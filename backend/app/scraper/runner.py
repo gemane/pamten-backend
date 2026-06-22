@@ -271,16 +271,16 @@ def _scrape_node(
             wikidata_id=sub["qid"],
         )
         _upsert_owns(entity_id, sub_id, source_id)
-        scraped.append({
-            "qid":  sub["qid"],
-            "id":   sub_id,
-            "name": sub_name,
-            "type": sub_type,
-        })
-
         if depth > 1:
             _scrape_node(sub["qid"], depth - 1, visited, scraped, source_id,
                          parent_entity_id=entity_id)
+        elif sub["qid"] not in {s["qid"] for s in scraped}:
+            scraped.append({
+                "qid":  sub["qid"],
+                "id":   sub_id,
+                "name": sub_name,
+                "type": sub_type,
+            })
 
     # CEOs
     for ceo in data.get("ceos", [])[:MAX_CEOS]:
