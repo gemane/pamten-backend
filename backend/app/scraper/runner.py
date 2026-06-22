@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import db
 from app.scraper.wikidata import search_entity, fetch_company_data
 from app.scraper.mapper import infer_entity_type, parse_full_name
+from app.scraper.sources import get_source_enabled
 
 WIKIDATA_SOURCE_NAME  = "Wikidata"
 WIKIDATA_SOURCE_URL   = "https://www.wikidata.org"
@@ -304,8 +305,11 @@ def run_scrape(query: str, depth: int = 2) -> dict:
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
-            "Scraper is disabled. Set SCRAPER_ENABLED=true in .env to enable."
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
         )
+
+    if not get_source_enabled("wikidata"):
+        raise PermissionError("Wikidata source is disabled. Enable it in the Scraper panel.")
 
     depth = max(0, min(int(depth), 3))  # hard cap at 3 levels
 

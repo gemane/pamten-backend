@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import entities, persons, locations, relationships, search, sources
 from app.scraper import router as scraper_router
+from app.scraper import sources as scraper_sources
 from app.auth import router as auth_router
 
 app = FastAPI(
@@ -29,6 +30,7 @@ app.include_router(relationships.router)
 app.include_router(search.router)
 app.include_router(sources.router)
 app.include_router(scraper_router.router)
+app.include_router(scraper_sources.router)
 app.include_router(auth_router.router)
 
 
