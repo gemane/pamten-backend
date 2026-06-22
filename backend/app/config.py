@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     NEO4J_DATABASE: str = "neo4j"
     APP_NAME: str = "Ownership Platform"
     DEBUG: bool = False
+    SCRAPER_ENABLED: bool = False
 
     class Config:
         env_file = ".env"

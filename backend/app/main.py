@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import entities, persons, locations, relationships, search, sources
+from app.scraper import router as scraper_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -26,6 +27,7 @@ app.include_router(locations.router)
 app.include_router(relationships.router)
 app.include_router(search.router)
 app.include_router(sources.router)
+app.include_router(scraper_router.router)
 
 
 @app.get("/", tags=["Health"])
