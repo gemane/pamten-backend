@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from app.config import settings
 from app.scraper.runner import run_scrape
+from app.auth.dependencies import require_admin
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -18,7 +19,7 @@ def scraper_status():
 
 
 @router.post("/run")
-def scraper_run(body: ScrapeRequest):
+def scraper_run(body: ScrapeRequest, _: dict = Depends(require_admin)):
     """
     Trigger a scrape for a company name.
     Requires SCRAPER_ENABLED=true in the environment.
