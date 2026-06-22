@@ -35,6 +35,29 @@ def create_entity(entity: EntityCreate):
         return {**dict(record["e"]), "id": entity_id}
 
 
+@router.get("/by-country")
+def get_entities_by_country():
+    query = """
+        MATCH (e:Entity)
+        WHERE e.country IS NOT NULL
+          AND e.country <> 'string'
+          AND size(e.country) = 2
+        RETURN e.country AS country,
+               collect({id: e.id, name: e.name, type: e.type}) AS entities
+        ORDER BY size(collect(e)) DESC
+    """
+    with db.get_session() as session:
+        result = session.run(query)
+        return [
+            {
+                "country":  rec["country"],
+                "count":    len(rec["entities"]),
+                "entities": rec["entities"],
+            }
+            for rec in result
+        ]
+
+
 @router.get("/{entity_id}", response_model=EntityResponse)
 def get_entity(entity_id: str):
     query = """
