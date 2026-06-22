@@ -158,20 +158,64 @@ def get_owners(entity_id: str):
 
 @router.get("/history/{entity_id}")
 def get_ownership_history(entity_id: str):
-    # Full ownership history of an entity
-    query = """
-        MATCH (owner)-[r:OWNS]->(e:Entity {id: $entity_id})
-        RETURN owner, r
-        ORDER BY r.since DESC
-    """
+    events = []
 
     with db.get_session() as session:
-        result = session.run(query, entity_id=entity_id)
-        return [
-            {
-                "owner": dict(record["owner"]),
-                "relationship": dict(record["r"]),
-                "active": record["r"]["until"] is None
-            }
-            for record in result
-        ]
+        # Who owns / owned this entity
+        for rec in session.run(
+            """
+            MATCH (owner)-[r:OWNS]->(e:Entity {id: $id})
+            RETURN owner, r, 'ownership_in' AS kind
+            """,
+            id=entity_id,
+        ):
+            events.append({
+                "kind":          "ownership_in",
+                "party":         dict(rec["owner"]),
+                "since":         rec["r"].get("since"),
+                "until":         rec["r"].get("until"),
+                "active":        rec["r"].get("until") is None,
+                "stake_percent": rec["r"].get("stake_percent"),
+                "ownership_type": rec["r"].get("ownership_type"),
+            })
+
+        # What this entity owns / owned
+        for rec in session.run(
+            """
+            MATCH (e:Entity {id: $id})-[r:OWNS]->(owned)
+            RETURN owned, r, 'ownership_out' AS kind
+            """,
+            id=entity_id,
+        ):
+            events.append({
+                "kind":          "ownership_out",
+                "party":         dict(rec["owned"]),
+                "since":         rec["r"].get("since"),
+                "until":         rec["r"].get("until"),
+                "active":        rec["r"].get("until") is None,
+                "stake_percent": rec["r"].get("stake_percent"),
+                "ownership_type": rec["r"].get("ownership_type"),
+            })
+
+        # Executive roles at this entity
+        for rec in session.run(
+            """
+            MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+            RETURN p, r, 'role' AS kind
+            """,
+            id=entity_id,
+        ):
+            events.append({
+                "kind":   "role",
+                "party":  dict(rec["p"]),
+                "since":  rec["r"].get("since"),
+                "until":  rec["r"].get("until"),
+                "active": rec["r"].get("until") is None,
+                "role":   rec["r"].get("role"),
+            })
+
+    # Dated events first (desc), undated at bottom
+    def sort_key(e):
+        return e["since"] or ""
+
+    return sorted(events, key=sort_key, reverse=True)
