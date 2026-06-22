@@ -44,7 +44,7 @@ def get_entities_by_country():
           AND size(e.country) = 2
         RETURN e.country AS country,
                collect({id: e.id, name: e.name, type: e.type}) AS entities
-        ORDER BY size(collect(e)) DESC
+        ORDER BY size(entities) DESC
     """
     with db.get_session() as session:
         result = session.run(query)
