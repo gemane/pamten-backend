@@ -29,6 +29,10 @@ MAX_FORM4_FETCH  = 25     # max unique insiders to fetch Form 3/4 for
 SEARCH_URL      = "https://efts.sec.gov/LATEST/search-index"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions"
 ARCHIVES_URL    = "https://www.sec.gov/Archives/edgar/data"
+TICKERS_URL     = "https://www.sec.gov/files/company_tickers.json"
+
+# Module-level cache for the tickers file (populated on first use per process)
+_tickers_cache: dict | None = None
 
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -117,6 +121,69 @@ def _title_to_role(title: str) -> str:
     return title or "Officer"
 
 
+# ── Ticker-file company lookup ────────────────────────────────────────────────
+
+def _get_tickers() -> dict:
+    """Fetch (and cache) EDGAR's company_tickers.json for the process lifetime."""
+    global _tickers_cache
+    if _tickers_cache is None:
+        log.info("SEC EDGAR: loading company_tickers.json")
+        r = httpx.get(TICKERS_URL, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        time.sleep(REQUEST_DELAY)
+        _tickers_cache = r.json()
+    return _tickers_cache
+
+
+_LEGAL_SUFFIXES = re.compile(
+    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp)\b",
+    re.IGNORECASE,
+)
+
+def _ticker_normalize(name: str) -> str:
+    """Lowercase, strip punctuation and legal suffixes for name comparison."""
+    name = name.lower()
+    name = re.sub(r"[.,]", "", name)
+    name = _LEGAL_SUFFIXES.sub("", name)
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def _lookup_in_tickers(query: str) -> dict | None:
+    """
+    Look up a company in EDGAR's listed-company tickers file.
+    Prefers exact normalized-name matches; falls back to prefix matches,
+    preferring the shortest (most specific) result.
+    Returns {cik: zero-padded-10-digit, name: str} or None.
+    """
+    try:
+        tickers = _get_tickers()
+    except httpx.HTTPError as exc:
+        log.warning("SEC EDGAR: tickers file fetch failed: %s", exc)
+        return None
+
+    q = _ticker_normalize(query)
+    exact: list[tuple[str, str, int]] = []   # (title, cik, len)
+    prefix: list[tuple[str, str, int]] = []
+
+    for entry in tickers.values():
+        title = entry.get("title", "")
+        cik   = str(entry.get("cik_str", "")).zfill(10)
+        norm  = _ticker_normalize(title)
+        if norm == q:
+            exact.append((title, cik, len(title)))
+        elif norm.startswith(q):
+            prefix.append((title, cik, len(title)))
+
+    for pool in (exact, prefix):
+        if pool:
+            pool.sort(key=lambda x: x[2])   # shortest name = most specific
+            title, cik, _ = pool[0]
+            log.info("SEC EDGAR: tickers matched %r → %r (CIK=%s)", query, title, cik)
+            return {"cik": cik, "name": title}
+
+    return None
+
+
 # ── EDGAR search helpers ──────────────────────────────────────────────────────
 
 def _parse_hit(src: dict) -> tuple[str | None, str | None]:
@@ -140,10 +207,21 @@ def _parse_hit(src: dict) -> tuple[str | None, str | None]:
 def search_company(name: str) -> dict | None:
     """
     Find a company's CIK and registered name on EDGAR.
-    Searches their own 10-K / DEF 14A filings (filer = the company itself).
+
+    Strategy:
+    1. Try company_tickers.json — unambiguous for all listed public companies.
+    2. Fall back to full-text search (10-K then DEF 14A) for private/foreign
+       companies not in the tickers file.
+
     Returns {cik: zero-padded-10-digit, name: str} or None.
     """
     log.info("SEC EDGAR: searching for company %r", name)
+
+    result = _lookup_in_tickers(name)
+    if result:
+        return result
+
+    log.info("SEC EDGAR: tickers miss for %r, falling back to full-text search", name)
     for forms in ("10-K", "DEF 14A"):
         try:
             data = _get(SEARCH_URL, {"q": f'"{name}"', "forms": forms})
@@ -152,7 +230,7 @@ def search_company(name: str) -> dict | None:
                 continue
             entity_name, cik = _parse_hit(hits[0]["_source"])
             if entity_name and cik:
-                log.info("SEC EDGAR: matched %r → CIK=%s", entity_name, cik)
+                log.info("SEC EDGAR: full-text matched %r → CIK=%s", entity_name, cik)
                 return {"cik": cik, "name": entity_name}
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             log.warning("SEC EDGAR: company search error (%s): %s", forms, exc)
