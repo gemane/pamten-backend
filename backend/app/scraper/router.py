@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.scraper.runner import run_scrape, run_scrape_sec_edgar, run_scrape_all
 from app.auth.dependencies import require_admin
+from app.database import db
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -104,3 +105,51 @@ def scraper_run_all(
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Run-all failed: {e}")
+
+
+# ── Purge endpoint ────────────────────────────────────────────────────────────
+
+@router.delete("/company")
+def purge_company(
+    name: str = Query(..., min_length=2, description="Exact company name to delete"),
+    _: dict = Depends(require_admin),
+):
+    """
+    Delete a company entity and all its relationships from the graph, then
+    remove any nodes that are left with no remaining relationships (orphans).
+    Admin only. Useful for cleaning up test scrapes.
+    """
+    with db.get_session() as session:
+        # Check it exists first
+        rec = session.run(
+            "MATCH (e:Entity {name: $name}) RETURN e.id AS id LIMIT 1",
+            name=name,
+        ).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail=f"Company '{name}' not found")
+
+        # Detach-delete the entity and all its relationships
+        session.run(
+            "MATCH (e:Entity {name: $name}) DETACH DELETE e",
+            name=name,
+        )
+
+        # Remove orphaned Person and Entity nodes (no remaining relationships)
+        orphan_result = session.run(
+            """
+            MATCH (n)
+            WHERE (n:Person OR n:Entity) AND NOT (n)--()
+            WITH n, n.name AS orphan_name
+            DETACH DELETE n
+            RETURN count(*) AS removed, collect(orphan_name) AS names
+            """
+        ).single()
+        orphans_removed = orphan_result["removed"] if orphan_result else 0
+        orphan_names    = orphan_result["names"]   if orphan_result else []
+
+    return {
+        "status":          "deleted",
+        "company":         name,
+        "orphans_removed": orphans_removed,
+        "orphans":         orphan_names,
+    }
