@@ -105,6 +105,7 @@ def _upsert_entity(
                     e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END
                 """,
                 id=entity_id,
+                name=name,
                 wid=wikidata_id,
                 type=entity_type,
                 country=country,
