@@ -10,7 +10,7 @@ router = APIRouter(prefix="/scraper/sources", tags=["Scraper"])
 
 KNOWN_SOURCES = {
     "wikidata":  "Wikidata — structured corporate data via SPARQL",
-    "sec_edgar": "SEC EDGAR — legally required US ownership filings (SC 13D/13G, DEF 14A)",
+    "sec_edgar": "SEC EDGAR — legally required US ownership filings (SC 13D/13G, Form 3/4)",
 }
 
 
