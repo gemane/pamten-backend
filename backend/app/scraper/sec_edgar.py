@@ -300,6 +300,10 @@ def fetch_executives(cik: str) -> list:
             continue
         accession   = accessions[i]   if i < len(accessions)   else ""
         primary_doc = primary_docs[i] if i < len(primary_docs) else ""
+        # primaryDocument is sometimes prefixed with an XSLT stylesheet dir
+        # (e.g. "xslF345X06/form4.xml") which serves HTML, not raw XML.
+        # Strip any leading xsl.../  to get the actual document filename.
+        primary_doc = primary_doc.split("/")[-1] if "/" in primary_doc else primary_doc
         filer_cik   = accession.replace("-", "")[:10]
 
         if not filer_cik or filer_cik in seen_filer_ciks or not primary_doc:
