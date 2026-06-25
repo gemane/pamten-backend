@@ -100,7 +100,9 @@ def _upsert_entity(
                     e.founded         = COALESCE($founded, e.founded),
                     e.revenue         = COALESCE($revenue, e.revenue),
                     e.description     = COALESCE($desc, e.description),
-                    e.name_normalized = $name_norm
+                    e.name_normalized = $name_norm,
+                    e.name            = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
+                    e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END
                 """,
                 id=entity_id,
                 wid=wikidata_id,
@@ -110,6 +112,7 @@ def _upsert_entity(
                 revenue=revenue,
                 desc=description,
                 name_norm=name_norm,
+                cred=WIKIDATA_CREDIBILITY,
             )
             return entity_id
 
@@ -118,6 +121,7 @@ def _upsert_entity(
             """
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
+                name_credibility: $cred,
                 type: $type, country: $country, founded: $founded,
                 revenue: $revenue, description: $desc,
                 wikidata_id: $wid, verified: false
@@ -126,6 +130,7 @@ def _upsert_entity(
             id=entity_id,
             name=name,
             name_norm=name_norm,
+            cred=WIKIDATA_CREDIBILITY,
             type=entity_type,
             country=country,
             founded=founded,
@@ -403,10 +408,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             session.run(
                 """
                 MATCH (e:Entity {id: $id})
-                SET e.name_normalized = $name_norm,
-                    e.sec_cik = COALESCE($cik, e.sec_cik)
+                SET e.name_normalized  = $name_norm,
+                    e.sec_cik          = COALESCE($cik, e.sec_cik),
+                    e.name             = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
+                    e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END
                 """,
-                id=entity_id, name_norm=name_norm, cik=cik,
+                id=entity_id, name_norm=name_norm, cik=cik, name=name,
+                cred=SEC_EDGAR_CREDIBILITY,
             )
             return entity_id
 
@@ -415,13 +423,14 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             """
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
+                name_credibility: $cred,
                 type: $type, sec_cik: $cik, verified: false,
                 country: null, founded: null, revenue: null,
                 description: null, wikidata_id: null
             })
             """,
             id=entity_id, name=name, name_norm=name_norm,
-            type=entity_type, cik=cik,
+            cred=SEC_EDGAR_CREDIBILITY, type=entity_type, cik=cik,
         )
         return entity_id
 
