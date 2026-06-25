@@ -17,7 +17,7 @@ import logging
 from app.config import settings
 from app.database import db
 from app.scraper.wikidata import search_entity, fetch_company_data
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name
 from app.scraper.sources import get_source_enabled
 
 log = logging.getLogger(__name__)
@@ -74,15 +74,19 @@ def _upsert_entity(
     Find entity by wikidata_id or name, update it if found, create if not.
     Returns the entity's internal id.
     """
+    name_norm = normalize_entity_name(name)
     with db.get_session() as session:
         rec = session.run(
             """
             MATCH (e:Entity)
-            WHERE ($wid IS NOT NULL AND e.wikidata_id = $wid) OR e.name = $name
+            WHERE ($wid IS NOT NULL AND e.wikidata_id = $wid)
+               OR e.name = $name
+               OR e.name_normalized = $name_norm
             RETURN e.id AS id LIMIT 1
             """,
             wid=wikidata_id,
             name=name,
+            name_norm=name_norm,
         ).single()
 
         if rec:
@@ -90,12 +94,13 @@ def _upsert_entity(
             session.run(
                 """
                 MATCH (e:Entity {id: $id})
-                SET e.wikidata_id  = $wid,
-                    e.type         = COALESCE($type, e.type),
-                    e.country      = COALESCE($country, e.country),
-                    e.founded      = COALESCE($founded, e.founded),
-                    e.revenue      = COALESCE($revenue, e.revenue),
-                    e.description  = COALESCE($desc, e.description)
+                SET e.wikidata_id     = $wid,
+                    e.type            = COALESCE($type, e.type),
+                    e.country         = COALESCE($country, e.country),
+                    e.founded         = COALESCE($founded, e.founded),
+                    e.revenue         = COALESCE($revenue, e.revenue),
+                    e.description     = COALESCE($desc, e.description),
+                    e.name_normalized = $name_norm
                 """,
                 id=entity_id,
                 wid=wikidata_id,
@@ -104,6 +109,7 @@ def _upsert_entity(
                 founded=founded,
                 revenue=revenue,
                 desc=description,
+                name_norm=name_norm,
             )
             return entity_id
 
@@ -111,14 +117,15 @@ def _upsert_entity(
         session.run(
             """
             CREATE (e:Entity {
-                id: $id, name: $name, type: $type,
-                country: $country, founded: $founded,
+                id: $id, name: $name, name_normalized: $name_norm,
+                type: $type, country: $country, founded: $founded,
                 revenue: $revenue, description: $desc,
                 wikidata_id: $wid, verified: false
             })
             """,
             id=entity_id,
             name=name,
+            name_norm=name_norm,
             type=entity_type,
             country=country,
             founded=founded,
@@ -375,38 +382,46 @@ def _ensure_sec_edgar_source() -> str:
 
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None) -> str:
-    """Find or create an Entity node matched by name (or SEC CIK)."""
+    """Find or create an Entity node matched by CIK, exact name, or normalized name."""
+    name_norm = normalize_entity_name(name)
     with db.get_session() as session:
         rec = session.run(
             """
             MATCH (e:Entity)
-            WHERE ($cik IS NOT NULL AND e.sec_cik = $cik) OR e.name = $name
+            WHERE ($cik IS NOT NULL AND e.sec_cik = $cik)
+               OR e.name = $name
+               OR e.name_normalized = $name_norm
             RETURN e.id AS id LIMIT 1
             """,
             cik=cik,
             name=name,
+            name_norm=name_norm,
         ).single()
 
         if rec:
             entity_id = rec["id"]
-            if cik:
-                session.run(
-                    "MATCH (e:Entity {id: $id}) SET e.sec_cik = $cik",
-                    id=entity_id, cik=cik,
-                )
+            session.run(
+                """
+                MATCH (e:Entity {id: $id})
+                SET e.name_normalized = $name_norm,
+                    e.sec_cik = COALESCE($cik, e.sec_cik)
+                """,
+                id=entity_id, name_norm=name_norm, cik=cik,
+            )
             return entity_id
 
         entity_id = str(uuid.uuid4())
         session.run(
             """
             CREATE (e:Entity {
-                id: $id, name: $name, type: $type,
-                sec_cik: $cik, verified: false,
+                id: $id, name: $name, name_normalized: $name_norm,
+                type: $type, sec_cik: $cik, verified: false,
                 country: null, founded: null, revenue: null,
                 description: null, wikidata_id: null
             })
             """,
-            id=entity_id, name=name, type=entity_type, cik=cik,
+            id=entity_id, name=name, name_norm=name_norm,
+            type=entity_type, cik=cik,
         )
         return entity_id
 

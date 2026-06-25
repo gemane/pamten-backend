@@ -66,3 +66,22 @@ def is_person_name(name: str) -> bool:
 def sec_form_to_ownership_type(form_type: str) -> str:
     """Map SC 13G → 'passive', SC 13D → 'active'."""
     return "passive" if "13G" in form_type else "active"
+
+
+_LEGAL_SUFFIX_NORM = re.compile(
+    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp)\b\.?",
+    re.IGNORECASE,
+)
+
+def normalize_entity_name(name: str) -> str:
+    """
+    Canonical form of a company name for cross-source deduplication.
+    Strips legal suffixes, punctuation, and whitespace.
+    e.g. 'BlackRock, Inc.' → 'blackrock'
+         'BLACKROCK INC'   → 'blackrock'
+         'BlackRock'       → 'blackrock'
+    """
+    name = name.lower()
+    name = re.sub(r"[,.]", "", name)
+    name = _LEGAL_SUFFIX_NORM.sub("", name)
+    return re.sub(r"\s+", " ", name).strip()
