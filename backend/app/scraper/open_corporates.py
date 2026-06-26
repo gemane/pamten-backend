@@ -46,9 +46,18 @@ def _params(extra: dict | None = None) -> dict:
 def _get(path: str, params: dict | None = None) -> dict:
     url = f"{BASE_URL}{path}"
     r = httpx.get(url, params=_params(params), headers=HEADERS, timeout=20)
+    if r.status_code == 401:
+        raise PermissionError(
+            "OpenCorporates API requires an API token. "
+            "Register at https://opencorporates.com and set OPENCORPORATES_API_KEY."
+        )
     r.raise_for_status()
     time.sleep(REQUEST_DELAY)
-    return r.json()
+    payload = r.json()
+    # Some error responses arrive as HTTP 200 with an error key
+    if "error" in payload:
+        raise RuntimeError(f"OpenCorporates API error: {payload['error'].get('message', payload['error'])}")
+    return payload
 
 
 # ── Company search ────────────────────────────────────────────────────────────
