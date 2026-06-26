@@ -32,6 +32,10 @@ SEC_EDGAR_SOURCE_NAME = "SEC EDGAR"
 SEC_EDGAR_SOURCE_URL  = "https://www.sec.gov/edgar"
 SEC_EDGAR_CREDIBILITY = 98   # legally mandated filings
 
+OPENCORPORATES_SOURCE_NAME = "OpenCorporates"
+OPENCORPORATES_SOURCE_URL  = "https://opencorporates.com"
+OPENCORPORATES_CREDIBILITY = 85
+
 
 # ── Neo4j helpers ─────────────────────────────────────────────────────────────
 
@@ -662,4 +666,209 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     else:
         results["sec_edgar"] = {"status": "disabled"}
 
+    # OpenCorporates
+    if settings.SCRAPER_OPENCORPORATES_ENABLED and get_source_enabled("open_corporates"):
+        try:
+            results["open_corporates"] = run_scrape_open_corporates(query)
+        except PermissionError as exc:
+            results["open_corporates"] = {"status": "disabled", "detail": str(exc)}
+        except Exception as exc:
+            log.error("OpenCorporates scrape failed for %r: %s", query, exc)
+            results["open_corporates"] = {"status": "error", "detail": str(exc)}
+    else:
+        results["open_corporates"] = {"status": "disabled"}
+
     return {"status": "ok", "query": query, "results": results}
+
+
+# ── OpenCorporates Neo4j helpers ──────────────────────────────────────────────
+
+def _ensure_open_corporates_source() -> str:
+    """Get or create the OpenCorporates source node, return its id."""
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
+            name=OPENCORPORATES_SOURCE_NAME,
+        ).single()
+        if rec:
+            return rec["id"]
+
+        source_id = str(uuid.uuid4())
+        session.run(
+            """
+            CREATE (s:Source {
+                id: $id, name: $name, url: $url,
+                credibility_score: $score, type: 'register'
+            })
+            """,
+            id=source_id,
+            name=OPENCORPORATES_SOURCE_NAME,
+            url=OPENCORPORATES_SOURCE_URL,
+            score=OPENCORPORATES_CREDIBILITY,
+        )
+        return source_id
+
+
+def _upsert_location_oc(address: dict) -> str | None:
+    """
+    Find or create a Location node from a registered address dict.
+    Returns the Location's id, or None if the address is empty.
+    """
+    city    = (address.get("city")    or "").strip()
+    country = (address.get("country") or "").strip()
+    street  = (address.get("street")  or "").strip()
+    zip_    = (address.get("zip")     or "").strip()
+
+    if not (city or country):
+        return None
+
+    with db.get_session() as session:
+        rec = session.run(
+            """
+            MATCH (l:Location)
+            WHERE l.city = $city AND l.country = $country
+              AND COALESCE(l.street, '') = $street
+            RETURN l.id AS id LIMIT 1
+            """,
+            city=city, country=country, street=street,
+        ).single()
+        if rec:
+            return rec["id"]
+
+        location_id = str(uuid.uuid4())
+        session.run(
+            """
+            CREATE (l:Location {
+                id: $id, street: $street, city: $city,
+                country: $country, zip: $zip
+            })
+            """,
+            id=location_id, street=street, city=city,
+            country=country, zip=zip_,
+        )
+        return location_id
+
+
+def _upsert_role_oc(person_id: str, entity_id: str, role: str,
+                    start_date: str | None, end_date: str | None,
+                    source_id: str):
+    """Create a HAS_ROLE edge attributed to OpenCorporates if not already present."""
+    with db.get_session() as session:
+        existing = session.run(
+            """
+            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+            WHERE r.role = $role AND r.until IS NULL
+            RETURN r LIMIT 1
+            """,
+            pid=person_id, eid=entity_id, role=role,
+        ).single()
+        if existing:
+            return
+        session.run(
+            """
+            MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
+            CREATE (p)-[:HAS_ROLE {
+                role: $role, since: $since, until: $until,
+                source_id: $sid, credibility_score: $score
+            }]->(e)
+            """,
+            pid=person_id, eid=entity_id, role=role,
+            since=start_date, until=end_date,
+            sid=source_id, score=OPENCORPORATES_CREDIBILITY,
+        )
+
+
+# ── OpenCorporates public entry point ─────────────────────────────────────────
+
+def run_scrape_open_corporates(company_name: str) -> dict:
+    """
+    Scrape OpenCorporates for registration details and officers for one company.
+    Requires SCRAPER_ENABLED=true AND SCRAPER_OPENCORPORATES_ENABLED=true.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_OPENCORPORATES_ENABLED:
+        raise PermissionError(
+            "OpenCorporates scraper is disabled. "
+            "Set SCRAPER_OPENCORPORATES_ENABLED=true in the environment to enable."
+        )
+    if not get_source_enabled("open_corporates"):
+        raise PermissionError(
+            "OpenCorporates source is disabled. Enable it in the Scraper panel."
+        )
+
+    from app.scraper.open_corporates import scrape_company
+
+    log.info("OpenCorporates runner: starting scrape for %r", company_name)
+    data = scrape_company(company_name)
+
+    if not data:
+        return {
+            "status":  "no_results",
+            "company": company_name,
+            "total":   0,
+            "scraped": [],
+        }
+
+    source_id = _ensure_open_corporates_source()
+    scraped: list[dict] = []
+
+    # Upsert the target company
+    target_id = _upsert_entity_by_name(
+        name=data["name"],
+        entity_type="company",
+    )
+    scraped.append({"type": "entity", "name": data["name"], "role": "target"})
+
+    # Registered address → Location node linked with REGISTERED_IN
+    address = data.get("registered_address") or {}
+    location_id = _upsert_location_oc(address)
+    if location_id:
+        with db.get_session() as session:
+            session.run(
+                """
+                MATCH (e:Entity {id: $eid}), (l:Location {id: $lid})
+                MERGE (e)-[:REGISTERED_IN {source_id: $sid}]->(l)
+                """,
+                eid=target_id, lid=location_id, sid=source_id,
+            )
+        city    = address.get("city", "")
+        country = address.get("country", "")
+        scraped.append({"type": "location", "city": city, "country": country,
+                        "role": "registered_address"})
+
+    # Officers → Person or Entity nodes + HAS_ROLE edges
+    for officer in data.get("officers", []):
+        name = officer.get("name", "").strip()
+        role = officer.get("role", "Officer")
+        if not name:
+            continue
+
+        if is_person_name(name):
+            person_id = _upsert_person_by_name(name)
+            _upsert_role_oc(
+                person_id, target_id, role,
+                officer.get("start_date"), officer.get("end_date"),
+                source_id,
+            )
+            scraped.append({"type": "person", "name": name, "role": role})
+        else:
+            entity_id = _upsert_entity_by_name(name=name, entity_type="company")
+            scraped.append({"type": "entity", "name": name, "role": role})
+
+        log.info("OpenCorporates: wrote %r → %r (%s)", name, data["name"], role)
+
+    log.info(
+        "OpenCorporates runner: finished %r — %d nodes written",
+        company_name, len(scraped),
+    )
+    return {
+        "status":             "ok",
+        "company":            company_name,
+        "jurisdiction_code":  data.get("jurisdiction_code"),
+        "company_number":     data.get("company_number"),
+        "total":              len(scraped),
+        "scraped":            scraped,
+    }

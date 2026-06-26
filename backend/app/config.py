@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SCRAPER_ENABLED: bool = False
     SCRAPER_SEC_EDGAR_ENABLED: bool = False
+    SCRAPER_OPENCORPORATES_ENABLED: bool = False
+    OPENCORPORATES_API_KEY: str = ""
     SECRET_KEY: str = "change-me-in-production-use-a-long-random-string"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
 

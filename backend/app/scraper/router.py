@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from app.config import settings
-from app.scraper.runner import run_scrape, run_scrape_sec_edgar, run_scrape_all
+from app.scraper.runner import run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates
 from app.auth.dependencies import require_admin
 from app.database import db
 
@@ -19,8 +19,9 @@ class ScrapeRequest(BaseModel):
 def scraper_status():
     """Check whether the master scraper switch is enabled."""
     return {
-        "enabled":              settings.SCRAPER_ENABLED,
-        "sec_edgar_enabled":    settings.SCRAPER_SEC_EDGAR_ENABLED,
+        "enabled":                    settings.SCRAPER_ENABLED,
+        "sec_edgar_enabled":          settings.SCRAPER_SEC_EDGAR_ENABLED,
+        "open_corporates_enabled":    settings.SCRAPER_OPENCORPORATES_ENABLED,
     }
 
 
@@ -91,7 +92,7 @@ def scraper_run_all(
     _: dict = Depends(require_admin),
 ):
     """
-    Run all enabled scrapers (Wikidata + SEC EDGAR) for a company name.
+    Run all enabled scrapers (Wikidata + SEC EDGAR + OpenCorporates) for a company name.
     Disabled scrapers are skipped and reported with status 'disabled'.
     Requires SCRAPER_ENABLED=true.
     """
@@ -105,6 +106,42 @@ def scraper_run_all(
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Run-all failed: {e}")
+
+
+# ── OpenCorporates endpoints ──────────────────────────────────────────────────
+
+@router.get("/open-corporates/status")
+def open_corporates_status():
+    """Check whether OpenCorporates scraping is enabled (both master and per-source flags)."""
+    return {
+        "enabled":                    settings.SCRAPER_ENABLED and settings.SCRAPER_OPENCORPORATES_ENABLED,
+        "master_switch":              settings.SCRAPER_ENABLED,
+        "open_corporates_switch":     settings.SCRAPER_OPENCORPORATES_ENABLED,
+    }
+
+
+@router.post("/open-corporates/run")
+def open_corporates_run(
+    company: str = Query(..., min_length=2, description="Company name to look up on OpenCorporates"),
+    _: dict = Depends(require_admin),
+):
+    """
+    Scrape OpenCorporates for company registration details and officers.
+    Requires SCRAPER_ENABLED=true AND SCRAPER_OPENCORPORATES_ENABLED=true.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+    if not settings.SCRAPER_OPENCORPORATES_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="OpenCorporates scraper is disabled. Set SCRAPER_OPENCORPORATES_ENABLED=true.")
+    try:
+        result = run_scrape_open_corporates(company)
+        return result
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenCorporates scrape failed: {e}")
 
 
 # ── Purge endpoint ────────────────────────────────────────────────────────────
