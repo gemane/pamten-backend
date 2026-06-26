@@ -6,24 +6,25 @@ router = APIRouter(prefix="/search", tags=["Search"])
 
 @router.get("/")
 def search(q: str = Query(..., min_length=2)):
-    # Full text search across Entity and Person nodes
+    q_lower = q.lower()
     query = """
-        CALL db.index.fulltext.queryNodes(
-            'namesIndex', $q
-        )
-        YIELD node, score
-        RETURN node, score, labels(node) as labels
-        ORDER BY score DESC
+        MATCH (n:Entity)
+        WHERE toLower(n.name) CONTAINS $q
+        RETURN n AS node, 1.0 AS score, 'Entity' AS type
+        UNION
+        MATCH (n:Person)
+        WHERE toLower(n.full_name) CONTAINS $q
+        RETURN n AS node, 1.0 AS score, 'Person' AS type
         LIMIT 20
     """
 
     with db.get_session() as session:
-        result = session.run(query, q=q + "*")
+        result = session.run(query, q=q_lower)
         return [
             {
                 "node": dict(record["node"]),
                 "score": record["score"],
-                "type": record["labels"][0]
+                "type": record["type"],
             }
             for record in result
         ]
