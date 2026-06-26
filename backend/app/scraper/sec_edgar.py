@@ -11,6 +11,7 @@ than parsing DEF 14A proxy HTML.
 
 import re
 import time
+import html as html_lib
 import logging
 import xml.etree.ElementTree as ET
 
@@ -25,8 +26,10 @@ HEADERS = {
 }
 REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s
 MAX_FORM4_FETCH  = 25     # max unique insiders to fetch Form 3/4 for
+MAX_PERCENT_FETCH = 5     # max investors to fetch actual stake % for
 
 SEARCH_URL      = "https://efts.sec.gov/LATEST/search-index"
+BROWSE_URL      = "https://www.sec.gov/cgi-bin/browse-edgar"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions"
 ARCHIVES_URL    = "https://www.sec.gov/Archives/edgar/data"
 TICKERS_URL     = "https://www.sec.gov/files/company_tickers.json"
@@ -44,8 +47,8 @@ def _get(url: str, params: dict | None = None) -> dict:
     return r.json()
 
 
-def _get_text(url: str) -> str:
-    r = httpx.get(url, headers=HEADERS, timeout=30)
+def _get_text(url: str, params: dict | None = None) -> str:
+    r = httpx.get(url, params=params, headers=HEADERS, timeout=30)
     r.raise_for_status()
     time.sleep(REQUEST_DELAY)
     return r.text
@@ -239,63 +242,188 @@ def search_company(name: str) -> dict | None:
     return None
 
 
+# ── Investor info from EDGAR submissions + filing document ────────────────────
+
+_PERCENT_PATTERNS = [
+    # Standard SC 13G/13D cover page: "PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW N  X.X%"
+    r'percent\s+of\s+class\s+represented\s+by\s+amount\s+in\s+row\s+\d+\s+(\d{1,2}\.?\d*)\s*%',
+    # Item 13 label followed by the value (some filings use "Item 13" as the header)
+    r'item\s*13\.?\s*percent\s+of\s+class[^\n]*?\n[^\n]*?(\d{1,2}\.?\d*)\s*%',
+    # Fallback: "percent of class" anywhere, followed within 300 chars by a percentage
+    # (uses .{0,300}? instead of [^\d%]{0,300}? to not break on digits in labels)
+    r'percent\s+of\s+class\s+represented.{0,300}?(\d{1,2}\.?\d*)\s*%',
+]
+
+
+def _plain_text(raw: str) -> str:
+    """Strip HTML tags and decode entities so regex patterns match cleanly."""
+    decoded = html_lib.unescape(raw)
+    stripped = re.sub(r'<[^>]+>', ' ', decoded)
+    return re.sub(r'\s+', ' ', stripped)
+
+
+def _parse_percent_from_text(text: str) -> float | None:
+    """Extract stake % from Item 13 of a SC 13D/13G filing document."""
+    plain = _plain_text(text)
+    for pattern in _PERCENT_PATTERNS:
+        m = re.search(pattern, plain, re.IGNORECASE | re.DOTALL)
+        if m:
+            try:
+                val = float(m.group(1))
+                if 0 < val <= 100:
+                    return val
+            except (ValueError, IndexError):
+                pass
+    return None
+
+
+def _fetch_filing_index(index_url: str) -> tuple[str | None, str | None, str | None]:
+    """
+    Fetch an EDGAR filing index HTML page and extract:
+      - investor (filer) name
+      - investor CIK (zero-padded 10 digits)
+      - primary document URL (for parsing stake percentage)
+
+    The index page has separate filerDiv blocks for the subject company ("Subject")
+    and the reporting persons ("Filed by"). We want the latter.
+    """
+    try:
+        html = _get_text(index_url)
+    except httpx.HTTPError as exc:
+        log.debug("SEC EDGAR: index fetch failed %s: %s", index_url, exc)
+        return None, None, None
+
+    # Extract the first "(Filed by)" company name and its CIK
+    name = None
+    cik  = None
+    m = re.search(
+        r'class="companyName">\s*([^<(]+?)\s*\(Filed by\).*?CIK=(\d+)',
+        html, re.DOTALL | re.IGNORECASE,
+    )
+    if m:
+        name = m.group(1).strip()
+        cik  = m.group(2).zfill(10)
+
+    # Extract primary document URL: first doc-table row whose type cell says SC 13
+    primary_url = None
+    m2 = re.search(
+        r'href="(/Archives/edgar/data/\d+/[^"]+\.(?:htm|txt))"[^>]*>[^<]*</a>\s*</td>\s*<td[^>]*>SC\s*13',
+        html, re.DOTALL | re.IGNORECASE,
+    )
+    if m2:
+        primary_url = f"https://www.sec.gov{m2.group(1)}"
+
+    return name, cik, primary_url
+
+
 # ── Ownership filings (SC 13D / SC 13G) ──────────────────────────────────────
 
 def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                             limit: int = 20) -> list:
     """
-    Search for SC 13D / SC 13G filings where this company is the subject/issuer.
-    Each filing was submitted by an investor who owns >5% of the company.
-    company_cik confirms the company is at ciks[0] (issuer position), filtering
-    out filings the company itself made about other entities.
+    Find SC 13D/13G large-shareholder filings where this company is the issuer.
+    Uses EDGAR's company browse Atom feed (keyed by CIK), which is more reliable
+    than full-text search. Each entry represents an investor holding >5%.
+    Names and stake percentages are fetched from individual submissions JSONs.
     """
-    log.info("SEC EDGAR: fetching SC 13D/13G filings for %r", company_name)
-    try:
-        data = _get(SEARCH_URL, {
-            "q":         f'"{company_name}"',
-            "forms":     "SC 13D,SC 13G",
-            "dateRange": "custom",
-            "startdt":   "2018-01-01",
-            "enddt":     "2026-12-31",
-        })
-    except httpx.HTTPError as exc:
-        log.error("SEC EDGAR: ownership search failed: %s", exc)
+    if not company_cik:
+        log.warning("SEC EDGAR: CIK required for ownership search; skipping %r", company_name)
         return []
 
-    hits = data.get("hits", {}).get("hits", [])[:limit]
-    results: list[dict] = []
-    seen_investors: set[str] = set()
+    log.info("SEC EDGAR: fetching SC 13D/13G via browse for CIK=%s (%r)", company_cik, company_name)
+    try:
+        atom_text = _get_text(BROWSE_URL, {
+            "action": "getcompany",
+            "CIK":    company_cik,
+            "type":   "SC 13",
+            "dateb":  "",
+            "owner":  "include",
+            "count":  "30",   # over-fetch so we can deduplicate amendments
+            "output": "atom",
+        })
+    except httpx.HTTPError as exc:
+        log.error("SEC EDGAR: browse request failed for CIK=%s: %s", company_cik, exc)
+        return []
 
-    for hit in hits:
-        src           = hit.get("_source", {})
-        form_type     = src.get("form", "")
-        display_names = src.get("display_names", [])
-        ciks          = src.get("ciks", [])
+    try:
+        root = ET.fromstring(atom_text)
+    except ET.ParseError as exc:
+        log.error("SEC EDGAR: Atom feed parse error: %s", exc)
+        return []
 
-        if len(display_names) < 2 or len(ciks) < 2:
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+
+    # Parse entries from Atom feed; grab filing-href for each
+    raw_entries: list[dict] = []
+    for entry in root.findall("a:entry", ns):
+        cat       = entry.find("a:category", ns)
+        form_type = (cat.get("term") or "").strip() if cat is not None else ""
+        if "13" not in form_type:
             continue
-        # Confirm our company is the issuer (index 0), not the filer
-        if company_cik and ciks[0].zfill(10) != company_cik:
+
+        content = entry.find("a:content", ns)
+        if content is None:
+            continue
+        href_elem = content.find("a:filing-href", ns)
+        date_elem = content.find("a:filing-date", ns)
+        index_url = (href_elem.text or "").strip() if href_elem is not None else ""
+        file_date = (date_elem.text or "").strip() if date_elem is not None else None
+
+        if not index_url:
             continue
 
-        investor_name = _normalize_investor_name(display_names[1])
-        investor_cik  = ciks[1].zfill(10)
-
-        if not investor_name or investor_name in seen_investors:
-            continue
-        seen_investors.add(investor_name)
-
-        results.append({
-            "investor_name":    investor_name,
-            "investor_cik":     investor_cik,
-            "form_type":        form_type,
-            "file_date":        src.get("file_date"),
-            "period_of_report": src.get("period_ending"),
-            "stake_percent":    None,
-            "ownership_type":   "passive" if "13G" in form_type else "active",
+        raw_entries.append({
+            "index_url": index_url,
+            "form_type": form_type,
+            "file_date": file_date,
         })
 
-    log.info("SEC EDGAR: found %d investors for %r", len(results), company_name)
+    # Fetch filing index pages; deduplicate by investor CIK (Atom is most-recent-first)
+    seen_investor_ciks: set[str] = set()
+    if company_cik:
+        seen_investor_ciks.add(company_cik)   # skip the company's own filings
+    enriched: list[dict] = []
+
+    for raw in raw_entries:
+        if len(enriched) >= limit:
+            break
+        name, cik, primary_url = _fetch_filing_index(raw["index_url"])
+        if not name or not cik:
+            continue
+        if cik in seen_investor_ciks:
+            continue
+        seen_investor_ciks.add(cik)
+        enriched.append({
+            "investor_name": name,
+            "investor_cik":  cik,
+            "form_type":     raw["form_type"],
+            "file_date":     raw["file_date"],
+            "primary_url":   primary_url,
+        })
+
+    # Fetch stake percentages for the top N investors
+    results: list[dict] = []
+    for i, inv in enumerate(enriched):
+        pct = None
+        if i < MAX_PERCENT_FETCH and inv.get("primary_url"):
+            try:
+                text = _get_text(inv["primary_url"])
+                pct  = _parse_percent_from_text(text)
+            except httpx.HTTPError:
+                pass
+
+        log.info("SEC EDGAR: investor %r (CIK=%s) stake=%s", inv["investor_name"], inv["investor_cik"], pct)
+        results.append({
+            "investor_name":    inv["investor_name"].title(),
+            "investor_cik":     inv["investor_cik"],
+            "form_type":        inv["form_type"],
+            "file_date":        inv["file_date"],
+            "period_of_report": None,
+            "stake_percent":    pct,
+            "ownership_type":   "passive" if "13G" in inv["form_type"] else "active",
+        })
+
+    log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)
     return results
 
 
