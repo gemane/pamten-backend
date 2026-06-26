@@ -316,8 +316,13 @@ def _scrape_node(
                 "type": sub_type,
             })
 
-    # CEOs
-    for ceo in data.get("ceos", [])[:MAX_CEOS]:
+    # CEOs — sort current first (no until), then most recent since, before capping
+    sorted_ceos = sorted(
+        data.get("ceos", []),
+        key=lambda c: (1 if c.get("until") else 0, c.get("since") or "0000"),
+        reverse=True,
+    )
+    for ceo in sorted_ceos[:MAX_CEOS]:
         if not ceo.get("label"):
             continue
         person_id = _upsert_person(
