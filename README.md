@@ -221,3 +221,11 @@ To add a new scraper source, add an entry to `KNOWN_SOURCES` in `scraper/sources
 ## Deployment
 
 Deployed on Render as a web service. Render detects `render.yaml` automatically. Required environment variables must be set in the Render dashboard: `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `SECRET_KEY`. Any push to `main` triggers a redeploy.
+
+---
+
+## Built With
+
+This project was designed and built with the assistance of
+[Claude](https://claude.ai) by Anthropic, using
+[Claude Code](https://claude.ai/code) CLI for development.
