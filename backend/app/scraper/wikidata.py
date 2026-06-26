@@ -48,6 +48,7 @@ def fetch_company_data(qid: str) -> dict | None:
            ?subsidiary ?subsidiaryLabel ?subsidiaryInstance
            ?parent
            ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode
+           ?ceoStart ?ceoEnd
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item wdt:P31 ?instance }}
@@ -66,7 +67,10 @@ def fetch_company_data(qid: str) -> dict | None:
       }}
       OPTIONAL {{ ?item wdt:P749 ?parent }}
       OPTIONAL {{
-        ?item wdt:P169 ?ceo .
+        ?item p:P169 ?ceoStmt .
+        ?ceoStmt ps:P169 ?ceo .
+        OPTIONAL {{ ?ceoStmt pq:P580 ?ceoStart }}
+        OPTIONAL {{ ?ceoStmt pq:P582 ?ceoEnd }}
         OPTIONAL {{
           ?ceo wdt:P27 ?ceoNationality .
           ?ceoNationality wdt:P297 ?ceoNationalityCode
@@ -158,15 +162,20 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         if parent_uri := _v(row, "parent"):
             result["parents"].add(_qid(parent_uri))
 
-        # CEO
+        # CEO (keyed by qid+since to capture multiple tenures)
         if ceo_uri := _v(row, "ceo"):
             ceo_qid = _qid(ceo_uri)
-            if ceo_qid and ceo_qid not in result["ceos"]:
-                result["ceos"][ceo_qid] = {
+            since   = (_v(row, "ceoStart") or "")[:10] or None
+            until   = (_v(row, "ceoEnd")   or "")[:10] or None
+            key     = f"{ceo_qid}|{since}"
+            if ceo_qid and key not in result["ceos"]:
+                result["ceos"][key] = {
                     "qid":         ceo_qid,
                     "label":       _v(row, "ceoLabel"),
                     "description": _v(row, "ceoDescription"),
                     "nationality": _v(row, "ceoNationalityCode"),
+                    "since":       since,
+                    "until":       until,
                 }
 
     # Convert sets/dicts to lists

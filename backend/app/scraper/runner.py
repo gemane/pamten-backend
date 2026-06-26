@@ -216,17 +216,21 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str):
         )
 
 
-def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str):
-    """Create a HAS_ROLE edge if one doesn't already exist."""
+def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
+                 since: str | None = None, until: str | None = None):
+    """Create a HAS_ROLE edge if one doesn't already exist (matched on role+since)."""
     with db.get_session() as session:
         exists = session.run(
             """
             MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-            WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1
+            WHERE r.role = $role
+              AND (r.since = $since OR (r.since IS NULL AND $since IS NULL))
+            RETURN r LIMIT 1
             """,
             pid=person_id,
             eid=entity_id,
             role=role,
+            since=since,
         ).single()
         if exists:
             return
@@ -234,13 +238,15 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str):
             """
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
             CREATE (p)-[:HAS_ROLE {
-                role: $role, since: null, until: null,
+                role: $role, since: $since, until: $until,
                 source_id: $sid, credibility_score: $score
             }]->(e)
             """,
             pid=person_id,
             eid=entity_id,
             role=role,
+            since=since,
+            until=until,
             sid=source_id,
             score=WIKIDATA_CREDIBILITY,
         )
@@ -320,7 +326,8 @@ def _scrape_node(
             description=ceo.get("description"),
             wikidata_id=ceo["qid"],
         )
-        _upsert_role(person_id, entity_id, "CEO", source_id)
+        _upsert_role(person_id, entity_id, "CEO", source_id,
+                     since=ceo.get("since"), until=ceo.get("until"))
 
 
 # ── Wikidata public entry point ───────────────────────────────────────────────
