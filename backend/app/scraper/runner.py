@@ -1,5 +1,5 @@
 """
-Scraper runner — orchestrates Wikidata and SEC EDGAR fetching and Neo4j writes.
+Scraper runner — orchestrates Wikidata and SEC EDGAR fetching and ArcadeDB writes.
 
 Entry points:
   run_scrape(query, depth)          – Wikidata scrape
@@ -9,7 +9,7 @@ Entry points:
 All entry points:
 - Check SCRAPER_ENABLED before doing anything.
 - Check the per-source flag before running that source.
-- Write to Neo4j using MERGE so repeated runs are safe (no duplicates).
+- Write using MERGE so repeated runs are safe (no duplicates).
 """
 
 import uuid
@@ -37,7 +37,7 @@ OPENCORPORATES_SOURCE_URL  = "https://opencorporates.com"
 OPENCORPORATES_CREDIBILITY = 85
 
 
-# ── Neo4j helpers ─────────────────────────────────────────────────────────────
+# ── Database helpers ──────────────────────────────────────────────────────────
 
 def _ensure_source() -> str:
     """Get or create the Wikidata source node, return its id."""
@@ -362,7 +362,7 @@ def run_scrape(query: str, depth: int = 2) -> dict:
     }
 
 
-# ── SEC EDGAR Neo4j helpers ───────────────────────────────────────────────────
+# ── SEC EDGAR helpers ─────────────────────────────────────────────────────────
 
 def _ensure_sec_edgar_source() -> str:
     """Get or create the SEC EDGAR source node, return its id."""
@@ -681,7 +681,7 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     return {"status": "ok", "query": query, "results": results}
 
 
-# ── OpenCorporates Neo4j helpers ──────────────────────────────────────────────
+# ── OpenCorporates helpers ────────────────────────────────────────────────────
 
 def _ensure_open_corporates_source() -> str:
     """Get or create the OpenCorporates source node, return its id."""

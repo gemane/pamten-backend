@@ -116,7 +116,7 @@ def create_related_to(data: RelatedToCreate):
 @router.get("/ownership-tree/{entity_id}")
 def get_ownership_tree(entity_id: str, depth: int = 3):
     # Get everything an entity owns, up to N levels deep.
-    # depth must be interpolated as a literal — Neo4j doesn't accept a parameter
+    # depth must be interpolated as a literal — Cypher doesn't accept a parameter
     # for variable-length path bounds.
     safe_depth = max(1, min(int(depth), 10))
     query = f"""

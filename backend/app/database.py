@@ -56,7 +56,7 @@ def _wrap(value):
 class _NodeWrapper:
     """
     Wraps an ArcadeDB vertex or edge dict.
-    Strips @-prefixed ArcadeDB metadata so dict() / .get() work like Neo4j.
+    Strips @-prefixed ArcadeDB metadata so dict() / .get() return clean dicts.
     """
 
     def __init__(self, data: dict):
@@ -93,7 +93,7 @@ class _NodeWrapper:
 class _PathWrapper:
     """
     Wraps an ArcadeDB path so path.nodes and path.relationships work as on
-    a Neo4j Path object.
+    exposing .nodes and .relationships lists.
 
     Handles two formats:
     • list  – alternating [vertex, edge, vertex, …] (openCypher serialisation)

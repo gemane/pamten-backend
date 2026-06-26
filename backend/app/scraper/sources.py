@@ -1,5 +1,5 @@
 """
-Per-source scraper toggles, stored as ScraperSource nodes in Neo4j.
+Per-source scraper toggles, stored as ScraperSource nodes in ArcadeDB.
 These are independent of the master SCRAPER_ENABLED env flag.
 """
 from fastapi import APIRouter, HTTPException, Depends
