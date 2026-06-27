@@ -338,7 +338,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "type":   "SC 13",
             "dateb":  "",
             "owner":  "include",
-            "count":  "30",   # over-fetch so we can deduplicate amendments
+            "count":  "100",  # large institutions file many outbound SC 13s; need room for inbound
             "output": "atom",
         })
     except httpx.HTTPError as exc:
@@ -353,7 +353,14 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
 
     ns = {"a": "http://www.w3.org/2005/Atom"}
 
-    # Parse entries from Atom feed; grab filing-href for each
+    # Normalise company CIK to 10-digit zero-padded form for comparisons
+    norm_company_cik = company_cik.zfill(10)
+
+    # Parse entries from Atom feed; grab filing-href for each.
+    # Pre-filter outbound filings (where this company is the FILER, not the subject)
+    # by reading the accession number's embedded filer-CIK directly from the feed —
+    # no HTTP request needed. Investment managers (JPMorgan, BlackRock) file hundreds
+    # of outbound SC 13s per year; without this filter they swamp the count limit.
     raw_entries: list[dict] = []
     for entry in root.findall("a:entry", ns):
         cat       = entry.find("a:category", ns)
@@ -366,11 +373,20 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             continue
         href_elem = content.find("a:filing-href", ns)
         date_elem = content.find("a:filing-date", ns)
+        acc_elem  = content.find("a:accession-number", ns)
         index_url = (href_elem.text or "").strip() if href_elem is not None else ""
         file_date = (date_elem.text or "").strip() if date_elem is not None else None
+        accession = (acc_elem.text  or "").strip() if acc_elem  is not None else ""
 
         if not index_url:
             continue
+
+        # Skip filings submitted BY this company (outbound) — filer CIK is the
+        # first 10 digits of the accession number (after stripping dashes).
+        if accession:
+            filer_cik = accession.replace("-", "")[:10].zfill(10)
+            if filer_cik == norm_company_cik:
+                continue
 
         raw_entries.append({
             "index_url": index_url,
