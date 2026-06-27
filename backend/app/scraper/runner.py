@@ -453,15 +453,37 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
 
 
 def _upsert_person_by_name(full_name: str) -> str:
-    """Find or create a Person node matched by full_name."""
+    """
+    Find or create a Person node matched by full_name.
+
+    SEC EDGAR investor filings use LAST FIRST word order, while Form 3/4
+    executive filings use FIRST LAST order. For two-word names this causes
+    duplicate nodes (e.g. "Brin Sergey" and "Sergey Brin").  We resolve
+    this by also trying the reversed form before creating a new node, and
+    storing whichever form already exists if found.
+    """
+    parts = full_name.strip().split()
+    reversed_name = f"{parts[1]} {parts[0]}" if len(parts) == 2 else None
+
     first_name, last_name = parse_full_name(full_name)
     with db.get_session() as session:
+        # 1. Exact match
         rec = session.run(
             "MATCH (p:Person {full_name: $name}) RETURN p.id AS id LIMIT 1",
             name=full_name,
         ).single()
         if rec:
             return rec["id"]
+
+        # 2. Reversed two-word form — catches "Brin Sergey" when "Sergey Brin"
+        #    already exists (or vice-versa)
+        if reversed_name:
+            rec = session.run(
+                "MATCH (p:Person {full_name: $name}) RETURN p.id AS id LIMIT 1",
+                name=reversed_name,
+            ).single()
+            if rec:
+                return rec["id"]
 
         person_id = str(uuid.uuid4())
         session.run(
