@@ -301,7 +301,7 @@ def _fetch_filing_index(index_url: str) -> tuple[str | None, str | None, str | N
         html, re.DOTALL | re.IGNORECASE,
     )
     if m:
-        name = m.group(1).strip()
+        name = html_lib.unescape(m.group(1).strip())
         cik  = m.group(2).zfill(10)
 
     # Extract primary document URL: first doc-table row whose type cell says SC 13
