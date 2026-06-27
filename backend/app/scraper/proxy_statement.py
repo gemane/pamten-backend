@@ -44,16 +44,25 @@ def _get_json(url: str) -> dict:
 # ── Name similarity ────────────────────────────────────────────────────────────
 
 _SUFFIX_RE = re.compile(
-    r"\b(inc|corp|ltd|llc|plc|sa|ag|co|company|group|holding|holdings)\b\.?",
+    r"\b(inc|corp|ltd|llc|plc|sa|ag|co|company)\b\.?",
     re.IGNORECASE,
 )
 
 
+def _norm(s: str) -> str:
+    s = _SUFFIX_RE.sub("", s.lower())
+    return re.sub(r"[^a-z0-9 ]", "", s).strip()
+
+
 def _sim(a: str, b: str) -> float:
-    def norm(s: str) -> str:
-        s = _SUFFIX_RE.sub("", s.lower())
-        return re.sub(r"[^a-z0-9 ]", "", s).strip()
-    return SequenceMatcher(None, norm(a), norm(b)).ratio()
+    na, nb = _norm(a), _norm(b)
+    seq = SequenceMatcher(None, na, nb).ratio()
+    # Boost only when the query matches complete leading words of the registered name,
+    # e.g. "Meta" → "meta platforms" (word boundary after "meta").
+    # Avoid false boosts like "Meta" → "metabank" (no space after).
+    if nb == na or nb.startswith(na + " ") or na.startswith(nb + " "):
+        seq = max(seq, 0.75)
+    return seq
 
 
 # ── EDGAR filing lookup ────────────────────────────────────────────────────────
@@ -94,55 +103,100 @@ def _get_def14a_for_cik(cik: str) -> tuple[str, str, str] | None:
 def _browse_edgar_def14a(search_name: str) -> tuple[str, str, str, str] | None:
     """
     Search browse-edgar for DEF 14A filings matching search_name.
-
-    The EDGAR DEF 14A ATOM feed places the CIK in a feed-level
-    <company-info><cik> element (not in the per-entry <id> tag).
     Returns (cik_padded, accession_no_dashes, primary_doc, filing_date) or None.
+
+    Two modes depending on whether EDGAR returns a single matched company
+    (unambiguous) or a list of company candidates (ambiguous):
+
+    • Unambiguous: feed has a top-level <company-info> with the CIK and entries
+      are individual filings with <accession-number>.
+    • Ambiguous:   feed has no top-level <company-info>; entries are company
+      listings with their CIK in the <id> field.  We score each candidate by
+      name similarity and pick the one with the most recent DEF 14A.
     """
     resp = _get(BROWSE_URL, company=search_name, action="getcompany",
-                type="DEF 14A", dateb="", owner="include", count="5",
+                type="DEF 14A", dateb="", owner="include", count="8",
                 search_text="", output="atom")
     try:
         root = ET.fromstring(resp.content)
     except ET.ParseError:
         return None
 
-    # CIK and registered name live in the feed-level <company-info> block
     cik_el  = root.find("a:company-info/a:cik",            _NS_A)
     name_el = root.find("a:company-info/a:conformed-name", _NS_A)
 
-    if cik_el is None or not (cik_el.text or "").strip():
+    # ── Unambiguous: single company matched ────────────────────────────────────
+    if cik_el is not None and (cik_el.text or "").strip():
+        cik             = cik_el.text.strip().zfill(10)
+        registered_name = (name_el.text or "").strip() if name_el is not None else ""
+
+        if _sim(search_name, registered_name) < _MIN_SIM:
+            return None
+
+        # Entries are filings; grab the first (most recent) accession number
+        for entry in root.findall("a:entry", _NS_A):
+            content = entry.find("a:content", _NS_A)
+            if content is None:
+                continue
+            accnum = (content.findtext("a:accession-number", "", _NS_A) or "").strip()
+            if not accnum:
+                continue
+            acc_nodash = accnum.replace("-", "")
+
+            # Map accession → primary document via submissions JSON
+            sub = _get_json(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+            recent = sub.get("filings", {}).get("recent", {})
+            for form, acc, doc, d in zip(
+                recent.get("form", []),
+                recent.get("accessionNumber", []),
+                recent.get("primaryDocument", []),
+                recent.get("filingDate", []),
+            ):
+                if form == "DEF 14A" and acc.replace("-", "") == acc_nodash and doc:
+                    return cik, acc_nodash, doc, d
+            break
         return None
 
-    cik             = cik_el.text.strip().zfill(10)
-    registered_name = (name_el.text or "").strip() if name_el is not None else ""
+    # ── Ambiguous: entries are company listings ────────────────────────────────
+    # Each entry's <id> is "urn:tag:www.sec.gov:cik=XXXXXXXXXX".
+    # Fetch submissions for each, score by name similarity, pick the one
+    # with the best similarity AND a recent DEF 14A.
+    candidates: list[tuple[float, str, dict]] = []  # (sim, cik, sub_json)
+    for entry in root.findall("a:entry", _NS_A)[:8]:
+        id_text = (entry.findtext("a:id", "", _NS_A) or "").strip()
+        m = re.search(r"cik=(\d+)", id_text, re.IGNORECASE)
+        if not m:
+            continue
+        candidate_cik = m.group(1).zfill(10)
+        try:
+            sub = _get_json(f"{SUBMISSIONS_URL}/CIK{candidate_cik}.json")
+        except Exception:
+            continue
+        s = _sim(search_name, sub.get("name", ""))
+        if s >= _MIN_SIM:
+            candidates.append((s, candidate_cik, sub))
 
-    if _sim(search_name, registered_name) < _MIN_SIM:
+    if not candidates:
         return None
 
-    # Most recent filing is the first <entry> in the feed
-    for entry in root.findall("a:entry", _NS_A):
-        content = entry.find("a:content", _NS_A)
-        if content is None:
-            continue
-        accnum = (content.findtext("a:accession-number", "", _NS_A) or "").strip()
-        date   = (content.findtext("a:filing-date",      "", _NS_A) or "").strip()
-        if not accnum:
-            continue
-        acc_nodash = accnum.replace("-", "")
+    # Sort by similarity DESC, then by most recent DEF 14A date DESC.
+    # This breaks ties like "Meta Platforms" vs "Meta Materials" in favour of
+    # the company that filed more recently (the larger / more active one).
+    def _sort_key(item: tuple) -> tuple:
+        s, _, sub = item
+        recent  = sub.get("filings", {}).get("recent", {})
+        filing  = _search_recent_for_def14a(recent)
+        date    = filing[2] if filing else ""
+        return (s, date)
 
-        # Resolve primary document filename from submissions JSON
-        sub = _get_json(f"{SUBMISSIONS_URL}/CIK{cik}.json")
-        recent = sub.get("filings", {}).get("recent", {})
-        for form, acc, doc, d in zip(
-            recent.get("form", []),
-            recent.get("accessionNumber", []),
-            recent.get("primaryDocument", []),
-            recent.get("filingDate", []),
-        ):
-            if form == "DEF 14A" and acc.replace("-", "") == acc_nodash and doc:
-                return cik, acc_nodash, doc, d
-        break  # only try the first (most recent) entry
+    candidates.sort(key=_sort_key, reverse=True)
+
+    # Return the first candidate that has a recent DEF 14A
+    for s, candidate_cik, sub in candidates:
+        recent  = sub.get("filings", {}).get("recent", {})
+        filing  = _search_recent_for_def14a(recent)
+        if filing:
+            return candidate_cik, *filing
 
     return None
 
