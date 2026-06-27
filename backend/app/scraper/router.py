@@ -449,14 +449,21 @@ def proxy_statement_run(
 def proxy_statement_write(
     company: str = Query(..., min_length=2,
                          description="Company name to search for on EDGAR"),
+    entity_id: str | None = Query(
+        None,
+        description="DB entity ID of the target company (overrides name lookup). "
+                    "Use this when the EDGAR name differs from the DB name, "
+                    "e.g. company=Alphabet&entity_id=<google-uuid>",
+    ),
     _: dict = Depends(require_admin),
 ):
     """
     Fetch the most recent DEF 14A proxy statement and write voting_power_pct
     onto active OWNS edges in the database.
 
-    Matches owners by name (exact or normalised).  Edges that cannot be
-    matched to a DB node are reported in 'not_found_in_db'.
+    Owner names are matched by: exact full_name / name, normalised name,
+    and reversed-word variants (e.g. 'Sergey Brin' matches 'Brin Sergey').
+    Edges that cannot be matched are reported in 'not_found_in_db'.
     """
     from app.scraper.proxy_statement import fetch_proxy_ownership
     from app.scraper.mapper import normalize_entity_name
@@ -466,16 +473,23 @@ def proxy_statement_write(
         return proxy
 
     # ── Find the company node ──────────────────────────────────────────────────
-    company_norm = normalize_entity_name(company)
-    company_rows = run_query(
-        """MATCH (c:Company)
-           WHERE c.name_normalized = $norm OR c.name = $name
-           RETURN c.id AS id, c.name AS name
-           LIMIT 5""",
-        {"norm": company_norm, "name": company},
-    )
+    if entity_id:
+        company_rows = run_query(
+            "MATCH (c {id: $id}) RETURN c.id AS id, c.name AS name LIMIT 1",
+            {"id": entity_id},
+        )
+    else:
+        company_norm = normalize_entity_name(company)
+        company_rows = run_query(
+            """MATCH (c:Company)
+               WHERE c.name_normalized = $norm OR c.name = $name
+               RETURN c.id AS id, c.name AS name
+               LIMIT 5""",
+            {"norm": company_norm, "name": company},
+        )
     if not company_rows:
-        return {**proxy, "db_error": f"Company not found in DB: '{company}'"}
+        hint = f" (try passing entity_id directly)" if not entity_id else ""
+        return {**proxy, "db_error": f"Company not found in DB: '{company}'{hint}"}
 
     company_id   = company_rows[0]["id"]
     company_name = company_rows[0]["name"]
@@ -492,13 +506,17 @@ def proxy_statement_write(
             continue
 
         name_norm = normalize_entity_name(name)
+        # Reversed-word variant: "Sergey Brin" → "Brin Sergey" (SEC reversed names)
+        words = name.split()
+        name_rev = " ".join(reversed(words)) if len(words) == 2 else None
 
         # ── Find active OWNS edge owner → company ──────────────────────────
         match_rows = run_query(
             """MATCH (n)-[r:OWNS]->(c {id: $cid})
                WHERE r.until IS NULL
                  AND (n.full_name = $name OR n.name = $name
-                      OR n.name_normalized = $norm)
+                      OR n.name_normalized = $norm
+                      OR ($rev IS NOT NULL AND (n.full_name = $rev OR n.name = $rev)))
                RETURN n.id AS oid,
                       coalesce(n.full_name, n.name) AS matched_name,
                       r.stake_percent   AS stake,
@@ -507,7 +525,7 @@ def proxy_statement_write(
                       r.ownership_type  AS ownership_type,
                       r.since           AS since
                LIMIT 1""",
-            {"cid": company_id, "name": name, "norm": name_norm},
+            {"cid": company_id, "name": name, "norm": name_norm, "rev": name_rev},
         )
         if not match_rows:
             not_found.append(name)
