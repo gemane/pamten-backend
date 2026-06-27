@@ -380,6 +380,10 @@ def _plain_text(raw: str) -> str:
     return re.sub(r'\s+', ' ', stripped)
 
 
+# SC 13G/13D Item 8 "Type of Reporting Person" codes that mean an individual.
+# All other codes (CO, PN, IA, IC, BK, BD, SA, OO, HC, EP, GP …) are entities.
+_INDIVIDUAL_CODES = {"IN"}
+
 def _parse_percent_from_text(text: str) -> float | None:
     """Extract stake % from Item 13 of a SC 13D/13G filing document."""
     plain = _plain_text(text)
@@ -392,6 +396,24 @@ def _parse_percent_from_text(text: str) -> float | None:
                     return val
             except (ValueError, IndexError):
                 pass
+    return None
+
+
+def _parse_reporter_type_from_text(text: str) -> bool | None:
+    """
+    Extract Item 8 'Type of Reporting Person' from a SC 13D/13G filing.
+    Returns True if the filer is an individual (code IN), False if it is
+    a legal entity (CO, PN, IA, IC, BK, …), or None if the field is absent.
+    This is authoritative — no name heuristics needed.
+    """
+    plain = _plain_text(text)
+    m = re.search(
+        r'type\s+of\s+reporting\s+person[^a-z]{0,80}'
+        r'\b(IN|CO|PN|IA|IC|BK|BD|SA|OO|HC|EP|GP|LP)\b',
+        plain, re.IGNORECASE | re.DOTALL,
+    )
+    if m:
+        return m.group(1).upper() in _INDIVIDUAL_CODES
     return None
 
 
@@ -535,18 +557,26 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "primary_url":   primary_url,
         })
 
-    # Fetch stake percentages for the top N investors
+    # Fetch stake % and reporter type from the primary filing document.
+    # We only fetch the document for the top N investors to limit requests;
+    # for the rest, is_individual stays None and the runner falls back to
+    # the name heuristic.
     results: list[dict] = []
     for i, inv in enumerate(enriched):
-        pct = None
+        pct           = None
+        is_individual = None
         if i < MAX_PERCENT_FETCH and inv.get("primary_url"):
             try:
-                text = _get_text(inv["primary_url"])
-                pct  = _parse_percent_from_text(text)
+                text          = _get_text(inv["primary_url"])
+                pct           = _parse_percent_from_text(text)
+                is_individual = _parse_reporter_type_from_text(text)
             except httpx.HTTPError:
                 pass
 
-        log.info("SEC EDGAR: investor %r (CIK=%s) stake=%s", inv["investor_name"], inv["investor_cik"], pct)
+        log.info(
+            "SEC EDGAR: investor %r (CIK=%s) stake=%s is_individual=%s",
+            inv["investor_name"], inv["investor_cik"], pct, is_individual,
+        )
         results.append({
             "investor_name":    inv["investor_name"].title(),
             "investor_cik":     inv["investor_cik"],
@@ -555,6 +585,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "period_of_report": None,
             "stake_percent":    pct,
             "ownership_type":   "passive" if "13G" in inv["form_type"] else "active",
+            "is_individual":    is_individual,   # None = unknown (use name heuristic)
         })
 
     log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)

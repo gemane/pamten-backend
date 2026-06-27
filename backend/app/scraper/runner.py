@@ -612,7 +612,14 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         if not investor_name:
             continue
 
-        if is_person_name(investor_name):
+        # Prefer the explicit Item 8 "Type of Reporting Person" field parsed
+        # from the SC 13D/13G filing (is_individual=True → IN code).
+        # Fall back to the name heuristic only when the document wasn't fetched.
+        is_individual = filing.get("is_individual")
+        if is_individual is None:
+            is_individual = is_person_name(investor_name)
+
+        if is_individual:
             investor_node_id = _upsert_person_by_name(investor_name)
             scraped.append({"type": "person", "name": investor_name, "role": "investor"})
         else:
