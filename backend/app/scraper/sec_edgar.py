@@ -247,6 +247,11 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
         root = ET.fromstring(resp.content)
         ns_a = {"a": "http://www.w3.org/2005/Atom"}
 
+        # Collect all candidates, then pick highest similarity so we don't
+        # accidentally prefer a subsidiary that appears before the parent company.
+        best_sim  = 0.0
+        best_match: dict | None = None
+
         for entry in root.findall("a:entry", ns_a):
             id_text = (entry.findtext("a:id", "", ns_a) or "").strip()
             m = re.search(r"cik=(\d+)", id_text, re.IGNORECASE)
@@ -255,7 +260,7 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
             cik = m.group(1).zfill(10)
 
             # Official company name from submissions (one extra request, but
-            # browse-edgar's Atom feed doesn't include the name due to a server bug)
+            # browse-edgar's Atom feed loses the name due to a server-side bug)
             try:
                 sub  = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
                 registered_name = sub.get("name", "")
@@ -265,17 +270,21 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
             if not registered_name:
                 continue
 
-            sim = _name_similarity(name, registered_name)
-            if sim >= _MIN_NAME_SIMILARITY:
-                log.info(
-                    "SEC EDGAR: browse-edgar matched %r → %r (CIK=%s, sim=%.2f, form=%s)",
-                    name, registered_name, cik, sim, form_type,
-                )
-                return {"cik": cik, "name": registered_name}
+            s = _name_similarity(name, registered_name)
             log.debug(
-                "SEC EDGAR: browse-edgar candidate rejected (sim=%.2f): %r vs %r",
-                sim, name, registered_name,
+                "SEC EDGAR: browse-edgar candidate (sim=%.2f): %r vs %r",
+                s, name, registered_name,
             )
+            if s > best_sim:
+                best_sim   = s
+                best_match = {"cik": cik, "name": registered_name}
+
+        if best_match and best_sim >= _MIN_NAME_SIMILARITY:
+            log.info(
+                "SEC EDGAR: browse-edgar matched %r → %r (CIK=%s, sim=%.2f, form=%s)",
+                name, best_match["name"], best_match["cik"], best_sim, form_type,
+            )
+            return best_match
 
     log.info("SEC EDGAR: browse-edgar found no registered match for %r", name)
     return None
