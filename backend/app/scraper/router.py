@@ -426,3 +426,21 @@ def deduplicate_person_nodes(_: dict = Depends(require_admin)):
         })
 
     return {"pairs_merged": len(merged), "detail": merged}
+
+
+# ── Proxy statement endpoint (POC) ─────────────────────────────────────────────
+
+@router.post("/proxy-statement/run")
+def proxy_statement_run(
+    company: str = Query(..., min_length=2,
+                         description="Company name to search for on EDGAR"),
+    _: dict = Depends(require_admin),
+):
+    """
+    Parse the most recent DEF 14A proxy statement for a company and return
+    per-person voting power percentages from the beneficial ownership table.
+
+    POC endpoint — read-only, does not write to the database.
+    """
+    from app.scraper.proxy_statement import fetch_proxy_ownership
+    return fetch_proxy_ownership(company)
