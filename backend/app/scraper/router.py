@@ -445,34 +445,117 @@ def proxy_statement_run(
     return fetch_proxy_ownership(company)
 
 
+import re as _re
+
+# Common nickname → formal first-name mappings
+_NICKNAMES: dict[str, str] = {
+    "larry":  "lawrence",
+    "bill":   "william",
+    "bob":    "robert",
+    "dick":   "richard",
+    "chuck":  "charles",
+    "jim":    "james",
+    "mike":   "michael",
+    "ted":    "edward",
+    "tom":    "thomas",
+    "ken":    "kenneth",
+    "jeff":   "jeffrey",
+    "steve":  "steven",
+    "dave":   "david",
+    "andy":   "andrew",
+    "tony":   "anthony",
+    "joe":    "joseph",
+    "jack":   "john",
+    "alex":   "alexander",
+    "liz":    "elizabeth",
+    "beth":   "elizabeth",
+    "kate":   "katherine",
+    "sue":    "susan",
+    "jen":    "jennifer",
+    "sam":    "samuel",
+    "matt":   "matthew",
+    "dan":    "daniel",
+    "tim":    "timothy",
+    "pat":    "patricia",
+    "chris":  "christopher",
+    "nick":   "nicholas",
+}
+
+
+def _name_words(name: str) -> list[str]:
+    """Strip punctuation and split into words."""
+    return name.replace(".", "").replace(",", "").strip().split()
+
+
 def _person_name_variants(name: str) -> list[str]:
     """
-    Generate name permutations to match SEC reversed-name format.
+    Generate name candidates to match SEC reversed-name format and nicknames.
 
-    SEC filings store names as "Last First Middle" (no periods).
-    Proxy statements use "First Middle Last" or "First M. Last".
+    SEC filings store names as "Last First [Mid]" (no periods).
+    Proxy statements use "First [Mid.] Last".
 
     Examples:
-      "Sergey Brin"       → ["Sergey Brin", "Brin Sergey"]
-      "Warren E. Buffett" → ["Warren E. Buffett", "Buffett Warren E", "Buffett Warren"]
+      "Sergey Brin"       → [..., "Brin Sergey"]
+      "Warren E. Buffett" → [..., "Buffett Warren E", "Buffett Warren"]
+      "Larry Page"        → [..., "Page Larry", "Lawrence Page", "Page Lawrence"]
     """
     variants: list[str] = [name]
-    # Strip periods to normalise initials ("E." → "E")
     clean = name.replace(".", "").replace(",", "").strip()
     words = clean.split()
+
     if len(words) == 2:
-        # "First Last" ↔ "Last First"
         variants.append(f"{words[1]} {words[0]}")
     elif len(words) == 3:
-        # "First Mid Last" → "Last First Mid" (SEC format)
         variants.append(f"{words[2]} {words[0]} {words[1]}")
-        # Also try without the middle initial
         variants.append(f"{words[2]} {words[0]}")
         variants.append(f"{words[0]} {words[2]}")
-    # Include the period-stripped variant of the original
+
     if clean != name:
         variants.append(clean)
-    return list(dict.fromkeys(variants))  # deduplicated, order preserved
+
+    # Nickname expansion on the first word
+    if words:
+        nick = words[0].lower()
+        formal = _NICKNAMES.get(nick)
+        if formal:
+            formal_cap = formal.capitalize()
+            exp_words = [formal_cap] + words[1:]
+            variants.append(" ".join(exp_words))
+            if len(exp_words) == 2:
+                variants.append(f"{exp_words[1]} {exp_words[0]}")
+            elif len(exp_words) == 3:
+                variants.append(f"{exp_words[2]} {exp_words[0]} {exp_words[1]}")
+                variants.append(f"{exp_words[2]} {exp_words[0]}")
+
+    return list(dict.fromkeys(variants))
+
+
+def _entity_name_variants(name: str) -> list[str]:
+    """
+    Generate entity name candidates that differ only in articles/punctuation.
+
+    Handles cases like:
+      "The Vanguard Group, Inc." → also tries "Vanguard Group, Inc.", "Vanguard Group Inc"
+      "BlackRock, Inc."          → also tries "BlackRock Inc", "Blackrock Inc."
+    """
+    variants: list[str] = [name]
+    # Strip leading "The "
+    no_the = _re.sub(r"^the\s+", "", name.strip(), flags=_re.IGNORECASE)
+    if no_the != name:
+        variants.append(no_the)
+    # Strip commas and periods
+    for base in [name, no_the]:
+        no_punct = base.replace(",", "").replace(".", "")
+        variants.append(no_punct)
+    return list(dict.fromkeys(variants))
+
+
+def _is_reordering(proxy_name: str, db_name: str) -> bool:
+    """True when proxy and DB name contain exactly the same words in a different order."""
+    pw = sorted(_name_words(proxy_name.lower()))
+    dw = sorted(_name_words(db_name.lower()))
+    return pw == dw and proxy_name.replace(".", "").replace(",", "").strip() != \
+           db_name.replace(".", "").replace(",", "").strip()
 
 
 @router.post("/proxy-statement/write")
@@ -492,8 +575,10 @@ def proxy_statement_write(
     onto active OWNS edges in the database.
 
     Owner names are matched by: exact full_name / name, normalised name,
-    and SEC reversed-name variants (e.g. 'Sergey Brin' → 'Brin Sergey',
-    'Warren E. Buffett' → 'Buffett Warren E').
+    SEC reversed-name variants, nickname expansion, and entity article/
+    punctuation variants.  When a match is a word-reordering (e.g. 'Brin
+    Sergey' in DB matched by 'Sergey Brin' from proxy), the DB node name
+    is updated to the proxy's form in-place.
     Edges that cannot be matched are reported in 'not_found_in_db'.
     """
     from app.scraper.proxy_statement import fetch_proxy_ownership
@@ -536,15 +621,21 @@ def proxy_statement_write(
             skipped.append(name)
             continue
 
-        name_norm = normalize_entity_name(name)
-        variants = _person_name_variants(name)
+        # Combine person (reordering + nickname) and entity (article/punct) variants
+        variants = list(dict.fromkeys(
+            _person_name_variants(name) + _entity_name_variants(name)
+        ))
+        # Normalised form: also strip leading "The" before normalising
+        name_no_the = _re.sub(r"^the\s+", "", name.strip(), flags=_re.IGNORECASE)
+        name_norm     = normalize_entity_name(name)
+        name_norm_the = normalize_entity_name(name_no_the)
 
         # ── Find active OWNS edge owner → company ──────────────────────────
         match_rows = run_query(
             """MATCH (n)-[r:OWNS]->(c {id: $cid})
                WHERE r.until IS NULL
                  AND (n.full_name IN $variants OR n.name IN $variants
-                      OR n.name_normalized = $norm)
+                      OR n.name_normalized IN $norms)
                RETURN n.id AS oid,
                       coalesce(n.full_name, n.name) AS matched_name,
                       r.stake_percent   AS stake,
@@ -553,7 +644,8 @@ def proxy_statement_write(
                       r.ownership_type  AS ownership_type,
                       r.since           AS since
                LIMIT 1""",
-            {"cid": company_id, "variants": variants, "norm": name_norm},
+            {"cid": company_id, "variants": variants,
+             "norms": list(dict.fromkeys([name_norm, name_norm_the]))},
         )
         if not match_rows:
             not_found.append(name)
@@ -562,6 +654,17 @@ def proxy_statement_write(
         row          = match_rows[0]
         oid          = row["oid"]
         matched_name = row["matched_name"]
+
+        # ── Auto-correct reversed DB names to proxy form ──────────────────
+        # e.g. "Brin Sergey" → "Sergey Brin", "Buffett Warren E" → "Warren E. Buffett"
+        name_corrected = False
+        if matched_name and _is_reordering(name, matched_name):
+            run_command(
+                """MATCH (n {id: $oid})
+                   SET n.full_name = $proxy_name""",
+                {"oid": oid, "proxy_name": name},
+            )
+            name_corrected = True
 
         # ── Delete old edge and recreate with voting_power_pct ────────────
         run_command(
@@ -592,11 +695,14 @@ def proxy_statement_write(
                 "pct":            pct,
             },
         )
-        updated.append({
+        entry: dict = {
             "proxy_name":       name,
             "db_name":          matched_name,
             "voting_power_pct": pct,
-        })
+        }
+        if name_corrected:
+            entry["name_corrected"] = True
+        updated.append(entry)
 
     return {
         "company":              company_name,

@@ -528,6 +528,8 @@ def fetch_proxy_ownership(company_name: str) -> dict:
         for entry in _parse_ownership_table(tbl, is_dual_class=is_dual_class):
             if entry.get("voting_power_pct") is None and entry.get("largest_holding_shares") is None:
                 continue
+            # Normalise non-breaking spaces in names (Apple proxy uses \xa0)
+            entry["name"] = entry["name"].replace("\xa0", " ").strip()
             if entry["name"] not in seen:
                 seen.add(entry["name"])
                 owners.append(entry)
