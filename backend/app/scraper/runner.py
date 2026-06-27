@@ -426,16 +426,12 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
 
         if rec:
             entity_id = rec["id"]
+            # Only stamp the CIK onto the existing entity; preserve whatever
+            # name and credibility the entity already has (Wikidata names are
+            # human-readable; EDGAR registered names are all-caps legal strings).
             session.run(
-                """
-                MATCH (e:Entity {id: $id})
-                SET e.name_normalized  = $name_norm,
-                    e.sec_cik          = COALESCE($cik, e.sec_cik),
-                    e.name             = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
-                    e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END
-                """,
-                id=entity_id, name_norm=name_norm, cik=cik, name=name,
-                cred=SEC_EDGAR_CREDIBILITY,
+                "MATCH (e:Entity {id: $id}) SET e.sec_cik = COALESCE($cik, e.sec_cik)",
+                id=entity_id, cik=cik,
             )
             return entity_id
 
