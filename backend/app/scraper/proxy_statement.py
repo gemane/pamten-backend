@@ -248,7 +248,8 @@ def _find_company(company_name: str) -> tuple[str, str, str, str] | None:
 
 # First-cell patterns that identify header or section-divider rows to skip
 _SKIP_FIRST_CELL = re.compile(
-    r"name\s+of\s+beneficial|name\s+and\s+address|class\s+[abc]|shares|percent"
+    r"name\s+of\s+beneficial|name\s+and\s+address|beneficial\s+owner\s+name"
+    r"|class\s+[abc]|shares|percent"
     r"|voting\s+power|executive\s+officers|other\s+[>5%]|all\s+(executive|directors)",
     re.IGNORECASE,
 )
@@ -517,11 +518,16 @@ def fetch_proxy_ownership(company_name: str) -> dict:
             "owners":      [],
         }
 
-    # Parse all matching tables and merge, deduplicating by name
+    # Parse all matching tables and merge, deduplicating by name.
+    # Discard entries that have neither a percentage nor a share count — these
+    # come from equity-plan or trading-window tables that happen to match the
+    # keyword pattern but contain legal-term rows, not owner names.
     seen: set[str] = set()
     owners: list[dict] = []
     for tbl in tables:
         for entry in _parse_ownership_table(tbl, is_dual_class=is_dual_class):
+            if entry.get("voting_power_pct") is None and entry.get("largest_holding_shares") is None:
+                continue
             if entry["name"] not in seen:
                 seen.add(entry["name"])
                 owners.append(entry)
