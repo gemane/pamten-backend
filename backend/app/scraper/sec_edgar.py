@@ -14,6 +14,7 @@ import time
 import html as html_lib
 import logging
 import xml.etree.ElementTree as ET
+from difflib import SequenceMatcher
 
 import httpx
 from app.scraper.mapper import _ENTITY_SUFFIXES
@@ -139,7 +140,8 @@ def _get_tickers() -> dict:
 
 
 _LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp)\b",
+    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp"
+    r"|group|holding|holdings)\b",
     re.IGNORECASE,
 )
 
@@ -149,6 +151,20 @@ def _ticker_normalize(name: str) -> str:
     name = re.sub(r"[.,]", "", name)
     name = _LEGAL_SUFFIXES.sub("", name)
     return re.sub(r"\s+", " ", name).strip()
+
+
+# Minimum SequenceMatcher ratio for a match to be accepted.
+# Rejects EFTS false positives (e.g. a Chesapeake Corp 10-K that merely
+# *mentions* Nestlé in its text) and overly loose prefix matches.
+_MIN_NAME_SIMILARITY = 0.55
+
+def _name_similarity(a: str, b: str) -> float:
+    """Normalized similarity [0, 1] between two company names after stripping suffixes."""
+    na = _ticker_normalize(a)
+    nb = _ticker_normalize(b)
+    if not na or not nb:
+        return 0.0
+    return SequenceMatcher(None, na, nb).ratio()
 
 
 def _lookup_in_tickers(query: str) -> dict | None:
@@ -181,7 +197,14 @@ def _lookup_in_tickers(query: str) -> dict | None:
         if pool:
             pool.sort(key=lambda x: x[2])   # shortest name = most specific
             title, cik, _ = pool[0]
-            log.info("SEC EDGAR: tickers matched %r → %r (CIK=%s)", query, title, cik)
+            sim = _name_similarity(query, title)
+            if sim < _MIN_NAME_SIMILARITY:
+                log.warning(
+                    "SEC EDGAR: tickers match rejected (similarity %.2f < %.2f): %r vs %r",
+                    sim, _MIN_NAME_SIMILARITY, query, title,
+                )
+                continue
+            log.info("SEC EDGAR: tickers matched %r → %r (CIK=%s, sim=%.2f)", query, title, cik, sim)
             return {"cik": cik, "name": title}
 
     return None
@@ -233,7 +256,14 @@ def search_company(name: str) -> dict | None:
                 continue
             entity_name, cik = _parse_hit(hits[0]["_source"])
             if entity_name and cik:
-                log.info("SEC EDGAR: full-text matched %r → CIK=%s", entity_name, cik)
+                sim = _name_similarity(name, entity_name)
+                if sim < _MIN_NAME_SIMILARITY:
+                    log.warning(
+                        "SEC EDGAR: EFTS match rejected (similarity %.2f < %.2f): %r vs %r",
+                        sim, _MIN_NAME_SIMILARITY, name, entity_name,
+                    )
+                    continue
+                log.info("SEC EDGAR: full-text matched %r → CIK=%s (sim=%.2f)", entity_name, cik, sim)
                 return {"cik": cik, "name": entity_name}
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             log.warning("SEC EDGAR: company search error (%s): %s", forms, exc)
