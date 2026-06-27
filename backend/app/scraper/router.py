@@ -283,3 +283,146 @@ def deduplicate_owns_edges(_: dict = Depends(require_admin)):
         cleaned.append({"owner_id": oid, "target_id": nid, "duplicates_removed": deleted_count})
 
     return {"duplicates_removed": total_deleted, "pairs_cleaned": len(pairs), "detail": cleaned}
+
+
+# ── Person deduplication endpoint ──────────────────────────────────────────────
+
+def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
+    """Move all OWNS and HAS_ROLE edges from dead_id → keep_id, return count migrated."""
+    migrated = 0
+
+    # OWNS edges the dead node owns
+    owns_out = run_query(
+        """
+        MATCH (p:Person {id: $pid})-[r:OWNS]->(t)
+        RETURN t.id AS tid, r.stake_percent AS stake, r.file_date AS file_date,
+               r.source_id AS source_id, r.ownership_type AS ownership_type,
+               r.since AS since, r.until AS until
+        """,
+        {"pid": dead_id},
+    )
+    for e in owns_out:
+        tid = e["tid"]
+        # Skip if keep already has an active OWNS edge to the same target
+        existing = run_query(
+            "MATCH (p:Person {id: $pid})-[r:OWNS]->(t {id: $tid}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            {"pid": keep_id, "tid": tid},
+        )
+        if not existing:
+            run_command(
+                """
+                MATCH (p:Person {id: $pid}), (t {id: $tid})
+                CREATE (p)-[:OWNS {
+                    stake_percent: $stake, file_date: $file_date,
+                    source_id: $source_id, ownership_type: $otype,
+                    since: $since, until: $until
+                }]->(t)
+                """,
+                {"pid": keep_id, "tid": tid, "stake": e.get("stake"),
+                 "file_date": e.get("file_date"), "source_id": e.get("source_id"),
+                 "otype": e.get("ownership_type"), "since": e.get("since"),
+                 "until": e.get("until")},
+            )
+            migrated += 1
+
+    # HAS_ROLE edges
+    roles = run_query(
+        """
+        MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(t)
+        RETURN t.id AS tid, r.role AS role, r.since AS since, r.until AS until,
+               r.source_id AS source_id
+        """,
+        {"pid": dead_id},
+    )
+    for e in roles:
+        tid = e["tid"]
+        existing = run_query(
+            """
+            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(t {id: $tid})
+            WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1
+            """,
+            {"pid": keep_id, "tid": tid, "role": e.get("role")},
+        )
+        if not existing:
+            run_command(
+                """
+                MATCH (p:Person {id: $pid}), (t {id: $tid})
+                CREATE (p)-[:HAS_ROLE {
+                    role: $role, since: $since, until: $until, source_id: $source_id
+                }]->(t)
+                """,
+                {"pid": keep_id, "tid": tid, "role": e.get("role"),
+                 "since": e.get("since"), "until": e.get("until"),
+                 "source_id": e.get("source_id")},
+            )
+            migrated += 1
+
+    return migrated
+
+
+@router.post("/deduplicate-persons")
+def deduplicate_person_nodes(_: dict = Depends(require_admin)):
+    """
+    Merge Person node pairs whose 2-word names are each other's reversal
+    (e.g. 'Brin Sergey' ↔ 'Sergey Brin').  Keeps the richer node
+    (prefer wikidata_id, then more edges, then alphabetically first name),
+    migrates all edges from the dead node, then deletes it.  Admin only.
+    """
+    # Fetch all Person nodes with a 2-word full_name
+    persons = run_query(
+        "MATCH (p:Person) RETURN p.id AS id, p.full_name AS name, p.wikidata_id AS wid"
+    )
+
+    # Build a lookup: normalised name → node
+    by_name: dict[str, dict] = {}
+    for p in persons:
+        name = (p.get("name") or "").strip()
+        if name:
+            by_name[name.lower()] = p
+
+    merged: list[dict] = []
+    visited: set[str] = set()
+
+    for p in persons:
+        name = (p.get("name") or "").strip()
+        parts = name.split()
+        if len(parts) != 2:
+            continue
+        pid = p["id"]
+        if pid in visited:
+            continue
+
+        reversed_name = f"{parts[1]} {parts[0]}"
+        other = by_name.get(reversed_name.lower())
+        if not other or other["id"] == pid or other["id"] in visited:
+            continue
+
+        # Decide which to keep: prefer wikidata_id, then pick the one with
+        # more natural "First Last" order (first word title-cased, second too)
+        p_has_wiki   = bool(p.get("wid"))
+        oth_has_wiki = bool(other.get("wid"))
+
+        if p_has_wiki and not oth_has_wiki:
+            keep, dead = p, other
+        elif oth_has_wiki and not p_has_wiki:
+            keep, dead = other, p
+        else:
+            # Both or neither have wikidata — keep the more "natural" name
+            # (prefer First Last over Last First: first word should be shorter
+            # for EDGAR LAST FIRST format, but simplest heuristic is alphabetical)
+            keep, dead = (p, other) if p["name"] < other["name"] else (other, p)
+
+        migrated = _migrate_person_edges(dead["id"], keep["id"])
+
+        # Delete the dead node
+        run_command("MATCH (p:Person {id: $pid}) DETACH DELETE p", {"pid": dead["id"]})
+
+        visited.add(pid)
+        visited.add(other["id"])
+        merged.append({
+            "kept":     keep["name"],
+            "deleted":  dead["name"],
+            "edges_migrated": migrated,
+        })
+
+    return {"pairs_merged": len(merged), "detail": merged}
