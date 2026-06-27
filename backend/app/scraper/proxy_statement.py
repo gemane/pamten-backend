@@ -308,17 +308,16 @@ def _find_voting_tables(soup) -> tuple:
 
     for table in soup.find_all("table"):
         text = table.get_text(" ", strip=True)
+        tl   = text.lower().replace("\xa0", " ")  # normalise non-breaking spaces
         rows = table.find_all("tr")
         if len(rows) < 3:
             continue
 
-        if "voting power" in text.lower() and (
-            "class a" in text.lower() or "class b" in text.lower()
-        ):
+        if "voting power" in tl and ("class a" in tl or "class b" in tl):
             dual_candidate = table
             break
 
-        if _SINGLE_RE.search(text):
+        if _SINGLE_RE.search(tl):
             # Only keep tables with actual data (not just footnotes)
             first_cells = [
                 r.find_all(["td", "th"])[0].get_text(" ", strip=True)
@@ -341,19 +340,25 @@ def _parse_ownership_table(table, is_dual_class: bool = True) -> list[dict]:
     """Parse the beneficial ownership table into a list of owner dicts."""
     rows = table.find_all("tr")
 
-    # Detect where data rows start by scanning for the last "header-like" row
+    # Detect where data rows start by scanning for header rows.
+    # Only rows with a non-empty first cell that looks like a column header
+    # advance data_start.  Rows with empty first cells are continuation rows
+    # (e.g. Class B row for the same person) and must NOT push data_start
+    # forward, or we'd skip real data.
     data_start = 0
-    for i, row in enumerate(rows[:8]):
+    for i, row in enumerate(rows[:6]):
         cells = row.find_all(["td", "th"])
         if not cells:
             continue
         first = cells[0].get_text(" ", strip=True)
         all_text = " ".join(c.get_text(" ", strip=True) for c in cells)
-        if (not first.strip()
-                or "name of beneficial" in first.lower()
-                or "class a" in first.lower()
+        if not first.strip():
+            continue  # continuation row — don't advance data_start
+        if ("name of beneficial" in first.lower()
+                or "name" == first.lower().strip()
                 or "shares" in first.lower()
-                or ("voting" in all_text.lower() and "percent" in all_text.lower())
+                or ("voting" in all_text.lower().replace("\xa0", " ")
+                    and "percent" in all_text.lower())
                 or re.match(r"^[\s—–\-]*$", first)):
             data_start = i + 1
 
@@ -367,22 +372,40 @@ def _parse_ownership_table(table, is_dual_class: bool = True) -> list[dict]:
         texts = [c.get_text(" ", strip=True) for c in cells]
         name = _clean_name(texts[0])
 
+        # Meaningful non-empty values after the name cell
+        meaningful = [t for t in texts[1:] if t.strip() not in ("", " ")]
+
         if not name:
+            # Continuation row (e.g. the Class B row in Berkshire's two-row-per-person
+            # format).  The aggregate voting power and economic interest totals appear
+            # only in this row at positions meaningful[-2] and meaningful[-1].
+            # Update the most recently added entry with the correct voting power.
+            if results and is_dual_class and len(meaningful) >= 3:
+                vp = _parse_pct(meaningful[-2])
+                if vp is not None:
+                    results[-1]["voting_power_pct"] = vp
+                # Also harvest share counts from this row
+                for t in texts[1:]:
+                    v = _parse_shares(t)
+                    if v and v > 10_000:
+                        prev = results[-1].get("largest_holding_shares", 0) or 0
+                        if v > prev:
+                            results[-1]["largest_holding_shares"] = v
             continue
 
         # Skip section-divider rows (e.g. "Executive Officers and Directors")
         if _SKIP_FIRST_CELL.search(name):
             continue
 
-        # Strip trailing empty cells to find the last meaningful value
-        meaningful = [t for t in texts[1:] if t.strip() not in ("", " ")]
         if not meaningful:
             continue
 
         entry: dict = {"name": name}
 
         if is_dual_class:
-            # Total voting power % is the last column
+            # Total voting power % is the last column in single-row formats
+            # (Alphabet, Meta).  For two-row-per-person formats (Berkshire) the
+            # continuation row handler above will overwrite this with the correct value.
             entry["voting_power_pct"] = _parse_pct(meaningful[-1])
         else:
             # Single-class: find the % of common stock column.
