@@ -248,10 +248,13 @@ def _find_company(company_name: str) -> tuple[str, str, str, str] | None:
 
 # First-cell patterns that identify header or section-divider rows to skip
 _SKIP_FIRST_CELL = re.compile(
-    r"name\s+of\s+beneficial|class\s+[abc]|shares|percent|voting\s+power"
-    r"|executive\s+officers|other\s+[>5%]|all\s+(executive|directors)",
+    r"name\s+of\s+beneficial|name\s+and\s+address|class\s+[abc]|shares|percent"
+    r"|voting\s+power|executive\s+officers|other\s+[>5%]|all\s+(executive|directors)",
     re.IGNORECASE,
 )
+
+# Street address appended to a person/entity name in some filings (e.g. Amazon)
+_ADDRESS_RE = re.compile(r"\s+\d+\s+[A-Za-z]")
 
 # Footnote references like (1), (2)
 _FOOTNOTE_RE = re.compile(r"\s*\(\d+\)")
@@ -302,7 +305,8 @@ def _find_voting_tables(soup) -> tuple:
     single_candidates: list[object] = []
 
     _SINGLE_RE = re.compile(
-        r"beneficial ownership|percent of common|percent of outstanding|percent\xa0of",
+        r"beneficial ownership|percent of common"
+        r"|percent of outstanding|percent of class|percent\xa0of",
         re.IGNORECASE,
     )
 
@@ -318,12 +322,29 @@ def _find_voting_tables(soup) -> tuple:
             break
 
         if _SINGLE_RE.search(tl):
-            # Only keep tables with actual data (not just footnotes)
-            first_cells = [
-                r.find_all(["td", "th"])[0].get_text(" ", strip=True)
-                for r in rows
-                if r.find_all(["td", "th"])
-            ]
+            # The pattern must appear in the table's own first few rows, NOT just
+            # in deeply nested content.  This prevents outer wrapper tables (e.g.
+            # Amazon's page-level container) from matching because they inherit
+            # text from inner tables.
+            header_tl = " ".join(
+                c.get_text(" ", strip=True).lower().replace("\xa0", " ")
+                for r in rows[:5]
+                for c in r.find_all(["td", "th"])
+            )
+            if not _SINGLE_RE.search(header_tl):
+                continue
+
+            # Only keep tables with actual data (not just footnotes).
+            # Some filings pad every row with an empty first cell (​, Amazon),
+            # so look for the first non-empty cell in each row rather than cell 0.
+            first_cells = []
+            for r in rows:
+                tds = r.find_all(["td", "th"])
+                for cell in tds:
+                    ct = cell.get_text(" ", strip=True).replace("​", "").strip()
+                    if ct:
+                        first_cells.append(ct)
+                        break
             has_names = any(
                 len(c.split()) >= 2 and any(w[0].isupper() for w in c.split() if w)
                 for c in first_cells
@@ -350,12 +371,13 @@ def _parse_ownership_table(table, is_dual_class: bool = True) -> list[dict]:
         cells = row.find_all(["td", "th"])
         if not cells:
             continue
-        first = cells[0].get_text(" ", strip=True)
+        # Strip zero-width spaces before checking (Amazon pads cell 0 with ​)
+        first = cells[0].get_text(" ", strip=True).replace("​", "").strip()
         all_text = " ".join(c.get_text(" ", strip=True) for c in cells)
-        if not first.strip():
-            continue  # continuation row — don't advance data_start
+        if not first:
+            continue  # continuation or padded — don't advance data_start
         if ("name of beneficial" in first.lower()
-                or "name" == first.lower().strip()
+                or "name" == first.lower()
                 or "shares" in first.lower()
                 or ("voting" in all_text.lower().replace("\xa0", " ")
                     and "percent" in all_text.lower())
@@ -369,32 +391,39 @@ def _parse_ownership_table(table, is_dual_class: bool = True) -> list[dict]:
         if not cells:
             continue
 
-        texts = [c.get_text(" ", strip=True) for c in cells]
-        name = _clean_name(texts[0])
+        # Normalise all cell text: strip zero-width spaces (used as visual padding
+        # in some filings, e.g. Amazon's proxy tables)
+        texts = [c.get_text(" ", strip=True).replace("​", "").strip() for c in cells]
 
-        # Meaningful non-empty values after the name cell
-        meaningful = [t for t in texts[1:] if t.strip() not in ("", " ")]
+        # Find the first non-empty cell — this is the name cell for standard tables
+        # (cell 0) and also for padded tables (cell 1 in Amazon).  For Berkshire's
+        # Class B continuation rows the first non-empty cell is "Class B", which
+        # matches _SKIP_FIRST_CELL and triggers the continuation handler below.
+        name_idx = next((i for i, t in enumerate(texts) if t), None)
+        if name_idx is None:
+            continue
 
-        if not name:
-            # Continuation row (e.g. the Class B row in Berkshire's two-row-per-person
-            # format).  The aggregate voting power and economic interest totals appear
-            # only in this row at positions meaningful[-2] and meaningful[-1].
-            # Update the most recently added entry with the correct voting power.
-            if results and is_dual_class and len(meaningful) >= 3:
+        raw_name = _clean_name(texts[name_idx])
+        # Strip appended street addresses (e.g. "Jeffrey P. Bezos 410 Terry Ave...")
+        m_addr = _ADDRESS_RE.search(raw_name)
+        name = raw_name[:m_addr.start()].strip() if m_addr else raw_name
+        # All non-empty values after the name cell
+        meaningful = [t for t in texts[name_idx + 1:] if t]
+
+        if not name or _SKIP_FIRST_CELL.search(name):
+            # Continuation / header row.  For dual-class two-row-per-person tables
+            # (Berkshire), the aggregate voting power sits at meaningful[-2] in the
+            # Class B row; update the previous entry.
+            if results and is_dual_class and len(meaningful) >= 2:
                 vp = _parse_pct(meaningful[-2])
                 if vp is not None:
                     results[-1]["voting_power_pct"] = vp
-                # Also harvest share counts from this row
-                for t in texts[1:]:
+                for t in meaningful:
                     v = _parse_shares(t)
                     if v and v > 10_000:
                         prev = results[-1].get("largest_holding_shares", 0) or 0
                         if v > prev:
                             results[-1]["largest_holding_shares"] = v
-            continue
-
-        # Skip section-divider rows (e.g. "Executive Officers and Directors")
-        if _SKIP_FIRST_CELL.search(name):
             continue
 
         if not meaningful:
