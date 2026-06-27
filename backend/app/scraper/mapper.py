@@ -24,7 +24,11 @@ _ENTITY_SUFFIXES = re.compile(
     r"\b(inc|corp|corporation|llc|llp|ltd|limited|lp|plc|"
     r"fund|trust|group|holdings|capital|management|partners|"
     r"associates|advisors|advisers|securities|financial|"
-    r"investment|investments|asset|assets|bank|bancorp)\b",
+    r"investment|investments|asset|assets|bank|bancorp|"
+    # European legal forms (S.A.R.L., GmbH, S.A., N.V., B.V., etc.)
+    r"sarl|s\.a\.r\.l|gmbh|sa|ag|nv|bv|se|sas|srl|spa|oy|ab|as|aps)\b"
+    # also catch dotted abbreviations like S.A.R.L. anywhere in the name
+    r"|s\.a\.r\.l\.|s\.a\.|n\.v\.|b\.v\.|p\.l\.c\.",
     re.IGNORECASE,
 )
 
