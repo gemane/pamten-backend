@@ -1,6 +1,6 @@
 # Pamten Backend
 
-FastAPI backend for the Pamten ownership mapping platform. Stores corporate ownership hierarchies in a Neo4j graph database and exposes a REST API consumed by the frontend.
+FastAPI backend for the Pamten ownership mapping platform. Stores corporate ownership hierarchies in an ArcadeDB graph database and exposes a REST API consumed by the frontend.
 
 **Live API:** https://pamten-backend-yrbh.onrender.com  
 **Docs (Swagger):** https://pamten-backend-yrbh.onrender.com/docs  
@@ -13,9 +13,9 @@ FastAPI backend for the Pamten ownership mapping platform. Stores corporate owne
 | Layer | Library |
 |---|---|
 | Framework | FastAPI 0.111 |
-| Database | Neo4j AuraDB (graph) |
+| Database | ArcadeDB (graph, Cypher-compatible) |
 | Auth | PyJWT + passlib/bcrypt |
-| HTTP client | httpx (Wikidata SPARQL) |
+| HTTP client | httpx |
 | Config | pydantic-settings |
 | Server | Uvicorn |
 | Hosting | Render (web service) |
@@ -33,20 +33,13 @@ uvicorn app.main:app --reload   # http://localhost:8000
 Create a `.env` file with your credentials:
 
 ```env
-NEO4J_URI=neo4j+s://<your-instance>.databases.neo4j.io
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=<password>
-NEO4J_DATABASE=neo4j
+ARCADEDB_URL=http://<your-instance>:2480
+ARCADEDB_USERNAME=root
+ARCADEDB_PASSWORD=<password>
+ARCADEDB_DATABASE=pamten
 SECRET_KEY=<long-random-string>
 SCRAPER_ENABLED=false
-```
-
-Run this once in the Neo4j console to enable full-text search:
-
-```cypher
-CREATE FULLTEXT INDEX namesIndex
-FOR (n:Entity|Person)
-ON EACH [n.name, n.full_name, n.description]
+SCRAPER_SEC_EDGAR_ENABLED=false
 ```
 
 ---
@@ -58,7 +51,7 @@ backend/
 └── app/
     ├── main.py              # FastAPI app, CORS, router registration
     ├── config.py            # Settings loaded from environment variables
-    ├── database.py          # Neo4j driver + session helper
+    ├── database.py          # ArcadeDB HTTP client + Neo4j-compatible shim
     ├── models/              # Pydantic request/response models
     │   ├── entity.py
     │   ├── person.py
@@ -76,12 +69,14 @@ backend/
     │   ├── router.py        # /auth/register, /auth/login, /auth/me
     │   ├── security.py      # Password hashing, token create/decode
     │   └── dependencies.py  # FastAPI Depends: get_current_user, require_admin, etc.
-    └── scraper/             # Wikidata scraper
-        ├── router.py        # /scraper/status, /scraper/run
-        ├── sources.py       # /scraper/sources — per-source toggle switches
-        ├── runner.py        # Orchestration: search → fetch → write to Neo4j
+    └── scraper/
+        ├── router.py        # All /scraper/* endpoints
+        ├── sources.py       # Per-source toggle switches
+        ├── runner.py        # Orchestration: search → fetch → write to DB
         ├── wikidata.py      # Wikidata SPARQL client
-        └── mapper.py        # Maps Wikidata instance types → Pamten entity types
+        ├── sec_edgar.py     # SEC EDGAR scraper (ownership filings + executives)
+        ├── open_corporates.py  # OpenCorporates client (requires API key)
+        └── mapper.py        # Entity type inference, name normalisation
 ```
 
 ---
@@ -92,8 +87,8 @@ backend/
 
 | Label | Key properties |
 |---|---|
-| `Entity` | `id`, `name`, `type` (company/brand/holding), `country`, `founded`, `revenue`, `wikidata_id` |
-| `Person` | `id`, `full_name`, `first_name`, `last_name`, `nationality`, `wikidata_id` |
+| `Entity` | `id`, `name`, `type` (company/brand/holding), `country`, `founded`, `revenue`, `wikidata_id`, `sec_cik` |
+| `Person` | `id`, `full_name`, `first_name`, `last_name`, `nationality`, `wikidata_id`, `wikipedia_url` |
 | `Location` | `id`, `city`, `country`, `coordinates` |
 | `Source` | `id`, `name`, `url`, `credibility_score` |
 | `User` | `id`, `email`, `password_hash`, `role` (admin/contributor/viewer) |
@@ -111,7 +106,7 @@ backend/
 | `(Entity)-[:OPERATES_IN]->(Location)` | — |
 
 `until = null` means the relationship is currently active.  
-`ownership_type`: `full`, `majority`, `minority`, `controlling`, `partnership`
+`ownership_type`: `full`, `majority`, `minority`, `controlling`, `passive`, `active`, `partnership`
 
 ---
 
@@ -145,6 +140,7 @@ backend/
 |---|---|---|
 | GET | `/search/?q=` | Full-text search across entities and persons |
 | GET | `/search/entity/{id}/full-profile` | Entity with owners, subsidiaries, executives, HQ |
+| GET | `/search/geographic` | Entities grouped by country for map view |
 
 ### Relationships
 | Method | Path | Description |
@@ -153,6 +149,7 @@ backend/
 | POST | `/relationships/owns/close` | Set `until` date (end ownership) |
 | POST | `/relationships/roles` | Create HAS_ROLE edge |
 | POST | `/relationships/roles/close` | End a role |
+| POST | `/relationships/related-to` | Create RELATED_TO edge between persons |
 | GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (depth param, max 10) |
 | GET | `/relationships/owners/{id}` | Current active owners of an entity |
 | GET | `/relationships/history/{id}` | Full history: ownership in/out + executive roles |
@@ -162,8 +159,14 @@ backend/
 |---|---|---|---|
 | GET | `/scraper/status` | — | Whether master `SCRAPER_ENABLED` flag is on |
 | POST | `/scraper/run` | admin | Run a Wikidata scrape by company name |
+| GET | `/scraper/sec-edgar/status` | — | Whether `SCRAPER_SEC_EDGAR_ENABLED` flag is on |
+| POST | `/scraper/sec-edgar/run` | admin | Run an SEC EDGAR scrape by company name |
+| POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company name |
+| GET | `/scraper/open-corporates/status` | — | Whether OpenCorporates is configured |
+| POST | `/scraper/open-corporates/run` | admin | Run an OpenCorporates scrape by company name |
 | GET | `/scraper/sources` | — | Per-source toggle states |
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
+| DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
 
 ---
 
@@ -185,21 +188,31 @@ The first account registered automatically receives the `admin` role. Protected 
 
 ---
 
-## Scraper
+## Scrapers
 
-The Wikidata scraper imports corporate ownership data via SPARQL. It is controlled by two independent switches:
+Three data sources are supported, all triggered via `/scraper/run-all`:
 
-1. **`SCRAPER_ENABLED`** env var — master on/off, set in Render
-2. **Per-source toggles** — stored as `ScraperSource` nodes in Neo4j, toggled via the API by admins
+### Wikidata
+Imports corporate ownership data via SPARQL. Fetches subsidiaries, parent organisations, and CEOs recursively up to `depth` levels (max 3). Controlled by `SCRAPER_ENABLED`.
 
-Both must be on for a scrape to run. Behaviour:
-- Searches Wikidata for the company name and picks the top result
-- Fetches subsidiaries, parent organisations, and CEOs recursively up to `depth` levels (max 3)
-- Writes to Neo4j using `MERGE` — safe to re-run, no duplicates
+- Searches Wikidata by company name, picks the best-matching entity
+- Writes to the DB using upsert — safe to re-run, no duplicates
 - Caps at 15 subsidiaries and 3 CEOs per entity
-- Adds a 400 ms delay between Wikidata requests
+- 400 ms delay between requests (Wikidata rate limit)
 
-To add a new scraper source, add an entry to `KNOWN_SOURCES` in `scraper/sources.py`. It will automatically appear as a toggle in the frontend.
+### SEC EDGAR
+Imports investor data from SC 13D/13G ownership filings and executive data from Form 3/4 XML. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`.
+
+Company lookup uses a three-vector strategy to avoid false matches:
+
+1. **`company_tickers.json`** — instant lookup for all US-listed companies
+2. **`browse-edgar` name index** — EDGAR's registered company-name search; returns 0 results for companies not on EDGAR (Nestlé, Samsung, Volkswagen, etc.), preventing false positives from full-text matches
+3. **EFTS full-text search** — last resort, guarded by a name-similarity check (SequenceMatcher ratio ≥ 0.55 after stripping legal suffixes)
+
+Investor names are classified as Person or Entity using heuristics that recognise common legal suffixes including European forms (S.A.R.L., GmbH, S.A., N.V., AG, etc.).
+
+### OpenCorporates
+Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 
 ---
 
@@ -207,20 +220,22 @@ To add a new scraper source, add an entry to `KNOWN_SOURCES` in `scraper/sources
 
 | Variable | Default | Description |
 |---|---|---|
-| `NEO4J_URI` | required | Neo4j AuraDB connection URI |
-| `NEO4J_USERNAME` | required | Database username |
-| `NEO4J_PASSWORD` | required | Database password |
-| `NEO4J_DATABASE` | `neo4j` | Database name |
+| `ARCADEDB_URL` | required | ArcadeDB HTTP endpoint |
+| `ARCADEDB_USERNAME` | required | Database username |
+| `ARCADEDB_PASSWORD` | required | Database password |
+| `ARCADEDB_DATABASE` | `pamten` | Database name |
 | `SECRET_KEY` | insecure default | JWT signing key — **must be overridden in production** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
-| `SCRAPER_ENABLED` | `false` | Master scraper switch |
+| `SCRAPER_ENABLED` | `false` | Master Wikidata scraper switch |
+| `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR scraper switch |
+| `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
 | `DEBUG` | `false` | FastAPI debug mode |
 
 ---
 
 ## Deployment
 
-Deployed on Render as a web service. Render detects `render.yaml` automatically. Required environment variables must be set in the Render dashboard: `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `SECRET_KEY`. Any push to `main` triggers a redeploy.
+Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`.
 
 ---
 
