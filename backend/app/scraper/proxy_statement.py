@@ -305,7 +305,7 @@ def _find_voting_tables(soup) -> tuple:
     single_candidates: list[object] = []
 
     _SINGLE_RE = re.compile(
-        r"beneficial ownership|percent of common"
+        r"beneficial ownership|beneficially owned|percent of common"
         r"|percent of outstanding|percent of class|percent\xa0of",
         re.IGNORECASE,
     )
