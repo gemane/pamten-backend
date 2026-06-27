@@ -235,18 +235,55 @@ def _parse_shares(text: str) -> int | None:
         return None
 
 
-def _find_voting_table(soup):
-    """Return the beneficial ownership HTML table, or None."""
+def _find_voting_tables(soup) -> tuple:
+    """
+    Return (tables_list, is_dual_class).
+
+    Dual-class: single table with 'voting power' + 'class a/b'.
+    Single-class: all tables mentioning 'beneficial ownership' or 'percent of
+    common/outstanding' with at least 3 data rows — covers both the 5%+
+    holders table and the directors/officers table.
+    """
+    dual_candidate: object | None   = None
+    single_candidates: list[object] = []
+
+    _SINGLE_RE = re.compile(
+        r"beneficial ownership|percent of common|percent of outstanding|percent\xa0of",
+        re.IGNORECASE,
+    )
+
     for table in soup.find_all("table"):
-        text = table.get_text(" ", strip=True).lower()
-        # Must mention voting power AND at least one share class
-        if "voting power" in text and ("class a" in text or "class b" in text):
-            if len(table.find_all("tr")) >= 5:
-                return table
-    return None
+        text = table.get_text(" ", strip=True)
+        rows = table.find_all("tr")
+        if len(rows) < 3:
+            continue
+
+        if "voting power" in text.lower() and (
+            "class a" in text.lower() or "class b" in text.lower()
+        ):
+            dual_candidate = table
+            break
+
+        if _SINGLE_RE.search(text):
+            # Only keep tables with actual data (not just footnotes)
+            first_cells = [
+                r.find_all(["td", "th"])[0].get_text(" ", strip=True)
+                for r in rows
+                if r.find_all(["td", "th"])
+            ]
+            has_names = any(
+                len(c.split()) >= 2 and any(w[0].isupper() for w in c.split() if w)
+                for c in first_cells
+            )
+            if has_names:
+                single_candidates.append(table)
+
+    if dual_candidate is not None:
+        return [dual_candidate], True
+    return single_candidates, False
 
 
-def _parse_ownership_table(table) -> list[dict]:
+def _parse_ownership_table(table, is_dual_class: bool = True) -> list[dict]:
     """Parse the beneficial ownership table into a list of owner dicts."""
     rows = table.find_all("tr")
 
@@ -290,8 +327,34 @@ def _parse_ownership_table(table) -> list[dict]:
 
         entry: dict = {"name": name}
 
-        # Total voting power % is conventionally the last column
-        entry["voting_power_pct"] = _parse_pct(meaningful[-1])
+        if is_dual_class:
+            # Total voting power % is the last column
+            entry["voting_power_pct"] = _parse_pct(meaningful[-1])
+        else:
+            # Single-class: find the % of common stock column.
+            # Real percentages are either "*" (< 1%) or have a "%" sign or are
+            # decimal numbers like "7.3".  Plain integers (1, 2, … 20) without
+            # a "%" are footnote reference numbers — skip them.
+            pct_val = None
+            for t in meaningful:
+                stripped = _FOOTNOTE_RE.sub("", t).strip()
+                if stripped == "*":
+                    pct_val = 0.4
+                    break
+                if "%" in stripped:
+                    pct_val = _parse_pct(stripped)
+                    break
+                # Accept a decimal number (X.X) as a percentage
+                raw = stripped.replace(",", "")
+                if "." in raw:
+                    try:
+                        v = float(raw)
+                        if 0.0 < v < 100.0:
+                            pct_val = v
+                            break
+                    except ValueError:
+                        pass
+            entry["voting_power_pct"] = pct_val
 
         # Harvest share counts: values > 10,000 are almost certainly share counts
         share_counts = sorted(
@@ -336,9 +399,9 @@ def fetch_proxy_ownership(company_name: str) -> dict:
         return {"error": f"Failed to fetch filing: {exc}", "owners": []}
 
     soup  = BeautifulSoup(resp.content, "lxml")
-    table = _find_voting_table(soup)
+    tables, is_dual_class = _find_voting_tables(soup)
 
-    if not table:
+    if not tables:
         return {
             "company":     company_name,
             "cik":         cik,
@@ -348,14 +411,22 @@ def fetch_proxy_ownership(company_name: str) -> dict:
             "owners":      [],
         }
 
-    owners = _parse_ownership_table(table)
+    # Parse all matching tables and merge, deduplicating by name
+    seen: set[str] = set()
+    owners: list[dict] = []
+    for tbl in tables:
+        for entry in _parse_ownership_table(tbl, is_dual_class=is_dual_class):
+            if entry["name"] not in seen:
+                seen.add(entry["name"])
+                owners.append(entry)
 
     result: dict = {
-        "company":      company_name,
-        "cik":          cik,
-        "filing_date":  filing_date,
-        "filing_url":   doc_url,
-        "owners":       owners,
+        "company":            company_name,
+        "cik":                cik,
+        "filing_date":        filing_date,
+        "filing_url":         doc_url,
+        "share_class_structure": "dual_class" if is_dual_class else "single_class",
+        "owners":             owners,
     }
 
     if not _is_recent(filing_date):
