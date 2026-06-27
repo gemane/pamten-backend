@@ -4,6 +4,7 @@ from app.config import settings
 from app.scraper.runner import run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates
 from app.auth.dependencies import require_admin
 from app.database import db
+from app.db.arcadedb import run_query, run_command
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -190,3 +191,95 @@ def purge_company(
         "orphans_removed": orphans_removed,
         "orphans":         orphan_names,
     }
+
+
+# ── Deduplication endpoint ─────────────────────────────────────────────────────
+
+@router.post("/deduplicate-edges")
+def deduplicate_owns_edges(_: dict = Depends(require_admin)):
+    """
+    For every (owner → target) pair that has more than one active OWNS edge,
+    keep the most informative edge (highest stake_percent, then most recent
+    file_date) and delete the rest.  Admin only.
+    """
+    # Find all pairs with duplicates
+    pairs = run_query(
+        """
+        MATCH (a)-[r:OWNS]->(b)
+        WHERE r.until IS NULL
+        WITH a.id AS owner_id, b.id AS target_id, count(r) AS cnt
+        WHERE cnt > 1
+        RETURN owner_id, target_id, cnt
+        """
+    )
+
+    total_deleted = 0
+    cleaned = []
+
+    for pair in pairs:
+        oid = pair["owner_id"]
+        nid = pair["target_id"]
+
+        # Fetch all active edges for this pair with their properties
+        edges = run_query(
+            """
+            MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+            WHERE r.until IS NULL
+            RETURN r.stake_percent   AS stake,
+                   r.file_date       AS file_date,
+                   r.source_id       AS source_id,
+                   r.ownership_type  AS ownership_type,
+                   r.since           AS since
+            """,
+            {"oid": oid, "nid": nid},
+        )
+
+        # Sort: prefer edge with stake_percent, then most recent file_date
+        def _sort_key(e):
+            return (
+                0 if e.get("stake") is not None else 1,
+                e.get("file_date") or "",
+            )
+
+        edges_sorted = sorted(edges, key=_sort_key, reverse=True)
+        best = edges_sorted[0]
+
+        # Delete all active edges between this pair
+        run_command(
+            """
+            MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+            WHERE r.until IS NULL
+            DELETE r
+            """,
+            {"oid": oid, "nid": nid},
+        )
+
+        # Recreate the single best edge
+        run_command(
+            """
+            MATCH (a {id: $oid}), (b {id: $nid})
+            CREATE (a)-[:OWNS {
+                stake_percent:  $stake,
+                file_date:      $file_date,
+                source_id:      $source_id,
+                ownership_type: $ownership_type,
+                since:          $since,
+                until:          null
+            }]->(b)
+            """,
+            {
+                "oid":            oid,
+                "nid":            nid,
+                "stake":          best.get("stake"),
+                "file_date":      best.get("file_date"),
+                "source_id":      best.get("source_id"),
+                "ownership_type": best.get("ownership_type"),
+                "since":          best.get("since"),
+            },
+        )
+
+        deleted_count = len(edges_sorted) - 1
+        total_deleted += deleted_count
+        cleaned.append({"owner_id": oid, "target_id": nid, "duplicates_removed": deleted_count})
+
+    return {"duplicates_removed": total_deleted, "pairs_cleaned": len(pairs), "detail": cleaned}
