@@ -413,6 +413,10 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             WHERE ($cik IS NOT NULL AND e.sec_cik = $cik)
                OR e.name = $name
                OR e.name_normalized = $name_norm
+               OR ($cik IS NOT NULL
+                   AND e.name_normalized IS NOT NULL
+                   AND size(e.name_normalized) >= 4
+                   AND $name_norm STARTS WITH e.name_normalized)
             RETURN e.id AS id LIMIT 1
             """,
             cik=cik,
