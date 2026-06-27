@@ -445,6 +445,36 @@ def proxy_statement_run(
     return fetch_proxy_ownership(company)
 
 
+def _person_name_variants(name: str) -> list[str]:
+    """
+    Generate name permutations to match SEC reversed-name format.
+
+    SEC filings store names as "Last First Middle" (no periods).
+    Proxy statements use "First Middle Last" or "First M. Last".
+
+    Examples:
+      "Sergey Brin"       → ["Sergey Brin", "Brin Sergey"]
+      "Warren E. Buffett" → ["Warren E. Buffett", "Buffett Warren E", "Buffett Warren"]
+    """
+    variants: list[str] = [name]
+    # Strip periods to normalise initials ("E." → "E")
+    clean = name.replace(".", "").replace(",", "").strip()
+    words = clean.split()
+    if len(words) == 2:
+        # "First Last" ↔ "Last First"
+        variants.append(f"{words[1]} {words[0]}")
+    elif len(words) == 3:
+        # "First Mid Last" → "Last First Mid" (SEC format)
+        variants.append(f"{words[2]} {words[0]} {words[1]}")
+        # Also try without the middle initial
+        variants.append(f"{words[2]} {words[0]}")
+        variants.append(f"{words[0]} {words[2]}")
+    # Include the period-stripped variant of the original
+    if clean != name:
+        variants.append(clean)
+    return list(dict.fromkeys(variants))  # deduplicated, order preserved
+
+
 @router.post("/proxy-statement/write")
 def proxy_statement_write(
     company: str = Query(..., min_length=2,
@@ -462,7 +492,8 @@ def proxy_statement_write(
     onto active OWNS edges in the database.
 
     Owner names are matched by: exact full_name / name, normalised name,
-    and reversed-word variants (e.g. 'Sergey Brin' matches 'Brin Sergey').
+    and SEC reversed-name variants (e.g. 'Sergey Brin' → 'Brin Sergey',
+    'Warren E. Buffett' → 'Buffett Warren E').
     Edges that cannot be matched are reported in 'not_found_in_db'.
     """
     from app.scraper.proxy_statement import fetch_proxy_ownership
@@ -506,17 +537,14 @@ def proxy_statement_write(
             continue
 
         name_norm = normalize_entity_name(name)
-        # Reversed-word variant: "Sergey Brin" → "Brin Sergey" (SEC reversed names)
-        words = name.split()
-        name_rev = " ".join(reversed(words)) if len(words) == 2 else None
+        variants = _person_name_variants(name)
 
         # ── Find active OWNS edge owner → company ──────────────────────────
         match_rows = run_query(
             """MATCH (n)-[r:OWNS]->(c {id: $cid})
                WHERE r.until IS NULL
-                 AND (n.full_name = $name OR n.name = $name
-                      OR n.name_normalized = $norm
-                      OR ($rev IS NOT NULL AND (n.full_name = $rev OR n.name = $rev)))
+                 AND (n.full_name IN $variants OR n.name IN $variants
+                      OR n.name_normalized = $norm)
                RETURN n.id AS oid,
                       coalesce(n.full_name, n.name) AS matched_name,
                       r.stake_percent   AS stake,
@@ -525,7 +553,7 @@ def proxy_statement_write(
                       r.ownership_type  AS ownership_type,
                       r.since           AS since
                LIMIT 1""",
-            {"cid": company_id, "name": name, "norm": name_norm, "rev": name_rev},
+            {"cid": company_id, "variants": variants, "norm": name_norm},
         )
         if not match_rows:
             not_found.append(name)
