@@ -210,6 +210,77 @@ def _lookup_in_tickers(query: str) -> dict | None:
     return None
 
 
+# ── EDGAR company-name index lookup (second vector) ───────────────────────────
+
+def _lookup_edgar_by_name(name: str) -> dict | None:
+    """
+    Second vector: EDGAR's registered company-name index via browse-edgar.
+
+    Unlike the EFTS full-text search, browse-edgar only returns companies whose
+    *registered name* starts with the query — filing text that merely mentions
+    the company never shows up here.  This correctly returns 0 results for
+    foreign companies not registered with the SEC (Nestlé, Samsung, etc.) even
+    though their names may appear in other filers' filings.
+
+    The Atom feed has a server-side bug that loses the company name from <title>,
+    so we extract the CIK from <id> and verify the official name from the
+    submissions JSON.
+    """
+    for form_type in ("10-K", "20-F"):
+        try:
+            resp = httpx.get(BROWSE_URL, params={
+                "company":     name,
+                "action":      "getcompany",
+                "type":        form_type,
+                "dateb":       "",
+                "owner":       "include",
+                "count":       "5",
+                "search_text": "",
+                "output":      "atom",
+            }, headers=HEADERS, timeout=15)
+            resp.raise_for_status()
+            time.sleep(REQUEST_DELAY)
+        except httpx.HTTPError as exc:
+            log.debug("SEC EDGAR: browse-edgar (%s) failed for %r: %s", form_type, name, exc)
+            continue
+
+        root = ET.fromstring(resp.content)
+        ns_a = {"a": "http://www.w3.org/2005/Atom"}
+
+        for entry in root.findall("a:entry", ns_a):
+            id_text = (entry.findtext("a:id", "", ns_a) or "").strip()
+            m = re.search(r"cik=(\d+)", id_text, re.IGNORECASE)
+            if not m:
+                continue
+            cik = m.group(1).zfill(10)
+
+            # Official company name from submissions (one extra request, but
+            # browse-edgar's Atom feed doesn't include the name due to a server bug)
+            try:
+                sub  = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+                registered_name = sub.get("name", "")
+            except httpx.HTTPError:
+                continue
+
+            if not registered_name:
+                continue
+
+            sim = _name_similarity(name, registered_name)
+            if sim >= _MIN_NAME_SIMILARITY:
+                log.info(
+                    "SEC EDGAR: browse-edgar matched %r → %r (CIK=%s, sim=%.2f, form=%s)",
+                    name, registered_name, cik, sim, form_type,
+                )
+                return {"cik": cik, "name": registered_name}
+            log.debug(
+                "SEC EDGAR: browse-edgar candidate rejected (sim=%.2f): %r vs %r",
+                sim, name, registered_name,
+            )
+
+    log.info("SEC EDGAR: browse-edgar found no registered match for %r", name)
+    return None
+
+
 # ── EDGAR search helpers ──────────────────────────────────────────────────────
 
 def _parse_hit(src: dict) -> tuple[str | None, str | None]:
@@ -234,10 +305,13 @@ def search_company(name: str) -> dict | None:
     """
     Find a company's CIK and registered name on EDGAR.
 
-    Strategy:
-    1. Try company_tickers.json — unambiguous for all listed public companies.
-    2. Fall back to full-text search (10-K then DEF 14A) for private/foreign
-       companies not in the tickers file.
+    Three-vector strategy:
+    1. company_tickers.json      — fast, unambiguous for all US-listed companies.
+    2. browse-edgar name index   — EDGAR's registered company-name search; correctly
+                                   returns nothing for companies not on EDGAR
+                                   (Nestlé, Samsung…) since their names never appear
+                                   as filer names, only inside other filings' text.
+    3. EFTS full-text search     — last resort, guarded by name-similarity check.
 
     Returns {cik: zero-padded-10-digit, name: str} or None.
     """
@@ -247,7 +321,12 @@ def search_company(name: str) -> dict | None:
     if result:
         return result
 
-    log.info("SEC EDGAR: tickers miss for %r, falling back to full-text search", name)
+    log.info("SEC EDGAR: tickers miss for %r, trying browse-edgar name index", name)
+    result = _lookup_edgar_by_name(name)
+    if result:
+        return result
+
+    log.info("SEC EDGAR: browse-edgar miss for %r, falling back to EFTS full-text search", name)
     for forms in ("10-K", "DEF 14A"):
         try:
             data = _get(SEARCH_URL, {"q": f'"{name}"', "forms": forms})
