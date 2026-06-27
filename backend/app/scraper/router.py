@@ -428,7 +428,7 @@ def deduplicate_person_nodes(_: dict = Depends(require_admin)):
     return {"pairs_merged": len(merged), "detail": merged}
 
 
-# ── Proxy statement endpoint (POC) ─────────────────────────────────────────────
+# ── Proxy statement endpoints ───────────────────────────────────────────────────
 
 @router.post("/proxy-statement/run")
 def proxy_statement_run(
@@ -439,8 +439,124 @@ def proxy_statement_run(
     """
     Parse the most recent DEF 14A proxy statement for a company and return
     per-person voting power percentages from the beneficial ownership table.
-
-    POC endpoint — read-only, does not write to the database.
+    Read-only — does not write to the database.
     """
     from app.scraper.proxy_statement import fetch_proxy_ownership
     return fetch_proxy_ownership(company)
+
+
+@router.post("/proxy-statement/write")
+def proxy_statement_write(
+    company: str = Query(..., min_length=2,
+                         description="Company name to search for on EDGAR"),
+    _: dict = Depends(require_admin),
+):
+    """
+    Fetch the most recent DEF 14A proxy statement and write voting_power_pct
+    onto active OWNS edges in the database.
+
+    Matches owners by name (exact or normalised).  Edges that cannot be
+    matched to a DB node are reported in 'not_found_in_db'.
+    """
+    from app.scraper.proxy_statement import fetch_proxy_ownership
+    from app.scraper.mapper import normalize_entity_name
+
+    proxy = fetch_proxy_ownership(company)
+    if proxy.get("error") and not proxy.get("owners"):
+        return proxy
+
+    # ── Find the company node ──────────────────────────────────────────────────
+    company_norm = normalize_entity_name(company)
+    company_rows = run_query(
+        """MATCH (c:Company)
+           WHERE c.name_normalized = $norm OR c.name = $name
+           RETURN c.id AS id, c.name AS name
+           LIMIT 5""",
+        {"norm": company_norm, "name": company},
+    )
+    if not company_rows:
+        return {**proxy, "db_error": f"Company not found in DB: '{company}'"}
+
+    company_id   = company_rows[0]["id"]
+    company_name = company_rows[0]["name"]
+
+    updated:   list[dict] = []
+    not_found: list[str]  = []
+    skipped:   list[str]  = []
+
+    for owner in proxy.get("owners", []):
+        name = owner["name"]
+        pct  = owner.get("voting_power_pct")
+        if pct is None:
+            skipped.append(name)
+            continue
+
+        name_norm = normalize_entity_name(name)
+
+        # ── Find active OWNS edge owner → company ──────────────────────────
+        match_rows = run_query(
+            """MATCH (n)-[r:OWNS]->(c {id: $cid})
+               WHERE r.until IS NULL
+                 AND (n.full_name = $name OR n.name = $name
+                      OR n.name_normalized = $norm)
+               RETURN n.id AS oid,
+                      coalesce(n.full_name, n.name) AS matched_name,
+                      r.stake_percent   AS stake,
+                      r.file_date       AS file_date,
+                      r.source_id       AS source_id,
+                      r.ownership_type  AS ownership_type,
+                      r.since           AS since
+               LIMIT 1""",
+            {"cid": company_id, "name": name, "norm": name_norm},
+        )
+        if not match_rows:
+            not_found.append(name)
+            continue
+
+        row          = match_rows[0]
+        oid          = row["oid"]
+        matched_name = row["matched_name"]
+
+        # ── Delete old edge and recreate with voting_power_pct ────────────
+        run_command(
+            """MATCH (n {id: $oid})-[r:OWNS]->(c {id: $cid})
+               WHERE r.until IS NULL
+               DELETE r""",
+            {"oid": oid, "cid": company_id},
+        )
+        run_command(
+            """MATCH (n {id: $oid}), (c {id: $cid})
+               CREATE (n)-[:OWNS {
+                   stake_percent:     $stake,
+                   file_date:         $file_date,
+                   source_id:         $source_id,
+                   ownership_type:    $ownership_type,
+                   since:             $since,
+                   until:             null,
+                   voting_power_pct:  $pct
+               }]->(c)""",
+            {
+                "oid":            oid,
+                "cid":            company_id,
+                "stake":          row.get("stake"),
+                "file_date":      row.get("file_date"),
+                "source_id":      row.get("source_id"),
+                "ownership_type": row.get("ownership_type"),
+                "since":          row.get("since"),
+                "pct":            pct,
+            },
+        )
+        updated.append({
+            "proxy_name":       name,
+            "db_name":          matched_name,
+            "voting_power_pct": pct,
+        })
+
+    return {
+        "company":              company_name,
+        "filing_date":          proxy.get("filing_date"),
+        "share_class_structure": proxy.get("share_class_structure"),
+        "updated":              updated,
+        "not_found_in_db":      not_found,
+        "skipped_no_pct":       skipped,
+    }
