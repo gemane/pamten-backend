@@ -69,9 +69,34 @@ def is_person_name(name: str) -> bool:
     )
 
 
-def sec_form_to_ownership_type(form_type: str) -> str:
-    """Map SC 13G → 'passive', SC 13D → 'active'."""
-    return "passive" if "13G" in form_type else "active"
+def derive_ownership_type(stake_pct: float | None, form_type: str | None = None) -> str:
+    """
+    Derive a canonical ownership type from stake % and SEC form type.
+
+    Thresholds:
+      >= 99%          → full        (essentially wholly owned)
+      > 50%           → majority    (outright control)
+      >= 20% – 50%    → controlling (significant blocking minority)
+      > 0%  – 20%     → minority    (passive stake)
+
+    When stake is unknown, fall back on the SEC form type:
+      SC 13D (activist / strategic)  → controlling
+      SC 13G (passive institutional) → minority
+      no info (Wikidata subsidiary)  → majority
+    """
+    if stake_pct is not None:
+        if stake_pct >= 99:
+            return "full"
+        if stake_pct > 50:
+            return "majority"
+        if stake_pct >= 20:
+            return "controlling"
+        return "minority"
+    if form_type and "13D" in form_type:
+        return "controlling"
+    if form_type and "13G" in form_type:
+        return "minority"
+    return "majority"
 
 
 _LEGAL_SUFFIX_NORM = re.compile(

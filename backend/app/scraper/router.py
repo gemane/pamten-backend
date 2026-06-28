@@ -446,6 +446,7 @@ def proxy_statement_run(
 
 
 import re as _re
+from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 
 # Common nickname → formal first-name mappings
 _NICKNAMES: dict[str, str] = {
@@ -711,4 +712,103 @@ def proxy_statement_write(
         "updated":              updated,
         "not_found_in_db":      not_found,
         "skipped_no_pct":       skipped,
+    }
+
+
+# ── Ownership-type migration endpoint ────────────────────────────────────────
+
+@router.post("/migrate-ownership-types")
+def migrate_ownership_types(_: dict = Depends(require_admin)):
+    """
+    One-time migration: derive canonical ownership_type values for all OWNS
+    edges using stake_percent and the old 'passive'/'active' markers.
+
+    Rules applied in order (first matching rule wins per edge):
+      stake >= 99                          → full
+      stake > 50                           → majority
+      stake >= 20                          → controlling
+      stake > 0                            → minority
+      no stake, old type = 'active'        → controlling
+      no stake, old type = 'passive'       → minority
+      no stake, no type (Wikidata sub)     → majority
+    """
+    edges = run_query(
+        """
+        MATCH (a)-[r:OWNS]->(b)
+        RETURN a.id AS owner_id, b.id AS target_id,
+               r.stake_percent  AS stake,
+               r.ownership_type AS old_type,
+               r.since          AS since,
+               r.until          AS until,
+               r.file_date      AS file_date,
+               r.source_id      AS source_id,
+               r.credibility_score AS cred,
+               r.voting_power_pct  AS voting_pct
+        """
+    )
+
+    updated = 0
+    skipped = 0
+    detail: list[dict] = []
+
+    for e in edges:
+        old_type = e.get("old_type")
+        stake    = e.get("stake")
+
+        # Derive from stake % when available, else fall back on old marker
+        form_hint = None
+        if old_type == "active":
+            form_hint = "SC 13D"
+        elif old_type == "passive":
+            form_hint = "SC 13G"
+
+        new_type = _derive_ownership_type(stake, form_hint)
+
+        if new_type == old_type:
+            skipped += 1
+            continue
+
+        oid = e["owner_id"]
+        nid = e["target_id"]
+
+        run_command(
+            "MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid}) WHERE r.until = $until DELETE r",
+            {"oid": oid, "nid": nid, "until": e.get("until")},
+        )
+        run_command(
+            """
+            MATCH (a {id: $oid}), (b {id: $nid})
+            CREATE (a)-[:OWNS {
+                stake_percent:      $stake,
+                ownership_type:     $otype,
+                since:              $since,
+                until:              $until,
+                file_date:          $file_date,
+                source_id:          $source_id,
+                credibility_score:  $cred,
+                voting_power_pct:   $voting_pct
+            }]->(b)
+            """,
+            {
+                "oid":       oid,
+                "nid":       nid,
+                "stake":     stake,
+                "otype":     new_type,
+                "since":     e.get("since"),
+                "until":     e.get("until"),
+                "file_date": e.get("file_date"),
+                "source_id": e.get("source_id"),
+                "cred":      e.get("cred"),
+                "voting_pct": e.get("voting_pct"),
+            },
+        )
+        updated += 1
+        detail.append({"owner_id": oid, "target_id": nid,
+                        "old": old_type, "new": new_type, "stake": stake})
+
+    return {
+        "status":  "ok",
+        "updated": updated,
+        "skipped": skipped,
+        "detail":  detail,
     }

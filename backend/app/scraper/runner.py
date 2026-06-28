@@ -17,7 +17,7 @@ import logging
 from app.config import settings
 from app.database import db
 from app.scraper.wikidata import search_entity, fetch_company_data
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type
 from app.scraper.sources import get_source_enabled
 
 log = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str):
             """
             MATCH (a {id: $oid}), (b {id: $nid})
             CREATE (a)-[:OWNS {
-                stake_percent: null, ownership_type: null,
+                stake_percent: null, ownership_type: 'majority',
                 since: null, until: null,
                 source_id: $sid, credibility_score: $score
             }]->(b)

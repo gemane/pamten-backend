@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
 
 import httpx
-from app.scraper.mapper import _ENTITY_SUFFIXES
+from app.scraper.mapper import _ENTITY_SUFFIXES, derive_ownership_type
 
 log = logging.getLogger(__name__)
 
@@ -584,7 +584,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "file_date":        inv["file_date"],
             "period_of_report": None,
             "stake_percent":    pct,
-            "ownership_type":   "passive" if "13G" in inv["form_type"] else "active",
+            "ownership_type":   derive_ownership_type(pct, inv["form_type"]),
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
         })
 
