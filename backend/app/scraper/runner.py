@@ -36,15 +36,15 @@ OPENCORPORATES_SOURCE_NAME = "OpenCorporates"
 OPENCORPORATES_SOURCE_URL  = "https://opencorporates.com"
 OPENCORPORATES_CREDIBILITY = 85
 
-GLEIF_SOURCE_NAME   = "GLEIF"
-GLEIF_SOURCE_URL    = "https://www.gleif.org"
-GLEIF_CREDIBILITY   = 92   # international official register, CC0
-GLEIF_BODS_URL      = "https://oo-bodsdata.s3.amazonaws.com/data/gleif_version_0_4/json.zip"
+GLEIF_SOURCE_NAME        = "GLEIF"
+GLEIF_SOURCE_URL         = "https://www.gleif.org"
+GLEIF_BODS_URL           = "https://oo-bodsdata.s3.amazonaws.com/data/gleif_version_0_4/json.zip"
+BODS_GLEIF_CREDIBILITY   = 92   # authoritative LEI data, CC0 — corporate not beneficial ownership
 
-UK_PSC_SOURCE_NAME  = "UK PSC"
-UK_PSC_SOURCE_URL   = "https://www.gov.uk/government/publications/persons-with-significant-control-register"
-UK_PSC_CREDIBILITY  = 97   # statutory UK register, CC0
-UK_PSC_BODS_URL     = "https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip"
+UK_PSC_SOURCE_NAME       = "UK PSC"
+UK_PSC_SOURCE_URL        = "https://www.gov.uk/government/publications/persons-with-significant-control-register"
+UK_PSC_BODS_URL          = "https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip"
+BODS_UK_PSC_CREDIBILITY  = 97   # statutory UK legal register, CC0
 
 
 # ── Database helpers ──────────────────────────────────────────────────────────
@@ -927,12 +927,12 @@ def run_scrape_open_corporates(company_name: str) -> dict:
 
 # ── BODS (GLEIF / UK PSC) helpers ─────────────────────────────────────────────
 
-def _ensure_bods_source(name: str, url: str, credibility: int) -> str:
-    """Get or create a BODS Source node, return its id."""
+def _ensure_bods_gleif_source() -> str:
+    """Get or create Source node for GLEIF, return its id."""
     with db.get_session() as session:
         rec = session.run(
             "MATCH (s:Source {name: $name}) RETURN s.id AS id",
-            name=name,
+            name=GLEIF_SOURCE_NAME,
         ).single()
         if rec:
             return rec["id"]
@@ -945,87 +945,141 @@ def _ensure_bods_source(name: str, url: str, credibility: int) -> str:
                 credibility_score: $score, type: 'register'
             })
             """,
-            id=source_id, name=name, url=url, score=credibility,
+            id=source_id, name=GLEIF_SOURCE_NAME,
+            url=GLEIF_SOURCE_URL, score=BODS_GLEIF_CREDIBILITY,
+        )
+        return source_id
+
+
+def _ensure_bods_uk_psc_source() -> str:
+    """Get or create Source node for UK PSC, return its id."""
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
+            name=UK_PSC_SOURCE_NAME,
+        ).single()
+        if rec:
+            return rec["id"]
+
+        source_id = str(uuid.uuid4())
+        session.run(
+            """
+            CREATE (s:Source {
+                id: $id, name: $name, url: $url,
+                credibility_score: $score, type: 'register'
+            })
+            """,
+            id=source_id, name=UK_PSC_SOURCE_NAME,
+            url=UK_PSC_SOURCE_URL, score=BODS_UK_PSC_CREDIBILITY,
         )
         return source_id
 
 
 # ── GLEIF public entry point ──────────────────────────────────────────────────
 
-def run_scrape_bods_gleif(
+def run_import_bods_gleif(
     limit: int | None = None,
     filter_jurisdiction: str | None = None,
+    local_file: str | None = None,
 ) -> dict:
     """
-    Import the GLEIF BODS dataset from the Open Ownership S3 bucket.
-    Requires SCRAPER_ENABLED=true AND SCRAPER_GLEIF_ENABLED=true.
+    Import GLEIF dataset.
+    Checks SCRAPER_ENABLED and SCRAPER_BODS_GLEIF_ENABLED.
+    If local_file is given, import from file instead of URL.
 
     Args:
         limit:               Max entity statements to process (None = full dataset).
-        filter_jurisdiction: ISO alpha-2 country code to restrict import.
+        filter_jurisdiction: ISO alpha-2 country code to restrict entity imports.
+        local_file:          Path to a pre-downloaded .zip or .json file.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
         )
-    if not settings.SCRAPER_GLEIF_ENABLED:
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
         raise PermissionError(
-            "GLEIF scraper is disabled. Set SCRAPER_GLEIF_ENABLED=true in the environment to enable."
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
         )
-    if not get_source_enabled("gleif"):
+    if not get_source_enabled("bods_gleif"):
         raise PermissionError("GLEIF source is disabled. Enable it in the Scraper panel.")
 
-    from app.scraper.bods import import_bods_source
+    from app.scraper.bods import import_bods_source, import_bods_file
 
-    source_id = _ensure_bods_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, GLEIF_CREDIBILITY)
-    log.info("GLEIF runner: starting BODS import (limit=%s, jurisdiction=%s)",
-             limit, filter_jurisdiction)
+    source_id = _ensure_bods_gleif_source()
+    log.info("GLEIF runner: starting BODS import (limit=%s, jurisdiction=%s, local=%s)",
+             limit, filter_jurisdiction, local_file)
 
-    counts = import_bods_source(
-        source_name=GLEIF_SOURCE_NAME,
-        url=GLEIF_BODS_URL,
-        source_id=source_id,
-        credibility_score=GLEIF_CREDIBILITY,
-        limit=limit,
-        filter_jurisdiction=filter_jurisdiction,
-    )
+    if local_file:
+        counts = import_bods_file(
+            filepath=local_file,
+            source_id=source_id,
+            credibility_score=BODS_GLEIF_CREDIBILITY,
+            limit=limit,
+            filter_jurisdiction=filter_jurisdiction,
+        )
+    else:
+        counts = import_bods_source(
+            source_name=GLEIF_SOURCE_NAME,
+            url=GLEIF_BODS_URL,
+            source_id=source_id,
+            credibility_score=BODS_GLEIF_CREDIBILITY,
+            limit=limit,
+            filter_jurisdiction=filter_jurisdiction,
+        )
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 
 
 # ── UK PSC public entry point ─────────────────────────────────────────────────
 
-def run_scrape_bods_uk_psc(
+def run_import_bods_uk_psc(
     limit: int | None = None,
+    filter_jurisdiction: str | None = None,
+    local_file: str | None = None,
 ) -> dict:
     """
-    Import the UK PSC BODS dataset from the Open Ownership S3 bucket.
-    Requires SCRAPER_ENABLED=true AND SCRAPER_UK_PSC_ENABLED=true.
+    Import UK PSC dataset.
+    Checks SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED.
+    If local_file is given, import from file instead of URL.
 
     Args:
-        limit: Max entity statements to process (None = full ~5 GB dataset).
+        limit:               Max entity statements to process (None = full ~8 M-entity dataset).
+        filter_jurisdiction: ISO alpha-2 country code (defaults to "GB" for UK PSC).
+        local_file:          Path to a pre-downloaded .zip or .json file.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
         )
-    if not settings.SCRAPER_UK_PSC_ENABLED:
+    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
         raise PermissionError(
-            "UK PSC scraper is disabled. Set SCRAPER_UK_PSC_ENABLED=true in the environment to enable."
+            "UK PSC scraper is disabled. "
+            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
         )
-    if not get_source_enabled("uk_psc"):
+    if not get_source_enabled("bods_uk_psc"):
         raise PermissionError("UK PSC source is disabled. Enable it in the Scraper panel.")
 
-    from app.scraper.bods import import_bods_source
+    from app.scraper.bods import import_bods_source, import_bods_file
 
-    source_id = _ensure_bods_source(UK_PSC_SOURCE_NAME, UK_PSC_SOURCE_URL, UK_PSC_CREDIBILITY)
-    log.info("UK PSC runner: starting BODS import (limit=%s)", limit)
+    source_id = _ensure_bods_uk_psc_source()
+    jur = filter_jurisdiction or "GB"
+    log.info("UK PSC runner: starting BODS import (limit=%s, local=%s)", limit, local_file)
 
-    counts = import_bods_source(
-        source_name=UK_PSC_SOURCE_NAME,
-        url=UK_PSC_BODS_URL,
-        source_id=source_id,
-        credibility_score=UK_PSC_CREDIBILITY,
-        limit=limit,
-        filter_jurisdiction="GB",
-    )
+    if local_file:
+        counts = import_bods_file(
+            filepath=local_file,
+            source_id=source_id,
+            credibility_score=BODS_UK_PSC_CREDIBILITY,
+            limit=limit,
+            filter_jurisdiction=jur,
+        )
+    else:
+        counts = import_bods_source(
+            source_name=UK_PSC_SOURCE_NAME,
+            url=UK_PSC_BODS_URL,
+            source_id=source_id,
+            credibility_score=BODS_UK_PSC_CREDIBILITY,
+            limit=limit,
+            filter_jurisdiction=jur,
+        )
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts}

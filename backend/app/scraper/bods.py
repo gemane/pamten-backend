@@ -463,8 +463,11 @@ def _process_relationship_statement(
             except (TypeError, ValueError):
                 pass
 
-        if mapped is None:
-            # "shareholding" or unmapped type — derive from stake %
+        if interest_type not in _INTEREST_OWNERSHIP_TYPE:
+            # Unknown / future interest type — fall back to minority
+            ownership_type = derive_ownership_type(stake) if stake is not None else "minority"
+        elif mapped is None:
+            # "shareholding" — derive from stake %
             ownership_type = derive_ownership_type(stake)
         else:
             ownership_type = mapped

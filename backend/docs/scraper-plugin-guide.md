@@ -393,6 +393,52 @@ but is a heuristic — it will occasionally misclassify unusual names.
 
 ---
 
+## Importing BODS Data
+
+BODS (Beneficial Ownership Data Standard) datasets are large
+bulk imports, not real-time scrapers. They should be run
+manually, not on a schedule.
+
+### Recommended approach
+
+For initial data population, download files locally first
+to avoid re-downloading on retries:
+
+```bash
+# Download GLEIF (1.1 GB)
+wget https://oo-bodsdata.s3.amazonaws.com/data/gleif_version_0_4/json.zip \
+     -O /data/gleif.zip
+
+# Download UK PSC (3.3 GB)
+wget https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip \
+     -O /data/uk_psc.zip
+```
+
+Then import with local file path:
+
+```bash
+# Test with limit first
+curl -X POST "/scraper/bods/gleif/run?limit=1000&local_file=/data/gleif.zip"
+
+# Import specific jurisdiction only
+curl -X POST "/scraper/bods/gleif/run?filter_jurisdiction=DE&local_file=/data/gleif.zip"
+
+# Full import (takes hours for large files)
+curl -X POST "/scraper/bods/uk-psc/run?local_file=/data/uk_psc.zip"
+```
+
+### Licence
+
+Both datasets are published under CC0 1.0 Universal.
+No attribution required but Pamten credits them in NOTICE.
+
+### Credibility scores
+
+- GLEIF:  92 (authoritative LEI data, corporate ownership)
+- UK PSC: 97 (official UK legal register, beneficial ownership)
+
+---
+
 ## Checklist before deploying a new plugin
 
 - [ ] `scrape_company()` returns `None` (not an exception) when not found

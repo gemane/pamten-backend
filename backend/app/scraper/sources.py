@@ -12,8 +12,14 @@ KNOWN_SOURCES = {
     "wikidata":         "Wikidata — structured corporate data via SPARQL",
     "sec_edgar":        "SEC EDGAR — legally required US ownership filings (SC 13D/13G, Form 3/4)",
     "open_corporates":  "OpenCorporates — official company registers from 200+ jurisdictions",
-    "gleif":            "GLEIF — Global LEI Foundation legal-entity identifiers (CC0)",
-    "uk_psc":           "UK PSC — Companies House persons-with-significant-control register (CC0)",
+    "bods_gleif": (
+        "GLEIF – Global Legal Entity Identifier "
+        "(corporate ownership, worldwide, CC0)"
+    ),
+    "bods_uk_psc": (
+        "UK People with Significant Control Register "
+        "(beneficial ownership, UK companies, CC0)"
+    ),
 }
 
 

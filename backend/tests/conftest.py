@@ -18,8 +18,8 @@ _TEST_ENV = {
     "SCRAPER_ENABLED":               "true",
     "SCRAPER_SEC_EDGAR_ENABLED":     "true",
     "SCRAPER_OPENCORPORATES_ENABLED":"true",
-    "SCRAPER_GLEIF_ENABLED":         "true",
-    "SCRAPER_UK_PSC_ENABLED":        "true",
+    "SCRAPER_BODS_GLEIF_ENABLED":    "true",
+    "SCRAPER_BODS_UK_PSC_ENABLED":   "true",
     "OPENCORPORATES_API_KEY":        "",
     "SECRET_KEY":                    "test-secret",
 }

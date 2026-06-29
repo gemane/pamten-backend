@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.scraper.runner import (
     run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
-    run_scrape_bods_gleif, run_scrape_bods_uk_psc,
+    run_import_bods_gleif, run_import_bods_uk_psc,
 )
 from app.auth.dependencies import require_admin
 from app.database import db
@@ -28,8 +28,8 @@ def scraper_status():
         "enabled":                    settings.SCRAPER_ENABLED,
         "sec_edgar_enabled":          settings.SCRAPER_SEC_EDGAR_ENABLED,
         "open_corporates_enabled":    settings.SCRAPER_OPENCORPORATES_ENABLED,
-        "gleif_enabled":              settings.SCRAPER_GLEIF_ENABLED,
-        "uk_psc_enabled":             settings.SCRAPER_UK_PSC_ENABLED,
+        "bods_gleif_enabled":         settings.SCRAPER_BODS_GLEIF_ENABLED,
+        "bods_uk_psc_enabled":        settings.SCRAPER_BODS_UK_PSC_ENABLED,
     }
 
 
@@ -818,83 +818,126 @@ def migrate_ownership_types(_: dict = Depends(require_admin)):
     }
 
 
-# ── GLEIF BODS endpoints ──────────────────────────────────────────────────────
+# ── BODS endpoints ────────────────────────────────────────────────────────────
 
-@router.get("/gleif/status")
-def gleif_status():
-    """Check whether GLEIF BODS import is enabled."""
+@router.get("/bods/status")
+def bods_status():
+    """Check enabled status for both BODS sources (GLEIF and UK PSC)."""
     return {
-        "enabled":        settings.SCRAPER_ENABLED and settings.SCRAPER_GLEIF_ENABLED,
-        "master_switch":  settings.SCRAPER_ENABLED,
-        "gleif_switch":   settings.SCRAPER_GLEIF_ENABLED,
+        "gleif_enabled":      settings.SCRAPER_ENABLED and settings.SCRAPER_BODS_GLEIF_ENABLED,
+        "uk_psc_enabled":     settings.SCRAPER_ENABLED and settings.SCRAPER_BODS_UK_PSC_ENABLED,
+        "master_switch":      settings.SCRAPER_ENABLED,
+        "bods_gleif_switch":  settings.SCRAPER_BODS_GLEIF_ENABLED,
+        "bods_uk_psc_switch": settings.SCRAPER_BODS_UK_PSC_ENABLED,
     }
 
 
-@router.post("/gleif/import")
-def gleif_import(
+@router.post("/bods/gleif/run")
+def bods_gleif_run(
     limit: int | None = Query(
         None, ge=1,
-        description="Max entity statements to import. Omit for the full ~5 M-entity dataset.",
+        description="Max entity statements to process. Omit for the full ~5 M-entity dataset.",
     ),
     filter_jurisdiction: str | None = Query(
         None, min_length=2, max_length=2,
-        description="ISO alpha-2 country code to restrict imports, e.g. 'DE'.",
+        description="ISO alpha-2 country code to restrict entity imports, e.g. 'DE'.",
+    ),
+    local_file: str | None = Query(
+        None,
+        description="Path to a pre-downloaded .zip or .json file. "
+                    "Skips the ~1.1 GB download when given.",
     ),
     _: dict = Depends(require_admin),
 ):
     """
-    Download and import the full GLEIF BODS dataset (CC0) from Open Ownership.
-    Downloads ~1.1 GB; allow 10–30 minutes for the full dataset.
-    Requires SCRAPER_ENABLED=true AND SCRAPER_GLEIF_ENABLED=true.
+    Import the GLEIF BODS dataset (CC0) into the graph.
+    Downloads ~1.1 GB if no local_file is given; allow 10–30 min for the full dataset.
+    Requires SCRAPER_ENABLED=true AND SCRAPER_BODS_GLEIF_ENABLED=true.
     """
     if not settings.SCRAPER_ENABLED:
         raise HTTPException(status_code=403,
             detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
-    if not settings.SCRAPER_GLEIF_ENABLED:
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
         raise HTTPException(status_code=403,
-            detail="GLEIF scraper is disabled. Set SCRAPER_GLEIF_ENABLED=true.")
+            detail="GLEIF scraper is disabled. Set SCRAPER_BODS_GLEIF_ENABLED=true.")
     try:
-        return run_scrape_bods_gleif(limit=limit, filter_jurisdiction=filter_jurisdiction)
+        return run_import_bods_gleif(
+            limit=limit,
+            filter_jurisdiction=filter_jurisdiction,
+            local_file=local_file,
+        )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GLEIF import failed: {e}")
 
 
-# ── UK PSC BODS endpoints ─────────────────────────────────────────────────────
-
-@router.get("/uk-psc/status")
-def uk_psc_status():
-    """Check whether UK PSC BODS import is enabled."""
-    return {
-        "enabled":        settings.SCRAPER_ENABLED and settings.SCRAPER_UK_PSC_ENABLED,
-        "master_switch":  settings.SCRAPER_ENABLED,
-        "uk_psc_switch":  settings.SCRAPER_UK_PSC_ENABLED,
-    }
-
-
-@router.post("/uk-psc/import")
-def uk_psc_import(
+@router.post("/bods/uk-psc/run")
+def bods_uk_psc_run(
     limit: int | None = Query(
         None, ge=1,
-        description="Max entity statements to import. Omit for the full ~8 M-entity dataset.",
+        description="Max entity statements to process. Omit for the full ~8 M-entity dataset.",
+    ),
+    local_file: str | None = Query(
+        None,
+        description="Path to a pre-downloaded .zip or .json file. "
+                    "Skips the ~3.3 GB download when given.",
     ),
     _: dict = Depends(require_admin),
 ):
     """
-    Download and import the UK PSC BODS dataset (CC0) from Open Ownership.
-    Downloads ~3.3 GB; allow 30–90 minutes for the full dataset.
-    Requires SCRAPER_ENABLED=true AND SCRAPER_UK_PSC_ENABLED=true.
+    Import the UK PSC BODS dataset (CC0) into the graph.
+    Downloads ~3.3 GB if no local_file is given; allow 30–90 min for the full dataset.
+    Requires SCRAPER_ENABLED=true AND SCRAPER_BODS_UK_PSC_ENABLED=true.
     """
     if not settings.SCRAPER_ENABLED:
         raise HTTPException(status_code=403,
             detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
-    if not settings.SCRAPER_UK_PSC_ENABLED:
+    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
         raise HTTPException(status_code=403,
-            detail="UK PSC scraper is disabled. Set SCRAPER_UK_PSC_ENABLED=true.")
+            detail="UK PSC scraper is disabled. Set SCRAPER_BODS_UK_PSC_ENABLED=true.")
     try:
-        return run_scrape_bods_uk_psc(limit=limit)
+        return run_import_bods_uk_psc(limit=limit, local_file=local_file)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"UK PSC import failed: {e}")
+
+
+@router.post("/bods/run-all")
+def bods_run_all(
+    limit: int | None = Query(None, ge=1, description="Max entity statements per source."),
+    _: dict = Depends(require_admin),
+):
+    """
+    Run both GLEIF and UK PSC imports if their respective flags are enabled.
+    Disabled sources are skipped and reported with status 'disabled'.
+    Requires SCRAPER_ENABLED=true.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+
+    results: dict = {}
+
+    if settings.SCRAPER_BODS_GLEIF_ENABLED:
+        try:
+            results["gleif"] = run_import_bods_gleif(limit=limit)
+        except PermissionError as e:
+            results["gleif"] = {"status": "disabled", "detail": str(e)}
+        except Exception as e:
+            results["gleif"] = {"status": "error", "detail": str(e)}
+    else:
+        results["gleif"] = {"status": "disabled"}
+
+    if settings.SCRAPER_BODS_UK_PSC_ENABLED:
+        try:
+            results["uk_psc"] = run_import_bods_uk_psc(limit=limit)
+        except PermissionError as e:
+            results["uk_psc"] = {"status": "disabled", "detail": str(e)}
+        except Exception as e:
+            results["uk_psc"] = {"status": "error", "detail": str(e)}
+    else:
+        results["uk_psc"] = {"status": "disabled"}
+
+    return {"status": "ok", "results": results}
