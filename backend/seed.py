@@ -1,149 +1,195 @@
+#!/usr/bin/env python3
 """
-Seed script – populates the database with example data.
-Run with: python seed.py
+Pamten seed script – populates the database with real-world ownership data.
+Run with: python3 seed.py [--region europe|americas|asia|middleeast|africa|oceania|all]
+Default: all regions
+
 Make sure your .env file is configured before running.
 """
 
-import httpx
-import json
+import argparse
+import sys
+import os
+import time
+from unittest.mock import patch
 
-BASE_URL = "http://localhost:8000"
+# ── Load .env before any app imports ─────────────────────────────────────────
+from dotenv import load_dotenv
+load_dotenv()
+
+# ── Override scraper flags before Settings() is instantiated ─────────────────
+os.environ["SCRAPER_ENABLED"]             = "true"
+os.environ["SCRAPER_SEC_EDGAR_ENABLED"]   = "true"
+
+from app.config import settings
+settings.SCRAPER_ENABLED           = True
+settings.SCRAPER_SEC_EDGAR_ENABLED = True
+
+from app.scraper.runner import run_scrape, run_scrape_sec_edgar
+from app.scraper.sources import _ensure_sources
+from app.database import db
 
 
-def post(path, data):
-    r = httpx.post(f"{BASE_URL}{path}", json=data)
-    r.raise_for_status()
-    return r.json()
+# ── Ensure ScraperSource nodes exist and are enabled ─────────────────────────
+
+def _enable_sources():
+    _ensure_sources()
+    with db.get_session() as session:
+        session.run(
+            "MATCH (s:ScraperSource) SET s.enabled = true"
+        )
+
+
+# ── Company list ──────────────────────────────────────────────────────────────
+
+COMPANIES = [
+    # (name,                          region,       use_sec_edgar)
+    ("AB InBev",                      "europe",      False),
+    ("Heineken",                      "europe",      False),
+    ("Carlsberg",                     "europe",      False),
+    ("Nestlé",                        "europe",      False),
+    ("Unilever",                      "europe",      False),
+    ("Bertelsmann",                   "europe",      False),
+    ("Axel Springer",                 "europe",      False),
+    ("Alphabet",                      "americas",    True),
+    ("Microsoft",                     "americas",    True),
+    ("Apple",                         "americas",    True),
+    ("News Corp",                     "americas",    True),
+    ("Grupo Televisa",                "americas",    False),
+    ("Embraer",                       "americas",    False),
+    ("MercadoLibre",                  "americas",    True),
+    ("Grupo Bimbo",                   "americas",    False),
+    ("SoftBank",                      "asia",        False),
+    ("Samsung Electronics",           "asia",        False),
+    ("Tata Group",                    "asia",        False),
+    ("Alibaba Group",                 "asia",        False),
+    ("CITIC Group",                   "asia",        False),
+    ("Saudi Aramco",                  "middleeast",  False),
+    ("Mubadala Investment Company",   "middleeast",  False),
+    ("Al Jazeera Media Network",      "middleeast",  False),
+    ("Naspers",                       "africa",      False),
+    ("Dangote Group",                 "africa",      False),
+    ("MTN Group",                     "africa",      False),
+    ("Wesfarmers",                    "oceania",     False),
+    ("Nine Entertainment",            "oceania",     False),
+]
+
+
+# ── Seeding logic ─────────────────────────────────────────────────────────────
+
+def seed_company(name: str, region: str, use_sec_edgar: bool) -> dict:
+    """
+    Seed one company. Returns a result dict with keys:
+      status: 'ok' | 'partial' | 'failed'
+      wikidata_nodes: int
+      sec_nodes: int
+      error: str | None
+    """
+    result = {"status": "ok", "wikidata_nodes": 0, "sec_nodes": 0, "error": None}
+
+    # Wikidata
+    try:
+        wd = run_scrape(name, depth=1)
+        result["wikidata_nodes"] = wd.get("total", 0)
+        if wd.get("status") == "no_results":
+            print(f"    Wikidata: no results")
+            result["status"] = "partial"
+        else:
+            print(f"    Wikidata: {wd['total']} nodes  (wikidata_id: {wd.get('wikidata_id', '?')})")
+    except Exception as e:
+        print(f"    Wikidata ERROR: {e}")
+        result["status"] = "partial"
+        result["error"] = str(e)
+
+    # SEC EDGAR (US-listed companies only)
+    if use_sec_edgar:
+        try:
+            sec = run_scrape_sec_edgar(name)
+            result["sec_nodes"] = sec.get("total", 0)
+            if sec.get("status") == "no_results":
+                print(f"    SEC EDGAR: no results")
+            else:
+                print(f"    SEC EDGAR: {sec['total']} nodes  (CIK: {sec.get('cik', '?')})")
+        except Exception as e:
+            print(f"    SEC EDGAR ERROR: {e}")
+            if result["status"] == "ok":
+                result["status"] = "partial"
+            if not result["error"]:
+                result["error"] = str(e)
+
+    if result["wikidata_nodes"] == 0 and result["sec_nodes"] == 0:
+        result["status"] = "failed"
+
+    return result
 
 
 def main():
-    print("🌱 Seeding database...")
+    parser = argparse.ArgumentParser(description="Seed Pamten database with real-world ownership data.")
+    parser.add_argument(
+        "--region",
+        default="all",
+        choices=["all", "europe", "americas", "asia", "middleeast", "africa", "oceania"],
+        help="Region to seed (default: all)",
+    )
+    args = parser.parse_args()
 
-    # --- Sources ---
-    print("\n📰 Creating sources...")
-    nyt = post("/sources/", {
-        "name": "New York Times",
-        "url": "https://nytimes.com",
-        "credibility_score": 95,
-        "type": "news"
-    })
-    wikipedia = post("/sources/", {
-        "name": "Wikipedia",
-        "url": "https://wikipedia.org",
-        "credibility_score": 75,
-        "type": "wikipedia"
-    })
-    print(f"  ✓ {nyt['name']} (id: {nyt['id']})")
-    print(f"  ✓ {wikipedia['name']} (id: {wikipedia['id']})")
+    companies = COMPANIES if args.region == "all" else [
+        c for c in COMPANIES if c[1] == args.region
+    ]
 
-    # --- Entities ---
-    print("\n🏢 Creating entities...")
-    ab_inbev = post("/entities/", {
-        "name": "AB InBev",
-        "type": "company",
-        "country": "BE",
-        "founded": 2008,
-        "revenue": 57786000000,
-        "description": "Anheuser-Busch InBev, world's largest beer company."
-    })
-    corona = post("/entities/", {
-        "name": "Corona",
-        "type": "brand",
-        "country": "MX",
-        "founded": 1925,
-        "description": "Mexican beer brand owned by AB InBev outside Mexico."
-    })
-    modelo = post("/entities/", {
-        "name": "Grupo Modelo",
-        "type": "company",
-        "country": "MX",
-        "founded": 1925,
-        "description": "Mexican brewery, maker of Corona."
-    })
-    print(f"  ✓ {ab_inbev['name']} (id: {ab_inbev['id']})")
-    print(f"  ✓ {corona['name']} (id: {corona['id']})")
-    print(f"  ✓ {modelo['name']} (id: {modelo['id']})")
+    if not companies:
+        print(f"No companies found for region: {args.region}")
+        sys.exit(1)
 
-    # --- Locations ---
-    print("\n📍 Creating locations...")
-    leuven = post("/locations/", {
-        "city": "Leuven",
-        "country": "BE",
-        "country_full": "Belgium",
-        "region": "Europe",
-        "latitude": 50.8798,
-        "longitude": 4.7005
-    })
-    mexico_city = post("/locations/", {
-        "city": "Mexico City",
-        "country": "MX",
-        "country_full": "Mexico",
-        "region": "Latin America",
-        "latitude": 19.4326,
-        "longitude": -99.1332
-    })
-    print(f"  ✓ {leuven['city']} (id: {leuven['id']})")
-    print(f"  ✓ {mexico_city['city']} (id: {mexico_city['id']})")
+    print(f"\n🌱  Pamten seed — region: {args.region} ({len(companies)} companies)")
+    print("─" * 60)
 
-    # --- Set HQ locations ---
-    print("\n🗺️  Setting headquarters...")
-    httpx.post(f"{BASE_URL}/locations/{ab_inbev['id']}/headquartered-in/{leuven['id']}").raise_for_status()
-    httpx.post(f"{BASE_URL}/locations/{modelo['id']}/headquartered-in/{mexico_city['id']}").raise_for_status()
-    print(f"  ✓ AB InBev → Leuven")
-    print(f"  ✓ Grupo Modelo → Mexico City")
+    # Ensure ScraperSource nodes exist and are enabled
+    print("\n⚙️   Enabling scrapers in DB...")
+    try:
+        _enable_sources()
+        print("    Sources enabled.")
+    except Exception as e:
+        print(f"    WARNING: could not enable sources: {e}")
+        print("    Continuing — sources may already be enabled.")
 
-    # --- Persons ---
-    print("\n👤 Creating persons...")
-    michel = post("/persons/", {
-        "first_name": "Michel",
-        "last_name": "Doukeris",
-        "nationality": "BR",
-        "description": "CEO of AB InBev since 2021.",
-        "wikipedia_url": "https://en.wikipedia.org/wiki/Michel_Doukeris"
-    })
-    print(f"  ✓ {michel['full_name']} (id: {michel['id']})")
+    # Seed each company
+    succeeded = []
+    failed    = []
+    total_wikidata_nodes = 0
+    total_sec_nodes      = 0
 
-    # --- Relationships ---
-    print("\n🔗 Creating ownership relationships...")
-    post("/relationships/owns", {
-        "owner_id": ab_inbev["id"],
-        "owned_id": modelo["id"],
-        "stake_percent": 100.0,
-        "ownership_type": "full",
-        "since": "2013-06-04",
-        "until": None,
-        "value_usd": 20100000000,
-        "source_id": wikipedia["id"],
-        "credibility_score": 80
-    })
-    post("/relationships/owns", {
-        "owner_id": modelo["id"],
-        "owned_id": corona["id"],
-        "stake_percent": 100.0,
-        "ownership_type": "full",
-        "since": "1925-01-01",
-        "until": None,
-        "source_id": wikipedia["id"],
-        "credibility_score": 80
-    })
-    print(f"  ✓ AB InBev → Grupo Modelo (100%)")
-    print(f"  ✓ Grupo Modelo → Corona (100%)")
+    for name, region, use_sec in companies:
+        scrapers = "Wikidata" + (" + SEC EDGAR" if use_sec else "")
+        print(f"\n[{region}] {name}  ({scrapers})")
+        result = seed_company(name, region, use_sec)
+        total_wikidata_nodes += result["wikidata_nodes"]
+        total_sec_nodes      += result["sec_nodes"]
 
-    # --- Role ---
-    print("\n👔 Creating roles...")
-    post("/relationships/roles", {
-        "person_id": michel["id"],
-        "entity_id": ab_inbev["id"],
-        "role": "CEO",
-        "since": "2021-07-01",
-        "until": None,
-        "source_id": nyt["id"],
-        "credibility_score": 95
-    })
-    print(f"  ✓ Michel Doukeris → CEO of AB InBev")
+        if result["status"] == "failed":
+            failed.append((name, result["error"] or "no data returned"))
+            print(f"    ⚠️  No data retrieved")
+        else:
+            succeeded.append(name)
+            print(f"    ✅ Done")
 
-    print("\n✅ Seed complete! Visit http://localhost:8000/docs to explore the API.")
-    print(f"\n🔍 Try: GET /search/entity/{ab_inbev['id']}/full-profile")
+        # Brief pause between companies to be polite to external APIs
+        time.sleep(0.5)
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    print("\n" + "═" * 60)
+    print(f"  ✅  Seeded:  {len(succeeded)} / {len(companies)} companies")
+    if failed:
+        print(f"  ⚠️   Failed:  {len(failed)} companies")
+        for name, err in failed:
+            print(f"        • {name}: {err}")
+    print(f"  📊  Wikidata nodes : {total_wikidata_nodes}")
+    print(f"  📊  SEC EDGAR nodes: {total_sec_nodes}")
+    print(f"  📊  Total nodes    : {total_wikidata_nodes + total_sec_nodes}")
+    print("═" * 60)
+
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
