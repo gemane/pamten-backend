@@ -17,9 +17,6 @@ jobs:
       ARCADEDB_PASSWORD: test
       ARCADEDB_DATABASE: test
       SECRET_KEY: test-secret-key-for-ci
-      SCRAPER_ENABLED: "false"
-      SCRAPER_SEC_EDGAR_ENABLED: "false"
-      SCRAPER_OPENCORPORATES_ENABLED: "false"
 
     steps:
       - uses: actions/checkout@v4
