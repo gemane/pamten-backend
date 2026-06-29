@@ -1,10 +1,24 @@
 # Pamten Backend
 
+![CI](https://github.com/gemane/pamten-backend/actions/workflows/ci.yml/badge.svg)
+
 FastAPI backend for the Pamten ownership mapping platform. Stores corporate ownership hierarchies in an ArcadeDB graph database and exposes a REST API consumed by the frontend.
 
 **Live API:** https://pamten-backend-yrbh.onrender.com  
 **Docs (Swagger):** https://pamten-backend-yrbh.onrender.com/docs  
 **Frontend:** https://pamten-frontend.onrender.com
+
+---
+
+## Branch protection
+
+To require CI to pass before any merge into `main`:
+
+1. Go to **Settings → Branches → Add rule**
+2. Branch name pattern: `main`
+3. Enable: **Require status checks to pass before merging**
+4. Select the **test** job as required
+5. Enable: **Require branches to be up to date before merging**
 
 ---
 

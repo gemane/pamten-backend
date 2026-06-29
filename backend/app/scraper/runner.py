@@ -17,7 +17,7 @@ import logging
 from app.config import settings
 from app.database import db
 from app.scraper.wikidata import search_entity, fetch_company_data
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name
 from app.scraper.sources import get_source_enabled
 
 log = logging.getLogger(__name__)
@@ -896,7 +896,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
             )
             scraped.append({"type": "person", "name": name, "role": role})
         else:
-            entity_id = _upsert_entity_by_name(name=name, entity_type="company")
+            _upsert_entity_by_name(name=name, entity_type="company")
             scraped.append({"type": "entity", "name": name, "role": role})
 
         log.info("OpenCorporates: wrote %r → %r (%s)", name, data["name"], role)

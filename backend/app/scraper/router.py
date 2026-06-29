@@ -1,3 +1,4 @@
+import re as _re
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from app.config import settings
@@ -5,6 +6,7 @@ from app.scraper.runner import run_scrape, run_scrape_sec_edgar, run_scrape_all,
 from app.auth.dependencies import require_admin
 from app.database import db
 from app.db.arcadedb import run_query, run_command
+from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -445,9 +447,6 @@ def proxy_statement_run(
     return fetch_proxy_ownership(company)
 
 
-import re as _re
-from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
-
 # Common nickname → formal first-name mappings
 _NICKNAMES: dict[str, str] = {
     "larry":  "lawrence",
@@ -605,7 +604,7 @@ def proxy_statement_write(
             {"norm": company_norm, "name": company},
         )
     if not company_rows:
-        hint = f" (try passing entity_id directly)" if not entity_id else ""
+        hint = " (try passing entity_id directly)" if not entity_id else ""
         return {**proxy, "db_error": f"Company not found in DB: '{company}'{hint}"}
 
     company_id   = company_rows[0]["id"]

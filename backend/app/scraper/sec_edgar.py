@@ -244,7 +244,10 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
             log.debug("SEC EDGAR: browse-edgar (%s) failed for %r: %s", form_type, name, exc)
             continue
 
-        root = ET.fromstring(resp.content)
+        try:
+            root = ET.fromstring(resp.content)
+        except (ET.ParseError, TypeError):
+            continue
         ns_a = {"a": "http://www.w3.org/2005/Atom"}
 
         # Collect all candidates, then pick highest similarity so we don't

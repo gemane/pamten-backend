@@ -57,7 +57,7 @@ def get_full_profile(entity_id: str):
         return {
             "entity": dict(record["e"]),
             "headquarters": dict(record["hq"]) if record["hq"] else None,
-            "operations": [dict(l) for l in record["operations"] if l],
+            "operations": [dict(loc) for loc in record["operations"] if loc],
             "owners": [
                 {
                     "owner": dict(o["owner"]),
