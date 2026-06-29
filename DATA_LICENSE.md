@@ -38,6 +38,8 @@ The Pamten database aggregates data from the following sources:
 |---|---|---|
 | Wikidata | CC0 1.0 | Compatible with ODbL |
 | SEC EDGAR | Public domain (US Gov) | Compatible with ODbL |
+| GLEIF (Global LEI Foundation) | CC0 1.0 | Compatible with ODbL |
+| UK Companies House PSC Register | CC0 1.0 | Compatible with ODbL |
 | OpenCorporates | Varies by tier | Requires separate agreement for redistribution |
 
 This dual-licence model (MIT for code, ODbL for data) follows the same

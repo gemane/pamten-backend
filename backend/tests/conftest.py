@@ -11,12 +11,15 @@ import os
 
 # Set at module level — these run before any test-file import
 _TEST_ENV = {
-    "NEO4J_URI":                     "bolt://localhost:7687",
-    "NEO4J_USERNAME":                "neo4j",
-    "NEO4J_PASSWORD":                "test",
+    "ARCADEDB_URL":                  "http://localhost:2480",
+    "ARCADEDB_USERNAME":             "test",
+    "ARCADEDB_PASSWORD":             "test",
+    "ARCADEDB_DATABASE":             "test",
     "SCRAPER_ENABLED":               "true",
     "SCRAPER_SEC_EDGAR_ENABLED":     "true",
     "SCRAPER_OPENCORPORATES_ENABLED":"true",
+    "SCRAPER_GLEIF_ENABLED":         "true",
+    "SCRAPER_UK_PSC_ENABLED":        "true",
     "OPENCORPORATES_API_KEY":        "",
     "SECRET_KEY":                    "test-secret",
 }

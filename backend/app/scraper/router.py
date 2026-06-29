@@ -2,7 +2,10 @@ import re as _re
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from app.config import settings
-from app.scraper.runner import run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates
+from app.scraper.runner import (
+    run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
+    run_scrape_bods_gleif, run_scrape_bods_uk_psc,
+)
 from app.auth.dependencies import require_admin
 from app.database import db
 from app.db.arcadedb import run_query, run_command
@@ -25,6 +28,8 @@ def scraper_status():
         "enabled":                    settings.SCRAPER_ENABLED,
         "sec_edgar_enabled":          settings.SCRAPER_SEC_EDGAR_ENABLED,
         "open_corporates_enabled":    settings.SCRAPER_OPENCORPORATES_ENABLED,
+        "gleif_enabled":              settings.SCRAPER_GLEIF_ENABLED,
+        "uk_psc_enabled":             settings.SCRAPER_UK_PSC_ENABLED,
     }
 
 
@@ -811,3 +816,85 @@ def migrate_ownership_types(_: dict = Depends(require_admin)):
         "skipped": skipped,
         "detail":  detail,
     }
+
+
+# ── GLEIF BODS endpoints ──────────────────────────────────────────────────────
+
+@router.get("/gleif/status")
+def gleif_status():
+    """Check whether GLEIF BODS import is enabled."""
+    return {
+        "enabled":        settings.SCRAPER_ENABLED and settings.SCRAPER_GLEIF_ENABLED,
+        "master_switch":  settings.SCRAPER_ENABLED,
+        "gleif_switch":   settings.SCRAPER_GLEIF_ENABLED,
+    }
+
+
+@router.post("/gleif/import")
+def gleif_import(
+    limit: int | None = Query(
+        None, ge=1,
+        description="Max entity statements to import. Omit for the full ~5 M-entity dataset.",
+    ),
+    filter_jurisdiction: str | None = Query(
+        None, min_length=2, max_length=2,
+        description="ISO alpha-2 country code to restrict imports, e.g. 'DE'.",
+    ),
+    _: dict = Depends(require_admin),
+):
+    """
+    Download and import the full GLEIF BODS dataset (CC0) from Open Ownership.
+    Downloads ~1.1 GB; allow 10–30 minutes for the full dataset.
+    Requires SCRAPER_ENABLED=true AND SCRAPER_GLEIF_ENABLED=true.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+    if not settings.SCRAPER_GLEIF_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="GLEIF scraper is disabled. Set SCRAPER_GLEIF_ENABLED=true.")
+    try:
+        return run_scrape_bods_gleif(limit=limit, filter_jurisdiction=filter_jurisdiction)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"GLEIF import failed: {e}")
+
+
+# ── UK PSC BODS endpoints ─────────────────────────────────────────────────────
+
+@router.get("/uk-psc/status")
+def uk_psc_status():
+    """Check whether UK PSC BODS import is enabled."""
+    return {
+        "enabled":        settings.SCRAPER_ENABLED and settings.SCRAPER_UK_PSC_ENABLED,
+        "master_switch":  settings.SCRAPER_ENABLED,
+        "uk_psc_switch":  settings.SCRAPER_UK_PSC_ENABLED,
+    }
+
+
+@router.post("/uk-psc/import")
+def uk_psc_import(
+    limit: int | None = Query(
+        None, ge=1,
+        description="Max entity statements to import. Omit for the full ~8 M-entity dataset.",
+    ),
+    _: dict = Depends(require_admin),
+):
+    """
+    Download and import the UK PSC BODS dataset (CC0) from Open Ownership.
+    Downloads ~3.3 GB; allow 30–90 minutes for the full dataset.
+    Requires SCRAPER_ENABLED=true AND SCRAPER_UK_PSC_ENABLED=true.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+    if not settings.SCRAPER_UK_PSC_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="UK PSC scraper is disabled. Set SCRAPER_UK_PSC_ENABLED=true.")
+    try:
+        return run_scrape_bods_uk_psc(limit=limit)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"UK PSC import failed: {e}")

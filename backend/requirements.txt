@@ -12,3 +12,4 @@ bcrypt==3.2.2
 beautifulsoup4==4.12.3
 lxml==5.2.2
 ruff==0.4.4
+ijson==3.3.0
