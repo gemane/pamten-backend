@@ -6,6 +6,27 @@ the SEC EDGAR and OpenCorporates plugins.
 
 ---
 
+## Data Licence
+
+All data collected by Pamten scrapers and stored in the
+Pamten database is published under ODbL v1.0.
+
+When writing a new scraper plugin, ensure:
+1. The source data licence is compatible with ODbL
+   - CC0: ✅ compatible
+   - Public domain: ✅ compatible
+   - Open Government Licence: ✅ compatible
+   - Creative Commons Attribution (CC-BY): ✅ compatible
+   - CC-BY-SA: ✅ compatible (share-alike aligns with ODbL)
+   - Proprietary / All rights reserved: ❌ not compatible
+   - OpenCorporates free tier: ❌ requires separate agreement
+
+2. Add the source licence to the NOTICE file
+3. Set an appropriate credibility_score for the source
+4. Document the source licence in the scraper file header
+
+---
+
 ## Architecture overview
 
 Each scraper plugin consists of three layers:

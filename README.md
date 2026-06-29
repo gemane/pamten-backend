@@ -1,6 +1,8 @@
 # Pamten Backend
 
 ![CI](https://github.com/gemane/pamten-backend/actions/workflows/ci.yml/badge.svg)
+[![Licence: MIT](https://img.shields.io/badge/Code-MIT-yellow.svg)](LICENSE)
+[![Data Licence: ODbL](https://img.shields.io/badge/Data-ODbL-brightgreen.svg)](DATA_LICENSE.md)
 
 FastAPI backend for the Pamten ownership mapping platform. Stores corporate ownership hierarchies in an ArcadeDB graph database and exposes a REST API consumed by the frontend.
 
@@ -250,6 +252,26 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 ## Deployment
 
 Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`.
+
+---
+
+## Licence
+
+### Source Code
+The Pamten source code is licensed under the
+[MIT Licence](LICENSE).
+
+### Database
+The Pamten ownership database is licensed under the
+[Open Database Licence (ODbL) v1.0](DATA_LICENSE.md).
+
+You are free to copy, distribute and use the data,
+as long as you attribute Pamten and share any adapted
+databases under ODbL. See [DATA_LICENSE.md](DATA_LICENSE.md)
+for full details.
+
+This dual licence model follows the same approach as
+[OpenStreetMap](https://www.openstreetmap.org/copyright).
 
 ---
 
