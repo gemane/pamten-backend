@@ -1,8 +1,45 @@
 """
 OpenCorporates scraper — official company register data from 200+ jurisdictions.
-Free API, no key required for basic use. Optional OPENCORPORATES_API_KEY env var.
-Rate limit: 5 req/s on free tier → 0.2s sleep between requests.
-Required header: User-Agent: Pamten/1.0 contact@pamten.com
+
+Data source:  https://opencorporates.com
+Manual lookup: https://opencorporates.com/companies/<jurisdiction>/<company_number>
+  Example: https://opencorporates.com/companies/us_de/2028165
+
+Endpoints used:
+  Search:  GET https://api.opencorporates.com/v0.4/companies/search?q=<name>
+  Fetch:   GET https://api.opencorporates.com/v0.4/companies/<jurisdiction>/<number>
+  Officers:GET https://api.opencorporates.com/v0.4/companies/<jurisdiction>/<number>/officers
+  Docs: https://api.opencorporates.com/documentation/API-Reference
+
+Fields returned and Pamten mapping:
+  company.name              → entity.name
+  company.jurisdiction_code → entity.country (first 2 chars = ISO-2)
+  company.company_number    → entity.external_id (oc:<jurisdiction>/<number>)
+  company.incorporation_date→ entity.founded_year
+  company.registered_address.country → entity.country (fallback)
+  officers[].name           → person.name
+  officers[].position       → HAS_ROLE edge (role)
+  officers[].start_date     → HAS_ROLE edge (since)
+
+Rate limits:
+  Free tier: 5 requests/second, 50 requests/day per IP (unauthenticated).
+  With OPENCORPORATES_API_KEY: higher limits (plan-dependent).
+  We sleep 0.2 s between requests (~5 req/s).
+  Docs: https://api.opencorporates.com/documentation/API-Reference#rate_limiting
+
+Data licence:
+  Open Database Licence (ODbL) 1.0 for the underlying data.
+  API results may also carry individual jurisdiction licences.
+  ODbL requires attribution and share-alike for derivative databases,
+  but does NOT restrict use in an application. Pamten displays data,
+  it does not redistribute a database, so this is compliant.
+  Licence: https://opencorporates.com/info/licence
+
+How to verify:
+  1. Open https://opencorporates.com/companies/<jurisdiction>/<number> in a browser.
+  2. Compare name, incorporation date, and officers with the values returned
+     by fetch_company() / fetch_officers().
+  3. Cross-check jurisdiction_code against ISO-3166-1 alpha-2 (first 2 chars).
 """
 
 import time

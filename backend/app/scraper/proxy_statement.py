@@ -1,11 +1,42 @@
 """
 SEC EDGAR DEF 14A (proxy statement) scraper — POC.
 
-Extracts the beneficial ownership table from the most recent annual proxy
-filing to get per-person voting power percentages for companies with
-multiple share classes (e.g. Alphabet Class A / Class B).
+Data source:  https://www.sec.gov
+Manual lookup:
+  Search proxy filings: https://www.sec.gov/cgi-bin/browse-edgar
+    Action: getcompany, Type: DEF 14A, company name or CIK
+  Direct example: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=DEF+14A&dateb=&owner=include&count=10&search_text=
 
-POC: returns parsed data only; does not write to the database.
+Endpoints used:
+  GET https://data.sec.gov/submissions/CIK<10-digit-cik>.json
+    — filing index to find the most recent DEF 14A accession number
+  GET https://www.sec.gov/Archives/edgar/data/<CIK>/<accession>/<primary-doc>.htm
+    — HTML of the proxy statement, parsed with BeautifulSoup
+
+Fields returned and Pamten mapping:
+  Beneficial ownership table in the proxy HTML:
+    Person/entity name → person or entity node
+    Share class        → ownership.share_class (e.g. "Class A", "Class B")
+    % voting power     → ownership.voting_percent (replaces stake_percent for dual-class)
+    % economic interest→ ownership.stake_percent
+
+  This data supplements Form 3/4 specifically for companies with dual/multi-class
+  share structures where voting power differs from economic ownership.
+
+Rate limits:
+  Same as sec_edgar.py — max 10 req/s, 0.12 s sleep, User-Agent required.
+  Docs: https://www.sec.gov/os/accessing-edgar-data
+
+Data licence:
+  US federal government works — public domain (17 U.S.C. § 105).
+
+How to verify:
+  1. Download the DEF 14A filing manually from EDGAR for the target company.
+  2. Find the "Security Ownership of Certain Beneficial Owners and Management" table.
+  3. Compare the parsed percentages with what the scraper returns for that CIK.
+
+Note: POC status — returns parsed data only; does not write to the database.
+HTML structure varies widely across companies and years; may require tuning per issuer.
 """
 
 import re

@@ -1,15 +1,15 @@
-fastapi==0.111.0
-uvicorn==0.29.0
-pydantic==2.7.0
-pydantic-settings==2.2.1
-python-dotenv==1.0.1
-httpx==0.27.0
-pytest==8.2.0
-pytest-asyncio==0.23.6
-PyJWT==2.8.0
-passlib[bcrypt]==1.7.4
-bcrypt==3.2.2
-beautifulsoup4==4.12.3
-lxml==5.2.2
-ruff==0.4.4
-ijson==3.3.0
+fastapi==0.111.0          # MIT
+uvicorn==0.29.0           # BSD-3-Clause
+pydantic==2.7.0           # MIT
+pydantic-settings==2.2.1  # MIT
+python-dotenv==1.0.1      # BSD-3-Clause
+httpx==0.27.0             # BSD-3-Clause
+pytest==8.2.0             # MIT
+pytest-asyncio==0.23.6    # Apache-2.0
+PyJWT==2.8.0              # MIT
+passlib[bcrypt]==1.7.4    # BSD-2-Clause
+bcrypt==3.2.2             # Apache-2.0
+beautifulsoup4==4.12.3    # MIT
+lxml==5.2.2               # BSD-3-Clause
+ruff==0.4.4               # MIT
+ijson==3.3.0              # BSD-3-Clause
