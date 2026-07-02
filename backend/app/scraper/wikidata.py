@@ -1,7 +1,41 @@
 """
-Wikidata client — search and SPARQL fetch.
-All requests include a User-Agent as required by Wikimedia policy.
-A small sleep is added between calls to be a good citizen.
+Wikidata scraper — company search and structured SPARQL fetch.
+
+Data source:  https://www.wikidata.org
+Manual lookup: https://www.wikidata.org/wiki/<QID>  (e.g. Q380 for Apple Inc.)
+
+Endpoints used:
+  Search:  GET https://www.wikidata.org/w/api.php
+             ?action=wbsearchentities&search=<name>&language=en&type=item
+  SPARQL:  GET https://query.wikidata.org/sparql?query=<SPARQL>&format=json
+             Fetches basic info, subsidiaries, parent org, and CEO for a QID.
+
+Fields returned and Pamten mapping:
+  itemLabel        → entity.name
+  itemDescription  → entity.description
+  instance (P31)   → used to classify entity type (company / person / etc.)
+  countryCode      → entity.country (ISO-2)
+  founded (P571)   → entity.founded_year
+  revenue (P2139)  → entity.revenue_usd
+  subsidiary (P355)→ OWNS edge (target entity)
+  parent (P749)    → OWNS edge (source entity)
+  ceo (P169)       → person node + HAS_ROLE edge (role="CEO")
+
+Rate limits:
+  Wikimedia policy: no hard public limit, but requests must include a User-Agent
+  and should be polite. We sleep 0.4 s between calls (~2.5 req/s).
+  SPARQL endpoint may return 429 under heavy load — callers should retry.
+  Docs: https://www.wikidata.org/wiki/Wikidata:Data_access#Rate_limits
+
+Data licence:
+  CC0 1.0 Universal (public domain dedication).
+  https://creativecommons.org/publicdomain/zero/1.0/
+
+How to verify:
+  1. Open https://www.wikidata.org/wiki/<QID> in a browser.
+  2. Compare P31 (instance of), P17 (country), P355 (subsidiaries), P169 (CEO)
+     with the values returned by fetch_company_data().
+  3. Run the SPARQL query directly at https://query.wikidata.org/ to inspect raw rows.
 """
 
 import time
