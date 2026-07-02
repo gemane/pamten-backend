@@ -1,12 +1,42 @@
 """
 SEC EDGAR scraper — ownership filings (SC 13D/13G) and executive data (Form 3/4).
-No API key required; fully public data.
-Rate limit: 10 req/s — 0.12s sleep between requests.
-Required header: User-Agent: Pamten/1.0 contact@pamten.com
 
-Executive data comes from Form 3/4 (insider ownership reports), which are
-structured XML with explicit name and title fields. This is far more reliable
-than parsing DEF 14A proxy HTML.
+Data source:  https://www.sec.gov/cgi-bin/browse-edgar
+Manual lookup:
+  Company search: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=<name>
+  Submissions:    https://data.sec.gov/submissions/CIK<10-digit-cik>.json
+  Tickers map:    https://www.sec.gov/files/company_tickers.json
+
+Endpoints used:
+  GET https://efts.sec.gov/LATEST/search-index         — full-text filing search
+  GET https://data.sec.gov/submissions/CIK<CIK>.json  — company filing index
+  GET https://www.sec.gov/Archives/edgar/data/<CIK>/<accession>/... — filing docs
+
+Fields returned and Pamten mapping:
+  Form 3/4 (insider ownership reports):
+    reportingOwner/reportingOwnerId/rptOwnerName → person.name (normalised from LAST FIRST)
+    reportingOwner/reportingOwnerRelationship/officerTitle → person.role
+    isDirector / isOfficer flags                → HAS_ROLE edge type
+    issuerName                                  → links to company entity
+  SC 13D/13G (large-stake disclosures):
+    percentOfClass in filing text               → ownership.stake_percent
+    filer name                                  → person/entity node
+
+Rate limits:
+  SEC fair-access policy: max 10 requests/second per IP.
+  We sleep 0.12 s between each request (~8.3 req/s).
+  Required header: User-Agent must identify the application and a contact address.
+  Docs: https://www.sec.gov/os/accessing-edgar-data
+
+Data licence:
+  All EDGAR filings are US federal government works — public domain (17 U.S.C. § 105).
+  Bulk download explicitly permitted: https://www.sec.gov/os/accessing-edgar-data
+
+How to verify:
+  1. Find the company CIK at https://www.sec.gov/cgi-bin/browse-edgar
+  2. Check https://data.sec.gov/submissions/CIK<CIK>.json for recent filings.
+  3. Open the Form 3/4 filing on EDGAR and compare the parsed name/role with
+     the XML at <Archives URL>/<accession>/<primary-doc>.xml.
 """
 
 import re
