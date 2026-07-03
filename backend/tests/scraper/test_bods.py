@@ -382,6 +382,56 @@ class TestProcessRelationshipStatement:
         assert captured["owned_id"] == "OWNED-UUID"
         assert captured["owner_id"] == "OWNER-UUID"
 
+    def test_shareholding_below_20_maps_to_minority(self):
+        # Thresholds: >50% majority, 20-50% controlling, <20% minority
+        from app.scraper.bods import _process_relationship_statement
+
+        stmt = {
+            "recordId":     "rel-minority",
+            "recordType":   "relationship",
+            "recordStatus": "new",
+            "recordDetails": {
+                "subject":         "entity-001",
+                "interestedParty": "entity-002",
+                "interests": [
+                    {
+                        "type": "shareholding",
+                        "share": {"exact": 8.5},
+                    }
+                ],
+            },
+        }
+        captured = {}
+
+        with patch("app.scraper.bods._upsert_owns_bods",
+                   side_effect=lambda **kw: captured.update(kw)):
+            _process_relationship_statement(stmt, self._bods_map(), "src-1", 97)
+
+        assert captured["stake_percent"] == 8.5
+        assert captured["ownership_type"] == "minority"
+
+    def test_unresolved_party_creates_placeholder_and_writes_edge(self):
+        # When interestedParty is not in bods_id_map, the importer creates a
+        # placeholder Entity rather than skipping, so the edge is preserved.
+        from app.scraper.bods import _process_relationship_statement
+
+        bods_map = {"entity-001": "eid-1"}   # entity-002 intentionally absent
+        owns_calls = []
+
+        with patch("app.scraper.bods._upsert_entity_bods", return_value="placeholder-id") as mock_e, \
+             patch("app.scraper.bods._upsert_owns_bods",
+                   side_effect=lambda **kw: owns_calls.append(kw)):
+            edges = _process_relationship_statement(
+                RELATIONSHIP_STMT, bods_map, "src-1", 97
+            )
+
+        # A placeholder was created for the unknown party
+        mock_e.assert_called_once()
+        assert bods_map["entity-002"] == "placeholder-id"
+        # The edge was still written
+        assert edges == 1
+        assert owns_calls[0]["owner_id"] == "placeholder-id"
+
 
 # ── _run_import: filter_jurisdiction and limit ────────────────────────────────
 
