@@ -46,6 +46,25 @@ def get_source(source_id: str):
         return dict(record["s"])
 
 
+@router.get("/entity/{entity_id}")
+def get_sources_for_entity(entity_id: str):
+    """Return all unique Source nodes referenced by this entity's ownership and role relationships."""
+    query = """
+        MATCH (e:Entity {id: $entity_id})
+        OPTIONAL MATCH ()-[r1:OWNS]->(e) WHERE r1.source_id IS NOT NULL
+        OPTIONAL MATCH (e)-[r2:OWNS]->() WHERE r2.source_id IS NOT NULL
+        OPTIONAL MATCH ()-[r3:HAS_ROLE]->(e) WHERE r3.source_id IS NOT NULL
+        WITH collect(r1.source_id) + collect(r2.source_id) + collect(r3.source_id) AS ids
+        UNWIND ids AS sid
+        MATCH (s:Source {id: sid})
+        RETURN DISTINCT s
+        ORDER BY s.credibility_score DESC
+    """
+    with db.get_session() as session:
+        result = session.run(query, entity_id=entity_id)
+        return [dict(rec["s"]) for rec in result]
+
+
 @router.get("/")
 def list_sources(skip: int = 0, limit: int = 20):
     query = """
