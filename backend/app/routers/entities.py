@@ -51,23 +51,31 @@ def list_countries():
 
 @router.get("/by-country")
 def get_entities_by_country():
+    """Return entity counts per country. Entity lists are fetched per-country on demand."""
     query = """
         MATCH (e:Entity)
         WHERE e.country IS NOT NULL AND e.country <> ''
-        RETURN e.country AS country,
-               collect({id: e.id, name: e.name, type: e.type}) AS entities
-        ORDER BY size(entities) DESC
+        RETURN e.country AS country, count(e) AS cnt
+        ORDER BY cnt DESC
     """
     with db.get_session() as session:
         result = session.run(query)
-        return [
-            {
-                "country":  rec["country"],
-                "count":    len(rec["entities"]),
-                "entities": rec["entities"],
-            }
-            for rec in result
-        ]
+        return [{"country": rec["country"], "count": rec["cnt"]} for rec in result]
+
+
+@router.get("/by-country/{country}")
+def get_entities_for_country(country: str, limit: int = 200):
+    """Return up to `limit` entities for a specific country, ordered by name."""
+    query = """
+        MATCH (e:Entity)
+        WHERE e.country = $country
+        RETURN e.id AS id, e.name AS name, e.type AS type
+        ORDER BY e.name
+        LIMIT $limit
+    """
+    with db.get_session() as session:
+        result = session.run(query, country=country, limit=limit)
+        return [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in result]
 
 
 @router.get("/{entity_id}", response_model=EntityResponse)
