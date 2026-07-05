@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.models.entity import EntityCreate, EntityResponse
+from app.auth.dependencies import require_contributor
 from app.database import db
 import uuid
 
@@ -7,7 +8,7 @@ router = APIRouter(prefix="/entities", tags=["Entities"])
 
 
 @router.post("/", response_model=EntityResponse)
-def create_entity(entity: EntityCreate):
+def create_entity(entity: EntityCreate, _: dict = Depends(require_contributor)):
     entity_id = str(uuid.uuid4())
 
     query = """
@@ -105,7 +106,7 @@ def list_entities(skip: int = 0, limit: int = 20):
 
 
 @router.put("/{entity_id}", response_model=EntityResponse)
-def update_entity(entity_id: str, entity: EntityCreate):
+def update_entity(entity_id: str, entity: EntityCreate, _: dict = Depends(require_contributor)):
     query = """
         MATCH (e:Entity {id: $id})
         SET e += {
@@ -127,7 +128,7 @@ def update_entity(entity_id: str, entity: EntityCreate):
 
 
 @router.delete("/{entity_id}")
-def delete_entity(entity_id: str):
+def delete_entity(entity_id: str, _: dict = Depends(require_contributor)):
     query = """
         MATCH (e:Entity {id: $id})
         DETACH DELETE e

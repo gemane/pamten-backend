@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.database import db
 from app.auth.security import hash_password, verify_password, create_access_token
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_admin
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -67,3 +67,39 @@ def login(data: LoginRequest):
 @router.get("/me")
 def me(user: dict = Depends(get_current_user)):
     return {"id": user["sub"], "email": user["email"], "role": user["role"]}
+
+
+class RoleRequest(BaseModel):
+    role: str
+
+
+@router.get("/users")
+def list_users(_: dict = Depends(require_admin)):
+    with db.get_session() as session:
+        result = session.run(
+            "MATCH (u:User) RETURN u.id AS id, u.email AS email, u.role AS role, u.created_at AS created_at ORDER BY u.created_at"
+        )
+        return [{"id": r["id"], "email": r["email"], "role": r["role"], "created_at": r["created_at"]} for r in result]
+
+
+@router.patch("/users/{user_id}/role")
+def update_user_role(user_id: str, data: RoleRequest, _: dict = Depends(require_admin)):
+    if data.role not in ("admin", "contributor", "viewer"):
+        raise HTTPException(status_code=400, detail="Role must be admin, contributor, or viewer")
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (u:User {id: $id}) SET u.role = $role RETURN u.id AS id",
+            id=user_id, role=data.role,
+        ).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "Role updated"}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: str, current: dict = Depends(require_admin)):
+    if current["sub"] == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    with db.get_session() as session:
+        session.run("MATCH (u:User {id: $id}) DELETE u", id=user_id)
+    return {"message": "User deleted"}

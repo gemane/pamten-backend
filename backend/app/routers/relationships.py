@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from app.auth.dependencies import require_contributor
 from app.models.relationship import (
     OwnsRelationshipCreate,
     RoleRelationshipCreate,
@@ -10,7 +11,7 @@ router = APIRouter(prefix="/relationships", tags=["Relationships"])
 
 
 @router.post("/owns")
-def create_owns_relationship(data: OwnsRelationshipCreate):
+def create_owns_relationship(data: OwnsRelationshipCreate, _: dict = Depends(require_contributor)):
     # Works for both Person->Entity and Entity->Entity
     query = """
         MATCH (owner {id: $owner_id})
@@ -35,7 +36,7 @@ def create_owns_relationship(data: OwnsRelationshipCreate):
 
 
 @router.post("/owns/close")
-def close_owns_relationship(owner_id: str, owned_id: str, until: str):
+def close_owns_relationship(owner_id: str, owned_id: str, until: str, _: dict = Depends(require_contributor)):
     # When ownership ends, set the until date (becomes historical)
     query = """
         MATCH (owner {id: $owner_id})-[r:OWNS]->(owned:Entity {id: $owned_id})
@@ -56,7 +57,7 @@ def close_owns_relationship(owner_id: str, owned_id: str, until: str):
 
 
 @router.post("/roles")
-def create_role_relationship(data: RoleRelationshipCreate):
+def create_role_relationship(data: RoleRelationshipCreate, _: dict = Depends(require_contributor)):
     query = """
         MATCH (p:Person {id: $person_id})
         MATCH (e:Entity {id: $entity_id})
@@ -78,7 +79,7 @@ def create_role_relationship(data: RoleRelationshipCreate):
 
 
 @router.post("/roles/close")
-def close_role_relationship(person_id: str, entity_id: str, until: str):
+def close_role_relationship(person_id: str, entity_id: str, until: str, _: dict = Depends(require_contributor)):
     query = """
         MATCH (p:Person {id: $person_id})-[r:HAS_ROLE]->(e:Entity {id: $entity_id})
         WHERE r.until IS NULL
@@ -98,7 +99,7 @@ def close_role_relationship(person_id: str, entity_id: str, until: str):
 
 
 @router.post("/related-to")
-def create_related_to(data: RelatedToCreate):
+def create_related_to(data: RelatedToCreate, _: dict = Depends(require_contributor)):
     query = """
         MATCH (a:Person {id: $person_a_id})
         MATCH (b:Person {id: $person_b_id})

@@ -6,7 +6,7 @@ from app.scraper.runner import (
     run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
     run_import_bods_gleif, run_import_bods_uk_psc,
 )
-from app.auth.dependencies import require_admin
+from app.auth.dependencies import require_admin, require_contributor
 from app.database import db
 from app.db.arcadedb import run_query, run_command
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
@@ -36,7 +36,7 @@ def scraper_status():
 # ── Wikidata endpoints ────────────────────────────────────────────────────────
 
 @router.post("/run")
-def scraper_run(body: ScrapeRequest, _: dict = Depends(require_admin)):
+def scraper_run(body: ScrapeRequest, _: dict = Depends(require_contributor)):
     """
     Trigger a Wikidata scrape for a company name.
     Requires SCRAPER_ENABLED=true in the environment.
@@ -70,7 +70,7 @@ def sec_edgar_status():
 @router.post("/sec-edgar/run")
 def sec_edgar_run(
     company: str = Query(..., min_length=2, description="Company name to look up on SEC EDGAR"),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Scrape SEC EDGAR for ownership filings and executive data for one company.
@@ -97,7 +97,7 @@ def sec_edgar_run(
 def scraper_run_all(
     company: str = Query(..., min_length=2, description="Company name to scrape across all enabled sources"),
     depth:   int = Query(2, ge=0, le=3,    description="Wikidata subsidiary depth (0–3)"),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Run all enabled scrapers (Wikidata + SEC EDGAR + OpenCorporates) for a company name.
@@ -131,7 +131,7 @@ def open_corporates_status():
 @router.post("/open-corporates/run")
 def open_corporates_run(
     company: str = Query(..., min_length=2, description="Company name to look up on OpenCorporates"),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Scrape OpenCorporates for company registration details and officers.
@@ -441,7 +441,7 @@ def deduplicate_person_nodes(_: dict = Depends(require_admin)):
 def proxy_statement_run(
     company: str = Query(..., min_length=2,
                          description="Company name to search for on EDGAR"),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Parse the most recent DEF 14A proxy statement for a company and return
@@ -573,7 +573,7 @@ def proxy_statement_write(
                     "Use this when the EDGAR name differs from the DB name, "
                     "e.g. company=Alphabet&entity_id=<google-uuid>",
     ),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Fetch the most recent DEF 14A proxy statement and write voting_power_pct
@@ -847,7 +847,7 @@ def bods_gleif_run(
         description="Path to a pre-downloaded .zip or .json file. "
                     "Skips the ~1.1 GB download when given.",
     ),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Import the GLEIF BODS dataset (CC0) into the graph.
@@ -883,7 +883,7 @@ def bods_uk_psc_run(
         description="Path to a pre-downloaded .zip or .json file. "
                     "Skips the ~3.3 GB download when given.",
     ),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Import the UK PSC BODS dataset (CC0) into the graph.
@@ -907,7 +907,7 @@ def bods_uk_psc_run(
 @router.post("/bods/run-all")
 def bods_run_all(
     limit: int | None = Query(None, ge=1, description="Max entity statements per source."),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_contributor),
 ):
     """
     Run both GLEIF and UK PSC imports if their respective flags are enabled.
