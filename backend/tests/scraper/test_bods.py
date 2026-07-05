@@ -164,7 +164,7 @@ class TestProcessEntityStatement:
         assert bods_map["entity-001"] == "eid-1"
         assert captured["name"] == "AstraZeneca PLC"
         assert captured["entity_type"] == "company"
-        assert captured["country"] == "GB"
+        assert captured["country"] == "United Kingdom"
         assert captured["founded"] == 1992
         assert captured["lei_id"] == "PY6ZZQWO2IZFZC3IOL08"
         assert captured["companies_house_id"] == "02723534"

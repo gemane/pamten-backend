@@ -8,17 +8,17 @@ ARCADEDB_USERNAME  – database user
 ARCADEDB_PASSWORD  – database password
 ARCADEDB_DATABASE  – database name
 """
-import os
 import httpx
+from app.config import settings
 
 _TIMEOUT = 30.0
 
 
 def _post(endpoint: str, cypher: str, params: dict) -> list[dict]:
-    url  = os.getenv("ARCADEDB_URL", "http://localhost:2480")
-    user = os.getenv("ARCADEDB_USERNAME", "root")
-    pw   = os.getenv("ARCADEDB_PASSWORD", "")
-    db   = os.getenv("ARCADEDB_DATABASE", "pamten")
+    url  = settings.ARCADEDB_URL
+    user = settings.ARCADEDB_USERNAME
+    pw   = settings.ARCADEDB_PASSWORD
+    db   = settings.ARCADEDB_DATABASE
     url  = f"{url}/api/v1/{endpoint}/{db}"
     body = {"language": "cypher", "command": cypher, "params": params}
     try:

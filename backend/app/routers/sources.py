@@ -54,7 +54,8 @@ def get_sources_for_entity(entity_id: str):
         OPTIONAL MATCH ()-[r1:OWNS]->(e) WHERE r1.source_id IS NOT NULL
         OPTIONAL MATCH (e)-[r2:OWNS]->() WHERE r2.source_id IS NOT NULL
         OPTIONAL MATCH ()-[r3:HAS_ROLE]->(e) WHERE r3.source_id IS NOT NULL
-        WITH collect(r1.source_id) + collect(r2.source_id) + collect(r3.source_id) AS ids
+        WITH e, collect(r1.source_id) + collect(r2.source_id) + collect(r3.source_id) AS rel_ids
+        WITH CASE WHEN e.source_id IS NOT NULL THEN rel_ids + [e.source_id] ELSE rel_ids END AS ids
         UNWIND ids AS sid
         MATCH (s:Source {id: sid})
         RETURN DISTINCT s

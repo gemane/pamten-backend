@@ -21,9 +21,12 @@ Processing strategy:
   to constrain memory and runtime.
 """
 
+import json
 import logging
 import os
+import sys
 import tempfile
+import time
 import uuid
 import zipfile
 from collections.abc import Iterator
@@ -38,6 +41,93 @@ from app.scraper.mapper import derive_ownership_type, normalize_entity_name, par
 log = logging.getLogger(__name__)
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB per download chunk
+
+# ISO 3166-1 alpha-2 → full English country name
+_ISO2_COUNTRY: dict[str, str] = {
+    "AF": "Afghanistan", "AX": "Åland Islands", "AL": "Albania", "DZ": "Algeria",
+    "AS": "American Samoa", "AD": "Andorra", "AO": "Angola", "AI": "Anguilla",
+    "AQ": "Antarctica", "AG": "Antigua and Barbuda", "AR": "Argentina",
+    "AM": "Armenia", "AW": "Aruba", "AU": "Australia", "AT": "Austria",
+    "AZ": "Azerbaijan", "BS": "Bahamas", "BH": "Bahrain", "BD": "Bangladesh",
+    "BB": "Barbados", "BY": "Belarus", "BE": "Belgium", "BZ": "Belize",
+    "BJ": "Benin", "BM": "Bermuda", "BT": "Bhutan", "BO": "Bolivia",
+    "BQ": "Bonaire, Sint Eustatius and Saba", "BA": "Bosnia and Herzegovina",
+    "BW": "Botswana", "BV": "Bouvet Island", "BR": "Brazil",
+    "IO": "British Indian Ocean Territory", "BN": "Brunei", "BG": "Bulgaria",
+    "BF": "Burkina Faso", "BI": "Burundi", "CV": "Cabo Verde", "KH": "Cambodia",
+    "CM": "Cameroon", "CA": "Canada", "KY": "Cayman Islands",
+    "CF": "Central African Republic", "TD": "Chad", "CL": "Chile", "CN": "China",
+    "CX": "Christmas Island", "CC": "Cocos (Keeling) Islands", "CO": "Colombia",
+    "KM": "Comoros", "CG": "Congo", "CD": "Congo, Democratic Republic",
+    "CK": "Cook Islands", "CR": "Costa Rica", "CI": "Côte d'Ivoire",
+    "HR": "Croatia", "CU": "Cuba", "CW": "Curaçao", "CY": "Cyprus",
+    "CZ": "Czech Republic", "DK": "Denmark", "DJ": "Djibouti", "DM": "Dominica",
+    "DO": "Dominican Republic", "EC": "Ecuador", "EG": "Egypt",
+    "SV": "El Salvador", "GQ": "Equatorial Guinea", "ER": "Eritrea",
+    "EE": "Estonia", "SZ": "Eswatini", "ET": "Ethiopia",
+    "FK": "Falkland Islands", "FO": "Faroe Islands", "FJ": "Fiji",
+    "FI": "Finland", "FR": "France", "GF": "French Guiana",
+    "PF": "French Polynesia", "TF": "French Southern Territories", "GA": "Gabon",
+    "GM": "Gambia", "GE": "Georgia", "DE": "Germany", "GH": "Ghana",
+    "GI": "Gibraltar", "GR": "Greece", "GL": "Greenland", "GD": "Grenada",
+    "GP": "Guadeloupe", "GU": "Guam", "GT": "Guatemala", "GG": "Guernsey",
+    "GN": "Guinea", "GW": "Guinea-Bissau", "GY": "Guyana", "HT": "Haiti",
+    "HM": "Heard Island and McDonald Islands", "VA": "Holy See", "HN": "Honduras",
+    "HK": "Hong Kong", "HU": "Hungary", "IS": "Iceland", "IN": "India",
+    "ID": "Indonesia", "IR": "Iran", "IQ": "Iraq", "IE": "Ireland",
+    "IM": "Isle of Man", "IL": "Israel", "IT": "Italy", "JM": "Jamaica",
+    "JP": "Japan", "JE": "Jersey", "JO": "Jordan", "KZ": "Kazakhstan",
+    "KE": "Kenya", "KI": "Kiribati", "KP": "Korea, North", "KR": "Korea, South",
+    "KW": "Kuwait", "KG": "Kyrgyzstan", "LA": "Laos", "LV": "Latvia",
+    "LB": "Lebanon", "LS": "Lesotho", "LR": "Liberia", "LY": "Libya",
+    "LI": "Liechtenstein", "LT": "Lithuania", "LU": "Luxembourg",
+    "MO": "Macao", "MG": "Madagascar", "MW": "Malawi", "MY": "Malaysia",
+    "MV": "Maldives", "ML": "Mali", "MT": "Malta", "MH": "Marshall Islands",
+    "MQ": "Martinique", "MR": "Mauritania", "MU": "Mauritius", "YT": "Mayotte",
+    "MX": "Mexico", "FM": "Micronesia", "MD": "Moldova", "MC": "Monaco",
+    "MN": "Mongolia", "ME": "Montenegro", "MS": "Montserrat", "MA": "Morocco",
+    "MZ": "Mozambique", "MM": "Myanmar", "NA": "Namibia", "NR": "Nauru",
+    "NP": "Nepal", "NL": "Netherlands", "NC": "New Caledonia", "NZ": "New Zealand",
+    "NI": "Nicaragua", "NE": "Niger", "NG": "Nigeria", "NU": "Niue",
+    "NF": "Norfolk Island", "MK": "North Macedonia",
+    "MP": "Northern Mariana Islands", "NO": "Norway", "OM": "Oman",
+    "PK": "Pakistan", "PW": "Palau", "PS": "Palestine", "PA": "Panama",
+    "PG": "Papua New Guinea", "PY": "Paraguay", "PE": "Peru",
+    "PH": "Philippines", "PN": "Pitcairn", "PL": "Poland", "PT": "Portugal",
+    "PR": "Puerto Rico", "QA": "Qatar", "RE": "Réunion", "RO": "Romania",
+    "RU": "Russia", "RW": "Rwanda", "BL": "Saint Barthélemy",
+    "SH": "Saint Helena", "KN": "Saint Kitts and Nevis", "LC": "Saint Lucia",
+    "MF": "Saint Martin", "PM": "Saint Pierre and Miquelon",
+    "VC": "Saint Vincent and the Grenadines", "WS": "Samoa", "SM": "San Marino",
+    "ST": "Sao Tome and Principe", "SA": "Saudi Arabia", "SN": "Senegal",
+    "RS": "Serbia", "SC": "Seychelles", "SL": "Sierra Leone", "SG": "Singapore",
+    "SX": "Sint Maarten", "SK": "Slovakia", "SI": "Slovenia",
+    "SB": "Solomon Islands", "SO": "Somalia", "ZA": "South Africa",
+    "GS": "South Georgia and the South Sandwich Islands", "SS": "South Sudan",
+    "ES": "Spain", "LK": "Sri Lanka", "SD": "Sudan", "SR": "Suriname",
+    "SJ": "Svalbard and Jan Mayen", "SE": "Sweden", "CH": "Switzerland",
+    "SY": "Syria", "TW": "Taiwan", "TJ": "Tajikistan", "TZ": "Tanzania",
+    "TH": "Thailand", "TL": "Timor-Leste", "TG": "Togo", "TK": "Tokelau",
+    "TO": "Tonga", "TT": "Trinidad and Tobago", "TN": "Tunisia", "TR": "Turkey",
+    "TM": "Turkmenistan", "TC": "Turks and Caicos Islands", "TV": "Tuvalu",
+    "UG": "Uganda", "UA": "Ukraine", "AE": "United Arab Emirates",
+    "GB": "United Kingdom", "US": "United States", "UM": "United States Minor Outlying Islands",
+    "UY": "Uruguay", "UZ": "Uzbekistan", "VU": "Vanuatu", "VE": "Venezuela",
+    "VN": "Vietnam", "VG": "Virgin Islands, British", "VI": "Virgin Islands, U.S.",
+    "WF": "Wallis and Futuna", "EH": "Western Sahara", "YE": "Yemen",
+    "ZM": "Zambia", "ZW": "Zimbabwe",
+    # GLEIF special codes
+    "XI": "International",
+    "XK": "Kosovo",
+}
+
+
+def _country_name(code: str | None) -> str | None:
+    """Convert an ISO alpha-2 code to a full English country name. Returns the
+    code unchanged if no mapping is found, and None for empty/None input."""
+    if not code:
+        return None
+    return _ISO2_COUNTRY.get(code.upper(), code)
 
 # ── Interest type → Pamten ownership_type ─────────────────────────────────────
 # None means "derive from stake_percent via derive_ownership_type()".
@@ -102,12 +192,13 @@ def _upsert_entity_bods(
                     MATCH (e:Entity {id: $id})
                     SET e.name                = $name,
                         e.name_credibility    = $cred,
+                        e.source_id           = $sid,
                         e.country             = COALESCE($country,  e.country),
                         e.founded             = COALESCE($founded,  e.founded),
                         e.lei_id              = COALESCE($lei,      e.lei_id),
                         e.companies_house_id  = COALESCE($ch,       e.companies_house_id)
                     """,
-                    id=entity_id, name=name, cred=credibility_score,
+                    id=entity_id, name=name, cred=credibility_score, sid=source_id,
                     country=country, founded=founded, lei=lei_id, ch=companies_house_id,
                 )
             else:
@@ -127,7 +218,7 @@ def _upsert_entity_bods(
             """
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
-                name_credibility: $cred,
+                name_credibility: $cred, source_id: $sid,
                 type: $type, country: $country, founded: $founded,
                 revenue: null, description: null,
                 lei_id: $lei, companies_house_id: $ch,
@@ -135,7 +226,7 @@ def _upsert_entity_bods(
             })
             """,
             id=entity_id, name=name, name_norm=name_norm, cred=credibility_score,
-            type=entity_type, country=country, founded=founded,
+            sid=source_id, type=entity_type, country=country, founded=founded,
             lei=lei_id, ch=companies_house_id,
         )
         return entity_id
@@ -281,6 +372,7 @@ def _process_entity_statement(
     country_code = (jurisdiction.get("code") or "").upper()[:2] or None
     if filter_jurisdiction and country_code != filter_jurisdiction.upper():
         return None
+    country = _country_name(country_code)
 
     # Entity type
     raw_type    = (details.get("entityType") or {}).get("type", "registeredEntity")
@@ -311,7 +403,7 @@ def _process_entity_statement(
     entity_id = _upsert_entity_bods(
         name=name,
         entity_type=entity_type,
-        country=country_code,
+        country=country,
         founded=founded,
         lei_id=lei_id,
         companies_house_id=companies_house_id,
@@ -485,9 +577,137 @@ def _process_relationship_statement(
 
 # ── Streaming helpers ─────────────────────────────────────────────────────────
 
+class _CombinedStream:
+    """Prepend a byte-buffer to a binary stream (needed after format-detection peek)."""
+    def __init__(self, prefix: bytes, rest: IO[bytes]):
+        self._prefix = prefix
+        self._offset = 0
+        self._rest = rest
+
+    def read(self, n: int = -1) -> bytes:
+        prefix_remaining = len(self._prefix) - self._offset
+        if prefix_remaining <= 0:
+            return self._rest.read(n)
+        if n == -1:
+            chunk = self._prefix[self._offset:]
+            self._offset = len(self._prefix)
+            return chunk + self._rest.read()
+        if n <= prefix_remaining:
+            chunk = self._prefix[self._offset:self._offset + n]
+            self._offset += n
+            return chunk
+        chunk = self._prefix[self._offset:]
+        self._offset = len(self._prefix)
+        return chunk + self._rest.read(n - len(chunk))
+
+    def readable(self) -> bool:
+        return True
+
+
+class _ProgressBar:
+    """Terminal progress bar that writes to stderr via carriage return."""
+
+    _WIDTH = 30
+
+    def __init__(self, label: str) -> None:
+        self._label = label
+        self._start = time.monotonic()
+        self._last  = 0.0
+        self._tty   = sys.stderr.isatty()
+
+    def _ftime(self, secs: float) -> str:
+        m, s = divmod(int(secs), 60)
+        return f"{m:02d}:{s:02d}"
+
+    def render(self, done: int, total: int | None, extra: str = "") -> None:
+        now = time.monotonic()
+        if now - self._last < 0.25:   # cap at 4 redraws/sec
+            return
+        self._last = now
+        elapsed = now - self._start
+
+        if total:
+            pct    = min(100.0, done * 100.0 / total)
+            filled = int(self._WIDTH * pct / 100)
+            bar    = "█" * filled + "░" * (self._WIDTH - filled)
+            line   = f"{self._label}  [{bar}] {pct:5.1f}%"
+        else:
+            line = f"{self._label}  {done:,} done"
+
+        line += f"  {self._ftime(elapsed)}"
+        if extra:
+            line += f"  {extra}"
+
+        if self._tty:
+            sys.stderr.write(f"\r{line:<79}")
+        else:
+            sys.stderr.write(line + "\n")
+        sys.stderr.flush()
+
+    def finish(self, summary: str = "") -> None:
+        elapsed = time.monotonic() - self._start
+        line = f"{self._label}  done  {self._ftime(elapsed)}"
+        if summary:
+            line += f"  {summary}"
+        if self._tty:
+            sys.stderr.write(f"\r{line:<79}\n")
+        else:
+            sys.stderr.write(line + "\n")
+        sys.stderr.flush()
+
+
+class _ProgressStream:
+    """Byte-counting wrapper that feeds a _ProgressBar as data is read."""
+
+    def __init__(self, stream: IO[bytes], total_bytes: int, bar: _ProgressBar) -> None:
+        self._stream = stream
+        self._total  = total_bytes
+        self._read   = 0
+        self._bar    = bar
+
+    def read(self, n: int = -1) -> bytes:
+        data = self._stream.read(n)
+        if data:
+            self._read += len(data)
+            self._bar.render(self._read, self._total)
+        return data
+
+    def readable(self) -> bool:
+        return True
+
+
+def _iter_ndjson(stream: IO[bytes]) -> Iterator[dict]:
+    """Parse a NDJSON (one JSON object per line) binary stream."""
+    buf = b""
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            line = buf.strip()
+            if line:
+                yield json.loads(line)
+            return
+        buf += chunk
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
 def _iter_statements(stream: IO[bytes]) -> Iterator[dict]:
-    """Stream BODS statements from a binary file object using ijson."""
-    yield from ijson.items(stream, "item")
+    """Stream BODS statements. Handles both JSON array ([…]) and NDJSON formats."""
+    prefix = b""
+    while len(prefix) < 512:
+        chunk = stream.read(512)
+        if not chunk:
+            return
+        prefix += chunk
+
+    combined = _CombinedStream(prefix, stream)
+    if prefix.lstrip().startswith(b"["):
+        yield from ijson.items(combined, "item")
+    else:
+        yield from _iter_ndjson(combined)
 
 
 def _open_zip_stream(zip_path: str) -> IO[bytes]:
@@ -541,6 +761,7 @@ def _run_import(
     credibility_score: int,
     limit: int | None,
     filter_jurisdiction: str | None,
+    pass1_bar: _ProgressBar | None = None,
 ) -> dict:
     """
     Single-pass import with relationship buffering.
@@ -601,10 +822,18 @@ def _run_import(
         "BODS: pass 1 done — %d entities, %d persons, %d relationships buffered",
         counts["entities"], counts["persons"], len(buffered_rels),
     )
+    if pass1_bar:
+        pass1_bar.finish(
+            f"entities={counts['entities']:,}  persons={counts['persons']:,}"
+            f"  {len(buffered_rels):,} rels buffered"
+        )
 
     # Pass 2: write edges now that all nodes are known
     log.info("BODS: pass 2 — writing %d relationship edges", len(buffered_rels))
-    for stmt in buffered_rels:
+    bar2 = _ProgressBar("Pass 2")
+    total_rels = len(buffered_rels)
+    for i, stmt in enumerate(buffered_rels, 1):
+        bar2.render(i, total_rels)
         try:
             edges = _process_relationship_statement(
                 stmt, bods_to_pamten_id, source_id, credibility_score,
@@ -613,6 +842,7 @@ def _run_import(
         except Exception as exc:
             log.warning("BODS relationship error: %s", exc)
             counts["errors"] += 1
+    bar2.finish(f"relationships={counts['relationships']:,}  errors={counts['errors']:,}")
 
     log.info("BODS: import complete — %s", counts)
     return counts
@@ -652,6 +882,7 @@ def import_bods_source(
 
     try:
         log.info("BODS: downloading %s…", url)
+        dl_bar     = _ProgressBar("Download")
         downloaded = 0
         with open(tmp_path, "wb") as out:
             with httpx.stream("GET", url, timeout=300, follow_redirects=True) as resp:
@@ -660,17 +891,27 @@ def import_bods_source(
                 for chunk in resp.iter_bytes(CHUNK_SIZE):
                     out.write(chunk)
                     downloaded += len(chunk)
-                    if total and downloaded % (100 * CHUNK_SIZE) == 0:
-                        log.info("BODS: %.0f%% downloaded", 100 * downloaded / total)
+                    dl_bar.render(downloaded, total or None)
+        dl_bar.finish(f"{downloaded / 1e6:.0f} MB")
         log.info("BODS: download complete — %d bytes", downloaded)
 
-        stream = _open_zip_stream(tmp_path)
+        zf         = zipfile.ZipFile(tmp_path)
+        json_names = [n for n in zf.namelist() if n.lower().endswith(".json")]
+        if not json_names:
+            raise ValueError(f"No .json file found inside ZIP: {tmp_path}")
+        entry       = json_names[0]
+        total_bytes = zf.getinfo(entry).file_size
+        raw_stream  = zf.open(entry)
+
+        bar    = _ProgressBar("Pass 1")
+        stream = _ProgressStream(raw_stream, total_bytes, bar)
         return _run_import(
             _iter_statements(stream),
             source_id=source_id,
             credibility_score=credibility_score,
             limit=limit,
             filter_jurisdiction=filter_jurisdiction,
+            pass1_bar=bar,
         )
 
     finally:
@@ -703,17 +944,28 @@ def import_bods_file(
     log.info("BODS: importing from local file %s", filepath)
 
     if filepath.lower().endswith(".zip"):
-        stream = _open_zip_stream(filepath)
+        zf         = zipfile.ZipFile(filepath)
+        json_names = [n for n in zf.namelist() if n.lower().endswith(".json")]
+        if not json_names:
+            raise ValueError(f"No .json file found inside ZIP: {filepath}")
+        entry        = json_names[0]
+        total_bytes  = zf.getinfo(entry).file_size
+        raw_stream   = zf.open(entry)
+        log.info("BODS: reading %s  (%s bytes uncompressed)", entry, f"{total_bytes:,}")
     else:
-        stream = open(filepath, "rb")  # noqa: WPS515
+        total_bytes = os.path.getsize(filepath)
+        raw_stream  = open(filepath, "rb")  # noqa: WPS515
 
     try:
+        bar    = _ProgressBar("Pass 1")
+        stream = _ProgressStream(raw_stream, total_bytes, bar)
         return _run_import(
             _iter_statements(stream),
             source_id=source_id,
             credibility_score=credibility_score,
             limit=limit,
             filter_jurisdiction=filter_jurisdiction,
+            pass1_bar=bar,
         )
     finally:
-        stream.close()
+        raw_stream.close()
