@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.models.person import PersonCreate, PersonResponse
+from app.auth.dependencies import require_contributor
 from app.database import db
 import uuid
 
@@ -7,7 +8,7 @@ router = APIRouter(prefix="/persons", tags=["Persons"])
 
 
 @router.post("/", response_model=PersonResponse)
-def create_person(person: PersonCreate):
+def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
     person_id = str(uuid.uuid4())
     full_name = f"{person.first_name} {person.last_name}"
 
@@ -68,7 +69,7 @@ def list_persons(skip: int = 0, limit: int = 20):
 
 
 @router.put("/{person_id}", response_model=PersonResponse)
-def update_person(person_id: str, person: PersonCreate):
+def update_person(person_id: str, person: PersonCreate, _: dict = Depends(require_contributor)):
     full_name = f"{person.first_name} {person.last_name}"
     query = """
         MATCH (p:Person {id: $id})
@@ -99,7 +100,7 @@ def update_person(person_id: str, person: PersonCreate):
 
 
 @router.delete("/{person_id}")
-def delete_person(person_id: str):
+def delete_person(person_id: str, _: dict = Depends(require_contributor)):
     query = """
         MATCH (p:Person {id: $id})
         DETACH DELETE p

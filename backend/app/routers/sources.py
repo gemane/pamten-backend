@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.models.source import SourceCreate, SourceResponse
+from app.auth.dependencies import require_contributor
 from app.database import db
 import uuid
 
@@ -7,7 +8,7 @@ router = APIRouter(prefix="/sources", tags=["Sources"])
 
 
 @router.post("/", response_model=SourceResponse)
-def create_source(source: SourceCreate):
+def create_source(source: SourceCreate, _: dict = Depends(require_contributor)):
     source_id = str(uuid.uuid4())
 
     query = """
