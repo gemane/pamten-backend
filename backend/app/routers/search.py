@@ -5,21 +5,31 @@ router = APIRouter(prefix="/search", tags=["Search"])
 
 
 @router.get("/")
-def search(q: str = Query(..., min_length=2)):
+def search(q: str = Query(..., min_length=2), country: str | None = Query(default=None)):
     q_lower = q.lower()
-    query = """
-        MATCH (n:Entity)
-        WHERE toLower(n.name) CONTAINS $q
-        RETURN n AS node, 1.0 AS score, 'Entity' AS type
-        UNION
-        MATCH (n:Person)
-        WHERE toLower(n.full_name) CONTAINS $q
-        RETURN n AS node, 1.0 AS score, 'Person' AS type
-        LIMIT 20
-    """
+    if country:
+        cypher = """
+            MATCH (n:Entity)
+            WHERE toLower(n.name) CONTAINS $q AND n.country = $country
+            RETURN n AS node, 1.0 AS score, 'Entity' AS type
+            LIMIT 20
+        """
+        params: dict = {"q": q_lower, "country": country}
+    else:
+        cypher = """
+            MATCH (n:Entity)
+            WHERE toLower(n.name) CONTAINS $q
+            RETURN n AS node, 1.0 AS score, 'Entity' AS type
+            UNION
+            MATCH (n:Person)
+            WHERE toLower(n.full_name) CONTAINS $q
+            RETURN n AS node, 1.0 AS score, 'Person' AS type
+            LIMIT 20
+        """
+        params = {"q": q_lower}
 
     with db.get_session() as session:
-        result = session.run(query, q=q_lower)
+        result = session.run(cypher, **params)
         return [
             {
                 "node": dict(record["node"]),

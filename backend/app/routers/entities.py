@@ -35,13 +35,25 @@ def create_entity(entity: EntityCreate):
         return {**dict(record["e"]), "id": entity_id}
 
 
+@router.get("/countries")
+def list_countries():
+    """Return distinct country names with entity counts, sorted by count."""
+    query = """
+        MATCH (e:Entity)
+        WHERE e.country IS NOT NULL AND e.country <> ''
+        RETURN e.country AS country, count(e) AS cnt
+        ORDER BY cnt DESC
+    """
+    with db.get_session() as session:
+        result = session.run(query)
+        return [{"country": r["country"], "count": r["cnt"]} for r in result]
+
+
 @router.get("/by-country")
 def get_entities_by_country():
     query = """
         MATCH (e:Entity)
-        WHERE e.country IS NOT NULL
-          AND e.country <> 'string'
-          AND size(e.country) = 2
+        WHERE e.country IS NOT NULL AND e.country <> ''
         RETURN e.country AS country,
                collect({id: e.id, name: e.name, type: e.type}) AS entities
         ORDER BY size(entities) DESC
