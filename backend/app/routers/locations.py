@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from app.models.location import LocationCreate, LocationResponse
+from app.auth.dependencies import require_contributor
 from app.database import db
 import uuid
 
@@ -7,7 +8,7 @@ router = APIRouter(prefix="/locations", tags=["Locations"])
 
 
 @router.post("/", response_model=LocationResponse)
-def create_location(location: LocationCreate):
+def create_location(location: LocationCreate, _: dict = Depends(require_contributor)):
     location_id = str(uuid.uuid4())
 
     query = """
@@ -53,7 +54,7 @@ def get_location(location_id: str):
 
 
 @router.post("/{entity_id}/headquartered-in/{location_id}")
-def set_headquarters(entity_id: str, location_id: str):
+def set_headquarters(entity_id: str, location_id: str, _: dict = Depends(require_contributor)):
     query = """
         MATCH (e:Entity {id: $entity_id})
         MATCH (l:Location {id: $location_id})
@@ -71,7 +72,7 @@ def set_headquarters(entity_id: str, location_id: str):
 
 
 @router.post("/{entity_id}/registered-in/{location_id}")
-def set_registered_in(entity_id: str, location_id: str):
+def set_registered_in(entity_id: str, location_id: str, _: dict = Depends(require_contributor)):
     query = """
         MATCH (e:Entity {id: $entity_id})
         MATCH (l:Location {id: $location_id})
@@ -89,7 +90,7 @@ def set_registered_in(entity_id: str, location_id: str):
 
 
 @router.post("/{entity_id}/operates-in/{location_id}")
-def set_operates_in(entity_id: str, location_id: str):
+def set_operates_in(entity_id: str, location_id: str, _: dict = Depends(require_contributor)):
     query = """
         MATCH (e:Entity {id: $entity_id})
         MATCH (l:Location {id: $location_id})
