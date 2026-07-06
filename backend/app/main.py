@@ -13,10 +13,12 @@ app = FastAPI(
     debug=settings.DEBUG
 )
 
-# CORS – allow all origins for now (tighten in production)
+# CORS – explicit allow-list via CORS_ORIGINS env var (comma-separated).
+# allow_origins=["*"] with allow_credentials=True is rejected by browsers anyway,
+# so an explicit list is required for authenticated cross-origin requests to work.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
