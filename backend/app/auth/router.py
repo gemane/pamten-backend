@@ -1,26 +1,67 @@
+import time
 import uuid
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+import threading
+from collections import defaultdict
+from fastapi import APIRouter, HTTPException, Depends, Request
+from pydantic import BaseModel, EmailStr, field_validator
 from app.database import db
 from app.auth.security import hash_password, verify_password, create_access_token
 from app.auth.dependencies import get_current_user, require_admin
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+LOGIN_RATE_LIMIT = 5           # attempts
+LOGIN_RATE_WINDOW = 15 * 60    # seconds
 
-class RegisterRequest(BaseModel):
-    email: str
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+_login_attempts_lock = threading.Lock()
+
+
+class _EmailPasswordRequest(BaseModel):
+    email: EmailStr
     password: str
 
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
+
+class RegisterRequest(_EmailPasswordRequest):
+    pass
+
+
+class LoginRequest(_EmailPasswordRequest):
+    pass
 
 
 def _token_response(user_id: str, email: str, role: str):
     token = create_access_token({"sub": user_id, "email": email, "role": role})
     return {"access_token": token, "token_type": "bearer", "email": email, "role": role}
+
+
+def _login_rate_limit_key(request: Request, email: str) -> str:
+    client_ip = request.client.host if request.client else "unknown"
+    return f"{client_ip}:{email}"
+
+
+def _check_login_rate_limit(key: str) -> None:
+    now = time.time()
+    with _login_attempts_lock:
+        attempts = [t for t in _login_attempts[key] if now - t < LOGIN_RATE_WINDOW]
+        _login_attempts[key] = attempts
+        if len(attempts) >= LOGIN_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+
+
+def _record_login_failure(key: str) -> None:
+    with _login_attempts_lock:
+        _login_attempts[key].append(time.time())
+
+
+def _clear_login_attempts(key: str) -> None:
+    with _login_attempts_lock:
+        _login_attempts.pop(key, None)
 
 
 @router.post("/register")
@@ -51,16 +92,22 @@ def register(data: RegisterRequest):
 
 
 @router.post("/login")
-def login(data: LoginRequest):
+def login(data: LoginRequest, request: Request):
+    rate_limit_key = _login_rate_limit_key(request, data.email)
+    _check_login_rate_limit(rate_limit_key)
+
     with db.get_session() as session:
         rec = session.run("MATCH (u:User {email: $e}) RETURN u", e=data.email).single()
         if not rec:
+            _record_login_failure(rate_limit_key)
             raise HTTPException(status_code=401, detail="Invalid email or password")
         user = dict(rec["u"])
 
     if not verify_password(data.password, user["password_hash"]):
+        _record_login_failure(rate_limit_key)
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    _clear_login_attempts(rate_limit_key)
     return _token_response(user["id"], user["email"], user["role"])
 
 
