@@ -1,3 +1,4 @@
+import logging
 import re as _re
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
@@ -10,6 +11,8 @@ from app.auth.dependencies import require_admin, require_contributor
 from app.database import db
 from app.db.arcadedb import run_query, run_command
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scraper", tags=["Scraper"])
 
@@ -51,8 +54,9 @@ def scraper_run(body: ScrapeRequest, _: dict = Depends(require_contributor)):
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Scrape failed: {e}")
+    except Exception:
+        logger.exception("Wikidata scrape failed (query=%r)", body.query)
+        raise HTTPException(status_code=500, detail="Scrape failed. Check server logs for details.")
 
 
 # ── SEC EDGAR endpoints ───────────────────────────────────────────────────────
@@ -87,8 +91,9 @@ def sec_edgar_run(
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"SEC EDGAR scrape failed: {e}")
+    except Exception:
+        logger.exception("SEC EDGAR scrape failed (company=%r)", company)
+        raise HTTPException(status_code=500, detail="SEC EDGAR scrape failed. Check server logs for details.")
 
 
 # ── Run-all endpoint ──────────────────────────────────────────────────────────
@@ -112,8 +117,9 @@ def scraper_run_all(
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Run-all failed: {e}")
+    except Exception:
+        logger.exception("Run-all scrape failed (company=%r)", company)
+        raise HTTPException(status_code=500, detail="Run-all failed. Check server logs for details.")
 
 
 # ── OpenCorporates endpoints ──────────────────────────────────────────────────
@@ -148,8 +154,9 @@ def open_corporates_run(
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenCorporates scrape failed: {e}")
+    except Exception:
+        logger.exception("OpenCorporates scrape failed (company=%r)", company)
+        raise HTTPException(status_code=500, detail="OpenCorporates scrape failed. Check server logs for details.")
 
 
 # ── Purge endpoint ────────────────────────────────────────────────────────────
@@ -868,8 +875,9 @@ def bods_gleif_run(
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"GLEIF import failed: {e}")
+    except Exception:
+        logger.exception("GLEIF BODS import failed")
+        raise HTTPException(status_code=500, detail="GLEIF import failed. Check server logs for details.")
 
 
 @router.post("/bods/uk-psc/run")
@@ -900,8 +908,9 @@ def bods_uk_psc_run(
         return run_import_bods_uk_psc(limit=limit, local_file=local_file)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"UK PSC import failed: {e}")
+    except Exception:
+        logger.exception("UK PSC BODS import failed")
+        raise HTTPException(status_code=500, detail="UK PSC import failed. Check server logs for details.")
 
 
 @router.post("/bods/run-all")
@@ -925,8 +934,9 @@ def bods_run_all(
             results["gleif"] = run_import_bods_gleif(limit=limit)
         except PermissionError as e:
             results["gleif"] = {"status": "disabled", "detail": str(e)}
-        except Exception as e:
-            results["gleif"] = {"status": "error", "detail": str(e)}
+        except Exception:
+            logger.exception("GLEIF BODS import failed (run-all)")
+            results["gleif"] = {"status": "error", "detail": "Import failed. Check server logs for details."}
     else:
         results["gleif"] = {"status": "disabled"}
 
@@ -935,8 +945,9 @@ def bods_run_all(
             results["uk_psc"] = run_import_bods_uk_psc(limit=limit)
         except PermissionError as e:
             results["uk_psc"] = {"status": "disabled", "detail": str(e)}
-        except Exception as e:
-            results["uk_psc"] = {"status": "error", "detail": str(e)}
+        except Exception:
+            logger.exception("UK PSC BODS import failed (run-all)")
+            results["uk_psc"] = {"status": "error", "detail": "Import failed. Check server logs for details."}
     else:
         results["uk_psc"] = {"status": "disabled"}
 
