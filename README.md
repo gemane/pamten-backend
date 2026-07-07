@@ -240,8 +240,9 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 | `ARCADEDB_USERNAME` | required | Database username |
 | `ARCADEDB_PASSWORD` | required | Database password |
 | `ARCADEDB_DATABASE` | `pamten` | Database name |
-| `SECRET_KEY` | insecure default | JWT signing key — **must be overridden in production** |
+| `SECRET_KEY` | insecure default | JWT signing key — **must be overridden when `DEBUG=false`, or the app refuses to start** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
+| `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
 | `SCRAPER_ENABLED` | `false` | Master Wikidata scraper switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR scraper switch |
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
@@ -251,7 +252,7 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 
 ## Deployment
 
-Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`.
+Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`.
 
 ---
 
