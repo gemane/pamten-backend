@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.person import PersonCreate, PersonResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
@@ -57,7 +57,7 @@ def get_person(person_id: str):
 
 
 @router.get("/")
-def list_persons(skip: int = 0, limit: int = 20):
+def list_persons(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20, ge=1, le=100)):
     query = """
         MATCH (p:Person)
         RETURN p

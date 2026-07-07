@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.entity import EntityCreate, EntityResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
@@ -65,7 +65,7 @@ def get_entities_by_country():
 
 
 @router.get("/by-country/{country}")
-def get_entities_for_country(country: str, limit: int = 200):
+def get_entities_for_country(country: str, limit: int = Query(200, ge=1, le=500)):
     """Return up to `limit` entities for a specific country, ordered by name."""
     query = """
         MATCH (e:Entity)
@@ -94,7 +94,7 @@ def get_entity(entity_id: str):
 
 
 @router.get("/")
-def list_entities(skip: int = 0, limit: int = 20):
+def list_entities(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20, ge=1, le=100)):
     query = """
         MATCH (e:Entity)
         RETURN e

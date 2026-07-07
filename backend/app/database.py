@@ -24,10 +24,19 @@ from app.db.arcadedb import run_query, run_command
 _WRITE_RE = re.compile(
     r'\b(CREATE|SET|DELETE|MERGE|REMOVE|DETACH|DROP)\b', re.IGNORECASE
 )
+# String literals and line comments are stripped before the keyword scan so
+# that a data value quoted directly in the query (e.g. a company named
+# "Delete Corp") can never be mistaken for a write clause. All current
+# call sites pass data via $params rather than inlining it, so this is a
+# hardening measure rather than a fix for an observed misroute.
+_STRING_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 
 
 def _is_write(cypher: str) -> bool:
-    return bool(_WRITE_RE.search(cypher))
+    stripped = _LINE_COMMENT_RE.sub("", cypher)
+    stripped = _STRING_LITERAL_RE.sub("", stripped)
+    return bool(_WRITE_RE.search(stripped))
 
 
 # ── Value wrappers ─────────────────────────────────────────────────────────────
