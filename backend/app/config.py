@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     SCRAPER_BODS_UK_PSC_ENABLED:      bool = False
     OPENCORPORATES_API_KEY:           str  = ""
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
-    ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 24 * 7  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 12  # 12 hours
     CORS_ORIGINS:                     str  = ""
 
     class Config:
