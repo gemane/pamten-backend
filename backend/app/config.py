@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
     ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 12  # 12 hours
     CORS_ORIGINS:                     str  = ""
+    # Only files inside this directory may be passed as local_file to the
+    # BODS import endpoints (prevents arbitrary server file reads).
+    BODS_DATA_DIR:                    str  = "/data"
 
     class Config:
         env_file = ".env"
