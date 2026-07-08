@@ -1,5 +1,6 @@
 import logging
 import re as _re
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from app.config import settings
@@ -827,6 +828,29 @@ def migrate_ownership_types(_: dict = Depends(require_admin)):
 
 # ── BODS endpoints ────────────────────────────────────────────────────────────
 
+def _validate_bods_local_file(local_file: str | None) -> str | None:
+    """
+    Restrict local_file to .zip/.json files inside BODS_DATA_DIR.
+
+    The importer opens whatever path it is handed, so without this check any
+    contributor could read arbitrary server files into the graph. resolve()
+    follows symlinks, so a link pointing outside the data dir is rejected too.
+    """
+    if local_file is None:
+        return None
+    data_dir = Path(settings.BODS_DATA_DIR).resolve()
+    path = Path(local_file).resolve()
+    if path.suffix.lower() not in (".zip", ".json"):
+        raise HTTPException(status_code=400, detail="local_file must be a .zip or .json file")
+    if not path.is_relative_to(data_dir):
+        raise HTTPException(
+            status_code=400,
+            detail=f"local_file must be inside the data directory ({settings.BODS_DATA_DIR})",
+        )
+    if not path.is_file():
+        raise HTTPException(status_code=400, detail="local_file not found")
+    return str(path)
+
 @router.get("/bods/status")
 def bods_status():
     """Check enabled status for both BODS sources (GLEIF and UK PSC)."""
@@ -867,6 +891,7 @@ def bods_gleif_run(
     if not settings.SCRAPER_BODS_GLEIF_ENABLED:
         raise HTTPException(status_code=403,
             detail="GLEIF scraper is disabled. Set SCRAPER_BODS_GLEIF_ENABLED=true.")
+    local_file = _validate_bods_local_file(local_file)
     try:
         return run_import_bods_gleif(
             limit=limit,
@@ -904,6 +929,7 @@ def bods_uk_psc_run(
     if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
         raise HTTPException(status_code=403,
             detail="UK PSC scraper is disabled. Set SCRAPER_BODS_UK_PSC_ENABLED=true.")
+    local_file = _validate_bods_local_file(local_file)
     try:
         return run_import_bods_uk_psc(limit=limit, local_file=local_file)
     except PermissionError as e:

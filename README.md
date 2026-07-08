@@ -246,6 +246,7 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 | `SCRAPER_ENABLED` | `false` | Master Wikidata scraper switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR scraper switch |
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
+| `BODS_DATA_DIR` | `/data` | Only .zip/.json files inside this directory may be passed as `local_file` to BODS imports |
 | `DEBUG` | `false` | FastAPI debug mode |
 
 ---
