@@ -1,0 +1,70 @@
+"""
+Schema bootstrap: create the vertex types, properties, and indexes the app
+relies on for its lookups.
+
+Without these indexes the name-based upserts in the scraper (e.g.
+`MATCH (e:Entity) WHERE e.wikidata_id = ... OR e.name_normalized = ...`)
+do a full scan of every node, which makes bulk imports O(n^2). The unique
+index on User.email also enforces the account-uniqueness the app assumes.
+
+Design notes
+------------
+- Idempotent: everything uses `IF NOT EXISTS`, so it is safe to re-run.
+- Fault-tolerant: each statement is guarded individually, so a single
+  failure never aborts the rest, and an unreachable DB is skipped with one
+  warning rather than crashing the caller. This lets it run best-effort on
+  startup while remaining useful as an explicit `manage.py init-schema`.
+"""
+import logging
+
+from app.db.arcadedb import run_sql
+
+log = logging.getLogger(__name__)
+
+# (vertex type, property, uniqueness) — the properties queries filter/join on.
+_INDEXES: list[tuple[str, str, str]] = [
+    ("Entity",   "id",              "UNIQUE"),
+    ("Entity",   "name",            "NOTUNIQUE"),
+    ("Entity",   "name_normalized", "NOTUNIQUE"),
+    ("Entity",   "wikidata_id",     "NOTUNIQUE"),
+    ("Entity",   "sec_cik",         "NOTUNIQUE"),
+    ("Person",   "id",              "UNIQUE"),
+    ("Person",   "full_name",       "NOTUNIQUE"),
+    ("Person",   "wikidata_id",     "NOTUNIQUE"),
+    ("Location", "id",              "UNIQUE"),
+    ("Source",   "id",              "UNIQUE"),
+    ("User",     "id",              "UNIQUE"),
+    ("User",     "email",           "UNIQUE"),
+]
+
+
+def _statements() -> list[str]:
+    stmts: list[str] = []
+    for vtype in sorted({t for t, _, _ in _INDEXES}):
+        stmts.append(f"CREATE VERTEX TYPE {vtype} IF NOT EXISTS")
+    for vtype, prop, kind in _INDEXES:
+        stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING IF NOT EXISTS")
+        stmts.append(f"CREATE INDEX IF NOT EXISTS idx_{vtype}_{prop} ON {vtype} ({prop}) {kind}")
+    return stmts
+
+
+def ensure_indexes() -> dict:
+    """
+    Create the types/properties/indexes best-effort. Returns a summary:
+    {"ok": [stmt, ...], "failed": [{"stmt", "error"}, ...], "skipped": bool}.
+    """
+    ok: list[str] = []
+    failed: list[dict] = []
+    for stmt in _statements():
+        try:
+            run_sql(stmt)
+            ok.append(stmt)
+        except ConnectionError as exc:
+            # DB not reachable — don't spam a warning per statement.
+            log.warning("Schema bootstrap skipped — ArcadeDB unreachable: %s", exc)
+            return {"ok": ok, "failed": failed, "skipped": True}
+        except Exception as exc:  # noqa: BLE001 - best-effort DDL
+            log.warning("Schema statement failed (%s): %s", stmt, exc)
+            failed.append({"stmt": stmt, "error": str(exc)})
+    log.info("Schema bootstrap complete: %d applied, %d failed", len(ok), len(failed))
+    return {"ok": ok, "failed": failed, "skipped": False}

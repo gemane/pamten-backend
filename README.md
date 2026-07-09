@@ -255,6 +255,14 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 
 Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`.
 
+### Schema & indexes
+
+Lookup indexes (on `id`, `name`, `name_normalized`, `wikidata_id`, `sec_cik`, and a unique `User.email`) are created automatically on startup — the app runs an idempotent, best-effort bootstrap that is a no-op once they exist. To (re)create them explicitly, e.g. against a fresh database:
+
+```bash
+python3 manage.py init-schema
+```
+
 ---
 
 ## Licence

@@ -47,9 +47,9 @@ def close_client() -> None:
             _client = None
 
 
-def _post(endpoint: str, cypher: str, params: dict) -> list[dict]:
+def _post(endpoint: str, statement: str, params: dict, language: str = "cypher") -> list[dict]:
     url  = f"{settings.ARCADEDB_URL}/api/v1/{endpoint}/{settings.ARCADEDB_DATABASE}"
-    body = {"language": "cypher", "command": cypher, "params": params}
+    body = {"language": language, "command": statement, "params": params}
     try:
         resp = _get_client().post(url, json=body)
     except httpx.RequestError as exc:
@@ -70,3 +70,8 @@ def run_query(cypher: str, params: dict | None = None) -> list[dict]:
 def run_command(cypher: str, params: dict | None = None) -> list[dict]:
     """Execute a write Cypher command against /api/v1/command/{db}."""
     return _post("command", cypher, params or {})
+
+
+def run_sql(command: str, params: dict | None = None) -> list[dict]:
+    """Execute an ArcadeDB SQL command — used for schema DDL (Cypher can't)."""
+    return _post("command", command, params or {}, language="sql")
