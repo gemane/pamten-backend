@@ -23,8 +23,8 @@ def test_creates_property_and_index_for_each_entry():
         result = schema.ensure_indexes()
     issued = [c.args[0] for c in m.call_args_list]
     # spot-check the hot-path lookup indexes
-    assert any("CREATE INDEX IF NOT EXISTS idx_Entity_name_normalized ON Entity (name_normalized) NOTUNIQUE" == s for s in issued)
-    assert any("CREATE PROPERTY Entity.wikidata_id STRING IF NOT EXISTS" == s for s in issued)
+    assert any("CREATE INDEX IF NOT EXISTS ON Entity (name_normalized) NOTUNIQUE" == s for s in issued)
+    assert any("CREATE PROPERTY Entity.wikidata_id STRING" == s for s in issued)
     assert result["skipped"] is False
     assert result["failed"] == []
 
@@ -33,27 +33,32 @@ def test_id_and_email_indexes_are_unique():
     with _run() as m:
         schema.ensure_indexes()
     issued = [c.args[0] for c in m.call_args_list]
-    assert "CREATE INDEX IF NOT EXISTS idx_User_email ON User (email) UNIQUE" in issued
-    assert "CREATE INDEX IF NOT EXISTS idx_Entity_id ON Entity (id) UNIQUE" in issued
+    assert "CREATE INDEX IF NOT EXISTS ON User (email) UNIQUE" in issued
+    assert "CREATE INDEX IF NOT EXISTS ON Entity (id) UNIQUE" in issued
 
 
-def test_is_idempotent_every_statement_uses_if_not_exists():
+def test_is_idempotent_vertex_types_and_indexes_use_if_not_exists():
     with _run() as m:
         schema.ensure_indexes()
     issued = [c.args[0] for c in m.call_args_list]
-    assert all("IF NOT EXISTS" in s for s in issued)
+    # VERTEX TYPE and INDEX statements use IF NOT EXISTS; PROPERTY statements do not
+    for s in issued:
+        if s.startswith("CREATE VERTEX TYPE") or s.startswith("CREATE INDEX"):
+            assert "IF NOT EXISTS" in s, s
+        elif s.startswith("CREATE PROPERTY"):
+            assert "IF NOT EXISTS" not in s, s
 
 
 def test_continues_and_records_failures():
     # fail only the User.email index; everything else should still run
     def side(stmt, *a, **k):
-        if "idx_User_email" in stmt:
+        if "ON User (email) UNIQUE" in stmt and stmt.startswith("CREATE INDEX"):
             raise RuntimeError("duplicate keys")
     with _run(side_effect=side):
         result = schema.ensure_indexes()
     assert result["skipped"] is False
     assert len(result["failed"]) == 1
-    assert "idx_User_email" in result["failed"][0]["stmt"]
+    assert "ON User (email) UNIQUE" in result["failed"][0]["stmt"]
     assert result["ok"]  # the rest applied
 
 

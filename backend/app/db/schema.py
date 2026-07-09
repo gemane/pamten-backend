@@ -9,7 +9,9 @@ index on User.email also enforces the account-uniqueness the app assumes.
 
 Design notes
 ------------
-- Idempotent: everything uses `IF NOT EXISTS`, so it is safe to re-run.
+- Idempotent: vertex types and indexes use `IF NOT EXISTS`; property
+  statements are guarded by the per-statement try/except (ArcadeDB does
+  not support `IF NOT EXISTS` on `CREATE PROPERTY`).
 - Fault-tolerant: each statement is guarded individually, so a single
   failure never aborts the rest, and an unreachable DB is skipped with one
   warning rather than crashing the caller. This lets it run best-effort on
@@ -43,8 +45,8 @@ def _statements() -> list[str]:
     for vtype in sorted({t for t, _, _ in _INDEXES}):
         stmts.append(f"CREATE VERTEX TYPE {vtype} IF NOT EXISTS")
     for vtype, prop, kind in _INDEXES:
-        stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING IF NOT EXISTS")
-        stmts.append(f"CREATE INDEX IF NOT EXISTS idx_{vtype}_{prop} ON {vtype} ({prop}) {kind}")
+        stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING")
+        stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}")
     return stmts
 
 
