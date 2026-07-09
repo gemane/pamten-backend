@@ -3,6 +3,7 @@
 Owlgraph management commands – run directly on the server.
 
 Usage:
+  python3 manage.py init-schema
   python3 manage.py bods-gleif [options]
   python3 manage.py bods-uk-psc [options]
   python3 manage.py seed [options]
@@ -47,6 +48,16 @@ def cmd_seed(args):
     import seed
     seed.main(region=args.region)
 
+def cmd_init_schema(args):
+    from app.db.schema import ensure_indexes
+    result = ensure_indexes()
+    if result.get("skipped"):
+        print("Skipped — ArcadeDB unreachable.")
+        sys.exit(1)
+    print(f"Schema bootstrap: {len(result['ok'])} applied, {len(result['failed'])} failed")
+    for f in result["failed"]:
+        print(f"  FAILED: {f['stmt']}\n          -> {f['error']}")
+
 parser = argparse.ArgumentParser(description='Owlgraph management')
 subparsers = parser.add_subparsers()
 
@@ -72,6 +83,10 @@ p_seed.add_argument(
              'africa','oceania','all']
 )
 p_seed.set_defaults(func=cmd_seed)
+
+# init-schema command
+p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
+p_schema.set_defaults(func=cmd_init_schema)
 
 args = parser.parse_args()
 if hasattr(args, 'func'):

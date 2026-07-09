@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.db.arcadedb import close_client
+from app.db.schema import ensure_indexes
 from app.routers import entities, persons, locations, relationships, search, sources
 from app.scraper import router as scraper_router
 from app.scraper import sources as scraper_sources
@@ -11,6 +12,8 @@ from app.auth import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Best-effort schema/index bootstrap (idempotent, never fatal).
+    ensure_indexes()
     yield
     # Close the pooled ArcadeDB connections on shutdown.
     close_client()
