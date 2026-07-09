@@ -1,16 +1,27 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
+from app.db.arcadedb import close_client
 from app.routers import entities, persons, locations, relationships, search, sources
 from app.scraper import router as scraper_router
 from app.scraper import sources as scraper_sources
 from app.auth import router as auth_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # Close the pooled ArcadeDB connections on shutdown.
+    close_client()
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     description="A platform for mapping corporate ownership hierarchies worldwide.",
     version="0.1.0",
-    debug=settings.DEBUG
+    debug=settings.DEBUG,
+    lifespan=lifespan,
 )
 
 # CORS – explicit allow-list via CORS_ORIGINS env var (comma-separated).

@@ -1,6 +1,12 @@
 """
 ArcadeDB HTTP client.
 
+A single httpx.Client is shared across all queries so TCP (and TLS)
+connections are pooled and kept alive. Previously every query opened and
+closed its own connection, which was very costly inside the bulk-import
+loops that issue thousands of queries. httpx.Client is safe for concurrent
+use across threads, which is how FastAPI runs sync endpoints.
+
 Environment variables
 ---------------------
 ARCADEDB_URL       – base URL of the ArcadeDB server  (e.g. http://localhost:2480)
@@ -8,22 +14,44 @@ ARCADEDB_USERNAME  – database user
 ARCADEDB_PASSWORD  – database password
 ARCADEDB_DATABASE  – database name
 """
+import threading
 import httpx
 from app.config import settings
 
 _TIMEOUT = 30.0
 
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def _get_client() -> httpx.Client:
+    """Lazily build the shared, pooled client (double-checked locking)."""
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = httpx.Client(
+                    auth=(settings.ARCADEDB_USERNAME, settings.ARCADEDB_PASSWORD),
+                    timeout=_TIMEOUT,
+                    limits=httpx.Limits(max_keepalive_connections=20, max_connections=40),
+                )
+    return _client
+
+
+def close_client() -> None:
+    """Close the pooled client (call on application shutdown)."""
+    global _client
+    with _client_lock:
+        if _client is not None:
+            _client.close()
+            _client = None
+
 
 def _post(endpoint: str, cypher: str, params: dict) -> list[dict]:
-    url  = settings.ARCADEDB_URL
-    user = settings.ARCADEDB_USERNAME
-    pw   = settings.ARCADEDB_PASSWORD
-    db   = settings.ARCADEDB_DATABASE
-    url  = f"{url}/api/v1/{endpoint}/{db}"
+    url  = f"{settings.ARCADEDB_URL}/api/v1/{endpoint}/{settings.ARCADEDB_DATABASE}"
     body = {"language": "cypher", "command": cypher, "params": params}
     try:
-        with httpx.Client(auth=(user, pw), timeout=_TIMEOUT) as client:
-            resp = client.post(url, json=body)
+        resp = _get_client().post(url, json=body)
     except httpx.RequestError as exc:
         raise ConnectionError(f"ArcadeDB unreachable: {exc}") from exc
 
