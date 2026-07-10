@@ -25,11 +25,13 @@ log = logging.getLogger(__name__)
 
 # (vertex type, property, uniqueness) — the properties queries filter/join on.
 _INDEXES: list[tuple[str, str, str]] = [
-    ("Entity",   "id",              "UNIQUE"),
-    ("Entity",   "name",            "NOTUNIQUE"),
-    ("Entity",   "name_normalized", "NOTUNIQUE"),
-    ("Entity",   "wikidata_id",     "NOTUNIQUE"),
-    ("Entity",   "sec_cik",         "NOTUNIQUE"),
+    ("Entity",   "id",                  "UNIQUE"),
+    ("Entity",   "name",               "NOTUNIQUE"),
+    ("Entity",   "name_normalized",    "NOTUNIQUE"),
+    ("Entity",   "wikidata_id",        "NOTUNIQUE"),
+    ("Entity",   "sec_cik",            "NOTUNIQUE"),
+    ("Entity",   "lei_id",             "NOTUNIQUE"),
+    ("Entity",   "companies_house_id", "NOTUNIQUE"),
     ("Person",   "id",              "UNIQUE"),
     ("Person",   "full_name",       "NOTUNIQUE"),
     ("Person",   "wikidata_id",     "NOTUNIQUE"),

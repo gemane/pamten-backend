@@ -155,6 +155,17 @@ _ENTITY_TYPE_MAP: dict[str, str] = {
 }
 
 
+def _ref_id(ref: object) -> str | None:
+    """Extract a BODS record-ID from either a bare string or a BODS v0.3 dict ref.
+
+    BODS v0.2 used plain string IDs; v0.3+ wraps them in objects:
+      {"describedByEntityStatement": "id"} or {"describedByPersonStatement": "id"}
+    """
+    if isinstance(ref, dict):
+        return ref.get("describedByEntityStatement") or ref.get("describedByPersonStatement") or None
+    return ref or None
+
+
 # ── Database helpers ──────────────────────────────────────────────────────────
 
 def _upsert_entity_bods(
@@ -170,18 +181,24 @@ def _upsert_entity_bods(
     """Find or create an Entity node, updating identifiers if found."""
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
-        rec = session.run(
-            """
-            MATCH (e:Entity)
-            WHERE ($lei IS NOT NULL AND e.lei_id = $lei)
-               OR ($ch  IS NOT NULL AND e.companies_house_id = $ch)
-               OR e.name = $name
-               OR e.name_normalized = $name_norm
-            RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred
-            LIMIT 1
-            """,
-            lei=lei_id, ch=companies_house_id, name=name, name_norm=name_norm,
-        ).single()
+        # Query each indexed property separately so ArcadeDB can use its indexes.
+        # A single OR across multiple properties forces a full scan even when indexes exist.
+        rec = None
+        if lei_id:
+            rec = session.run(
+                "MATCH (e:Entity {lei_id: $lei}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
+                lei=lei_id,
+            ).single()
+        if not rec and companies_house_id:
+            rec = session.run(
+                "MATCH (e:Entity {companies_house_id: $ch}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
+                ch=companies_house_id,
+            ).single()
+        if not rec:
+            rec = session.run(
+                "MATCH (e:Entity) WHERE e.name_normalized = $name_norm OR e.name = $name RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
+                name_norm=name_norm, name=name,
+            ).single()
 
         if rec:
             entity_id   = rec["id"]
@@ -283,7 +300,7 @@ def _upsert_owns_bods(
     with db.get_session() as session:
         exists = session.run(
             """
-            MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+            MATCH (a:Entity {id: $oid})-[r:OWNS]->(b:Entity {id: $nid})
             WHERE r.until IS NULL RETURN r LIMIT 1
             """,
             oid=owner_id, nid=owned_id,
@@ -292,7 +309,7 @@ def _upsert_owns_bods(
             return
         session.run(
             """
-            MATCH (a {id: $oid}), (b {id: $nid})
+            MATCH (a:Entity {id: $oid}), (b:Entity {id: $nid})
             CREATE (a)-[:OWNS {
                 stake_percent:    $stake,
                 ownership_type:   $otype,
@@ -487,8 +504,8 @@ def _process_relationship_statement(
     details       = stmt.get("recordDetails") or {}
     record_status = stmt.get("recordStatus", "new")
 
-    subject_ref  = details.get("subject")         or details.get("subjectId")
-    party_ref    = details.get("interestedParty")  or details.get("interestedPartyId")
+    subject_ref  = _ref_id(details.get("subject")        or details.get("subjectId"))
+    party_ref    = _ref_id(details.get("interestedParty") or details.get("interestedPartyId"))
 
     if not subject_ref or not party_ref:
         return 0
@@ -816,7 +833,14 @@ def _run_import(
                 counts["errors"] += 1
 
         elif record_type == "relationship":
-            buffered_rels.append(stmt)
+            # Only buffer if at least one endpoint was imported. This avoids
+            # accumulating millions of foreign-to-foreign relationships in RAM
+            # when running with a jurisdiction filter against a global file.
+            _details = stmt.get("recordDetails") or {}
+            _subj  = _ref_id(_details.get("subject")        or _details.get("subjectId"))
+            _party = _ref_id(_details.get("interestedParty") or _details.get("interestedPartyId"))
+            if _subj in bods_to_pamten_id or _party in bods_to_pamten_id:
+                buffered_rels.append(stmt)
 
     log.info(
         "BODS: pass 1 done — %d entities, %d persons, %d relationships buffered",

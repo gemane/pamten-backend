@@ -24,8 +24,8 @@ def test_client_is_configured_with_keepalive_limits():
     c = arcadedb._get_client()
     assert isinstance(c, httpx.Client)
     pool = c._transport._pool
-    assert pool._max_connections == 40
-    assert pool._max_keepalive_connections == 20
+    assert pool._max_connections == 10
+    assert pool._max_keepalive_connections == 5
 
 
 def test_close_client_disposes_and_rebuilds():

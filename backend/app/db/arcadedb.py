@@ -18,7 +18,7 @@ import threading
 import httpx
 from app.config import settings
 
-_TIMEOUT = 30.0
+_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=10.0)
 
 _client: httpx.Client | None = None
 _client_lock = threading.Lock()
@@ -33,7 +33,11 @@ def _get_client() -> httpx.Client:
                 _client = httpx.Client(
                     auth=(settings.ARCADEDB_USERNAME, settings.ARCADEDB_PASSWORD),
                     timeout=_TIMEOUT,
-                    limits=httpx.Limits(max_keepalive_connections=20, max_connections=40),
+                    limits=httpx.Limits(
+                        max_keepalive_connections=5,
+                        max_connections=10,
+                        keepalive_expiry=30.0,
+                    ),
                 )
     return _client
 
