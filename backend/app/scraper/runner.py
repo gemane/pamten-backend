@@ -19,8 +19,39 @@ from app.database import db
 from app.scraper.wikidata import search_entity, fetch_company_data
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name
 from app.scraper.sources import get_source_enabled
+from app.scraper.geocode import geocode_address
 
 log = logging.getLogger(__name__)
+
+
+def _geocode_and_attach(entity_id: str, location_id: str, address: dict) -> None:
+    """
+    Best-effort: geocode an address, persist lat/lng on the Location node, and
+    denormalize a primary location (coords + city/country) onto the Entity so
+    the map can place a pin without traversing edges. Keeps any values already
+    present (COALESCE(existing, new)) so richer data is never clobbered.
+    """
+    coord = geocode_address(address)
+    lat, lng = coord if coord else (None, None)
+    with db.get_session() as session:
+        if coord:
+            session.run(
+                "MATCH (l:Location {id: $id}) SET l.latitude = $lat, l.longitude = $lng",
+                id=location_id, lat=lat, lng=lng,
+            )
+        session.run(
+            """
+            MATCH (e:Entity {id: $id})
+            SET e.hq_city    = COALESCE(e.hq_city, $city),
+                e.hq_country = COALESCE(e.hq_country, $country),
+                e.hq_lat     = COALESCE(e.hq_lat, $lat),
+                e.hq_lng     = COALESCE(e.hq_lng, $lng)
+            """,
+            id=entity_id,
+            city=address.get("city") or None,
+            country=address.get("country") or None,
+            lat=lat, lng=lng,
+        )
 
 WIKIDATA_SOURCE_NAME  = "Wikidata"
 WIKIDATA_SOURCE_URL   = "https://www.wikidata.org"
@@ -885,6 +916,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
                 """,
                 eid=target_id, lid=location_id, sid=source_id,
             )
+        _geocode_and_attach(target_id, location_id, address)
         city    = address.get("city", "")
         country = address.get("country", "")
         scraped.append({"type": "location", "city": city, "country": country,

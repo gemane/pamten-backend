@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     # Only files inside this directory may be passed as local_file to the
     # BODS import endpoints (prevents arbitrary server file reads).
     BODS_DATA_DIR:                    str  = "/data"
+    # Geocoding (Nominatim / OpenStreetMap). Disabled by default; the public
+    # endpoint requires a descriptive User-Agent with a contact and enforces
+    # ~1 request/second, which GEOCODING_MIN_INTERVAL respects.
+    GEOCODING_ENABLED:                bool  = False
+    NOMINATIM_URL:                    str   = "https://nominatim.openstreetmap.org/search"
+    GEOCODING_USER_AGENT:             str   = "pamten-ownership-platform"
+    GEOCODING_CONTACT:                str   = ""
+    GEOCODING_MIN_INTERVAL:           float = 1.0
 
     class Config:
         env_file = ".env"
