@@ -494,6 +494,7 @@ def _process_person_statement(
 def _process_relationship_statement(
     stmt: dict,
     bods_to_pamten_id: dict,
+    bods_id_to_name: dict,
     source_id: str,
     credibility_score: int,
 ) -> int:
@@ -510,13 +511,28 @@ def _process_relationship_statement(
     if not subject_ref or not party_ref:
         return 0
 
+    def _placeholder_name(ref: str) -> str:
+        """Return the real entity name when available, else a cleaned-up fallback."""
+        if ref in bods_id_to_name:
+            return bods_id_to_name[ref]
+        # GLEIF BODS record IDs are "XI-LEI-{LEI}" — strip the prefix
+        if ref.startswith("XI-LEI-"):
+            return f"Unknown [{ref[7:]}]"
+        return ref[:200]
+
+    def _placeholder_lei(ref: str) -> str | None:
+        if ref.startswith("XI-LEI-"):
+            return ref[7:]
+        return None
+
     # Resolve BODS record ids to Pamten node ids.
-    # If either side is unknown, create a minimal placeholder so the edge is preserved.
+    # If either side is unknown, create a named placeholder so the edge is preserved.
     owned_id = bods_to_pamten_id.get(subject_ref)
     if not owned_id:
         owned_id = _upsert_entity_bods(
-            name=subject_ref[:200], entity_type="company",
-            country=None, founded=None, lei_id=None, companies_house_id=None,
+            name=_placeholder_name(subject_ref), entity_type="company",
+            country=None, founded=None,
+            lei_id=_placeholder_lei(subject_ref), companies_house_id=None,
             source_id=source_id, credibility_score=0,
         )
         bods_to_pamten_id[subject_ref] = owned_id
@@ -524,8 +540,9 @@ def _process_relationship_statement(
     owner_id = bods_to_pamten_id.get(party_ref)
     if not owner_id:
         owner_id = _upsert_entity_bods(
-            name=party_ref[:200], entity_type="company",
-            country=None, founded=None, lei_id=None, companies_house_id=None,
+            name=_placeholder_name(party_ref), entity_type="company",
+            country=None, founded=None,
+            lei_id=_placeholder_lei(party_ref), companies_house_id=None,
             source_id=source_id, credibility_score=0,
         )
         bods_to_pamten_id[party_ref] = owner_id
@@ -789,6 +806,7 @@ def _run_import(
                         bods_to_pamten_id lookup.
     """
     bods_to_pamten_id: dict[str, str] = {}
+    bods_id_to_name:   dict[str, str] = {}   # all entity names, for placeholder creation
     buffered_rels:     list[dict]     = []
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
 
@@ -805,6 +823,14 @@ def _run_import(
         record_type = stmt.get("recordType")
 
         if record_type == "entity":
+            # Cache the name for every entity so foreign-company placeholders
+            # get their real name instead of the raw BODS record ID.
+            _rid = stmt.get("recordId") or stmt.get("statementId")
+            if _rid:
+                _det = stmt.get("recordDetails") or {}
+                _nm  = (_det.get("name") or "").strip()
+                if _nm:
+                    bods_id_to_name[_rid] = _nm
             try:
                 result = _process_entity_statement(
                     stmt, bods_to_pamten_id, source_id, credibility_score, jur,
@@ -860,7 +886,7 @@ def _run_import(
         bar2.render(i, total_rels)
         try:
             edges = _process_relationship_statement(
-                stmt, bods_to_pamten_id, source_id, credibility_score,
+                stmt, bods_to_pamten_id, bods_id_to_name, source_id, credibility_score,
             )
             counts["relationships"] += edges
         except Exception as exc:
