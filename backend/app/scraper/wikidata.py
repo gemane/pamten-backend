@@ -20,6 +20,7 @@ Fields returned and Pamten mapping:
   subsidiary (P355)→ OWNS edge (target entity)
   parent (P749)    → OWNS edge (source entity)
   ceo (P169)       → person node + HAS_ROLE edge (role="CEO")
+  headquarters (P159) + coordinate (P625) → entity.hq_lat/hq_lng/hq_city/hq_country
 
 Rate limits:
   Wikimedia policy: no hard public limit, but requests must include a User-Agent
@@ -38,6 +39,7 @@ How to verify:
   3. Run the SPARQL query directly at https://query.wikidata.org/ to inspect raw rows.
 """
 
+import re
 import time
 import httpx
 
@@ -79,6 +81,8 @@ def fetch_company_data(qid: str) -> dict | None:
            ?instance
            ?countryCode
            ?founded ?revenue
+           ?itemCoord
+           ?hq ?hqLabel ?hqCoord ?hqCountryCode
            ?subsidiary ?subsidiaryLabel ?subsidiaryInstance
            ?parent
            ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode
@@ -89,6 +93,12 @@ def fetch_company_data(qid: str) -> dict | None:
       OPTIONAL {{
         ?item wdt:P17 ?country .
         ?country wdt:P297 ?countryCode
+      }}
+      OPTIONAL {{ ?item wdt:P625 ?itemCoord }}
+      OPTIONAL {{
+        ?item wdt:P159 ?hq .
+        OPTIONAL {{ ?hq wdt:P625 ?hqCoord }}
+        OPTIONAL {{ ?hq wdt:P17 ?hqCountry . ?hqCountry wdt:P297 ?hqCountryCode }}
       }}
       OPTIONAL {{ ?item wdt:P571 ?founded }}
       OPTIONAL {{
@@ -140,6 +150,25 @@ def _qid(uri: str | None) -> str | None:
     return uri.rstrip("/").split("/")[-1]
 
 
+def _parse_point(wkt: str | None) -> tuple[float, float] | None:
+    """
+    Parse a Wikidata P625 WKT literal into (latitude, longitude).
+
+    WKT stores coordinates as 'Point(<longitude> <latitude>)', so the order is
+    swapped on the way out.
+    """
+    if not wkt:
+        return None
+    m = re.match(r"\s*Point\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)", wkt, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        lng, lat = float(m.group(1)), float(m.group(2))
+    except ValueError:
+        return None
+    return (lat, lng)
+
+
 def _aggregate(qid: str, rows: list) -> dict | None:
     if not rows:
         return None
@@ -155,6 +184,10 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "subsidiaries": {},
         "parents":     set(),
         "ceos":        {},
+        "hq_lat":      None,
+        "hq_lng":      None,
+        "hq_city":     None,
+        "hq_country":  None,
     }
 
     for row in rows:
@@ -175,6 +208,15 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     result["revenue"] = float(raw_rev)
                 except (ValueError, TypeError):
                     pass
+
+        # Headquarters location (first row that provides coordinates wins;
+        # prefer the HQ's own P625, fall back to the company's own P625).
+        if result["hq_lat"] is None:
+            coord = _parse_point(_v(row, "hqCoord")) or _parse_point(_v(row, "itemCoord"))
+            if coord:
+                result["hq_lat"], result["hq_lng"] = coord
+                result["hq_city"]    = _v(row, "hqLabel")
+                result["hq_country"] = _v(row, "hqCountryCode") or result["country"]
 
         # Instance (entity type)
         if inst_uri := _v(row, "instance"):

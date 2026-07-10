@@ -8,7 +8,7 @@ and mock httpx for the HTTP-calling functions.
 import pytest
 from unittest.mock import patch, MagicMock
 
-from app.scraper.wikidata import _v, _qid, _aggregate, search_entity, fetch_company_data
+from app.scraper.wikidata import _v, _qid, _parse_point, _aggregate, search_entity, fetch_company_data
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -64,6 +64,23 @@ class TestQid:
 
     def test_returns_bare_qid_unchanged(self):
         assert _qid("Q999") == "Q999"
+
+
+# ── _parse_point ───────────────────────────────────────────────────────────────
+
+class TestParsePoint:
+    def test_parses_point_swapping_lon_lat(self):
+        # WKT is Point(longitude latitude); we return (lat, lng)
+        assert _parse_point("Point(-122.03 37.33)") == (37.33, -122.03)
+
+    def test_parses_positive_and_integer_coords(self):
+        assert _parse_point("Point(13 52)") == (52.0, 13.0)
+
+    def test_returns_none_for_none(self):
+        assert _parse_point(None) is None
+
+    def test_returns_none_for_garbage(self):
+        assert _parse_point("somewhere") is None
 
 
 # ── _aggregate ────────────────────────────────────────────────────────────────
@@ -159,6 +176,41 @@ class TestAggregate:
         result = _aggregate("Q1", [row1, row2])
         assert result["name"] == "First Name"
         assert result["country"] == "US"
+
+    def test_extracts_hq_coordinates_city_and_country(self):
+        row = _row(
+            itemLabel="Apple Inc.",
+            hqCoord="Point(-122.0312 37.3318)",
+            hqLabel="Cupertino",
+            hqCountryCode="US",
+        )
+        result = _aggregate("Q1", [row])
+        assert result["hq_lat"] == pytest.approx(37.3318)
+        assert result["hq_lng"] == pytest.approx(-122.0312)
+        assert result["hq_city"] == "Cupertino"
+        assert result["hq_country"] == "US"
+
+    def test_falls_back_to_item_coordinate_when_no_hq(self):
+        row = _row(itemLabel="X", itemCoord="Point(13.4 52.5)", countryCode="DE")
+        result = _aggregate("Q1", [row])
+        assert result["hq_lat"] == pytest.approx(52.5)
+        assert result["hq_lng"] == pytest.approx(13.4)
+        assert result["hq_country"] == "DE"  # falls back to item country
+
+    def test_hq_prefers_hq_coord_over_item_coord(self):
+        row = _row(
+            itemLabel="X",
+            itemCoord="Point(0 0)",
+            hqCoord="Point(2 48)",
+            hqLabel="Paris",
+        )
+        result = _aggregate("Q1", [row])
+        assert (result["hq_lat"], result["hq_lng"]) == (48.0, 2.0)
+
+    def test_no_coordinates_leaves_hq_none(self):
+        result = _aggregate("Q1", [_row(itemLabel="X")])
+        assert result["hq_lat"] is None
+        assert result["hq_city"] is None
 
     def test_subsidiary_instances_accumulated_across_rows(self):
         row1 = _row(
