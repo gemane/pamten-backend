@@ -4,6 +4,7 @@ Owlgraph management commands – run directly on the server.
 
 Usage:
   python3 manage.py init-schema
+  python3 manage.py geocode [--limit N]
   python3 manage.py bods-gleif [options]
   python3 manage.py bods-uk-psc [options]
   python3 manage.py seed [options]
@@ -60,7 +61,7 @@ def cmd_init_schema(args):
 
 def cmd_wipe_data(args):
     import os
-    if not os.getenv("DEBUG", "").lower() in ("1", "true", "yes"):
+    if os.getenv("DEBUG", "").lower() not in ("1", "true", "yes"):
         print("wipe-data only runs with DEBUG=true. Aborted.")
         sys.exit(1)
     from app.db.arcadedb import run_sql
@@ -79,6 +80,14 @@ def cmd_wipe_data(args):
             print(f"  Wiped {t}")
         except Exception as exc:
             print(f"  {t}: {exc}")
+
+def cmd_geocode(args):
+    from app.config import settings
+    settings.GEOCODING_ENABLED = True
+    from app.scraper.geocode_backfill import backfill
+    result = backfill(limit=args.limit)
+    print(f"Geocoded {result['geocoded']}/{result['total']} locations "
+          f"({result['skipped']} without a match)")
 
 parser = argparse.ArgumentParser(description='Owlgraph management')
 subparsers = parser.add_subparsers()
@@ -114,6 +123,11 @@ p_schema.set_defaults(func=cmd_init_schema)
 p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')
 p_wipe.add_argument('--yes', action='store_true', help='Skip confirmation prompt')
 p_wipe.set_defaults(func=cmd_wipe_data)
+
+# geocode command
+p_geo = subparsers.add_parser('geocode', help='Backfill lat/lng for Location nodes via Nominatim')
+p_geo.add_argument('--limit', type=int, help='Max locations to geocode this run')
+p_geo.set_defaults(func=cmd_geocode)
 
 args = parser.parse_args()
 if hasattr(args, 'func'):

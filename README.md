@@ -247,6 +247,10 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR scraper switch |
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
 | `BODS_DATA_DIR` | `/data` | Only .zip/.json files inside this directory may be passed as `local_file` to BODS imports |
+| `GEOCODING_ENABLED` | `false` | Geocode addresses to coordinates via Nominatim |
+| `GEOCODING_CONTACT` | — | Contact email added to the Nominatim User-Agent (required by their usage policy) |
+| `NOMINATIM_URL` | public endpoint | Nominatim search URL (override to self-host) |
+| `GEOCODING_MIN_INTERVAL` | `1.0` | Minimum seconds between geocoding requests |
 | `DEBUG` | `false` | FastAPI debug mode |
 
 ---
