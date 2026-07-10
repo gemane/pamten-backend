@@ -31,6 +31,7 @@ def scraper_status():
         "open_corporates_enabled":    settings.SCRAPER_OPENCORPORATES_ENABLED,
         "bods_gleif_enabled":         settings.SCRAPER_BODS_GLEIF_ENABLED,
         "bods_uk_psc_enabled":        settings.SCRAPER_BODS_UK_PSC_ENABLED,
+        "geocoding_enabled":          settings.GEOCODING_ENABLED,
     }
 
 
