@@ -15,6 +15,7 @@ ARCADEDB_PASSWORD  – database password
 ARCADEDB_DATABASE  – database name
 """
 import threading
+import time
 import httpx
 from app.config import settings
 
@@ -51,19 +52,31 @@ def close_client() -> None:
             _client = None
 
 
+_MAX_RETRIES = 4
+
+
 def _post(endpoint: str, statement: str, params: dict, language: str = "cypher") -> list[dict]:
     url  = f"{settings.ARCADEDB_URL}/api/v1/{endpoint}/{settings.ARCADEDB_DATABASE}"
     body = {"language": language, "command": statement, "params": params}
-    try:
-        resp = _get_client().post(url, json=body)
-    except httpx.RequestError as exc:
-        raise ConnectionError(f"ArcadeDB unreachable: {exc}") from exc
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            resp = _get_client().post(url, json=body)
+        except httpx.RequestError as exc:
+            raise ConnectionError(f"ArcadeDB unreachable: {exc}") from exc
 
-    if resp.status_code not in (200, 201):
+        if resp.status_code in (200, 201):
+            return resp.json().get("result", [])
+
+        # ArcadeDB MVCC conflict: retry with exponential backoff (0.1 → 0.8 s)
+        if resp.status_code == 503 and "ConcurrentModificationException" in resp.text and attempt < _MAX_RETRIES:
+            time.sleep(0.1 * (2 ** attempt))
+            continue
+
         raise RuntimeError(
             f"ArcadeDB {endpoint} failed [{resp.status_code}]: {resp.text[:400]}"
         )
-    return resp.json().get("result", [])
+    # unreachable but makes type checkers happy
+    raise RuntimeError(f"ArcadeDB {endpoint} failed after {_MAX_RETRIES} retries")
 
 
 def run_query(cypher: str, params: dict | None = None) -> list[dict]:
