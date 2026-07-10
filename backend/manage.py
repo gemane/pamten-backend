@@ -80,6 +80,12 @@ def cmd_wipe_data(args):
             print(f"  Wiped {t}")
         except Exception as exc:
             print(f"  {t}: {exc}")
+    # Rebuild indexes — DELETE FROM leaves stale index entries pointing to
+    # deleted RIDs, which cause RecordNotFoundException on the next import.
+    print("Rebuilding indexes...")
+    from app.db.schema import ensure_indexes
+    ensure_indexes()
+    print("Done.")
 
 def cmd_geocode(args):
     from app.config import settings

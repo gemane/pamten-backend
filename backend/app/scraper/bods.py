@@ -183,22 +183,37 @@ def _upsert_entity_bods(
     with db.get_session() as session:
         # Query each indexed property separately so ArcadeDB can use its indexes.
         # A single OR across multiple properties forces a full scan even when indexes exist.
+        # Wrap each lookup in a try/except: DELETE FROM Entity removes records but can
+        # leave stale index entries pointing to deleted RIDs, causing RecordNotFoundException.
+        # Treating that as "not found" is correct — the record is gone.
         rec = None
         if lei_id:
-            rec = session.run(
-                "MATCH (e:Entity {lei_id: $lei}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
-                lei=lei_id,
-            ).single()
+            try:
+                rec = session.run(
+                    "MATCH (e:Entity {lei_id: $lei}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
+                    lei=lei_id,
+                ).single()
+            except RuntimeError as exc:
+                if "RecordNotFoundException" not in str(exc):
+                    raise
         if not rec and companies_house_id:
-            rec = session.run(
-                "MATCH (e:Entity {companies_house_id: $ch}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
-                ch=companies_house_id,
-            ).single()
+            try:
+                rec = session.run(
+                    "MATCH (e:Entity {companies_house_id: $ch}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
+                    ch=companies_house_id,
+                ).single()
+            except RuntimeError as exc:
+                if "RecordNotFoundException" not in str(exc):
+                    raise
         if not rec:
-            rec = session.run(
-                "MATCH (e:Entity) WHERE e.name_normalized = $name_norm OR e.name = $name RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
-                name_norm=name_norm, name=name,
-            ).single()
+            try:
+                rec = session.run(
+                    "MATCH (e:Entity) WHERE e.name_normalized = $name_norm OR e.name = $name RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
+                    name_norm=name_norm, name=name,
+                ).single()
+            except RuntimeError as exc:
+                if "RecordNotFoundException" not in str(exc):
+                    raise
 
         if rec:
             entity_id   = rec["id"]
