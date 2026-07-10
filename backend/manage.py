@@ -58,6 +58,28 @@ def cmd_init_schema(args):
     for f in result["failed"]:
         print(f"  FAILED: {f['stmt']}\n          -> {f['error']}")
 
+def cmd_wipe_data(args):
+    import os
+    if not os.getenv("DEBUG", "").lower() in ("1", "true", "yes"):
+        print("wipe-data only runs with DEBUG=true. Aborted.")
+        sys.exit(1)
+    from app.db.arcadedb import run_sql
+    types = ["OWNS", "HAS_ROLE", "Entity", "Person", "Location", "Source"]
+    if not args.yes:
+        print("This will delete ALL imported data (entities, persons, edges, sources).")
+        print("User accounts are NOT affected.")
+        print(f"Types to wipe: {', '.join(types)}")
+        confirm = input("Type YES to confirm: ")
+        if confirm.strip() != "YES":
+            print("Aborted.")
+            sys.exit(1)
+    for t in types:
+        try:
+            run_sql(f"DELETE FROM {t}")
+            print(f"  Wiped {t}")
+        except Exception as exc:
+            print(f"  {t}: {exc}")
+
 parser = argparse.ArgumentParser(description='Owlgraph management')
 subparsers = parser.add_subparsers()
 
@@ -87,6 +109,11 @@ p_seed.set_defaults(func=cmd_seed)
 # init-schema command
 p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
 p_schema.set_defaults(func=cmd_init_schema)
+
+# wipe-data command
+p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')
+p_wipe.add_argument('--yes', action='store_true', help='Skip confirmation prompt')
+p_wipe.set_defaults(func=cmd_wipe_data)
 
 args = parser.parse_args()
 if hasattr(args, 'func'):

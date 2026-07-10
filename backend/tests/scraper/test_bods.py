@@ -294,6 +294,9 @@ class TestProcessRelationshipStatement:
     def _bods_map(self):
         return {"entity-001": "eid-1", "entity-002": "eid-2", "person-001": "pid-1"}
 
+    def _name_map(self):
+        return {}  # empty — tests don't need real names
+
     def test_shareholding_maps_correctly(self):
         from app.scraper.bods import _process_relationship_statement
 
@@ -305,7 +308,7 @@ class TestProcessRelationshipStatement:
         bods_map = self._bods_map()
         with patch("app.scraper.bods._upsert_owns_bods", side_effect=fake_owns):
             edges = _process_relationship_statement(
-                RELATIONSHIP_STMT, bods_map, "src-1", 97
+                RELATIONSHIP_STMT, bods_map, self._name_map(), "src-1", 97
             )
 
         assert edges == 1
@@ -322,7 +325,7 @@ class TestProcessRelationshipStatement:
         with patch("app.scraper.bods._upsert_owns_bods",
                    side_effect=lambda **kw: captured.update(kw)):
             _process_relationship_statement(
-                CLOSED_RELATIONSHIP_STMT, self._bods_map(), "src-1", 97
+                CLOSED_RELATIONSHIP_STMT, self._bods_map(), self._name_map(), "src-1", 97
             )
 
         assert captured["until"] == "2023-05-01"
@@ -335,7 +338,7 @@ class TestProcessRelationshipStatement:
         with patch("app.scraper.bods._upsert_owns_bods",
                    side_effect=lambda **kw: captured.update(kw)):
             _process_relationship_statement(
-                RELATIONSHIP_NO_EXACT, self._bods_map(), "src-1", 97
+                RELATIONSHIP_NO_EXACT, self._bods_map(), self._name_map(), "src-1", 97
             )
 
         assert captured["stake_percent"] == 25.0
@@ -349,7 +352,7 @@ class TestProcessRelationshipStatement:
                    side_effect=lambda **kw: captured.update(kw)), \
              patch("app.scraper.bods._upsert_entity_bods", return_value="eid-new"):
             _process_relationship_statement(
-                RELATIONSHIP_UNKNOWN_INTEREST, self._bods_map(), "src-1", 97
+                RELATIONSHIP_UNKNOWN_INTEREST, self._bods_map(), self._name_map(), "src-1", 97
             )
 
         assert captured["ownership_type"] == "minority"
@@ -360,7 +363,7 @@ class TestProcessRelationshipStatement:
         with patch("app.scraper.bods._upsert_role_bods") as mock_role, \
              patch("app.scraper.bods._upsert_owns_bods") as mock_owns:
             edges = _process_relationship_statement(
-                RELATIONSHIP_ROLE, self._bods_map(), "src-1", 97
+                RELATIONSHIP_ROLE, self._bods_map(), self._name_map(), "src-1", 97
             )
 
         assert edges == 1
@@ -376,7 +379,7 @@ class TestProcessRelationshipStatement:
         with patch("app.scraper.bods._upsert_owns_bods",
                    side_effect=lambda **kw: captured.update(kw)):
             _process_relationship_statement(
-                RELATIONSHIP_STMT, bods_map, "src-1", 97
+                RELATIONSHIP_STMT, bods_map, self._name_map(), "src-1", 97
             )
 
         assert captured["owned_id"] == "OWNED-UUID"
@@ -405,7 +408,7 @@ class TestProcessRelationshipStatement:
 
         with patch("app.scraper.bods._upsert_owns_bods",
                    side_effect=lambda **kw: captured.update(kw)):
-            _process_relationship_statement(stmt, self._bods_map(), "src-1", 97)
+            _process_relationship_statement(stmt, self._bods_map(), self._name_map(), "src-1", 97)
 
         assert captured["stake_percent"] == 8.5
         assert captured["ownership_type"] == "minority"
@@ -422,7 +425,7 @@ class TestProcessRelationshipStatement:
              patch("app.scraper.bods._upsert_owns_bods",
                    side_effect=lambda **kw: owns_calls.append(kw)):
             edges = _process_relationship_statement(
-                RELATIONSHIP_STMT, bods_map, "src-1", 97
+                RELATIONSHIP_STMT, bods_map, self._name_map(), "src-1", 97
             )
 
         # A placeholder was created for the unknown party
