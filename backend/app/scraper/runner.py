@@ -114,6 +114,10 @@ def _upsert_entity(
     revenue: float | None,
     description: str | None,
     wikidata_id: str,
+    hq_lat: float | None = None,
+    hq_lng: float | None = None,
+    hq_city: str | None = None,
+    hq_country: str | None = None,
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
@@ -146,6 +150,10 @@ def _upsert_entity(
                     e.revenue         = COALESCE($revenue, e.revenue),
                     e.description     = COALESCE($desc, e.description),
                     e.name_normalized = $name_norm,
+                    e.hq_lat          = COALESCE(e.hq_lat, $hq_lat),
+                    e.hq_lng          = COALESCE(e.hq_lng, $hq_lng),
+                    e.hq_city         = COALESCE(e.hq_city, $hq_city),
+                    e.hq_country      = COALESCE(e.hq_country, $hq_country),
                     e.name            = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
                     e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END
                 """,
@@ -159,6 +167,7 @@ def _upsert_entity(
                 desc=description,
                 name_norm=name_norm,
                 cred=WIKIDATA_CREDIBILITY,
+                hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
             )
             return entity_id
 
@@ -170,7 +179,9 @@ def _upsert_entity(
                 name_credibility: $cred,
                 type: $type, country: $country, founded: $founded,
                 revenue: $revenue, description: $desc,
-                wikidata_id: $wid, verified: false
+                wikidata_id: $wid, verified: false,
+                hq_lat: $hq_lat, hq_lng: $hq_lng,
+                hq_city: $hq_city, hq_country: $hq_country
             })
             """,
             id=entity_id,
@@ -183,6 +194,7 @@ def _upsert_entity(
             revenue=revenue,
             desc=description,
             wid=wikidata_id,
+            hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
         )
         return entity_id
 
@@ -320,6 +332,10 @@ def _scrape_node(
         revenue=data.get("revenue"),
         description=data.get("description"),
         wikidata_id=qid,
+        hq_lat=data.get("hq_lat"),
+        hq_lng=data.get("hq_lng"),
+        hq_city=data.get("hq_city"),
+        hq_country=data.get("hq_country"),
     )
     scraped.append({
         "qid":  qid,
