@@ -17,9 +17,14 @@ from contextlib import contextmanager
 # Import runner at module level (env vars are set in conftest.py before collection)
 from app.scraper import runner as runner_module
 from app.scraper.runner import (
+    run_scrape,
     run_scrape_sec_edgar,
     run_scrape_open_corporates,
     run_scrape_all,
+    _upsert_entity,
+    _upsert_person,
+    _upsert_owns,
+    _upsert_role,
     WIKIDATA_CREDIBILITY,
     SEC_EDGAR_CREDIBILITY,
     OPENCORPORATES_CREDIBILITY,
@@ -314,3 +319,169 @@ class TestNameCredibility:
 
         # OpenCorporates (85) cannot overwrite SEC EDGAR (98) either
         assert _winning_name("Tesla, Inc.", 98, "TESLA INC", 85) == "Tesla, Inc."
+
+
+# ── run_scrape (Wikidata) ─────────────────────────────────────────────────────
+
+class TestRunScrapeWikidata:
+    SEARCH_RESULT = [{"id": "Q380", "label": "Apple Inc.", "description": "tech co"}]
+    COMPANY_DATA  = {
+        "qid":         "Q380",
+        "name":        "Apple Inc.",
+        "description": "American technology company",
+        "instances":   ["Q4830453"],
+        "country":     "US",
+        "founded":     1976,
+        "revenue":     394328000000.0,
+        "subsidiaries": [],
+        "parents":     [],
+        "ceos":        [],
+    }
+
+    def _ctx(self):
+        return _make_session_mock()[0]
+
+    def test_raises_when_scraper_disabled(self):
+        with patch.object(settings, "SCRAPER_ENABLED", False):
+            with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):
+                run_scrape("Apple")
+
+    def test_raises_when_wikidata_source_disabled(self):
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=False):
+            with pytest.raises(PermissionError, match="[Ww]ikidata"):
+                run_scrape("Apple")
+
+    def test_returns_no_results_when_search_empty(self):
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.search_entity", return_value=[]):
+            result = run_scrape("NoSuchCompany")
+        assert result["status"] == "no_results"
+        assert result["total"] == 0
+
+    def test_returns_ok_with_scraped_entity(self):
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
+             patch("app.scraper.runner.fetch_company_data", return_value=self.COMPANY_DATA), \
+             patch("app.scraper.runner.db.get_session", self._ctx()):
+            result = run_scrape("Apple", depth=1)
+        assert result["status"] == "ok"
+        assert result["wikidata_id"] == "Q380"
+        assert result["total"] >= 1
+        assert any(e["qid"] == "Q380" for e in result["scraped"])
+
+    def test_depth_is_capped_at_3(self):
+        scraped_calls = []
+        def fake_scrape_node(qid, depth, *a, **kw):
+            scraped_calls.append(depth)
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
+             patch("app.scraper.runner._scrape_node", side_effect=fake_scrape_node), \
+             patch("app.scraper.runner._ensure_source", return_value="src-1"):
+            run_scrape("Apple", depth=99)
+        assert scraped_calls[0] == 3
+
+    def test_subsidiaries_are_written_as_owns_edges(self):
+        data_with_sub = {
+            **self.COMPANY_DATA,
+            "subsidiaries": [{"qid": "Q312", "name": "Apple Records", "instances": []}],
+        }
+        owns_calls = []
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
+             patch("app.scraper.runner.fetch_company_data", return_value=data_with_sub), \
+             patch("app.scraper.runner.db.get_session", self._ctx()), \
+             patch("app.scraper.runner._upsert_owns",
+                   side_effect=lambda *a, **kw: owns_calls.append(a)):
+            run_scrape("Apple", depth=1)
+        assert len(owns_calls) >= 1
+
+    def test_ceos_are_written_as_has_role_edges(self):
+        data_with_ceo = {
+            **self.COMPANY_DATA,
+            "ceos": [{"qid": "Q88", "label": "Tim Cook",
+                      "nationality": "US", "description": "",
+                      "since": "2011-08-24", "until": None}],
+        }
+        role_calls = []
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
+             patch("app.scraper.runner.fetch_company_data", return_value=data_with_ceo), \
+             patch("app.scraper.runner.db.get_session", self._ctx()), \
+             patch("app.scraper.runner._upsert_role",
+                   side_effect=lambda *a, **kw: role_calls.append(a)):
+            run_scrape("Apple", depth=1)
+        assert len(role_calls) >= 1
+
+
+# ── Wikidata DB helpers ───────────────────────────────────────────────────────
+
+class TestUpsertEntity:
+    def test_creates_new_entity_when_not_found(self):
+        ctx, session = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
+        # run called twice: MATCH then CREATE
+        assert session.run.call_count == 2
+
+    def test_updates_existing_entity_when_found(self):
+        ctx, session = _make_session_mock(single_returns=[{"id": "existing-uuid"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            eid = _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
+        assert eid == "existing-uuid"
+        # run called twice: MATCH then SET
+        assert session.run.call_count == 2
+
+    def test_returns_string_id(self):
+        ctx, _ = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            eid = _upsert_entity("Acme", "company", None, None, None, None, "Q1")
+        assert isinstance(eid, str) and len(eid) > 0
+
+
+class TestUpsertPerson:
+    def test_creates_new_person_when_not_found(self):
+        ctx, session = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_person("Tim Cook", "US", "Apple CEO", "Q88")
+        assert session.run.call_count == 2
+
+    def test_returns_existing_id_without_create(self):
+        ctx, session = _make_session_mock(single_returns=[{"id": "person-uuid"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            pid = _upsert_person("Tim Cook", "US", "", "Q88")
+        assert pid == "person-uuid"
+        assert session.run.call_count == 1  # only MATCH, no CREATE
+
+
+class TestUpsertOwns:
+    def test_creates_edge_when_not_exists(self):
+        ctx, session = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_owns("owner-id", "owned-id", "src-1")
+        assert session.run.call_count == 2
+
+    def test_skips_creation_when_edge_exists(self):
+        ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_owns("owner-id", "owned-id", "src-1")
+        assert session.run.call_count == 1  # only EXISTS check, no CREATE
+
+
+class TestUpsertRole:
+    def test_creates_role_edge_when_not_exists(self):
+        ctx, session = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
+        assert session.run.call_count == 2
+
+    def test_skips_when_same_role_and_since_exists(self):
+        ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
+        assert session.run.call_count == 1
