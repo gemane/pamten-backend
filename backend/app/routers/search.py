@@ -4,8 +4,40 @@ from app.database import db
 router = APIRouter(prefix="/search", tags=["Search"])
 
 
+def _rank(node: dict, q: str) -> tuple:
+    """
+    Sort key: (match_tier ASC, name_length ASC).
+    Tier 0 = exact, 1 = starts-with, 2 = contains name, 3 = alias/description only.
+    Lower tier and shorter name float to the top.
+    """
+    name = (node.get("name") or "").lower()
+    if name == q:
+        return (0, len(name))
+    if name.startswith(q):
+        return (1, len(name))
+    if q in name:
+        return (2, len(name))
+    return (3, len(name))
+
+
 @router.get("/")
 def search(q: str = Query(..., min_length=2), country: str | None = Query(default=None)):
+    """
+    Search for entities and persons by name, alias, or description.
+
+    Matches against:
+    - `name` (primary field)
+    - `aliases` — Wikidata alternate labels (e.g. "AB InBev" finds "Anheuser-Busch InBev")
+    - `description` — short Wikidata description
+
+    Results are ranked by match quality:
+    1. **Exact name match** — query equals the full name
+    2. **Starts-with** — name begins with the query; shorter names rank higher within this tier
+    3. **Contains** — query appears anywhere in the name
+    4. **Alias / description match** — query only matched a secondary field
+
+    Up to 20 entities and 10 persons are returned (30 total, trimmed to 20 after ranking).
+    """
     q_lower = q.lower()
 
     # Run Entity and Person queries separately — ArcadeDB UNION + LIMIT is unreliable.
@@ -51,6 +83,7 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
                     "type":  record["type"],
                 })
 
+    results.sort(key=lambda r: _rank(r["node"], q_lower))
     return results[:20]
 
 

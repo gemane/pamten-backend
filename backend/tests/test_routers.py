@@ -153,3 +153,43 @@ def test_search_finds_entity_by_alias(client, fake_db):
     r = client.get("/search/", params={"q": "ab inbev"})
     assert r.status_code == 200
     assert r.json()[0]["node"]["name"] == "Anheuser-Busch InBev"
+
+
+def test_search_ranks_exact_match_first(client, fake_db):
+    austria = {"id": "e2", "name": "Apple Sales International Austria GmbH", "type": "company"}
+    main    = {"id": "e1", "name": "Apple Inc.", "type": "company"}
+    # DB returns Austria first (worse match), but ranking should put Apple Inc. first
+    fake_db.queue([
+        {"node": austria, "score": 1.0, "type": "Entity"},
+        {"node": main,    "score": 1.0, "type": "Entity"},
+    ])
+    fake_db.queue([])
+    r = client.get("/search/", params={"q": "apple inc."})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "e1"
+
+
+def test_search_ranks_starts_with_before_contains(client, fake_db):
+    division = {"id": "e2", "name": "Greater Apple Valley Holdings", "type": "company"}
+    main     = {"id": "e1", "name": "Apple Inc.", "type": "company"}
+    fake_db.queue([
+        {"node": division, "score": 1.0, "type": "Entity"},
+        {"node": main,     "score": 1.0, "type": "Entity"},
+    ])
+    fake_db.queue([])
+    r = client.get("/search/", params={"q": "apple"})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "e1"
+
+
+def test_search_ranks_shorter_starts_with_name_first(client, fake_db):
+    long_name  = {"id": "e2", "name": "Apple Sales International Austria GmbH", "type": "company"}
+    short_name = {"id": "e1", "name": "Apple Inc.", "type": "company"}
+    fake_db.queue([
+        {"node": long_name,  "score": 1.0, "type": "Entity"},
+        {"node": short_name, "score": 1.0, "type": "Entity"},
+    ])
+    fake_db.queue([])
+    r = client.get("/search/", params={"q": "apple"})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "e1"
