@@ -60,6 +60,12 @@ def _make_session_mock(single_returns=None):
 class TestPermissionGuards:
     """Each entry point raises PermissionError when master or source flag is off."""
 
+    def test_run_scrape_requires_wikidata_flag(self):
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch.object(settings, "SCRAPER_WIKIDATA_ENABLED", False):
+            with pytest.raises(PermissionError, match="SCRAPER_WIKIDATA_ENABLED"):
+                run_scrape("Tesla")
+
     def test_run_scrape_sec_edgar_requires_master_flag(self):
         with patch.object(settings, "SCRAPER_ENABLED", False):
             with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):
@@ -275,6 +281,16 @@ class TestRunScrapeAll:
 
         assert result["results"]["sec_edgar"]["status"]       == "disabled"
         assert result["results"]["open_corporates"]["status"] == "disabled"
+
+    def test_wikidata_flag_off_reports_disabled(self):
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch.object(settings, "SCRAPER_WIKIDATA_ENABLED", False), \
+             patch("app.scraper.runner.run_scrape_sec_edgar",       return_value=self._sec_result()), \
+             patch("app.scraper.runner.run_scrape_open_corporates", return_value=self._oc_result()):
+            result = run_scrape_all("Tesla", depth=1)
+
+        assert result["results"]["wikidata"]["status"] == "disabled"
+        assert result["results"]["sec_edgar"]["status"] == "ok"
 
     def test_scraper_error_does_not_abort_others(self):
         """An exception in one scraper must not prevent the rest from running."""

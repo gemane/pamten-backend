@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     APP_NAME:          str  = "Ownership Platform"
     DEBUG:             bool = False
     SCRAPER_ENABLED:                  bool = False
+    SCRAPER_WIKIDATA_ENABLED:         bool = True
     SCRAPER_SEC_EDGAR_ENABLED:        bool = False
     SCRAPER_OPENCORPORATES_ENABLED:   bool = False
     SCRAPER_BODS_GLEIF_ENABLED:       bool = False

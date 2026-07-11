@@ -87,3 +87,12 @@ def test_pagination_negative_skip_rejected(client, path):
 
 def test_by_country_limit_ceiling_enforced(client):
     assert client.get("/entities/by-country/US", params={"limit": 10_000}).status_code == 422
+
+
+# ── Scraper status endpoint ────────────────────────────────────────────────────
+
+def test_scraper_status_includes_wikidata_enabled(client):
+    r = client.get("/scraper/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert "wikidata_enabled" in data

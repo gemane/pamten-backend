@@ -27,6 +27,7 @@ def scraper_status():
     """Check whether the master scraper switch is enabled."""
     return {
         "enabled":                    settings.SCRAPER_ENABLED,
+        "wikidata_enabled":           settings.SCRAPER_WIKIDATA_ENABLED,
         "sec_edgar_enabled":          settings.SCRAPER_SEC_EDGAR_ENABLED,
         "open_corporates_enabled":    settings.SCRAPER_OPENCORPORATES_ENABLED,
         "bods_gleif_enabled":         settings.SCRAPER_BODS_GLEIF_ENABLED,

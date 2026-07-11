@@ -404,6 +404,11 @@ def run_scrape(query: str, depth: int = 2) -> dict:
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
         )
 
+    if not settings.SCRAPER_WIKIDATA_ENABLED:
+        raise PermissionError(
+            "Wikidata scraper is disabled. Set SCRAPER_WIKIDATA_ENABLED=true to enable."
+        )
+
     if not get_source_enabled("wikidata"):
         raise PermissionError("Wikidata source is disabled. Enable it in the Scraper panel.")
 
@@ -741,7 +746,7 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     results: dict[str, dict] = {}
 
     # Wikidata
-    if get_source_enabled("wikidata"):
+    if settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"):
         try:
             results["wikidata"] = run_scrape(query, depth)
         except PermissionError as exc:
