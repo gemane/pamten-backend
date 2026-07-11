@@ -123,25 +123,27 @@ def seed_company(name: str, region: str, use_sec_edgar: bool) -> dict:
     return result
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Seed Pamten database with real-world ownership data.")
-    parser.add_argument(
-        "--region",
-        default="all",
-        choices=["all", "europe", "americas", "asia", "middleeast", "africa", "oceania"],
-        help="Region to seed (default: all)",
-    )
-    args = parser.parse_args()
+def main(region: str | None = None):
+    if region is None:
+        parser = argparse.ArgumentParser(description="Seed Pamten database with real-world ownership data.")
+        parser.add_argument(
+            "--region",
+            default="all",
+            choices=["all", "europe", "americas", "asia", "middleeast", "africa", "oceania"],
+            help="Region to seed (default: all)",
+        )
+        args = parser.parse_args()
+        region = args.region
 
-    companies = COMPANIES if args.region == "all" else [
-        c for c in COMPANIES if c[1] == args.region
+    companies = COMPANIES if region == "all" else [
+        c for c in COMPANIES if c[1] == region
     ]
 
     if not companies:
-        print(f"No companies found for region: {args.region}")
+        print(f"No companies found for region: {region}")
         sys.exit(1)
 
-    print(f"\n🌱  Pamten seed — region: {args.region} ({len(companies)} companies)")
+    print(f"\n🌱  Pamten seed — region: {region} ({len(companies)} companies)")
     print("─" * 60)
 
     # Ensure ScraperSource nodes exist and are enabled
