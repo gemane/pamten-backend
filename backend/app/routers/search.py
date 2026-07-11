@@ -7,37 +7,51 @@ router = APIRouter(prefix="/search", tags=["Search"])
 @router.get("/")
 def search(q: str = Query(..., min_length=2), country: str | None = Query(default=None)):
     q_lower = q.lower()
+
+    # Run Entity and Person queries separately — ArcadeDB UNION + LIMIT is unreliable.
     if country:
-        cypher = """
+        entity_cypher = """
             MATCH (n:Entity)
             WHERE toLower(n.name) CONTAINS $q AND n.country = $country
             RETURN n AS node, 1.0 AS score, 'Entity' AS type
             LIMIT 20
         """
-        params: dict = {"q": q_lower, "country": country}
+        entity_params: dict = {"q": q_lower, "country": country}
     else:
-        cypher = """
+        entity_cypher = """
             MATCH (n:Entity)
             WHERE toLower(n.name) CONTAINS $q
+               OR toLower(coalesce(n.description, '')) CONTAINS $q
+               OR any(alias IN coalesce(n.aliases, []) WHERE toLower(alias) CONTAINS $q)
             RETURN n AS node, 1.0 AS score, 'Entity' AS type
-            UNION
-            MATCH (n:Person)
-            WHERE toLower(n.full_name) CONTAINS $q
-            RETURN n AS node, 1.0 AS score, 'Person' AS type
             LIMIT 20
         """
-        params = {"q": q_lower}
+        entity_params = {"q": q_lower}
 
+    person_cypher = """
+        MATCH (n:Person)
+        WHERE toLower(n.full_name) CONTAINS $q
+        RETURN n AS node, 1.0 AS score, 'Person' AS type
+        LIMIT 10
+    """
+
+    results = []
     with db.get_session() as session:
-        result = session.run(cypher, **params)
-        return [
-            {
-                "node": dict(record["node"]),
+        for record in session.run(entity_cypher, **entity_params):
+            results.append({
+                "node":  dict(record["node"]),
                 "score": record["score"],
-                "type": record["type"],
-            }
-            for record in result
-        ]
+                "type":  record["type"],
+            })
+        if not country:
+            for record in session.run(person_cypher, q=q_lower):
+                results.append({
+                    "node":  dict(record["node"]),
+                    "score": record["score"],
+                    "type":  record["type"],
+                })
+
+    return results[:20]
 
 
 @router.get("/entity/{entity_id}/full-profile")

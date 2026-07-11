@@ -21,6 +21,7 @@ def _row(**kwargs) -> dict:
 APPLE_ROW = _row(
     itemLabel="Apple Inc.",
     itemDescription="American technology company",
+    altLabel="Apple",
     instance="http://www.wikidata.org/entity/Q4830453",
     countryCode="US",
     founded="1976-04-01T00:00:00Z",
@@ -155,10 +156,26 @@ class TestAggregate:
 
     def test_returns_lists_not_sets(self):
         result = _aggregate("Q1", [APPLE_ROW])
+        assert isinstance(result["aliases"], list)
         assert isinstance(result["instances"], list)
         assert isinstance(result["subsidiaries"], list)
         assert isinstance(result["parents"], list)
         assert isinstance(result["ceos"], list)
+
+    def test_collects_aliases(self):
+        row1 = _row(itemLabel="Apple Inc.", altLabel="Apple")
+        row2 = _row(itemLabel="Apple Inc.", altLabel="AAPL")
+        result = _aggregate("Q1", [row1, row2])
+        assert set(result["aliases"]) == {"Apple", "AAPL"}
+
+    def test_deduplicates_aliases(self):
+        rows = [_row(itemLabel="X", altLabel="Foo"), _row(itemLabel="X", altLabel="Foo")]
+        result = _aggregate("Q1", rows)
+        assert result["aliases"].count("Foo") == 1
+
+    def test_no_aliases_returns_empty_list(self):
+        result = _aggregate("Q1", [_row(itemLabel="X")])
+        assert result["aliases"] == []
 
     def test_malformed_founded_date_leaves_founded_none(self):
         row = _row(itemLabel="X", founded="not-a-date")

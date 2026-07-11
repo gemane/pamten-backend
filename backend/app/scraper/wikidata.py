@@ -13,6 +13,7 @@ Endpoints used:
 Fields returned and Pamten mapping:
   itemLabel        → entity.name
   itemDescription  → entity.description
+  altLabel         → entity.aliases (skos:altLabel, English only)
   instance (P31)   → used to classify entity type (company / person / etc.)
   countryCode      → entity.country (ISO-2)
   founded (P571)   → entity.founded_year
@@ -78,6 +79,7 @@ def fetch_company_data(qid: str) -> dict | None:
     """
     query = f"""
     SELECT ?itemLabel ?itemDescription
+           ?altLabel
            ?instance
            ?countryCode
            ?founded ?revenue
@@ -89,6 +91,7 @@ def fetch_company_data(qid: str) -> dict | None:
            ?ceoStart ?ceoEnd
     WHERE {{
       BIND(wd:{qid} AS ?item)
+      OPTIONAL {{ ?item skos:altLabel ?altLabel . FILTER(LANG(?altLabel) = "en") }}
       OPTIONAL {{ ?item wdt:P31 ?instance }}
       OPTIONAL {{
         ?item wdt:P17 ?country .
@@ -177,6 +180,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "qid":         qid,
         "name":        None,
         "description": None,
+        "aliases":     set(),
         "instances":   set(),
         "country":     None,
         "founded":     None,
@@ -218,6 +222,10 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                 result["hq_city"]    = _v(row, "hqLabel")
                 result["hq_country"] = _v(row, "hqCountryCode") or result["country"]
 
+        # Aliases (skos:altLabel, English)
+        if alias := _v(row, "altLabel"):
+            result["aliases"].add(alias)
+
         # Instance (entity type)
         if inst_uri := _v(row, "instance"):
             result["instances"].add(_qid(inst_uri))
@@ -255,6 +263,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                 }
 
     # Convert sets/dicts to lists
+    result["aliases"]      = sorted(result["aliases"])
     result["instances"]    = list(result["instances"])
     result["subsidiaries"] = list(result["subsidiaries"].values())
     result["parents"]      = list(result["parents"])

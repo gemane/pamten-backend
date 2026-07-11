@@ -96,3 +96,60 @@ def test_scraper_status_includes_wikidata_enabled(client):
     assert r.status_code == 200
     data = r.json()
     assert "wikidata_enabled" in data
+
+
+# ── Search endpoint ────────────────────────────────────────────────────────────
+
+def test_search_returns_entity_results(client, fake_db):
+    entity = {"id": "e1", "name": "AB InBev", "type": "company"}
+    # Two separate queries: entity then person
+    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
+    fake_db.queue([])  # no person results
+    r = client.get("/search/", params={"q": "inbev"})
+    assert r.status_code == 200
+    results = r.json()
+    assert len(results) == 1
+    assert results[0]["node"]["name"] == "AB InBev"
+
+
+def test_search_returns_person_results(client, fake_db):
+    person = {"id": "p1", "full_name": "Tim Cook", "type": "person"}
+    fake_db.queue([])  # no entity results
+    fake_db.queue([{"node": person, "score": 1.0, "type": "Person"}])
+    r = client.get("/search/", params={"q": "tim cook"})
+    assert r.status_code == 200
+    results = r.json()
+    assert len(results) == 1
+    assert results[0]["type"] == "Person"
+
+
+def test_search_combines_entity_and_person(client, fake_db):
+    entity = {"id": "e1", "name": "Apple", "type": "company"}
+    person = {"id": "p1", "full_name": "Apple Smith", "type": "person"}
+    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
+    fake_db.queue([{"node": person, "score": 1.0, "type": "Person"}])
+    r = client.get("/search/", params={"q": "apple"})
+    assert r.status_code == 200
+    assert len(r.json()) == 2
+
+
+def test_search_with_country_filter(client, fake_db):
+    entity = {"id": "e1", "name": "Heineken", "type": "company", "country": "NL"}
+    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
+    r = client.get("/search/", params={"q": "heineken", "country": "NL"})
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+
+
+def test_search_rejects_short_query(client):
+    assert client.get("/search/", params={"q": "a"}).status_code == 422
+
+
+def test_search_finds_entity_by_alias(client, fake_db):
+    entity = {"id": "e1", "name": "Anheuser-Busch InBev", "type": "company",
+              "aliases": ["AB InBev", "ABInBev"]}
+    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
+    fake_db.queue([])
+    r = client.get("/search/", params={"q": "ab inbev"})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["name"] == "Anheuser-Busch InBev"
