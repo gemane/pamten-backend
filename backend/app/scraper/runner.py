@@ -14,12 +14,30 @@ All entry points:
 
 import uuid
 import logging
+from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
 from app.scraper.wikidata import search_entity, fetch_company_data
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name
 from app.scraper.sources import get_source_enabled
 from app.scraper.geocode import geocode_address
+
+
+def _now_iso() -> str:
+    """UTC timestamp for last_scraped_at provenance."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _wikidata_url(qid: str | None) -> str | None:
+    """Verifiable per-record URL for a Wikidata entity (QID page)."""
+    return f"https://www.wikidata.org/wiki/{qid}" if qid else None
+
+
+def _opencorporates_url(jurisdiction_code: str | None, company_number: str | None) -> str | None:
+    """Verifiable per-record URL for an OpenCorporates company page."""
+    if not jurisdiction_code or not company_number:
+        return None
+    return f"https://opencorporates.com/companies/{jurisdiction_code}/{company_number}"
 
 log = logging.getLogger(__name__)
 
@@ -245,8 +263,15 @@ def _upsert_person(
         return person_id
 
 
-def _upsert_owns(owner_id: str, owned_id: str, source_id: str):
-    """Create an active OWNS edge if one doesn't already exist."""
+def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
+                 source_url: str | None = None, source_date: str | None = None):
+    """Create an active OWNS edge if one doesn't already exist.
+
+    Stamps per-entry provenance (source_url/source_date/last_scraped_at). On a
+    re-scrape of an existing edge, refresh last_scraped_at so the UI shows when
+    the fact was last confirmed against the source.
+    """
+    now = _now_iso()
     with db.get_session() as session:
         exists = session.run(
             """
@@ -257,6 +282,13 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str):
             nid=owned_id,
         ).single()
         if exists:
+            session.run(
+                """
+                MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+                WHERE r.until IS NULL SET r.last_scraped_at = $now
+                """,
+                oid=owner_id, nid=owned_id, now=now,
+            )
             return
         session.run(
             """
@@ -264,19 +296,23 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str):
             CREATE (a)-[:OWNS {
                 stake_percent: null, ownership_type: 'majority',
                 since: null, until: null,
-                source_id: $sid, credibility_score: $score
+                source_id: $sid, credibility_score: $score,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now
             }]->(b)
             """,
             oid=owner_id,
             nid=owned_id,
             sid=source_id,
             score=WIKIDATA_CREDIBILITY,
+            surl=source_url, sdate=source_date, now=now,
         )
 
 
 def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
-                 since: str | None = None, until: str | None = None):
+                 since: str | None = None, until: str | None = None,
+                 source_url: str | None = None):
     """Create a HAS_ROLE edge if one doesn't already exist (matched on role+since)."""
+    now = _now_iso()
     with db.get_session() as session:
         exists = session.run(
             """
@@ -291,13 +327,23 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             since=since,
         ).single()
         if exists:
+            session.run(
+                """
+                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                WHERE r.role = $role
+                  AND (r.since = $since OR (r.since IS NULL AND $since IS NULL))
+                SET r.last_scraped_at = $now
+                """,
+                pid=person_id, eid=entity_id, role=role, since=since, now=now,
+            )
             return
         session.run(
             """
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
-                source_id: $sid, credibility_score: $score
+                source_id: $sid, credibility_score: $score,
+                source_url: $surl, source_date: $since, last_scraped_at: $now
             }]->(e)
             """,
             pid=person_id,
@@ -307,6 +353,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             until=until,
             sid=source_id,
             score=WIKIDATA_CREDIBILITY,
+            surl=source_url, now=now,
         )
 
 
@@ -352,7 +399,8 @@ def _scrape_node(
 
     # Wire up to parent if this node was reached via a subsidiary edge
     if parent_entity_id:
-        _upsert_owns(parent_entity_id, entity_id, source_id)
+        _upsert_owns(parent_entity_id, entity_id, source_id,
+                     source_url=_wikidata_url(qid))
 
     # Subsidiaries
     for sub in data.get("subsidiaries", [])[:MAX_SUBSIDIARIES]:
@@ -367,7 +415,8 @@ def _scrape_node(
             description=None,
             wikidata_id=sub["qid"],
         )
-        _upsert_owns(entity_id, sub_id, source_id)
+        _upsert_owns(entity_id, sub_id, source_id,
+                     source_url=_wikidata_url(sub["qid"]))
         if depth > 1:
             _scrape_node(sub["qid"], depth - 1, visited, scraped, source_id,
                          parent_entity_id=entity_id)
@@ -395,7 +444,8 @@ def _scrape_node(
             wikidata_id=ceo["qid"],
         )
         _upsert_role(person_id, entity_id, "CEO", source_id,
-                     since=ceo.get("since"), until=ceo.get("until"))
+                     since=ceo.get("since"), until=ceo.get("until"),
+                     source_url=_wikidata_url(qid))
 
 
 # ── Wikidata public entry point ───────────────────────────────────────────────
@@ -570,8 +620,15 @@ def _upsert_person_by_name(full_name: str) -> str:
 
 def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
-                     stake_percent: float | None):
-    """Create or update an OWNS edge with SEC EDGAR attribution."""
+                     stake_percent: float | None, source_url: str | None = None):
+    """Create or update an OWNS edge with SEC EDGAR attribution.
+
+    Provenance stamped per-entry: source_url = the specific SEC filing document,
+    source_date = the filing date, last_scraped_at = now. On a re-scrape of an
+    existing edge we refresh last_scraped_at so the UI can show when we last
+    confirmed the fact against the source.
+    """
+    now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
         existing = session.run(
             """
@@ -582,6 +639,14 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             oid=owner_id, nid=owned_id, sid=source_id,
         ).single()
         if existing:
+            session.run(
+                """
+                MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+                WHERE r.source_id = $sid AND r.until IS NULL
+                SET r.last_scraped_at = $now
+                """,
+                oid=owner_id, nid=owned_id, sid=source_id, now=now,
+            )
             return
         session.run(
             """
@@ -592,12 +657,16 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 since:            $since,
                 until:            null,
                 source_id:        $sid,
-                credibility_score: $score
+                credibility_score: $score,
+                source_url:       $surl,
+                source_date:      $sdate,
+                last_scraped_at:  $now
             }]->(b)
             """,
             oid=owner_id, nid=owned_id,
             stake=stake_percent, otype=ownership_type,
             since=file_date, sid=source_id, score=SEC_EDGAR_CREDIBILITY,
+            surl=source_url, sdate=file_date, now=now,
         )
 
 
@@ -620,11 +689,13 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: null, until: null,
-                source_id: $sid, credibility_score: $score
+                source_id: $sid, credibility_score: $score,
+                source_url: null, source_date: null, last_scraped_at: $now
             }]->(e)
             """,
             pid=person_id, eid=entity_id, role=role,
             sid=source_id, score=SEC_EDGAR_CREDIBILITY,
+            now=datetime.now(timezone.utc).isoformat(),
         )
 
 
@@ -705,6 +776,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             ownership_type=filing.get("ownership_type", "unknown"),
             file_date=filing.get("file_date"),
             stake_percent=filing.get("stake_percent"),
+            source_url=filing.get("source_url"),
         )
         log.info(
             "SEC EDGAR: wrote OWNS %r → %r (%s)",
@@ -860,8 +932,14 @@ def _upsert_location_oc(address: dict) -> str | None:
 
 def _upsert_role_oc(person_id: str, entity_id: str, role: str,
                     start_date: str | None, end_date: str | None,
-                    source_id: str):
-    """Create a HAS_ROLE edge attributed to OpenCorporates if not already present."""
+                    source_id: str, source_url: str | None = None):
+    """Create a HAS_ROLE edge attributed to OpenCorporates if not already present.
+
+    Stamps per-entry provenance: source_url = the OpenCorporates company page,
+    source_date = the officer's start date, last_scraped_at = now (refreshed on
+    re-scrape).
+    """
+    now = _now_iso()
     with db.get_session() as session:
         existing = session.run(
             """
@@ -872,18 +950,28 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
             pid=person_id, eid=entity_id, role=role,
         ).single()
         if existing:
+            session.run(
+                """
+                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                WHERE r.role = $role AND r.until IS NULL
+                SET r.last_scraped_at = $now
+                """,
+                pid=person_id, eid=entity_id, role=role, now=now,
+            )
             return
         session.run(
             """
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
-                source_id: $sid, credibility_score: $score
+                source_id: $sid, credibility_score: $score,
+                source_url: $surl, source_date: $since, last_scraped_at: $now
             }]->(e)
             """,
             pid=person_id, eid=entity_id, role=role,
             since=start_date, until=end_date,
             sid=source_id, score=OPENCORPORATES_CREDIBILITY,
+            surl=source_url, now=now,
         )
 
 
@@ -924,6 +1012,11 @@ def run_scrape_open_corporates(company_name: str) -> dict:
     source_id = _ensure_open_corporates_source()
     scraped: list[dict] = []
 
+    # Verifiable per-record URL for this company on OpenCorporates
+    company_url = _opencorporates_url(
+        data.get("jurisdiction_code"), data.get("company_number"),
+    )
+
     # Upsert the target company
     target_id = _upsert_entity_by_name(
         name=data["name"],
@@ -961,7 +1054,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
             _upsert_role_oc(
                 person_id, target_id, role,
                 officer.get("start_date"), officer.get("end_date"),
-                source_id,
+                source_id, source_url=company_url,
             )
             scraped.append({"type": "person", "name": name, "role": role})
         else:

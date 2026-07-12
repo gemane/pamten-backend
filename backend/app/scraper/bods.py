@@ -10,6 +10,12 @@ Datasets:
 
 Data licence: CC0 1.0 (compatible with ODbL — see DATA_LICENSE.md)
 
+Provenance (per OWNS/HAS_ROLE edge, for later verification):
+  source_url   → GLEIF record (search.gleif.org/#/record/<LEI>) for XI-LEI refs,
+                 else the statement's own source.url (UK PSC → Companies House)
+  source_date  → BODS statementDate
+  last_scraped_at → import time (refreshed when an existing edge is re-imported)
+
 Processing strategy:
   Single streaming pass through the file.
   Entity and person statements are written to the DB immediately.
@@ -35,10 +41,32 @@ from typing import IO
 import httpx
 import ijson
 
+from datetime import datetime, timezone
+
 from app.database import db
 from app.scraper.mapper import derive_ownership_type, normalize_entity_name, parse_full_name
 
 log = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    """UTC timestamp for last_scraped_at provenance."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _bods_record_url(subject_ref: str | None, stmt: dict) -> str | None:
+    """
+    Verifiable per-record URL for a BODS statement.
+
+    GLEIF record ids are "XI-LEI-{LEI}" → link to the public GLEIF record.
+    Otherwise fall back to the statement's own declared source URL (UK PSC
+    statements carry a Companies House link), or None if neither is available.
+    """
+    if subject_ref and subject_ref.startswith("XI-LEI-"):
+        return f"https://search.gleif.org/#/record/{subject_ref[7:]}"
+    src = stmt.get("source") or {}
+    url = src.get("url")
+    return url or None
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB per download chunk
 
@@ -310,8 +338,15 @@ def _upsert_owns_bods(
     until: str | None,
     source_id: str,
     credibility_score: int,
+    source_url: str | None = None,
+    source_date: str | None = None,
 ):
-    """Create an active OWNS edge if one does not already exist."""
+    """Create an active OWNS edge if one does not already exist.
+
+    Stamps per-entry provenance: source_url (GLEIF/Companies House record),
+    source_date (BODS statementDate), last_scraped_at (refreshed on re-import).
+    """
+    now = _now_iso()
     with db.get_session() as session:
         exists = session.run(
             """
@@ -321,6 +356,13 @@ def _upsert_owns_bods(
             oid=owner_id, nid=owned_id,
         ).single()
         if exists:
+            session.run(
+                """
+                MATCH (a:Entity {id: $oid})-[r:OWNS]->(b:Entity {id: $nid})
+                WHERE r.until IS NULL SET r.last_scraped_at = $now
+                """,
+                oid=owner_id, nid=owned_id, now=now,
+            )
             return
         session.run(
             """
@@ -332,13 +374,17 @@ def _upsert_owns_bods(
                 since:            $since,
                 until:            $until,
                 source_id:        $sid,
-                credibility_score: $score
+                credibility_score: $score,
+                source_url:       $surl,
+                source_date:      $sdate,
+                last_scraped_at:  $now
             }]->(b)
             """,
             oid=owner_id, nid=owned_id,
             stake=stake_percent, otype=ownership_type,
             since=since, until=until,
             sid=source_id, score=credibility_score,
+            surl=source_url, sdate=source_date, now=now,
         )
 
 
@@ -350,8 +396,15 @@ def _upsert_role_bods(
     until: str | None,
     source_id: str,
     credibility_score: int,
+    source_url: str | None = None,
+    source_date: str | None = None,
 ):
-    """Create a HAS_ROLE edge if one does not already exist."""
+    """Create a HAS_ROLE edge if one does not already exist.
+
+    Stamps per-entry provenance (source_url/source_date/last_scraped_at),
+    refreshing last_scraped_at on re-import of an existing edge.
+    """
+    now = _now_iso()
     with db.get_session() as session:
         exists = session.run(
             """
@@ -362,18 +415,28 @@ def _upsert_role_bods(
             pid=person_id, eid=entity_id, role=role,
         ).single()
         if exists:
+            session.run(
+                """
+                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                WHERE r.role = $role AND r.until IS NULL
+                SET r.last_scraped_at = $now
+                """,
+                pid=person_id, eid=entity_id, role=role, now=now,
+            )
             return
         session.run(
             """
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
-                source_id: $sid, credibility_score: $score
+                source_id: $sid, credibility_score: $score,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now
             }]->(e)
             """,
             pid=person_id, eid=entity_id, role=role,
             since=since, until=until,
             sid=source_id, score=credibility_score,
+            surl=source_url, sdate=source_date, now=now,
         )
 
 
@@ -572,6 +635,10 @@ def _process_relationship_statement(
     closed     = record_status == "closed"
     close_date = stmt.get("statementDate") if closed else None
 
+    # Provenance: verifiable record URL + the statement's own date
+    record_url     = _bods_record_url(subject_ref, stmt)
+    statement_date = stmt.get("statementDate")
+
     edges = 0
     for interest in interests:
         interest_type = interest.get("type", "shareholding")
@@ -587,6 +654,7 @@ def _process_relationship_statement(
                 role="Senior Managing Official",
                 since=start_date, until=end_date,
                 source_id=source_id, credibility_score=credibility_score,
+                source_url=record_url, source_date=statement_date,
             )
             edges += 1
             continue
@@ -620,6 +688,7 @@ def _process_relationship_statement(
             stake_percent=stake, ownership_type=ownership_type,
             since=start_date, until=end_date,
             source_id=source_id, credibility_score=credibility_score,
+            source_url=record_url, source_date=statement_date,
         )
         edges += 1
 

@@ -29,6 +29,9 @@ class OwnsRelationshipCreate(BaseModel):
     value_usd: Optional[float] = None
     source_id: Optional[str] = None
     credibility_score: Optional[int] = None
+    # Provenance (per-entry, for later verification e.g. by journalists):
+    source_url: Optional[str] = None      # link to the specific source record
+    source_date: Optional[str] = None     # date the fact was published/recorded in the source
 
 
 class RoleRelationshipCreate(BaseModel):
@@ -39,6 +42,9 @@ class RoleRelationshipCreate(BaseModel):
     until: Optional[str] = None           # null = still active
     source_id: Optional[str] = None
     credibility_score: Optional[int] = None
+    # Provenance (per-entry):
+    source_url: Optional[str] = None      # link to the specific source record
+    source_date: Optional[str] = None     # date the fact was published/recorded in the source
 
 
 class RelatedToCreate(BaseModel):
