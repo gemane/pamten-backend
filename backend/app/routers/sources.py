@@ -47,6 +47,55 @@ def get_source(source_id: str):
         return dict(record["s"])
 
 
+# Per-entry provenance for an entity comes from the source reference on each
+# relationship that touches it (and on the entity itself). We run one simple
+# MATCH/RETURN per source — the same query shape as get_owners — and merge in
+# Python, rather than one big Cypher with list literals / UNWIND / COALESCE,
+# which ArcadeDB's Cypher engine does not support.
+_PROVENANCE_QUERIES = (
+    # Owners of this entity
+    """
+    MATCH (a)-[r:OWNS]->(e:Entity {id: $entity_id})
+    WHERE r.source_id IS NOT NULL
+    MATCH (s:Source {id: r.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           r.source_url AS source_url, r.source_date AS source_date,
+           r.last_scraped_at AS last_scraped_at
+    """,
+    # Things this entity owns
+    """
+    MATCH (e:Entity {id: $entity_id})-[r:OWNS]->(b)
+    WHERE r.source_id IS NOT NULL
+    MATCH (s:Source {id: r.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           r.source_url AS source_url, r.source_date AS source_date,
+           r.last_scraped_at AS last_scraped_at
+    """,
+    # Roles at this entity
+    """
+    MATCH (p)-[r:HAS_ROLE]->(e:Entity {id: $entity_id})
+    WHERE r.source_id IS NOT NULL
+    MATCH (s:Source {id: r.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           r.source_url AS source_url, r.source_date AS source_date,
+           r.last_scraped_at AS last_scraped_at
+    """,
+    # Provenance stamped directly on the entity
+    """
+    MATCH (e:Entity {id: $entity_id})
+    WHERE e.source_id IS NOT NULL
+    MATCH (s:Source {id: e.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           e.source_url AS source_url, e.source_date AS source_date,
+           e.last_scraped_at AS last_scraped_at
+    """,
+)
+
+
 @router.get("/entity/{entity_id}")
 def get_sources_for_entity(entity_id: str):
     """
@@ -54,43 +103,40 @@ def get_sources_for_entity(entity_id: str):
     found on its ownership/role relationships (and on the entity itself),
     joined to the Source node for display metadata.
 
-    Each row carries the specific record URL, the date the fact was recorded in
-    the source, and when we last scraped it — so a reader (e.g. a journalist)
-    can verify the exact record. Rows are shaped to stay backward-compatible
-    with the old Source response (id/name/type/credibility_score/url) and add
-    source_date + last_scraped_at.
-
-    Provenance tuples are collected as [source_id, source_url, source_date,
-    last_scraped_at] lists (not map literals) for broad ArcadeDB Cypher support.
+    Each row carries the specific record URL (falling back to the source's home
+    URL), the date the fact was recorded in the source, and when we last scraped
+    it — so a reader (e.g. a journalist) can verify the exact record. Shaped to
+    stay backward-compatible with the old Source response
+    (id/name/type/credibility_score/url) plus source_date + last_scraped_at.
     """
-    query = """
-        MATCH (e:Entity {id: $entity_id})
-        OPTIONAL MATCH (a)-[r1:OWNS]->(e) WHERE r1.source_id IS NOT NULL
-        OPTIONAL MATCH (e)-[r2:OWNS]->(b) WHERE r2.source_id IS NOT NULL
-        OPTIONAL MATCH (c)-[r3:HAS_ROLE]->(e) WHERE r3.source_id IS NOT NULL
-        WITH e,
-            collect(DISTINCT [r1.source_id, r1.source_url, r1.source_date, r1.last_scraped_at]) +
-            collect(DISTINCT [r2.source_id, r2.source_url, r2.source_date, r2.last_scraped_at]) +
-            collect(DISTINCT [r3.source_id, r3.source_url, r3.source_date, r3.last_scraped_at]) AS rel_rows
-        WITH CASE WHEN e.source_id IS NOT NULL
-             THEN rel_rows + [[e.source_id, e.source_url, e.source_date, e.last_scraped_at]]
-             ELSE rel_rows END AS rows
-        UNWIND rows AS row
-        WITH row WHERE row[0] IS NOT NULL
-        MATCH (s:Source {id: row[0]})
-        RETURN DISTINCT
-            s.id AS id,
-            s.name AS name,
-            s.type AS type,
-            s.credibility_score AS credibility_score,
-            COALESCE(row[1], s.url) AS url,
-            row[2] AS source_date,
-            row[3] AS last_scraped_at
-        ORDER BY credibility_score DESC
-    """
+    rows: list[dict] = []
     with db.get_session() as session:
-        result = session.run(query, entity_id=entity_id)
-        return [dict(rec) for rec in result]
+        for query in _PROVENANCE_QUERIES:
+            for rec in session.run(query, entity_id=entity_id):
+                rows.append(dict(rec))
+
+    # Merge + dedupe in Python: the specific record URL wins over the source home
+    # URL; a source can appear once per distinct (url, source_date) pair.
+    seen: set = set()
+    out: list[dict] = []
+    for r in rows:
+        url = r.get("source_url") or r.get("source_home_url")
+        key = (r.get("id"), url, r.get("source_date"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "id":                r.get("id"),
+            "name":              r.get("name"),
+            "type":              r.get("type"),
+            "credibility_score": r.get("credibility_score"),
+            "url":               url,
+            "source_date":       r.get("source_date"),
+            "last_scraped_at":   r.get("last_scraped_at"),
+        })
+
+    out.sort(key=lambda x: -(x["credibility_score"] or 0))
+    return out
 
 
 @router.get("/")
