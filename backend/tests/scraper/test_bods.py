@@ -7,6 +7,26 @@ All DB calls are mocked — these tests validate field mapping logic only.
 import pytest
 from unittest.mock import patch, MagicMock
 
+from app.scraper.bods import _bods_record_url
+
+
+# ── Provenance record-URL helper (pure) ───────────────────────────────────────
+
+class TestBodsRecordUrl:
+    def test_gleif_ref_builds_gleif_record_url(self):
+        ref = "XI-LEI-529900T8BM49AURSDO55"
+        assert _bods_record_url(ref, {}) == \
+            "https://search.gleif.org/#/record/529900T8BM49AURSDO55"
+
+    def test_falls_back_to_statement_source_url(self):
+        stmt = {"source": {"type": ["officialRegister"], "url": "https://find-and-update.company-information.service.gov.uk/company/01234567"}}
+        assert _bods_record_url("some-uk-psc-ref", stmt) == \
+            "https://find-and-update.company-information.service.gov.uk/company/01234567"
+
+    def test_none_when_no_lei_and_no_source_url(self):
+        assert _bods_record_url("some-ref", {}) is None
+        assert _bods_record_url(None, {}) is None
+
 
 # ── Fixtures: minimal valid BODS statements ───────────────────────────────────
 
