@@ -54,3 +54,31 @@ def test_is_idempotent_second_run_converts_nothing():
         result = maintenance.normalize_entity_countries()
     assert result["converted"] == []
     cmd.assert_not_called()
+
+
+def test_converts_variant_spellings_and_mixed_case():
+    rows = [
+        {"country": "USA"},
+        {"country": "Czechia"},
+        {"country": "south korea"},
+        {"country": "BRAZIL"},
+    ]
+    q, c = _run(rows)
+    with q, c:
+        result = maintenance.normalize_entity_countries()
+    assert result["converted"] == [
+        {"from": "USA", "to": "US"},
+        {"from": "Czechia", "to": "CZ"},
+        {"from": "south korea", "to": "KR"},
+        {"from": "BRAZIL", "to": "BR"},
+    ]
+
+
+def test_canonicalizes_lowercase_and_padded_codes():
+    q, c = _run([{"country": "br"}, {"country": " AT "}])
+    with q, c:
+        result = maintenance.normalize_entity_countries()
+    assert result["converted"] == [
+        {"from": "br", "to": "BR"},
+        {"from": " AT ", "to": "AT"},
+    ]
