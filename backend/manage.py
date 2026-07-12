@@ -5,6 +5,7 @@ Owlgraph management commands – run directly on the server.
 Usage:
   python3 manage.py init-schema
   python3 manage.py geocode [--limit N]
+  python3 manage.py normalize-countries
   python3 manage.py bods-gleif [options]
   python3 manage.py bods-uk-psc [options]
   python3 manage.py seed [options]
@@ -95,6 +96,14 @@ def cmd_geocode(args):
     print(f"Geocoded {result['geocoded']}/{result['total']} locations "
           f"({result['skipped']} without a match)")
 
+def cmd_normalize_countries(args):
+    from app.scraper.maintenance import normalize_entity_countries
+    result = normalize_entity_countries()
+    for c in result["converted"]:
+        print(f"  {c['from']} -> {c['to']}")
+    print(f"Converted {len(result['converted'])} country values "
+          f"({result['skipped']} already canonical or unrecognized)")
+
 parser = argparse.ArgumentParser(description='Owlgraph management')
 subparsers = parser.add_subparsers()
 
@@ -134,6 +143,11 @@ p_wipe.set_defaults(func=cmd_wipe_data)
 p_geo = subparsers.add_parser('geocode', help='Backfill lat/lng for Location nodes via Nominatim')
 p_geo.add_argument('--limit', type=int, help='Max locations to geocode this run')
 p_geo.set_defaults(func=cmd_geocode)
+
+# normalize-countries command
+p_norm = subparsers.add_parser('normalize-countries',
+                               help='Convert full-name Entity.country values to ISO-2 codes')
+p_norm.set_defaults(func=cmd_normalize_countries)
 
 args = parser.parse_args()
 if hasattr(args, 'func'):

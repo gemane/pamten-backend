@@ -378,3 +378,34 @@ def migrate_ownership_types() -> dict:
         "skipped": skipped,
         "detail":  detail,
     }
+
+
+def normalize_entity_countries() -> dict:
+    """
+    One-time migration: convert full-name Entity.country values (as older
+    BODS imports stored them, e.g. 'Brazil') to ISO-2 codes ('BR'), the
+    canonical form the Wikidata scraper writes. Mixed forms made countries
+    appear twice in by-country groupings. Idempotent: values that are
+    already codes (or unrecognized) are left untouched.
+    """
+    from app.scraper.bods import _ISO2_COUNTRY
+    name_to_code = {name: code for code, name in _ISO2_COUNTRY.items()}
+
+    rows = run_query(
+        "MATCH (e:Entity) WHERE e.country IS NOT NULL RETURN DISTINCT e.country AS country"
+    )
+    converted: list[dict] = []
+    skipped = 0
+    for r in rows:
+        raw = r["country"]
+        code = name_to_code.get(raw)
+        if code and code != raw:
+            run_command(
+                "MATCH (e:Entity) WHERE e.country = $old SET e.country = $new",
+                {"old": raw, "new": code},
+            )
+            converted.append({"from": raw, "to": code})
+        else:
+            skipped += 1
+
+    return {"converted": converted, "skipped": skipped}
