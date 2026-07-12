@@ -285,9 +285,13 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
             session.run(
                 """
                 MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
-                WHERE r.until IS NULL SET r.last_scraped_at = $now
+                WHERE r.until IS NULL
+                SET r.last_scraped_at = $now,
+                    r.source_url  = COALESCE($surl,  r.source_url),
+                    r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 oid=owner_id, nid=owned_id, now=now,
+                surl=source_url, sdate=source_date,
             )
             return
         session.run(
@@ -332,9 +336,11 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role
                   AND (r.since = $since OR (r.since IS NULL AND $since IS NULL))
-                SET r.last_scraped_at = $now
+                SET r.last_scraped_at = $now,
+                    r.source_url = COALESCE($surl, r.source_url)
                 """,
                 pid=person_id, eid=entity_id, role=role, since=since, now=now,
+                surl=source_url,
             )
             return
         session.run(
@@ -639,13 +645,19 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             oid=owner_id, nid=owned_id, sid=source_id,
         ).single()
         if existing:
+            # Refresh last_scraped_at and backfill the specific record URL/date
+            # onto edges created before provenance (COALESCE keeps existing
+            # values when this scrape didn't yield a URL).
             session.run(
                 """
                 MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
                 WHERE r.source_id = $sid AND r.until IS NULL
-                SET r.last_scraped_at = $now
+                SET r.last_scraped_at = $now,
+                    r.source_url  = COALESCE($surl,  r.source_url),
+                    r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
+                surl=source_url, sdate=file_date,
             )
             return
         session.run(
@@ -954,9 +966,11 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role AND r.until IS NULL
-                SET r.last_scraped_at = $now
+                SET r.last_scraped_at = $now,
+                    r.source_url = COALESCE($surl, r.source_url)
                 """,
                 pid=person_id, eid=entity_id, role=role, now=now,
+                surl=source_url,
             )
             return
         session.run(
