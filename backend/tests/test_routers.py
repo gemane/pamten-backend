@@ -198,13 +198,15 @@ def test_search_ranks_shorter_starts_with_name_first(client, fake_db):
 # ── Provenance: per-entry source + dates + verifiable link ──────────────────────
 
 def test_sources_for_entity_returns_provenance(client, fake_db):
-    # Rows come back already shaped by the RETURN clause (id/name/type/
-    # credibility_score/url/source_date/last_scraped_at).
+    # The endpoint runs several simple per-source queries and merges in Python.
+    # Rows come back with the RETURN columns (source_url + source_home_url); the
+    # router computes `url` (specific record wins over the source home page).
     fake_db.queue([
         {
             "id": "s1", "name": "SEC EDGAR", "type": "register",
             "credibility_score": 95,
-            "url": "https://www.sec.gov/Archives/edgar/data/320193/000.../primary.htm",
+            "source_home_url": "https://www.sec.gov",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/320193/000.../primary.htm",
             "source_date": "2025-02-14",
             "last_scraped_at": "2026-07-12T09:00:00+00:00",
         },
@@ -215,6 +217,21 @@ def test_sources_for_entity_returns_provenance(client, fake_db):
     assert row["url"].endswith("primary.htm")          # specific record, verifiable
     assert row["source_date"] == "2025-02-14"          # date recorded in the source
     assert row["last_scraped_at"].startswith("2026-07-12")  # when we last checked it
+
+
+def test_sources_for_entity_falls_back_to_home_url(client, fake_db):
+    # Older/manual data has no per-edge source_url → fall back to the source home.
+    fake_db.queue([
+        {
+            "id": "s2", "name": "Wikidata", "type": "knowledge_base",
+            "credibility_score": 70,
+            "source_home_url": "https://www.wikidata.org",
+            "source_url": None, "source_date": None, "last_scraped_at": None,
+        },
+    ])
+    r = client.get("/sources/entity/e1")
+    assert r.status_code == 200
+    assert r.json()[0]["url"] == "https://www.wikidata.org"
 
 
 def test_create_owns_persists_provenance(client, fake_db, make_token):
