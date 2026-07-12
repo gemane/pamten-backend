@@ -109,11 +109,15 @@ def get_sources_for_entity(entity_id: str):
     stay backward-compatible with the old Source response
     (id/name/type/credibility_score/url) plus source_date + last_scraped_at.
     """
+    # Read columns explicitly with rec.get(): the ArcadeDB result-record type
+    # supports __getitem__/get but not dict(rec) on a whole multi-column row.
+    _COLS = ("id", "name", "type", "credibility_score", "source_home_url",
+             "source_url", "source_date", "last_scraped_at")
     rows: list[dict] = []
     with db.get_session() as session:
         for query in _PROVENANCE_QUERIES:
             for rec in session.run(query, entity_id=entity_id):
-                rows.append(dict(rec))
+                rows.append({c: rec.get(c) for c in _COLS})
 
     # Merge + dedupe in Python: the specific record URL wins over the source home
     # URL; a source can appear once per distinct (url, source_date) pair.
