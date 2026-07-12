@@ -379,6 +379,40 @@ def migrate_ownership_types() -> dict:
         "detail":  detail,
     }
 
+# Alternate country spellings seen in external data that the canonical
+# _ISO2_COUNTRY map does not carry (matched case-insensitively).
+_COUNTRY_NAME_VARIANTS: dict[str, str] = {
+    "UAE": "AE",
+    "South Korea": "KR",
+    "Korea, Republic of": "KR",
+    "Republic of Korea": "KR",
+    "North Korea": "KP",
+    "Korea, Democratic People's Republic of": "KP",
+    "Czechia": "CZ",
+    "United States of America": "US",
+    "USA": "US",
+    "Russian Federation": "RU",
+    "Viet Nam": "VN",
+    "Türkiye": "TR",
+    "Turkiye": "TR",
+    "The Netherlands": "NL",
+    "Ivory Coast": "CI",
+    "Côte d'Ivoire": "CI",
+    "Republic of Ireland": "IE",
+    "Great Britain": "GB",
+    "Taiwan, Province of China": "TW",
+    "Hong Kong SAR": "HK",
+    "Macau": "MO",
+    "Brunei Darussalam": "BN",
+    "Lao People's Democratic Republic": "LA",
+    "Syrian Arab Republic": "SY",
+    "Moldova, Republic of": "MD",
+    "Tanzania, United Republic of": "TZ",
+    "Iran, Islamic Republic of": "IR",
+    "Venezuela, Bolivarian Republic of": "VE",
+    "Bolivia, Plurinational State of": "BO",
+}
+
 
 def normalize_entity_countries() -> dict:
     """
@@ -389,7 +423,9 @@ def normalize_entity_countries() -> dict:
     already codes (or unrecognized) are left untouched.
     """
     from app.scraper.bods import _ISO2_COUNTRY
-    name_to_code = {name: code for code, name in _ISO2_COUNTRY.items()}
+    # Case-insensitive name lookup, extended with spellings other sources use.
+    name_to_code = {name.lower(): code for code, name in _ISO2_COUNTRY.items()}
+    name_to_code.update({name.lower(): code for name, code in _COUNTRY_NAME_VARIANTS.items()})
 
     rows = run_query(
         "MATCH (e:Entity) WHERE e.country IS NOT NULL RETURN DISTINCT e.country AS country"
@@ -398,7 +434,10 @@ def normalize_entity_countries() -> dict:
     skipped = 0
     for r in rows:
         raw = r["country"]
-        code = name_to_code.get(raw)
+        cleaned = (raw or "").strip()
+        code = name_to_code.get(cleaned.lower())
+        if code is None and len(cleaned) == 2 and cleaned.upper() in _ISO2_COUNTRY:
+            code = cleaned.upper()  # lowercase/whitespace-padded codes -> canonical
         if code and code != raw:
             run_command(
                 "MATCH (e:Entity) WHERE e.country = $old SET e.country = $new",
