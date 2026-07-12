@@ -21,6 +21,8 @@ Fields returned and Pamten mapping:
   SC 13D/13G (large-stake disclosures):
     percentOfClass in filing text               → ownership.stake_percent
     filer name                                  → person/entity node
+    primary filing document URL                 → OWNS.source_url (provenance)
+    filing date                                 → OWNS.source_date (provenance)
 
 Rate limits:
   SEC fair-access policy: max 10 requests/second per IP.
@@ -619,6 +621,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "stake_percent":    pct,
             "ownership_type":   derive_ownership_type(pct, inv["form_type"]),
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
+            # Provenance: the specific SEC filing document this fact came from,
+            # so it can be verified later. file_date is the filing's date.
+            "source_url":       inv.get("primary_url"),
         })
 
     log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)

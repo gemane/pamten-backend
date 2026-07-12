@@ -25,11 +25,31 @@ from app.scraper.runner import (
     _upsert_person,
     _upsert_owns,
     _upsert_role,
+    _wikidata_url,
+    _opencorporates_url,
     WIKIDATA_CREDIBILITY,
     SEC_EDGAR_CREDIBILITY,
     OPENCORPORATES_CREDIBILITY,
 )
 from app.config import settings
+
+
+# ── Provenance URL helpers (pure) ──────────────────────────────────────────────
+
+class TestProvenanceUrlHelpers:
+    def test_wikidata_url_builds_qid_page(self):
+        assert _wikidata_url("Q95") == "https://www.wikidata.org/wiki/Q95"
+
+    def test_wikidata_url_none_when_missing(self):
+        assert _wikidata_url(None) is None
+
+    def test_opencorporates_url_builds_company_page(self):
+        assert _opencorporates_url("gb", "01234567") == \
+            "https://opencorporates.com/companies/gb/01234567"
+
+    def test_opencorporates_url_none_when_incomplete(self):
+        assert _opencorporates_url("gb", None) is None
+        assert _opencorporates_url(None, "01234567") is None
 
 
 # ── DB session mock factory ────────────────────────────────────────────────────
@@ -482,11 +502,15 @@ class TestUpsertOwns:
             _upsert_owns("owner-id", "owned-id", "src-1")
         assert session.run.call_count == 2
 
-    def test_skips_creation_when_edge_exists(self):
+    def test_refreshes_last_scraped_when_edge_exists(self):
         ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_owns("owner-id", "owned-id", "src-1")
-        assert session.run.call_count == 1  # only EXISTS check, no CREATE
+        # EXISTS check + a last_scraped_at refresh, but no CREATE
+        assert session.run.call_count == 2
+        second_cypher = session.run.call_args_list[1].args[0]
+        assert "SET r.last_scraped_at" in second_cypher
+        assert "CREATE" not in second_cypher
 
 
 class TestUpsertRole:
@@ -496,8 +520,12 @@ class TestUpsertRole:
             _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
         assert session.run.call_count == 2
 
-    def test_skips_when_same_role_and_since_exists(self):
+    def test_refreshes_last_scraped_when_same_role_and_since_exists(self):
         ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
-        assert session.run.call_count == 1
+        # EXISTS check + a last_scraped_at refresh, but no CREATE
+        assert session.run.call_count == 2
+        second_cypher = session.run.call_args_list[1].args[0]
+        assert "SET r.last_scraped_at" in second_cypher
+        assert "CREATE" not in second_cypher
