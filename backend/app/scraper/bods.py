@@ -404,7 +404,9 @@ def _process_entity_statement(
     country_code = (jurisdiction.get("code") or "").upper()[:2] or None
     if filter_jurisdiction and country_code != filter_jurisdiction.upper():
         return None
-    country = _country_name(country_code)
+    # Store the ISO-2 code — the canonical Entity.country form shared with the
+    # Wikidata scraper, so by-country grouping doesn't split (frontend localizes).
+    country = country_code
 
     # Entity type
     raw_type    = (details.get("entityType") or {}).get("type", "registeredEntity")
