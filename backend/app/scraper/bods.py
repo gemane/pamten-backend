@@ -359,9 +359,13 @@ def _upsert_owns_bods(
             session.run(
                 """
                 MATCH (a:Entity {id: $oid})-[r:OWNS]->(b:Entity {id: $nid})
-                WHERE r.until IS NULL SET r.last_scraped_at = $now
+                WHERE r.until IS NULL
+                SET r.last_scraped_at = $now,
+                    r.source_url  = COALESCE($surl,  r.source_url),
+                    r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 oid=owner_id, nid=owned_id, now=now,
+                surl=source_url, sdate=source_date,
             )
             return
         session.run(
@@ -419,9 +423,12 @@ def _upsert_role_bods(
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role AND r.until IS NULL
-                SET r.last_scraped_at = $now
+                SET r.last_scraped_at = $now,
+                    r.source_url  = COALESCE($surl,  r.source_url),
+                    r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 pid=person_id, eid=entity_id, role=role, now=now,
+                surl=source_url, sdate=source_date,
             )
             return
         session.run(

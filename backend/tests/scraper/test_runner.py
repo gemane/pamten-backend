@@ -502,15 +502,20 @@ class TestUpsertOwns:
             _upsert_owns("owner-id", "owned-id", "src-1")
         assert session.run.call_count == 2
 
-    def test_refreshes_last_scraped_when_edge_exists(self):
+    def test_refreshes_and_backfills_when_edge_exists(self):
         ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_owns("owner-id", "owned-id", "src-1")
-        # EXISTS check + a last_scraped_at refresh, but no CREATE
+            _upsert_owns("owner-id", "owned-id", "src-1",
+                         source_url="https://www.wikidata.org/wiki/Q2283")
+        # EXISTS check + a refresh, but no CREATE
         assert session.run.call_count == 2
         second_cypher = session.run.call_args_list[1].args[0]
         assert "SET r.last_scraped_at" in second_cypher
         assert "CREATE" not in second_cypher
+        # Re-scrape backfills the specific record URL onto the existing edge
+        assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
+        assert session.run.call_args_list[1].kwargs.get("surl") == \
+            "https://www.wikidata.org/wiki/Q2283"
 
 
 class TestUpsertRole:
@@ -520,12 +525,15 @@ class TestUpsertRole:
             _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
         assert session.run.call_count == 2
 
-    def test_refreshes_last_scraped_when_same_role_and_since_exists(self):
+    def test_refreshes_and_backfills_when_same_role_and_since_exists(self):
         ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
-        # EXISTS check + a last_scraped_at refresh, but no CREATE
+            _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24",
+                         source_url="https://www.wikidata.org/wiki/Q2283")
+        # EXISTS check + a refresh, but no CREATE
         assert session.run.call_count == 2
         second_cypher = session.run.call_args_list[1].args[0]
         assert "SET r.last_scraped_at" in second_cypher
         assert "CREATE" not in second_cypher
+        # Re-scrape backfills the specific record URL onto the existing edge
+        assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
