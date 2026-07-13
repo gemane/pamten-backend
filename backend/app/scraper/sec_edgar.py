@@ -18,12 +18,12 @@ Fields returned and Pamten mapping:
     reportingOwner/reportingOwnerRelationship/officerTitle → person.role
     isDirector / isOfficer flags                → HAS_ROLE edge type
     issuerName                                  → links to company entity
-    primary filing document URL                 → HAS_ROLE.source_url (provenance)
+    filing index page URL                       → HAS_ROLE.source_url (provenance)
     filing date                                 → HAS_ROLE.source_date (provenance)
   SC 13D/13G (large-stake disclosures):
     percentOfClass in filing text               → ownership.stake_percent
     filer name                                  → person/entity node
-    primary filing document URL                 → OWNS.source_url (provenance)
+    filing index page URL                       → OWNS.source_url (provenance)
     filing date                                 → OWNS.source_date (provenance)
 
 Rate limits:
@@ -100,6 +100,21 @@ def _cik_from_accession(accession_no: str) -> str | None:
 def _cik_int(cik: str) -> str:
     """Return CIK as a plain integer string (no leading zeros), for Archives URLs."""
     return str(int(cik))
+
+
+def _filing_index_url(cik: str, accession: str) -> str | None:
+    """
+    Canonical, human-readable EDGAR filing index page for a filing, e.g.
+    .../Archives/edgar/data/320193/000110465924021466/0001104659-24-021466-index.htm
+
+    Preferred as a provenance link over a primary document: it always renders
+    as a readable page (metadata + every document in the filing), regardless of
+    whether the primary doc is HTML, .txt, or raw Form 3/4 XML.
+    """
+    if not cik or not accession:
+        return None
+    acc_nodash = accession.replace("-", "")
+    return f"{ARCHIVES_URL}/{_cik_int(cik)}/{acc_nodash}/{accession}-index.htm"
 
 
 # ── Name helpers ──────────────────────────────────────────────────────────────
@@ -591,7 +606,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "investor_cik":  cik,
             "form_type":     raw["form_type"],
             "file_date":     raw["file_date"],
-            "primary_url":   primary_url,
+            "primary_url":   primary_url,    # used to parse stake %, not for display
+            "index_url":     raw["index_url"],  # the readable filing index page
         })
 
     # Fetch stake % and reporter type from the primary filing document.
@@ -623,9 +639,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "stake_percent":    pct,
             "ownership_type":   derive_ownership_type(pct, inv["form_type"]),
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
-            # Provenance: the specific SEC filing document this fact came from,
-            # so it can be verified later. file_date is the filing's date.
-            "source_url":       inv.get("primary_url"),
+            # Provenance: the filing index page (readable), with the primary doc
+            # as a fallback. file_date is the filing's date.
+            "source_url":       inv.get("index_url") or inv.get("primary_url"),
         })
 
     log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)
@@ -725,6 +741,7 @@ def fetch_executives(cik: str) -> list:
             "accession":   accession.replace("-", ""),
             "primary_doc": primary_doc,
             "file_date":   filing_dates[i] if i < len(filing_dates) else None,
+            "index_url":   _filing_index_url(cik, accession),  # readable filing page
         })
         if len(to_fetch) >= MAX_FORM4_FETCH:
             break
@@ -748,8 +765,9 @@ def fetch_executives(cik: str) -> list:
         if not name or name in seen_names:
             continue
         seen_names.add(name)
-        # Provenance: the specific Form 3/4 filing document this role came from.
-        result["source_url"]  = url
+        # Provenance: the readable filing index page (the raw XML `url` above is
+        # only used to parse the role). Fall back to the raw doc if needed.
+        result["source_url"]  = filing.get("index_url") or url
         result["source_date"] = filing.get("file_date")
         executives.append(result)
         log.debug("SEC EDGAR: insider %s (%s)", name, result["role"])
