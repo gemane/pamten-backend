@@ -47,25 +47,19 @@ def get_source(source_id: str):
         return dict(record["s"])
 
 
-# Per-entry provenance for an entity comes from the source reference on each
-# relationship that touches it (and on the entity itself). We run one simple
-# MATCH/RETURN per source — the same query shape as get_owners — and merge in
-# Python, rather than one big Cypher with list literals / UNWIND / COALESCE,
-# which ArcadeDB's Cypher engine does not support.
+# Per-entry provenance for an entity is where *its own* information came from:
+# who owns it, its executives, and the entity record itself. We deliberately do
+# NOT include the entity's outbound ownership edges (its subsidiaries) — those
+# would add one source row per subsidiary (each a distinct record URL), which
+# floods the panel; a subsidiary's own source is shown when you select it.
+#
+# We run one simple MATCH/RETURN per source — the same query shape as get_owners
+# — and merge in Python, rather than one big Cypher with list literals / UNWIND
+# / COALESCE, which ArcadeDB's Cypher engine does not support.
 _PROVENANCE_QUERIES = (
     # Owners of this entity
     """
     MATCH (a)-[r:OWNS]->(e:Entity {id: $entity_id})
-    WHERE r.source_id IS NOT NULL
-    MATCH (s:Source {id: r.source_id})
-    RETURN s.id AS id, s.name AS name, s.type AS type,
-           s.credibility_score AS credibility_score, s.url AS source_home_url,
-           r.source_url AS source_url, r.source_date AS source_date,
-           r.last_scraped_at AS last_scraped_at
-    """,
-    # Things this entity owns
-    """
-    MATCH (e:Entity {id: $entity_id})-[r:OWNS]->(b)
     WHERE r.source_id IS NOT NULL
     MATCH (s:Source {id: r.source_id})
     RETURN s.id AS id, s.name AS name, s.type AS type,
@@ -100,8 +94,9 @@ _PROVENANCE_QUERIES = (
 def get_sources_for_entity(entity_id: str):
     """
     Return per-entry provenance for this entity: one row per source reference
-    found on its ownership/role relationships (and on the entity itself),
-    joined to the Source node for display metadata.
+    behind who owns it, its executive roles, and the entity record itself
+    (NOT its subsidiaries — see the query note above), joined to the Source node
+    for display metadata.
 
     Each row carries the specific record URL (falling back to the source's home
     URL), the date the fact was recorded in the source, and when we last scraped
