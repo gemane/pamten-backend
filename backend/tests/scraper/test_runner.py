@@ -25,6 +25,7 @@ from app.scraper.runner import (
     _upsert_person,
     _upsert_owns,
     _upsert_role,
+    _upsert_role_sec,
     _wikidata_url,
     _opencorporates_url,
     WIKIDATA_CREDIBILITY,
@@ -537,3 +538,31 @@ class TestUpsertRole:
         assert "CREATE" not in second_cypher
         # Re-scrape backfills the specific record URL onto the existing edge
         assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
+
+
+class TestUpsertRoleSec:
+    FORM4 = "https://www.sec.gov/Archives/edgar/data/789019/0001/form4.xml"
+
+    def test_creates_role_with_form4_provenance(self):
+        ctx, session = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_role_sec("p-id", "e-id", "Director", "sec-1",
+                             source_url=self.FORM4, source_date="2024-02-13")
+        assert session.run.call_count == 2
+        create_cypher = session.run.call_args_list[1].args[0]
+        create_kwargs = session.run.call_args_list[1].kwargs
+        assert "CREATE" in create_cypher
+        assert create_kwargs.get("surl") == self.FORM4
+        assert create_kwargs.get("sdate") == "2024-02-13"
+
+    def test_backfills_form4_provenance_when_role_exists(self):
+        ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_role_sec("p-id", "e-id", "Director", "sec-1",
+                             source_url=self.FORM4, source_date="2024-02-13")
+        assert session.run.call_count == 2  # EXISTS check + backfill, no CREATE
+        second_cypher = session.run.call_args_list[1].args[0]
+        assert "SET r.last_scraped_at" in second_cypher
+        assert "CREATE" not in second_cypher
+        assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
+        assert session.run.call_args_list[1].kwargs.get("surl") == self.FORM4

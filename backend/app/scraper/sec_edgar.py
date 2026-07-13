@@ -18,6 +18,8 @@ Fields returned and Pamten mapping:
     reportingOwner/reportingOwnerRelationship/officerTitle → person.role
     isDirector / isOfficer flags                → HAS_ROLE edge type
     issuerName                                  → links to company entity
+    primary filing document URL                 → HAS_ROLE.source_url (provenance)
+    filing date                                 → HAS_ROLE.source_date (provenance)
   SC 13D/13G (large-stake disclosures):
     percentOfClass in filing text               → ownership.stake_percent
     filer name                                  → person/entity node
@@ -698,6 +700,7 @@ def fetch_executives(cik: str) -> list:
     forms        = recent.get("form",           [])
     accessions   = recent.get("accessionNumber", [])
     primary_docs = recent.get("primaryDocument", [])
+    filing_dates = recent.get("filingDate",      [])
 
     # Collect one filing per unique filer CIK (newest first = most current title)
     seen_filer_ciks: set[str] = set()
@@ -721,6 +724,7 @@ def fetch_executives(cik: str) -> list:
         to_fetch.append({
             "accession":   accession.replace("-", ""),
             "primary_doc": primary_doc,
+            "file_date":   filing_dates[i] if i < len(filing_dates) else None,
         })
         if len(to_fetch) >= MAX_FORM4_FETCH:
             break
@@ -744,6 +748,9 @@ def fetch_executives(cik: str) -> list:
         if not name or name in seen_names:
             continue
         seen_names.add(name)
+        # Provenance: the specific Form 3/4 filing document this role came from.
+        result["source_url"]  = url
+        result["source_date"] = filing.get("file_date")
         executives.append(result)
         log.debug("SEC EDGAR: insider %s (%s)", name, result["role"])
 

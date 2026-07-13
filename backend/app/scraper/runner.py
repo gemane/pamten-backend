@@ -683,8 +683,16 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
 
 
 def _upsert_role_sec(person_id: str, entity_id: str, role: str,
-                     source_id: str):
-    """Create a HAS_ROLE edge attributed to SEC EDGAR if not already present."""
+                     source_id: str, source_url: str | None = None,
+                     source_date: str | None = None):
+    """Create a HAS_ROLE edge attributed to SEC EDGAR if not already present.
+
+    Provenance: source_url = the specific Form 3/4 filing document,
+    source_date = its filing date. On a re-scrape of an existing edge we refresh
+    last_scraped_at and backfill the URL/date (COALESCE keeps existing values
+    when this scrape didn't yield them).
+    """
+    now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
         existing = session.run(
             """
@@ -695,6 +703,17 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             pid=person_id, eid=entity_id, role=role,
         ).single()
         if existing:
+            session.run(
+                """
+                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                WHERE r.role = $role AND r.until IS NULL
+                SET r.last_scraped_at = $now,
+                    r.source_url  = COALESCE($surl,  r.source_url),
+                    r.source_date = COALESCE($sdate, r.source_date)
+                """,
+                pid=person_id, eid=entity_id, role=role, now=now,
+                surl=source_url, sdate=source_date,
+            )
             return
         session.run(
             """
@@ -702,12 +721,12 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: null, until: null,
                 source_id: $sid, credibility_score: $score,
-                source_url: null, source_date: null, last_scraped_at: $now
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now
             }]->(e)
             """,
             pid=person_id, eid=entity_id, role=role,
             sid=source_id, score=SEC_EDGAR_CREDIBILITY,
-            now=datetime.now(timezone.utc).isoformat(),
+            surl=source_url, sdate=source_date, now=now,
         )
 
 
@@ -803,7 +822,9 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             continue
 
         person_id = _upsert_person_by_name(name)
-        _upsert_role_sec(person_id, target_id, role, source_id)
+        _upsert_role_sec(person_id, target_id, role, source_id,
+                         source_url=exec_rec.get("source_url"),
+                         source_date=exec_rec.get("source_date"))
         scraped.append({"type": "person", "name": name, "role": role})
         log.info("SEC EDGAR: wrote HAS_ROLE %r → %r (%s)", name, data["name"], role)
 
