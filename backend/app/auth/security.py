@@ -1,17 +1,29 @@
 from datetime import datetime, timedelta, timezone
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 from app.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt only considers the first 72 bytes of a password; bcrypt >= 4.1 raises
+# if given more, so truncate to match (passlib truncated internally too). This
+# keeps the $2b$ hash format, so hashes created by the previous passlib+bcrypt
+# stack still verify.
+_BCRYPT_MAX_BYTES = 72
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    pw = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
+    return bcrypt.hashpw(pw, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(
+            plain.encode("utf-8")[:_BCRYPT_MAX_BYTES],
+            hashed.encode("utf-8"),
+        )
+    except (ValueError, TypeError):
+        # Malformed/empty stored hash — treat as a failed auth, never raise.
+        return False
 
 
 def create_access_token(data: dict) -> str:
