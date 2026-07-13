@@ -234,6 +234,20 @@ def test_sources_for_entity_falls_back_to_home_url(client, fake_db):
     assert r.json()[0]["url"] == "https://www.wikidata.org"
 
 
+def test_sources_for_entity_excludes_subsidiaries(client, fake_db):
+    # An entity's Sources panel must not list a row per subsidiary — the
+    # outbound-ownership query is intentionally absent (it flooded the panel;
+    # a subsidiary's own source shows when you select it).
+    r = client.get("/sources/entity/e1")
+    assert r.status_code == 200
+    cyphers = [c for c, _ in fake_db.calls]
+    assert len(cyphers) == 3  # owners-in, roles, entity-self — no owns-out
+    # No query walks OUT from this entity along OWNS (i.e. to its subsidiaries)
+    assert not any("{id: $entity_id})-[r:OWNS]->" in c for c in cyphers)
+    # Sanity: the inbound-owners query IS present
+    assert any("-[r:OWNS]->(e:Entity {id: $entity_id})" in c for c in cyphers)
+
+
 def test_create_owns_persists_provenance(client, fake_db, make_token):
     fake_db.queue([{"r": {"source_id": "s1"}}])  # CREATE ... RETURN r
     r = client.post(
