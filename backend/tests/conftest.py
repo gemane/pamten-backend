@@ -42,12 +42,19 @@ def scraper_env(monkeypatch):
 #
 # These fixtures let the API be tested end-to-end (real auth, real security,
 # real request validation) while the ArcadeDB layer is faked at the
-# db.get_session() seam. Records are plain dicts — routers only ever do
-# dict(record["x"]) / record["x"].get(...), which plain dicts satisfy.
+# db.get_session() seam.
+#
+# Queued rows are wrapped in the SAME _Record type the real ArcadeDB layer
+# returns, so mocked tests exercise the production record interface — e.g.
+# dict(rec) on a whole row raises here just like it does against ArcadeDB
+# (_Record has no keys()). Routers must use rec["x"] / rec.get("x").
 
 class _FakeResult:
     def __init__(self, rows):
-        self._rows = list(rows)
+        # Import lazily: env vars are set at the top of this module before any
+        # app import, so importing app.database here is safe.
+        from app.database import _Record
+        self._rows = [_Record(r) if isinstance(r, dict) else r for r in rows]
 
     def single(self):
         return self._rows[0] if self._rows else None
