@@ -47,6 +47,60 @@ jobs:
           name: test-results
           path: backend/.pytest_cache/
 
+  integration:
+    name: Integration (real ArcadeDB)
+    runs-on: ubuntu-latest
+
+    # Real ArcadeDB so the integration tests exercise actual Cypher + the real
+    # result type — catches bugs the mocked unit tests can't (Cypher dialect,
+    # dict(rec) vs rec.get()). See backend/tests/integration/README.md.
+    services:
+      arcadedb:
+        # Pinned to the version verified locally; ArcadeDB enforces a password
+        # policy, so the root password must be strong (weak ones like
+        # "playwithdata" are rejected and the server falls back to a prompt).
+        image: arcadedata/arcadedb:26.7.2
+        ports:
+          - 2480:2480
+        env:
+          JAVA_OPTS: "-Darcadedb.server.rootPassword=RootPass123!"
+
+    env:
+      # Dedicated IT creds the integration fixture uses to create/drop a fresh
+      # throwaway database per test (kept separate from ARCADEDB_* on purpose).
+      ARCADEDB_IT_URL: http://localhost:2480
+      ARCADEDB_IT_USERNAME: root
+      ARCADEDB_IT_PASSWORD: "RootPass123!"
+      # Needed for the app/config import:
+      ARCADEDB_URL: http://localhost:2480
+      ARCADEDB_USERNAME: root
+      ARCADEDB_PASSWORD: "RootPass123!"
+      ARCADEDB_DATABASE: test
+      SECRET_KEY: test-secret-key-for-ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: cd backend && pip install -r requirements.txt
+
+      - name: Wait for ArcadeDB to be ready
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2480/api/v1/ready || true)
+            if [ "$code" = "204" ] || [ "$code" = "200" ]; then echo "ArcadeDB ready"; exit 0; fi
+            echo "waiting for ArcadeDB ($i)... [$code]"; sleep 2
+          done
+          echo "ArcadeDB did not become ready in time"; exit 1
+
+      - name: Run integration tests
+        run: cd backend && python -m pytest tests/integration -v
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
