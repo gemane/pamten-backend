@@ -126,6 +126,39 @@ class TestAggregate:
         assert ceo["since"] == "2011-08-24"
         assert ceo["until"] is None
 
+    def test_extracts_founder_chair_board_as_officers(self):
+        rows = [
+            _row(itemLabel="SpaceX",
+                 founder="http://www.wikidata.org/entity/Q317521", founderLabel="Elon Musk"),
+            _row(itemLabel="SpaceX",
+                 chair="http://www.wikidata.org/entity/Q317521", chairLabel="Elon Musk"),
+            _row(itemLabel="SpaceX",
+                 board="http://www.wikidata.org/entity/Q123", boardLabel="Some Director"),
+        ]
+        result = _aggregate("Q1", rows)
+        officers = {(o["label"], o["role"]) for o in result["officers"]}
+        assert ("Elon Musk", "Founder") in officers
+        assert ("Elon Musk", "Chairman") in officers
+        assert ("Some Director", "Board Member") in officers
+
+    def test_extracts_owned_by_with_instances(self):
+        rows = [_row(
+            itemLabel="SpaceX",
+            owner="http://www.wikidata.org/entity/Q317521", ownerLabel="Elon Musk",
+            ownerInstance="http://www.wikidata.org/entity/Q5",  # human
+        )]
+        result = _aggregate("Q1", rows)
+        assert len(result["owners"]) == 1
+        owner = result["owners"][0]
+        assert owner["qid"] == "Q317521"
+        assert owner["label"] == "Elon Musk"
+        assert "Q5" in owner["instances"]
+
+    def test_officers_and_owners_empty_when_absent(self):
+        result = _aggregate("Q1", [APPLE_ROW])  # APPLE_ROW has no founder/owner
+        assert result["officers"] == []
+        assert result["owners"] == []
+
     def test_deduplicates_subsidiaries_across_rows(self):
         rows = [APPLE_ROW, APPLE_ROW]  # same subsidiary in two rows
         result = _aggregate("Q1", rows)

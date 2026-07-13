@@ -21,6 +21,10 @@ Fields returned and Pamten mapping:
   subsidiary (P355)→ OWNS edge (target entity)
   parent (P749)    → OWNS edge (source entity)
   ceo (P169)       → person node + HAS_ROLE edge (role="CEO")
+  founder (P112)   → person node + HAS_ROLE edge (role="Founder")
+  chairperson (P488)   → person node + HAS_ROLE edge (role="Chairman")
+  board member (P3320) → person node + HAS_ROLE edge (role="Board Member")
+  owned by (P127)  → OWNS edge (owner → this company; owner may be person or entity)
   headquarters (P159) + coordinate (P625) → entity.hq_lat/hq_lng/hq_city/hq_country
 
 Rate limits:
@@ -89,6 +93,10 @@ def fetch_company_data(qid: str) -> dict | None:
            ?parent
            ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode
            ?ceoStart ?ceoEnd
+           ?founder ?founderLabel
+           ?chair ?chairLabel
+           ?board ?boardLabel
+           ?owner ?ownerLabel ?ownerInstance
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item skos:altLabel ?altLabel . FILTER(LANG(?altLabel) = "en") }}
@@ -126,6 +134,13 @@ def fetch_company_data(qid: str) -> dict | None:
           ?ceo schema:description ?ceoDescription .
           FILTER(LANG(?ceoDescription) = "en")
         }}
+      }}
+      OPTIONAL {{ ?item wdt:P112 ?founder }}
+      OPTIONAL {{ ?item wdt:P488 ?chair }}
+      OPTIONAL {{ ?item wdt:P3320 ?board }}
+      OPTIONAL {{
+        ?item wdt:P127 ?owner .
+        OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }}
       }}
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" }}
     }}
@@ -188,6 +203,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "subsidiaries": {},
         "parents":     set(),
         "ceos":        {},
+        "officers":    {},   # founder / chairperson / board member → HAS_ROLE
+        "owners":      {},   # owned by (P127) → OWNS edge (owner → company)
         "hq_lat":      None,
         "hq_lng":      None,
         "hq_city":     None,
@@ -262,11 +279,41 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     "until":       until,
                 }
 
+        # Founder / chairperson / board member → HAS_ROLE (person + role)
+        for var, role in (("founder", "Founder"), ("chair", "Chairman"),
+                          ("board", "Board Member")):
+            if uri := _v(row, var):
+                pqid = _qid(uri)
+                okey = f"{pqid}|{role}"
+                if pqid and okey not in result["officers"]:
+                    result["officers"][okey] = {
+                        "qid":   pqid,
+                        "label": _v(row, f"{var}Label"),
+                        "role":  role,
+                    }
+
+        # Owned by (P127) → OWNS edge. Owner may be a person or an entity;
+        # keep its P31 instances so the runner can tell which.
+        if owner_uri := _v(row, "owner"):
+            owner_qid = _qid(owner_uri)
+            if owner_qid and owner_qid not in result["owners"]:
+                result["owners"][owner_qid] = {
+                    "qid":       owner_qid,
+                    "label":     _v(row, "ownerLabel"),
+                    "instances": set(),
+                }
+            if owner_inst := _v(row, "ownerInstance"):
+                result["owners"][owner_qid]["instances"].add(_qid(owner_inst))
+
     # Convert sets/dicts to lists
     result["aliases"]      = sorted(result["aliases"])
     result["instances"]    = list(result["instances"])
     result["subsidiaries"] = list(result["subsidiaries"].values())
     result["parents"]      = list(result["parents"])
     result["ceos"]         = list(result["ceos"].values())
+    result["officers"]     = list(result["officers"].values())
+    for o in result["owners"].values():
+        o["instances"] = list(o["instances"])
+    result["owners"]       = list(result["owners"].values())
 
     return result

@@ -76,6 +76,8 @@ WIKIDATA_SOURCE_URL   = "https://www.wikidata.org"
 WIKIDATA_CREDIBILITY  = 80
 MAX_SUBSIDIARIES      = 15   # per entity, to avoid runaway scrapes
 MAX_CEOS              = 3
+MAX_OFFICERS          = 12   # founders + chairpersons + board members combined
+MAX_OWNERS            = 10   # owned-by (P127) links
 
 SEC_EDGAR_SOURCE_NAME = "SEC EDGAR"
 SEC_EDGAR_SOURCE_URL  = "https://www.sec.gov/edgar"
@@ -452,6 +454,33 @@ def _scrape_node(
         _upsert_role(person_id, entity_id, "CEO", source_id,
                      since=ceo.get("since"), until=ceo.get("until"),
                      source_url=_wikidata_url(qid))
+
+    # Founders / chairpersons / board members → Person + HAS_ROLE
+    for off in data.get("officers", [])[:MAX_OFFICERS]:
+        if not off.get("label"):
+            continue
+        person_id = _upsert_person(full_name=off["label"], nationality=None,
+                                   description=None, wikidata_id=off["qid"])
+        _upsert_role(person_id, entity_id, off["role"], source_id,
+                     source_url=_wikidata_url(qid))
+
+    # Owned by (P127) → OWNS edge (owner → this company). The owner may be a
+    # person (e.g. a founder-owner) or another entity (e.g. a holding company).
+    for owner in data.get("owners", [])[:MAX_OWNERS]:
+        if not owner.get("label"):
+            continue
+        instances = list(owner.get("instances", []))
+        if "Q5" in instances:  # Q5 = human
+            owner_id = _upsert_person(full_name=owner["label"], nationality=None,
+                                      description=None, wikidata_id=owner["qid"])
+        else:
+            owner_id = _upsert_entity(
+                name=owner["label"],
+                entity_type=infer_entity_type(instances),
+                country=None, founded=None, revenue=None, description=None,
+                wikidata_id=owner["qid"],
+            )
+        _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid))
 
 
 # ── Wikidata public entry point ───────────────────────────────────────────────
