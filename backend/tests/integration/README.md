@@ -22,8 +22,8 @@ Start a throwaway ArcadeDB with Docker:
 
 ```bash
 docker run -d --rm --name arcadedb-it -p 2480:2480 \
-    -e JAVA_OPTS="-Darcadedb.server.rootPassword=playwithdata" \
-    arcadedata/arcadedb:latest
+    -e JAVA_OPTS="-Darcadedb.server.rootPassword=RootPass123!" \
+    arcadedata/arcadedb:26.7.2
 ```
 
 Point a **dedicated** env at it (separate from `ARCADEDB_*` so these
@@ -32,13 +32,32 @@ create/drop-database tests can never hit production), then run:
 ```bash
 export ARCADEDB_IT_URL=http://localhost:2480
 export ARCADEDB_IT_USERNAME=root
-export ARCADEDB_IT_PASSWORD=playwithdata
+export ARCADEDB_IT_PASSWORD='RootPass123!'
 
 pytest tests/integration -v
 ```
 
 Each test gets a fresh, isolated database (`pamten_it_<random>`) that is dropped
 on teardown.
+
+> **Note:** ArcadeDB enforces a password policy — a weak root password (e.g.
+> `playwithdata`) is rejected and the server falls back to an interactive
+> prompt. Use a strong one (upper + lower + digit + symbol).
+
+## Run without Docker (standalone server)
+
+No Docker? Run ArcadeDB as a standalone Java app (needs a JRE 17+):
+
+```bash
+# Download + extract ArcadeDB (github.com/ArcadeData/arcadedb/releases), then:
+JAVA_OPTS="-Darcadedb.server.rootPassword=RootPass123!" \
+  arcadedb-*/bin/server.sh < /dev/null &
+
+export ARCADEDB_IT_URL=http://localhost:2480
+export ARCADEDB_IT_USERNAME=root
+export ARCADEDB_IT_PASSWORD='RootPass123!'
+pytest tests/integration -v
+```
 
 ## Default behaviour
 
