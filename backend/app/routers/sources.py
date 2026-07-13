@@ -47,24 +47,95 @@ def get_source(source_id: str):
         return dict(record["s"])
 
 
+# Per-entry provenance for an entity is where *its own* information came from:
+# who owns it, its executives, and the entity record itself. We deliberately do
+# NOT include the entity's outbound ownership edges (its subsidiaries) — those
+# would add one source row per subsidiary (each a distinct record URL), which
+# floods the panel; a subsidiary's own source is shown when you select it.
+#
+# We run one simple MATCH/RETURN per source — the same query shape as get_owners
+# — and merge in Python, rather than one big Cypher with list literals / UNWIND
+# / COALESCE, which ArcadeDB's Cypher engine does not support.
+_PROVENANCE_QUERIES = (
+    # Owners of this entity
+    """
+    MATCH (a)-[r:OWNS]->(e:Entity {id: $entity_id})
+    WHERE r.source_id IS NOT NULL
+    MATCH (s:Source {id: r.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           r.source_url AS source_url, r.source_date AS source_date,
+           r.last_scraped_at AS last_scraped_at
+    """,
+    # Roles at this entity
+    """
+    MATCH (p)-[r:HAS_ROLE]->(e:Entity {id: $entity_id})
+    WHERE r.source_id IS NOT NULL
+    MATCH (s:Source {id: r.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           r.source_url AS source_url, r.source_date AS source_date,
+           r.last_scraped_at AS last_scraped_at
+    """,
+    # Provenance stamped directly on the entity
+    """
+    MATCH (e:Entity {id: $entity_id})
+    WHERE e.source_id IS NOT NULL
+    MATCH (s:Source {id: e.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           e.source_url AS source_url, e.source_date AS source_date,
+           e.last_scraped_at AS last_scraped_at
+    """,
+)
+
+
 @router.get("/entity/{entity_id}")
 def get_sources_for_entity(entity_id: str):
-    """Return all unique Source nodes referenced by this entity's ownership and role relationships."""
-    query = """
-        MATCH (e:Entity {id: $entity_id})
-        OPTIONAL MATCH ()-[r1:OWNS]->(e) WHERE r1.source_id IS NOT NULL
-        OPTIONAL MATCH (e)-[r2:OWNS]->() WHERE r2.source_id IS NOT NULL
-        OPTIONAL MATCH ()-[r3:HAS_ROLE]->(e) WHERE r3.source_id IS NOT NULL
-        WITH e, collect(r1.source_id) + collect(r2.source_id) + collect(r3.source_id) AS rel_ids
-        WITH CASE WHEN e.source_id IS NOT NULL THEN rel_ids + [e.source_id] ELSE rel_ids END AS ids
-        UNWIND ids AS sid
-        MATCH (s:Source {id: sid})
-        RETURN DISTINCT s
-        ORDER BY s.credibility_score DESC
     """
+    Return per-entry provenance for this entity: one row per source reference
+    behind who owns it, its executive roles, and the entity record itself
+    (NOT its subsidiaries — see the query note above), joined to the Source node
+    for display metadata.
+
+    Each row carries the specific record URL (falling back to the source's home
+    URL), the date the fact was recorded in the source, and when we last scraped
+    it — so a reader (e.g. a journalist) can verify the exact record. Shaped to
+    stay backward-compatible with the old Source response
+    (id/name/type/credibility_score/url) plus source_date + last_scraped_at.
+    """
+    # Read columns explicitly with rec.get(): the ArcadeDB result-record type
+    # supports __getitem__/get but not dict(rec) on a whole multi-column row.
+    _COLS = ("id", "name", "type", "credibility_score", "source_home_url",
+             "source_url", "source_date", "last_scraped_at")
+    rows: list[dict] = []
     with db.get_session() as session:
-        result = session.run(query, entity_id=entity_id)
-        return [dict(rec["s"]) for rec in result]
+        for query in _PROVENANCE_QUERIES:
+            for rec in session.run(query, entity_id=entity_id):
+                rows.append({c: rec.get(c) for c in _COLS})
+
+    # Merge + dedupe in Python: the specific record URL wins over the source home
+    # URL; a source can appear once per distinct (url, source_date) pair.
+    seen: set = set()
+    out: list[dict] = []
+    for r in rows:
+        url = r.get("source_url") or r.get("source_home_url")
+        key = (r.get("id"), url, r.get("source_date"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "id":                r.get("id"),
+            "name":              r.get("name"),
+            "type":              r.get("type"),
+            "credibility_score": r.get("credibility_score"),
+            "url":               url,
+            "source_date":       r.get("source_date"),
+            "last_scraped_at":   r.get("last_scraped_at"),
+        })
+
+    out.sort(key=lambda x: -(x["credibility_score"] or 0))
+    return out
 
 
 @router.get("/")

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from app.auth.dependencies import require_contributor
 from app.models.relationship import (
@@ -8,6 +9,11 @@ from app.models.relationship import (
 from app.database import db
 
 router = APIRouter(prefix="/relationships", tags=["Relationships"])
+
+
+def _now_iso() -> str:
+    """UTC timestamp for last_scraped_at / last-recorded provenance."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 @router.post("/owns")
@@ -23,13 +29,16 @@ def create_owns_relationship(data: OwnsRelationshipCreate, _: dict = Depends(req
             until: $until,
             value_usd: $value_usd,
             source_id: $source_id,
-            credibility_score: $credibility_score
+            credibility_score: $credibility_score,
+            source_url: $source_url,
+            source_date: $source_date,
+            last_scraped_at: $last_scraped_at
         }]->(owned)
         RETURN r
     """
 
     with db.get_session() as session:
-        result = session.run(query, **data.model_dump())
+        result = session.run(query, last_scraped_at=_now_iso(), **data.model_dump())
         if not result.single():
             raise HTTPException(status_code=404, detail="Owner or Entity not found")
         return {"message": "Ownership relationship created"}
@@ -66,13 +75,16 @@ def create_role_relationship(data: RoleRelationshipCreate, _: dict = Depends(req
             since: $since,
             until: $until,
             source_id: $source_id,
-            credibility_score: $credibility_score
+            credibility_score: $credibility_score,
+            source_url: $source_url,
+            source_date: $source_date,
+            last_scraped_at: $last_scraped_at
         }]->(e)
         RETURN r
     """
 
     with db.get_session() as session:
-        result = session.run(query, **data.model_dump())
+        result = session.run(query, last_scraped_at=_now_iso(), **data.model_dump())
         if not result.single():
             raise HTTPException(status_code=404, detail="Person or Entity not found")
         return {"message": "Role relationship created"}

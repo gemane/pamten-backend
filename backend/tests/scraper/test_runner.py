@@ -25,11 +25,32 @@ from app.scraper.runner import (
     _upsert_person,
     _upsert_owns,
     _upsert_role,
+    _upsert_role_sec,
+    _wikidata_url,
+    _opencorporates_url,
     WIKIDATA_CREDIBILITY,
     SEC_EDGAR_CREDIBILITY,
     OPENCORPORATES_CREDIBILITY,
 )
 from app.config import settings
+
+
+# ── Provenance URL helpers (pure) ──────────────────────────────────────────────
+
+class TestProvenanceUrlHelpers:
+    def test_wikidata_url_builds_qid_page(self):
+        assert _wikidata_url("Q95") == "https://www.wikidata.org/wiki/Q95"
+
+    def test_wikidata_url_none_when_missing(self):
+        assert _wikidata_url(None) is None
+
+    def test_opencorporates_url_builds_company_page(self):
+        assert _opencorporates_url("gb", "01234567") == \
+            "https://opencorporates.com/companies/gb/01234567"
+
+    def test_opencorporates_url_none_when_incomplete(self):
+        assert _opencorporates_url("gb", None) is None
+        assert _opencorporates_url(None, "01234567") is None
 
 
 # ── DB session mock factory ────────────────────────────────────────────────────
@@ -482,11 +503,20 @@ class TestUpsertOwns:
             _upsert_owns("owner-id", "owned-id", "src-1")
         assert session.run.call_count == 2
 
-    def test_skips_creation_when_edge_exists(self):
+    def test_refreshes_and_backfills_when_edge_exists(self):
         ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_owns("owner-id", "owned-id", "src-1")
-        assert session.run.call_count == 1  # only EXISTS check, no CREATE
+            _upsert_owns("owner-id", "owned-id", "src-1",
+                         source_url="https://www.wikidata.org/wiki/Q2283")
+        # EXISTS check + a refresh, but no CREATE
+        assert session.run.call_count == 2
+        second_cypher = session.run.call_args_list[1].args[0]
+        assert "SET r.last_scraped_at" in second_cypher
+        assert "CREATE" not in second_cypher
+        # Re-scrape backfills the specific record URL onto the existing edge
+        assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
+        assert session.run.call_args_list[1].kwargs.get("surl") == \
+            "https://www.wikidata.org/wiki/Q2283"
 
 
 class TestUpsertRole:
@@ -496,8 +526,43 @@ class TestUpsertRole:
             _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
         assert session.run.call_count == 2
 
-    def test_skips_when_same_role_and_since_exists(self):
+    def test_refreshes_and_backfills_when_same_role_and_since_exists(self):
         ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
-        assert session.run.call_count == 1
+            _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24",
+                         source_url="https://www.wikidata.org/wiki/Q2283")
+        # EXISTS check + a refresh, but no CREATE
+        assert session.run.call_count == 2
+        second_cypher = session.run.call_args_list[1].args[0]
+        assert "SET r.last_scraped_at" in second_cypher
+        assert "CREATE" not in second_cypher
+        # Re-scrape backfills the specific record URL onto the existing edge
+        assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
+
+
+class TestUpsertRoleSec:
+    FORM4 = "https://www.sec.gov/Archives/edgar/data/789019/0001/form4.xml"
+
+    def test_creates_role_with_form4_provenance(self):
+        ctx, session = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_role_sec("p-id", "e-id", "Director", "sec-1",
+                             source_url=self.FORM4, source_date="2024-02-13")
+        assert session.run.call_count == 2
+        create_cypher = session.run.call_args_list[1].args[0]
+        create_kwargs = session.run.call_args_list[1].kwargs
+        assert "CREATE" in create_cypher
+        assert create_kwargs.get("surl") == self.FORM4
+        assert create_kwargs.get("sdate") == "2024-02-13"
+
+    def test_backfills_form4_provenance_when_role_exists(self):
+        ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_role_sec("p-id", "e-id", "Director", "sec-1",
+                             source_url=self.FORM4, source_date="2024-02-13")
+        assert session.run.call_count == 2  # EXISTS check + backfill, no CREATE
+        second_cypher = session.run.call_args_list[1].args[0]
+        assert "SET r.last_scraped_at" in second_cypher
+        assert "CREATE" not in second_cypher
+        assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
+        assert session.run.call_args_list[1].kwargs.get("surl") == self.FORM4

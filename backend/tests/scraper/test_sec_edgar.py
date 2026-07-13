@@ -20,6 +20,7 @@ from app.scraper.sec_edgar import (
     _parse_form34_xml,
     _cik_int,
     _cik_from_accession,
+    _filing_index_url,
     _ticker_normalize,
     _lookup_in_tickers,
     search_company,
@@ -90,6 +91,17 @@ class TestCikHelpers:
 
     def test_cik_int_strips_zeros(self):
         assert _cik_int("0001318605") == "1318605"
+
+    def test_filing_index_url(self):
+        # Readable EDGAR filing index page: /data/{cik-int}/{acc-nodash}/{acc}-index.htm
+        assert _filing_index_url("0000320193", "0001104659-24-021466") == (
+            "https://www.sec.gov/Archives/edgar/data/320193/"
+            "000110465924021466/0001104659-24-021466-index.htm"
+        )
+
+    def test_filing_index_url_none_when_incomplete(self):
+        assert _filing_index_url("", "0001104659-24-021466") is None
+        assert _filing_index_url("320193", "") is None
 
 
 class TestParseForm34Xml:

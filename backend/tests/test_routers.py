@@ -193,3 +193,77 @@ def test_search_ranks_shorter_starts_with_name_first(client, fake_db):
     r = client.get("/search/", params={"q": "apple"})
     assert r.status_code == 200
     assert r.json()[0]["node"]["id"] == "e1"
+
+
+# ── Provenance: per-entry source + dates + verifiable link ──────────────────────
+
+def test_sources_for_entity_returns_provenance(client, fake_db):
+    # The endpoint runs several simple per-source queries and merges in Python.
+    # Rows come back with the RETURN columns (source_url + source_home_url); the
+    # router computes `url` (specific record wins over the source home page).
+    fake_db.queue([
+        {
+            "id": "s1", "name": "SEC EDGAR", "type": "register",
+            "credibility_score": 95,
+            "source_home_url": "https://www.sec.gov",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/320193/000.../primary.htm",
+            "source_date": "2025-02-14",
+            "last_scraped_at": "2026-07-12T09:00:00+00:00",
+        },
+    ])
+    r = client.get("/sources/entity/e1")
+    assert r.status_code == 200
+    row = r.json()[0]
+    assert row["url"].endswith("primary.htm")          # specific record, verifiable
+    assert row["source_date"] == "2025-02-14"          # date recorded in the source
+    assert row["last_scraped_at"].startswith("2026-07-12")  # when we last checked it
+
+
+def test_sources_for_entity_falls_back_to_home_url(client, fake_db):
+    # Older/manual data has no per-edge source_url → fall back to the source home.
+    fake_db.queue([
+        {
+            "id": "s2", "name": "Wikidata", "type": "knowledge_base",
+            "credibility_score": 70,
+            "source_home_url": "https://www.wikidata.org",
+            "source_url": None, "source_date": None, "last_scraped_at": None,
+        },
+    ])
+    r = client.get("/sources/entity/e1")
+    assert r.status_code == 200
+    assert r.json()[0]["url"] == "https://www.wikidata.org"
+
+
+def test_sources_for_entity_excludes_subsidiaries(client, fake_db):
+    # An entity's Sources panel must not list a row per subsidiary — the
+    # outbound-ownership query is intentionally absent (it flooded the panel;
+    # a subsidiary's own source shows when you select it).
+    r = client.get("/sources/entity/e1")
+    assert r.status_code == 200
+    cyphers = [c for c, _ in fake_db.calls]
+    assert len(cyphers) == 3  # owners-in, roles, entity-self — no owns-out
+    # No query walks OUT from this entity along OWNS (i.e. to its subsidiaries)
+    assert not any("{id: $entity_id})-[r:OWNS]->" in c for c in cyphers)
+    # Sanity: the inbound-owners query IS present
+    assert any("-[r:OWNS]->(e:Entity {id: $entity_id})" in c for c in cyphers)
+
+
+def test_create_owns_persists_provenance(client, fake_db, make_token):
+    fake_db.queue([{"r": {"source_id": "s1"}}])  # CREATE ... RETURN r
+    r = client.post(
+        "/relationships/owns",
+        json={
+            "owner_id": "a", "owned_id": "b", "ownership_type": "majority",
+            "source_id": "s1",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/1/x.htm",
+            "source_date": "2025-02-14",
+        },
+        headers=auth(make_token, "contributor"),
+    )
+    assert r.status_code == 200
+    # The write must carry provenance into the DB layer, including a
+    # server-stamped last_scraped_at.
+    _cypher, params = fake_db.calls[-1]
+    assert params["source_url"] == "https://www.sec.gov/Archives/edgar/data/1/x.htm"
+    assert params["source_date"] == "2025-02-14"
+    assert params["last_scraped_at"]  # non-empty ISO timestamp
