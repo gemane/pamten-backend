@@ -116,6 +116,34 @@ class TestAggregate:
         assert sub["qid"] == "Q312"
         assert sub["name"] == "Apple Records"
 
+    def test_dual_listed_company_multiple_countries_and_hqs(self):
+        # Unilever-style: two domiciles (UK + NL) and two HQs.
+        rows = [
+            _row(itemLabel="Unilever", countryCode="GB",
+                 hqLabel="London", hqCountryCode="GB", hqCoord="Point(-0.12 51.5)"),
+            _row(itemLabel="Unilever", countryCode="NL",
+                 hqLabel="Rotterdam", hqCountryCode="NL", hqCoord="Point(4.48 51.92)"),
+        ]
+        r = _aggregate("Q1", rows)
+        assert r["country"] == "GB"                       # primary
+        assert r["countries"] == ["GB", "NL"]             # both domiciles, primary first
+        # Primary HQ's city and country agree (no "Rotterdam, GB" mismatch)
+        assert (r["hq_city"], r["hq_country"]) == ("London", "GB")
+        assert set(r["hq_locations"]) == {"London|GB", "Rotterdam|NL"}
+
+    def test_single_country_company_has_singleton_countries_list(self):
+        r = _aggregate("Q1", [APPLE_ROW])
+        assert r["country"] == "US"
+        assert r["countries"] == ["US"]
+
+    def test_hq_country_never_falls_back_to_a_mismatched_domicile(self):
+        # HQ in NL but company domiciled in GB → hq_country must be NL, not GB.
+        rows = [_row(itemLabel="X", countryCode="GB",
+                     hqLabel="Rotterdam", hqCountryCode="NL", hqCoord="Point(4.48 51.92)")]
+        r = _aggregate("Q1", rows)
+        assert r["hq_city"] == "Rotterdam"
+        assert r["hq_country"] == "NL"
+
     def test_extracts_ceo(self):
         result = _aggregate("Q1", [APPLE_ROW])
         assert len(result["ceos"]) == 1

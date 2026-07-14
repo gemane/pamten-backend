@@ -15,7 +15,8 @@ Fields returned and Pamten mapping:
   itemDescription  → entity.description
   altLabel         → entity.aliases (skos:altLabel, English only)
   instance (P31)   → used to classify entity type (company / person / etc.)
-  countryCode      → entity.country (ISO-2)
+  countryCode      → entity.country (primary ISO-2) + entity.countries (all
+                     domiciles; dual-listed companies have >1)
   founded (P571)   → entity.founded_year
   revenue (P2139)  → entity.revenue_usd
   subsidiary (P355)→ OWNS edge (target entity)
@@ -25,7 +26,9 @@ Fields returned and Pamten mapping:
   chairperson (P488)   → person node + HAS_ROLE edge (role="Chairman")
   board member (P3320) → person node + HAS_ROLE edge (role="Board Member")
   owned by (P127)  → OWNS edge (owner → this company; owner may be person or entity)
-  headquarters (P159) + coordinate (P625) → entity.hq_lat/hq_lng/hq_city/hq_country
+  headquarters (P159) + coordinate (P625) → primary entity.hq_lat/hq_lng/hq_city/
+                     hq_country (city and country always agree) + entity.hq_locations
+                     ("City|CC" for every HQ; dual-listed companies have >1)
 
 Rate limits:
   Wikimedia policy: no hard public limit, but requests must include a User-Agent
@@ -197,7 +200,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "description": None,
         "aliases":     set(),
         "instances":   set(),
-        "country":     None,
+        "country":     None,   # primary domicile (first P17) — used for grouping/map
+        "countries":   set(),  # all P17 domiciles (dual-listed companies have >1)
         "founded":     None,
         "revenue":     None,
         "subsidiaries": {},
@@ -205,11 +209,14 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "ceos":        {},
         "officers":    {},   # founder / chairperson / board member → HAS_ROLE
         "owners":      {},   # owned by (P127) → OWNS edge (owner → company)
-        "hq_lat":      None,
+        "headquarters": {},  # city -> {city, country, coord} (all P159 HQs)
+        "hq_lat":      None,  # primary HQ (map pin) — filled after the loop
         "hq_lng":      None,
         "hq_city":     None,
         "hq_country":  None,
     }
+
+    item_coord = None  # company's own P625, used as a fallback HQ coordinate
 
     for row in rows:
         # Basic fields (set once)
@@ -230,14 +237,22 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                 except (ValueError, TypeError):
                     pass
 
-        # Headquarters location (first row that provides coordinates wins;
-        # prefer the HQ's own P625, fall back to the company's own P625).
-        if result["hq_lat"] is None:
-            coord = _parse_point(_v(row, "hqCoord")) or _parse_point(_v(row, "itemCoord"))
-            if coord:
-                result["hq_lat"], result["hq_lng"] = coord
-                result["hq_city"]    = _v(row, "hqLabel")
-                result["hq_country"] = _v(row, "hqCountryCode") or result["country"]
+        # All domicile countries (P17 may repeat across rows for a dual-listed
+        # company); the company's own P625 is a fallback HQ coordinate.
+        if cc := _v(row, "countryCode"):
+            result["countries"].add(cc)
+        if item_coord is None:
+            item_coord = _parse_point(_v(row, "itemCoord"))
+
+        # Headquarters (P159) — collect each with its OWN city/country/coord so
+        # they can never disagree (dual-listed firms have several).
+        if hq_city := _v(row, "hqLabel"):
+            hq = result["headquarters"].setdefault(
+                hq_city, {"city": hq_city, "country": None, "coord": None})
+            if hq["country"] is None:
+                hq["country"] = _v(row, "hqCountryCode")
+            if hq["coord"] is None:
+                hq["coord"] = _parse_point(_v(row, "hqCoord"))
 
         # Aliases (skos:altLabel, English)
         if alias := _v(row, "altLabel"):
@@ -305,6 +320,31 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if owner_inst := _v(row, "ownerInstance"):
                 result["owners"][owner_qid]["instances"].add(_qid(owner_inst))
 
+    # ── Headquarters: choose a consistent primary + list them all ────────────
+    hqs = list(result["headquarters"].values())
+    # Primary HQ (map pin + main display): prefer one that has coordinates.
+    primary = next((h for h in hqs if h["coord"]), None) or (hqs[0] if hqs else None)
+    if primary:
+        result["hq_city"]    = primary["city"]
+        # Country comes from the SAME HQ, so city/country never contradict.
+        result["hq_country"] = primary["country"] or result["country"]
+        coord = primary["coord"] or item_coord
+        if coord:
+            result["hq_lat"], result["hq_lng"] = coord
+    elif item_coord:
+        # No named P159 HQ, but the company has its own coordinate.
+        result["hq_lat"], result["hq_lng"] = item_coord
+        result["hq_country"] = result["country"]
+
+    # All HQs as "City|CC" strings (CC may be empty) for display.
+    result["hq_locations"] = [
+        f"{h['city']}|{h['country'] or ''}" for h in hqs if h.get("city")
+    ]
+
+    # Domicile countries: primary first, then the rest, de-duplicated.
+    others = sorted(c for c in result["countries"] if c and c != result["country"])
+    result["countries"] = ([result["country"]] if result["country"] else []) + others
+
     # Convert sets/dicts to lists
     result["aliases"]      = sorted(result["aliases"])
     result["instances"]    = list(result["instances"])
@@ -315,5 +355,6 @@ def _aggregate(qid: str, rows: list) -> dict | None:
     for o in result["owners"].values():
         o["instances"] = list(o["instances"])
     result["owners"]       = list(result["owners"].values())
+    result.pop("headquarters", None)
 
     return result
