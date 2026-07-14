@@ -131,6 +131,18 @@ class TestAggregate:
         assert (r["hq_city"], r["hq_country"]) == ("London", "GB")
         assert set(r["hq_locations"]) == {"London|GB", "Rotterdam|NL"}
 
+    def test_primary_hq_prefers_one_with_a_resolved_country(self):
+        # Unilever's real case: an HQ that's an office building (coords but no
+        # country) must NOT become the primary and inherit a mismatched country.
+        rows = [
+            _row(itemLabel="Unilever", countryCode="GB",
+                 hqLabel="Rotterdam", hqCoord="Point(4.48 51.92)"),   # coords, no country
+            _row(itemLabel="Unilever", countryCode="NL",
+                 hqLabel="London", hqCountryCode="GB", hqCoord="Point(-0.12 51.5)"),
+        ]
+        r = _aggregate("Q1", rows)
+        assert (r["hq_city"], r["hq_country"]) == ("London", "GB")  # never "Rotterdam, GB"
+
     def test_single_country_company_has_singleton_countries_list(self):
         r = _aggregate("Q1", [APPLE_ROW])
         assert r["country"] == "US"
@@ -392,7 +404,9 @@ class TestFetchCompanyData:
         assert "Q380" in query
 
     def test_sleeps_before_request(self):
+        # One polite sleep before each of the three targeted queries.
         with patch("httpx.get", return_value=self._sparql_response([])), \
              patch("time.sleep") as mock_sleep:
             fetch_company_data("Q1")
-        mock_sleep.assert_called_once()
+        assert mock_sleep.call_count == 3
+        mock_sleep.assert_called_with(0.4)
