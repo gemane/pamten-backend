@@ -78,36 +78,29 @@ def search_entity(query: str, limit: int = 5) -> list:
     return r.json().get("search", [])
 
 
-def fetch_company_data(qid: str) -> dict | None:
+_LABEL_SERVICE = 'SERVICE wikibase:label { bd:serviceParam wikibase:language "en" }'
+
+
+def _sparql(qid: str) -> list:
     """
-    Fetch a company's data from Wikidata via SPARQL:
-    basic info, subsidiaries, parent org, and CEO.
-    Returns a structured dict or None if no results.
+    Run the three targeted SPARQL queries for a QID and return their combined
+    result rows.
+
+    A single query joining every multi-valued property (aliases × instances ×
+    countries × HQs × subsidiaries × people × owners) is a cartesian product
+    that explodes for large companies — Unilever produced a 140 MB response.
+    Splitting by concern keeps each query bounded; _aggregate reads fields
+    per-row, so the combined rows aggregate correctly.
     """
-    query = f"""
-    SELECT ?itemLabel ?itemDescription
-           ?altLabel
-           ?instance
-           ?countryCode
-           ?founded ?revenue
-           ?itemCoord
-           ?hq ?hqLabel ?hqCoord ?hqCountryCode
-           ?subsidiary ?subsidiaryLabel ?subsidiaryInstance
-           ?parent
-           ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode
-           ?ceoStart ?ceoEnd
-           ?founder ?founderLabel
-           ?chair ?chairLabel
-           ?board ?boardLabel
-           ?owner ?ownerLabel ?ownerInstance
+    # 1. Core: identity, aliases, instances, all domicile countries, all HQs.
+    core = f"""
+    SELECT ?itemLabel ?itemDescription ?altLabel ?instance ?countryCode
+           ?founded ?revenue ?itemCoord ?hqLabel ?hqCoord ?hqCountryCode
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item skos:altLabel ?altLabel . FILTER(LANG(?altLabel) = "en") }}
       OPTIONAL {{ ?item wdt:P31 ?instance }}
-      OPTIONAL {{
-        ?item wdt:P17 ?country .
-        ?country wdt:P297 ?countryCode
-      }}
+      OPTIONAL {{ ?item wdt:P17 ?country . ?country wdt:P297 ?countryCode }}
       OPTIONAL {{ ?item wdt:P625 ?itemCoord }}
       OPTIONAL {{
         ?item wdt:P159 ?hq .
@@ -115,49 +108,58 @@ def fetch_company_data(qid: str) -> dict | None:
         OPTIONAL {{ ?hq wdt:P17 ?hqCountry . ?hqCountry wdt:P297 ?hqCountryCode }}
       }}
       OPTIONAL {{ ?item wdt:P571 ?founded }}
-      OPTIONAL {{
-        ?item wdt:P2139 ?revenue .
-        FILTER(?revenue > 0)
-      }}
-      OPTIONAL {{
-        ?item wdt:P355 ?subsidiary .
-        OPTIONAL {{ ?subsidiary wdt:P31 ?subsidiaryInstance }}
-      }}
-      OPTIONAL {{ ?item wdt:P749 ?parent }}
-      OPTIONAL {{
-        ?item p:P169 ?ceoStmt .
-        ?ceoStmt ps:P169 ?ceo .
-        OPTIONAL {{ ?ceoStmt pq:P580 ?ceoStart }}
-        OPTIONAL {{ ?ceoStmt pq:P582 ?ceoEnd }}
-        OPTIONAL {{
-          ?ceo wdt:P27 ?ceoNationality .
-          ?ceoNationality wdt:P297 ?ceoNationalityCode
-        }}
-        OPTIONAL {{
-          ?ceo schema:description ?ceoDescription .
-          FILTER(LANG(?ceoDescription) = "en")
-        }}
-      }}
-      OPTIONAL {{ ?item wdt:P112 ?founder }}
-      OPTIONAL {{ ?item wdt:P488 ?chair }}
-      OPTIONAL {{ ?item wdt:P3320 ?board }}
-      OPTIONAL {{
-        ?item wdt:P127 ?owner .
-        OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }}
-      }}
-      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en" }}
+      OPTIONAL {{ ?item wdt:P2139 ?revenue . FILTER(?revenue > 0) }}
+      {_LABEL_SERVICE}
     }}
     """
-    time.sleep(REQUEST_DELAY)
-    r = httpx.get(
-        SPARQL_URL,
-        params={"query": query, "format": "json"},
-        headers=HEADERS,
-        timeout=30,
-    )
-    r.raise_for_status()
-    rows = r.json()["results"]["bindings"]
-    return _aggregate(qid, rows)
+    # 2. People: CEO / founder / chair / board — UNION so one person per row.
+    people = f"""
+    SELECT ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode ?ceoStart ?ceoEnd
+           ?founder ?founderLabel ?chair ?chairLabel ?board ?boardLabel
+    WHERE {{
+      BIND(wd:{qid} AS ?item)
+      {{
+        ?item p:P169 ?ceoStmt . ?ceoStmt ps:P169 ?ceo .
+        OPTIONAL {{ ?ceoStmt pq:P580 ?ceoStart }}
+        OPTIONAL {{ ?ceoStmt pq:P582 ?ceoEnd }}
+        OPTIONAL {{ ?ceo wdt:P27 ?ceoNationality . ?ceoNationality wdt:P297 ?ceoNationalityCode }}
+        OPTIONAL {{ ?ceo schema:description ?ceoDescription . FILTER(LANG(?ceoDescription) = "en") }}
+      }}
+      UNION {{ ?item wdt:P112 ?founder }}
+      UNION {{ ?item wdt:P488 ?chair }}
+      UNION {{ ?item wdt:P3320 ?board }}
+      {_LABEL_SERVICE}
+    }}
+    """
+    # 3. Relations: subsidiaries, parent, owners.
+    relations = f"""
+    SELECT ?subsidiary ?subsidiaryLabel ?subsidiaryInstance ?parent
+           ?owner ?ownerLabel ?ownerInstance
+    WHERE {{
+      BIND(wd:{qid} AS ?item)
+      OPTIONAL {{ ?item wdt:P355 ?subsidiary . OPTIONAL {{ ?subsidiary wdt:P31 ?subsidiaryInstance }} }}
+      OPTIONAL {{ ?item wdt:P749 ?parent }}
+      OPTIONAL {{ ?item wdt:P127 ?owner . OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }} }}
+      {_LABEL_SERVICE}
+    }}
+    """
+    rows: list = []
+    for query in (core, people, relations):
+        time.sleep(REQUEST_DELAY)
+        r = httpx.get(SPARQL_URL, params={"query": query, "format": "json"},
+                      headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        rows.extend(r.json()["results"]["bindings"])
+    return rows
+
+
+def fetch_company_data(qid: str) -> dict | None:
+    """
+    Fetch a company's data from Wikidata: identity, all domicile countries and
+    HQs, subsidiaries, parent, owners, and key people. Returns a structured
+    dict or None if no results.
+    """
+    return _aggregate(qid, _sparql(qid))
 
 
 def _v(row: dict, key: str) -> str | None:
@@ -321,13 +323,20 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                 result["owners"][owner_qid]["instances"].add(_qid(owner_inst))
 
     # ── Headquarters: choose a consistent primary + list them all ────────────
+    multi_country = len(result["countries"]) > 1
     hqs = list(result["headquarters"].values())
-    # Primary HQ (map pin + main display): prefer one that has coordinates.
-    primary = next((h for h in hqs if h["coord"]), None) or (hqs[0] if hqs else None)
+    # Primary HQ (map pin + main display): prefer one with BOTH coordinates and
+    # a resolved country, so city/country agree and the pin is placeable.
+    primary = (next((h for h in hqs if h["coord"] and h["country"]), None)
+               or next((h for h in hqs if h["country"]), None)
+               or next((h for h in hqs if h["coord"]), None)
+               or (hqs[0] if hqs else None))
     if primary:
         result["hq_city"]    = primary["city"]
-        # Country comes from the SAME HQ, so city/country never contradict.
-        result["hq_country"] = primary["country"] or result["country"]
+        # Use the HQ's own country. Only fall back to the entity's country for a
+        # single-domicile company — for a dual-listed firm, guessing would
+        # reintroduce the mismatch (e.g. Rotterdam labelled GB).
+        result["hq_country"] = primary["country"] or (None if multi_country else result["country"])
         coord = primary["coord"] or item_coord
         if coord:
             result["hq_lat"], result["hq_lng"] = coord
