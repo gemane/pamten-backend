@@ -4,7 +4,8 @@ from app.auth.dependencies import require_contributor
 from app.models.relationship import (
     OwnsRelationshipCreate,
     RoleRelationshipCreate,
-    RelatedToCreate
+    RelatedToCreate,
+    DualListedCreate,
 )
 from app.database import db
 
@@ -124,6 +125,33 @@ def create_related_to(data: RelatedToCreate, _: dict = Depends(require_contribut
         if not result.single():
             raise HTTPException(status_code=404, detail="One or both persons not found")
         return {"message": "Relationship created"}
+
+
+@router.post("/dual-listed")
+def create_dual_listed(data: DualListedCreate, _: dict = Depends(require_contributor)):
+    """
+    Link two entities as a dual-listed company (symmetric, non-ownership).
+    MERGE so re-adding is idempotent; provenance is stamped on the edge.
+    """
+    # Store both directions so the relationship is symmetric and can be found
+    # with a plain directed match (an undirected match returns a path that the
+    # result layer can't iterate).
+    query = """
+        MATCH (a:Entity {id: $entity_a_id})
+        MATCH (b:Entity {id: $entity_b_id})
+        MERGE (a)-[r1:DUAL_LISTED_WITH]->(b)
+        MERGE (b)-[r2:DUAL_LISTED_WITH]->(a)
+        SET r1.source_id = $source_id, r1.source_url = $source_url,
+            r1.source_date = $source_date, r1.last_scraped_at = $last_scraped_at,
+            r2.source_id = $source_id, r2.source_url = $source_url,
+            r2.source_date = $source_date, r2.last_scraped_at = $last_scraped_at
+        RETURN r1
+    """
+    with db.get_session() as session:
+        result = session.run(query, last_scraped_at=_now_iso(), **data.model_dump())
+        if not result.single():
+            raise HTTPException(status_code=404, detail="One or both entities not found")
+        return {"message": "Dual-listed relationship created"}
 
 
 @router.get("/ownership-tree/{entity_id}")

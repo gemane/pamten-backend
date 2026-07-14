@@ -97,12 +97,14 @@ def get_full_profile(entity_id: str):
         OPTIONAL MATCH (owner)-[owns_r:OWNS]->(e) WHERE owns_r.until IS NULL
         OPTIONAL MATCH (e)-[sub_r:OWNS]->(subsidiary) WHERE sub_r.until IS NULL
         OPTIONAL MATCH (p:Person)-[role_r:HAS_ROLE]->(e) WHERE role_r.until IS NULL
+        OPTIONAL MATCH (e)-[:DUAL_LISTED_WITH]->(dlc:Entity)
         RETURN e,
                hq,
                collect(DISTINCT ops) as operations,
                collect(DISTINCT {owner: owner, rel: owns_r}) as owners,
                collect(DISTINCT {entity: subsidiary, rel: sub_r}) as subsidiaries,
-               collect(DISTINCT {person: p, role: role_r}) as executives
+               collect(DISTINCT {person: p, role: role_r}) as executives,
+               collect(DISTINCT dlc) as dual_listed
     """
 
     with db.get_session() as session:
@@ -135,7 +137,8 @@ def get_full_profile(entity_id: str):
                     "role": dict(ex["role"])
                 }
                 for ex in record["executives"] if ex["person"]
-            ]
+            ],
+            "dual_listed": [dict(d) for d in record["dual_listed"] if d],
         }
 
 

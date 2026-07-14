@@ -52,3 +52,16 @@ class RelatedToCreate(BaseModel):
     person_b_id: str
     relation: str                         # "brother", "spouse", etc.
     source_id: Optional[str] = None
+
+
+class DualListedCreate(BaseModel):
+    """
+    Two legal entities that form a dual-listed company (e.g. Rio Tinto plc +
+    Rio Tinto Limited). NOT an ownership link — neither owns the other; they're
+    bound by an equalisation agreement and a shared board. Symmetric.
+    """
+    entity_a_id: str
+    entity_b_id: str
+    source_id: Optional[str] = None
+    source_url: Optional[str] = None
+    source_date: Optional[str] = None

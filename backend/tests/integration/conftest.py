@@ -88,7 +88,7 @@ def it_db(monkeypatch):
     try:
         ensure_indexes()  # vertex types + id indexes (Entity, Source, Person, ...)
         # Edge types aren't part of the app's index bootstrap — create them here.
-        for etype in ("OWNS", "HAS_ROLE"):
+        for etype in ("OWNS", "HAS_ROLE", "DUAL_LISTED_WITH"):
             arcadedb.run_sql(f"CREATE EDGE TYPE {etype} IF NOT EXISTS")
         yield arcadedb
     finally:
