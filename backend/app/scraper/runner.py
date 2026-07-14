@@ -139,6 +139,8 @@ def _upsert_entity(
     hq_city: str | None = None,
     hq_country: str | None = None,
     aliases: list[str] | None = None,
+    countries: list[str] | None = None,      # all domiciles (dual-listed → >1)
+    hq_locations: list[str] | None = None,   # all HQs as "City|CC" strings
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
@@ -172,6 +174,8 @@ def _upsert_entity(
                     e.description     = COALESCE($desc, e.description),
                     e.name_normalized = $name_norm,
                     e.aliases         = CASE WHEN size($aliases) > 0 THEN $aliases ELSE COALESCE(e.aliases, []) END,
+                    e.countries       = CASE WHEN size($countries) > 0 THEN $countries ELSE COALESCE(e.countries, []) END,
+                    e.hq_locations    = CASE WHEN size($hq_locations) > 0 THEN $hq_locations ELSE COALESCE(e.hq_locations, []) END,
                     e.hq_lat          = COALESCE(e.hq_lat, $hq_lat),
                     e.hq_lng          = COALESCE(e.hq_lng, $hq_lng),
                     e.hq_city         = COALESCE(e.hq_city, $hq_city),
@@ -190,6 +194,7 @@ def _upsert_entity(
                 name_norm=name_norm,
                 cred=WIKIDATA_CREDIBILITY,
                 aliases=aliases or [],
+                countries=countries or [], hq_locations=hq_locations or [],
                 hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
             )
             return entity_id
@@ -203,7 +208,7 @@ def _upsert_entity(
                 type: $type, country: $country, founded: $founded,
                 revenue: $revenue, description: $desc,
                 wikidata_id: $wid, verified: false,
-                aliases: $aliases,
+                aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
                 hq_city: $hq_city, hq_country: $hq_country
             })
@@ -219,6 +224,7 @@ def _upsert_entity(
             desc=description,
             wid=wikidata_id,
             aliases=aliases or [],
+            countries=countries or [], hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
         )
         return entity_id
@@ -397,6 +403,8 @@ def _scrape_node(
         hq_city=data.get("hq_city"),
         hq_country=data.get("hq_country"),
         aliases=data.get("aliases", []),
+        countries=data.get("countries", []),
+        hq_locations=data.get("hq_locations", []),
     )
     scraped.append({
         "qid":  qid,
