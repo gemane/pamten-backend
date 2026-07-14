@@ -52,11 +52,13 @@ def _wrap(value):
         # Plain map (e.g. collect({owner: o, rel: r})) — wrap nested nodes
         return {k: _wrap(v) for k, v in value.items()}
     if isinstance(value, list):
-        # Detect a path serialised as alternating [vertex, edge, vertex, …]
+        # A path is serialised as an alternating [vertex, edge, vertex, …] list.
+        # A list of ONLY vertices — e.g. collect(DISTINCT node) — is not a path;
+        # it must contain at least one edge. (Otherwise a single-node collect,
+        # ["v"], was misread as a one-vertex path and became non-iterable.)
         if value and all(isinstance(x, dict) and x.get("@cat") in ("v", "e")
                          for x in value):
-            cats = [x["@cat"] for x in value]
-            if cats[0] == "v" and (len(cats) == 1 or cats[1] == "e"):
+            if any(x.get("@cat") == "e" for x in value):
                 return _PathWrapper(value)
         return [_wrap(v) for v in value]
     return value
