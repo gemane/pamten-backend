@@ -63,6 +63,7 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     person_cypher = """
         MATCH (n:Person)
         WHERE toLower(n.full_name) CONTAINS $q
+           OR any(a IN coalesce(n.alias, []) WHERE toLower(a) CONTAINS $q)
         RETURN n AS node, 1.0 AS score, 'Person' AS type
         LIMIT 10
     """
