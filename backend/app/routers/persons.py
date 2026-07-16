@@ -28,24 +28,46 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
         if not session.run("MATCH (p:Person {id:$id}) RETURN p.id AS id", id=data.dup_id).single():
             raise HTTPException(status_code=404, detail="Duplicate person not found")
 
-        # Re-home the duplicate's relationships onto the kept person, preserving
-        # each edge's properties. (Display-level de-dup already collapses any
-        # resulting same-target duplicates in the profile endpoints.)
+        # Re-home the duplicate's relationships onto the kept person. Properties
+        # are copied field-by-field with COALESCE (never rely on properties() —
+        # its support varies across ArcadeDB versions). OWNS/RELATED_TO fold onto
+        # the kept person's existing edge to the same target (backfilling blanks)
+        # instead of duplicating; HAS_ROLE is created (tenures are deduped on
+        # display by (entity, role)).
         session.run("""
             MATCH (keep:Person {id:$keep}), (dup:Person {id:$dup})-[r:OWNS]->(x)
-            CREATE (keep)-[nr:OWNS]->(x) SET nr += properties(r)
+            MERGE (keep)-[nr:OWNS]->(x)
+            SET nr.stake_percent     = COALESCE(nr.stake_percent, r.stake_percent),
+                nr.voting_power_pct  = COALESCE(nr.voting_power_pct, r.voting_power_pct),
+                nr.ownership_type    = COALESCE(nr.ownership_type, r.ownership_type),
+                nr.since             = COALESCE(nr.since, r.since),
+                nr.until             = COALESCE(nr.until, r.until),
+                nr.value_usd         = COALESCE(nr.value_usd, r.value_usd),
+                nr.source_id         = COALESCE(nr.source_id, r.source_id),
+                nr.credibility_score = COALESCE(nr.credibility_score, r.credibility_score),
+                nr.source_url        = COALESCE(nr.source_url, r.source_url),
+                nr.source_date       = COALESCE(nr.source_date, r.source_date),
+                nr.last_scraped_at   = COALESCE(nr.last_scraped_at, r.last_scraped_at)
         """, **params)
         session.run("""
             MATCH (keep:Person {id:$keep}), (dup:Person {id:$dup})-[r:HAS_ROLE]->(x)
-            CREATE (keep)-[nr:HAS_ROLE]->(x) SET nr += properties(r)
+            CREATE (keep)-[nr:HAS_ROLE]->(x)
+            SET nr.role = r.role, nr.since = r.since, nr.until = r.until,
+                nr.source_id = r.source_id, nr.credibility_score = r.credibility_score,
+                nr.source_url = r.source_url, nr.source_date = r.source_date,
+                nr.last_scraped_at = r.last_scraped_at
         """, **params)
         session.run("""
             MATCH (keep:Person {id:$keep}), (dup:Person {id:$dup})-[r:RELATED_TO]->(x)
-            CREATE (keep)-[nr:RELATED_TO]->(x) SET nr += properties(r)
+            MERGE (keep)-[nr:RELATED_TO]->(x)
+            SET nr.relation = COALESCE(nr.relation, r.relation),
+                nr.source_id = COALESCE(nr.source_id, r.source_id)
         """, **params)
         session.run("""
             MATCH (keep:Person {id:$keep}), (x)-[r:RELATED_TO]->(dup:Person {id:$dup})
-            CREATE (x)-[nr:RELATED_TO]->(keep) SET nr += properties(r)
+            MERGE (x)-[nr:RELATED_TO]->(keep)
+            SET nr.relation = COALESCE(nr.relation, r.relation),
+                nr.source_id = COALESCE(nr.source_id, r.source_id)
         """, **params)
 
         # Backfill blank bio fields on the kept person from the duplicate.
