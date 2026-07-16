@@ -455,6 +455,29 @@ class TestRunScrapeWikidata:
             run_scrape("Apple", depth=1)
         assert len(role_calls) >= 1
 
+    def test_non_human_officer_is_skipped(self):
+        # a company wrongly listed as a subsidiary's "founder" (is_human False)
+        # must NOT be created as a Person / HAS_ROLE.
+        data = {
+            **self.COMPANY_DATA,
+            "officers": [
+                {"qid": "Q312", "label": "Apple Inc.", "role": "Founder", "is_human": False},
+                {"qid": "Q19837", "label": "Steve Jobs", "role": "Founder", "is_human": True},
+            ],
+        }
+        person_calls = []
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
+             patch("app.scraper.runner.fetch_company_data", return_value=data), \
+             patch("app.scraper.runner.db.get_session", self._ctx()), \
+             patch("app.scraper.runner._upsert_role", side_effect=lambda *a, **kw: None), \
+             patch("app.scraper.runner._upsert_person",
+                   side_effect=lambda **kw: person_calls.append(kw["full_name"]) or "pid"):
+            run_scrape("Apple", depth=1)
+        assert "Steve Jobs" in person_calls
+        assert "Apple Inc." not in person_calls      # the company was skipped
+
 
 # ── Wikidata DB helpers ───────────────────────────────────────────────────────
 
