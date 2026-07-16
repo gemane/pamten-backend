@@ -170,8 +170,9 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     query = f"""
     SELECT ?person ?birth ?death
            (SAMPLE(?bpLabel) AS ?birthPlace)
-           (GROUP_CONCAT(DISTINCT ?natCode; separator="|") AS ?nats)
-           (GROUP_CONCAT(DISTINCT ?alias;   separator="|") AS ?aliases)
+           (GROUP_CONCAT(DISTINCT ?natCode;  separator="|") AS ?nats)
+           (GROUP_CONCAT(DISTINCT ?alias;    separator="|") AS ?aliases)
+           (GROUP_CONCAT(DISTINCT ?instance; separator="|") AS ?instances)
     WHERE {{
       VALUES ?person {{ {values} }}
       OPTIONAL {{ ?person wdt:P569 ?birth }}
@@ -179,6 +180,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
       OPTIONAL {{ ?person wdt:P19 ?bp . ?bp rdfs:label ?bpLabel . FILTER(LANG(?bpLabel) = "en") }}
       OPTIONAL {{ ?person wdt:P27 ?nat . ?nat wdt:P297 ?natCode }}
       OPTIONAL {{ ?person skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }}
+      OPTIONAL {{ ?person wdt:P31 ?instance }}
     }}
     GROUP BY ?person ?birth ?death
     """
@@ -191,14 +193,21 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
         pqid = _qid(_v(row, "person"))
         if not pqid or pqid in details:
             continue
-        nats    = [c for c in (_v(row, "nats")    or "").split("|") if c]
-        aliases = [a for a in (_v(row, "aliases") or "").split("|") if a]
+        nats      = [c for c in (_v(row, "nats")    or "").split("|") if c]
+        aliases   = [a for a in (_v(row, "aliases") or "").split("|") if a]
+        instances = [_qid(u) for u in (_v(row, "instances") or "").split("|") if u]
+        # Humans are instance-of Q5. If P31 is present but lacks Q5, it's an org
+        # wrongly listed in a person slot (e.g. a company as a subsidiary's
+        # "founder") — flag it so the runner won't create a Person node. Unknown
+        # (no P31 returned) stays None → treated as a person.
+        is_human = ("Q5" in instances) if instances else None
         details[pqid] = {
             "birth_date":    (_v(row, "birth") or "")[:10] or None,
             "death_date":    (_v(row, "death") or "")[:10] or None,
             "birth_place":   _v(row, "birthPlace") or None,
             "nationalities": nats,
             "aliases":       aliases,
+            "is_human":      is_human,
         }
     return details
 

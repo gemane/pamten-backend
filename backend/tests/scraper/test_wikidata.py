@@ -437,6 +437,7 @@ class TestFetchPersonDetails:
             "birthPlace": {"value": "Pretoria"},
             "nats":       {"value": "US|CA|ZA"},
             "aliases":    {"value": "Elon|Technoking"},
+            "instances":  {"value": "http://www.wikidata.org/entity/Q5"},  # human
         }]
         with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
             out = _fetch_person_details({"Q317521"})
@@ -446,22 +447,32 @@ class TestFetchPersonDetails:
         assert d["birth_place"] == "Pretoria"
         assert d["nationalities"] == ["US", "CA", "ZA"]
         assert d["aliases"] == ["Elon", "Technoking"]
+        assert d["is_human"] is True                  # instance-of Q5
 
-    def test_person_with_no_detail_yields_empty_lists(self):
+    def test_non_human_flagged(self):
+        # a company (P31 present, no Q5) wrongly appearing in a person slot
+        rows = [{"person":    {"value": "http://www.wikidata.org/entity/Q312"},
+                 "instances": {"value": "http://www.wikidata.org/entity/Q4830453"}}]
+        with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
+            out = _fetch_person_details({"Q312"})
+        assert out["Q312"]["is_human"] is False
+
+    def test_person_with_no_detail_yields_unknown_human(self):
         rows = [{"person": {"value": "http://www.wikidata.org/entity/Q1"}}]
         with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
             out = _fetch_person_details({"Q1"})
         assert out["Q1"] == {
             "birth_date": None, "death_date": None, "birth_place": None,
-            "nationalities": [], "aliases": [],
+            "nationalities": [], "aliases": [], "is_human": None,   # no P31 → unknown
         }
 
-    def test_query_includes_place_of_birth_property(self):
+    def test_query_includes_place_of_birth_and_instance(self):
         with patch("httpx.get", return_value=self._resp([])) as mock_get, \
              patch("time.sleep"):
             _fetch_person_details({"Q42"})
         query = mock_get.call_args.kwargs["params"]["query"]
         assert "wdt:P19" in query and "birthPlace" in query
+        assert "wdt:P31" in query and "instances" in query
 
     def test_embeds_all_qids_as_values(self):
         with patch("httpx.get", return_value=self._resp([])) as mock_get, \

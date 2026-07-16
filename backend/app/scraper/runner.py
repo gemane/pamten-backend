@@ -486,6 +486,8 @@ def _scrape_node(
     for ceo in sorted_ceos[:MAX_CEOS]:
         if not ceo.get("label"):
             continue
+        if ceo.get("is_human") is False:   # an org wrongly in a person slot — skip
+            continue
         person_id = _upsert_person(
             full_name=ceo["label"],
             nationality=ceo.get("nationality"),
@@ -504,6 +506,8 @@ def _scrape_node(
     # Founders / chairpersons / board members → Person + HAS_ROLE
     for off in data.get("officers", [])[:MAX_OFFICERS]:
         if not off.get("label"):
+            continue
+        if off.get("is_human") is False:   # a company listed as founder/board — skip
             continue
         person_id = _upsert_person(full_name=off["label"], nationality=None,
                                    description=None, wikidata_id=off["qid"],
