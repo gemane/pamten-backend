@@ -155,9 +155,9 @@ def _sparql(qid: str) -> list:
 
 def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     """
-    Fetch per-person detail — date of birth (P569) / death (P570), nationalities
-    (P27) and aliases ("also known as") — for a set of Wikidata person QIDs in
-    ONE query.
+    Fetch per-person detail — date of birth (P569) / death (P570), place of birth
+    (P19), nationalities (P27) and aliases ("also known as") — for a set of
+    Wikidata person QIDs in ONE query.
 
     GROUP_CONCAT collapses the multi-valued nationality/alias props into a single
     row per person, so the response can't blow up combinatorially. (Joining many
@@ -169,12 +169,14 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     values = " ".join(f"wd:{q}" for q in sorted(qids))
     query = f"""
     SELECT ?person ?birth ?death
+           (SAMPLE(?bpLabel) AS ?birthPlace)
            (GROUP_CONCAT(DISTINCT ?natCode; separator="|") AS ?nats)
            (GROUP_CONCAT(DISTINCT ?alias;   separator="|") AS ?aliases)
     WHERE {{
       VALUES ?person {{ {values} }}
       OPTIONAL {{ ?person wdt:P569 ?birth }}
       OPTIONAL {{ ?person wdt:P570 ?death }}
+      OPTIONAL {{ ?person wdt:P19 ?bp . ?bp rdfs:label ?bpLabel . FILTER(LANG(?bpLabel) = "en") }}
       OPTIONAL {{ ?person wdt:P27 ?nat . ?nat wdt:P297 ?natCode }}
       OPTIONAL {{ ?person skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }}
     }}
@@ -194,6 +196,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
         details[pqid] = {
             "birth_date":    (_v(row, "birth") or "")[:10] or None,
             "death_date":    (_v(row, "death") or "")[:10] or None,
+            "birth_place":   _v(row, "birthPlace") or None,
             "nationalities": nats,
             "aliases":       aliases,
         }

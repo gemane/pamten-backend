@@ -27,7 +27,7 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
                   "last_scraped_at"]
     ROLE_PROPS = ["role", "since", "until", "source_id", "credibility_score",
                   "source_url", "source_date", "last_scraped_at"]
-    BIO_COALESCE = ["wikidata_id", "sec_cik", "birth_date", "death_date", "wikipedia_url"]
+    BIO_COALESCE = ["wikidata_id", "sec_cik", "birth_date", "death_date", "birth_place", "wikipedia_url"]
 
     with db.get_session() as session:
         keep_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=keep).single()
@@ -132,6 +132,7 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
             nationalities: $nationalities,
             birth_date: $birth_date,
             death_date: $death_date,
+            birth_place: $birth_place,
             description: $description,
             wikipedia_url: $wikipedia_url,
             verified: false
@@ -191,6 +192,7 @@ def update_person(person_id: str, person: PersonCreate, _: dict = Depends(requir
             nationalities: $nationalities,
             birth_date: $birth_date,
             death_date: $death_date,
+            birth_place: $birth_place,
             description: $description,
             wikipedia_url: $wikipedia_url
         }

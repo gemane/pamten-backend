@@ -237,6 +237,7 @@ def _upsert_person(
     wikidata_id: str,
     birth_date: str | None = None,
     death_date: str | None = None,
+    birth_place: str | None = None,
     aliases: list[str] | None = None,
     nationalities: list[str] | None = None,
 ) -> str:
@@ -264,12 +265,13 @@ def _upsert_person(
                 MATCH (p:Person {id: $id})
                 SET p.birth_date   = COALESCE(p.birth_date, $bdate),
                     p.death_date   = COALESCE(p.death_date, $ddate),
+                    p.birth_place  = COALESCE(p.birth_place, $bplace),
                     p.description   = CASE WHEN COALESCE(p.description, '') = '' THEN $desc ELSE p.description END,
                     p.nationality   = CASE WHEN COALESCE(p.nationality, '') = '' THEN $nat  ELSE p.nationality END,
                     p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
                     p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 THEN p.nationalities ELSE $nats END
                 """,
-                id=rec["id"], bdate=birth_date, ddate=death_date,
+                id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
                 desc=description or "", nat=nat,
                 aliases=aliases, nats=nationalities,
             )
@@ -282,7 +284,7 @@ def _upsert_person(
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, nationality: $nat,
                 description: $desc, wikidata_id: $wid,
-                birth_date: $bdate, death_date: $ddate,
+                birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
                 verified: false, alias: $aliases, nationalities: $nats
             })
             """,
@@ -295,6 +297,7 @@ def _upsert_person(
             wid=wikidata_id,
             bdate=birth_date,
             ddate=death_date,
+            bplace=birth_place,
             aliases=aliases,
             nats=nationalities,
         )
@@ -490,6 +493,7 @@ def _scrape_node(
             wikidata_id=ceo["qid"],
             birth_date=ceo.get("birth_date"),
             death_date=ceo.get("death_date"),
+            birth_place=ceo.get("birth_place"),
             aliases=ceo.get("aliases"),
             nationalities=ceo.get("nationalities"),
         )
@@ -505,6 +509,7 @@ def _scrape_node(
                                    description=None, wikidata_id=off["qid"],
                                    birth_date=off.get("birth_date"),
                                    death_date=off.get("death_date"),
+                                   birth_place=off.get("birth_place"),
                                    aliases=off.get("aliases"),
                                    nationalities=off.get("nationalities"))
         _upsert_role(person_id, entity_id, off["role"], source_id,
@@ -521,6 +526,7 @@ def _scrape_node(
                                       description=None, wikidata_id=owner["qid"],
                                       birth_date=owner.get("birth_date"),
                                       death_date=owner.get("death_date"),
+                                      birth_place=owner.get("birth_place"),
                                       aliases=owner.get("aliases"),
                                       nationalities=owner.get("nationalities"))
         else:
