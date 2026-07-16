@@ -69,18 +69,29 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
             seen.add(ids)
             ent = [_entities(m["id"]) for m in members]
             shared_entity = any(ent[i] & ent[j] for i in range(len(ent)) for j in range(i + 1, len(ent)))
-            births = {(m["birth_date"], _norm_place(m["birth_place"]))
-                      for m in members if m["birth_date"] and m["birth_place"]}
-            shared_birth = len(births) == 1 and len(members) > 1 and \
-                sum(1 for m in members if m["birth_date"] and m["birth_place"]) > 1
+
+            # Birth-date signal (place may be missing — BODS/PSC give date only).
+            present_dates = [m["birth_date"] for m in members if m["birth_date"]]
+            shared_birth   = len(set(present_dates)) == 1 and len(present_dates) >= 2
+            conflict_birth = len(set(present_dates)) >= 2
             distinctive = len(_name_key(members[0]["full_name"])) >= 3
 
             reasons = [base_reason]
-            if shared_birth and "birth" not in base_reason:
-                reasons.append("same birth date + place")
             if shared_entity:
                 reasons.append("share a company")
-            confidence = "high" if (shared_birth or shared_entity) else ("medium" if distinctive else "low")
+            if shared_birth and "birth" not in base_reason:
+                reasons.append("same birth date")
+
+            # Conflicting birth dates on a same-name group ⇒ almost certainly two
+            # different people — flag as likely-distinct, don't suggest a merge.
+            likely_distinct = conflict_birth and not (shared_entity or shared_birth)
+            if shared_entity or shared_birth:
+                confidence = "high"
+            elif likely_distinct:
+                confidence = "low"
+                reasons.append("but DIFFERENT birth dates — likely distinct people")
+            else:
+                confidence = "medium" if distinctive else "low"
 
             # keep: prefer a Wikidata node, then the most-connected, then shortest name
             idx = sorted(range(len(members)),
@@ -88,6 +99,7 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
                                         len(members[i]["full_name"] or "")))
             groups.append({
                 "confidence": confidence,
+                "likely_distinct": likely_distinct,
                 "reason": ", ".join(reasons),
                 "suggested_keep_id": members[idx[0]]["id"],
                 "members": [{**m, "connected": len(ent[i])} for i, m in enumerate(members)],

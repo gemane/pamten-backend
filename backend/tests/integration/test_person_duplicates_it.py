@@ -28,9 +28,17 @@ def test_duplicate_scan_confidence(it_db):
     it_db.run_command("CREATE (:Person {id:'c1', full_name:'David Taylor'})")
     it_db.run_command("CREATE (:Person {id:'c2', full_name:'Mr David Taylor'})")
 
-    # (D) distinctive 3-token name, honorific only → MEDIUM
+    # (D) distinctive 3-token name, honorific only, no birth info → MEDIUM
     it_db.run_command("CREATE (:Person {id:'d1', full_name:'Alexander Julius Halpert'})")
     it_db.run_command("CREATE (:Person {id:'d2', full_name:'Mr Alexander Julius Halpert'})")
+
+    # (E) same birth date, no place (BODS-style) → HIGH
+    it_db.run_command("CREATE (:Person {id:'e1', full_name:'Grace Hopper', birth_date:'1906-12'})")
+    it_db.run_command("CREATE (:Person {id:'e2', full_name:'Mrs Grace Hopper', birth_date:'1906-12'})")
+
+    # (F) same distinctive name but DIFFERENT birth dates → likely two people
+    it_db.run_command("CREATE (:Person {id:'f1', full_name:'Peter David Jones',    birth_date:'1974-08'})")
+    it_db.run_command("CREATE (:Person {id:'f2', full_name:'Mr Peter David Jones', birth_date:'1966-03'})")
 
     # a genuinely unique person must NOT be flagged
     it_db.run_command("CREATE (:Person {id:'z1', full_name:'Unique Personne'})")
@@ -43,4 +51,7 @@ def test_duplicate_scan_confidence(it_db):
     assert by_members[frozenset(["b1", "b2"])]["confidence"] == "high"    # same DOB + place
     assert by_members[frozenset(["c1", "c2"])]["confidence"] == "low"     # common name only
     assert by_members[frozenset(["d1", "d2"])]["confidence"] == "medium"  # distinctive name
+    assert by_members[frozenset(["e1", "e2"])]["confidence"] == "high"    # same birth date (no place)
+    fg = by_members[frozenset(["f1", "f2"])]
+    assert fg["confidence"] == "low" and fg["likely_distinct"] is True    # conflicting DOB
     assert not any("z1" in k for k in by_members)                         # unique not flagged
