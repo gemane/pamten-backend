@@ -235,8 +235,16 @@ def _upsert_person(
     nationality: str | None,
     description: str | None,
     wikidata_id: str,
+    birth_date: str | None = None,
+    death_date: str | None = None,
+    aliases: list[str] | None = None,
+    nationalities: list[str] | None = None,
 ) -> str:
     first_name, last_name = parse_full_name(full_name)
+    aliases       = aliases or []
+    nationalities = nationalities or []
+    # Prefer an explicit single nationality; else the first of the list.
+    nat = nationality or (nationalities[0] if nationalities else "")
     with db.get_session() as session:
         rec = session.run(
             """
@@ -248,6 +256,23 @@ def _upsert_person(
             name=full_name,
         ).single()
         if rec:
+            # Backfill detail for a person first seen from a source that lacked it
+            # (e.g. created as a bare founder name, later enriched on re-scrape).
+            # Only fill blanks — never overwrite what's already there.
+            session.run(
+                """
+                MATCH (p:Person {id: $id})
+                SET p.birth_date   = COALESCE(p.birth_date, $bdate),
+                    p.death_date   = COALESCE(p.death_date, $ddate),
+                    p.description   = CASE WHEN COALESCE(p.description, '') = '' THEN $desc ELSE p.description END,
+                    p.nationality   = CASE WHEN COALESCE(p.nationality, '') = '' THEN $nat  ELSE p.nationality END,
+                    p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
+                    p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 THEN p.nationalities ELSE $nats END
+                """,
+                id=rec["id"], bdate=birth_date, ddate=death_date,
+                desc=description or "", nat=nat,
+                aliases=aliases, nats=nationalities,
+            )
             return rec["id"]
 
         person_id = str(uuid.uuid4())
@@ -257,16 +282,21 @@ def _upsert_person(
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, nationality: $nat,
                 description: $desc, wikidata_id: $wid,
-                verified: false, alias: [], nationalities: []
+                birth_date: $bdate, death_date: $ddate,
+                verified: false, alias: $aliases, nationalities: $nats
             })
             """,
             id=person_id,
             first=first_name,
             last=last_name,
             full=full_name,
-            nat=nationality or "",
+            nat=nat,
             desc=description or "",
             wid=wikidata_id,
+            bdate=birth_date,
+            ddate=death_date,
+            aliases=aliases,
+            nats=nationalities,
         )
         return person_id
 
@@ -458,6 +488,10 @@ def _scrape_node(
             nationality=ceo.get("nationality"),
             description=ceo.get("description"),
             wikidata_id=ceo["qid"],
+            birth_date=ceo.get("birth_date"),
+            death_date=ceo.get("death_date"),
+            aliases=ceo.get("aliases"),
+            nationalities=ceo.get("nationalities"),
         )
         _upsert_role(person_id, entity_id, "CEO", source_id,
                      since=ceo.get("since"), until=ceo.get("until"),
@@ -468,7 +502,11 @@ def _scrape_node(
         if not off.get("label"):
             continue
         person_id = _upsert_person(full_name=off["label"], nationality=None,
-                                   description=None, wikidata_id=off["qid"])
+                                   description=None, wikidata_id=off["qid"],
+                                   birth_date=off.get("birth_date"),
+                                   death_date=off.get("death_date"),
+                                   aliases=off.get("aliases"),
+                                   nationalities=off.get("nationalities"))
         _upsert_role(person_id, entity_id, off["role"], source_id,
                      source_url=_wikidata_url(qid))
 
@@ -480,7 +518,11 @@ def _scrape_node(
         instances = list(owner.get("instances", []))
         if "Q5" in instances:  # Q5 = human
             owner_id = _upsert_person(full_name=owner["label"], nationality=None,
-                                      description=None, wikidata_id=owner["qid"])
+                                      description=None, wikidata_id=owner["qid"],
+                                      birth_date=owner.get("birth_date"),
+                                      death_date=owner.get("death_date"),
+                                      aliases=owner.get("aliases"),
+                                      nationalities=owner.get("nationalities"))
         else:
             owner_id = _upsert_entity(
                 name=owner["label"],

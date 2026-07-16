@@ -488,12 +488,16 @@ class TestUpsertPerson:
             _upsert_person("Tim Cook", "US", "Apple CEO", "Q88")
         assert session.run.call_count == 2
 
-    def test_returns_existing_id_without_create(self):
+    def test_returns_existing_id_and_backfills_without_create(self):
         ctx, session = _make_session_mock(single_returns=[{"id": "person-uuid"}])
         with patch("app.scraper.runner.db.get_session", ctx):
             pid = _upsert_person("Tim Cook", "US", "", "Q88")
         assert pid == "person-uuid"
-        assert session.run.call_count == 1  # only MATCH, no CREATE
+        # MATCH + a detail backfill, but no CREATE (person already exists).
+        assert session.run.call_count == 2
+        backfill_cypher = session.run.call_args_list[1].args[0]
+        assert "SET p.birth_date" in backfill_cypher
+        assert "CREATE" not in backfill_cypher
 
 
 class TestUpsertOwns:
@@ -566,3 +570,55 @@ class TestUpsertRoleSec:
         assert "CREATE" not in second_cypher
         assert "r.source_url" in second_cypher and "COALESCE" in second_cypher
         assert session.run.call_args_list[1].kwargs.get("surl") == self.FORM4
+
+
+# ── _upsert_person: person detail (birth/death/aliases/nationalities) ──────────
+
+class TestUpsertPersonDetail:
+    def _create_call(self, session):
+        return next(c for c in session.run.call_args_list
+                    if "CREATE (p:Person" in c.args[0])
+
+    def _backfill_call(self, session):
+        return next(c for c in session.run.call_args_list
+                    if "SET p.birth_date" in c.args[0])
+
+    def test_create_stores_birth_death_aliases_nationalities(self):
+        ctx, session = _make_session_mock()  # no existing person
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_person(
+                "Elon Musk", nationality=None, description=None,
+                wikidata_id="Q317521",
+                birth_date="1971-06-28", death_date=None,
+                aliases=["Elon"], nationalities=["US", "CA"],
+            )
+        create = self._create_call(session)
+        assert create.kwargs["bdate"] == "1971-06-28"
+        assert create.kwargs["aliases"] == ["Elon"]
+        assert create.kwargs["nats"] == ["US", "CA"]
+        # single nationality is derived from the first of the list when not given
+        assert create.kwargs["nat"] == "US"
+
+    def test_existing_person_backfills_detail(self):
+        ctx, session = _make_session_mock(single_returns=[{"id": "p-1"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            pid = _upsert_person(
+                "Elon Musk", nationality=None, description=None,
+                wikidata_id="Q317521",
+                birth_date="1971-06-28", aliases=["Elon"], nationalities=["US"],
+            )
+        assert pid == "p-1"
+        backfill = self._backfill_call(session)
+        assert backfill.kwargs["bdate"] == "1971-06-28"
+        assert backfill.kwargs["aliases"] == ["Elon"]
+        assert backfill.kwargs["nats"] == ["US"]
+
+    def test_defaults_to_empty_lists_when_detail_absent(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_person("Jane Doe", nationality=None, description=None,
+                           wikidata_id="Q2")
+        create = self._create_call(session)
+        assert create.kwargs["aliases"] == []
+        assert create.kwargs["nats"] == []
+        assert create.kwargs["bdate"] is None

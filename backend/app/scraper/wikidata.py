@@ -153,13 +153,76 @@ def _sparql(qid: str) -> list:
     return rows
 
 
+def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
+    """
+    Fetch per-person detail — date of birth (P569) / death (P570), nationalities
+    (P27) and aliases ("also known as") — for a set of Wikidata person QIDs in
+    ONE query.
+
+    GROUP_CONCAT collapses the multi-valued nationality/alias props into a single
+    row per person, so the response can't blow up combinatorially. (Joining many
+    multi-valued props for a company in a single query is exactly what exploded
+    the Unilever scrape — person detail is kept split out and pre-aggregated.)
+    """
+    if not qids:
+        return {}
+    values = " ".join(f"wd:{q}" for q in sorted(qids))
+    query = f"""
+    SELECT ?person ?birth ?death
+           (GROUP_CONCAT(DISTINCT ?natCode; separator="|") AS ?nats)
+           (GROUP_CONCAT(DISTINCT ?alias;   separator="|") AS ?aliases)
+    WHERE {{
+      VALUES ?person {{ {values} }}
+      OPTIONAL {{ ?person wdt:P569 ?birth }}
+      OPTIONAL {{ ?person wdt:P570 ?death }}
+      OPTIONAL {{ ?person wdt:P27 ?nat . ?nat wdt:P297 ?natCode }}
+      OPTIONAL {{ ?person skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }}
+    }}
+    GROUP BY ?person ?birth ?death
+    """
+    time.sleep(REQUEST_DELAY)
+    r = httpx.get(SPARQL_URL, params={"query": query, "format": "json"},
+                  headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    details: dict[str, dict] = {}
+    for row in r.json()["results"]["bindings"]:
+        pqid = _qid(_v(row, "person"))
+        if not pqid or pqid in details:
+            continue
+        nats    = [c for c in (_v(row, "nats")    or "").split("|") if c]
+        aliases = [a for a in (_v(row, "aliases") or "").split("|") if a]
+        details[pqid] = {
+            "birth_date":    (_v(row, "birth") or "")[:10] or None,
+            "death_date":    (_v(row, "death") or "")[:10] or None,
+            "nationalities": nats,
+            "aliases":       aliases,
+        }
+    return details
+
+
 def fetch_company_data(qid: str) -> dict | None:
     """
     Fetch a company's data from Wikidata: identity, all domicile countries and
     HQs, subsidiaries, parent, owners, and key people. Returns a structured
     dict or None if no results.
     """
-    return _aggregate(qid, _sparql(qid))
+    data = _aggregate(qid, _sparql(qid))
+    if not data:
+        return None
+
+    # Enrich the people (CEOs, founders/chair/board, person-owners) with birth /
+    # death date, nationalities and aliases in one further bounded query.
+    person_qids = {p["qid"] for p in data["ceos"]     if p.get("qid")}
+    person_qids |= {p["qid"] for p in data["officers"] if p.get("qid")}
+    person_qids |= {o["qid"] for o in data["owners"]
+                    if o.get("qid") and "Q5" in o.get("instances", [])}
+    details = _fetch_person_details(person_qids)
+    if details:
+        for group in (data["ceos"], data["officers"], data["owners"]):
+            for person in group:
+                if extra := details.get(person.get("qid")):
+                    person.update(extra)
+    return data
 
 
 def _v(row: dict, key: str) -> str | None:
