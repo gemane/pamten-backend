@@ -40,6 +40,28 @@ def test_merge_rehomes_edges_and_backfills_then_deletes_dup(it_db):
     assert keep["d"] == "SEC filer"     # keep's blank description filled from dup
 
 
+def test_merge_folds_onto_existing_edge_and_backfills_stake(it_db):
+    """keep already owns the company (blank stake); dup owns it with a real stake.
+    Merge must fold onto the single existing edge and backfill the stake — not
+    create a duplicate. (This is the shape used to repair a bad earlier merge.)"""
+    from app.routers.persons import merge_persons
+    from app.routers.search import get_person_profile
+    from app.models.person import PersonMergeRequest
+
+    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Larry Page'})")
+    it_db.run_command("CREATE (:Person {id:'dup',  full_name:'Page Lawrence'})")
+    it_db.run_command("CREATE (:Entity {id:'alphabet', name:'Alphabet Inc.', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'keep'}), (e:Entity {id:'alphabet'}) CREATE (p)-[:OWNS {}]->(e)")           # blank
+    it_db.run_command("MATCH (p:Person {id:'dup'}),  (e:Entity {id:'alphabet'}) CREATE (p)-[:OWNS {stake_percent: 6.12, ownership_type:'minority'}]->(e)")
+
+    merge_persons(PersonMergeRequest(keep_id="keep", dup_id="dup"), _={"role": "contributor"})
+
+    holdings = get_person_profile("keep")["holdings"]
+    assert len(holdings) == 1                                   # folded, not duplicated
+    assert holdings[0]["relationship"]["stake_percent"] == 6.12  # blank backfilled
+    assert holdings[0]["relationship"]["ownership_type"] == "minority"
+
+
 def test_merge_same_id_rejected(it_db):
     from app.routers.persons import merge_persons
     from app.models.person import PersonMergeRequest
