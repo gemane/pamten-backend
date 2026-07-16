@@ -30,12 +30,27 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
     BIO_COALESCE = ["wikidata_id", "sec_cik", "birth_date", "death_date", "wikipedia_url"]
 
     with db.get_session() as session:
-        if not session.run("MATCH (p:Person {id:$id}) RETURN p.id AS id", id=keep).single():
+        keep_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=keep).single()
+        if not keep_rec:
             raise HTTPException(status_code=404, detail="Person to keep not found")
+        keep_node = dict(keep_rec["p"])
         dup_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=dup).single()
         if not dup_rec:
             raise HTTPException(status_code=404, detail="Duplicate person not found")
         dup_node = dict(dup_rec["p"])
+
+        # The duplicate's name is an alias of the kept person (e.g. SEC's
+        # "Page Lawrence" becomes an alias of "Larry Page"), so it's still
+        # findable. Union: kept aliases + dup's full_name + dup's aliases,
+        # dropping the kept person's own name and case-insensitive dupes.
+        keep_full = (keep_node.get("full_name") or "").strip()
+        alias_union: list[str] = []
+        seen_alias = {keep_full.lower()}
+        for a in (keep_node.get("alias") or []) + [dup_node.get("full_name")] + (dup_node.get("alias") or []):
+            a = (a or "").strip()
+            if a and a.lower() not in seen_alias:
+                seen_alias.add(a.lower())
+                alias_union.append(a)
 
         # Read the duplicate's edges into Python, then write them onto the kept
         # person with bound $params. We deliberately avoid Cypher that reads a
@@ -87,12 +102,12 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
             SET {bio_set},
                 keep.description   = CASE WHEN COALESCE(keep.description, '') = '' THEN $description ELSE keep.description END,
                 keep.nationality   = CASE WHEN COALESCE(keep.nationality, '') = '' THEN $nationality ELSE keep.nationality END,
-                keep.alias         = CASE WHEN size(COALESCE(keep.alias, [])) > 0 THEN keep.alias ELSE $alias END,
+                keep.alias         = $alias,
                 keep.nationalities = CASE WHEN size(COALESCE(keep.nationalities, [])) > 0 THEN keep.nationalities ELSE $nationalities END
         """, keep=keep,
              description=dup_node.get("description") or "",
              nationality=dup_node.get("nationality") or "",
-             alias=dup_node.get("alias") or [],
+             alias=alias_union,
              nationalities=dup_node.get("nationalities") or [],
              **{p: dup_node.get(p) for p in BIO_COALESCE})
 
