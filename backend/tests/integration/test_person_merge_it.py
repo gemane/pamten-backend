@@ -34,10 +34,13 @@ def test_merge_rehomes_edges_and_backfills_then_deletes_dup(it_db):
     holdings = {(h["entity"]["name"], h["relationship"]["stake_percent"]) for h in prof["holdings"]}
     assert ("Alphabet Inc.", 6.12) in holdings
 
-    # Blank bio field backfilled from the dup; wikidata_id retained.
-    keep = it_db.run_command("MATCH (p:Person {id:'keep'}) RETURN p.wikidata_id AS w, p.description AS d")[0]
+    # Blank bio field backfilled from the dup; wikidata_id retained; the dup's
+    # name is captured as an alias so the kept person stays findable by it.
+    keep = it_db.run_command("MATCH (p:Person {id:'keep'}) RETURN p.wikidata_id AS w, p.description AS d, p.alias AS a")[0]
     assert keep["w"] == "Q4934"
     assert keep["d"] == "SEC filer"     # keep's blank description filled from dup
+    assert "Page Lawrence" in (keep["a"] or [])   # dup's name is now an alias
+    assert "Larry Page" not in (keep["a"] or [])  # not the kept person's own name
 
 
 def test_merge_folds_onto_existing_edge_and_backfills_stake(it_db):
