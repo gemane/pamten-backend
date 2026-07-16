@@ -142,6 +142,41 @@ def get_full_profile(entity_id: str):
         }
 
 
+@router.get("/person/{person_id}/full-profile")
+def get_person_profile(person_id: str):
+    """
+    Everything about a person in one call: the positions they hold (HAS_ROLE →
+    entity) and the entities they own (OWNS → entity). Both already in the graph
+    from scraping — the entity full-profile surfaces them from the company side;
+    this surfaces them from the person side.
+    """
+    query = """
+        MATCH (p:Person {id: $id})
+        OPTIONAL MATCH (p)-[role_r:HAS_ROLE]->(org:Entity) WHERE role_r.until IS NULL
+        OPTIONAL MATCH (p)-[owns_r:OWNS]->(owned:Entity)   WHERE owns_r.until IS NULL
+        RETURN p,
+               collect(DISTINCT {entity: org,   rel: role_r}) as positions,
+               collect(DISTINCT {entity: owned, rel: owns_r}) as holdings
+    """
+
+    with db.get_session() as session:
+        record = session.run(query, id=person_id).single()
+        if not record:
+            raise HTTPException(status_code=404, detail="Person not found")
+
+        return {
+            "person": dict(record["p"]),
+            "positions": [
+                {"entity": dict(x["entity"]), "role": dict(x["rel"])}
+                for x in record["positions"] if x["entity"]
+            ],
+            "holdings": [
+                {"entity": dict(x["entity"]), "relationship": dict(x["rel"])}
+                for x in record["holdings"] if x["entity"]
+            ],
+        }
+
+
 @router.get("/geographic")
 def search_by_country(country: str, region: str = None):
     # Find all entities in a country or region
