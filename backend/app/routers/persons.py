@@ -2,9 +2,105 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest
 from app.auth.dependencies import require_contributor
 from app.database import db
+from collections import defaultdict
+import re
 import uuid
 
 router = APIRouter(prefix="/persons", tags=["Persons"])
+
+_HONORIFICS = {"mr", "mrs", "ms", "miss", "dr", "sir", "prof", "mx", "madam", "hon", "rev"}
+
+
+def _name_key(full_name: str | None) -> tuple:
+    """Order/case/honorific-insensitive token set — 'Page Lawrence' == 'Lawrence Page'."""
+    toks = [t for t in re.findall(r"[a-z0-9]+", (full_name or "").lower()) if t not in _HONORIFICS]
+    return tuple(sorted(toks))
+
+
+def _norm_place(place: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (place or "").lower())
+
+
+@router.get("/duplicates")
+def find_duplicate_persons(_: dict = Depends(require_contributor)):
+    """
+    Suggest likely-duplicate person nodes for review (does NOT merge). Signals:
+      - same name token set (catches SEC "Last First" order + honorific/spelling)
+      - same birth date + place (links the same person across different name
+        spellings, e.g. "Larry Page" / "Lawrence Page")
+      - sharing a connected company (corroboration for common names)
+
+    Confidence: high = share birth date+place OR a company; medium = distinctive
+    name match (3+ tokens); low = common 2-token name match with no corroboration.
+    Feed a group's members into POST /persons/merge to resolve it.
+    """
+    with db.get_session() as session:
+        persons = [
+            {"id": r.get("id"), "full_name": r.get("full_name"), "wikidata_id": r.get("wikidata_id"),
+             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place")}
+            for r in session.run("""
+                MATCH (p:Person)
+                RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id,
+                       p.birth_date AS birth_date, p.birth_place AS birth_place
+            """)
+        ]
+
+        by_name: dict[tuple, list] = defaultdict(list)
+        by_birth: dict[tuple, list] = defaultdict(list)
+        for p in persons:
+            if (nk := _name_key(p["full_name"])):
+                by_name[nk].append(p)
+            if p["birth_date"] and p["birth_place"]:
+                by_birth[(p["birth_date"], _norm_place(p["birth_place"]))].append(p)
+
+        groups: list[dict] = []
+        seen: set[frozenset] = set()
+
+        def _entities(pid: str) -> set:
+            rec = session.run(
+                "MATCH (x:Person {id:$id})-[]-(e:Entity) RETURN collect(DISTINCT e.id) AS ids",
+                id=pid).single()
+            return set(rec.get("ids") or [])
+
+        def _emit(members: list, base_reason: str):
+            ids = frozenset(m["id"] for m in members)
+            if len(ids) < 2 or ids in seen:
+                return
+            seen.add(ids)
+            ent = [_entities(m["id"]) for m in members]
+            shared_entity = any(ent[i] & ent[j] for i in range(len(ent)) for j in range(i + 1, len(ent)))
+            births = {(m["birth_date"], _norm_place(m["birth_place"]))
+                      for m in members if m["birth_date"] and m["birth_place"]}
+            shared_birth = len(births) == 1 and len(members) > 1 and \
+                sum(1 for m in members if m["birth_date"] and m["birth_place"]) > 1
+            distinctive = len(_name_key(members[0]["full_name"])) >= 3
+
+            reasons = [base_reason]
+            if shared_birth and "birth" not in base_reason:
+                reasons.append("same birth date + place")
+            if shared_entity:
+                reasons.append("share a company")
+            confidence = "high" if (shared_birth or shared_entity) else ("medium" if distinctive else "low")
+
+            # keep: prefer a Wikidata node, then the most-connected, then shortest name
+            idx = sorted(range(len(members)),
+                         key=lambda i: (0 if members[i]["wikidata_id"] else 1, -len(ent[i]),
+                                        len(members[i]["full_name"] or "")))
+            groups.append({
+                "confidence": confidence,
+                "reason": ", ".join(reasons),
+                "suggested_keep_id": members[idx[0]]["id"],
+                "members": [{**m, "connected": len(ent[i])} for i, m in enumerate(members)],
+            })
+
+        for members in by_birth.values():
+            _emit(members, "same birth date + place")
+        for members in by_name.values():
+            _emit(members, "same name (order/spelling/title)")
+
+    rank = {"high": 0, "medium": 1, "low": 2}
+    groups.sort(key=lambda g: (rank[g["confidence"]], g["reason"]))
+    return {"count": len(groups), "groups": groups}
 
 
 @router.post("/merge")
