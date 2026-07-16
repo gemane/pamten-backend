@@ -340,25 +340,28 @@ def _upsert_owns_bods(
     credibility_score: int,
     source_url: str | None = None,
     source_date: str | None = None,
+    owner_label: str = "Entity",
 ):
     """Create an active OWNS edge if one does not already exist.
 
-    Stamps per-entry provenance: source_url (GLEIF/Companies House record),
-    source_date (BODS statementDate), last_scraped_at (refreshed on re-import).
+    The owner is an Entity (GLEIF: company owns company) OR a Person (UK PSC:
+    person with significant control) — `owner_label` selects which, so the match
+    stays index-backed. The owned side is always an Entity. Stamps per-entry
+    provenance: source_url, source_date (statementDate), last_scraped_at.
     """
+    if owner_label not in ("Entity", "Person"):
+        owner_label = "Entity"
     now = _now_iso()
+    a = f"(a:{owner_label} {{id: $oid}})"
     with db.get_session() as session:
         exists = session.run(
-            """
-            MATCH (a:Entity {id: $oid})-[r:OWNS]->(b:Entity {id: $nid})
-            WHERE r.until IS NULL RETURN r LIMIT 1
-            """,
+            f"MATCH {a}-[r:OWNS]->(b:Entity {{id: $nid}}) WHERE r.until IS NULL RETURN r LIMIT 1",
             oid=owner_id, nid=owned_id,
         ).single()
         if exists:
             session.run(
-                """
-                MATCH (a:Entity {id: $oid})-[r:OWNS]->(b:Entity {id: $nid})
+                f"""
+                MATCH {a}-[r:OWNS]->(b:Entity {{id: $nid}})
                 WHERE r.until IS NULL
                 SET r.last_scraped_at = $now,
                     r.source_url  = COALESCE($surl,  r.source_url),
@@ -369,9 +372,9 @@ def _upsert_owns_bods(
             )
             return
         session.run(
-            """
-            MATCH (a:Entity {id: $oid}), (b:Entity {id: $nid})
-            CREATE (a)-[:OWNS {
+            f"""
+            MATCH {a}, (b:Entity {{id: $nid}})
+            CREATE (a)-[:OWNS {{
                 stake_percent:    $stake,
                 ownership_type:   $otype,
                 voting_power_pct: null,
@@ -382,7 +385,7 @@ def _upsert_owns_bods(
                 source_url:       $surl,
                 source_date:      $sdate,
                 last_scraped_at:  $now
-            }]->(b)
+            }}]->(b)
             """,
             oid=owner_id, nid=owned_id,
             stake=stake_percent, otype=ownership_type,
@@ -592,11 +595,16 @@ def _process_relationship_statement(
     details       = stmt.get("recordDetails") or {}
     record_status = stmt.get("recordStatus", "new")
 
-    subject_ref  = _ref_id(details.get("subject")        or details.get("subjectId"))
-    party_ref    = _ref_id(details.get("interestedParty") or details.get("interestedPartyId"))
+    subject_raw = details.get("subject")        or details.get("subjectId")
+    party_raw   = details.get("interestedParty") or details.get("interestedPartyId")
+    subject_ref = _ref_id(subject_raw)
+    party_ref   = _ref_id(party_raw)
 
     if not subject_ref or not party_ref:
         return 0
+
+    # The interested party (owner) may be a Person (UK PSC) or an Entity (GLEIF).
+    party_is_person = isinstance(party_raw, dict) and "describedByPersonStatement" in party_raw
 
     def _placeholder_name(ref: str) -> str:
         """Return the real entity name when available, else a cleaned-up fallback."""
@@ -626,13 +634,22 @@ def _process_relationship_statement(
 
     owner_id = bods_to_pamten_id.get(party_ref)
     if not owner_id:
-        owner_id = _upsert_entity_bods(
-            name=_placeholder_name(party_ref), entity_type="company",
-            country=None, founded=None,
-            lei_id=_placeholder_lei(party_ref), companies_house_id=None,
-            source_id=source_id, credibility_score=0,
-        )
+        if party_is_person:
+            # A person owner not yet imported — create a bare Person placeholder
+            # (don't misfile it as a company Entity).
+            owner_id = _upsert_person_bods(
+                full_name=_placeholder_name(party_ref),
+                first_name=None, last_name=None, nationality=None, birth_date=None,
+            )
+        else:
+            owner_id = _upsert_entity_bods(
+                name=_placeholder_name(party_ref), entity_type="company",
+                country=None, founded=None,
+                lei_id=_placeholder_lei(party_ref), companies_house_id=None,
+                source_id=source_id, credibility_score=0,
+            )
         bods_to_pamten_id[party_ref] = owner_id
+    owner_label = "Person" if party_is_person else "Entity"
 
     interests = details.get("interests") or []
     if not interests:
@@ -696,6 +713,7 @@ def _process_relationship_statement(
             since=start_date, until=end_date,
             source_id=source_id, credibility_score=credibility_score,
             source_url=record_url, source_date=statement_date,
+            owner_label=owner_label,
         )
         edges += 1
 
@@ -891,23 +909,28 @@ def _run_import(
     pass1_bar: _ProgressBar | None = None,
 ) -> dict:
     """
-    Single-pass import with relationship buffering.
+    Single-pass streaming import — nodes AND edges written inline.
 
-    Pass 1 (streaming): write entity and person nodes immediately;
-                        buffer relationship statements.
-    Pass 2 (in-memory): write relationship edges using the completed
-                        bods_to_pamten_id lookup.
+    Every statement is written as it streams: entities/persons become nodes, and
+    a relationship becomes OWNS/HAS_ROLE edges immediately (creating a named
+    placeholder for any endpoint not imported yet). This means a partial or
+    interrupted run still leaves *connected* data — no separate end-pass that
+    could be skipped. Endpoints resolve/merge by LEI (or Companies House id), so
+    a placeholder is reconciled with its real node whenever that node's statement
+    arrives.
+
+    A relationship is only written when at least one endpoint has already been
+    imported, so foreign-to-foreign ownership isn't materialised as placeholders
+    when running under a jurisdiction filter.
     """
     bods_to_pamten_id: dict[str, str] = {}
-    bods_id_to_name:   dict[str, str] = {}   # all entity names, for placeholder creation
-    buffered_rels:     list[dict]     = []
+    bods_id_to_name:   dict[str, str] = {}   # entity names, for placeholder labelling
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
 
     counts = dict(entities=0, persons=0, relationships=0, skipped=0, errors=0)
     processed = 0
 
-    log.info("BODS: pass 1 — streaming entities and persons%s",
-             f" (limit={limit})" if limit else "")
+    log.info("BODS: streaming import%s", f" (limit={limit})" if limit else "")
 
     for stmt in statements:
         if limit and processed >= limit:
@@ -952,40 +975,30 @@ def _run_import(
                 counts["errors"] += 1
 
         elif record_type == "relationship":
-            # Only buffer if at least one endpoint was imported. This avoids
-            # accumulating millions of foreign-to-foreign relationships in RAM
-            # when running with a jurisdiction filter against a global file.
+            # Write the edge now, but only if at least one endpoint was imported
+            # (avoids materialising foreign-to-foreign ownership under a filter).
             _details = stmt.get("recordDetails") or {}
             _subj  = _ref_id(_details.get("subject")        or _details.get("subjectId"))
             _party = _ref_id(_details.get("interestedParty") or _details.get("interestedPartyId"))
             if _subj in bods_to_pamten_id or _party in bods_to_pamten_id:
-                buffered_rels.append(stmt)
+                try:
+                    edges = _process_relationship_statement(
+                        stmt, bods_to_pamten_id, bods_id_to_name, source_id, credibility_score,
+                    )
+                    counts["relationships"] += edges
+                except Exception as exc:
+                    log.warning("BODS relationship error: %s", exc)
+                    counts["errors"] += 1
 
     log.info(
-        "BODS: pass 1 done — %d entities, %d persons, %d relationships buffered",
-        counts["entities"], counts["persons"], len(buffered_rels),
+        "BODS: import complete — %d entities, %d persons, %d ownership edges",
+        counts["entities"], counts["persons"], counts["relationships"],
     )
     if pass1_bar:
         pass1_bar.finish(
             f"entities={counts['entities']:,}  persons={counts['persons']:,}"
-            f"  {len(buffered_rels):,} rels buffered"
+            f"  edges={counts['relationships']:,}"
         )
-
-    # Pass 2: write edges now that all nodes are known
-    log.info("BODS: pass 2 — writing %d relationship edges", len(buffered_rels))
-    bar2 = _ProgressBar("Pass 2")
-    total_rels = len(buffered_rels)
-    for i, stmt in enumerate(buffered_rels, 1):
-        bar2.render(i, total_rels)
-        try:
-            edges = _process_relationship_statement(
-                stmt, bods_to_pamten_id, bods_id_to_name, source_id, credibility_score,
-            )
-            counts["relationships"] += edges
-        except Exception as exc:
-            log.warning("BODS relationship error: %s", exc)
-            counts["errors"] += 1
-    bar2.finish(f"relationships={counts['relationships']:,}  errors={counts['errors']:,}")
 
     log.info("BODS: import complete — %s", counts)
     return counts
