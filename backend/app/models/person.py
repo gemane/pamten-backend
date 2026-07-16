@@ -10,6 +10,7 @@ class PersonCreate(BaseModel):
     nationalities: Optional[List[str]] = []
     birth_date: Optional[str] = None
     death_date: Optional[str] = None
+    birth_place: Optional[str] = None
     description: Optional[str] = None
     wikipedia_url: Optional[str] = None
 

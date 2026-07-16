@@ -431,17 +431,19 @@ class TestFetchPersonDetails:
 
     def test_parses_birth_death_nationalities_and_aliases(self):
         rows = [{
-            "person":  {"value": "http://www.wikidata.org/entity/Q317521"},
-            "birth":   {"value": "1971-06-28T00:00:00Z"},
-            "death":   {"value": ""},
-            "nats":    {"value": "US|CA|ZA"},
-            "aliases": {"value": "Elon|Technoking"},
+            "person":     {"value": "http://www.wikidata.org/entity/Q317521"},
+            "birth":      {"value": "1971-06-28T00:00:00Z"},
+            "death":      {"value": ""},
+            "birthPlace": {"value": "Pretoria"},
+            "nats":       {"value": "US|CA|ZA"},
+            "aliases":    {"value": "Elon|Technoking"},
         }]
         with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
             out = _fetch_person_details({"Q317521"})
         d = out["Q317521"]
         assert d["birth_date"] == "1971-06-28"       # timestamp truncated to date
         assert d["death_date"] is None                # empty string → None
+        assert d["birth_place"] == "Pretoria"
         assert d["nationalities"] == ["US", "CA", "ZA"]
         assert d["aliases"] == ["Elon", "Technoking"]
 
@@ -450,9 +452,16 @@ class TestFetchPersonDetails:
         with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
             out = _fetch_person_details({"Q1"})
         assert out["Q1"] == {
-            "birth_date": None, "death_date": None,
+            "birth_date": None, "death_date": None, "birth_place": None,
             "nationalities": [], "aliases": [],
         }
+
+    def test_query_includes_place_of_birth_property(self):
+        with patch("httpx.get", return_value=self._resp([])) as mock_get, \
+             patch("time.sleep"):
+            _fetch_person_details({"Q42"})
+        query = mock_get.call_args.kwargs["params"]["query"]
+        assert "wdt:P19" in query and "birthPlace" in query
 
     def test_embeds_all_qids_as_values(self):
         with patch("httpx.get", return_value=self._resp([])) as mock_get, \
