@@ -142,6 +142,41 @@ def get_full_profile(entity_id: str):
         }
 
 
+def _dedupe_positions(rows: list) -> list:
+    """
+    Collapse to one entry per (entity, role). A person can hold several HAS_ROLE
+    edges for the same role at the same company — e.g. two CEO tenures with
+    different `since` dates — which are distinct in the graph but duplicate noise
+    in a current-positions view. Keep the most recent tenure. Sorted for a stable
+    display order.
+    """
+    best: dict[tuple, dict] = {}
+    for x in rows:
+        if not x["entity"]:
+            continue
+        entity, role = dict(x["entity"]), dict(x["rel"])
+        key = (entity["id"], role.get("role"))
+        cur = best.get(key)
+        if cur is None or (role.get("since") or "") > (cur["role"].get("since") or ""):
+            best[key] = {"entity": entity, "role": role}
+    return sorted(best.values(),
+                  key=lambda e: ((e["entity"].get("name") or "").lower(), e["role"].get("role") or ""))
+
+
+def _dedupe_holdings(rows: list) -> list:
+    """One entry per owned entity — keep the largest stake if it appears twice."""
+    best: dict[str, dict] = {}
+    for x in rows:
+        if not x["entity"]:
+            continue
+        entity, rel = dict(x["entity"]), dict(x["rel"])
+        key = entity["id"]
+        cur = best.get(key)
+        if cur is None or (rel.get("stake_percent") or -1) > (cur["relationship"].get("stake_percent") or -1):
+            best[key] = {"entity": entity, "relationship": rel}
+    return sorted(best.values(), key=lambda e: (e["entity"].get("name") or "").lower())
+
+
 @router.get("/person/{person_id}/full-profile")
 def get_person_profile(person_id: str):
     """
@@ -166,14 +201,8 @@ def get_person_profile(person_id: str):
 
         return {
             "person": dict(record["p"]),
-            "positions": [
-                {"entity": dict(x["entity"]), "role": dict(x["rel"])}
-                for x in record["positions"] if x["entity"]
-            ],
-            "holdings": [
-                {"entity": dict(x["entity"]), "relationship": dict(x["rel"])}
-                for x in record["holdings"] if x["entity"]
-            ],
+            "positions": _dedupe_positions(record["positions"]),
+            "holdings": _dedupe_holdings(record["holdings"]),
         }
 
 

@@ -17,9 +17,13 @@ def test_person_profile_surfaces_positions_and_holdings(it_db):
     it_db.run_command("CREATE (:Person {id: 'musk', full_name: 'Elon Musk'})")
     it_db.run_command("CREATE (:Entity {id: 'spacex', name: 'SpaceX', type: 'company'})")
     it_db.run_command("CREATE (:Entity {id: 'tesla',  name: 'Tesla',  type: 'company'})")
-    # Current CEO + owner of SpaceX; a FORMER CEO of Tesla (until set → excluded).
+    # TWO current CEO tenures at SpaceX (different `since`) — must collapse to one
+    # position row (most recent kept). Plus an owner edge, and a FORMER CEO of
+    # Tesla (until set → excluded entirely).
     it_db.run_command("MATCH (p:Person {id:'musk'}), (e:Entity {id:'spacex'}) "
-                      "CREATE (p)-[:HAS_ROLE {role:'CEO'}]->(e)")
+                      "CREATE (p)-[:HAS_ROLE {role:'CEO', since:'2002-03-14'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'musk'}), (e:Entity {id:'spacex'}) "
+                      "CREATE (p)-[:HAS_ROLE {role:'CEO', since:'2018-01-01'}]->(e)")
     it_db.run_command("MATCH (p:Person {id:'musk'}), (e:Entity {id:'spacex'}) "
                       "CREATE (p)-[:OWNS {stake_percent: 42}]->(e)")
     it_db.run_command("MATCH (p:Person {id:'musk'}), (e:Entity {id:'tesla'}) "
@@ -28,8 +32,13 @@ def test_person_profile_surfaces_positions_and_holdings(it_db):
     prof = get_person_profile("musk")
     assert prof["person"]["full_name"] == "Elon Musk"
 
+    # The duplicate SpaceX CEO tenure is collapsed to a single row.
+    spacex_ceo = [x for x in prof["positions"]
+                  if x["entity"]["name"] == "SpaceX" and x["role"]["role"] == "CEO"]
+    assert len(spacex_ceo) == 1
+    assert spacex_ceo[0]["role"]["since"] == "2018-01-01"   # most recent tenure kept
+
     positions = {(x["entity"]["name"], x["role"]["role"]) for x in prof["positions"]}
-    assert ("SpaceX", "CEO") in positions
     assert ("Tesla", "CEO") not in positions        # past role (until set) excluded
 
     holdings = {(x["entity"]["name"], x["relationship"]["stake_percent"]) for x in prof["holdings"]}
