@@ -8,7 +8,10 @@ and mock httpx for the HTTP-calling functions.
 import pytest
 from unittest.mock import patch, MagicMock
 
-from app.scraper.wikidata import _v, _qid, _parse_point, _aggregate, search_entity, fetch_company_data
+from app.scraper.wikidata import (
+    _v, _qid, _parse_point, _aggregate, _fetch_person_details,
+    search_entity, fetch_company_data,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -410,3 +413,90 @@ class TestFetchCompanyData:
             fetch_company_data("Q1")
         assert mock_sleep.call_count == 3
         mock_sleep.assert_called_with(0.4)
+
+
+# ── _fetch_person_details ─────────────────────────────────────────────────────
+
+class TestFetchPersonDetails:
+    def _resp(self, bindings: list) -> MagicMock:
+        resp = MagicMock()
+        resp.json.return_value = {"results": {"bindings": bindings}}
+        return resp
+
+    def test_empty_qids_makes_no_request(self):
+        with patch("httpx.get") as mock_get:
+            out = _fetch_person_details(set())
+        assert out == {}
+        mock_get.assert_not_called()
+
+    def test_parses_birth_death_nationalities_and_aliases(self):
+        rows = [{
+            "person":  {"value": "http://www.wikidata.org/entity/Q317521"},
+            "birth":   {"value": "1971-06-28T00:00:00Z"},
+            "death":   {"value": ""},
+            "nats":    {"value": "US|CA|ZA"},
+            "aliases": {"value": "Elon|Technoking"},
+        }]
+        with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
+            out = _fetch_person_details({"Q317521"})
+        d = out["Q317521"]
+        assert d["birth_date"] == "1971-06-28"       # timestamp truncated to date
+        assert d["death_date"] is None                # empty string → None
+        assert d["nationalities"] == ["US", "CA", "ZA"]
+        assert d["aliases"] == ["Elon", "Technoking"]
+
+    def test_person_with_no_detail_yields_empty_lists(self):
+        rows = [{"person": {"value": "http://www.wikidata.org/entity/Q1"}}]
+        with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
+            out = _fetch_person_details({"Q1"})
+        assert out["Q1"] == {
+            "birth_date": None, "death_date": None,
+            "nationalities": [], "aliases": [],
+        }
+
+    def test_embeds_all_qids_as_values(self):
+        with patch("httpx.get", return_value=self._resp([])) as mock_get, \
+             patch("time.sleep"):
+            _fetch_person_details({"Q42", "Q88"})
+        query = mock_get.call_args.kwargs["params"]["query"]
+        assert "wd:Q42" in query and "wd:Q88" in query
+
+
+# ── fetch_company_data person enrichment ──────────────────────────────────────
+
+class TestFetchCompanyDataEnrichesPeople:
+    def test_ceo_founder_owner_get_person_detail_merged(self):
+        rows = [_row(
+            itemLabel="Tesla, Inc.",
+            ceo="http://www.wikidata.org/entity/Q317521",
+            ceoLabel="Elon Musk",
+            founder="http://www.wikidata.org/entity/Q317521",
+            founderLabel="Elon Musk",
+        )]
+        detail = {"Q317521": {
+            "birth_date": "1971-06-28", "death_date": None,
+            "nationalities": ["US", "CA"], "aliases": ["Elon"],
+        }}
+        with patch("app.scraper.wikidata._sparql", return_value=rows), \
+             patch("app.scraper.wikidata._fetch_person_details", return_value=detail) as fp:
+            result = fetch_company_data("Q478214")
+
+        # the person qid was passed to the detail fetch
+        assert "Q317521" in fp.call_args.args[0]
+        ceo = result["ceos"][0]
+        assert ceo["birth_date"] == "1971-06-28"
+        assert ceo["nationalities"] == ["US", "CA"]
+        assert ceo["aliases"] == ["Elon"]
+        founder = result["officers"][0]
+        assert founder["birth_date"] == "1971-06-28"
+
+    def test_no_people_skips_detail_fetch(self):
+        rows = [_row(itemLabel="Widget Co")]
+        with patch("app.scraper.wikidata._sparql", return_value=rows), \
+             patch("app.scraper.wikidata._fetch_person_details") as fp:
+            result = fetch_company_data("Q1")
+        # empty person set → helper returns {} without an HTTP call; still called
+        # with an empty set, or skipped — either way no enrichment error.
+        assert result["ceos"] == []
+        if fp.called:
+            assert fp.call_args.args[0] == set()

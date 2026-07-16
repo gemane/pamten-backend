@@ -142,6 +142,70 @@ def get_full_profile(entity_id: str):
         }
 
 
+def _dedupe_positions(rows: list) -> list:
+    """
+    Collapse to one entry per (entity, role). A person can hold several HAS_ROLE
+    edges for the same role at the same company — e.g. two CEO tenures with
+    different `since` dates — which are distinct in the graph but duplicate noise
+    in a current-positions view. Keep the most recent tenure. Sorted for a stable
+    display order.
+    """
+    best: dict[tuple, dict] = {}
+    for x in rows:
+        if not x["entity"]:
+            continue
+        entity, role = dict(x["entity"]), dict(x["rel"])
+        key = (entity["id"], role.get("role"))
+        cur = best.get(key)
+        if cur is None or (role.get("since") or "") > (cur["role"].get("since") or ""):
+            best[key] = {"entity": entity, "role": role}
+    return sorted(best.values(),
+                  key=lambda e: ((e["entity"].get("name") or "").lower(), e["role"].get("role") or ""))
+
+
+def _dedupe_holdings(rows: list) -> list:
+    """One entry per owned entity — keep the largest stake if it appears twice."""
+    best: dict[str, dict] = {}
+    for x in rows:
+        if not x["entity"]:
+            continue
+        entity, rel = dict(x["entity"]), dict(x["rel"])
+        key = entity["id"]
+        cur = best.get(key)
+        if cur is None or (rel.get("stake_percent") or -1) > (cur["relationship"].get("stake_percent") or -1):
+            best[key] = {"entity": entity, "relationship": rel}
+    return sorted(best.values(), key=lambda e: (e["entity"].get("name") or "").lower())
+
+
+@router.get("/person/{person_id}/full-profile")
+def get_person_profile(person_id: str):
+    """
+    Everything about a person in one call: the positions they hold (HAS_ROLE →
+    entity) and the entities they own (OWNS → entity). Both already in the graph
+    from scraping — the entity full-profile surfaces them from the company side;
+    this surfaces them from the person side.
+    """
+    query = """
+        MATCH (p:Person {id: $id})
+        OPTIONAL MATCH (p)-[role_r:HAS_ROLE]->(org:Entity) WHERE role_r.until IS NULL
+        OPTIONAL MATCH (p)-[owns_r:OWNS]->(owned:Entity)   WHERE owns_r.until IS NULL
+        RETURN p,
+               collect(DISTINCT {entity: org,   rel: role_r}) as positions,
+               collect(DISTINCT {entity: owned, rel: owns_r}) as holdings
+    """
+
+    with db.get_session() as session:
+        record = session.run(query, id=person_id).single()
+        if not record:
+            raise HTTPException(status_code=404, detail="Person not found")
+
+        return {
+            "person": dict(record["p"]),
+            "positions": _dedupe_positions(record["positions"]),
+            "holdings": _dedupe_holdings(record["holdings"]),
+        }
+
+
 @router.get("/geographic")
 def search_by_country(country: str, region: str = None):
     # Find all entities in a country or region
