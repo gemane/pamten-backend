@@ -57,6 +57,37 @@ def backfill(limit: int | None = None) -> dict:
         )
         geocoded += 1
 
-    result = {"total": len(rows), "geocoded": geocoded, "skipped": len(rows) - geocoded}
+    # Entities carry HQ directly (hq_city/hq_country/hq_lat) rather than via a
+    # Location node — the Wikidata scraper denormalizes it. Geocode those with a
+    # city/country but no coordinates (an HQ Wikidata had no P625 for, or a
+    # SEC/BODS entity with an address).
+    ent_query = """
+        MATCH (e:Entity)
+        WHERE e.hq_lat IS NULL AND (e.hq_city IS NOT NULL OR e.hq_country IS NOT NULL)
+        RETURN e.id AS id, e.hq_city AS city, e.hq_country AS country
+    """
+    if limit is not None:
+        ent_query += f"\n        LIMIT {int(limit)}"
+
+    ent_rows = run_query(ent_query)
+    ent_geocoded = 0
+    for r in ent_rows:
+        coord = geocode_address({"city": r.get("city"), "country": r.get("country")})
+        if not coord:
+            continue
+        lat, lng = coord
+        run_command(
+            "MATCH (e:Entity {id: $id}) SET e.hq_lat = $lat, e.hq_lng = $lng",
+            {"id": r["id"], "lat": lat, "lng": lng},
+        )
+        ent_geocoded += 1
+
+    result = {
+        "locations_total":    len(rows),
+        "locations_geocoded": geocoded,
+        "entities_total":     len(ent_rows),
+        "entities_geocoded":  ent_geocoded,
+        "geocoded":           geocoded + ent_geocoded,
+    }
     log.info("Geocode backfill: %s", result)
     return result
