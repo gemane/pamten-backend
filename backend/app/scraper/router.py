@@ -189,6 +189,27 @@ def deduplicate_person_nodes(_: dict = Depends(require_admin)):
     return maintenance.deduplicate_person_nodes()
 
 
+# ── Geocode endpoint ───────────────────────────────────────────────────────────
+
+@router.post("/geocode")
+def geocode_backfill_run(
+    limit: int | None = Query(None, ge=1, description="Max nodes to geocode this run"),
+    _: dict = Depends(require_contributor),
+):
+    """
+    Backfill HQ coordinates via Nominatim for Location nodes and Entities that
+    have a city/country but no coordinates. Gated by GEOCODING_ENABLED (env), so
+    it never hits Nominatim unless deliberately turned on.
+    """
+    if not settings.GEOCODING_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail="Geocoding is disabled. Set GEOCODING_ENABLED=true in the environment to enable.",
+        )
+    from app.scraper.geocode_backfill import backfill
+    return {"status": "ok", **backfill(limit=limit)}
+
+
 # ── Proxy statement endpoints ───────────────────────────────────────────────────
 
 @router.post("/proxy-statement/run")

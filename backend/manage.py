@@ -100,8 +100,9 @@ def cmd_geocode(args):
     settings.GEOCODING_ENABLED = True
     from app.scraper.geocode_backfill import backfill
     result = backfill(limit=args.limit)
-    print(f"Geocoded {result['geocoded']}/{result['total']} locations "
-          f"({result['skipped']} without a match)")
+    print(f"Geocoded {result['geocoded']} of "
+          f"{result['locations_total'] + result['entities_total']} candidates "
+          f"({result['locations_geocoded']} locations, {result['entities_geocoded']} entities)")
 
 def cmd_normalize_countries(args):
     from app.scraper.maintenance import normalize_entity_countries
