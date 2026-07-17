@@ -318,3 +318,44 @@ def test_parse_form4_shares_none_when_absent():
     </reportingOwner></ownershipDocument>"""
     out = _parse_form34_xml(xml)
     assert out["role"] == "Director" and out["shares_owned"] is None
+
+
+# ── Person-centric insider holding (Option A) ────────────────────────────────
+
+_SUBS = {"filings": {"recent": {
+    "form": ["4"], "accessionNumber": ["0001059245-24-000123"],
+    "primaryDocument": ["form4.xml"], "filingDate": ["2024-02-01"]}}}
+
+def _form4(issuer_cik: str, shares: str) -> str:
+    return (f"<x><issuerCik>{issuer_cik}</issuerCik>"
+            f"<nonDerivativeTable><nonDerivativeTransaction><postTransactionAmounts>"
+            f"<sharesOwnedFollowingTransaction><value>{shares}</value>"
+            f"</sharesOwnedFollowingTransaction></postTransactionAmounts>"
+            f"</nonDerivativeTransaction></nonDerivativeTable></x>")
+
+
+def test_fetch_insider_holding_computes_stake_when_issuer_matches():
+    from app.scraper.sec_edgar import fetch_insider_holding
+    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value="0001059245"), \
+         patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
+         patch("app.scraper.sec_edgar._get_text", return_value=_form4("0001364742", "2000")), \
+         patch("time.sleep"):
+        out = fetch_insider_holding("Larry Fink", "0001364742", shares_outstanding=100000)
+    assert out["shares_owned"] == 2000.0
+    assert out["stake_percent"] == 2.0            # 2000 / 100000 * 100
+
+
+def test_fetch_insider_holding_none_when_issuer_mismatch():
+    from app.scraper.sec_edgar import fetch_insider_holding
+    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value="0001059245"), \
+         patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
+         patch("app.scraper.sec_edgar._get_text", return_value=_form4("0000999999", "2000")), \
+         patch("time.sleep"):
+        out = fetch_insider_holding("Larry Fink", "0001364742", shares_outstanding=100000)
+    assert out is None                            # Form 4 is about a different company
+
+
+def test_fetch_insider_holding_none_when_no_cik():
+    from app.scraper.sec_edgar import fetch_insider_holding
+    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value=None):
+        assert fetch_insider_holding("Nobody", "0001364742") is None
