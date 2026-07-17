@@ -809,8 +809,10 @@ def fetch_insider_holding(name: str, issuer_cik: str,
     except httpx.HTTPError:
         return None
     rec   = subs.get("filings", {}).get("recent", {})
-    forms = rec.get("form", []); accs = rec.get("accessionNumber", [])
-    docs  = rec.get("primaryDocument", []); dates = rec.get("filingDate", [])
+    forms = rec.get("form", [])
+    accs  = rec.get("accessionNumber", [])
+    docs  = rec.get("primaryDocument", [])
+    dates = rec.get("filingDate", [])
     issuer_int = str(_cik_int(issuer_cik))
 
     for i, f in enumerate(forms):
