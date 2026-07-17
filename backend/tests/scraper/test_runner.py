@@ -676,3 +676,34 @@ def test_sec_insider_with_shares_gets_owns_edge():
     assert fink[0]["ownership_type"] == "minority"
     assert all(c.get("stake_percent") != 0 for c in owns)  # the no-shares director got none
     assert any(r.get("role") == "insider owner" for r in result["scraped"])
+
+
+# ── Person-centric insider ownership (Option A, in the runner) ───────────────
+
+def test_sec_person_centric_insider_owns():
+    from contextlib import contextmanager
+    from app.scraper.runner import run_scrape_sec_edgar
+    data = {"cik": "0001364742", "name": "BlackRock", "ownership_filings": [],
+            "executives": [], "shares_outstanding": 100000.0}
+
+    @contextmanager
+    def fake_ctx():
+        sess = MagicMock()
+        # the known-people query returns a founder/CEO already in the graph
+        sess.run.return_value = [{"id": "fink", "name": "Larry Fink"}]
+        yield sess
+
+    owns = []
+    with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+         patch("app.scraper.runner._ensure_sec_edgar_source", return_value="src"), \
+         patch("app.scraper.runner._upsert_entity_by_name", return_value="blk"), \
+         patch("app.scraper.runner.db.get_session", fake_ctx), \
+         patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+         patch("app.scraper.sec_edgar.fetch_insider_holding",
+               return_value={"shares_owned": 2000, "stake_percent": 2.0,
+                             "source_url": "https://sec.gov/f4", "source_date": "2024-02-01"}), \
+         patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)):
+        run_scrape_sec_edgar("BlackRock")
+
+    assert len(owns) == 1
+    assert owns[0]["owner_id"] == "fink" and owns[0]["stake_percent"] == 2.0

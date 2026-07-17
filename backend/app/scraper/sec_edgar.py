@@ -730,62 +730,117 @@ def fetch_executives(cik: str) -> list:
     filing_dates = recent.get("filingDate",      [])
 
     # Collect one filing per unique filer CIK (newest first = most current title)
-    seen_filer_ciks: set[str] = set()
-    to_fetch: list[dict] = []
+    executives: list[dict] = []
+    seen_names: set[str]   = set()
     issuer_cik_int = _cik_int(cik)
+    scanned  = 0
+    SCAN_CAP = MAX_FORM4_FETCH * 2   # bound fetches (many insiders share a filing agent)
 
+    # Fetch Form 3/4 filings newest-first and dedupe by the *reporting person* —
+    # NOT the accession/filer-CIK prefix, which collapses distinct insiders who
+    # share a filing agent (that missed most of a company's insiders). Stop at
+    # MAX_FORM4_FETCH unique insiders or the scan cap.
     for i, form in enumerate(forms):
         if form not in ("3", "4", "3/A", "4/A"):
             continue
-        accession   = accessions[i]   if i < len(accessions)   else ""
-        primary_doc = primary_docs[i] if i < len(primary_docs) else ""
-        # primaryDocument is sometimes prefixed with an XSLT stylesheet dir
-        # (e.g. "xslF345X06/form4.xml") which serves HTML, not raw XML.
-        # Strip any leading xsl.../  to get the actual document filename.
-        primary_doc = primary_doc.split("/")[-1] if "/" in primary_doc else primary_doc
-        filer_cik   = accession.replace("-", "")[:10]
-
-        if not filer_cik or filer_cik in seen_filer_ciks or not primary_doc:
+        # primaryDocument may be prefixed with an XSLT stylesheet dir
+        # (e.g. "xslF345X06/form4.xml") which serves HTML — strip to the raw XML.
+        doc = (primary_docs[i] if i < len(primary_docs) else "")
+        doc = doc.split("/")[-1] if "/" in doc else doc
+        acc = (accessions[i] if i < len(accessions) else "").replace("-", "")
+        if not doc or not acc:
             continue
-        seen_filer_ciks.add(filer_cik)
-        to_fetch.append({
-            "accession":   accession.replace("-", ""),
-            "primary_doc": primary_doc,
-            "file_date":   filing_dates[i] if i < len(filing_dates) else None,
-            "index_url":   _filing_index_url(cik, accession),  # readable filing page
-        })
-        if len(to_fetch) >= MAX_FORM4_FETCH:
-            break
 
-    executives: list[dict] = []
-    seen_names: set[str]   = set()
-
-    for filing in to_fetch:
-        # Use the issuer's CIK for the Archives path (not the accession filer CIK)
-        url = f"{ARCHIVES_URL}/{issuer_cik_int}/{filing['accession']}/{filing['primary_doc']}"
+        # Archives path uses the issuer CIK (not the accession filer CIK).
         try:
-            xml_text = _get_text(url)
+            xml_text = _get_text(f"{ARCHIVES_URL}/{issuer_cik_int}/{acc}/{doc}")
         except httpx.HTTPError as exc:
-            log.debug("SEC EDGAR: Form 3/4 fetch failed %s: %s", url, exc)
+            log.debug("SEC EDGAR: Form 3/4 fetch failed: %s", exc)
             continue
+        scanned += 1
 
         result = _parse_form34_xml(xml_text)
-        if not result:
-            continue
-        name = result["name"]
-        if not name or name in seen_names:
-            continue
-        seen_names.add(name)
-        # Provenance: the readable filing index page (the raw XML `url` above is
-        # only used to parse the role). Fall back to the raw doc if needed.
-        result["source_url"]  = filing.get("index_url") or url
-        result["source_date"] = filing.get("file_date")
-        executives.append(result)
-        log.debug("SEC EDGAR: insider %s (%s)", name, result["role"])
+        if result and result["name"] and result["name"] not in seen_names:
+            seen_names.add(result["name"])
+            result["source_url"]  = _filing_index_url(cik, accessions[i]) or None
+            result["source_date"] = filing_dates[i] if i < len(filing_dates) else None
+            executives.append(result)
+            log.debug("SEC EDGAR: insider %s (%s)", result["name"], result["role"])
+
+        if len(executives) >= MAX_FORM4_FETCH or scanned >= SCAN_CAP:
+            break
 
     log.info("SEC EDGAR: found %d executives from Form 3/4 for CIK=%s",
              len(executives), cik)
     return executives
+
+
+def _lookup_person_cik(name: str) -> str | None:
+    """Resolve an individual's name to their EDGAR filer CIK (they file Form 4s)."""
+    try:
+        resp = httpx.get(BROWSE_URL, params={
+            "company": name, "action": "getcompany", "type": "4",
+            "dateb": "", "owner": "include", "count": "5", "output": "atom",
+        }, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        time.sleep(REQUEST_DELAY)
+    except httpx.HTTPError:
+        return None
+    m = re.search(r"cik=(\d+)", resp.text, re.IGNORECASE)
+    return m.group(1).zfill(10) if m else None
+
+
+def fetch_insider_holding(name: str, issuer_cik: str,
+                          shares_outstanding: float | None = None) -> dict | None:
+    """
+    Person-centric insider lookup (all structured XML): resolve the individual's
+    CIK, read THEIR most recent Form 4 that reports on `issuer_cik`, and return
+    their current share holding (+ a stake %% when shares_outstanding is known).
+
+    Reaches insiders the issuer-side Form-4 scan misses (e.g. a CEO whose filings
+    are flooded out of the company's recent window). Verifying issuerCik on the
+    filing guards against name collisions. Returns None if not found / no shares.
+    """
+    cik = _lookup_person_cik(name)
+    if not cik:
+        return None
+    try:
+        subs = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+    except httpx.HTTPError:
+        return None
+    rec   = subs.get("filings", {}).get("recent", {})
+    forms = rec.get("form", []); accs = rec.get("accessionNumber", [])
+    docs  = rec.get("primaryDocument", []); dates = rec.get("filingDate", [])
+    issuer_int = str(_cik_int(issuer_cik))
+
+    for i, f in enumerate(forms):
+        if f not in ("4", "4/A"):
+            continue
+        acc = accs[i].replace("-", "")
+        doc = docs[i] if i < len(docs) else ""
+        doc = doc.split("/")[-1] if "/" in doc else doc
+        if not doc:
+            continue
+        try:
+            xml = _get_text(f"{ARCHIVES_URL}/{int(cik)}/{acc}/{doc}")
+        except httpx.HTTPError:
+            continue
+        m = re.search(r"<issuerCik>0*(\d+)</issuerCik>", xml)
+        if not m or m.group(1) != issuer_int:
+            continue                       # this Form 4 is about a different company
+        shares = [float(v) for v in re.findall(
+            r"<sharesOwnedFollowingTransaction>\s*<value>([\d.]+)</value>", xml)]
+        held = max(shares) if shares else None
+        if not held or held <= 0:
+            return None
+        stake = round(held / shares_outstanding * 100, 4) if shares_outstanding else None
+        return {
+            "shares_owned":  held,
+            "stake_percent": stake,
+            "source_url":    _filing_index_url(cik, accs[i]),
+            "source_date":   dates[i] if i < len(dates) else None,
+        }
+    return None
 
 
 def fetch_shares_outstanding(cik: str) -> float | None:

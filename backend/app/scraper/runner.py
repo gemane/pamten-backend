@@ -78,6 +78,7 @@ MAX_SUBSIDIARIES      = 15   # per entity, to avoid runaway scrapes
 MAX_CEOS              = 3
 MAX_OFFICERS          = 12   # founders + chairpersons + board members combined
 MAX_OWNERS            = 10   # owned-by (P127) links
+MAX_INSIDER_LOOKUPS   = 15   # known people to look up personal Form-4 holdings for
 
 SEC_EDGAR_SOURCE_NAME = "SEC EDGAR"
 SEC_EDGAR_SOURCE_URL  = "https://www.sec.gov/edgar"
@@ -934,6 +935,46 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             )
             scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             log.info("SEC EDGAR: wrote insider OWNS %r → %r (%s shares)", name, data["name"], shares)
+
+    # Person-centric insider ownership: for people already linked to this company
+    # (founders/execs/directors — e.g. from the Wikidata pass) who don't yet have
+    # an ownership edge, read THEIR own Form 4s. This reaches insiders the
+    # issuer-side scan misses, e.g. a founder-CEO whose filings are flooded out of
+    # the company's recent window (Larry Fink at BlackRock).
+    from app.scraper.sec_edgar import fetch_insider_holding
+    cik = data.get("cik")
+    shares_out = data.get("shares_outstanding")
+    if cik:
+        with db.get_session() as session:
+            known = [
+                {"id": r.get("id"), "name": r.get("name")}
+                for r in session.run(
+                    """
+                    MATCH (p:Person)-[:HAS_ROLE]->(e:Entity {id: $id})
+                    WHERE NOT (p)-[:OWNS]->(e)
+                    RETURN p.id AS id, p.full_name AS name LIMIT $cap
+                    """,
+                    id=target_id, cap=MAX_INSIDER_LOOKUPS,
+                )
+            ]
+        for row in known:
+            pname, pid = row["name"], row["id"]
+            if not pname or not pid:
+                continue
+            holding = fetch_insider_holding(pname, cik, shares_out)
+            if not holding:
+                continue
+            stake = holding.get("stake_percent")
+            _upsert_owns_sec(
+                owner_id=pid, owned_id=target_id, source_id=source_id,
+                ownership_type=(derive_ownership_type(stake) if stake is not None else "minority"),
+                file_date=holding.get("source_date"),
+                stake_percent=stake,
+                source_url=holding.get("source_url"),
+            )
+            scraped.append({"type": "owns", "name": pname, "role": "insider owner"})
+            log.info("SEC EDGAR: person-centric insider OWNS %r → %r (%s shares)",
+                     pname, data["name"], holding.get("shares_owned"))
 
     log.info(
         "SEC EDGAR runner: finished %r — %d nodes written",
