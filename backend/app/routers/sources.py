@@ -138,6 +138,79 @@ def get_sources_for_entity(entity_id: str):
     return out
 
 
+# Per-entry provenance for a person: where their information came from — the
+# entities they own (OWNS), the roles they hold (HAS_ROLE), and the person
+# record itself.
+_PERSON_PROVENANCE_QUERIES = (
+    # Entities this person owns
+    """
+    MATCH (p:Person {id: $person_id})-[r:OWNS]->(x)
+    WHERE r.source_id IS NOT NULL
+    MATCH (s:Source {id: r.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           r.source_url AS source_url, r.source_date AS source_date,
+           r.last_scraped_at AS last_scraped_at
+    """,
+    # Roles this person holds
+    """
+    MATCH (p:Person {id: $person_id})-[r:HAS_ROLE]->(x)
+    WHERE r.source_id IS NOT NULL
+    MATCH (s:Source {id: r.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           r.source_url AS source_url, r.source_date AS source_date,
+           r.last_scraped_at AS last_scraped_at
+    """,
+    # Provenance stamped directly on the person record
+    """
+    MATCH (p:Person {id: $person_id})
+    WHERE p.source_id IS NOT NULL
+    MATCH (s:Source {id: p.source_id})
+    RETURN s.id AS id, s.name AS name, s.type AS type,
+           s.credibility_score AS credibility_score, s.url AS source_home_url,
+           p.source_url AS source_url, p.source_date AS source_date,
+           p.last_scraped_at AS last_scraped_at
+    """,
+)
+
+
+@router.get("/person/{person_id}")
+def get_sources_for_person(person_id: str):
+    """
+    Return per-entry provenance for this person: one source row per ownership /
+    role fact and the person record itself. Same shape as /sources/entity.
+    """
+    _COLS = ("id", "name", "type", "credibility_score", "source_home_url",
+             "source_url", "source_date", "last_scraped_at")
+    rows: list[dict] = []
+    with db.get_session() as session:
+        for query in _PERSON_PROVENANCE_QUERIES:
+            for rec in session.run(query, person_id=person_id):
+                rows.append({c: rec.get(c) for c in _COLS})
+
+    seen: set = set()
+    out: list[dict] = []
+    for r in rows:
+        url = r.get("source_url") or r.get("source_home_url")
+        key = (r.get("id"), url, r.get("source_date"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "id":                r.get("id"),
+            "name":              r.get("name"),
+            "type":              r.get("type"),
+            "credibility_score": r.get("credibility_score"),
+            "url":               url,
+            "source_date":       r.get("source_date"),
+            "last_scraped_at":   r.get("last_scraped_at"),
+        })
+
+    out.sort(key=lambda x: -(x["credibility_score"] or 0))
+    return out
+
+
 @router.get("/")
 def list_sources(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20, ge=1, le=100)):
     query = """
