@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
 from app.scraper.wikidata import search_entity, fetch_company_data
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type
 from app.scraper.sources import get_source_enabled
 from app.scraper.geocode import geocode_address
 
@@ -916,6 +916,24 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
                          source_date=exec_rec.get("source_date"))
         scraped.append({"type": "person", "name": name, "role": role})
         log.info("SEC EDGAR: wrote HAS_ROLE %r → %r (%s)", name, data["name"], role)
+
+        # Insider (Form 4) holding → OWNS edge, so a founder/exec who holds
+        # shares also shows as an owner. stake_percent is set when the issuer's
+        # shares outstanding were readable; else it's a minority holding.
+        shares = exec_rec.get("shares_owned")
+        if shares and shares > 0:
+            stake = exec_rec.get("stake_percent")
+            _upsert_owns_sec(
+                owner_id=person_id,
+                owned_id=target_id,
+                source_id=source_id,
+                ownership_type=(derive_ownership_type(stake) if stake is not None else "minority"),
+                file_date=exec_rec.get("source_date"),
+                stake_percent=stake,
+                source_url=exec_rec.get("source_url"),
+            )
+            scraped.append({"type": "owns", "name": name, "role": "insider owner"})
+            log.info("SEC EDGAR: wrote insider OWNS %r → %r (%s shares)", name, data["name"], shares)
 
     log.info(
         "SEC EDGAR runner: finished %r — %d nodes written",

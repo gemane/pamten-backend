@@ -648,3 +648,31 @@ class TestUpsertPersonDetail:
         assert create.kwargs["aliases"] == []
         assert create.kwargs["nats"] == []
         assert create.kwargs["bdate"] is None
+
+
+# ── SEC insider (Form 4) holdings → OWNS edges ───────────────────────────────
+
+def test_sec_insider_with_shares_gets_owns_edge():
+    from app.scraper.runner import run_scrape_sec_edgar
+    data = {
+        "cik": "0001364742", "name": "BlackRock",
+        "ownership_filings": [],
+        "executives": [
+            {"name": "Larry Fink", "role": "CEO", "shares_owned": 500000, "stake_percent": 0.34,
+             "source_url": "https://sec.gov/x", "source_date": "2024-01-01"},
+            {"name": "No Shares Director", "role": "Director", "shares_owned": None},
+        ],
+    }
+    owns = []
+    ctx, _ = _make_session_mock()
+    with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+         patch("app.scraper.runner.db.get_session", ctx), \
+         patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+         patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)):
+        result = run_scrape_sec_edgar("BlackRock")
+
+    fink = [c for c in owns if c.get("stake_percent") == 0.34]
+    assert len(fink) == 1                                  # insider with shares → OWNS
+    assert fink[0]["ownership_type"] == "minority"
+    assert all(c.get("stake_percent") != 0 for c in owns)  # the no-shares director got none
+    assert any(r.get("role") == "insider owner" for r in result["scraped"])
