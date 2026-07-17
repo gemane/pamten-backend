@@ -278,3 +278,43 @@ class TestSearchCompany:
             result = search_company("NonExistentXYZ123")
 
         assert result is None
+
+
+# ── Form 4 share-holding extraction ──────────────────────────────────────────
+
+_FORM4_XML = """<?xml version="1.0"?>
+<ownershipDocument>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerName>Fink Laurence D</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship>
+      <isOfficer>1</isOfficer><officerTitle>Chief Executive Officer</officerTitle>
+    </reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>500000</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+    </nonDerivativeTransaction>
+    <nonDerivativeHolding>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>510000</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+    </nonDerivativeHolding>
+  </nonDerivativeTable>
+</ownershipDocument>"""
+
+
+def test_parse_form4_extracts_role_and_shares_owned():
+    out = _parse_form34_xml(_FORM4_XML)
+    assert out["role"] == "CEO"
+    assert out["shares_owned"] == 510000.0   # largest sharesOwnedFollowingTransaction
+
+
+def test_parse_form4_shares_none_when_absent():
+    xml = """<ownershipDocument><reportingOwner>
+      <reportingOwnerId><rptOwnerName>Doe Jane</rptOwnerName></reportingOwnerId>
+      <reportingOwnerRelationship><isDirector>1</isDirector></reportingOwnerRelationship>
+    </reportingOwner></ownershipDocument>"""
+    out = _parse_form34_xml(xml)
+    assert out["role"] == "Director" and out["shares_owned"] is None

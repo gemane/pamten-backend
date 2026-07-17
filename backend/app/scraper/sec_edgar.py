@@ -68,6 +68,7 @@ BROWSE_URL      = "https://www.sec.gov/cgi-bin/browse-edgar"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions"
 ARCHIVES_URL    = "https://www.sec.gov/Archives/edgar/data"
 TICKERS_URL     = "https://www.sec.gov/files/company_tickers.json"
+COMPANYCONCEPT_URL = "https://data.sec.gov/api/xbrl/companyconcept"
 
 # Module-level cache for the tickers file (populated on first use per process)
 _tickers_cache: dict | None = None
@@ -689,7 +690,17 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
     name = _normalize_sec_name(name_elem.text.strip())
     role = _title_to_role(officer_title) if is_officer else "Director"
 
-    return {"name": name, "title": officer_title, "role": role}
+    # Shares held after the reported transaction(s) — the insider's current
+    # non-derivative holding. Take the largest value across rows (the total).
+    share_vals: list[float] = []
+    for el in root.findall(".//sharesOwnedFollowingTransaction/value"):
+        try:
+            share_vals.append(float((el.text or "").replace(",", "").strip()))
+        except (TypeError, ValueError):
+            continue
+    shares_owned = max(share_vals) if share_vals else None
+
+    return {"name": name, "title": officer_title, "role": role, "shares_owned": shares_owned}
 
 
 def fetch_executives(cik: str) -> list:
@@ -777,6 +788,30 @@ def fetch_executives(cik: str) -> list:
     return executives
 
 
+def fetch_shares_outstanding(cik: str) -> float | None:
+    """
+    Latest reported common shares outstanding for an issuer (SEC XBRL facts),
+    used to turn an insider's Form-4 share count into a stake percentage.
+    Best-effort — returns None if unavailable.
+    """
+    for concept in ("dei/EntityCommonStockSharesOutstanding",
+                    "us-gaap/CommonStockSharesOutstanding"):
+        try:
+            data = _get(f"{COMPANYCONCEPT_URL}/CIK{cik}/{concept}.json")
+        except httpx.HTTPError:
+            continue
+        units = data.get("units") or {}
+        vals = units.get("shares") or (next(iter(units.values()), []) if units else [])
+        dated = [(v.get("end") or "", v.get("val")) for v in vals if v.get("val")]
+        if dated:
+            dated.sort()                      # most recent reporting period last
+            try:
+                return float(dated[-1][1])
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def scrape_company(company_name: str) -> dict | None:
@@ -789,12 +824,23 @@ def scrape_company(company_name: str) -> dict | None:
     if not company:
         return None
 
-    ownership  = fetch_ownership_filings(company_name, company_cik=company.get("cik"))
-    executives = fetch_executives(company["cik"]) if company.get("cik") else []
+    cik        = company.get("cik")
+    ownership  = fetch_ownership_filings(company_name, company_cik=cik)
+    executives = fetch_executives(cik) if cik else []
+
+    # Turn each insider's Form-4 share holding into a stake %, when we can read
+    # the issuer's shares outstanding.
+    shares_out = fetch_shares_outstanding(cik) if cik else None
+    if shares_out:
+        for ex in executives:
+            so = ex.get("shares_owned")
+            if so and so > 0:
+                ex["stake_percent"] = round(so / shares_out * 100, 4)
 
     return {
-        "cik":               company["cik"],
-        "name":              company["name"],
-        "ownership_filings": ownership,
-        "executives":        executives,
+        "cik":                company["cik"],
+        "name":               company["name"],
+        "ownership_filings":  ownership,
+        "executives":         executives,
+        "shares_outstanding": shares_out,
     }
