@@ -82,10 +82,17 @@ def cmd_wipe_data(args):
         except Exception as exc:
             print(f"  {t}: {exc}")
     # Rebuild indexes — DELETE FROM leaves stale index entries pointing to
-    # deleted RIDs, which cause RecordNotFoundException on the next import.
+    # deleted RIDs, which cause RecordNotFoundException on the next import/read
+    # (e.g. the SEC scraper 500'd until this ran). ensure_indexes only CREATEs
+    # missing indexes; REBUILD INDEX * is what actually clears the stale entries.
     print("Rebuilding indexes...")
     from app.db.schema import ensure_indexes
     ensure_indexes()
+    try:
+        run_sql("REBUILD INDEX *")
+        print("  Rebuilt all indexes (cleared stale entries).")
+    except Exception as exc:
+        print(f"  REBUILD INDEX * failed: {exc}")
     print("Done.")
 
 def cmd_geocode(args):
@@ -104,53 +111,57 @@ def cmd_normalize_countries(args):
     print(f"Converted {len(result['converted'])} country values "
           f"({result['skipped']} already canonical or unrecognized)")
 
-parser = argparse.ArgumentParser(description='Owlgraph management')
-subparsers = parser.add_subparsers()
+def _build_parser():
+    parser = argparse.ArgumentParser(description='Owlgraph management')
+    subparsers = parser.add_subparsers()
 
-# bods-gleif command
-p_gleif = subparsers.add_parser('bods-gleif')
-p_gleif.add_argument('--file', help='Path to local gleif.zip')
-p_gleif.add_argument('--limit', type=int, help='Max statements')
-p_gleif.add_argument('--jurisdiction', help='Country code e.g. AT')
-p_gleif.set_defaults(func=cmd_bods_gleif)
+    # bods-gleif command
+    p_gleif = subparsers.add_parser('bods-gleif')
+    p_gleif.add_argument('--file', help='Path to local gleif.zip')
+    p_gleif.add_argument('--limit', type=int, help='Max statements')
+    p_gleif.add_argument('--jurisdiction', help='Country code e.g. AT')
+    p_gleif.set_defaults(func=cmd_bods_gleif)
 
-# bods-uk-psc command
-p_psc = subparsers.add_parser('bods-uk-psc')
-p_psc.add_argument('--file', help='Path to local uk_psc.zip')
-p_psc.add_argument('--limit', type=int, help='Max statements')
-p_psc.set_defaults(func=cmd_bods_uk_psc)
+    # bods-uk-psc command
+    p_psc = subparsers.add_parser('bods-uk-psc')
+    p_psc.add_argument('--file', help='Path to local uk_psc.zip')
+    p_psc.add_argument('--limit', type=int, help='Max statements')
+    p_psc.set_defaults(func=cmd_bods_uk_psc)
 
-# seed command
-p_seed = subparsers.add_parser('seed')
-p_seed.add_argument(
-    '--region',
-    default='all',
-    choices=['europe','americas','asia','middleeast',
-             'africa','oceania','all']
-)
-p_seed.set_defaults(func=cmd_seed)
+    # seed command
+    p_seed = subparsers.add_parser('seed')
+    p_seed.add_argument(
+        '--region',
+        default='all',
+        choices=['europe','americas','asia','middleeast',
+                 'africa','oceania','all']
+    )
+    p_seed.set_defaults(func=cmd_seed)
 
-# init-schema command
-p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
-p_schema.set_defaults(func=cmd_init_schema)
+    # init-schema command
+    p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
+    p_schema.set_defaults(func=cmd_init_schema)
 
-# wipe-data command
-p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')
-p_wipe.add_argument('--yes', action='store_true', help='Skip confirmation prompt')
-p_wipe.set_defaults(func=cmd_wipe_data)
+    # wipe-data command
+    p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')
+    p_wipe.add_argument('--yes', action='store_true', help='Skip confirmation prompt')
+    p_wipe.set_defaults(func=cmd_wipe_data)
 
-# geocode command
-p_geo = subparsers.add_parser('geocode', help='Backfill lat/lng for Location nodes via Nominatim')
-p_geo.add_argument('--limit', type=int, help='Max locations to geocode this run')
-p_geo.set_defaults(func=cmd_geocode)
+    # geocode command
+    p_geo = subparsers.add_parser('geocode', help='Backfill lat/lng for Location nodes via Nominatim')
+    p_geo.add_argument('--limit', type=int, help='Max locations to geocode this run')
+    p_geo.set_defaults(func=cmd_geocode)
 
-# normalize-countries command
-p_norm = subparsers.add_parser('normalize-countries',
-                               help='Convert full-name Entity.country values to ISO-2 codes')
-p_norm.set_defaults(func=cmd_normalize_countries)
+    # normalize-countries command
+    p_norm = subparsers.add_parser('normalize-countries',
+                                   help='Convert full-name Entity.country values to ISO-2 codes')
+    p_norm.set_defaults(func=cmd_normalize_countries)
+    return parser
 
-args = parser.parse_args()
-if hasattr(args, 'func'):
-    args.func(args)
-else:
-    parser.print_help()
+
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
+    if hasattr(args, 'func'):
+        args.func(args)
+    else:
+        _build_parser().print_help()
