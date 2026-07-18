@@ -9,6 +9,7 @@ from app.scraper.runner import (
 )
 from app.auth.dependencies import require_admin, require_contributor
 from app.scraper import maintenance, proxy_write
+from app.scraper.run_log import record_run, list_runs
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,16 @@ def scraper_status():
     }
 
 
+@router.get("/runs")
+def scraper_runs(
+    limit: int = Query(50, ge=1, le=500, description="Max run records to return"),
+    _: dict = Depends(require_contributor),
+):
+    """Recent scrape runs (newest first) — what ran, when, node counts, and failures."""
+    runs = list_runs(limit)
+    return {"count": len(runs), "runs": runs}
+
+
 # ── Wikidata endpoints ────────────────────────────────────────────────────────
 
 @router.post("/run")
@@ -51,7 +62,9 @@ def scraper_run(body: ScrapeRequest, _: dict = Depends(require_contributor)):
             detail="Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable.",
         )
     try:
-        result = run_scrape(body.query, body.depth)
+        with record_run("wikidata", body.query) as run:
+            result = run_scrape(body.query, body.depth)
+            run["total"] = result.get("total", 0)
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -88,7 +101,9 @@ def sec_edgar_run(
         raise HTTPException(status_code=403,
             detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true.")
     try:
-        result = run_scrape_sec_edgar(company)
+        with record_run("sec_edgar", company) as run:
+            result = run_scrape_sec_edgar(company)
+            run["total"] = result.get("total", 0)
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -114,7 +129,11 @@ def scraper_run_all(
         raise HTTPException(status_code=403,
             detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
     try:
-        result = run_scrape_all(company, depth)
+        with record_run("all", company) as run:
+            result = run_scrape_all(company, depth)
+            run["total"] = sum(
+                (v or {}).get("total", 0)
+                for v in (result.get("results") or {}).values() if isinstance(v, dict))
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -151,7 +170,9 @@ def open_corporates_run(
         raise HTTPException(status_code=403,
             detail="OpenCorporates scraper is disabled. Set SCRAPER_OPENCORPORATES_ENABLED=true.")
     try:
-        result = run_scrape_open_corporates(company)
+        with record_run("open_corporates", company) as run:
+            result = run_scrape_open_corporates(company)
+            run["total"] = result.get("total", 0)
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
