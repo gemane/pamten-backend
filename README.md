@@ -277,6 +277,19 @@ Investor names are classified as Person or Entity using heuristics that recognis
 ### OpenCorporates
 Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 
+### BODS (GLEIF & UK PSC)
+Beneficial-ownership data imported via the **Beneficial Ownership Data Standard**:
+**GLEIF** (Global LEI, corporate ownership worldwide, CC0) and the **UK PSC**
+register (people with significant control, CC0). Controlled by
+`SCRAPER_BODS_GLEIF_ENABLED` / `SCRAPER_BODS_UK_PSC_ENABLED`.
+
+Unlike the per-company scrapers above, BODS is a **bulk dataset import**, not a
+name lookup — so it is *not* part of `run-all` and has its own endpoints
+(`/scraper/bods/*`) and, in the web app, its own **Bulk import** card. It streams
+a BODS file (URL or a local file inside `BODS_DATA_DIR`), reconciles endpoints by
+LEI / Companies House id, and can be filtered by `jurisdiction` and `limit`. Both
+sources still appear in `/scraper/sources` with independent on/off toggles.
+
 ---
 
 ## Duplicate persons
