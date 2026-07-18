@@ -41,6 +41,8 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("User",     "email",           "UNIQUE"),
     ("MergeLog", "id",              "UNIQUE"),
     ("MergeLog", "keep_id",         "NOTUNIQUE"),
+    ("Peer",     "id",              "UNIQUE"),
+    ("Peer",     "base_url",        "NOTUNIQUE"),
 ]
 
 # Edge types the app creates via Cypher and needs to exist up front.
