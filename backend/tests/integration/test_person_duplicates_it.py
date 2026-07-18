@@ -40,6 +40,35 @@ def test_duplicate_scan_confidence(it_db):
     it_db.run_command("CREATE (:Person {id:'f1', full_name:'Peter David Jones',    birth_date:'1974-08'})")
     it_db.run_command("CREATE (:Person {id:'f2', full_name:'Mr Peter David Jones', birth_date:'1966-03'})")
 
+    # (G) name variant (Larry/Laurence) + shared company, no shared birth → MEDIUM.
+    # Neither the name-token nor the birth signal links these; only surname+company.
+    it_db.run_command("CREATE (:Person {id:'g1', full_name:'Larry Fink', first_name:'Larry', last_name:'Fink', wikidata_id:'Q9'})")
+    it_db.run_command("CREATE (:Person {id:'g2', full_name:'Laurence Fink', first_name:'Laurence', last_name:'Fink'})")
+    it_db.run_command("CREATE (:Entity {id:'blk', name:'BlackRock', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'g1'}),(e:Entity{id:'blk'}) CREATE (p)-[:HAS_ROLE {role:'Founder'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'g2'}),(e:Entity{id:'blk'}) CREATE (p)-[:OWNS {}]->(e)")
+
+    # (H) same surname + same company but INCOMPATIBLE given names (brothers) → NOT flagged
+    it_db.run_command("CREATE (:Person {id:'h1', full_name:'Elon Musk',   first_name:'Elon',   last_name:'Musk'})")
+    it_db.run_command("CREATE (:Person {id:'h2', full_name:'Kimbal Musk', first_name:'Kimbal', last_name:'Musk'})")
+    it_db.run_command("CREATE (:Entity {id:'tsla', name:'Tesla', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'h1'}),(e:Entity{id:'tsla'}) CREATE (p)-[:HAS_ROLE {role:'CEO'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'h2'}),(e:Entity{id:'tsla'}) CREATE (p)-[:HAS_ROLE {role:'Director'}]->(e)")
+
+    # (I) compatible given names + same surname but NO shared company → NOT flagged
+    it_db.run_command("CREATE (:Person {id:'i1', full_name:'Bob Anderson',    first_name:'Bob',    last_name:'Anderson'})")
+    it_db.run_command("CREATE (:Person {id:'i2', full_name:'Robert Anderson', first_name:'Robert', last_name:'Anderson'})")
+
+    # (J) SEC last-first name matches a Wikidata *alias*, not the full name → linked.
+    # "Gates William H Iii" shares no name-token set with "Bill Gates", but does
+    # with its alias "William H. Gates III"; a shared company makes it HIGH.
+    it_db.run_command("CREATE (:Person {id:'j1', full_name:'Bill Gates', wikidata_id:'Q5', alias:$a})",
+                      {"a": ["William Henry Gates", "William H. Gates III"]})
+    it_db.run_command("CREATE (:Person {id:'j2', full_name:'Gates William H Iii', first_name:'Gates', last_name:'William H Iii'})")
+    it_db.run_command("CREATE (:Entity {id:'msft', name:'Microsoft', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'j1'}),(e:Entity{id:'msft'}) CREATE (p)-[:HAS_ROLE {role:'Founder'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'j2'}),(e:Entity{id:'msft'}) CREATE (p)-[:OWNS {}]->(e)")
+
     # a genuinely unique person must NOT be flagged
     it_db.run_command("CREATE (:Person {id:'z1', full_name:'Unique Personne'})")
 
@@ -54,4 +83,17 @@ def test_duplicate_scan_confidence(it_db):
     assert by_members[frozenset(["e1", "e2"])]["confidence"] == "high"    # same birth date (no place)
     fg = by_members[frozenset(["f1", "f2"])]
     assert fg["confidence"] == "low" and fg["likely_distinct"] is True    # conflicting DOB
+
+    gg = by_members[frozenset(["g1", "g2"])]                              # name variant + company
+    assert gg["confidence"] == "medium"
+    assert "surname" in gg["reason"]
+    assert gg["suggested_keep_id"] == "g1"                                # the Wikidata node
+
+    assert not any({"h1", "h2"} <= set(k) for k in by_members)            # brothers not flagged
+    assert not any({"i1", "i2"} <= set(k) for k in by_members)            # no shared company
+
+    jg = by_members[frozenset(["j1", "j2"])]                              # matched via alias
+    assert jg["confidence"] == "high"                                     # + shared company
+    assert jg["suggested_keep_id"] == "j1"                                # the Wikidata node
+
     assert not any("z1" in k for k in by_members)                         # unique not flagged

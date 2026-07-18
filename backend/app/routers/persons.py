@@ -1,14 +1,35 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest
+from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest, KeepSeparateRequest
 from app.auth.dependencies import require_contributor
 from app.database import db
 from collections import defaultdict
+from datetime import datetime, timezone
+from itertools import combinations
 import re
 import uuid
 
 router = APIRouter(prefix="/persons", tags=["Persons"])
 
 _HONORIFICS = {"mr", "mrs", "ms", "miss", "dr", "sir", "prof", "mx", "madam", "hon", "rev"}
+
+# Common given-name ↔ legal-name pairs, so "Bob Smith" links to "Robert Smith".
+# Deliberately small; the same-initial + fuzzy check below catches spelling
+# variants (Larry/Laurence) that a static map can't enumerate.
+_NICKNAMES = {
+    "bob": "robert", "bobby": "robert", "rob": "robert", "bill": "william",
+    "billy": "william", "will": "william", "dick": "richard", "rick": "richard",
+    "rich": "richard", "jim": "james", "jimmy": "james", "joe": "joseph",
+    "joey": "joseph", "larry": "lawrence", "tom": "thomas", "tommy": "thomas",
+    "tony": "anthony", "mike": "michael", "mickey": "michael", "dave": "david",
+    "steve": "stephen", "chris": "christopher", "ed": "edward", "eddie": "edward",
+    "ted": "theodore", "fred": "frederick", "gene": "eugene", "hank": "henry",
+    "jack": "john", "johnny": "john", "sam": "samuel", "ben": "benjamin",
+    "dan": "daniel", "danny": "daniel", "matt": "matthew", "nick": "nicholas",
+    "greg": "gregory", "jeff": "jeffrey", "ron": "ronald", "don": "donald",
+    "andy": "andrew", "charlie": "charles", "chuck": "charles", "al": "albert",
+    "betty": "elizabeth", "liz": "elizabeth", "beth": "elizabeth", "kate": "katherine",
+    "katie": "katherine", "peggy": "margaret", "meg": "margaret",
+}
 
 
 def _name_key(full_name: str | None) -> tuple:
@@ -21,63 +42,132 @@ def _norm_place(place: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", (place or "").lower())
 
 
+def _first_token(name: str | None) -> str:
+    m = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return m[0] if m else ""
+
+
+def _surname_key(last_name: str | None, full_name: str | None) -> str:
+    """Normalised surname — the parsed last_name if present, else the final
+    (honorific-stripped) token of the full name, in name order (not sorted)."""
+    if last_name and last_name.strip():
+        return _norm_place(last_name)
+    toks = [t for t in re.findall(r"[a-z0-9]+", (full_name or "").lower()) if t not in _HONORIFICS]
+    return toks[-1] if toks else ""
+
+
+def _first_compatible(a: str | None, b: str | None) -> bool:
+    """
+    True if two given names plausibly denote the same person — an exact match, a
+    known nickname/legal-name pair (Bob↔Robert), a prefix (Dave↔David), or a
+    shared two-letter stem (Larry↔Laurence). Intentionally lenient: it only ever
+    fires as a *review* suggestion alongside a shared company and surname.
+    """
+    a, b = _first_token(a), _first_token(b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if _NICKNAMES.get(a, a) == _NICKNAMES.get(b, b):     # Bob ↔ Robert (cross-initial)
+        return True
+    if a.startswith(b) or b.startswith(a):               # Dave ↔ David, Ed ↔ Edward
+        return True
+    if len(a) >= 2 and a[:2] == b[:2]:                   # Larry ↔ Laurence, Steve ↔ Stephen
+        return True
+    return False
+
+
 @router.get("/duplicates")
 def find_duplicate_persons(_: dict = Depends(require_contributor)):
+    """List likely-duplicate person groups for review (does NOT merge)."""
+    groups = scan_duplicate_groups()
+    return {"count": len(groups), "groups": groups}
+
+
+def scan_duplicate_groups() -> list[dict]:
     """
     Suggest likely-duplicate person nodes for review (does NOT merge). Signals:
-      - same name token set (catches SEC "Last First" order + honorific/spelling)
+      - same name token set, across a person's full name AND every Wikidata
+        alias (catches SEC "Last First" order + honorific/spelling, e.g. SEC's
+        "Gates William H Iii" vs the "Bill Gates" node's "William H. Gates III"
+        alias)
       - same birth date + place (links the same person across different name
         spellings, e.g. "Larry Page" / "Lawrence Page")
+      - same surname + a shared company + a compatible given name — catches
+        nickname/legal-name variants a static map can't, e.g. SEC's "Laurence
+        Fink" vs Wikidata's "Larry Fink", both tied to BlackRock
       - sharing a connected company (corroboration for common names)
 
-    Confidence: high = share birth date+place OR a company; medium = distinctive
-    name match (3+ tokens); low = common 2-token name match with no corroboration.
+    Confidence: high = share birth date+place OR a company on a same-name match;
+    medium = distinctive name match (3+ tokens) OR a surname+company name variant;
+    low = common 2-token name match with no corroboration.
     Feed a group's members into POST /persons/merge to resolve it.
     """
     with db.get_session() as session:
         persons = [
             {"id": r.get("id"), "full_name": r.get("full_name"), "wikidata_id": r.get("wikidata_id"),
-             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place")}
+             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
+             "first_name": r.get("first_name"), "last_name": r.get("last_name"),
+             "alias": r.get("alias") or []}
             for r in session.run("""
                 MATCH (p:Person)
                 RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id,
-                       p.birth_date AS birth_date, p.birth_place AS birth_place
+                       p.birth_date AS birth_date, p.birth_place AS birth_place,
+                       p.first_name AS first_name, p.last_name AS last_name,
+                       p.alias AS alias
             """)
         ]
 
         by_name: dict[tuple, list] = defaultdict(list)
         by_birth: dict[tuple, list] = defaultdict(list)
+        by_surname: dict[str, list] = defaultdict(list)
         for p in persons:
-            if (nk := _name_key(p["full_name"])):
+            # Index under the full name AND every alias, so a node whose full
+            # name is one variant links to one recorded only as another person's
+            # alias (SEC "Gates William H Iii" ↔ "Bill Gates" / "William H. Gates III").
+            name_keys = {nk for name in [p["full_name"], *p["alias"]] if (nk := _name_key(name))}
+            for nk in name_keys:
                 by_name[nk].append(p)
             if p["birth_date"] and p["birth_place"]:
                 by_birth[(p["birth_date"], _norm_place(p["birth_place"]))].append(p)
+            if (surname := _surname_key(p["last_name"], p["full_name"])):
+                by_surname[surname].append(p)
 
         groups: list[dict] = []
         seen: set[frozenset] = set()
+        _ent_cache: dict[str, set] = {}
 
         def _entities(pid: str) -> set:
-            rec = session.run(
-                "MATCH (x:Person {id:$id})-[]-(e:Entity) RETURN collect(DISTINCT e.id) AS ids",
-                id=pid).single()
-            return set(rec.get("ids") or [])
+            if pid not in _ent_cache:
+                rec = session.run(
+                    "MATCH (x:Person {id:$id})-[]-(e:Entity) RETURN collect(DISTINCT e.id) AS ids",
+                    id=pid).single()
+                _ent_cache[pid] = set(rec.get("ids") or [])
+            return _ent_cache[pid]
 
-        def _emit(members: list, base_reason: str):
+        def _emit(members: list, base_reason: str, variant: bool = False, match_key: tuple | None = None):
             ids = frozenset(m["id"] for m in members)
             if len(ids) < 2 or ids in seen:
                 return
-            seen.add(ids)
             ent = [_entities(m["id"]) for m in members]
             shared_entity = any(ent[i] & ent[j] for i in range(len(ent)) for j in range(i + 1, len(ent)))
+            # A name-variant guess (different given names) is only worth surfacing
+            # when a shared company corroborates it — otherwise it's just two people
+            # who happen to share a surname.
+            if variant and not shared_entity:
+                return
+            seen.add(ids)
 
             # Birth-date signal (place may be missing — BODS/PSC give date only).
             present_dates = [m["birth_date"] for m in members if m["birth_date"]]
             shared_birth   = len(set(present_dates)) == 1 and len(present_dates) >= 2
             conflict_birth = len(set(present_dates)) >= 2
-            distinctive = len(_name_key(members[0]["full_name"])) >= 3
+            # judge distinctiveness on the token set that actually matched (an alias
+            # like "William H. Gates III" is distinctive even if a full name is not)
+            distinctive = len(match_key if match_key is not None else _name_key(members[0]["full_name"])) >= 3
 
             reasons = [base_reason]
-            if shared_entity:
+            if shared_entity and "company" not in base_reason:
                 reasons.append("share a company")
             if shared_birth and "birth" not in base_reason:
                 reasons.append("same birth date")
@@ -85,7 +175,11 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
             # Conflicting birth dates on a same-name group ⇒ almost certainly two
             # different people — flag as likely-distinct, don't suggest a merge.
             likely_distinct = conflict_birth and not (shared_entity or shared_birth)
-            if shared_entity or shared_birth:
+            if variant:
+                # different given names ⇒ needs review even with the shared company,
+                # unless a matching birth date settles it
+                confidence = "high" if shared_birth else "medium"
+            elif shared_entity or shared_birth:
                 confidence = "high"
             elif likely_distinct:
                 confidence = "low"
@@ -107,12 +201,155 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
 
         for members in by_birth.values():
             _emit(members, "same birth date + place")
-        for members in by_name.values():
-            _emit(members, "same name (order/spelling/title)")
+        for nk, members in by_name.items():
+            _emit(members, "same name/alias (order/spelling/title)", match_key=nk)
+        # Surname + shared company + compatible given name — catches nickname and
+        # legal-name variants (Larry/Laurence Fink) that no name-token or birth
+        # signal links. Only pairs with differing given names reach here; identical
+        # names are already handled by the name-token pass above.
+        for members in by_surname.values():
+            if len(members) < 2:
+                continue
+            for i in range(len(members)):
+                for j in range(i + 1, len(members)):
+                    a, b = members[i], members[j]
+                    if _name_key(a["full_name"]) == _name_key(b["full_name"]):
+                        continue
+                    if _first_compatible(a["first_name"] or a["full_name"],
+                                         b["first_name"] or b["full_name"]):
+                        _emit([a, b], "same surname + shared company (name variant)", variant=True)
 
+        # Drop groups a human has confirmed are different people (NOT_DUPLICATE).
+        dismissed = {
+            frozenset((r.get("a"), r.get("b")))
+            for r in session.run(
+                "MATCH (a:Person)-[:NOT_DUPLICATE]->(b:Person) RETURN a.id AS a, b.id AS b")
+        }
+
+    groups = [g for g in groups if not _all_pairs_dismissed(g["members"], dismissed)]
     rank = {"high": 0, "medium": 1, "low": 2}
     groups.sort(key=lambda g: (rank[g["confidence"]], g["reason"]))
-    return {"count": len(groups), "groups": groups}
+    return groups
+
+
+def _all_pairs_dismissed(members: list, dismissed: set) -> bool:
+    """True if every pair in the group is marked NOT_DUPLICATE (confirmed distinct)."""
+    ids = [m["id"] for m in members]
+    return all(frozenset((a, b)) in dismissed for a, b in combinations(ids, 2))
+
+
+def deduplicate_high_confidence(apply: bool = True) -> dict:
+    """
+    Scan for duplicate persons and auto-merge only HIGH-confidence, non-distinct
+    groups — a matching name/alias token set backed by a shared company or birth
+    date. Medium/low groups (surname/company name variants, conflicting-birth
+    pairs) are returned untouched under `needs_review` for a human to resolve via
+    POST /persons/merge. Pass apply=False for a dry run (report only).
+    """
+    merged: list[dict] = []
+    needs_review: list[dict] = []
+    for g in scan_duplicate_groups():
+        if g["confidence"] != "high" or g.get("likely_distinct"):
+            needs_review.append(g)
+            continue
+        keep = g["suggested_keep_id"]
+        keep_name = next((m["full_name"] for m in g["members"] if m["id"] == keep), keep)
+        done: list[str] = []
+        for m in g["members"]:
+            if m["id"] == keep:
+                continue
+            if apply:
+                try:
+                    merge_person_records(keep, m["id"])
+                except ValueError:
+                    continue  # node vanished (already merged in a prior group)
+            done.append(m["full_name"])
+        if done:
+            merged.append({"keep_id": keep, "keep_name": keep_name, "merged": done})
+    return {
+        "applied": apply,
+        "merged": merged,
+        "merged_count": sum(len(x["merged"]) for x in merged),
+        "needs_review": needs_review,
+        "review_count": len(needs_review),
+    }
+
+
+@router.post("/deduplicate")
+def deduplicate_persons(
+    apply: bool = Query(True, description="Merge high-confidence groups; false = dry-run report only"),
+    _: dict = Depends(require_contributor),
+):
+    """
+    Auto-merge high-confidence duplicate persons and report what was merged plus
+    the medium/low groups left for manual review. Runs after each scrape when
+    SCRAPER_AUTODEDUP_ENABLED is set; also callable directly from the UI.
+    """
+    return deduplicate_high_confidence(apply=apply)
+
+
+@router.post("/keep-separate")
+def keep_separate(data: KeepSeparateRequest, _: dict = Depends(require_contributor)):
+    """
+    Mark a group of persons as confirmed DIFFERENT people (e.g. Keith vs Rupert
+    Murdoch). A NOT_DUPLICATE edge is stored between every pair so the group no
+    longer surfaces in the duplicate scan. Reversible via DELETE /persons/keep-separate.
+    """
+    ids = sorted(set(data.ids))
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="Need at least two distinct ids")
+    at = datetime.now(timezone.utc).isoformat()
+    with db.get_session() as session:
+        for a, b in combinations(ids, 2):
+            session.run(
+                "MATCH (a:Person {id:$a}), (b:Person {id:$b}) "
+                "MERGE (a)-[r:NOT_DUPLICATE]->(b) SET r.at = $at",
+                a=a, b=b, at=at)
+    return {"message": "Marked as separate", "ids": ids}
+
+
+@router.delete("/keep-separate")
+def undo_keep_separate(data: KeepSeparateRequest, _: dict = Depends(require_contributor)):
+    """Undo a keep-separate: the pair(s) can be suggested as duplicates again."""
+    ids = sorted(set(data.ids))
+    with db.get_session() as session:
+        for a, b in combinations(ids, 2):
+            session.run(
+                "MATCH (a:Person {id:$a})-[r:NOT_DUPLICATE]-(b:Person {id:$b}) DELETE r",
+                a=a, b=b)
+    return {"message": "Keep-separate removed", "ids": ids}
+
+
+@router.get("/kept-separate")
+def list_kept_separate(_: dict = Depends(require_contributor)):
+    """The pairs a human has confirmed are different people (the 'not to be merged' list)."""
+    with db.get_session() as session:
+        pairs = [
+            {"a_id": r.get("a_id"), "a_name": r.get("a_name"),
+             "b_id": r.get("b_id"), "b_name": r.get("b_name"), "at": r.get("at")}
+            for r in session.run(
+                "MATCH (a:Person)-[r:NOT_DUPLICATE]->(b:Person) "
+                "RETURN a.id AS a_id, a.full_name AS a_name, "
+                "       b.id AS b_id, b.full_name AS b_name, r.at AS at")
+        ]
+    pairs.sort(key=lambda p: p["at"] or "", reverse=True)
+    return {"count": len(pairs), "pairs": pairs}
+
+
+@router.get("/merge-log")
+def merge_log(limit: int = Query(200, ge=1, le=1000), _: dict = Depends(require_contributor)):
+    """Recent person merges (the 'already merged' list), most recent first."""
+    with db.get_session() as session:
+        entries = [
+            {"id": r.get("id"), "keep_id": r.get("keep_id"), "keep_name": r.get("keep_name"),
+             "dup_name": r.get("dup_name"), "at": r.get("at"), "count": r.get("count")}
+            for r in session.run(
+                "MATCH (ml:MergeLog) "
+                "RETURN ml.id AS id, ml.keep_id AS keep_id, ml.keep_name AS keep_name, "
+                "       ml.dup_name AS dup_name, ml.at AS at, ml.count AS count")
+        ]
+    entries.sort(key=lambda e: e["at"] or "", reverse=True)
+    return {"count": len(entries), "entries": entries[:limit]}
 
 
 @router.post("/merge")
@@ -126,10 +363,23 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
     relationships (OWNS / HAS_ROLE / RELATED_TO, with their properties) onto the
     kept person, backfills any blank bio fields, then DETACH DELETEs the dup.
     """
-    if data.keep_id == data.dup_id:
-        raise HTTPException(status_code=400, detail="keep_id and dup_id must differ")
+    try:
+        merge_person_records(data.keep_id, data.dup_id)
+    except ValueError as exc:
+        # keep==dup is a bad request; a missing node is a 404
+        status = 400 if "differ" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc))
+    return {"message": "Persons merged", "keep_id": data.keep_id, "removed_id": data.dup_id}
 
-    keep, dup = data.keep_id, data.dup_id
+
+def merge_person_records(keep: str, dup: str) -> None:
+    """
+    Fold person `dup` into person `keep` (see merge_persons). Raises ValueError if
+    the ids are equal or either node is missing — callers map that to HTTP status.
+    """
+    if keep == dup:
+        raise ValueError("keep_id and dup_id must differ")
+
     OWNS_PROPS = ["stake_percent", "voting_power_pct", "ownership_type", "since", "until",
                   "value_usd", "source_id", "credibility_score", "source_url", "source_date",
                   "last_scraped_at"]
@@ -140,11 +390,11 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
     with db.get_session() as session:
         keep_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=keep).single()
         if not keep_rec:
-            raise HTTPException(status_code=404, detail="Person to keep not found")
+            raise ValueError("Person to keep not found")
         keep_node = dict(keep_rec["p"])
         dup_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=dup).single()
         if not dup_rec:
-            raise HTTPException(status_code=404, detail="Duplicate person not found")
+            raise ValueError("Duplicate person not found")
         dup_node = dict(dup_rec["p"])
 
         # The duplicate's name is an alias of the kept person (e.g. SEC's
@@ -219,9 +469,17 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
              nationalities=dup_node.get("nationalities") or [],
              **{p: dup_node.get(p) for p in BIO_COALESCE})
 
-        session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
+        # Record the merge (deduped on keep + merged-name; repeated auto-merges of
+        # a re-scraped node bump `count`/`at` instead of piling up rows).
+        dup_full = (dup_node.get("full_name") or "").strip()
+        session.run(
+            "MERGE (ml:MergeLog {keep_id:$keep, dup_name:$dup_name}) "
+            "SET ml.id = COALESCE(ml.id, $id), ml.keep_name = $keep_name, "
+            "    ml.at = $at, ml.count = COALESCE(ml.count, 0) + 1",
+            keep=keep, dup_name=dup_full, keep_name=keep_full,
+            id=str(uuid.uuid4()), at=datetime.now(timezone.utc).isoformat())
 
-    return {"message": "Persons merged", "keep_id": data.keep_id, "removed_id": data.dup_id}
+        session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
 
 
 @router.post("/", response_model=PersonResponse)
