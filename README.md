@@ -99,139 +99,22 @@ backend/
 
 ## Data model
 
-### Nodes
-
-| Label | Key properties |
-|---|---|
-| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding), `country`, `countries`, `founded`, `revenue`, `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `hq_lat`/`hq_lng`/`hq_city`/`hq_country`, `source_id` |
-| `Person` | `id`, `full_name`, `first_name`, `last_name`, `alias[]`, `nationality`, `birth_date`, `birth_place`, `wikidata_id`, `sec_cik`, `wikipedia_url` |
-| `Location` | `id`, `city`, `country`, `latitude`, `longitude` |
-| `Source` | `id`, `name`, `url`, `type`, `credibility_score`; for peers also `verified`, `key_id` |
-| `User` | `id`, `email`, `password_hash`, `role` (admin/contributor/viewer) |
-| `ScraperSource` | `name`, `enabled`, `description` |
-| `MergeLog` | `id`, `keep_id`, `keep_name`, `dup_name`, `at`, `count` — history of person merges (deduped by keep+dup name) |
-| `Peer` | `id`, `name`, `base_url`, `credibility_score`, `auth_token`, `public_key`, `enabled` — a trusted federation peer |
-| `ScrapeRun` | `id`, `source`, `target`, `status` (running/ok/failed), `started_at`, `finished_at`, `total`, `error` — the scrape run log (capped) |
-
-### Relationships
-
-| Pattern | Properties |
-|---|---|
-| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent`, `voting_power_pct`, `ownership_type`, `since`, `until`, `source_id`, `source_url`, `source_date` |
-| `(Person)-[:HAS_ROLE]->(Entity)` | `role`, `since`, `until`, `source_id`, `source_url`, `source_date` |
-| `(Person)-[:RELATED_TO]->(Person)` | `relation`, `source_id` |
-| `(Person)-[:NOT_DUPLICATE]->(Person)` | `at` — marks two people confirmed to be *different* (keep-separate) |
-| `(Entity)-[:DUAL_LISTED_WITH]->(Entity)` | links share classes of a dual-listed company |
-| `(Entity)-[:HEADQUARTERED_IN\|REGISTERED_IN\|OPERATES_IN]->(Location)` | — |
-
-`until = null` means the relationship is currently active.  
-`ownership_type`: `full`, `majority`, `minority`, `controlling`, `passive`, `active`, `partnership`
+Nodes (`Entity`, `Person`, `Location`, `Source`, `MergeLog`, `Peer`, `ScrapeRun`,
+`ScraperSource`, `User`) and their edges (`OWNS`, `HAS_ROLE`, `RELATED_TO`,
+`NOT_DUPLICATE`, `DUAL_LISTED_WITH`, location edges) with all properties:
+**[`docs/data-model.md`](docs/data-model.md)**.
 
 ---
 
-## API reference
+## API
 
-### Auth
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/auth/register` | — | Create account (first → admin, rest → viewer) |
-| POST | `/auth/login` | — | Returns JWT access token |
-| GET | `/auth/me` | bearer | Current user info |
-
-### Entities
-| Method | Path | Description |
-|---|---|---|
-| GET | `/entities/` | List entities |
-| GET | `/entities/by-country` | Entities grouped by ISO country code |
-| GET | `/entities/{id}` | Single entity |
-| POST | `/entities/` | Create entity |
-| PUT | `/entities/{id}` | Update entity |
-| DELETE | `/entities/{id}` | Delete entity |
-
-### Persons
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/persons/{id}` | — | Single person |
-| POST | `/persons/` | contributor | Create person |
-| GET | `/persons/duplicates` | contributor | Suggest likely-duplicate people (see [Duplicate persons](#duplicate-persons)) |
-| POST | `/persons/deduplicate` | contributor | Auto-merge high-confidence duplicates (`apply=false` = dry run) |
-| POST | `/persons/merge` | contributor | Fold a duplicate person into the one to keep |
-| POST | `/persons/keep-separate` | contributor | Mark a group as confirmed-different (stops being suggested) |
-| DELETE | `/persons/keep-separate` | contributor | Undo a keep-separate |
-| GET | `/persons/kept-separate` | contributor | List confirmed-distinct pairs |
-| GET | `/persons/merge-log` | contributor | History of merges (the "already merged" list) |
-
-### Search
-| Method | Path | Description |
-|---|---|---|
-| GET | `/search/?q=` | Full-text search across entities and persons |
-| GET | `/search/entity/{id}/full-profile` | Entity with owners, subsidiaries, executives, HQ |
-| GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
-| GET | `/search/geographic` | Entities grouped by country for map view |
-
-### Sources (provenance)
-| Method | Path | Description |
-|---|---|---|
-| GET | `/sources/entity/{id}` | Sources behind an entity's facts (from its edges + node) |
-| GET | `/sources/person/{id}` | Sources behind a person's roles/ownership |
-
-### Relationships
-| Method | Path | Description |
-|---|---|---|
-| POST | `/relationships/owns` | Create OWNS edge |
-| POST | `/relationships/owns/close` | Set `until` date (end ownership) |
-| POST | `/relationships/roles` | Create HAS_ROLE edge |
-| POST | `/relationships/roles/close` | End a role |
-| POST | `/relationships/related-to` | Create RELATED_TO edge between persons |
-| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (depth param, max 10) |
-| GET | `/relationships/owners/{id}` | Current active owners of an entity |
-| GET | `/relationships/history/{id}` | Full history: ownership in/out + executive roles |
-
-### Scraper
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/scraper/status` | — | Master + per-source flag states (incl. `autodedup_enabled`) |
-| GET | `/scraper/runs` | contributor | Recent scrape run log — status, counts, failures (see [Scrape run log](#scrape-run-log)) |
-| POST | `/scraper/run` | admin | Run a Wikidata scrape by company name |
-| POST | `/scraper/sec-edgar/run` | admin | Run an SEC EDGAR scrape by company name |
-| POST | `/scraper/open-corporates/run` | admin | Run an OpenCorporates scrape by company name |
-| POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company (then auto-dedup) |
-| POST | `/scraper/geocode` | contributor | Backfill HQ coordinates via Nominatim (needs `GEOCODING_ENABLED`) |
-| POST | `/scraper/bods/gleif/run` | contributor | Import GLEIF beneficial-ownership data (BODS) |
-| POST | `/scraper/bods/uk-psc/run` | contributor | Import UK PSC beneficial-ownership data (BODS) |
-| POST | `/scraper/bods/run-all` | contributor | Run both BODS imports |
-| GET | `/scraper/sources` | — | Per-source toggle states |
-| PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
-| DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
-
-### Federation
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/federation/status` | contributor | Whether federation is on, plus this instance's publish counts |
-| GET | `/federation/export` | contributor | This instance's ownership snapshot (signed if a key is set) |
-| GET | `/federation/public-key` | contributor | This instance's signing public key + `key_id` |
-| GET | `/federation/peers` | contributor | List trusted peers (tokens/keys never returned) |
-| POST | `/federation/peers` | admin | Register a trusted peer |
-| DELETE | `/federation/peers/{id}` | admin | Remove a trusted peer |
-| POST | `/federation/peers/{id}/pull` | admin | Pull a peer's snapshot, verify, import, reconcile |
-
-### Maintenance / advanced
-One-off migrations and lower-level tools, mostly for operators. The person-merge
-endpoints under [Persons](#persons) supersede the legacy scraper ones below.
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/scraper/proxy-statement/run` | contributor | Parse a company's latest DEF 14A proxy and return per-person voting power (read-only) |
-| POST | `/scraper/proxy-statement/write` | contributor | Fetch the latest DEF 14A and write `voting_power_pct` onto OWNS edges (`entity_id` overrides name lookup) |
-| POST | `/scraper/deduplicate-edges` | admin | Collapse duplicate active OWNS edges, keeping the most informative |
-| POST | `/scraper/deduplicate-persons` | admin | Legacy: merge reversed-name Person duplicates (use `/persons/deduplicate`) |
-| POST | `/scraper/migrate-ownership-types` | admin | One-time migration deriving canonical `ownership_type` values |
-| POST | `/relationships/dual-listed` | contributor | Link two share classes of a dual-listed company (`DUAL_LISTED_WITH`) |
-| POST | `/locations/{entity_id}/headquartered-in/{location_id}` | contributor | Attach an HQ location |
-| POST | `/locations/{entity_id}/registered-in/{location_id}` | contributor | Attach a registration location |
-| POST | `/locations/{entity_id}/operates-in/{location_id}` | contributor | Attach an operating location |
+The full REST reference — Auth, Entities, Persons (incl. deduplication), Search,
+Sources, Relationships, Scraper, Federation, and maintenance/advanced endpoints —
+lives in **[`docs/api-reference.md`](docs/api-reference.md)**. An interactive
+version is served at `/docs` (Swagger) and `/redoc` on a running instance.
 
 ---
+
 
 ## Authentication
 
@@ -300,34 +183,13 @@ sources still appear in `/scraper/sources` with independent on/off toggles.
 
 ## Duplicate persons
 
-Different sources spell the same person differently — SEC's last-first "Page
-Lawrence" vs Wikidata's "Larry Page", nicknames (Rob/Robert), and legal-name
-aliases — so every scrape can create duplicate `Person` nodes. `GET
-/persons/duplicates` scans for them using three signals:
-
-- **name/alias token set** — order/case/honorific-insensitive, matched across a
-  person's full name *and* every Wikidata alias (so SEC's "Gates William H Iii"
-  links to "Bill Gates" via its "William H. Gates III" alias);
-- **same birth date + place**;
-- **same surname + a shared company + a compatible given name** — catches
-  nickname/legal-name variants, gated by the shared company so relatives (e.g.
-  Elon/Kimbal Musk) aren't flagged.
-
-Groups are ranked `high` / `medium` / `low`; conflicting birth dates flag a group
-as `likely_distinct`.
-
-- **Auto-merge** — `POST /persons/deduplicate` (and, after every `run-all`
-  scrape, gated by `SCRAPER_AUTODEDUP_ENABLED`) merges only high-confidence,
-  non-distinct groups; the rest are left for review.
-- **Merge** — `POST /persons/merge` re-homes a duplicate's edges (with their
-  provenance) onto the kept person, folds its name in as an alias, and records a
-  `MergeLog` entry (`GET /persons/merge-log`).
-- **Keep separate** — `POST /persons/keep-separate` records a `NOT_DUPLICATE`
-  edge so a confirmed-different pair (e.g. Keith vs Rupert Murdoch) stops being
-  suggested; reversible via `DELETE`, listed via `GET /persons/kept-separate`.
-
-Admins can drive all of this from the web app's **Scraper tab → Review duplicate
-persons** panel.
+Different sources spell the same person differently (SEC's "Page Lawrence" vs
+Wikidata's "Larry Page", nicknames, aliases), so scraping creates duplicate
+`Person` nodes. `GET /persons/duplicates` scans for them (name/alias tokens,
+birth date+place, surname+company); high-confidence groups are auto-merged after
+each `run-all` scrape (`SCRAPER_AUTODEDUP_ENABLED`), the rest are resolved from
+the web app's **Scraper tab → Review duplicate persons** panel (merge, keep
+separate, or view the merge log).
 
 📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — the scan signals, confidence model, the ArcadeDB param-mediated merge, keep-separate, and the merge log.
 
@@ -351,60 +213,20 @@ minutes is flagged `stale` (an interrupted run). Surfaced in the web app's
 
 ## Federation
 
-Federation lets independent instances — run by different people, on different
-servers — share ownership data as **trusted peers**. Each instance can *publish*
-its graph and *pull* from peers it trusts. A pull is **one-way and opt-in**:
-nothing is pushed to you and nothing syncs automatically.
+Independent instances, run by different people, share ownership data as
+**trusted peers** — each *publishes* its graph and *pulls* from peers it trusts.
+A pull is **one-way and opt-in**: pulled nodes are reconciled on external ids and
+run through the [duplicate scan](#duplicate-persons), and every imported fact is
+attributed to a `Peer: <name>` Source, so you can trust or drop a peer without
+touching your own data. Exports are **Ed25519-signed**, and a pull verifies the
+peer's signature (a mismatch is refused).
 
-Pulled data is reconciled, not blindly copied. Nodes are matched on their
-external ids (Wikidata QID, SEC CIK, LEI, Companies House) and then run through
-the [duplicate scan](#duplicate-persons), so a peer's "Larry Fink" folds into yours instead
-of duplicating it. Every imported fact is attributed to a `Peer: <name>` Source
-carrying that peer's credibility, so you can always tell what came from where —
-and downgrade or drop a peer without touching your own data.
+Disabled by default. Enable with `FEDERATION_ENABLED=true`, generate a signing
+key via `python manage.py gen-federation-key` (set it as `FEDERATION_SIGNING_KEY`),
+then register peers and pull from the web app's **Scraper tab → Federation**
+panel or the `/federation/*` API.
 
-Disabled by default. Turn it on with `FEDERATION_ENABLED=true`.
-
-📄 **Deep dive:** [`docs/federation.md`](docs/federation.md) — the snapshot format, Ed25519 signing/verification, external-id reconciliation, the trust/threat model, and why it's a native format rather than BODS.
-
-### Signing (verifiable provenance)
-
-So a pulled contribution is provably the peer's — not fabricated by whoever sent
-the bytes — exports are signed with **Ed25519**. Generate a keypair:
-
-```bash
-python3 manage.py gen-federation-key
-```
-
-Set the printed private seed as the `FEDERATION_SIGNING_KEY` env var (keep it
-secret — env only, never commit it) and redeploy. Your instance now signs every
-`/federation/export`, and `/federation/public-key` publishes the matching public
-key and its `key_id` fingerprint for peers to register.
-
-### Adding a trusted peer
-
-Register a peer with its base URL, an optional bearer token for its export
-endpoint, and its public key:
-
-```bash
-curl -X POST "$API/federation/peers" -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Partner Org","base_url":"https://partner.example.com",
-       "auth_token":"<their export token>","public_key":"<their base64 key>",
-       "credibility_score":70}'
-```
-
-Then pull:
-
-```bash
-curl -X POST "$API/federation/peers/{peer_id}/pull" -H "Authorization: Bearer $TOKEN"
-```
-
-The pull fetches the peer's signed snapshot and, if you registered their public
-key, **verifies the signature — a mismatch is refused (422)** and the import and
-its Source are stamped `verified: true`. A peer with no key on file still
-imports, but is marked unverified. Admins can also drive all of this from the
-web app's **Scraper tab → Federation** panel.
+📄 **Deep dive:** [`docs/federation.md`](docs/federation.md) — the snapshot format, Ed25519 signing/verification, external-id reconciliation, the trust/threat model, why it's a native format rather than BODS, and setup commands.
 
 ---
 
