@@ -257,7 +257,7 @@ Wikidata, SEC EDGAR, and OpenCorporates run per-company via `/scraper/run-all`;
 BODS (GLEIF / UK PSC) is a separate bulk dataset import. Each source has an
 independent on/off toggle (`/scraper/sources`).
 
-🧩 **Adding a source:** [`backend/docs/scraper-plugin-guide.md`](backend/docs/scraper-plugin-guide.md) is a step-by-step guide (API module → source toggle → config flags → runner → endpoints → dedup) with a pre-deploy checklist.
+🧩 **Adding a source:** [`docs/scraper-plugin-guide.md`](docs/scraper-plugin-guide.md) is a step-by-step guide (API module → source toggle → config flags → runner → endpoints → dedup) with a pre-deploy checklist.
 
 ### Wikidata
 Imports corporate ownership data via SPARQL. Fetches subsidiaries, parent organisations, and CEOs recursively up to `depth` levels (max 3). Controlled by `SCRAPER_ENABLED`.
