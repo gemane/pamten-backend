@@ -10,6 +10,25 @@ router = APIRouter(prefix="/persons", tags=["Persons"])
 
 _HONORIFICS = {"mr", "mrs", "ms", "miss", "dr", "sir", "prof", "mx", "madam", "hon", "rev"}
 
+# Common given-name ↔ legal-name pairs, so "Bob Smith" links to "Robert Smith".
+# Deliberately small; the same-initial + fuzzy check below catches spelling
+# variants (Larry/Laurence) that a static map can't enumerate.
+_NICKNAMES = {
+    "bob": "robert", "bobby": "robert", "rob": "robert", "bill": "william",
+    "billy": "william", "will": "william", "dick": "richard", "rick": "richard",
+    "rich": "richard", "jim": "james", "jimmy": "james", "joe": "joseph",
+    "joey": "joseph", "larry": "lawrence", "tom": "thomas", "tommy": "thomas",
+    "tony": "anthony", "mike": "michael", "mickey": "michael", "dave": "david",
+    "steve": "stephen", "chris": "christopher", "ed": "edward", "eddie": "edward",
+    "ted": "theodore", "fred": "frederick", "gene": "eugene", "hank": "henry",
+    "jack": "john", "johnny": "john", "sam": "samuel", "ben": "benjamin",
+    "dan": "daniel", "danny": "daniel", "matt": "matthew", "nick": "nicholas",
+    "greg": "gregory", "jeff": "jeffrey", "ron": "ronald", "don": "donald",
+    "andy": "andrew", "charlie": "charles", "chuck": "charles", "al": "albert",
+    "betty": "elizabeth", "liz": "elizabeth", "beth": "elizabeth", "kate": "katherine",
+    "katie": "katherine", "peggy": "margaret", "meg": "margaret",
+}
+
 
 def _name_key(full_name: str | None) -> tuple:
     """Order/case/honorific-insensitive token set — 'Page Lawrence' == 'Lawrence Page'."""
@@ -21,63 +40,126 @@ def _norm_place(place: str | None) -> str:
     return re.sub(r"[^a-z0-9]", "", (place or "").lower())
 
 
+def _first_token(name: str | None) -> str:
+    m = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return m[0] if m else ""
+
+
+def _surname_key(last_name: str | None, full_name: str | None) -> str:
+    """Normalised surname — the parsed last_name if present, else the final
+    (honorific-stripped) token of the full name, in name order (not sorted)."""
+    if last_name and last_name.strip():
+        return _norm_place(last_name)
+    toks = [t for t in re.findall(r"[a-z0-9]+", (full_name or "").lower()) if t not in _HONORIFICS]
+    return toks[-1] if toks else ""
+
+
+def _first_compatible(a: str | None, b: str | None) -> bool:
+    """
+    True if two given names plausibly denote the same person — an exact match, a
+    known nickname/legal-name pair (Bob↔Robert), a prefix (Dave↔David), or a
+    shared two-letter stem (Larry↔Laurence). Intentionally lenient: it only ever
+    fires as a *review* suggestion alongside a shared company and surname.
+    """
+    a, b = _first_token(a), _first_token(b)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if _NICKNAMES.get(a, a) == _NICKNAMES.get(b, b):     # Bob ↔ Robert (cross-initial)
+        return True
+    if a.startswith(b) or b.startswith(a):               # Dave ↔ David, Ed ↔ Edward
+        return True
+    if len(a) >= 2 and a[:2] == b[:2]:                   # Larry ↔ Laurence, Steve ↔ Stephen
+        return True
+    return False
+
+
 @router.get("/duplicates")
 def find_duplicate_persons(_: dict = Depends(require_contributor)):
     """
     Suggest likely-duplicate person nodes for review (does NOT merge). Signals:
-      - same name token set (catches SEC "Last First" order + honorific/spelling)
+      - same name token set, across a person's full name AND every Wikidata
+        alias (catches SEC "Last First" order + honorific/spelling, e.g. SEC's
+        "Gates William H Iii" vs the "Bill Gates" node's "William H. Gates III"
+        alias)
       - same birth date + place (links the same person across different name
         spellings, e.g. "Larry Page" / "Lawrence Page")
+      - same surname + a shared company + a compatible given name — catches
+        nickname/legal-name variants a static map can't, e.g. SEC's "Laurence
+        Fink" vs Wikidata's "Larry Fink", both tied to BlackRock
       - sharing a connected company (corroboration for common names)
 
-    Confidence: high = share birth date+place OR a company; medium = distinctive
-    name match (3+ tokens); low = common 2-token name match with no corroboration.
+    Confidence: high = share birth date+place OR a company on a same-name match;
+    medium = distinctive name match (3+ tokens) OR a surname+company name variant;
+    low = common 2-token name match with no corroboration.
     Feed a group's members into POST /persons/merge to resolve it.
     """
     with db.get_session() as session:
         persons = [
             {"id": r.get("id"), "full_name": r.get("full_name"), "wikidata_id": r.get("wikidata_id"),
-             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place")}
+             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
+             "first_name": r.get("first_name"), "last_name": r.get("last_name"),
+             "alias": r.get("alias") or []}
             for r in session.run("""
                 MATCH (p:Person)
                 RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id,
-                       p.birth_date AS birth_date, p.birth_place AS birth_place
+                       p.birth_date AS birth_date, p.birth_place AS birth_place,
+                       p.first_name AS first_name, p.last_name AS last_name,
+                       p.alias AS alias
             """)
         ]
 
         by_name: dict[tuple, list] = defaultdict(list)
         by_birth: dict[tuple, list] = defaultdict(list)
+        by_surname: dict[str, list] = defaultdict(list)
         for p in persons:
-            if (nk := _name_key(p["full_name"])):
+            # Index under the full name AND every alias, so a node whose full
+            # name is one variant links to one recorded only as another person's
+            # alias (SEC "Gates William H Iii" ↔ "Bill Gates" / "William H. Gates III").
+            name_keys = {nk for name in [p["full_name"], *p["alias"]] if (nk := _name_key(name))}
+            for nk in name_keys:
                 by_name[nk].append(p)
             if p["birth_date"] and p["birth_place"]:
                 by_birth[(p["birth_date"], _norm_place(p["birth_place"]))].append(p)
+            if (surname := _surname_key(p["last_name"], p["full_name"])):
+                by_surname[surname].append(p)
 
         groups: list[dict] = []
         seen: set[frozenset] = set()
+        _ent_cache: dict[str, set] = {}
 
         def _entities(pid: str) -> set:
-            rec = session.run(
-                "MATCH (x:Person {id:$id})-[]-(e:Entity) RETURN collect(DISTINCT e.id) AS ids",
-                id=pid).single()
-            return set(rec.get("ids") or [])
+            if pid not in _ent_cache:
+                rec = session.run(
+                    "MATCH (x:Person {id:$id})-[]-(e:Entity) RETURN collect(DISTINCT e.id) AS ids",
+                    id=pid).single()
+                _ent_cache[pid] = set(rec.get("ids") or [])
+            return _ent_cache[pid]
 
-        def _emit(members: list, base_reason: str):
+        def _emit(members: list, base_reason: str, variant: bool = False, match_key: tuple | None = None):
             ids = frozenset(m["id"] for m in members)
             if len(ids) < 2 or ids in seen:
                 return
-            seen.add(ids)
             ent = [_entities(m["id"]) for m in members]
             shared_entity = any(ent[i] & ent[j] for i in range(len(ent)) for j in range(i + 1, len(ent)))
+            # A name-variant guess (different given names) is only worth surfacing
+            # when a shared company corroborates it — otherwise it's just two people
+            # who happen to share a surname.
+            if variant and not shared_entity:
+                return
+            seen.add(ids)
 
             # Birth-date signal (place may be missing — BODS/PSC give date only).
             present_dates = [m["birth_date"] for m in members if m["birth_date"]]
             shared_birth   = len(set(present_dates)) == 1 and len(present_dates) >= 2
             conflict_birth = len(set(present_dates)) >= 2
-            distinctive = len(_name_key(members[0]["full_name"])) >= 3
+            # judge distinctiveness on the token set that actually matched (an alias
+            # like "William H. Gates III" is distinctive even if a full name is not)
+            distinctive = len(match_key if match_key is not None else _name_key(members[0]["full_name"])) >= 3
 
             reasons = [base_reason]
-            if shared_entity:
+            if shared_entity and "company" not in base_reason:
                 reasons.append("share a company")
             if shared_birth and "birth" not in base_reason:
                 reasons.append("same birth date")
@@ -85,7 +167,11 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
             # Conflicting birth dates on a same-name group ⇒ almost certainly two
             # different people — flag as likely-distinct, don't suggest a merge.
             likely_distinct = conflict_birth and not (shared_entity or shared_birth)
-            if shared_entity or shared_birth:
+            if variant:
+                # different given names ⇒ needs review even with the shared company,
+                # unless a matching birth date settles it
+                confidence = "high" if shared_birth else "medium"
+            elif shared_entity or shared_birth:
                 confidence = "high"
             elif likely_distinct:
                 confidence = "low"
@@ -107,8 +193,23 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
 
         for members in by_birth.values():
             _emit(members, "same birth date + place")
-        for members in by_name.values():
-            _emit(members, "same name (order/spelling/title)")
+        for nk, members in by_name.items():
+            _emit(members, "same name/alias (order/spelling/title)", match_key=nk)
+        # Surname + shared company + compatible given name — catches nickname and
+        # legal-name variants (Larry/Laurence Fink) that no name-token or birth
+        # signal links. Only pairs with differing given names reach here; identical
+        # names are already handled by the name-token pass above.
+        for members in by_surname.values():
+            if len(members) < 2:
+                continue
+            for i in range(len(members)):
+                for j in range(i + 1, len(members)):
+                    a, b = members[i], members[j]
+                    if _name_key(a["full_name"]) == _name_key(b["full_name"]):
+                        continue
+                    if _first_compatible(a["first_name"] or a["full_name"],
+                                         b["first_name"] or b["full_name"]):
+                        _emit([a, b], "same surname + shared company (name variant)", variant=True)
 
     rank = {"high": 0, "medium": 1, "low": 2}
     groups.sort(key=lambda g: (rank[g["confidence"]], g["reason"]))
