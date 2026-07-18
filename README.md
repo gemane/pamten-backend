@@ -329,6 +329,8 @@ as `likely_distinct`.
 Admins can drive all of this from the web app's **Scraper tab → Review duplicate
 persons** panel.
 
+📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — the scan signals, confidence model, the ArcadeDB param-mediated merge, keep-separate, and the merge log.
+
 ---
 
 ## Scrape run log
@@ -362,6 +364,8 @@ carrying that peer's credibility, so you can always tell what came from where �
 and downgrade or drop a peer without touching your own data.
 
 Disabled by default. Turn it on with `FEDERATION_ENABLED=true`.
+
+📄 **Deep dive:** [`docs/federation.md`](docs/federation.md) — the snapshot format, Ed25519 signing/verification, external-id reconciliation, the trust/threat model, and why it's a native format rather than BODS.
 
 ### Signing (verifiable provenance)
 
