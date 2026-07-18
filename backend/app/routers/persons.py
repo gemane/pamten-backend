@@ -77,6 +77,12 @@ def _first_compatible(a: str | None, b: str | None) -> bool:
 
 @router.get("/duplicates")
 def find_duplicate_persons(_: dict = Depends(require_contributor)):
+    """List likely-duplicate person groups for review (does NOT merge)."""
+    groups = scan_duplicate_groups()
+    return {"count": len(groups), "groups": groups}
+
+
+def scan_duplicate_groups() -> list[dict]:
     """
     Suggest likely-duplicate person nodes for review (does NOT merge). Signals:
       - same name token set, across a person's full name AND every Wikidata
@@ -213,7 +219,57 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
 
     rank = {"high": 0, "medium": 1, "low": 2}
     groups.sort(key=lambda g: (rank[g["confidence"]], g["reason"]))
-    return {"count": len(groups), "groups": groups}
+    return groups
+
+
+def deduplicate_high_confidence(apply: bool = True) -> dict:
+    """
+    Scan for duplicate persons and auto-merge only HIGH-confidence, non-distinct
+    groups — a matching name/alias token set backed by a shared company or birth
+    date. Medium/low groups (surname/company name variants, conflicting-birth
+    pairs) are returned untouched under `needs_review` for a human to resolve via
+    POST /persons/merge. Pass apply=False for a dry run (report only).
+    """
+    merged: list[dict] = []
+    needs_review: list[dict] = []
+    for g in scan_duplicate_groups():
+        if g["confidence"] != "high" or g.get("likely_distinct"):
+            needs_review.append(g)
+            continue
+        keep = g["suggested_keep_id"]
+        keep_name = next((m["full_name"] for m in g["members"] if m["id"] == keep), keep)
+        done: list[str] = []
+        for m in g["members"]:
+            if m["id"] == keep:
+                continue
+            if apply:
+                try:
+                    merge_person_records(keep, m["id"])
+                except ValueError:
+                    continue  # node vanished (already merged in a prior group)
+            done.append(m["full_name"])
+        if done:
+            merged.append({"keep_id": keep, "keep_name": keep_name, "merged": done})
+    return {
+        "applied": apply,
+        "merged": merged,
+        "merged_count": sum(len(x["merged"]) for x in merged),
+        "needs_review": needs_review,
+        "review_count": len(needs_review),
+    }
+
+
+@router.post("/deduplicate")
+def deduplicate_persons(
+    apply: bool = Query(True, description="Merge high-confidence groups; false = dry-run report only"),
+    _: dict = Depends(require_contributor),
+):
+    """
+    Auto-merge high-confidence duplicate persons and report what was merged plus
+    the medium/low groups left for manual review. Runs after each scrape when
+    SCRAPER_AUTODEDUP_ENABLED is set; also callable directly from the UI.
+    """
+    return deduplicate_high_confidence(apply=apply)
 
 
 @router.post("/merge")
@@ -227,10 +283,23 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
     relationships (OWNS / HAS_ROLE / RELATED_TO, with their properties) onto the
     kept person, backfills any blank bio fields, then DETACH DELETEs the dup.
     """
-    if data.keep_id == data.dup_id:
-        raise HTTPException(status_code=400, detail="keep_id and dup_id must differ")
+    try:
+        merge_person_records(data.keep_id, data.dup_id)
+    except ValueError as exc:
+        # keep==dup is a bad request; a missing node is a 404
+        status = 400 if "differ" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc))
+    return {"message": "Persons merged", "keep_id": data.keep_id, "removed_id": data.dup_id}
 
-    keep, dup = data.keep_id, data.dup_id
+
+def merge_person_records(keep: str, dup: str) -> None:
+    """
+    Fold person `dup` into person `keep` (see merge_persons). Raises ValueError if
+    the ids are equal or either node is missing — callers map that to HTTP status.
+    """
+    if keep == dup:
+        raise ValueError("keep_id and dup_id must differ")
+
     OWNS_PROPS = ["stake_percent", "voting_power_pct", "ownership_type", "since", "until",
                   "value_usd", "source_id", "credibility_score", "source_url", "source_date",
                   "last_scraped_at"]
@@ -241,11 +310,11 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
     with db.get_session() as session:
         keep_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=keep).single()
         if not keep_rec:
-            raise HTTPException(status_code=404, detail="Person to keep not found")
+            raise ValueError("Person to keep not found")
         keep_node = dict(keep_rec["p"])
         dup_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=dup).single()
         if not dup_rec:
-            raise HTTPException(status_code=404, detail="Duplicate person not found")
+            raise ValueError("Duplicate person not found")
         dup_node = dict(dup_rec["p"])
 
         # The duplicate's name is an alias of the kept person (e.g. SEC's
@@ -321,8 +390,6 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
              **{p: dup_node.get(p) for p in BIO_COALESCE})
 
         session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
-
-    return {"message": "Persons merged", "keep_id": data.keep_id, "removed_id": data.dup_id}
 
 
 @router.post("/", response_model=PersonResponse)
