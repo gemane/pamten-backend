@@ -30,6 +30,7 @@ Processing strategy:
 import json
 import logging
 import os
+import sqlite3
 import sys
 import tempfile
 import time
@@ -47,6 +48,71 @@ from app.database import db
 from app.scraper.mapper import derive_ownership_type, normalize_entity_name, parse_full_name
 
 log = logging.getLogger(__name__)
+
+# Fast JSON parse for the (huge) NDJSON BODS files; fall back to stdlib if orjson
+# isn't installed. orjson is ~2–3× faster and accepts bytes directly.
+try:
+    import orjson
+
+    def _loads(data):
+        return orjson.loads(data)
+except ImportError:  # pragma: no cover - orjson is a declared dependency
+    def _loads(data):
+        return json.loads(data)
+
+
+class _DiskMap:
+    """
+    A dict-like ``str -> str`` mapping backed by a throwaway SQLite file, so the
+    BODS-id → node-id (and id → name) maps for a multi-GB import don't have to fit
+    in RAM — full UK PSC has tens of millions of entries. Supports the operations
+    the import uses: ``m[k] = v``, ``m[k]``, ``m.get(k)``, ``k in m``. Not
+    thread-safe; call ``close()`` when done to delete the temp file.
+    """
+
+    def __init__(self):
+        fd, self._path = tempfile.mkstemp(suffix=".bods-idmap.sqlite")
+        os.close(fd)
+        self._con = sqlite3.connect(self._path)
+        self._con.executescript(
+            "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA cache_size=-131072;"
+            "CREATE TABLE m (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;")
+        self._pending = 0
+
+    def __setitem__(self, k: str, v: str) -> None:
+        self._con.execute("INSERT OR REPLACE INTO m VALUES (?, ?)", (k, v))
+        self._pending += 1
+        if self._pending >= 20000:
+            self._con.commit()
+            self._pending = 0
+
+    def get(self, k: str, default=None):
+        row = self._con.execute("SELECT v FROM m WHERE k = ?", (k,)).fetchone()
+        return row[0] if row else default
+
+    def __getitem__(self, k: str) -> str:
+        row = self._con.execute("SELECT v FROM m WHERE k = ?", (k,)).fetchone()
+        if row is None:
+            raise KeyError(k)
+        return row[0]
+
+    def __contains__(self, k: str) -> bool:
+        return self._con.execute("SELECT 1 FROM m WHERE k = ? LIMIT 1", (k,)).fetchone() is not None
+
+    def __len__(self) -> int:
+        return self._con.execute("SELECT count(*) FROM m").fetchone()[0]
+
+    def close(self) -> None:
+        try:
+            self._con.close()
+        finally:
+            try:
+                os.unlink(self._path)
+            except OSError:
+                pass
+
+    def __del__(self):  # backstop: drop the temp file even if close() isn't called
+        self.close()
 
 
 def _now_iso() -> str:
@@ -825,18 +891,18 @@ def _iter_ndjson(stream: IO[bytes]) -> Iterator[dict]:
     """Parse a NDJSON (one JSON object per line) binary stream."""
     buf = b""
     while True:
-        chunk = stream.read(65536)
+        chunk = stream.read(1 << 20)
         if not chunk:
             line = buf.strip()
             if line:
-                yield json.loads(line)
+                yield _loads(line)
             return
         buf += chunk
         while b"\n" in buf:
             line, buf = buf.split(b"\n", 1)
             line = line.strip()
             if line:
-                yield json.loads(line)
+                yield _loads(line)
 
 
 def _iter_statements(stream: IO[bytes]) -> Iterator[dict]:
@@ -923,18 +989,30 @@ def _run_import(
     imported, so foreign-to-foreign ownership isn't materialised as placeholders
     when running under a jurisdiction filter.
     """
-    bods_to_pamten_id: dict[str, str] = {}
-    bods_id_to_name:   dict[str, str] = {}   # entity names, for placeholder labelling
+    # SQLite-backed so the id/name maps don't have to fit in RAM — full UK PSC
+    # has tens of millions of entries and would otherwise OOM a small box.
+    bods_to_pamten_id = _DiskMap()
+    bods_id_to_name   = _DiskMap()   # entity names, for placeholder labelling
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
 
     counts = dict(entities=0, persons=0, relationships=0, skipped=0, errors=0)
     processed = 0
+    streamed = 0
+    t0 = time.time()
 
     log.info("BODS: streaming import%s", f" (limit={limit})" if limit else "")
 
     for stmt in statements:
         if limit and processed >= limit:
             break
+
+        streamed += 1
+        if streamed % 250000 == 0:
+            elapsed = time.time() - t0
+            log.info(
+                "BODS: %s statements in %.0fs (%.0f/s) — entities=%s persons=%s edges=%s",
+                f"{streamed:,}", elapsed, streamed / max(elapsed, 1e-9),
+                f"{counts['entities']:,}", f"{counts['persons']:,}", f"{counts['relationships']:,}")
 
         record_type = stmt.get("recordType")
 
@@ -990,9 +1068,13 @@ def _run_import(
                     log.warning("BODS relationship error: %s", exc)
                     counts["errors"] += 1
 
+    bods_to_pamten_id.close()
+    bods_id_to_name.close()
+
+    elapsed = time.time() - t0
     log.info(
-        "BODS: import complete — %d entities, %d persons, %d ownership edges",
-        counts["entities"], counts["persons"], counts["relationships"],
+        "BODS: import complete in %.0fs — %d entities, %d persons, %d ownership edges (%s statements)",
+        elapsed, counts["entities"], counts["persons"], counts["relationships"], f"{streamed:,}",
     )
     if pass1_bar:
         pass1_bar.finish(

@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,10 @@ from app.routers import entities, persons, locations, relationships, search, sou
 from app.scraper import router as scraper_router
 from app.scraper import sources as scraper_sources
 from app.auth import router as auth_router
+
+# Emit app INFO logs (scrape/import progress) — without this the root logger
+# stays at WARNING and those lines are lost. No-op if handlers already exist.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 @asynccontextmanager
