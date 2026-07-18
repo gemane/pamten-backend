@@ -68,6 +68,30 @@ def test_status_counts(it_db, monkeypatch):
     assert st == {"enabled": True, "entities": 2, "persons": 1, "ownerships": 1}
 
 
+def test_signed_export_verifies_and_attributes(it_db, monkeypatch):
+    from app.config import settings
+    from app import federation_keys
+    from app.routers.federation import export_snapshot, import_snapshot
+
+    priv, pub = federation_keys.generate_keypair()
+    monkeypatch.setattr(settings, "FEDERATION_ENABLED", True)
+    monkeypatch.setattr(settings, "FEDERATION_SIGNING_KEY", priv)
+
+    it_db.run_command("CREATE (:Entity {id:'e1', name:'Signed Co', name_normalized:'signed co', type:'company', wikidata_id:'Q77'})")
+
+    snap = export_snapshot(_={"role": "contributor"})
+    assert snap["algorithm"] == "ed25519"
+    assert snap["key_id"] == federation_keys.fingerprint(pub)
+    assert federation_keys.verify(snap, pub) is True             # signature is valid
+
+    import_snapshot(snap, source_name="Peer: Signed", credibility=80,
+                    verified=True, key_id=snap["key_id"])
+    src = it_db.run_command(
+        "MATCH (s:Source {name:'Peer: Signed'}) RETURN s.verified AS v, s.key_id AS k")[0]
+    assert src["v"] is True
+    assert src["k"] == snap["key_id"]
+
+
 def test_peer_registry(it_db, monkeypatch):
     from app.config import settings
     from app.routers.federation import add_peer, list_peers, remove_peer

@@ -112,9 +112,23 @@ def cmd_normalize_countries(args):
     print(f"Converted {len(result['converted'])} country values "
           f"({result['skipped']} already canonical or unrecognized)")
 
+def cmd_gen_federation_key(args):
+    from app.federation_keys import generate_keypair, fingerprint
+    priv, pub = generate_keypair()
+    print("Ed25519 federation signing keypair generated.\n")
+    print("Set this SECRET on your instance (env var, never commit):")
+    print(f"  FEDERATION_SIGNING_KEY={priv}\n")
+    print("Share this PUBLIC key with peers so they can verify your exports:")
+    print(f"  public_key={pub}")
+    print(f"  key_id={fingerprint(pub)}")
+
 def _build_parser():
     parser = argparse.ArgumentParser(description='Owlgraph management')
     subparsers = parser.add_subparsers()
+
+    p_fedkey = subparsers.add_parser('gen-federation-key',
+        help='Generate an Ed25519 signing keypair for federation')
+    p_fedkey.set_defaults(func=cmd_gen_federation_key)
 
     # bods-gleif command
     p_gleif = subparsers.add_parser('bods-gleif')

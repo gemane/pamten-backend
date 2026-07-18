@@ -13,3 +13,4 @@ beautifulsoup4==4.12.3    # MIT
 lxml==5.2.2               # BSD-3-Clause
 ruff==0.4.4               # MIT
 ijson==3.3.0              # BSD-3-Clause
+cryptography==43.0.3      # Apache-2.0 OR BSD-3-Clause (Ed25519 federation signing)

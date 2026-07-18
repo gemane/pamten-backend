@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # Trusted-peer federation (step 1: one-way pull of a peer's published export,
     # reconciled through the duplicate scan). Off by default; opt in per instance.
     FEDERATION_ENABLED:               bool = False
+    # Ed25519 private signing key (base64 32-byte seed) for signing exports so
+    # peers can verify a pull is genuinely ours. Generate with
+    # `python manage.py gen-federation-key`; keep it secret (env only).
+    FEDERATION_SIGNING_KEY:           str  = ""
     OPENCORPORATES_API_KEY:           str  = ""
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
     ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 12  # 12 hours
