@@ -40,6 +40,19 @@ def _require_enabled():
             detail="Federation is disabled. Set FEDERATION_ENABLED=true to enable.")
 
 
+@router.get("/status")
+def federation_status(_: dict = Depends(require_contributor)):
+    """Whether federation is on, plus what this instance would publish. Not gated
+    by the flag (returns enabled:false) so the UI can decide what to show."""
+    if not settings.FEDERATION_ENABLED:
+        return {"enabled": False, "entities": 0, "persons": 0, "ownerships": 0}
+    with db.get_session() as session:
+        entities   = session.run("MATCH (e:Entity) RETURN count(e) AS c").single().get("c") or 0
+        persons    = session.run("MATCH (p:Person) RETURN count(p) AS c").single().get("c") or 0
+        ownerships = session.run("MATCH (a)-[r:OWNS]->(b) RETURN count(r) AS c").single().get("c") or 0
+    return {"enabled": True, "entities": entities, "persons": persons, "ownerships": ownerships}
+
+
 # ── Peer registry ─────────────────────────────────────────────────────────────
 
 @router.post("/peers")

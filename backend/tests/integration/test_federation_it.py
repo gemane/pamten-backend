@@ -55,6 +55,19 @@ def test_import_reconciles_on_external_id_no_duplicate(it_db):
     assert n == 1   # matched on QID, not duplicated by the different name spelling
 
 
+def test_status_counts(it_db, monkeypatch):
+    from app.config import settings
+    from app.routers.federation import federation_status
+    monkeypatch.setattr(settings, "FEDERATION_ENABLED", True)
+    it_db.run_command("CREATE (:Entity {id:'e1', name:'A', name_normalized:'a', type:'company'})")
+    it_db.run_command("CREATE (:Entity {id:'e2', name:'B', name_normalized:'b', type:'company'})")
+    it_db.run_command("CREATE (:Person {id:'p1', full_name:'P'})")
+    it_db.run_command("MATCH (a:Person{id:'p1'}),(b:Entity{id:'e1'}) CREATE (a)-[:OWNS {}]->(b)")
+
+    st = federation_status(_={"role": "contributor"})
+    assert st == {"enabled": True, "entities": 2, "persons": 1, "ownerships": 1}
+
+
 def test_peer_registry(it_db, monkeypatch):
     from app.config import settings
     from app.routers.federation import add_peer, list_peers, remove_peer
