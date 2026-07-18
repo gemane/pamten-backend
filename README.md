@@ -184,6 +184,17 @@ backend/
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
 | DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
 
+### Federation
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/federation/status` | contributor | Whether federation is on, plus this instance's publish counts |
+| GET | `/federation/export` | contributor | This instance's ownership snapshot (signed if a key is set) |
+| GET | `/federation/public-key` | contributor | This instance's signing public key + `key_id` |
+| GET | `/federation/peers` | contributor | List trusted peers (tokens/keys never returned) |
+| POST | `/federation/peers` | admin | Register a trusted peer |
+| DELETE | `/federation/peers/{id}` | admin | Remove a trusted peer |
+| POST | `/federation/peers/{id}/pull` | admin | Pull a peer's snapshot, verify, import, reconcile |
+
 ---
 
 ## Authentication
@@ -232,6 +243,63 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 
 ---
 
+## Federation
+
+Federation lets independent instances — run by different people, on different
+servers — share ownership data as **trusted peers**. Each instance can *publish*
+its graph and *pull* from peers it trusts. A pull is **one-way and opt-in**:
+nothing is pushed to you and nothing syncs automatically.
+
+Pulled data is reconciled, not blindly copied. Nodes are matched on their
+external ids (Wikidata QID, SEC CIK, LEI, Companies House) and then run through
+the [duplicate scan](#persons), so a peer's "Larry Fink" folds into yours instead
+of duplicating it. Every imported fact is attributed to a `Peer: <name>` Source
+carrying that peer's credibility, so you can always tell what came from where —
+and downgrade or drop a peer without touching your own data.
+
+Disabled by default. Turn it on with `FEDERATION_ENABLED=true`.
+
+### Signing (verifiable provenance)
+
+So a pulled contribution is provably the peer's — not fabricated by whoever sent
+the bytes — exports are signed with **Ed25519**. Generate a keypair:
+
+```bash
+python3 manage.py gen-federation-key
+```
+
+Set the printed private seed as the `FEDERATION_SIGNING_KEY` env var (keep it
+secret — env only, never commit it) and redeploy. Your instance now signs every
+`/federation/export`, and `/federation/public-key` publishes the matching public
+key and its `key_id` fingerprint for peers to register.
+
+### Adding a trusted peer
+
+Register a peer with its base URL, an optional bearer token for its export
+endpoint, and its public key:
+
+```bash
+curl -X POST "$API/federation/peers" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Partner Org","base_url":"https://partner.example.com",
+       "auth_token":"<their export token>","public_key":"<their base64 key>",
+       "credibility_score":70}'
+```
+
+Then pull:
+
+```bash
+curl -X POST "$API/federation/peers/{peer_id}/pull" -H "Authorization: Bearer $TOKEN"
+```
+
+The pull fetches the peer's signed snapshot and, if you registered their public
+key, **verifies the signature — a mismatch is refused (422)** and the import and
+its Source are stamped `verified: true`. A peer with no key on file still
+imports, but is marked unverified. Admins can also drive all of this from the
+web app's **Scraper tab → Federation** panel.
+
+---
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -245,6 +313,9 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
 | `SCRAPER_ENABLED` | `false` | Master Wikidata scraper switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR scraper switch |
+| `SCRAPER_AUTODEDUP_ENABLED` | `true` | Auto-merge high-confidence duplicate persons after each `run-all` scrape |
+| `FEDERATION_ENABLED` | `false` | Enable trusted-peer federation (publish/pull) |
+| `FEDERATION_SIGNING_KEY` | — | Ed25519 private seed (base64) for signing exports; generate with `manage.py gen-federation-key`. Secret — env only |
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
 | `BODS_DATA_DIR` | `/data` | Only .zip/.json files inside this directory may be passed as `local_file` to BODS imports |
 | `GEOCODING_ENABLED` | `false` | Geocode addresses to coordinates via Nominatim |
