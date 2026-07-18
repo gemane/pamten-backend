@@ -183,34 +183,13 @@ sources still appear in `/scraper/sources` with independent on/off toggles.
 
 ## Duplicate persons
 
-Different sources spell the same person differently — SEC's last-first "Page
-Lawrence" vs Wikidata's "Larry Page", nicknames (Rob/Robert), and legal-name
-aliases — so every scrape can create duplicate `Person` nodes. `GET
-/persons/duplicates` scans for them using three signals:
-
-- **name/alias token set** — order/case/honorific-insensitive, matched across a
-  person's full name *and* every Wikidata alias (so SEC's "Gates William H Iii"
-  links to "Bill Gates" via its "William H. Gates III" alias);
-- **same birth date + place**;
-- **same surname + a shared company + a compatible given name** — catches
-  nickname/legal-name variants, gated by the shared company so relatives (e.g.
-  Elon/Kimbal Musk) aren't flagged.
-
-Groups are ranked `high` / `medium` / `low`; conflicting birth dates flag a group
-as `likely_distinct`.
-
-- **Auto-merge** — `POST /persons/deduplicate` (and, after every `run-all`
-  scrape, gated by `SCRAPER_AUTODEDUP_ENABLED`) merges only high-confidence,
-  non-distinct groups; the rest are left for review.
-- **Merge** — `POST /persons/merge` re-homes a duplicate's edges (with their
-  provenance) onto the kept person, folds its name in as an alias, and records a
-  `MergeLog` entry (`GET /persons/merge-log`).
-- **Keep separate** — `POST /persons/keep-separate` records a `NOT_DUPLICATE`
-  edge so a confirmed-different pair (e.g. Keith vs Rupert Murdoch) stops being
-  suggested; reversible via `DELETE`, listed via `GET /persons/kept-separate`.
-
-Admins can drive all of this from the web app's **Scraper tab → Review duplicate
-persons** panel.
+Different sources spell the same person differently (SEC's "Page Lawrence" vs
+Wikidata's "Larry Page", nicknames, aliases), so scraping creates duplicate
+`Person` nodes. `GET /persons/duplicates` scans for them (name/alias tokens,
+birth date+place, surname+company); high-confidence groups are auto-merged after
+each `run-all` scrape (`SCRAPER_AUTODEDUP_ENABLED`), the rest are resolved from
+the web app's **Scraper tab → Review duplicate persons** panel (merge, keep
+separate, or view the merge log).
 
 📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — the scan signals, confidence model, the ArcadeDB param-mediated merge, keep-separate, and the merge log.
 
@@ -234,60 +213,20 @@ minutes is flagged `stale` (an interrupted run). Surfaced in the web app's
 
 ## Federation
 
-Federation lets independent instances — run by different people, on different
-servers — share ownership data as **trusted peers**. Each instance can *publish*
-its graph and *pull* from peers it trusts. A pull is **one-way and opt-in**:
-nothing is pushed to you and nothing syncs automatically.
+Independent instances, run by different people, share ownership data as
+**trusted peers** — each *publishes* its graph and *pulls* from peers it trusts.
+A pull is **one-way and opt-in**: pulled nodes are reconciled on external ids and
+run through the [duplicate scan](#duplicate-persons), and every imported fact is
+attributed to a `Peer: <name>` Source, so you can trust or drop a peer without
+touching your own data. Exports are **Ed25519-signed**, and a pull verifies the
+peer's signature (a mismatch is refused).
 
-Pulled data is reconciled, not blindly copied. Nodes are matched on their
-external ids (Wikidata QID, SEC CIK, LEI, Companies House) and then run through
-the [duplicate scan](#duplicate-persons), so a peer's "Larry Fink" folds into yours instead
-of duplicating it. Every imported fact is attributed to a `Peer: <name>` Source
-carrying that peer's credibility, so you can always tell what came from where —
-and downgrade or drop a peer without touching your own data.
+Disabled by default. Enable with `FEDERATION_ENABLED=true`, generate a signing
+key via `python manage.py gen-federation-key` (set it as `FEDERATION_SIGNING_KEY`),
+then register peers and pull from the web app's **Scraper tab → Federation**
+panel or the `/federation/*` API.
 
-Disabled by default. Turn it on with `FEDERATION_ENABLED=true`.
-
-📄 **Deep dive:** [`docs/federation.md`](docs/federation.md) — the snapshot format, Ed25519 signing/verification, external-id reconciliation, the trust/threat model, and why it's a native format rather than BODS.
-
-### Signing (verifiable provenance)
-
-So a pulled contribution is provably the peer's — not fabricated by whoever sent
-the bytes — exports are signed with **Ed25519**. Generate a keypair:
-
-```bash
-python3 manage.py gen-federation-key
-```
-
-Set the printed private seed as the `FEDERATION_SIGNING_KEY` env var (keep it
-secret — env only, never commit it) and redeploy. Your instance now signs every
-`/federation/export`, and `/federation/public-key` publishes the matching public
-key and its `key_id` fingerprint for peers to register.
-
-### Adding a trusted peer
-
-Register a peer with its base URL, an optional bearer token for its export
-endpoint, and its public key:
-
-```bash
-curl -X POST "$API/federation/peers" -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Partner Org","base_url":"https://partner.example.com",
-       "auth_token":"<their export token>","public_key":"<their base64 key>",
-       "credibility_score":70}'
-```
-
-Then pull:
-
-```bash
-curl -X POST "$API/federation/peers/{peer_id}/pull" -H "Authorization: Bearer $TOKEN"
-```
-
-The pull fetches the peer's signed snapshot and, if you registered their public
-key, **verifies the signature — a mismatch is refused (422)** and the import and
-its Source are stamped `verified: true`. A peer with no key on file still
-imports, but is marked unverified. Admins can also drive all of this from the
-web app's **Scraper tab → Federation** panel.
+📄 **Deep dive:** [`docs/federation.md`](docs/federation.md) — the snapshot format, Ed25519 signing/verification, external-id reconciliation, the trust/threat model, why it's a native format rather than BODS, and setup commands.
 
 ---
 
