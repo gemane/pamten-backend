@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # different sources spelled differently. Only high-confidence, non-distinct
     # groups are merged; medium/low go to the review panel. Set false to disable.
     SCRAPER_AUTODEDUP_ENABLED:        bool = True
+    # Trusted-peer federation (step 1: one-way pull of a peer's published export,
+    # reconciled through the duplicate scan). Off by default; opt in per instance.
+    FEDERATION_ENABLED:               bool = False
     OPENCORPORATES_API_KEY:           str  = ""
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
     ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 12  # 12 hours
