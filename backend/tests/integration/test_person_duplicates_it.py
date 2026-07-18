@@ -59,6 +59,16 @@ def test_duplicate_scan_confidence(it_db):
     it_db.run_command("CREATE (:Person {id:'i1', full_name:'Bob Anderson',    first_name:'Bob',    last_name:'Anderson'})")
     it_db.run_command("CREATE (:Person {id:'i2', full_name:'Robert Anderson', first_name:'Robert', last_name:'Anderson'})")
 
+    # (J) SEC last-first name matches a Wikidata *alias*, not the full name → linked.
+    # "Gates William H Iii" shares no name-token set with "Bill Gates", but does
+    # with its alias "William H. Gates III"; a shared company makes it HIGH.
+    it_db.run_command("CREATE (:Person {id:'j1', full_name:'Bill Gates', wikidata_id:'Q5', alias:$a})",
+                      {"a": ["William Henry Gates", "William H. Gates III"]})
+    it_db.run_command("CREATE (:Person {id:'j2', full_name:'Gates William H Iii', first_name:'Gates', last_name:'William H Iii'})")
+    it_db.run_command("CREATE (:Entity {id:'msft', name:'Microsoft', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'j1'}),(e:Entity{id:'msft'}) CREATE (p)-[:HAS_ROLE {role:'Founder'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'j2'}),(e:Entity{id:'msft'}) CREATE (p)-[:OWNS {}]->(e)")
+
     # a genuinely unique person must NOT be flagged
     it_db.run_command("CREATE (:Person {id:'z1', full_name:'Unique Personne'})")
 
@@ -81,4 +91,9 @@ def test_duplicate_scan_confidence(it_db):
 
     assert not any({"h1", "h2"} <= set(k) for k in by_members)            # brothers not flagged
     assert not any({"i1", "i2"} <= set(k) for k in by_members)            # no shared company
+
+    jg = by_members[frozenset(["j1", "j2"])]                              # matched via alias
+    assert jg["confidence"] == "high"                                     # + shared company
+    assert jg["suggested_keep_id"] == "j1"                                # the Wikidata node
+
     assert not any("z1" in k for k in by_members)                         # unique not flagged
