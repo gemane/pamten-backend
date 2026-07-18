@@ -48,7 +48,7 @@ def test_merge_log_records_merges(it_db):
 
     merge_persons(PersonMergeRequest(keep_id="k", dup_id="d"), _=ROLE)
 
-    entries = merge_log(_=ROLE)["entries"]
+    entries = merge_log(limit=200, _=ROLE)["entries"]
     hit = next((e for e in entries if e["keep_id"] == "k" and e["dup_name"] == "Page Lawrence"), None)
     assert hit is not None
     assert hit["keep_name"] == "Larry Page"
