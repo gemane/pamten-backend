@@ -103,23 +103,26 @@ backend/
 
 | Label | Key properties |
 |---|---|
-| `Entity` | `id`, `name`, `type` (company/brand/holding), `country`, `founded`, `revenue`, `wikidata_id`, `sec_cik` |
-| `Person` | `id`, `full_name`, `first_name`, `last_name`, `nationality`, `wikidata_id`, `wikipedia_url` |
-| `Location` | `id`, `city`, `country`, `coordinates` |
-| `Source` | `id`, `name`, `url`, `credibility_score` |
+| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding), `country`, `countries`, `founded`, `revenue`, `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `hq_lat`/`hq_lng`/`hq_city`/`hq_country`, `source_id` |
+| `Person` | `id`, `full_name`, `first_name`, `last_name`, `alias[]`, `nationality`, `birth_date`, `birth_place`, `wikidata_id`, `sec_cik`, `wikipedia_url` |
+| `Location` | `id`, `city`, `country`, `latitude`, `longitude` |
+| `Source` | `id`, `name`, `url`, `type`, `credibility_score`; for peers also `verified`, `key_id` |
 | `User` | `id`, `email`, `password_hash`, `role` (admin/contributor/viewer) |
 | `ScraperSource` | `name`, `enabled`, `description` |
+| `MergeLog` | `id`, `keep_id`, `keep_name`, `dup_name`, `at`, `count` — history of person merges (deduped by keep+dup name) |
+| `Peer` | `id`, `name`, `base_url`, `credibility_score`, `auth_token`, `public_key`, `enabled` — a trusted federation peer |
+| `ScrapeRun` | `id`, `source`, `target`, `status` (running/ok/failed), `started_at`, `finished_at`, `total`, `error` — the scrape run log (capped) |
 
 ### Relationships
 
 | Pattern | Properties |
 |---|---|
-| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent`, `ownership_type`, `since`, `until`, `source_id` |
-| `(Person)-[:HAS_ROLE]->(Entity)` | `role`, `since`, `until`, `source_id` |
-| `(Person)-[:RELATED_TO]->(Person)` | `relation` |
-| `(Entity)-[:HEADQUARTERED_IN]->(Location)` | — |
-| `(Entity)-[:REGISTERED_IN]->(Location)` | — |
-| `(Entity)-[:OPERATES_IN]->(Location)` | — |
+| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent`, `voting_power_pct`, `ownership_type`, `since`, `until`, `source_id`, `source_url`, `source_date` |
+| `(Person)-[:HAS_ROLE]->(Entity)` | `role`, `since`, `until`, `source_id`, `source_url`, `source_date` |
+| `(Person)-[:RELATED_TO]->(Person)` | `relation`, `source_id` |
+| `(Person)-[:NOT_DUPLICATE]->(Person)` | `at` — marks two people confirmed to be *different* (keep-separate) |
+| `(Entity)-[:DUAL_LISTED_WITH]->(Entity)` | links share classes of a dual-listed company |
+| `(Entity)-[:HEADQUARTERED_IN\|REGISTERED_IN\|OPERATES_IN]->(Location)` | — |
 
 `until = null` means the relationship is currently active.  
 `ownership_type`: `full`, `majority`, `minority`, `controlling`, `passive`, `active`, `partnership`
@@ -146,17 +149,31 @@ backend/
 | DELETE | `/entities/{id}` | Delete entity |
 
 ### Persons
-| Method | Path | Description |
-|---|---|---|
-| GET | `/persons/{id}` | Single person |
-| POST | `/persons/` | Create person |
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/persons/{id}` | — | Single person |
+| POST | `/persons/` | contributor | Create person |
+| GET | `/persons/duplicates` | contributor | Suggest likely-duplicate people (see [Duplicate persons](#duplicate-persons)) |
+| POST | `/persons/deduplicate` | contributor | Auto-merge high-confidence duplicates (`apply=false` = dry run) |
+| POST | `/persons/merge` | contributor | Fold a duplicate person into the one to keep |
+| POST | `/persons/keep-separate` | contributor | Mark a group as confirmed-different (stops being suggested) |
+| DELETE | `/persons/keep-separate` | contributor | Undo a keep-separate |
+| GET | `/persons/kept-separate` | contributor | List confirmed-distinct pairs |
+| GET | `/persons/merge-log` | contributor | History of merges (the "already merged" list) |
 
 ### Search
 | Method | Path | Description |
 |---|---|---|
 | GET | `/search/?q=` | Full-text search across entities and persons |
 | GET | `/search/entity/{id}/full-profile` | Entity with owners, subsidiaries, executives, HQ |
+| GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
 | GET | `/search/geographic` | Entities grouped by country for map view |
+
+### Sources (provenance)
+| Method | Path | Description |
+|---|---|---|
+| GET | `/sources/entity/{id}` | Sources behind an entity's facts (from its edges + node) |
+| GET | `/sources/person/{id}` | Sources behind a person's roles/ownership |
 
 ### Relationships
 | Method | Path | Description |
@@ -173,13 +190,16 @@ backend/
 ### Scraper
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/scraper/status` | — | Whether master `SCRAPER_ENABLED` flag is on |
+| GET | `/scraper/status` | — | Master + per-source flag states (incl. `autodedup_enabled`) |
+| GET | `/scraper/runs` | contributor | Recent scrape run log — status, counts, failures (see [Scrape run log](#scrape-run-log)) |
 | POST | `/scraper/run` | admin | Run a Wikidata scrape by company name |
-| GET | `/scraper/sec-edgar/status` | — | Whether `SCRAPER_SEC_EDGAR_ENABLED` flag is on |
 | POST | `/scraper/sec-edgar/run` | admin | Run an SEC EDGAR scrape by company name |
-| POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company name |
-| GET | `/scraper/open-corporates/status` | — | Whether OpenCorporates is configured |
 | POST | `/scraper/open-corporates/run` | admin | Run an OpenCorporates scrape by company name |
+| POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company (then auto-dedup) |
+| POST | `/scraper/geocode` | contributor | Backfill HQ coordinates via Nominatim (needs `GEOCODING_ENABLED`) |
+| POST | `/scraper/bods/gleif/run` | contributor | Import GLEIF beneficial-ownership data (BODS) |
+| POST | `/scraper/bods/uk-psc/run` | contributor | Import UK PSC beneficial-ownership data (BODS) |
+| POST | `/scraper/bods/run-all` | contributor | Run both BODS imports |
 | GET | `/scraper/sources` | — | Per-source toggle states |
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
 | DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
@@ -194,6 +214,22 @@ backend/
 | POST | `/federation/peers` | admin | Register a trusted peer |
 | DELETE | `/federation/peers/{id}` | admin | Remove a trusted peer |
 | POST | `/federation/peers/{id}/pull` | admin | Pull a peer's snapshot, verify, import, reconcile |
+
+### Maintenance / advanced
+One-off migrations and lower-level tools, mostly for operators. The person-merge
+endpoints under [Persons](#persons) supersede the legacy scraper ones below.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/scraper/proxy-statement/run` | contributor | Parse a company's latest DEF 14A proxy and return per-person voting power (read-only) |
+| POST | `/scraper/proxy-statement/write` | contributor | Fetch the latest DEF 14A and write `voting_power_pct` onto OWNS edges (`entity_id` overrides name lookup) |
+| POST | `/scraper/deduplicate-edges` | admin | Collapse duplicate active OWNS edges, keeping the most informative |
+| POST | `/scraper/deduplicate-persons` | admin | Legacy: merge reversed-name Person duplicates (use `/persons/deduplicate`) |
+| POST | `/scraper/migrate-ownership-types` | admin | One-time migration deriving canonical `ownership_type` values |
+| POST | `/relationships/dual-listed` | contributor | Link two share classes of a dual-listed company (`DUAL_LISTED_WITH`) |
+| POST | `/locations/{entity_id}/headquartered-in/{location_id}` | contributor | Attach an HQ location |
+| POST | `/locations/{entity_id}/registered-in/{location_id}` | contributor | Attach a registration location |
+| POST | `/locations/{entity_id}/operates-in/{location_id}` | contributor | Attach an operating location |
 
 ---
 
@@ -217,7 +253,11 @@ The first account registered automatically receives the `admin` role. Protected 
 
 ## Scrapers
 
-Three data sources are supported, all triggered via `/scraper/run-all`:
+Wikidata, SEC EDGAR, and OpenCorporates run per-company via `/scraper/run-all`;
+BODS (GLEIF / UK PSC) is a separate bulk dataset import. Each source has an
+independent on/off toggle (`/scraper/sources`).
+
+🧩 **Adding a source:** [`docs/scraper-plugin-guide.md`](docs/scraper-plugin-guide.md) is a step-by-step guide (API module → source toggle → config flags → runner → endpoints → dedup) with a pre-deploy checklist.
 
 ### Wikidata
 Imports corporate ownership data via SPARQL. Fetches subsidiaries, parent organisations, and CEOs recursively up to `depth` levels (max 3). Controlled by `SCRAPER_ENABLED`.
@@ -238,8 +278,74 @@ Company lookup uses a three-vector strategy to avoid false matches:
 
 Investor names are classified as Person or Entity using heuristics that recognise common legal suffixes including European forms (S.A.R.L., GmbH, S.A., N.V., AG, etc.).
 
+📄 **Deep dive:** [`docs/sec_edgar_scraper.md`](docs/sec_edgar_scraper.md) — research and implementation notes (which EDGAR APIs, CIK resolution, 13D/13G & Form 3/4 parsing, per-company request budgets).
+
 ### OpenCorporates
 Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
+
+### BODS (GLEIF & UK PSC)
+Beneficial-ownership data imported via the **Beneficial Ownership Data Standard**:
+**GLEIF** (Global LEI, corporate ownership worldwide, CC0) and the **UK PSC**
+register (people with significant control, CC0). Controlled by
+`SCRAPER_BODS_GLEIF_ENABLED` / `SCRAPER_BODS_UK_PSC_ENABLED`.
+
+Unlike the per-company scrapers above, BODS is a **bulk dataset import**, not a
+name lookup — so it is *not* part of `run-all` and has its own endpoints
+(`/scraper/bods/*`) and, in the web app, its own **Bulk import** card. It streams
+a BODS file (URL or a local file inside `BODS_DATA_DIR`), reconciles endpoints by
+LEI / Companies House id, and can be filtered by `jurisdiction` and `limit`. Both
+sources still appear in `/scraper/sources` with independent on/off toggles.
+
+---
+
+## Duplicate persons
+
+Different sources spell the same person differently — SEC's last-first "Page
+Lawrence" vs Wikidata's "Larry Page", nicknames (Rob/Robert), and legal-name
+aliases — so every scrape can create duplicate `Person` nodes. `GET
+/persons/duplicates` scans for them using three signals:
+
+- **name/alias token set** — order/case/honorific-insensitive, matched across a
+  person's full name *and* every Wikidata alias (so SEC's "Gates William H Iii"
+  links to "Bill Gates" via its "William H. Gates III" alias);
+- **same birth date + place**;
+- **same surname + a shared company + a compatible given name** — catches
+  nickname/legal-name variants, gated by the shared company so relatives (e.g.
+  Elon/Kimbal Musk) aren't flagged.
+
+Groups are ranked `high` / `medium` / `low`; conflicting birth dates flag a group
+as `likely_distinct`.
+
+- **Auto-merge** — `POST /persons/deduplicate` (and, after every `run-all`
+  scrape, gated by `SCRAPER_AUTODEDUP_ENABLED`) merges only high-confidence,
+  non-distinct groups; the rest are left for review.
+- **Merge** — `POST /persons/merge` re-homes a duplicate's edges (with their
+  provenance) onto the kept person, folds its name in as an alias, and records a
+  `MergeLog` entry (`GET /persons/merge-log`).
+- **Keep separate** — `POST /persons/keep-separate` records a `NOT_DUPLICATE`
+  edge so a confirmed-different pair (e.g. Keith vs Rupert Murdoch) stops being
+  suggested; reversible via `DELETE`, listed via `GET /persons/kept-separate`.
+
+Admins can drive all of this from the web app's **Scraper tab → Review duplicate
+persons** panel.
+
+📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — the scan signals, confidence model, the ArcadeDB param-mediated merge, keep-separate, and the merge log.
+
+---
+
+## Scrape run log
+
+Every scrape (`/scraper/run`, `/run-all`, `/sec-edgar/run`,
+`/open-corporates/run`) records a `ScrapeRun` row: a `running` entry on start,
+updated to `ok` (with node count) or `failed` (with the error) on finish. `GET
+/scraper/runs` lists them newest-first, so the UI and other sessions can see
+what's scraping now and which runs failed — across the panel *and* the bundled
+`scrape_companies.sh` script.
+
+The log is **bounded**: capped at 500 records, with the oldest pruned on every
+write, so it can never grow the database unbounded. A `running` row older than 30
+minutes is flagged `stale` (an interrupted run). Surfaced in the web app's
+**Scraper tab → Recent activity** panel, which polls while a run is in progress.
 
 ---
 
@@ -252,12 +358,14 @@ nothing is pushed to you and nothing syncs automatically.
 
 Pulled data is reconciled, not blindly copied. Nodes are matched on their
 external ids (Wikidata QID, SEC CIK, LEI, Companies House) and then run through
-the [duplicate scan](#persons), so a peer's "Larry Fink" folds into yours instead
+the [duplicate scan](#duplicate-persons), so a peer's "Larry Fink" folds into yours instead
 of duplicating it. Every imported fact is attributed to a `Peer: <name>` Source
 carrying that peer's credibility, so you can always tell what came from where —
 and downgrade or drop a peer without touching your own data.
 
 Disabled by default. Turn it on with `FEDERATION_ENABLED=true`.
+
+📄 **Deep dive:** [`docs/federation.md`](docs/federation.md) — the snapshot format, Ed25519 signing/verification, external-id reconciliation, the trust/threat model, and why it's a native format rather than BODS.
 
 ### Signing (verifiable provenance)
 
@@ -311,8 +419,12 @@ web app's **Scraper tab → Federation** panel.
 | `SECRET_KEY` | insecure default | JWT signing key — **must be overridden when `DEBUG=false`, or the app refuses to start** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
-| `SCRAPER_ENABLED` | `false` | Master Wikidata scraper switch |
-| `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR scraper switch |
+| `SCRAPER_ENABLED` | `false` | Master scraper switch (required for any scrape) |
+| `SCRAPER_WIKIDATA_ENABLED` | `true` | Wikidata source switch |
+| `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |
+| `SCRAPER_OPENCORPORATES_ENABLED` | `false` | OpenCorporates source switch |
+| `SCRAPER_BODS_GLEIF_ENABLED` | `false` | GLEIF BODS import switch |
+| `SCRAPER_BODS_UK_PSC_ENABLED` | `false` | UK PSC BODS import switch |
 | `SCRAPER_AUTODEDUP_ENABLED` | `true` | Auto-merge high-confidence duplicate persons after each `run-all` scrape |
 | `FEDERATION_ENABLED` | `false` | Enable trusted-peer federation (publish/pull) |
 | `FEDERATION_SIGNING_KEY` | — | Ed25519 private seed (base64) for signing exports; generate with `manage.py gen-federation-key`. Secret — env only |
@@ -320,6 +432,7 @@ web app's **Scraper tab → Federation** panel.
 | `BODS_DATA_DIR` | `/data` | Only .zip/.json files inside this directory may be passed as `local_file` to BODS imports |
 | `GEOCODING_ENABLED` | `false` | Geocode addresses to coordinates via Nominatim |
 | `GEOCODING_CONTACT` | — | Contact email added to the Nominatim User-Agent (required by their usage policy) |
+| `GEOCODING_USER_AGENT` | `pamten-ownership-platform` | Base User-Agent for Nominatim requests |
 | `NOMINATIM_URL` | public endpoint | Nominatim search URL (override to self-host) |
 | `GEOCODING_MIN_INTERVAL` | `1.0` | Minimum seconds between geocoding requests |
 | `DEBUG` | `false` | FastAPI debug mode |
@@ -337,6 +450,18 @@ Lookup indexes (on `id`, `name`, `name_normalized`, `wikidata_id`, `sec_cik`, an
 ```bash
 python3 manage.py init-schema
 ```
+
+### CLI (`manage.py`)
+
+| Command | Description |
+|---|---|
+| `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
+| `seed` | Seed the built-in company list |
+| `wipe-data` | Delete all imported data (keeps user accounts + schema); rebuilds indexes. Guarded behind `DEBUG=true` |
+| `geocode` | Backfill HQ/location coordinates via Nominatim |
+| `normalize-countries` | Convert country values to canonical ISO-2 codes |
+| `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
+| `bods-gleif` / `bods-uk-psc` | Import a local BODS file |
 
 ---
 
