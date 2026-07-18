@@ -39,13 +39,20 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Source",   "id",              "UNIQUE"),
     ("User",     "id",              "UNIQUE"),
     ("User",     "email",           "UNIQUE"),
+    ("MergeLog", "id",              "UNIQUE"),
+    ("MergeLog", "keep_id",         "NOTUNIQUE"),
 ]
+
+# Edge types the app creates via Cypher and needs to exist up front.
+_EDGE_TYPES: list[str] = ["NOT_DUPLICATE"]
 
 
 def _statements() -> list[str]:
     stmts: list[str] = []
     for vtype in sorted({t for t, _, _ in _INDEXES}):
         stmts.append(f"CREATE VERTEX TYPE {vtype} IF NOT EXISTS")
+    for etype in _EDGE_TYPES:
+        stmts.append(f"CREATE EDGE TYPE {etype} IF NOT EXISTS")
     for vtype, prop, kind in _INDEXES:
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}")

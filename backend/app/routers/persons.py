@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest
+from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest, KeepSeparateRequest
 from app.auth.dependencies import require_contributor
 from app.database import db
 from collections import defaultdict
+from datetime import datetime, timezone
+from itertools import combinations
 import re
 import uuid
 
@@ -217,9 +219,23 @@ def scan_duplicate_groups() -> list[dict]:
                                          b["first_name"] or b["full_name"]):
                         _emit([a, b], "same surname + shared company (name variant)", variant=True)
 
+        # Drop groups a human has confirmed are different people (NOT_DUPLICATE).
+        dismissed = {
+            frozenset((r.get("a"), r.get("b")))
+            for r in session.run(
+                "MATCH (a:Person)-[:NOT_DUPLICATE]->(b:Person) RETURN a.id AS a, b.id AS b")
+        }
+
+    groups = [g for g in groups if not _all_pairs_dismissed(g["members"], dismissed)]
     rank = {"high": 0, "medium": 1, "low": 2}
     groups.sort(key=lambda g: (rank[g["confidence"]], g["reason"]))
     return groups
+
+
+def _all_pairs_dismissed(members: list, dismissed: set) -> bool:
+    """True if every pair in the group is marked NOT_DUPLICATE (confirmed distinct)."""
+    ids = [m["id"] for m in members]
+    return all(frozenset((a, b)) in dismissed for a, b in combinations(ids, 2))
 
 
 def deduplicate_high_confidence(apply: bool = True) -> dict:
@@ -270,6 +286,70 @@ def deduplicate_persons(
     SCRAPER_AUTODEDUP_ENABLED is set; also callable directly from the UI.
     """
     return deduplicate_high_confidence(apply=apply)
+
+
+@router.post("/keep-separate")
+def keep_separate(data: KeepSeparateRequest, _: dict = Depends(require_contributor)):
+    """
+    Mark a group of persons as confirmed DIFFERENT people (e.g. Keith vs Rupert
+    Murdoch). A NOT_DUPLICATE edge is stored between every pair so the group no
+    longer surfaces in the duplicate scan. Reversible via DELETE /persons/keep-separate.
+    """
+    ids = sorted(set(data.ids))
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="Need at least two distinct ids")
+    at = datetime.now(timezone.utc).isoformat()
+    with db.get_session() as session:
+        for a, b in combinations(ids, 2):
+            session.run(
+                "MATCH (a:Person {id:$a}), (b:Person {id:$b}) "
+                "MERGE (a)-[r:NOT_DUPLICATE]->(b) SET r.at = $at",
+                a=a, b=b, at=at)
+    return {"message": "Marked as separate", "ids": ids}
+
+
+@router.delete("/keep-separate")
+def undo_keep_separate(data: KeepSeparateRequest, _: dict = Depends(require_contributor)):
+    """Undo a keep-separate: the pair(s) can be suggested as duplicates again."""
+    ids = sorted(set(data.ids))
+    with db.get_session() as session:
+        for a, b in combinations(ids, 2):
+            session.run(
+                "MATCH (a:Person {id:$a})-[r:NOT_DUPLICATE]-(b:Person {id:$b}) DELETE r",
+                a=a, b=b)
+    return {"message": "Keep-separate removed", "ids": ids}
+
+
+@router.get("/kept-separate")
+def list_kept_separate(_: dict = Depends(require_contributor)):
+    """The pairs a human has confirmed are different people (the 'not to be merged' list)."""
+    with db.get_session() as session:
+        pairs = [
+            {"a_id": r.get("a_id"), "a_name": r.get("a_name"),
+             "b_id": r.get("b_id"), "b_name": r.get("b_name"), "at": r.get("at")}
+            for r in session.run(
+                "MATCH (a:Person)-[r:NOT_DUPLICATE]->(b:Person) "
+                "RETURN a.id AS a_id, a.full_name AS a_name, "
+                "       b.id AS b_id, b.full_name AS b_name, r.at AS at")
+        ]
+    pairs.sort(key=lambda p: p["at"] or "", reverse=True)
+    return {"count": len(pairs), "pairs": pairs}
+
+
+@router.get("/merge-log")
+def merge_log(limit: int = Query(200, ge=1, le=1000), _: dict = Depends(require_contributor)):
+    """Recent person merges (the 'already merged' list), most recent first."""
+    with db.get_session() as session:
+        entries = [
+            {"id": r.get("id"), "keep_id": r.get("keep_id"), "keep_name": r.get("keep_name"),
+             "dup_name": r.get("dup_name"), "at": r.get("at"), "count": r.get("count")}
+            for r in session.run(
+                "MATCH (ml:MergeLog) "
+                "RETURN ml.id AS id, ml.keep_id AS keep_id, ml.keep_name AS keep_name, "
+                "       ml.dup_name AS dup_name, ml.at AS at, ml.count AS count")
+        ]
+    entries.sort(key=lambda e: e["at"] or "", reverse=True)
+    return {"count": len(entries), "entries": entries[:limit]}
 
 
 @router.post("/merge")
@@ -388,6 +468,16 @@ def merge_person_records(keep: str, dup: str) -> None:
              alias=alias_union,
              nationalities=dup_node.get("nationalities") or [],
              **{p: dup_node.get(p) for p in BIO_COALESCE})
+
+        # Record the merge (deduped on keep + merged-name; repeated auto-merges of
+        # a re-scraped node bump `count`/`at` instead of piling up rows).
+        dup_full = (dup_node.get("full_name") or "").strip()
+        session.run(
+            "MERGE (ml:MergeLog {keep_id:$keep, dup_name:$dup_name}) "
+            "SET ml.id = COALESCE(ml.id, $id), ml.keep_name = $keep_name, "
+            "    ml.at = $at, ml.count = COALESCE(ml.count, 0) + 1",
+            keep=keep, dup_name=dup_full, keep_name=keep_full,
+            id=str(uuid.uuid4()), at=datetime.now(timezone.utc).isoformat())
 
         session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
 

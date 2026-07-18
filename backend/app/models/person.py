@@ -24,3 +24,7 @@ class PersonResponse(PersonCreate):
 class PersonMergeRequest(BaseModel):
     keep_id: str   # the canonical person to keep
     dup_id: str    # the duplicate to fold in and delete
+
+
+class KeepSeparateRequest(BaseModel):
+    ids: List[str]  # person ids in a group confirmed to be DIFFERENT people
