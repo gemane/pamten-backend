@@ -274,6 +274,8 @@ Company lookup uses a three-vector strategy to avoid false matches:
 
 Investor names are classified as Person or Entity using heuristics that recognise common legal suffixes including European forms (S.A.R.L., GmbH, S.A., N.V., AG, etc.).
 
+📄 **Deep dive:** [`docs/sec_edgar_scraper.md`](docs/sec_edgar_scraper.md) — research and implementation notes (which EDGAR APIs, CIK resolution, 13D/13G & Form 3/4 parsing, per-company request budgets).
+
 ### OpenCorporates
 Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 
