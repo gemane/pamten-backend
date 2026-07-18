@@ -33,6 +33,7 @@ def scraper_status():
         "bods_gleif_enabled":         settings.SCRAPER_BODS_GLEIF_ENABLED,
         "bods_uk_psc_enabled":        settings.SCRAPER_BODS_UK_PSC_ENABLED,
         "geocoding_enabled":          settings.GEOCODING_ENABLED,
+        "autodedup_enabled":          settings.SCRAPER_AUTODEDUP_ENABLED,
     }
 
 

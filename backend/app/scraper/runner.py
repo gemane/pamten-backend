@@ -1040,7 +1040,23 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     else:
         results["open_corporates"] = {"status": "disabled"}
 
-    return {"status": "ok", "query": query, "results": results}
+    out: dict = {"status": "ok", "query": query, "results": results}
+
+    # Auto-merge high-confidence duplicate persons the sources spelled differently
+    # (SEC "Page Lawrence" ↔ Wikidata "Larry Page"). Only safe, high-confidence
+    # merges are applied; the rest surface in the review panel. Best-effort — a
+    # dedup failure must never fail the scrape.
+    if settings.SCRAPER_AUTODEDUP_ENABLED:
+        try:
+            from app.routers.persons import deduplicate_high_confidence
+            dd = deduplicate_high_confidence(apply=True)
+            out["deduplication"] = {
+                "merged_count": dd["merged_count"], "review_count": dd["review_count"]}
+        except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
+            log.error("Auto-dedup after scrape failed for %r: %s", query, exc)
+            out["deduplication"] = {"status": "error", "detail": str(exc)}
+
+    return out
 
 
 # ── OpenCorporates helpers ────────────────────────────────────────────────────

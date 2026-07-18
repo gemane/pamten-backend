@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     SCRAPER_OPENCORPORATES_ENABLED:   bool = False
     SCRAPER_BODS_GLEIF_ENABLED:       bool = False
     SCRAPER_BODS_UK_PSC_ENABLED:      bool = False
+    # After each run-all scrape, auto-merge high-confidence duplicate persons that
+    # different sources spelled differently. Only high-confidence, non-distinct
+    # groups are merged; medium/low go to the review panel. Set false to disable.
+    SCRAPER_AUTODEDUP_ENABLED:        bool = True
     OPENCORPORATES_API_KEY:           str  = ""
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
     ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 12  # 12 hours
