@@ -12,3 +12,11 @@ def test_export_constants():
     from app.routers import federation
     assert federation.EXPORT_FORMAT == "pamten-federation"
     assert federation.EXPORT_VERSION == 1
+
+
+def test_status_disabled_reports_off(monkeypatch):
+    from app.config import settings
+    from app.routers.federation import federation_status
+    monkeypatch.setattr(settings, "FEDERATION_ENABLED", False)
+    st = federation_status(_={"role": "contributor"})
+    assert st["enabled"] is False and st["entities"] == 0
