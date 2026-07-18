@@ -7,3 +7,4 @@ class PeerCreate(BaseModel):
     base_url: str                          # e.g. https://peer.example.com
     credibility_score: int = 60            # how much to trust this peer's claims
     auth_token: Optional[str] = None       # bearer token for the peer's /federation/export
+    public_key: Optional[str] = None       # peer's Ed25519 public key (base64) to verify its exports

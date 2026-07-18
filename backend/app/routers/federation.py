@@ -26,6 +26,7 @@ from app.database import db
 from app.models.federation import PeerCreate
 from app.scraper.mapper import normalize_entity_name
 from app.routers.persons import deduplicate_high_confidence
+from app import federation_keys
 
 router = APIRouter(prefix="/federation", tags=["Federation"])
 log = logging.getLogger(__name__)
@@ -63,11 +64,13 @@ def add_peer(data: PeerCreate, _: dict = Depends(require_admin)):
     with db.get_session() as session:
         session.run(
             "CREATE (p:Peer {id:$id, name:$name, base_url:$url, credibility_score:$cred, "
-            "auth_token:$tok, enabled:true, created_at:$at})",
+            "auth_token:$tok, public_key:$pk, enabled:true, created_at:$at})",
             id=peer_id, name=data.name, url=data.base_url.rstrip("/"),
             cred=data.credibility_score, tok=data.auth_token or "",
+            pk=(data.public_key or "").strip(),
             at=datetime.now(timezone.utc).isoformat())
-    return {"id": peer_id, "name": data.name, "base_url": data.base_url.rstrip("/")}
+    return {"id": peer_id, "name": data.name, "base_url": data.base_url.rstrip("/"),
+            "has_public_key": bool((data.public_key or "").strip())}
 
 
 @router.get("/peers")
@@ -78,11 +81,12 @@ def list_peers(_: dict = Depends(require_contributor)):
         peers = [
             {"id": r.get("id"), "name": r.get("name"), "base_url": r.get("base_url"),
              "credibility_score": r.get("cred"), "enabled": r.get("enabled"),
-             "has_token": bool(r.get("tok")), "created_at": r.get("at")}
+             "has_token": bool(r.get("tok")), "has_public_key": bool(r.get("pk")),
+             "created_at": r.get("at")}
             for r in session.run(
                 "MATCH (p:Peer) RETURN p.id AS id, p.name AS name, p.base_url AS base_url, "
                 "p.credibility_score AS cred, p.enabled AS enabled, p.auth_token AS tok, "
-                "p.created_at AS at")
+                "p.public_key AS pk, p.created_at AS at")
         ]
     peers.sort(key=lambda p: p["created_at"] or "")
     return {"count": len(peers), "peers": peers}
@@ -151,21 +155,37 @@ def build_export() -> dict:
 
 @router.get("/export")
 def export_snapshot(_: dict = Depends(require_contributor)):
-    """Publish this instance's ownership graph for trusted peers to pull."""
+    """Publish this instance's ownership graph, signed if a signing key is set."""
     _require_enabled()
-    return build_export()
+    snapshot = build_export()
+    snapshot.update(federation_keys.sign(snapshot))   # adds signature/key_id/algorithm, or nothing
+    return snapshot
+
+
+@router.get("/public-key")
+def public_key(_: dict = Depends(require_contributor)):
+    """This instance's signing public key, for peers to register and verify our exports."""
+    _require_enabled()
+    pub = federation_keys.public_key_b64()
+    if not pub:
+        return {"signing_enabled": False}
+    return {"signing_enabled": True, "algorithm": federation_keys.ALGORITHM,
+            "public_key": pub, "key_id": federation_keys.fingerprint(pub)}
 
 
 # ── Pull (import a peer's snapshot) ───────────────────────────────────────────
 
-def _ensure_peer_source(session, name: str, credibility: int) -> str:
+def _ensure_peer_source(session, name: str, credibility: int, verified: bool, key_id: str) -> str:
     rec = session.run("MATCH (s:Source {name:$name}) RETURN s.id AS id", name=name).single()
     if rec:
+        session.run("MATCH (s:Source {id:$id}) SET s.verified=$v, s.key_id=$k",
+                    id=rec["id"], v=verified, k=key_id)
         return rec["id"]
     sid = str(uuid.uuid4())
     session.run(
-        "CREATE (s:Source {id:$id, name:$name, type:'peer', credibility_score:$cred, url:$url})",
-        id=sid, name=name, cred=credibility, url="")
+        "CREATE (s:Source {id:$id, name:$name, type:'peer', credibility_score:$cred, "
+        "url:$url, verified:$v, key_id:$k})",
+        id=sid, name=name, cred=credibility, url="", v=verified, k=key_id)
     return sid
 
 
@@ -216,13 +236,14 @@ def _upsert_person(session, ref: dict, source_id: str) -> str | None:
     return pid
 
 
-def import_snapshot(data: dict, source_name: str, credibility: int) -> dict:
+def import_snapshot(data: dict, source_name: str, credibility: int,
+                    verified: bool = False, key_id: str = "") -> dict:
     """Upsert a peer snapshot's nodes/edges, attributed to the peer's Source."""
     if data.get("format") != EXPORT_FORMAT:
         raise ValueError(f"Unrecognized export format: {data.get('format')!r}")
     counts = {"entities": 0, "persons": 0, "ownerships": 0, "skipped": 0}
     with db.get_session() as session:
-        source_id = _ensure_peer_source(session, source_name, credibility)
+        source_id = _ensure_peer_source(session, source_name, credibility, verified, key_id)
         for e in data.get("entities", []):
             if _upsert_entity(session, e, source_id):
                 counts["entities"] += 1
@@ -261,8 +282,8 @@ def pull_peer(peer_id: str, _: dict = Depends(require_admin)):
     with db.get_session() as session:
         rec = session.run(
             "MATCH (p:Peer {id:$id}) RETURN p.name AS name, p.base_url AS url, "
-            "p.credibility_score AS cred, p.auth_token AS tok, p.enabled AS enabled",
-            id=peer_id).single()
+            "p.credibility_score AS cred, p.auth_token AS tok, p.public_key AS pk, "
+            "p.enabled AS enabled", id=peer_id).single()
     if not rec:
         raise HTTPException(status_code=404, detail="Peer not found")
     if rec.get("enabled") is False:
@@ -278,13 +299,24 @@ def pull_peer(peer_id: str, _: dict = Depends(require_admin)):
         log.warning("Peer pull failed (%s): %s", rec["name"], exc)
         raise HTTPException(status_code=502, detail=f"Could not pull from peer: {exc}")
 
+    # Verify the signature when we hold the peer's public key. A registered key
+    # that doesn't validate means the data isn't provably the peer's — refuse it.
+    peer_key = (rec.get("pk") or "").strip()
+    verified = False
+    if peer_key:
+        if not federation_keys.verify(data, peer_key):
+            raise HTTPException(status_code=422,
+                detail="Signature verification failed — export is not provably from this peer.")
+        verified = True
+
     try:
         counts = import_snapshot(data, source_name=f"Peer: {rec['name']}",
-                                 credibility=rec.get("cred") or 60)
+                                 credibility=rec.get("cred") or 60,
+                                 verified=verified, key_id=data.get("key_id") or "")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
     dedup = deduplicate_high_confidence(apply=True)
-    return {"peer": rec["name"], "imported": counts,
+    return {"peer": rec["name"], "verified": verified, "imported": counts,
             "deduplication": {"merged_count": dedup["merged_count"],
                               "review_count": dedup["review_count"]}}
