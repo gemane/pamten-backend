@@ -52,6 +52,10 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Flag",      "node_id",        "NOTUNIQUE"),
     ("Flag",      "from_id",        "NOTUNIQUE"),
     ("Flag",      "to_id",          "NOTUNIQUE"),
+    # Suppressions — a moderator override hiding a wrong edge (Phase-B resolution).
+    ("Suppression", "id",           "UNIQUE"),
+    ("Suppression", "from_id",      "NOTUNIQUE"),
+    ("Suppression", "to_id",        "NOTUNIQUE"),
 ]
 
 # Edge types the app creates via Cypher and needs to exist up front.

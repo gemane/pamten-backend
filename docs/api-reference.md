@@ -54,7 +54,10 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/flags` | public (rate-limited) | Report a node/edge as wrong. Anonymous **or** logged-in; anon capped at 2/hour per IP fingerprint, users higher. Repeat of the same target+category is collapsed |
 | GET | `/flags` | moderator | Moderation queue, newest first; filter `?status=`, `?target_kind=`, `?category=` |
 | GET | `/flags/summary` | public | Open-flag count for one target (`?node_id=` or `?from_id=&to_id=[&role=]`) — powers the "disputed" badge |
-| PATCH | `/flags/{id}` | moderator | Triage status: `open` ⇄ `reviewing`, `→ rejected` (`resolved` is Phase B) |
+| PATCH | `/flags/{id}` | moderator | Triage status: `open` ⇄ `reviewing`, `→ rejected` |
+| POST | `/flags/{id}/suppress` | moderator | Resolve an edge flag by **suppressing** it — delete the edge now + record a `Suppression` so it stays hidden across re-scrapes (read-time enforced); flag → `resolved` |
+| GET | `/flags/suppressions` | moderator | Active suppression overrides |
+| DELETE | `/flags/suppressions/{id}` | moderator | Un-suppress (edge reappears if a re-scrape recreates it) |
 
 ## Relationships
 | Method | Path | Description |

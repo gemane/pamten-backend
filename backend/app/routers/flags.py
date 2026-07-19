@@ -178,3 +178,85 @@ def update_flag_status(flag_id: str, data: FlagStatusUpdate,
         if not rec:
             raise HTTPException(status_code=404, detail="Flag not found")
     return {"id": flag_id, "status": data.status.value}
+
+
+# ── Suppression (Phase-B resolution) ─────────────────────────────────────────
+# Suppressing an edge flag deletes the wrong edge now AND records a Suppression
+# override keyed by the edge's natural key, so read endpoints (app.suppressions)
+# keep it hidden even if a re-scrape recreates it. See docs/verification.md.
+
+@router.get("/suppressions")
+def list_suppressions(_: dict = Depends(require_moderator)):
+    """Active suppression overrides, newest first. Moderator only."""
+    with db.get_session() as session:
+        rows = session.run(
+            "MATCH (s:Suppression) RETURN s.id AS id, s.target_kind AS target_kind, "
+            "s.from_id AS from_id, s.to_id AS to_id, s.role AS role, "
+            "s.flag_id AS flag_id, s.created_at AS created_at ORDER BY s.created_at DESC"
+        )
+        return [
+            {"id": r["id"], "target_kind": r["target_kind"], "from_id": r["from_id"],
+             "to_id": r["to_id"], "role": r["role"], "flag_id": r["flag_id"],
+             "created_at": r["created_at"]}
+            for r in rows
+        ]
+
+
+@router.delete("/suppressions/{suppression_id}")
+def remove_suppression(suppression_id: str, _: dict = Depends(require_moderator)):
+    """Un-suppress — drop the override (the edge won't reappear until a re-scrape
+    recreates it). Moderator only."""
+    with db.get_session() as session:
+        exists = session.run(
+            "MATCH (s:Suppression {id:$id}) RETURN s.id AS id", id=suppression_id).single()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Suppression not found")
+        session.run("MATCH (s:Suppression {id:$id}) DELETE s", id=suppression_id)
+    return {"id": suppression_id, "status": "removed"}
+
+
+@router.post("/{flag_id}/suppress")
+def suppress_flag(flag_id: str, _: dict = Depends(require_moderator)):
+    """Resolve an edge flag by suppressing it: delete the active edge and record a
+    Suppression so it stays hidden across re-scrapes; the flag becomes resolved.
+    Only OWNS/HAS_ROLE (edge) flags can be suppressed. Moderator only."""
+    with db.get_session() as session:
+        flag = session.run(
+            "MATCH (f:Flag {id:$id}) RETURN f.target_kind AS tk, f.from_id AS from_id, "
+            "f.to_id AS to_id, f.role AS role", id=flag_id).single()
+        if not flag:
+            raise HTTPException(status_code=404, detail="Flag not found")
+        tk = flag["tk"]
+        if tk not in ("owns", "role"):
+            raise HTTPException(status_code=400, detail="Only edge flags (owns/role) can be suppressed")
+        from_id, to_id, role = flag["from_id"], flag["to_id"], flag.get("role") or ""
+
+        # Record the override (deduped by natural key).
+        existing = session.run(
+            "MATCH (s:Suppression) WHERE s.target_kind=$tk AND s.from_id=$f "
+            "AND s.to_id=$t AND s.role=$role RETURN s.id AS id LIMIT 1",
+            tk=tk, f=from_id, t=to_id, role=role).single()
+        sup_id = existing["id"] if existing else str(uuid.uuid4())
+        if not existing:
+            session.run(
+                "CREATE (s:Suppression {id:$id, target_kind:$tk, from_id:$f, to_id:$t, "
+                "role:$role, flag_id:$fid, created_at:$now})",
+                id=sup_id, tk=tk, f=from_id, t=to_id, role=role, fid=flag_id, now=_now_iso())
+
+        # Delete the active edge now (anchored on indexed ids).
+        etype = "OWNS" if tk == "owns" else "HAS_ROLE"
+        if tk == "role":
+            session.run(
+                f"MATCH (a {{id:$f}})-[r:{etype}]->(b {{id:$t}}) "
+                f"WHERE r.role=$role AND r.until IS NULL DELETE r",
+                f=from_id, t=to_id, role=role)
+        else:
+            session.run(
+                f"MATCH (a {{id:$f}})-[r:{etype}]->(b {{id:$t}}) WHERE r.until IS NULL DELETE r",
+                f=from_id, t=to_id)
+
+        # Resolve the flag (Phase-B action — the PATCH route blocks 'resolved').
+        session.run(
+            "MATCH (f:Flag {id:$id}) SET f.status='resolved', f.updated_at=$now",
+            id=flag_id, now=_now_iso())
+    return {"id": sup_id, "flag_id": flag_id, "status": "suppressed"}
