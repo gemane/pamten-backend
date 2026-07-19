@@ -67,13 +67,15 @@ def cmd_wipe_data(args):
         sys.exit(1)
     from app.db.arcadedb import run_sql
     from app.db.schema import ensure_indexes
-    # DROP each type outright rather than DELETE FROM: dropping is a metadata op
-    # (instant even for a type with millions of rows), whereas `DELETE FROM Entity`
-    # on a full GLEIF import times out. Recreating the empty types below also
-    # clears the stale index entries the old DELETE-based wipe had to REBUILD.
-    # Edges first, then vertices, then overlays/logs. User accounts and config
-    # (ScraperSource toggles, federation Peers) are intentionally kept; types that
-    # don't exist are skipped by the per-type try/except.
+    batch = getattr(args, "batch", None) or 10000
+    # Clear each type's rows in small batches, THEN drop the now-empty type and
+    # recreate it. A single DROP/DELETE on millions of rows exceeds the DB's
+    # reverse-proxy timeout (dev-db is behind nginx, ~60s) and locks ArcadeDB
+    # until it's restarted — batched `DELETE ... LIMIT` keeps every request short
+    # and never holds a whole-DB lock; the final DROP is instant on the emptied
+    # type and clears the stale index entries DELETE leaves behind. User accounts
+    # and config (ScraperSource toggles, federation Peers) are kept; types that
+    # don't exist are skipped.
     types = [
         "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH",
         "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
@@ -84,17 +86,30 @@ def cmd_wipe_data(args):
         print("This will delete ALL imported data (entities, persons, edges, sources)")
         print("plus verification flags/suppressions/pins, merge logs and scrape-run logs.")
         print("User accounts and scraper/federation config are NOT affected.")
-        print(f"Types to drop: {', '.join(types)}")
+        print(f"Types to clear: {', '.join(types)}")
         confirm = input("Type YES to confirm: ")
         if confirm.strip() != "YES":
             print("Aborted.")
             sys.exit(1)
     for t in types:
+        deleted = 0
+        while True:
+            try:
+                r = run_sql(f"DELETE FROM {t} LIMIT {batch}")
+            except RuntimeError as exc:
+                if "was not found" in str(exc):   # type doesn't exist — nothing to clear
+                    break
+                print(f"  {t}: {exc}")
+                break
+            n = int(r[0].get("count", 0)) if r and isinstance(r[0], dict) else 0
+            deleted += n
+            if n < batch:                          # last (partial) batch drained the type
+                break
         try:
-            run_sql(f"DROP TYPE {t} IF EXISTS UNSAFE")
-            print(f"  Dropped {t}")
+            run_sql(f"DROP TYPE {t} IF EXISTS UNSAFE")   # instant on the emptied type
         except Exception as exc:
-            print(f"  {t}: {exc}")
+            print(f"  {t} (drop): {exc}")
+        print(f"  Cleared {t}" + (f" ({deleted} rows)" if deleted else ""))
     # Recreate the now-empty vertex/edge types + indexes.
     print("Recreating schema (types + indexes)...")
     res = ensure_indexes()
@@ -166,6 +181,8 @@ def _build_parser():
     # wipe-data command
     p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')
     p_wipe.add_argument('--yes', action='store_true', help='Skip confirmation prompt')
+    p_wipe.add_argument('--batch', type=int, default=10000,
+                        help='Rows deleted per request — keep each well under the DB proxy timeout (default 10000)')
     p_wipe.set_defaults(func=cmd_wipe_data)
 
     # geocode command
