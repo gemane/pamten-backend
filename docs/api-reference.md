@@ -58,6 +58,9 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/flags/{id}/suppress` | moderator | Resolve an edge flag by **suppressing** it — delete the edge now + record a `Suppression` so it stays hidden across re-scrapes (read-time enforced); flag → `resolved` |
 | GET | `/flags/suppressions` | moderator | Active suppression overrides |
 | DELETE | `/flags/suppressions/{id}` | moderator | Un-suppress (edge reappears if a re-scrape recreates it) |
+| POST | `/flags/{id}/pin` | moderator | Resolve an OWNS flag by **pinning** a corrected `stake_percent`/`ownership_type` — a read-time override that survives re-scrapes (edge not mutated); flag → `resolved` |
+| GET | `/flags/pins` | moderator | Active pin overrides |
+| DELETE | `/flags/pins/{id}` | moderator | Un-pin (reads fall back to the scraped value) |
 
 ## Relationships
 | Method | Path | Description |

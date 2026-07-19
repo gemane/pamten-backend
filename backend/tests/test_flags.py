@@ -185,3 +185,60 @@ def test_is_suppressed_matches_natural_key():
     assert is_suppressed(keys, "role", "p", "e", "CEO")
     assert not is_suppressed(keys, "owns", "a", "c")
     assert not is_suppressed(keys, "role", "p", "e", "CFO")
+
+
+# ── Pin (Phase B) ────────────────────────────────────────────────────────────
+
+def test_pin_requires_moderator(client, fake_db, make_token):
+    r = client.post("/flags/f1/pin", json={"stake_percent": 51},
+                    headers=_auth(make_token(role="contributor")))
+    assert r.status_code == 403
+
+
+def test_pin_owns_flag_records_correction(client, fake_db, make_token):
+    fake_db.queue([{"tk": "owns", "from_id": "a", "to_id": "b"}])  # flag lookup; pin lookup → none
+    r = client.post("/flags/f1/pin", json={"stake_percent": 51, "ownership_type": "majority"},
+                    headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 200
+    assert r.json()["status"] == "pinned"
+    assert r.json()["stake_percent"] == 51
+
+
+def test_pin_rejects_non_owns_flag(client, fake_db, make_token):
+    fake_db.queue([{"tk": "role", "from_id": "p", "to_id": "e"}])
+    r = client.post("/flags/f1/pin", json={"stake_percent": 51},
+                    headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 400
+
+
+def test_pin_requires_a_value(client, fake_db, make_token):
+    r = client.post("/flags/f1/pin", json={}, headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 422
+
+
+def test_pin_unknown_flag_404(client, fake_db, make_token):
+    fake_db.queue([])
+    r = client.post("/flags/nope/pin", json={"stake_percent": 10},
+                    headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 404
+
+
+def test_list_pins_requires_moderator(client, fake_db, make_token):
+    assert client.get("/flags/pins").status_code == 401
+    assert client.get("/flags/pins", headers=_auth(make_token(role="viewer"))).status_code == 403
+
+
+def test_remove_pin_404(client, fake_db, make_token):
+    fake_db.queue([])
+    r = client.delete("/flags/pins/nope", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 404
+
+
+def test_apply_pin_overrides_only_pinned_fields():
+    from app.pins import apply_pin
+    pins = {("a", "b"): {"stake_percent": 51.0, "ownership_type": None}}
+    rel = {"stake_percent": 10.0, "ownership_type": "minority"}
+    out = apply_pin(pins, "a", "b", rel)
+    assert out["stake_percent"] == 51.0
+    assert out["ownership_type"] == "minority"     # not pinned → left as-is
+    assert apply_pin(pins, "a", "c", rel) == rel   # no pin for this edge

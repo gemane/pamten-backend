@@ -69,3 +69,15 @@ class FlagStatusUpdate(BaseModel):
         if self.status == FlagStatus.resolved:
             raise ValueError("resolving a flag needs a Phase-B resolution action")
         return self
+
+
+class PinRequest(BaseModel):
+    """A moderator-corrected value for an OWNS edge — at least one field required."""
+    stake_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    ownership_type: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        if self.stake_percent is None and not self.ownership_type:
+            raise ValueError("provide stake_percent and/or ownership_type")
+        return self

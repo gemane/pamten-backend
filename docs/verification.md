@@ -178,8 +178,12 @@ Per project convention (mocked unit tests + real-ArcadeDB integration —
   import recreates it. `GET /flags/suppressions` lists them; `DELETE
   /flags/suppressions/{id}` un-suppresses. (Node suppression + graph-tree/expand
   filtering are not yet covered.)
-- **Pin (deferred)** — a corrected value re-scrape treats as higher-authority;
-  deferred until real flag categories are observed.
+- **Pin (implemented).** `POST /flags/{id}/pin` (moderator) resolves an *OWNS*
+  flag by recording a corrected `stake_percent`/`ownership_type` as a **read-time
+  override** (`app/pins.py`) — it does *not* mutate the scraped edge, so the fix
+  stands across re-scrapes and un-pinning cleanly reverts. Applied in
+  `full-profile` (owners/subsidiaries), `person/full-profile` (holdings), and
+  `/relationships/owners`. `GET /flags/pins`, `DELETE /flags/pins/{id}` (un-pin).
 
 ## Non-goals (beyond Phase B)
 - **Manual data entry** — adding entities/people/relationships by hand

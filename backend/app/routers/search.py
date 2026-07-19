@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from app.database import db
 from app.suppressions import load_keys, is_suppressed
+from app.pins import load_pins, apply_pin
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
@@ -115,8 +116,9 @@ def get_full_profile(entity_id: str):
         if not record:
             raise HTTPException(status_code=404, detail="Entity not found")
 
-        # Drop edges a moderator has suppressed (kept out of the scraped data).
+        # Drop suppressed edges and apply pinned corrections (both read-time overlays).
         sup = load_keys(session)
+        pins = load_pins(session)
 
         owners = []
         for o in record["owners"]:
@@ -125,7 +127,8 @@ def get_full_profile(entity_id: str):
             owner = dict(o["owner"])
             if is_suppressed(sup, "owns", owner.get("id"), entity_id):
                 continue
-            owners.append({"owner": owner, "relationship": dict(o["rel"])})
+            rel = apply_pin(pins, owner.get("id"), entity_id, dict(o["rel"]))
+            owners.append({"owner": owner, "relationship": rel})
 
         subsidiaries = []
         for s in record["subsidiaries"]:
@@ -134,7 +137,8 @@ def get_full_profile(entity_id: str):
             sub = dict(s["entity"])
             if is_suppressed(sup, "owns", entity_id, sub.get("id")):
                 continue
-            subsidiaries.append({"entity": sub, "relationship": dict(s["rel"])})
+            rel = apply_pin(pins, entity_id, sub.get("id"), dict(s["rel"]))
+            subsidiaries.append({"entity": sub, "relationship": rel})
 
         executives = []
         for ex in record["executives"]:
@@ -220,10 +224,16 @@ def get_person_profile(person_id: str):
         holdings = [x for x in record["holdings"] if x["entity"] and not is_suppressed(
             sup, "owns", person_id, dict(x["entity"]).get("id"))]
 
+        # Apply pinned OWNS corrections to the collapsed holdings.
+        pins = load_pins(session)
+        holdings_out = _dedupe_holdings(holdings)
+        for h in holdings_out:
+            h["relationship"] = apply_pin(pins, person_id, h["entity"].get("id"), h["relationship"])
+
         return {
             "person": dict(record["p"]),
             "positions": _dedupe_positions(positions),
-            "holdings": _dedupe_holdings(holdings),
+            "holdings": holdings_out,
         }
 
 
