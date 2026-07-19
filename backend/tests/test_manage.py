@@ -1,7 +1,10 @@
 """
-Tests for the manage.py wipe-data command — in particular that it clears the
-stale index entries DELETE FROM leaves behind (which otherwise 500 the SEC
-scraper on the next import with RecordNotFoundException).
+Tests for the manage.py wipe-data command.
+
+Covers both the batched-delete mechanics (clears the stale index entries
+DELETE FROM leaves behind, which otherwise 500 the SEC scraper on the next
+import) and the three safety guards that keep it from ever running against a
+production database by accident.
 """
 import types
 
@@ -9,11 +12,17 @@ import pytest
 
 
 def _args(**kw):
+    kw.setdefault("confirm_database", "test")  # matches ARCADEDB_DATABASE in conftest
     return types.SimpleNamespace(**kw)
 
 
+def _arm(monkeypatch):
+    """Enable the dedicated wipe guard (Guard 1)."""
+    monkeypatch.setenv("ALLOW_DESTRUCTIVE_WIPE", "true")
+
+
 def test_wipe_data_drops_types_then_recreates_schema(monkeypatch):
-    monkeypatch.setenv("DEBUG", "true")
+    _arm(monkeypatch)
     calls: list[str] = []
     monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: calls.append(q))
     recreated: list[bool] = []
@@ -37,10 +46,39 @@ def test_wipe_data_drops_types_then_recreates_schema(monkeypatch):
     assert recreated == [True]
 
 
-def test_wipe_data_refuses_without_debug(monkeypatch):
-    monkeypatch.delenv("DEBUG", raising=False)
-    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda *a, **k: None)
+def test_wipe_data_refuses_without_the_dedicated_flag(monkeypatch):
+    # Guard 1: DEBUG must NOT be enough — only ALLOW_DESTRUCTIVE_WIPE arms it.
+    monkeypatch.delenv("ALLOW_DESTRUCTIVE_WIPE", raising=False)
+    monkeypatch.setenv("DEBUG", "true")
+    ran: list[str] = []
+    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: ran.append(q))
 
     import manage
     with pytest.raises(SystemExit):
         manage.cmd_wipe_data(_args(yes=True))
+    assert ran == []  # bailed before touching the DB
+
+
+def test_wipe_data_refuses_without_confirm_database(monkeypatch):
+    # Guard 2: must name the target DB explicitly.
+    _arm(monkeypatch)
+    ran: list[str] = []
+    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: ran.append(q))
+
+    import manage
+    with pytest.raises(SystemExit):
+        manage.cmd_wipe_data(_args(yes=True, confirm_database=None))
+    assert ran == []
+
+
+def test_wipe_data_refuses_on_database_name_mismatch(monkeypatch):
+    # Guard 2: the named DB must match the connected one — this is what stops a
+    # wipe aimed at the wrong (e.g. production) database.
+    _arm(monkeypatch)
+    ran: list[str] = []
+    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: ran.append(q))
+
+    import manage
+    with pytest.raises(SystemExit):
+        manage.cmd_wipe_data(_args(yes=True, confirm_database="pamten"))  # != "test"
+    assert ran == []
