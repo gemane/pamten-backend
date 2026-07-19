@@ -57,9 +57,11 @@ def get_source(source_id: str):
 # — and merge in Python, rather than one big Cypher with list literals / UNWIND
 # / COALESCE, which ArcadeDB's Cypher engine does not support.
 _PROVENANCE_QUERIES = (
-    # Owners of this entity
+    # Owners of this entity. Anchor on the indexed Entity and follow the edge
+    # *inward* — writing it as (a)-[:OWNS]->(e {id}) makes ArcadeDB scan every
+    # node for `a` instead of resolving `e` by index (36s on a full-GLEIF DB).
     """
-    MATCH (a)-[r:OWNS]->(e:Entity {id: $entity_id})
+    MATCH (e:Entity {id: $entity_id})<-[r:OWNS]-(a)
     WHERE r.source_id IS NOT NULL
     MATCH (s:Source {id: r.source_id})
     RETURN s.id AS id, s.name AS name, s.type AS type,
@@ -67,9 +69,9 @@ _PROVENANCE_QUERIES = (
            r.source_url AS source_url, r.source_date AS source_date,
            r.last_scraped_at AS last_scraped_at
     """,
-    # Roles at this entity
+    # Roles at this entity (same anchoring fix)
     """
-    MATCH (p)-[r:HAS_ROLE]->(e:Entity {id: $entity_id})
+    MATCH (e:Entity {id: $entity_id})<-[r:HAS_ROLE]-(p)
     WHERE r.source_id IS NOT NULL
     MATCH (s:Source {id: r.source_id})
     RETURN s.id AS id, s.name AS name, s.type AS type,

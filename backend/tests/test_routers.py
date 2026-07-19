@@ -245,8 +245,10 @@ def test_sources_for_entity_excludes_subsidiaries(client, fake_db):
     assert len(cyphers) == 3  # owners-in, roles, entity-self — no owns-out
     # No query walks OUT from this entity along OWNS (i.e. to its subsidiaries)
     assert not any("{id: $entity_id})-[r:OWNS]->" in c for c in cyphers)
-    # Sanity: the inbound-owners query IS present
-    assert any("-[r:OWNS]->(e:Entity {id: $entity_id})" in c for c in cyphers)
+    # Sanity: the inbound-owners query IS present. Anchored on the indexed Entity
+    # with the edge followed inward (…{id})<-[:OWNS]-…) so ArcadeDB uses the index
+    # instead of scanning every node at scale.
+    assert any("{id: $entity_id})<-[r:OWNS]-" in c for c in cyphers)
 
 
 def test_create_dual_listed_links_two_entities(client, fake_db, make_token):
