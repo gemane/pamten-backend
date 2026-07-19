@@ -12,25 +12,27 @@ def _args(**kw):
     return types.SimpleNamespace(**kw)
 
 
-def test_wipe_data_deletes_types_then_rebuilds_indexes(monkeypatch):
+def test_wipe_data_drops_types_then_recreates_schema(monkeypatch):
     monkeypatch.setenv("DEBUG", "true")
     calls: list[str] = []
     monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: calls.append(q))
-    monkeypatch.setattr("app.db.schema.ensure_indexes", lambda: {"ok": [], "failed": []})
+    recreated: list[bool] = []
+    monkeypatch.setattr("app.db.schema.ensure_indexes",
+                        lambda: recreated.append(True) or {"ok": [], "failed": []})
 
     import manage
     manage.cmd_wipe_data(_args(yes=True))
 
-    # every data type is wiped — core data, edges, and the derived overlays/logs
+    # every data/overlay type is DROPPED (metadata op — scales where DELETE FROM
+    # times out on a full GLEIF import); core data, edges, overlays and logs
     for t in ("OWNS", "HAS_ROLE", "Entity", "Person", "Location", "Source",
               "Flag", "Suppression", "Pin", "ScrapeRun", "MergeLog"):
-        assert f"DELETE FROM {t}" in calls
+        assert f"DROP TYPE {t} IF EXISTS UNSAFE" in calls
     # ... but user accounts and config are left alone
     for t in ("User", "ScraperSource", "Peer"):
-        assert f"DELETE FROM {t}" not in calls
-    # ... and stale index entries are cleared (the fix)
-    assert "REBUILD INDEX *" in calls
-    assert calls.index("REBUILD INDEX *") > calls.index("DELETE FROM Entity")
+        assert f"DROP TYPE {t} IF EXISTS UNSAFE" not in calls
+    # ... and the empty types + indexes are recreated afterward
+    assert recreated == [True]
 
 
 def test_wipe_data_refuses_without_debug(monkeypatch):
