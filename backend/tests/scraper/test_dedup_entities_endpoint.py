@@ -50,8 +50,29 @@ def test_job_records_run_and_clears_the_guard():
     scraper_router._dedup_running = True
     fake_cm = patch("app.scraper.router.record_run").start()
     fake_cm.return_value.__enter__.return_value = {"total": 0}
-    with patch.object(scraper_router.maintenance, "deduplicate_entities",
-                      return_value={"entities_merged": 7}):
-        scraper_router._dedup_entities_job()
+    with patch.object(scraper_router.maintenance, "deduplicate_entities_bulk",
+                      return_value={"entities_removed": 7}):
+        scraper_router._dedup_entities_job("bulk")
     patch.stopall()
     assert scraper_router._dedup_running is False    # guard released after the job
+
+
+def test_bulk_heal_aggregates_then_batches_deletes():
+    """deduplicate_entities_bulk: one grouped scan per id kind, then batched
+    DELETE VERTEX keeping the min-id survivor."""
+    from app.scraper import maintenance
+
+    # lei_id pass finds one dup group (keep e1, drop the other); coh pass none.
+    def fake_run_sql(q):
+        return [{"k": "LEI-A", "c": 2, "keep": "e1"}] if "lei_id" in q else []
+
+    scripts = []
+    with patch.object(maintenance, "run_sql", side_effect=fake_run_sql), \
+         patch.object(maintenance, "run_sqlscript",
+                      side_effect=lambda s, p=None: scripts.append((s, p))):
+        res = maintenance.deduplicate_entities_bulk()
+
+    assert res["entities_removed"] == 1                      # c-1 per group
+    assert res["by"]["lei_id"]["groups"] == 1
+    assert "DELETE VERTEX FROM Entity" in scripts[0][0]      # a delete was issued
+    assert scripts[0][1] == {"k__0": "LEI-A", "keep__0": "e1"}

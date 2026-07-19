@@ -218,14 +218,16 @@ _dedup_lock = threading.Lock()
 _dedup_running = False
 
 
-def _dedup_entities_job() -> None:
-    """Run the full entity dedup in a background thread, logged as a ScrapeRun so
+def _dedup_entities_job(strategy: str) -> None:
+    """Run the entity dedup in a background thread, logged as a ScrapeRun so
     progress/outcome shows up in GET /scraper/runs like any scrape."""
     global _dedup_running
     try:
-        with record_run("deduplicate-entities", "all") as out:
-            result = maintenance.deduplicate_entities(limit=None)
-            out["total"] = result["entities_merged"]
+        with record_run("deduplicate-entities", strategy) as out:
+            if strategy == "merge":
+                out["total"] = maintenance.deduplicate_entities(limit=None)["entities_merged"]
+            else:  # "bulk" — fast delete-redundant heal (the practical one at scale)
+                out["total"] = maintenance.deduplicate_entities_bulk()["entities_removed"]
     except Exception:  # noqa: BLE001 - record_run already logged 'failed'
         logger.exception("deduplicate-entities job failed")
     finally:
@@ -234,17 +236,19 @@ def _dedup_entities_job() -> None:
 
 
 @router.post("/deduplicate-entities")
-def deduplicate_entities(background: bool = True, limit: int = 300,
+def deduplicate_entities(background: bool = True, strategy: str = "bulk", limit: int = 300,
                          _: dict = Depends(require_admin)):
-    """Merge Entity duplicates sharing an LEI / Companies House number (heals the
-    old recordId-keyed BODS doubling) and migrate their edges. Admin only.
+    """Heal the old recordId-keyed BODS doubling: collapse Entity duplicates that
+    share an LEI / Companies House number. Admin only.
 
-    On a large dataset the aggregation scan alone exceeds the request timeout, so
-    by default this runs **in the background** and returns immediately — poll
-    `GET /scraper/runs` (source `deduplicate-entities`) for progress/outcome.
-    Pass `background=false` to run synchronously in bounded batches of `limit`
-    duplicate groups (returns `remaining`; call until 0) — only viable on small
-    datasets."""
+    Runs **in the background** by default (returns immediately; poll
+    `GET /scraper/runs`, source `deduplicate-entities`) because at full-GLEIF
+    scale even the grouping scan exceeds the request timeout. Strategies:
+    `bulk` (default) keeps one node per id and deletes the rest (fast, drops the
+    losers' edges — survivor already carries the import's); `merge` migrates the
+    losers' edges first (correct but only finishes on small data). Pass
+    `background=false` to run the bounded-batch merge synchronously (`limit`
+    groups, returns `remaining`)."""
     if not background:
         return maintenance.deduplicate_entities(limit=limit)
 
@@ -254,8 +258,8 @@ def deduplicate_entities(background: bool = True, limit: int = 300,
             return {"status": "already_running",
                     "message": "A deduplicate-entities job is already in progress; poll GET /scraper/runs."}
         _dedup_running = True
-    threading.Thread(target=_dedup_entities_job, daemon=True).start()
-    return {"status": "started",
+    threading.Thread(target=_dedup_entities_job, args=(strategy,), daemon=True).start()
+    return {"status": "started", "strategy": strategy,
             "message": "Deduplicating entities in the background; poll GET /scraper/runs (source=deduplicate-entities)."}
 
 

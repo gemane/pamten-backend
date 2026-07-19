@@ -5,7 +5,7 @@ the endpoints stay thin. Behaviour is unchanged from the previous inline
 implementations.
 """
 from app.database import db
-from app.db.arcadedb import run_query, run_command
+from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 
 
@@ -471,6 +471,47 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
         "remaining": max(0, total - len(batch)),
         "detail": merged[:100],   # cap payload; counts above are complete
     }
+
+
+def deduplicate_entities_bulk(batch_size: int = 200) -> dict:
+    """
+    Fast heal for the recordId-keyed BODS doubling. For each external id (LEI,
+    then Companies House number) that sits on more than one Entity, keep the
+    lexicographically-smallest node id and ``DELETE VERTEX`` the rest — which also
+    drops their edges (ArcadeDB detaches on vertex delete). Admin only; destructive.
+
+    Unlike :func:`deduplicate_entities` this does **not** migrate the losers'
+    edges onto the survivor. That's deliberate: the merge-with-migration can't
+    finish at full-GLEIF scale (per-group/per-edge round trips), whereas this is a
+    single grouped scan per id kind plus batched deletes. It's safe here because
+    the surviving node already carries the import's edges and anything missed is
+    re-scrapeable. Keyed on the external identifier via ArcadeDB SQL (Cypher has
+    no GROUP BY here); the survivor picks itself with ``min(id)`` in one scan, so
+    no per-group read.
+    """
+    removed_total = 0
+    by: dict[str, dict] = {}
+    for key_prop in ("lei_id", "companies_house_id"):
+        # One scan: every duplicated value + its keeper (min id) + member count.
+        # (ArcadeDB SQL has no HAVING, so filter the grouped result in a subquery.)
+        groups = run_sql(
+            f"SELECT FROM (SELECT {key_prop} AS k, count(*) AS c, min(id) AS keep "
+            f"FROM Entity WHERE {key_prop} IS NOT NULL GROUP BY {key_prop}) WHERE c > 1"
+        )
+        removed = sum(int(g["c"]) - 1 for g in groups)
+        for i in range(0, len(groups), batch_size):
+            chunk = groups[i:i + batch_size]
+            stmts, params = [], {}
+            for n, g in enumerate(chunk):
+                params[f"k__{n}"] = g["k"]
+                params[f"keep__{n}"] = g["keep"]
+                stmts.append(
+                    f"DELETE VERTEX FROM Entity WHERE {key_prop} = :k__{n} AND id <> :keep__{n};")
+            if stmts:
+                run_sqlscript("\n".join(stmts), params)
+        by[key_prop] = {"groups": len(groups), "entities_removed": removed}
+        removed_total += removed
+    return {"entities_removed": removed_total, "by": by}
 
 
 def migrate_ownership_types() -> dict:
