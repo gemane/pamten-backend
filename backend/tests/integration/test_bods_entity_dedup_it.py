@@ -66,3 +66,29 @@ def test_deduplicate_entities_heals_legacy_doubles(it_db):
     assert inc[0]["n"] == 1
     out = it_db.run_command("MATCH (e:Entity {id:'lei:LEI-ACME'})-[:OWNS]->(s) RETURN count(s) AS n")
     assert out[0]["n"] == 1
+
+
+def test_deduplicate_entities_batches_with_limit(it_db):
+    from app.scraper import maintenance
+
+    # Two independent duplicate groups (two LEIs, each with a double).
+    for lei in ("LEI-A", "LEI-B"):
+        it_db.run_command(f"CREATE (e:Entity {{id:'old-{lei}', name:'Co', lei_id:'{lei}'}})")
+        it_db.run_command(f"CREATE (e:Entity {{id:'lei:{lei}', name:'Co', lei_id:'{lei}'}})")
+
+    # First call: only one group heals, one still remains.
+    r1 = maintenance.deduplicate_entities(limit=1)
+    assert r1["duplicate_groups_found"] == 2
+    assert r1["groups_processed"] == 1
+    assert r1["entities_merged"] == 1
+    assert r1["remaining"] == 1
+
+    # Second call: the last group heals, nothing left.
+    r2 = maintenance.deduplicate_entities(limit=1)
+    assert r2["entities_merged"] == 1
+    assert r2["remaining"] == 0
+
+    # Idempotent: a third call finds no duplicates.
+    r3 = maintenance.deduplicate_entities()
+    assert r3["duplicate_groups_found"] == 0
+    assert r3["entities_merged"] == 0

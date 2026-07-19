@@ -214,10 +214,12 @@ def deduplicate_person_nodes(_: dict = Depends(require_admin)):
 # ── Entity deduplication endpoint ──────────────────────────────────────────────
 
 @router.post("/deduplicate-entities")
-def deduplicate_entities(_: dict = Depends(require_admin)):
+def deduplicate_entities(limit: int = 300, _: dict = Depends(require_admin)):
     """Merge Entity duplicates sharing an LEI / Companies House number (heals the
-    old recordId-keyed BODS doubling) and migrate their edges. Admin only."""
-    return maintenance.deduplicate_entities()
+    old recordId-keyed BODS doubling) and migrate their edges. Processes up to
+    `limit` duplicate groups per call and returns `remaining`; call repeatedly
+    until `remaining` is 0. Admin only."""
+    return maintenance.deduplicate_entities(limit=limit)
 
 
 # ── Geocode endpoint ───────────────────────────────────────────────────────────
