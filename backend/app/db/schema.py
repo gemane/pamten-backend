@@ -45,6 +45,13 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Peer",     "base_url",        "NOTUNIQUE"),
     ("ScrapeRun", "id",             "UNIQUE"),
     ("ScrapeRun", "started_at",     "NOTUNIQUE"),
+    # Verification flags (user reports that a node/edge looks wrong).
+    ("Flag",      "id",             "UNIQUE"),
+    ("Flag",      "status",         "NOTUNIQUE"),
+    ("Flag",      "target_kind",    "NOTUNIQUE"),
+    ("Flag",      "node_id",        "NOTUNIQUE"),
+    ("Flag",      "from_id",        "NOTUNIQUE"),
+    ("Flag",      "to_id",          "NOTUNIQUE"),
 ]
 
 # Edge types the app creates via Cypher and needs to exist up front.
