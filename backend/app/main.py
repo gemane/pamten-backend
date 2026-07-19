@@ -14,6 +14,9 @@ from app.auth import router as auth_router
 # Emit app INFO logs (scrape/import progress) — without this the root logger
 # stays at WARNING and those lines are lost. No-op if handlers already exist.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# ...but don't let httpx log every ArcadeDB request (a bulk import makes thousands).
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 @asynccontextmanager

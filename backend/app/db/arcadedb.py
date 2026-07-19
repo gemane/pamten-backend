@@ -92,3 +92,9 @@ def run_command(cypher: str, params: dict | None = None) -> list[dict]:
 def run_sql(command: str, params: dict | None = None) -> list[dict]:
     """Execute an ArcadeDB SQL command — used for schema DDL (Cypher can't)."""
     return _post("command", command, params or {}, language="sql")
+
+
+def run_sqlscript(script: str, params: dict | None = None) -> list[dict]:
+    """Execute a multi-statement ArcadeDB SQL script in one request — used to
+    batch bulk writes (Cypher can't; ArcadeDB rejects UNWIND)."""
+    return _post("command", script, params or {}, language="sqlscript")
