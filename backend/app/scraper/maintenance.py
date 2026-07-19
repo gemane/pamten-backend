@@ -473,6 +473,41 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     }
 
 
+# ArcadeDB caps a single GROUP BY at queryMaxHeapElementsAllowedPerOp (500k)
+# groups. At full-GLEIF scale there are millions of distinct LEIs, so we shard
+# the key space by prefix and sub-shard adaptively when a shard still trips it.
+_SHARD_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"   # LEI / Companies House ids are upper-alnum
+_GROUP_LIMIT_MARKERS = ("queryMaxHeapElementsAllowedPerOp", "in-heap GROUP")
+
+
+def _dup_groups_sharded(key_prop: str) -> list[tuple[str, str, int]]:
+    """(value, keeper-id, member-count) for every value on >1 Entity.
+
+    Grouped scan restricted to a key prefix (range ``[prefix, prefix+'{')`` —
+    ``{`` sorts just past ``Z``/``9``), split one level deeper whenever the shard
+    exceeds ArcadeDB's in-heap group cap. ArcadeDB SQL has no ``HAVING``, so the
+    ``c > 1`` filter wraps the grouped subquery.
+    """
+    found: list[tuple[str, str, int]] = []
+
+    def _collect(prefix: str) -> None:
+        q = (f"SELECT FROM (SELECT {key_prop} AS k, count(*) AS c, min(id) AS keep "
+             f"FROM Entity WHERE {key_prop} >= :lo AND {key_prop} < :hi "
+             f"GROUP BY {key_prop}) WHERE c > 1")
+        try:
+            rows = run_sql(q, {"lo": prefix, "hi": prefix + "{"})
+        except RuntimeError as exc:
+            if not any(m in str(exc) for m in _GROUP_LIMIT_MARKERS):
+                raise
+            for ch in _SHARD_CHARSET:
+                _collect(prefix + ch)
+            return
+        found.extend((r["k"], r["keep"], int(r["c"])) for r in rows)
+
+    _collect("")
+    return found
+
+
 def deduplicate_entities_bulk(batch_size: int = 200) -> dict:
     """
     Fast heal for the recordId-keyed BODS doubling. For each external id (LEI,
@@ -483,28 +518,21 @@ def deduplicate_entities_bulk(batch_size: int = 200) -> dict:
     Unlike :func:`deduplicate_entities` this does **not** migrate the losers'
     edges onto the survivor. That's deliberate: the merge-with-migration can't
     finish at full-GLEIF scale (per-group/per-edge round trips), whereas this is a
-    single grouped scan per id kind plus batched deletes. It's safe here because
-    the surviving node already carries the import's edges and anything missed is
-    re-scrapeable. Keyed on the external identifier via ArcadeDB SQL (Cypher has
-    no GROUP BY here); the survivor picks itself with ``min(id)`` in one scan, so
-    no per-group read.
+    grouped scan per id kind (prefix-sharded to stay under ArcadeDB's group cap)
+    plus batched deletes. Safe here because the surviving node already carries the
+    import's edges and anything missed is re-scrapeable.
     """
     removed_total = 0
     by: dict[str, dict] = {}
     for key_prop in ("lei_id", "companies_house_id"):
-        # One scan: every duplicated value + its keeper (min id) + member count.
-        # (ArcadeDB SQL has no HAVING, so filter the grouped result in a subquery.)
-        groups = run_sql(
-            f"SELECT FROM (SELECT {key_prop} AS k, count(*) AS c, min(id) AS keep "
-            f"FROM Entity WHERE {key_prop} IS NOT NULL GROUP BY {key_prop}) WHERE c > 1"
-        )
-        removed = sum(int(g["c"]) - 1 for g in groups)
+        groups = _dup_groups_sharded(key_prop)   # (value, keeper, member-count)
+        removed = sum(c - 1 for _, _, c in groups)
         for i in range(0, len(groups), batch_size):
             chunk = groups[i:i + batch_size]
             stmts, params = [], {}
-            for n, g in enumerate(chunk):
-                params[f"k__{n}"] = g["k"]
-                params[f"keep__{n}"] = g["keep"]
+            for n, (k, keep, _c) in enumerate(chunk):
+                params[f"k__{n}"] = k
+                params[f"keep__{n}"] = keep
                 stmts.append(
                     f"DELETE VERTEX FROM Entity WHERE {key_prop} = :k__{n} AND id <> :keep__{n};")
             if stmts:

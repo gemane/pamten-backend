@@ -58,12 +58,12 @@ def test_job_records_run_and_clears_the_guard():
 
 
 def test_bulk_heal_aggregates_then_batches_deletes():
-    """deduplicate_entities_bulk: one grouped scan per id kind, then batched
+    """deduplicate_entities_bulk: grouped scan per id kind, then batched
     DELETE VERTEX keeping the min-id survivor."""
     from app.scraper import maintenance
 
     # lei_id pass finds one dup group (keep e1, drop the other); coh pass none.
-    def fake_run_sql(q):
+    def fake_run_sql(q, params=None):
         return [{"k": "LEI-A", "c": 2, "keep": "e1"}] if "lei_id" in q else []
 
     scripts = []
@@ -76,3 +76,32 @@ def test_bulk_heal_aggregates_then_batches_deletes():
     assert res["by"]["lei_id"]["groups"] == 1
     assert "DELETE VERTEX FROM Entity" in scripts[0][0]      # a delete was issued
     assert scripts[0][1] == {"k__0": "LEI-A", "keep__0": "e1"}
+
+
+def test_bulk_heal_subshards_when_group_cap_is_hit():
+    """A shard that trips ArcadeDB's in-heap group cap is split one level deeper."""
+    from app.scraper import maintenance
+
+    cap_error = RuntimeError(
+        "ArcadeDB command failed [500]: Limit of allowed groups for in-heap "
+        "GROUP BY in a single query exceeded (500000). ... queryMaxHeapElementsAllowedPerOp")
+
+    calls = {"n": 0}
+
+    def fake_run_sql(q, params=None):
+        # Only the lei_id root shard (prefix "") trips the cap; sub-shards succeed.
+        if "lei_id" not in q:
+            return []
+        calls["n"] += 1
+        if params["lo"] == "":            # root shard → over the cap
+            raise cap_error
+        if params["lo"] == "5":           # one sub-shard has a duplicate
+            return [{"k": "5LEI", "c": 2, "keep": "a"}]
+        return []
+
+    with patch.object(maintenance, "run_sql", side_effect=fake_run_sql), \
+         patch.object(maintenance, "run_sqlscript", side_effect=lambda s, p=None: None):
+        res = maintenance.deduplicate_entities_bulk()
+
+    assert res["by"]["lei_id"]["groups"] == 1          # found via a sub-shard
+    assert calls["n"] > len(maintenance._SHARD_CHARSET)  # root failed, then 36 sub-shards scanned
