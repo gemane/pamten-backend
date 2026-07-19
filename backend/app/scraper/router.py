@@ -1,4 +1,5 @@
 import logging
+import threading
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
@@ -213,13 +214,49 @@ def deduplicate_person_nodes(_: dict = Depends(require_admin)):
 
 # ── Entity deduplication endpoint ──────────────────────────────────────────────
 
+_dedup_lock = threading.Lock()
+_dedup_running = False
+
+
+def _dedup_entities_job() -> None:
+    """Run the full entity dedup in a background thread, logged as a ScrapeRun so
+    progress/outcome shows up in GET /scraper/runs like any scrape."""
+    global _dedup_running
+    try:
+        with record_run("deduplicate-entities", "all") as out:
+            result = maintenance.deduplicate_entities(limit=None)
+            out["total"] = result["entities_merged"]
+    except Exception:  # noqa: BLE001 - record_run already logged 'failed'
+        logger.exception("deduplicate-entities job failed")
+    finally:
+        with _dedup_lock:
+            _dedup_running = False
+
+
 @router.post("/deduplicate-entities")
-def deduplicate_entities(limit: int = 300, _: dict = Depends(require_admin)):
+def deduplicate_entities(background: bool = True, limit: int = 300,
+                         _: dict = Depends(require_admin)):
     """Merge Entity duplicates sharing an LEI / Companies House number (heals the
-    old recordId-keyed BODS doubling) and migrate their edges. Processes up to
-    `limit` duplicate groups per call and returns `remaining`; call repeatedly
-    until `remaining` is 0. Admin only."""
-    return maintenance.deduplicate_entities(limit=limit)
+    old recordId-keyed BODS doubling) and migrate their edges. Admin only.
+
+    On a large dataset the aggregation scan alone exceeds the request timeout, so
+    by default this runs **in the background** and returns immediately — poll
+    `GET /scraper/runs` (source `deduplicate-entities`) for progress/outcome.
+    Pass `background=false` to run synchronously in bounded batches of `limit`
+    duplicate groups (returns `remaining`; call until 0) — only viable on small
+    datasets."""
+    if not background:
+        return maintenance.deduplicate_entities(limit=limit)
+
+    global _dedup_running
+    with _dedup_lock:
+        if _dedup_running:
+            return {"status": "already_running",
+                    "message": "A deduplicate-entities job is already in progress; poll GET /scraper/runs."}
+        _dedup_running = True
+    threading.Thread(target=_dedup_entities_job, daemon=True).start()
+    return {"status": "started",
+            "message": "Deduplicating entities in the background; poll GET /scraper/runs (source=deduplicate-entities)."}
 
 
 # ── Geocode endpoint ───────────────────────────────────────────────────────────
