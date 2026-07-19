@@ -8,7 +8,7 @@ from app.models.relationship import (
     DualListedCreate,
 )
 from app.database import db
-from app.suppressions import load_keys, is_suppressed
+from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 
 router = APIRouter(prefix="/relationships", tags=["Relationships"])
@@ -192,12 +192,13 @@ def get_owners(entity_id: str):
 
     with db.get_session() as session:
         rows = list(session.run(query, entity_id=entity_id))
-        sup = load_keys(session)     # drop moderator-suppressed owner edges
-        pins = load_pins(session)    # apply pinned corrections
+        sup = load_keys(session)                  # suppressed owner edges
+        hidden = load_suppressed_nodes(session)   # suppressed owner nodes
+        pins = load_pins(session)                 # pinned corrections
         out = []
         for record in rows:
             owner = dict(record["owner"])
-            if is_suppressed(sup, "owns", owner.get("id"), entity_id):
+            if owner.get("id") in hidden or is_suppressed(sup, "owns", owner.get("id"), entity_id):
                 continue
             rel = apply_pin(pins, owner.get("id"), entity_id, dict(record["r"]))
             out.append({"owner": owner, "relationship": rel})

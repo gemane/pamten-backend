@@ -155,10 +155,12 @@ def test_suppress_edge_flag_creates_suppression_and_resolves(client, fake_db, ma
     assert r.json()["status"] == "suppressed"
 
 
-def test_suppress_rejects_node_flag(client, fake_db, make_token):
-    fake_db.queue([{"tk": "entity", "from_id": "", "to_id": "", "role": ""}])
+def test_suppress_node_flag_creates_node_suppression(client, fake_db, make_token):
+    # Node (entity/person) flags are now suppressible — a pure read-time hide.
+    fake_db.queue([{"tk": "entity", "from_id": "", "to_id": "", "role": "", "node_id": "e1"}])
     r = client.post("/flags/f1/suppress", headers=_auth(make_token(role="moderator")))
-    assert r.status_code == 400
+    assert r.status_code == 200
+    assert r.json()["status"] == "suppressed"
 
 
 def test_suppress_unknown_flag_404(client, fake_db, make_token):

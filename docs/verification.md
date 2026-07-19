@@ -175,9 +175,12 @@ Per project convention (mocked unit tests + real-ArcadeDB integration —
   **read-time** (`app/suppressions.py`): the read endpoints (`full-profile`,
   `person/full-profile`, `/relationships/owners`) load the small suppression set
   and drop matching edges — so a suppressed edge stays hidden even if a later
-  import recreates it. `GET /flags/suppressions` lists them; `DELETE
-  /flags/suppressions/{id}` un-suppresses. (Node suppression + graph-tree/expand
-  filtering are not yet covered.)
+  import recreates it. **Node suppression** (entity/person flags) is also
+  supported: a pure read-time hide (the node is not deleted) enforced in search,
+  its own `full-profile` (404), and related-node lists on other profiles;
+  un-suppress restores it. `GET /flags/suppressions` lists them; `DELETE
+  /flags/suppressions/{id}` un-suppresses. (Graph tree/expand filtering is not yet
+  covered.)
 - **Pin (implemented).** `POST /flags/{id}/pin` (moderator) resolves an *OWNS*
   flag by recording a corrected `stake_percent`/`ownership_type` as a **read-time
   override** (`app/pins.py`) — it does *not* mutate the scraped edge, so the fix
