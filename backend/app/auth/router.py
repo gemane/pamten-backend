@@ -131,8 +131,8 @@ def list_users(_: dict = Depends(require_admin)):
 
 @router.patch("/users/{user_id}/role")
 def update_user_role(user_id: str, data: RoleRequest, _: dict = Depends(require_admin)):
-    if data.role not in ("admin", "contributor", "viewer"):
-        raise HTTPException(status_code=400, detail="Role must be admin, contributor, or viewer")
+    if data.role not in ("admin", "moderator", "contributor", "viewer"):
+        raise HTTPException(status_code=400, detail="Role must be admin, moderator, contributor, or viewer")
     with db.get_session() as session:
         rec = session.run(
             "MATCH (u:User {id: $id}) SET u.role = $role RETURN u.id AS id",
