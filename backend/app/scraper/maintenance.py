@@ -284,6 +284,174 @@ def deduplicate_person_nodes() -> dict:
     return {"pairs_merged": len(merged), "detail": merged}
 
 
+def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
+    """Move every OWNS / HAS_ROLE / location edge off ``dead_id`` onto ``keep_id``.
+
+    Covers all four ways an Entity is wired: OWNS it makes (outgoing), OWNS made
+    *to* it (incoming, from a Person or Entity), HAS_ROLE held *in* it, and its
+    HEADQUARTERED_IN / REGISTERED_IN / OPERATES_IN location links. An edge that
+    ``keep`` already has (active, same target/role/location) is dropped rather
+    than duplicated. Returns the number of edges migrated.
+    """
+    migrated = 0
+
+    # 1. Outgoing OWNS  (dead)-[:OWNS]->(t)
+    for e in run_query(
+        """
+        MATCH (a:Entity {id: $id})-[r:OWNS]->(t)
+        RETURN t.id AS tid, r.stake_percent AS stake, r.ownership_type AS otype,
+               r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
+               r.source_id AS source_id, r.credibility_score AS cred,
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        if run_query(
+            "MATCH (a:Entity {id: $k})-[r:OWNS]->(t {id: $tid}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            {"k": keep_id, "tid": e["tid"]},
+        ):
+            continue
+        run_command(
+            """
+            MATCH (a:Entity {id: $k}), (t {id: $tid})
+            CREATE (a)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
+                voting_power_pct: $vpp, since: $since, until: $until,
+                source_id: $source_id, credibility_score: $cred,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(t)
+            """,
+            {"k": keep_id, "tid": e["tid"], "stake": e.get("stake"), "otype": e.get("otype"),
+             "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
+             "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
+             "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    # 2. Incoming OWNS  (s)-[:OWNS]->(dead)   — owner may be Person or Entity
+    for e in run_query(
+        """
+        MATCH (s)-[r:OWNS]->(b:Entity {id: $id})
+        RETURN s.id AS sid, r.stake_percent AS stake, r.ownership_type AS otype,
+               r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
+               r.source_id AS source_id, r.credibility_score AS cred,
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        if run_query(
+            "MATCH (s {id: $sid})-[r:OWNS]->(b:Entity {id: $k}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            {"sid": e["sid"], "k": keep_id},
+        ):
+            continue
+        run_command(
+            """
+            MATCH (s {id: $sid}), (b:Entity {id: $k})
+            CREATE (s)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
+                voting_power_pct: $vpp, since: $since, until: $until,
+                source_id: $source_id, credibility_score: $cred,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(b)
+            """,
+            {"sid": e["sid"], "k": keep_id, "stake": e.get("stake"), "otype": e.get("otype"),
+             "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
+             "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
+             "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    # 3. Incoming HAS_ROLE  (p:Person)-[:HAS_ROLE]->(dead)
+    for e in run_query(
+        """
+        MATCH (p:Person)-[r:HAS_ROLE]->(b:Entity {id: $id})
+        RETURN p.id AS pid, r.role AS role, r.since AS since, r.until AS until,
+               r.source_id AS source_id, r.credibility_score AS cred,
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        if run_query(
+            "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(b:Entity {id: $k}) "
+            "WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1",
+            {"pid": e["pid"], "k": keep_id, "role": e.get("role")},
+        ):
+            continue
+        run_command(
+            """
+            MATCH (p:Person {id: $pid}), (b:Entity {id: $k})
+            CREATE (p)-[:HAS_ROLE {role: $role, since: $since, until: $until,
+                source_id: $source_id, credibility_score: $cred,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(b)
+            """,
+            {"pid": e["pid"], "k": keep_id, "role": e.get("role"), "since": e.get("since"),
+             "until": e.get("until"), "source_id": e.get("source_id"), "cred": e.get("cred"),
+             "surl": e.get("surl"), "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    # 4. Outgoing location links  (dead)-[:HEADQUARTERED_IN|REGISTERED_IN|OPERATES_IN]->(loc)
+    for rel in ("HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN"):
+        for e in run_query(
+            f"MATCH (a:Entity {{id: $id}})-[:{rel}]->(l:Location) RETURN l.id AS lid",
+            {"id": dead_id},
+        ):
+            if run_query(
+                f"MATCH (a:Entity {{id: $k}})-[:{rel}]->(l:Location {{id: $lid}}) RETURN 1 LIMIT 1",
+                {"k": keep_id, "lid": e["lid"]},
+            ):
+                continue
+            run_command(
+                f"MATCH (a:Entity {{id: $k}}), (l:Location {{id: $lid}}) CREATE (a)-[:{rel}]->(l)",
+                {"k": keep_id, "lid": e["lid"]},
+            )
+            migrated += 1
+
+    return migrated
+
+
+def deduplicate_entities() -> dict:
+    """
+    Merge Entity nodes that share a stable external identifier — the same LEI or
+    the same Companies House number — into one, migrating their edges and deleting
+    the extras. Heals duplicates left by the older BODS importer, which keyed
+    entities on the per-dump BODS recordId, so the same company imported in two
+    runs became two nodes. Admin only.
+
+    For each duplicate group the surviving node is the one with the highest
+    ``name_credibility`` (then verified, then the lexically-smallest id for a
+    deterministic result).
+    """
+    merged: list[dict] = []
+
+    def _pass(key_prop: str) -> None:
+        rows = run_query(
+            f"MATCH (e:Entity) WHERE e.{key_prop} IS NOT NULL "
+            f"RETURN e.id AS id, e.{key_prop} AS key, e.name AS name, "
+            f"COALESCE(e.name_credibility, 0) AS cred, COALESCE(e.verified, false) AS verified"
+        )
+        groups: dict[str, list[dict]] = {}
+        for r in rows:
+            groups.setdefault(r["key"], []).append(r)
+
+        for key, members in groups.items():
+            if len(members) < 2:
+                continue
+            # Keep the richest node; deterministic tie-break on id.
+            members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
+            keep = members[0]
+            for dead in members[1:]:
+                migrated = _migrate_entity_edges(dead["id"], keep["id"])
+                run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+                merged.append({
+                    "key": f"{key_prop}={key}",
+                    "kept": keep["name"], "kept_id": keep["id"],
+                    "deleted": dead["name"], "deleted_id": dead["id"],
+                    "edges_migrated": migrated,
+                })
+
+    _pass("lei_id")               # LEI first (GLEIF)
+    _pass("companies_house_id")   # then Companies House number (UK PSC); re-reads live data
+
+    return {"entities_merged": len(merged), "detail": merged}
+
+
 def migrate_ownership_types() -> dict:
     """
     One-time migration: derive canonical ownership_type values for all OWNS

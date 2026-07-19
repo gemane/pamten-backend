@@ -349,6 +349,24 @@ def _ref_id(ref: object) -> str | None:
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
+def _entity_node_id(lei_id: str | None, companies_house_id: str | None, fallback: str) -> str:
+    """Deterministic Entity node id derived from a stable external identifier.
+
+    Keying an Entity on its LEI / company number — rather than the BODS
+    ``recordId`` — is what lets the same real company reconcile across imports:
+    the recordId varies between dumps (and between an old filtered run and a
+    later full run), so id-by-recordId silently creates a *second* node for the
+    same company (the Austria-doubling bug). It also lets a forward-reference
+    placeholder merge with the real statement, since a GLEIF ref encodes the LEI.
+    Falls back to the record id / ref only when no external id is available.
+    """
+    if lei_id:
+        return f"lei:{lei_id}"
+    if companies_house_id:
+        return f"gb-coh:{companies_house_id}"
+    return fallback
+
+
 def _entity(batch, node_id, name, entity_type, country, founded,
             lei_id, companies_house_id, source_id, credibility_score):
     """Enqueue an Entity upsert (keyed on the stable node id) and return the id."""
@@ -480,7 +498,7 @@ def _process_entity_statement(
             companies_house_id = value
 
     entity_id = _entity(
-        batch, record_id,
+        batch, _entity_node_id(lei_id, companies_house_id, record_id),
         name=name,
         entity_type=entity_type,
         country=country,
@@ -600,11 +618,12 @@ def _process_relationship_statement(
     # If either side is unknown, create a named placeholder so the edge is preserved.
     owned_id = bods_to_pamten_id.get(subject_ref)
     if not owned_id:
+        _lei = _placeholder_lei(subject_ref)
         owned_id = _entity(
-            batch, subject_ref,
+            batch, _entity_node_id(_lei, None, subject_ref),
             name=_placeholder_name(subject_ref), entity_type="company",
             country=None, founded=None,
-            lei_id=_placeholder_lei(subject_ref), companies_house_id=None,
+            lei_id=_lei, companies_house_id=None,
             source_id=source_id, credibility_score=0,
         )
         bods_to_pamten_id[subject_ref] = owned_id
@@ -620,11 +639,12 @@ def _process_relationship_statement(
                 first_name=None, last_name=None, nationality=None, birth_date=None,
             )
         else:
+            _lei = _placeholder_lei(party_ref)
             owner_id = _entity(
-                batch, party_ref,
+                batch, _entity_node_id(_lei, None, party_ref),
                 name=_placeholder_name(party_ref), entity_type="company",
                 country=None, founded=None,
-                lei_id=_placeholder_lei(party_ref), companies_house_id=None,
+                lei_id=_lei, companies_house_id=None,
                 source_id=source_id, credibility_score=0,
             )
         bods_to_pamten_id[party_ref] = owner_id
