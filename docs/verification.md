@@ -69,13 +69,15 @@ edges at import time; not needed for Phase A.)
 
 ## Who can flag — **anonymous, rate-limited** (open decision 1, resolved)
 
-Anonymous reports are allowed. Rationale: more coverage, and a flag on a person's
-data is effectively a GDPR rectification/objection intake we *want* to make
-frictionless (see [below](#gdpr)). Abuse is contained rather than prevented by a
-login wall:
+Anyone can file a report — **anonymously or logged in**. A logged-in user of any
+role (`viewer`, `contributor`, `moderator`, `admin`) can flag; being signed in
+just raises their rate ceiling and attaches `reporter_id` for accountability.
+Rationale: more coverage, and a flag on a person's data is effectively a GDPR
+rectification/objection intake we *want* to make frictionless (see
+[below](#gdpr)). Abuse is contained rather than prevented by a login wall:
 
 - **Rate limit** anonymous `POST /flags` per `reporter_fp` (salted-hashed IP) —
-  e.g. 10/hour, tunable via config. Logged-in users get a higher ceiling.
+  **2/hour**, tunable via config. Logged-in users get a higher ceiling.
 - **Collapse duplicates.** A repeat `(target, category)` from the same
   `reporter_fp` doesn't create a second row; the queue shows a **count**
   ("12 reports") per target+category, not 12 rows.
@@ -83,14 +85,28 @@ login wall:
 - `reporter_fp` is a salted hash (not the raw IP), stored only for abuse control,
   with a short retention window.
 
+## Who can moderate — new `moderator` role
+
+Reviewing the queue is gated to a **new `moderator` role**, added alongside the
+existing `admin` / `contributor` / `viewer` (see the auth roles in `app/auth/`).
+`admin` implies moderator (admins can always moderate); a plain `contributor` or
+`viewer` **cannot**. This keeps day-to-day flag triage delegable without handing
+out full admin. Implementation: extend the role enum and add a
+`require_moderator` dependency (satisfied by `moderator` **or** `admin`) in
+`app/auth/dependencies.py`, mirroring `require_admin` / `require_contributor`.
+
 ## Endpoints (Phase A)
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/flags` | public (rate-limited) | file a report: `{target, category, note?}` |
-| `GET` | `/flags` | admin | the moderation queue; filter `?status=`, `?target_kind=`, `?category=` |
+| `POST` | `/flags` | public — anonymous *or* any logged-in user (rate-limited) | file a report: `{target, category, note?}` |
+| `GET` | `/flags` | moderator (or admin) | the moderation queue; filter `?status=`, `?target_kind=`, `?category=` |
 | `GET` | `/flags/summary` | public | open-flag counts per target, for the "disputed" badge |
-| `PATCH` | `/flags/{id}` | admin | status transitions: `open ⇄ reviewing`, `→ rejected` |
+| `PATCH` | `/flags/{id}` | moderator (or admin) | status transitions: `open ⇄ reviewing`, `→ rejected` |
+
+`POST /flags` is open to everyone — signing in is optional and only affects the
+rate ceiling and whether `reporter_id` is recorded. The queue and status changes
+require the `moderator` role (`admin` also qualifies).
 
 `resolved` is reachable only once Phase B resolution actions exist; Phase A can
 `reject` (source is correct / not actionable) and move things to `reviewing`.
@@ -114,9 +130,10 @@ resolves anything:
   logged-out.
 - **Disputed badge** — rendered wherever an edge/node is shown once its open-flag
   count > 0.
-- **Review queue** — an admin panel listing open flags with target, category,
-  count, note, and reporter kind; reuse the pattern from `DuplicatesModal.tsx` /
-  `ScraperActivity.tsx`. Actions in Phase A: **mark reviewing**, **reject**.
+- **Review queue** — a **moderator** panel (visible to `moderator`/`admin`)
+  listing open flags with target, category, count, note, and reporter kind; reuse
+  the pattern from `DuplicatesModal.tsx` / `ScraperActivity.tsx`. Actions in
+  Phase A: **mark reviewing**, **reject**.
 - i18n: all new strings added to `src/i18n/locales/{en,de,es}.json`.
 
 ## GDPR
