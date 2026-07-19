@@ -112,9 +112,14 @@ def create_flag(data: FlagCreate, request: Request,
 
 @router.get("")
 def list_flags(status: Optional[str] = None, target_kind: Optional[str] = None,
-               category: Optional[str] = None, limit: int = Query(100, ge=1, le=500),
+               category: Optional[str] = None, group: bool = False,
+               limit: int = Query(100, ge=1, le=500),
                _: dict = Depends(require_moderator)):
-    """The moderation queue — newest first, with optional filters. Moderator only."""
+    """The moderation queue — newest first, with optional filters. Moderator only.
+
+    With `group=true` the flags are collapsed to one row per target+category
+    (so many reports of the same thing show as a single row with a `count` and
+    the member `flag_ids`), ordered by count then recency."""
     clauses, params = [], {}
     if status:
         clauses.append("f.status = $status")
@@ -126,23 +131,46 @@ def list_flags(status: Optional[str] = None, target_kind: Optional[str] = None,
         clauses.append("f.category = $cat")
         params["cat"] = category
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    # When grouping we scan a wider window so a group's count is accurate, then
+    # collapse in Python (ArcadeDB's Cypher aggregation/collect is unreliable).
+    fetch = 1000 if group else int(limit)
     with db.get_session() as session:
         rows = session.run(
             f"MATCH (f:Flag) {where} RETURN f.id AS id, f.target_kind AS target_kind, "
             f"f.category AS category, f.note AS note, f.status AS status, "
             f"f.reporter_kind AS reporter_kind, f.from_id AS from_id, f.to_id AS to_id, "
             f"f.role AS role, f.node_id AS node_id, f.created_at AS created_at, "
-            f"f.updated_at AS updated_at ORDER BY f.created_at DESC LIMIT {int(limit)}",
+            f"f.updated_at AS updated_at ORDER BY f.created_at DESC LIMIT {fetch}",
             **params,
         )
         # Read columns explicitly — dict(rec) on a whole ArcadeDB _Record raises.
-        return [
+        flags = [
             {"id": r["id"], "target_kind": r["target_kind"], "category": r["category"],
              "note": r["note"], "status": r["status"], "reporter_kind": r["reporter_kind"],
              "from_id": r["from_id"], "to_id": r["to_id"], "role": r["role"],
              "node_id": r["node_id"], "created_at": r["created_at"], "updated_at": r["updated_at"]}
             for r in rows
         ]
+
+    if not group:
+        return flags
+
+    groups: dict[tuple, dict] = {}
+    for f in flags:
+        key = (f["target_kind"], f["from_id"], f["to_id"], f["role"], f["node_id"], f["category"])
+        g = groups.get(key)
+        if g is None:
+            g = {"target_kind": f["target_kind"], "from_id": f["from_id"], "to_id": f["to_id"],
+                 "role": f["role"], "node_id": f["node_id"], "category": f["category"],
+                 "count": 0, "flag_ids": [], "note": "", "created_at": ""}
+            groups[key] = g
+        g["count"] += 1
+        g["flag_ids"].append(f["id"])
+        if f.get("note") and not g["note"]:     # surface a representative note
+            g["note"] = f["note"]
+        if (f.get("created_at") or "") > g["created_at"]:
+            g["created_at"] = f["created_at"]
+    return sorted(groups.values(), key=lambda x: (x["count"], x["created_at"]), reverse=True)
 
 
 @router.get("/summary")
@@ -279,10 +307,20 @@ def suppress_flag(flag_id: str, _: dict = Depends(require_moderator)):
         else:
             raise HTTPException(status_code=400, detail=f"Cannot suppress target_kind '{tk}'")
 
-        # Resolve the flag (Phase-B action — the PATCH route blocks 'resolved').
-        session.run(
-            "MATCH (f:Flag {id:$id}) SET f.status='resolved', f.updated_at=$now",
-            id=flag_id, now=now)
+        # Resolve every open/reviewing flag on this same target — suppressing it
+        # moots all reports about it (clears the whole queue group in one action).
+        if tk in ("entity", "person"):
+            session.run(
+                "MATCH (f:Flag) WHERE f.target_kind=$tk AND f.node_id=$nid "
+                "AND (f.status='open' OR f.status='reviewing') "
+                "SET f.status='resolved', f.updated_at=$now",
+                tk=tk, nid=node_id, now=now)
+        else:
+            session.run(
+                "MATCH (f:Flag) WHERE f.target_kind=$tk AND f.from_id=$f AND f.to_id=$t "
+                "AND f.role=$role AND (f.status='open' OR f.status='reviewing') "
+                "SET f.status='resolved', f.updated_at=$now",
+                tk=tk, f=from_id, t=to_id, role=role, now=now)
     return {"id": sup_id, "flag_id": flag_id, "status": "suppressed"}
 
 
@@ -355,8 +393,11 @@ def pin_flag(flag_id: str, data: PinRequest, _: dict = Depends(require_moderator
                 "created_at:$now, updated_at:$now})",
                 id=pin_id, f=from_id, t=to_id, stake=stake, otype=otype, fid=flag_id, now=now)
 
+        # Resolve every open/reviewing flag on this OWNS edge (clears the group).
         session.run(
-            "MATCH (f:Flag {id:$id}) SET f.status='resolved', f.updated_at=$now",
-            id=flag_id, now=now)
+            "MATCH (f:Flag) WHERE f.target_kind='owns' AND f.from_id=$f AND f.to_id=$t "
+            "AND (f.status='open' OR f.status='reviewing') "
+            "SET f.status='resolved', f.updated_at=$now",
+            f=from_id, t=to_id, now=now)
     return {"id": pin_id, "flag_id": flag_id, "status": "pinned",
             "stake_percent": stake, "ownership_type": otype}

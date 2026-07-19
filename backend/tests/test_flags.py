@@ -104,6 +104,29 @@ def test_admin_can_also_moderate(client, fake_db, make_token):
     assert client.get("/flags", headers=_auth(make_token(role="admin"))).status_code == 200
 
 
+def test_queue_group_collapses_by_target_and_category(client, fake_db, make_token):
+    fake_db.queue([
+        {"id": "a", "target_kind": "owns", "category": "wrong-percent", "note": "",
+         "status": "open", "reporter_kind": "anon", "from_id": "x", "to_id": "y",
+         "role": "", "node_id": "", "created_at": "2026-01", "updated_at": "2026-01"},
+        {"id": "b", "target_kind": "owns", "category": "wrong-percent", "note": "look",
+         "status": "open", "reporter_kind": "user", "from_id": "x", "to_id": "y",
+         "role": "", "node_id": "", "created_at": "2026-02", "updated_at": "2026-02"},
+        {"id": "c", "target_kind": "entity", "category": "not-real", "note": "",
+         "status": "open", "reporter_kind": "anon", "from_id": "", "to_id": "",
+         "role": "", "node_id": "e1", "created_at": "2026-03", "updated_at": "2026-03"},
+    ])
+    r = client.get("/flags?group=true", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 200
+    groups = r.json()
+    assert len(groups) == 2                       # two distinct target+category groups
+    owns = next(g for g in groups if g["target_kind"] == "owns")
+    assert owns["count"] == 2
+    assert set(owns["flag_ids"]) == {"a", "b"}
+    assert owns["note"] == "look"                 # representative non-empty note
+    assert groups[0]["count"] >= groups[1]["count"]   # sorted by count desc
+
+
 # ── GET /flags/summary — disputed badge (public) ─────────────────────────────
 
 def test_summary_returns_open_count(client, fake_db):
