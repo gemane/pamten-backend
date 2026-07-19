@@ -66,10 +66,22 @@ def cmd_wipe_data(args):
         print("wipe-data only runs with DEBUG=true. Aborted.")
         sys.exit(1)
     from app.db.arcadedb import run_sql
-    types = ["OWNS", "HAS_ROLE", "Entity", "Person", "Location", "Source"]
+    # Edges first, then vertices, then the derived overlays/logs. User accounts
+    # and config (ScraperSource toggles, federation Peers) are intentionally kept.
+    # Types that don't exist are skipped by the per-type try/except below.
+    types = [
+        # edges
+        "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH",
+        "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
+        # core data vertices
+        "Entity", "Person", "Location", "Source",
+        # derived overlays + logs
+        "MergeLog", "ScrapeRun", "Flag", "Suppression", "Pin", "Conflict",
+    ]
     if not args.yes:
-        print("This will delete ALL imported data (entities, persons, edges, sources).")
-        print("User accounts are NOT affected.")
+        print("This will delete ALL imported data (entities, persons, edges, sources)")
+        print("plus verification flags/suppressions/pins, merge logs and scrape-run logs.")
+        print("User accounts and scraper/federation config are NOT affected.")
         print(f"Types to wipe: {', '.join(types)}")
         confirm = input("Type YES to confirm: ")
         if confirm.strip() != "YES":
