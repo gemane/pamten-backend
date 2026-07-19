@@ -63,8 +63,12 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Pin",         "to_id",        "NOTUNIQUE"),
 ]
 
-# Edge types the app creates via Cypher and needs to exist up front.
-_EDGE_TYPES: list[str] = ["NOT_DUPLICATE"]
+# Edge types the app creates via Cypher and needs to exist up front (also what
+# wipe-data recreates after dropping them).
+_EDGE_TYPES: list[str] = [
+    "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH",
+    "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
+]
 
 
 def _statements() -> list[str]:

@@ -66,45 +66,39 @@ def cmd_wipe_data(args):
         print("wipe-data only runs with DEBUG=true. Aborted.")
         sys.exit(1)
     from app.db.arcadedb import run_sql
-    # Edges first, then vertices, then the derived overlays/logs. User accounts
-    # and config (ScraperSource toggles, federation Peers) are intentionally kept.
-    # Types that don't exist are skipped by the per-type try/except below.
+    from app.db.schema import ensure_indexes
+    # DROP each type outright rather than DELETE FROM: dropping is a metadata op
+    # (instant even for a type with millions of rows), whereas `DELETE FROM Entity`
+    # on a full GLEIF import times out. Recreating the empty types below also
+    # clears the stale index entries the old DELETE-based wipe had to REBUILD.
+    # Edges first, then vertices, then overlays/logs. User accounts and config
+    # (ScraperSource toggles, federation Peers) are intentionally kept; types that
+    # don't exist are skipped by the per-type try/except.
     types = [
-        # edges
         "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH",
         "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
-        # core data vertices
         "Entity", "Person", "Location", "Source",
-        # derived overlays + logs
         "MergeLog", "ScrapeRun", "Flag", "Suppression", "Pin", "Conflict",
     ]
     if not args.yes:
         print("This will delete ALL imported data (entities, persons, edges, sources)")
         print("plus verification flags/suppressions/pins, merge logs and scrape-run logs.")
         print("User accounts and scraper/federation config are NOT affected.")
-        print(f"Types to wipe: {', '.join(types)}")
+        print(f"Types to drop: {', '.join(types)}")
         confirm = input("Type YES to confirm: ")
         if confirm.strip() != "YES":
             print("Aborted.")
             sys.exit(1)
     for t in types:
         try:
-            run_sql(f"DELETE FROM {t}")
-            print(f"  Wiped {t}")
+            run_sql(f"DROP TYPE {t} IF EXISTS UNSAFE")
+            print(f"  Dropped {t}")
         except Exception as exc:
             print(f"  {t}: {exc}")
-    # Rebuild indexes — DELETE FROM leaves stale index entries pointing to
-    # deleted RIDs, which cause RecordNotFoundException on the next import/read
-    # (e.g. the SEC scraper 500'd until this ran). ensure_indexes only CREATEs
-    # missing indexes; REBUILD INDEX * is what actually clears the stale entries.
-    print("Rebuilding indexes...")
-    from app.db.schema import ensure_indexes
-    ensure_indexes()
-    try:
-        run_sql("REBUILD INDEX *")
-        print("  Rebuilt all indexes (cleared stale entries).")
-    except Exception as exc:
-        print(f"  REBUILD INDEX * failed: {exc}")
+    # Recreate the now-empty vertex/edge types + indexes.
+    print("Recreating schema (types + indexes)...")
+    res = ensure_indexes()
+    print(f"  schema: {len(res.get('ok', []))} applied, {len(res.get('failed', []))} failed")
     print("Done.")
 
 def cmd_geocode(args):
