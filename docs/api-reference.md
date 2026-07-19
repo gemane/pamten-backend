@@ -97,6 +97,7 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 | POST | `/scraper/proxy-statement/run` | contributor | Parse a company's latest DEF 14A proxy and return per-person voting power (read-only) |
 | POST | `/scraper/proxy-statement/write` | contributor | Fetch the latest DEF 14A and write `voting_power_pct` onto OWNS edges (`entity_id` overrides name lookup) |
 | POST | `/scraper/deduplicate-edges` | admin | Collapse duplicate active OWNS edges, keeping the most informative |
+| POST | `/scraper/deduplicate-entities` | admin | Collapse Entity duplicates sharing an LEI / Companies House number (heals the recordId-keyed BODS doubling). Background by default (returns `started`; poll `GET /scraper/runs`). `strategy=bulk` (default) keeps one node per id and deletes the rest (fast; drops losers' edges); `strategy=merge` migrates edges first (only finishes on small data). `background=false` runs the sync bounded-batch merge (`?limit=`, returns `remaining`) |
 | POST | `/scraper/deduplicate-persons` | admin | Legacy: merge reversed-name Person duplicates (use `/persons/deduplicate`) |
 | POST | `/scraper/migrate-ownership-types` | admin | One-time migration deriving canonical `ownership_type` values |
 | POST | `/relationships/dual-listed` | contributor | Link two share classes of a dual-listed company (`DUAL_LISTED_WITH`) |

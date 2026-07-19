@@ -5,7 +5,7 @@ the endpoints stay thin. Behaviour is unchanged from the previous inline
 implementations.
 """
 from app.database import db
-from app.db.arcadedb import run_query, run_command
+from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 
 
@@ -282,6 +282,264 @@ def deduplicate_person_nodes() -> dict:
         })
 
     return {"pairs_merged": len(merged), "detail": merged}
+
+
+def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
+    """Move every OWNS / HAS_ROLE / location edge off ``dead_id`` onto ``keep_id``.
+
+    Covers all four ways an Entity is wired: OWNS it makes (outgoing), OWNS made
+    *to* it (incoming, from a Person or Entity), HAS_ROLE held *in* it, and its
+    HEADQUARTERED_IN / REGISTERED_IN / OPERATES_IN location links. An edge that
+    ``keep`` already has (active, same target/role/location) is dropped rather
+    than duplicated. Returns the number of edges migrated.
+    """
+    migrated = 0
+
+    # 1. Outgoing OWNS  (dead)-[:OWNS]->(t)
+    for e in run_query(
+        """
+        MATCH (a:Entity {id: $id})-[r:OWNS]->(t)
+        RETURN t.id AS tid, r.stake_percent AS stake, r.ownership_type AS otype,
+               r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
+               r.source_id AS source_id, r.credibility_score AS cred,
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        if run_query(
+            "MATCH (a:Entity {id: $k})-[r:OWNS]->(t {id: $tid}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            {"k": keep_id, "tid": e["tid"]},
+        ):
+            continue
+        run_command(
+            """
+            MATCH (a:Entity {id: $k}), (t {id: $tid})
+            CREATE (a)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
+                voting_power_pct: $vpp, since: $since, until: $until,
+                source_id: $source_id, credibility_score: $cred,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(t)
+            """,
+            {"k": keep_id, "tid": e["tid"], "stake": e.get("stake"), "otype": e.get("otype"),
+             "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
+             "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
+             "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    # 2. Incoming OWNS  (s)-[:OWNS]->(dead)   — owner may be Person or Entity
+    for e in run_query(
+        """
+        MATCH (s)-[r:OWNS]->(b:Entity {id: $id})
+        RETURN s.id AS sid, r.stake_percent AS stake, r.ownership_type AS otype,
+               r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
+               r.source_id AS source_id, r.credibility_score AS cred,
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        if run_query(
+            "MATCH (s {id: $sid})-[r:OWNS]->(b:Entity {id: $k}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            {"sid": e["sid"], "k": keep_id},
+        ):
+            continue
+        run_command(
+            """
+            MATCH (s {id: $sid}), (b:Entity {id: $k})
+            CREATE (s)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
+                voting_power_pct: $vpp, since: $since, until: $until,
+                source_id: $source_id, credibility_score: $cred,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(b)
+            """,
+            {"sid": e["sid"], "k": keep_id, "stake": e.get("stake"), "otype": e.get("otype"),
+             "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
+             "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
+             "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    # 3. Incoming HAS_ROLE  (p:Person)-[:HAS_ROLE]->(dead)
+    for e in run_query(
+        """
+        MATCH (p:Person)-[r:HAS_ROLE]->(b:Entity {id: $id})
+        RETURN p.id AS pid, r.role AS role, r.since AS since, r.until AS until,
+               r.source_id AS source_id, r.credibility_score AS cred,
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        if run_query(
+            "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(b:Entity {id: $k}) "
+            "WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1",
+            {"pid": e["pid"], "k": keep_id, "role": e.get("role")},
+        ):
+            continue
+        run_command(
+            """
+            MATCH (p:Person {id: $pid}), (b:Entity {id: $k})
+            CREATE (p)-[:HAS_ROLE {role: $role, since: $since, until: $until,
+                source_id: $source_id, credibility_score: $cred,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(b)
+            """,
+            {"pid": e["pid"], "k": keep_id, "role": e.get("role"), "since": e.get("since"),
+             "until": e.get("until"), "source_id": e.get("source_id"), "cred": e.get("cred"),
+             "surl": e.get("surl"), "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    # 4. Outgoing location links  (dead)-[:HEADQUARTERED_IN|REGISTERED_IN|OPERATES_IN]->(loc)
+    for rel in ("HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN"):
+        for e in run_query(
+            f"MATCH (a:Entity {{id: $id}})-[:{rel}]->(l:Location) RETURN l.id AS lid",
+            {"id": dead_id},
+        ):
+            if run_query(
+                f"MATCH (a:Entity {{id: $k}})-[:{rel}]->(l:Location {{id: $lid}}) RETURN 1 LIMIT 1",
+                {"k": keep_id, "lid": e["lid"]},
+            ):
+                continue
+            run_command(
+                f"MATCH (a:Entity {{id: $k}}), (l:Location {{id: $lid}}) CREATE (a)-[:{rel}]->(l)",
+                {"k": keep_id, "lid": e["lid"]},
+            )
+            migrated += 1
+
+    return migrated
+
+
+def _duplicate_keys(key_prop: str) -> list[str]:
+    """Return only the identifier values that appear on more than one Entity.
+
+    Aggregated server-side (GROUP BY … HAVING count > 1) so we ship back just the
+    handful of *duplicated* keys, never the whole entity set — the difference
+    between a bounded response and loading a full GLEIF import into memory.
+    """
+    rows = run_query(
+        f"MATCH (e:Entity) WHERE e.{key_prop} IS NOT NULL "
+        f"WITH e.{key_prop} AS key, count(e) AS cnt WHERE cnt > 1 RETURN key"
+    )
+    return [r["key"] for r in rows]
+
+
+def deduplicate_entities(limit: int | None = 300) -> dict:
+    """
+    Merge Entity nodes that share a stable external identifier — the same LEI or
+    the same Companies House number — into one, migrating their edges and deleting
+    the extras. Heals duplicates left by the older BODS importer, which keyed
+    entities on the per-dump BODS recordId, so the same company imported in two
+    runs became two nodes. Admin only.
+
+    Processes at most ``limit`` duplicate groups per call and reports how many
+    remain, so a large heal is done in bounded batches that each finish under the
+    HTTP/proxy request timeout — call repeatedly until ``remaining`` is 0, or pass
+    ``limit=None`` to process every group in one go (used by the background job,
+    which isn't bound by the request timeout). For each group the survivor is the
+    highest ``name_credibility`` node (then verified, then the lexically-smallest
+    id, for a deterministic result).
+    """
+    # All duplicate groups across both identifier kinds (cheap aggregation).
+    dup_keys = [("lei_id", k) for k in _duplicate_keys("lei_id")]
+    dup_keys += [("companies_house_id", k) for k in _duplicate_keys("companies_house_id")]
+    total = len(dup_keys)
+    batch = dup_keys if limit is None else dup_keys[:limit]
+
+    merged: list[dict] = []
+    for key_prop, key in batch:
+        members = run_query(
+            f"MATCH (e:Entity) WHERE e.{key_prop} = $key "
+            f"RETURN e.id AS id, e.name AS name, "
+            f"COALESCE(e.name_credibility, 0) AS cred, COALESCE(e.verified, false) AS verified",
+            {"key": key},
+        )
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
+        keep = members[0]
+        for dead in members[1:]:
+            migrated = _migrate_entity_edges(dead["id"], keep["id"])
+            run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+            merged.append({
+                "key": f"{key_prop}={key}",
+                "kept": keep["name"], "kept_id": keep["id"],
+                "deleted": dead["name"], "deleted_id": dead["id"],
+                "edges_migrated": migrated,
+            })
+
+    return {
+        "entities_merged": len(merged),
+        "groups_processed": len(batch),
+        "duplicate_groups_found": total,
+        "remaining": max(0, total - len(batch)),
+        "detail": merged[:100],   # cap payload; counts above are complete
+    }
+
+
+# ArcadeDB caps a single GROUP BY at queryMaxHeapElementsAllowedPerOp (500k)
+# groups. At full-GLEIF scale there are millions of distinct LEIs, so we shard
+# the key space by prefix and sub-shard adaptively when a shard still trips it.
+_SHARD_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"   # LEI / Companies House ids are upper-alnum
+_GROUP_LIMIT_MARKERS = ("queryMaxHeapElementsAllowedPerOp", "in-heap GROUP")
+
+
+def _dup_groups_sharded(key_prop: str) -> list[tuple[str, str, int]]:
+    """(value, keeper-id, member-count) for every value on >1 Entity.
+
+    Grouped scan restricted to a key prefix (range ``[prefix, prefix+'{')`` —
+    ``{`` sorts just past ``Z``/``9``), split one level deeper whenever the shard
+    exceeds ArcadeDB's in-heap group cap. ArcadeDB SQL has no ``HAVING``, so the
+    ``c > 1`` filter wraps the grouped subquery.
+    """
+    found: list[tuple[str, str, int]] = []
+
+    def _collect(prefix: str) -> None:
+        q = (f"SELECT FROM (SELECT {key_prop} AS k, count(*) AS c, min(id) AS keep "
+             f"FROM Entity WHERE {key_prop} >= :lo AND {key_prop} < :hi "
+             f"GROUP BY {key_prop}) WHERE c > 1")
+        try:
+            rows = run_sql(q, {"lo": prefix, "hi": prefix + "{"})
+        except RuntimeError as exc:
+            if not any(m in str(exc) for m in _GROUP_LIMIT_MARKERS):
+                raise
+            for ch in _SHARD_CHARSET:
+                _collect(prefix + ch)
+            return
+        found.extend((r["k"], r["keep"], int(r["c"])) for r in rows)
+
+    _collect("")
+    return found
+
+
+def deduplicate_entities_bulk(batch_size: int = 200) -> dict:
+    """
+    Fast heal for the recordId-keyed BODS doubling. For each external id (LEI,
+    then Companies House number) that sits on more than one Entity, keep the
+    lexicographically-smallest node id and ``DELETE VERTEX`` the rest — which also
+    drops their edges (ArcadeDB detaches on vertex delete). Admin only; destructive.
+
+    Unlike :func:`deduplicate_entities` this does **not** migrate the losers'
+    edges onto the survivor. That's deliberate: the merge-with-migration can't
+    finish at full-GLEIF scale (per-group/per-edge round trips), whereas this is a
+    grouped scan per id kind (prefix-sharded to stay under ArcadeDB's group cap)
+    plus batched deletes. Safe here because the surviving node already carries the
+    import's edges and anything missed is re-scrapeable.
+    """
+    removed_total = 0
+    by: dict[str, dict] = {}
+    for key_prop in ("lei_id", "companies_house_id"):
+        groups = _dup_groups_sharded(key_prop)   # (value, keeper, member-count)
+        removed = sum(c - 1 for _, _, c in groups)
+        for i in range(0, len(groups), batch_size):
+            chunk = groups[i:i + batch_size]
+            stmts, params = [], {}
+            for n, (k, keep, _c) in enumerate(chunk):
+                params[f"k__{n}"] = k
+                params[f"keep__{n}"] = keep
+                stmts.append(
+                    f"DELETE VERTEX FROM Entity WHERE {key_prop} = :k__{n} AND id <> :keep__{n};")
+            if stmts:
+                run_sqlscript("\n".join(stmts), params)
+        by[key_prop] = {"groups": len(groups), "entities_removed": removed}
+        removed_total += removed
+    return {"entities_removed": removed_total, "by": by}
 
 
 def migrate_ownership_types() -> dict:
