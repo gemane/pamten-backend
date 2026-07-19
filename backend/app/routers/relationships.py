@@ -180,8 +180,10 @@ def get_ownership_tree(entity_id: str, depth: int = 3):
 @router.get("/owners/{entity_id}")
 def get_owners(entity_id: str):
     # Who owns this entity right now?
+    # Anchor on the indexed Entity and follow the edge inward — the unanchored
+    # (owner)-[:OWNS]->(e {id}) form makes ArcadeDB scan every node at scale.
     query = """
-        MATCH (owner)-[r:OWNS]->(e:Entity {id: $entity_id})
+        MATCH (e:Entity {id: $entity_id})<-[r:OWNS]-(owner)
         WHERE r.until IS NULL
         RETURN owner, r
     """
@@ -205,7 +207,7 @@ def get_ownership_history(entity_id: str):
         # Who owns / owned this entity
         for rec in session.run(
             """
-            MATCH (owner)-[r:OWNS]->(e:Entity {id: $id})
+            MATCH (e:Entity {id: $id})<-[r:OWNS]-(owner)
             RETURN owner, r, 'ownership_in' AS kind
             """,
             id=entity_id,
@@ -241,7 +243,7 @@ def get_ownership_history(entity_id: str):
         # Executive roles at this entity
         for rec in session.run(
             """
-            MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+            MATCH (e:Entity {id: $id})<-[r:HAS_ROLE]-(p:Person)
             RETURN p, r, 'role' AS kind
             """,
             id=entity_id,
