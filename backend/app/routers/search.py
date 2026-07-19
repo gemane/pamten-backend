@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query, HTTPException
 from app.database import db
+from app.suppressions import load_keys, is_suppressed
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
@@ -114,31 +115,43 @@ def get_full_profile(entity_id: str):
         if not record:
             raise HTTPException(status_code=404, detail="Entity not found")
 
+        # Drop edges a moderator has suppressed (kept out of the scraped data).
+        sup = load_keys(session)
+
+        owners = []
+        for o in record["owners"]:
+            if not o["owner"]:
+                continue
+            owner = dict(o["owner"])
+            if is_suppressed(sup, "owns", owner.get("id"), entity_id):
+                continue
+            owners.append({"owner": owner, "relationship": dict(o["rel"])})
+
+        subsidiaries = []
+        for s in record["subsidiaries"]:
+            if not s["entity"]:
+                continue
+            sub = dict(s["entity"])
+            if is_suppressed(sup, "owns", entity_id, sub.get("id")):
+                continue
+            subsidiaries.append({"entity": sub, "relationship": dict(s["rel"])})
+
+        executives = []
+        for ex in record["executives"]:
+            if not ex["person"]:
+                continue
+            person, role = dict(ex["person"]), dict(ex["role"])
+            if is_suppressed(sup, "role", person.get("id"), entity_id, role.get("role")):
+                continue
+            executives.append({"person": person, "role": role})
+
         return {
             "entity": dict(record["e"]),
             "headquarters": dict(record["hq"]) if record["hq"] else None,
             "operations": [dict(loc) for loc in record["operations"] if loc],
-            "owners": [
-                {
-                    "owner": dict(o["owner"]),
-                    "relationship": dict(o["rel"])
-                }
-                for o in record["owners"] if o["owner"]
-            ],
-            "subsidiaries": [
-                {
-                    "entity": dict(s["entity"]),
-                    "relationship": dict(s["rel"])
-                }
-                for s in record["subsidiaries"] if s["entity"]
-            ],
-            "executives": [
-                {
-                    "person": dict(ex["person"]),
-                    "role": dict(ex["role"])
-                }
-                for ex in record["executives"] if ex["person"]
-            ],
+            "owners": owners,
+            "subsidiaries": subsidiaries,
+            "executives": executives,
             "dual_listed": [dict(d) for d in record["dual_listed"] if d],
         }
 
@@ -200,10 +213,17 @@ def get_person_profile(person_id: str):
         if not record:
             raise HTTPException(status_code=404, detail="Person not found")
 
+        # Drop moderator-suppressed edges before collapsing.
+        sup = load_keys(session)
+        positions = [x for x in record["positions"] if x["entity"] and not is_suppressed(
+            sup, "role", person_id, dict(x["entity"]).get("id"), dict(x["rel"]).get("role"))]
+        holdings = [x for x in record["holdings"] if x["entity"] and not is_suppressed(
+            sup, "owns", person_id, dict(x["entity"]).get("id"))]
+
         return {
             "person": dict(record["p"]),
-            "positions": _dedupe_positions(record["positions"]),
-            "holdings": _dedupe_holdings(record["holdings"]),
+            "positions": _dedupe_positions(positions),
+            "holdings": _dedupe_holdings(holdings),
         }
 
 

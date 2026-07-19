@@ -167,11 +167,21 @@ Per project convention (mocked unit tests + real-ArcadeDB integration —
 - **Frontend (Vitest):** report control renders logged-out; disputed badge
   appears when count > 0; queue actions call the right endpoints.
 
-## Non-goals (Phase B and beyond)
+## Phase B — resolution
 
-- **Resolution actions** — suppress (hide an edge the scraper won't recreate) and
-  pin (a corrected value re-scrape treats as higher-authority). Suppress is the
-  first Phase-B action; pin is deferred until real flag categories are observed.
+- **Suppress (implemented).** `POST /flags/{id}/suppress` (moderator) resolves an
+  *edge* flag: it deletes the wrong OWNS/HAS_ROLE edge now and records a
+  `Suppression` override keyed by the edge's natural key. Enforcement is
+  **read-time** (`app/suppressions.py`): the read endpoints (`full-profile`,
+  `person/full-profile`, `/relationships/owners`) load the small suppression set
+  and drop matching edges — so a suppressed edge stays hidden even if a later
+  import recreates it. `GET /flags/suppressions` lists them; `DELETE
+  /flags/suppressions/{id}` un-suppresses. (Node suppression + graph-tree/expand
+  filtering are not yet covered.)
+- **Pin (deferred)** — a corrected value re-scrape treats as higher-authority;
+  deferred until real flag categories are observed.
+
+## Non-goals (beyond Phase B)
 - **Manual data entry** — adding entities/people/relationships by hand
   (postponed indefinitely; the focus is the scraper).
 - **System-detected source conflicts** — the `Conflict` node; separate feature.

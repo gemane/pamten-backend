@@ -8,6 +8,7 @@ from app.models.relationship import (
     DualListedCreate,
 )
 from app.database import db
+from app.suppressions import load_keys, is_suppressed
 
 router = APIRouter(prefix="/relationships", tags=["Relationships"])
 
@@ -189,13 +190,12 @@ def get_owners(entity_id: str):
     """
 
     with db.get_session() as session:
-        result = session.run(query, entity_id=entity_id)
+        rows = list(session.run(query, entity_id=entity_id))
+        sup = load_keys(session)   # drop moderator-suppressed owner edges
         return [
-            {
-                "owner": dict(record["owner"]),
-                "relationship": dict(record["r"])
-            }
-            for record in result
+            {"owner": dict(record["owner"]), "relationship": dict(record["r"])}
+            for record in rows
+            if not is_suppressed(sup, "owns", dict(record["owner"]).get("id"), entity_id)
         ]
 
 

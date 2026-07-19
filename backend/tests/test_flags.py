@@ -138,3 +138,50 @@ def test_patch_unknown_flag_404(client, fake_db, make_token):
     r = client.patch("/flags/nope", json={"status": "rejected"},
                      headers=_auth(make_token(role="moderator")))
     assert r.status_code == 404
+
+
+# ── Suppression (Phase B) ────────────────────────────────────────────────────
+
+def test_suppress_requires_moderator(client, fake_db, make_token):
+    r = client.post("/flags/f1/suppress", headers=_auth(make_token(role="contributor")))
+    assert r.status_code == 403
+
+
+def test_suppress_edge_flag_creates_suppression_and_resolves(client, fake_db, make_token):
+    # 1st query returns the flag (an owns edge); the existence check then finds none.
+    fake_db.queue([{"tk": "owns", "from_id": "a", "to_id": "b", "role": ""}])
+    r = client.post("/flags/f1/suppress", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 200
+    assert r.json()["status"] == "suppressed"
+
+
+def test_suppress_rejects_node_flag(client, fake_db, make_token):
+    fake_db.queue([{"tk": "entity", "from_id": "", "to_id": "", "role": ""}])
+    r = client.post("/flags/f1/suppress", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 400
+
+
+def test_suppress_unknown_flag_404(client, fake_db, make_token):
+    fake_db.queue([])
+    r = client.post("/flags/nope/suppress", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 404
+
+
+def test_list_suppressions_requires_moderator(client, fake_db, make_token):
+    assert client.get("/flags/suppressions").status_code == 401
+    assert client.get("/flags/suppressions", headers=_auth(make_token(role="viewer"))).status_code == 403
+
+
+def test_remove_suppression_404(client, fake_db, make_token):
+    fake_db.queue([])
+    r = client.delete("/flags/suppressions/nope", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 404
+
+
+def test_is_suppressed_matches_natural_key():
+    from app.suppressions import is_suppressed
+    keys = {("owns", "a", "b", ""), ("role", "p", "e", "CEO")}
+    assert is_suppressed(keys, "owns", "a", "b")
+    assert is_suppressed(keys, "role", "p", "e", "CEO")
+    assert not is_suppressed(keys, "owns", "a", "c")
+    assert not is_suppressed(keys, "role", "p", "e", "CFO")
