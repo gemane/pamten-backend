@@ -130,6 +130,7 @@ The first account registered automatically receives the `admin` role. Protected 
 |---|---|
 | `get_current_user` | Any valid JWT |
 | `require_admin` | Role must be `admin` |
+| `require_moderator` | Role must be `admin` or `moderator` (data-moderation / verification queue) |
 | `require_contributor` | Role must be `admin` or `contributor` |
 
 ---
