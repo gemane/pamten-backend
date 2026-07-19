@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.config import settings
 from app.database import db
 from app.auth.dependencies import get_current_user_optional, require_moderator
-from app.models.flag import FlagCreate, FlagStatusUpdate, FlagTargetKind
+from app.models.flag import FlagCreate, FlagStatusUpdate, FlagTargetKind, PinRequest
 
 router = APIRouter(prefix="/flags", tags=["Verification"])
 
@@ -260,3 +260,79 @@ def suppress_flag(flag_id: str, _: dict = Depends(require_moderator)):
             "MATCH (f:Flag {id:$id}) SET f.status='resolved', f.updated_at=$now",
             id=flag_id, now=_now_iso())
     return {"id": sup_id, "flag_id": flag_id, "status": "suppressed"}
+
+
+# ── Pin (Phase-B resolution: corrected OWNS value) ───────────────────────────
+# Pinning records a corrected stake %/ownership type for an OWNS edge as a
+# read-time override (app.pins) — it does NOT mutate the scraped edge, so the fix
+# stands across re-scrapes and un-pinning cleanly reverts to the scraped value.
+
+@router.get("/pins")
+def list_pins(_: dict = Depends(require_moderator)):
+    """Active pin overrides, newest first. Moderator only."""
+    with db.get_session() as session:
+        rows = session.run(
+            "MATCH (p:Pin) RETURN p.id AS id, p.from_id AS from_id, p.to_id AS to_id, "
+            "p.stake_percent AS stake_percent, p.ownership_type AS ownership_type, "
+            "p.flag_id AS flag_id, p.created_at AS created_at ORDER BY p.created_at DESC"
+        )
+        return [
+            {"id": r["id"], "from_id": r["from_id"], "to_id": r["to_id"],
+             "stake_percent": r["stake_percent"], "ownership_type": r["ownership_type"],
+             "flag_id": r["flag_id"], "created_at": r["created_at"]}
+            for r in rows
+        ]
+
+
+@router.delete("/pins/{pin_id}")
+def remove_pin(pin_id: str, _: dict = Depends(require_moderator)):
+    """Un-pin — drop the override; reads fall back to the scraped value. Moderator only."""
+    with db.get_session() as session:
+        exists = session.run("MATCH (p:Pin {id:$id}) RETURN p.id AS id", id=pin_id).single()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Pin not found")
+        session.run("MATCH (p:Pin {id:$id}) DELETE p", id=pin_id)
+    return {"id": pin_id, "status": "removed"}
+
+
+@router.post("/{flag_id}/pin")
+def pin_flag(flag_id: str, data: PinRequest, _: dict = Depends(require_moderator)):
+    """Resolve an OWNS edge flag by pinning a corrected stake %/ownership type as a
+    read-time override; the flag becomes resolved. Moderator only."""
+    with db.get_session() as session:
+        flag = session.run(
+            "MATCH (f:Flag {id:$id}) RETURN f.target_kind AS tk, f.from_id AS from_id, "
+            "f.to_id AS to_id", id=flag_id).single()
+        if not flag:
+            raise HTTPException(status_code=404, detail="Flag not found")
+        if flag["tk"] != "owns":
+            raise HTTPException(status_code=400, detail="Only OWNS edge flags can be pinned")
+        from_id, to_id = flag["from_id"], flag["to_id"]
+
+        # Merge onto an existing pin for the same edge (keep fields not re-supplied).
+        existing = session.run(
+            "MATCH (p:Pin) WHERE p.from_id=$f AND p.to_id=$t "
+            "RETURN p.id AS id, p.stake_percent AS stake, p.ownership_type AS otype LIMIT 1",
+            f=from_id, t=to_id).single()
+        stake = data.stake_percent if data.stake_percent is not None else (existing["stake"] if existing else None)
+        otype = data.ownership_type if data.ownership_type else (existing["otype"] if existing else None)
+        now = _now_iso()
+        if existing:
+            pin_id = existing["id"]
+            session.run(
+                "MATCH (p:Pin {id:$id}) SET p.stake_percent=$stake, p.ownership_type=$otype, "
+                "p.flag_id=$fid, p.updated_at=$now",
+                id=pin_id, stake=stake, otype=otype, fid=flag_id, now=now)
+        else:
+            pin_id = str(uuid.uuid4())
+            session.run(
+                "CREATE (p:Pin {id:$id, target_kind:'owns', from_id:$f, to_id:$t, "
+                "stake_percent:$stake, ownership_type:$otype, flag_id:$fid, "
+                "created_at:$now, updated_at:$now})",
+                id=pin_id, f=from_id, t=to_id, stake=stake, otype=otype, fid=flag_id, now=now)
+
+        session.run(
+            "MATCH (f:Flag {id:$id}) SET f.status='resolved', f.updated_at=$now",
+            id=flag_id, now=now)
+    return {"id": pin_id, "flag_id": flag_id, "status": "pinned",
+            "stake_percent": stake, "ownership_type": otype}
