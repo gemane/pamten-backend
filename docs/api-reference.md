@@ -55,7 +55,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | GET | `/flags` | moderator | Moderation queue, newest first; filter `?status=`, `?target_kind=`, `?category=` |
 | GET | `/flags/summary` | public | Open-flag count for one target (`?node_id=` or `?from_id=&to_id=[&role=]`) — powers the "disputed" badge |
 | PATCH | `/flags/{id}` | moderator | Triage status: `open` ⇄ `reviewing`, `→ rejected` |
-| POST | `/flags/{id}/suppress` | moderator | Resolve an edge flag by **suppressing** it — delete the edge now + record a `Suppression` so it stays hidden across re-scrapes (read-time enforced); flag → `resolved` |
+| POST | `/flags/{id}/suppress` | moderator | Resolve a flag by **suppressing** its target — an *edge* flag deletes the edge + records a `Suppression`; a *node* flag (entity/person) is a pure read-time hide (search, own profile, related-node lists). Survives re-scrapes; flag → `resolved` |
 | GET | `/flags/suppressions` | moderator | Active suppression overrides |
 | DELETE | `/flags/suppressions/{id}` | moderator | Un-suppress (edge reappears if a re-scrape recreates it) |
 | POST | `/flags/{id}/pin` | moderator | Resolve an OWNS flag by **pinning** a corrected `stake_percent`/`ownership_type` — a read-time override that survives re-scrapes (edge not mutated); flag → `resolved` |

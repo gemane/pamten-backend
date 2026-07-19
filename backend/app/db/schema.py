@@ -56,6 +56,7 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Suppression", "id",           "UNIQUE"),
     ("Suppression", "from_id",      "NOTUNIQUE"),
     ("Suppression", "to_id",        "NOTUNIQUE"),
+    ("Suppression", "node_id",      "NOTUNIQUE"),
     # Pins — a moderator-corrected OWNS value that overrides the scraped one.
     ("Pin",         "id",           "UNIQUE"),
     ("Pin",         "from_id",      "NOTUNIQUE"),

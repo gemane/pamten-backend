@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, HTTPException
 from app.database import db
-from app.suppressions import load_keys, is_suppressed
+from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 
 router = APIRouter(prefix="/search", tags=["Search"])
@@ -85,7 +85,10 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
                     "score": record["score"],
                     "type":  record["type"],
                 })
+        # Hide moderator-suppressed nodes from search.
+        hidden = load_suppressed_nodes(session)
 
+    results = [r for r in results if r["node"].get("id") not in hidden]
     results.sort(key=lambda r: _rank(r["node"], q_lower))
     return results[:20]
 
@@ -116,16 +119,21 @@ def get_full_profile(entity_id: str):
         if not record:
             raise HTTPException(status_code=404, detail="Entity not found")
 
-        # Drop suppressed edges and apply pinned corrections (both read-time overlays).
+        # Read-time overlays: suppressed edges/nodes dropped, pinned values applied.
         sup = load_keys(session)
+        hidden = load_suppressed_nodes(session)
         pins = load_pins(session)
+
+        # A suppressed entity is hidden entirely.
+        if entity_id in hidden:
+            raise HTTPException(status_code=404, detail="Entity not found")
 
         owners = []
         for o in record["owners"]:
             if not o["owner"]:
                 continue
             owner = dict(o["owner"])
-            if is_suppressed(sup, "owns", owner.get("id"), entity_id):
+            if owner.get("id") in hidden or is_suppressed(sup, "owns", owner.get("id"), entity_id):
                 continue
             rel = apply_pin(pins, owner.get("id"), entity_id, dict(o["rel"]))
             owners.append({"owner": owner, "relationship": rel})
@@ -135,7 +143,7 @@ def get_full_profile(entity_id: str):
             if not s["entity"]:
                 continue
             sub = dict(s["entity"])
-            if is_suppressed(sup, "owns", entity_id, sub.get("id")):
+            if sub.get("id") in hidden or is_suppressed(sup, "owns", entity_id, sub.get("id")):
                 continue
             rel = apply_pin(pins, entity_id, sub.get("id"), dict(s["rel"]))
             subsidiaries.append({"entity": sub, "relationship": rel})
@@ -145,7 +153,7 @@ def get_full_profile(entity_id: str):
             if not ex["person"]:
                 continue
             person, role = dict(ex["person"]), dict(ex["role"])
-            if is_suppressed(sup, "role", person.get("id"), entity_id, role.get("role")):
+            if person.get("id") in hidden or is_suppressed(sup, "role", person.get("id"), entity_id, role.get("role")):
                 continue
             executives.append({"person": person, "role": role})
 
@@ -217,12 +225,18 @@ def get_person_profile(person_id: str):
         if not record:
             raise HTTPException(status_code=404, detail="Person not found")
 
-        # Drop moderator-suppressed edges before collapsing.
         sup = load_keys(session)
-        positions = [x for x in record["positions"] if x["entity"] and not is_suppressed(
-            sup, "role", person_id, dict(x["entity"]).get("id"), dict(x["rel"]).get("role"))]
-        holdings = [x for x in record["holdings"] if x["entity"] and not is_suppressed(
-            sup, "owns", person_id, dict(x["entity"]).get("id"))]
+        hidden = load_suppressed_nodes(session)
+        if person_id in hidden:
+            raise HTTPException(status_code=404, detail="Person not found")
+
+        # Drop suppressed edges and edges to suppressed entities before collapsing.
+        positions = [x for x in record["positions"] if x["entity"]
+                     and dict(x["entity"]).get("id") not in hidden
+                     and not is_suppressed(sup, "role", person_id, dict(x["entity"]).get("id"), dict(x["rel"]).get("role"))]
+        holdings = [x for x in record["holdings"] if x["entity"]
+                    and dict(x["entity"]).get("id") not in hidden
+                    and not is_suppressed(sup, "owns", person_id, dict(x["entity"]).get("id"))]
 
         # Apply pinned OWNS corrections to the collapsed holdings.
         pins = load_pins(session)

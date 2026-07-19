@@ -217,48 +217,60 @@ def remove_suppression(suppression_id: str, _: dict = Depends(require_moderator)
 
 @router.post("/{flag_id}/suppress")
 def suppress_flag(flag_id: str, _: dict = Depends(require_moderator)):
-    """Resolve an edge flag by suppressing it: delete the active edge and record a
-    Suppression so it stays hidden across re-scrapes; the flag becomes resolved.
-    Only OWNS/HAS_ROLE (edge) flags can be suppressed. Moderator only."""
+    """Resolve a flag by suppressing its target, recorded as a re-scrape-surviving
+    override; the flag becomes resolved. An **edge** flag (owns/role) also deletes
+    the active edge now; a **node** flag (entity/person) is a pure read-time hide
+    (not deleted, so un-suppress restores it). Moderator only."""
     with db.get_session() as session:
         flag = session.run(
             "MATCH (f:Flag {id:$id}) RETURN f.target_kind AS tk, f.from_id AS from_id, "
-            "f.to_id AS to_id, f.role AS role", id=flag_id).single()
+            "f.to_id AS to_id, f.role AS role, f.node_id AS node_id", id=flag_id).single()
         if not flag:
             raise HTTPException(status_code=404, detail="Flag not found")
         tk = flag["tk"]
-        if tk not in ("owns", "role"):
-            raise HTTPException(status_code=400, detail="Only edge flags (owns/role) can be suppressed")
-        from_id, to_id, role = flag["from_id"], flag["to_id"], flag.get("role") or ""
+        now = _now_iso()
 
-        # Record the override (deduped by natural key).
-        existing = session.run(
-            "MATCH (s:Suppression) WHERE s.target_kind=$tk AND s.from_id=$f "
-            "AND s.to_id=$t AND s.role=$role RETURN s.id AS id LIMIT 1",
-            tk=tk, f=from_id, t=to_id, role=role).single()
-        sup_id = existing["id"] if existing else str(uuid.uuid4())
-        if not existing:
-            session.run(
-                "CREATE (s:Suppression {id:$id, target_kind:$tk, from_id:$f, to_id:$t, "
-                "role:$role, flag_id:$fid, created_at:$now})",
-                id=sup_id, tk=tk, f=from_id, t=to_id, role=role, fid=flag_id, now=_now_iso())
-
-        # Delete the active edge now (anchored on indexed ids).
-        etype = "OWNS" if tk == "owns" else "HAS_ROLE"
-        if tk == "role":
-            session.run(
-                f"MATCH (a {{id:$f}})-[r:{etype}]->(b {{id:$t}}) "
-                f"WHERE r.role=$role AND r.until IS NULL DELETE r",
-                f=from_id, t=to_id, role=role)
+        if tk in ("entity", "person"):
+            node_id = flag["node_id"]
+            existing = session.run(
+                "MATCH (s:Suppression) WHERE s.target_kind=$tk AND s.node_id=$nid "
+                "RETURN s.id AS id LIMIT 1", tk=tk, nid=node_id).single()
+            sup_id = existing["id"] if existing else str(uuid.uuid4())
+            if not existing:
+                session.run(
+                    "CREATE (s:Suppression {id:$id, target_kind:$tk, node_id:$nid, "
+                    "from_id:'', to_id:'', role:'', flag_id:$fid, created_at:$now})",
+                    id=sup_id, tk=tk, nid=node_id, fid=flag_id, now=now)
+        elif tk in ("owns", "role"):
+            from_id, to_id, role = flag["from_id"], flag["to_id"], flag.get("role") or ""
+            existing = session.run(
+                "MATCH (s:Suppression) WHERE s.target_kind=$tk AND s.from_id=$f "
+                "AND s.to_id=$t AND s.role=$role RETURN s.id AS id LIMIT 1",
+                tk=tk, f=from_id, t=to_id, role=role).single()
+            sup_id = existing["id"] if existing else str(uuid.uuid4())
+            if not existing:
+                session.run(
+                    "CREATE (s:Suppression {id:$id, target_kind:$tk, from_id:$f, to_id:$t, "
+                    "role:$role, node_id:'', flag_id:$fid, created_at:$now})",
+                    id=sup_id, tk=tk, f=from_id, t=to_id, role=role, fid=flag_id, now=now)
+            # Delete the active edge now (anchored on indexed ids).
+            etype = "OWNS" if tk == "owns" else "HAS_ROLE"
+            if tk == "role":
+                session.run(
+                    f"MATCH (a {{id:$f}})-[r:{etype}]->(b {{id:$t}}) "
+                    f"WHERE r.role=$role AND r.until IS NULL DELETE r",
+                    f=from_id, t=to_id, role=role)
+            else:
+                session.run(
+                    f"MATCH (a {{id:$f}})-[r:{etype}]->(b {{id:$t}}) WHERE r.until IS NULL DELETE r",
+                    f=from_id, t=to_id)
         else:
-            session.run(
-                f"MATCH (a {{id:$f}})-[r:{etype}]->(b {{id:$t}}) WHERE r.until IS NULL DELETE r",
-                f=from_id, t=to_id)
+            raise HTTPException(status_code=400, detail=f"Cannot suppress target_kind '{tk}'")
 
         # Resolve the flag (Phase-B action — the PATCH route blocks 'resolved').
         session.run(
             "MATCH (f:Flag {id:$id}) SET f.status='resolved', f.updated_at=$now",
-            id=flag_id, now=_now_iso())
+            id=flag_id, now=now)
     return {"id": sup_id, "flag_id": flag_id, "status": "suppressed"}
 
 

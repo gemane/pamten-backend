@@ -25,3 +25,19 @@ def load_keys(session) -> set[tuple]:
 
 def is_suppressed(keys: set[tuple], target_kind: str, from_id, to_id, role: str = "") -> bool:
     return (target_kind, from_id, to_id, role or "") in keys
+
+
+def load_suppressed_nodes(session) -> set:
+    """ids of nodes (Entity/Person) a moderator has suppressed. Such a node is
+    hidden everywhere at read time — from search, its own profile, and as a
+    related node on other profiles — without being deleted, so un-suppress
+    restores it."""
+    ids: set = set()
+    for rec in session.run(
+        "MATCH (s:Suppression) WHERE s.target_kind = 'entity' OR s.target_kind = 'person' "
+        "RETURN s.node_id AS nid"
+    ):
+        nid = rec.get("nid")
+        if nid:
+            ids.add(nid)
+    return ids
