@@ -420,7 +420,7 @@ def _duplicate_keys(key_prop: str) -> list[str]:
     return [r["key"] for r in rows]
 
 
-def deduplicate_entities(limit: int = 300) -> dict:
+def deduplicate_entities(limit: int | None = 300) -> dict:
     """
     Merge Entity nodes that share a stable external identifier — the same LEI or
     the same Companies House number — into one, migrating their edges and deleting
@@ -430,15 +430,17 @@ def deduplicate_entities(limit: int = 300) -> dict:
 
     Processes at most ``limit`` duplicate groups per call and reports how many
     remain, so a large heal is done in bounded batches that each finish under the
-    HTTP/proxy request timeout — call repeatedly until ``remaining`` is 0. For
-    each group the survivor is the highest ``name_credibility`` node (then
-    verified, then the lexically-smallest id, for a deterministic result).
+    HTTP/proxy request timeout — call repeatedly until ``remaining`` is 0, or pass
+    ``limit=None`` to process every group in one go (used by the background job,
+    which isn't bound by the request timeout). For each group the survivor is the
+    highest ``name_credibility`` node (then verified, then the lexically-smallest
+    id, for a deterministic result).
     """
     # All duplicate groups across both identifier kinds (cheap aggregation).
     dup_keys = [("lei_id", k) for k in _duplicate_keys("lei_id")]
     dup_keys += [("companies_house_id", k) for k in _duplicate_keys("companies_house_id")]
     total = len(dup_keys)
-    batch = dup_keys[:limit]
+    batch = dup_keys if limit is None else dup_keys[:limit]
 
     merged: list[dict] = []
     for key_prop, key in batch:
