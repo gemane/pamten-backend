@@ -92,3 +92,29 @@ def test_deduplicate_entities_batches_with_limit(it_db):
     r3 = maintenance.deduplicate_entities()
     assert r3["duplicate_groups_found"] == 0
     assert r3["entities_merged"] == 0
+
+
+def test_bulk_heal_keeps_one_per_lei_and_drops_the_rest(it_db):
+    from app.scraper import maintenance
+
+    # Two nodes for LEI-X (a dup) + one for LEI-Y (not a dup). The survivor is the
+    # min-id node ('x-a'); the loser 'x-b' carries an edge that must vanish with it.
+    it_db.run_command("CREATE (e:Entity {id:'x-a', name:'X', lei_id:'LEI-X'})")
+    it_db.run_command("CREATE (e:Entity {id:'x-b', name:'X dup', lei_id:'LEI-X'})")
+    it_db.run_command("CREATE (e:Entity {id:'y-only', name:'Y', lei_id:'LEI-Y'})")
+    it_db.run_command("CREATE (e:Entity {id:'owner', name:'Owner'})")
+    it_db.run_command("MATCH (o:Entity {id:'owner'}), (e:Entity {id:'x-b'}) "
+                      "CREATE (o)-[:OWNS {until:null}]->(e)")
+
+    res = maintenance.deduplicate_entities_bulk()
+    assert res["entities_removed"] == 1
+    assert res["by"]["lei_id"]["groups"] == 1
+
+    # Only the min-id keeper ('x-a') remains for LEI-X; LEI-Y untouched.
+    survivors = it_db.run_command("MATCH (e:Entity) WHERE e.lei_id='LEI-X' RETURN e.id AS id")
+    assert [r["id"] for r in survivors] == ["x-a"]
+    y = it_db.run_command("MATCH (e:Entity) WHERE e.lei_id='LEI-Y' RETURN count(e) AS n")
+    assert y[0]["n"] == 1
+    # The dropped node's edge is gone with it.
+    edges = it_db.run_command("MATCH (:Entity {id:'owner'})-[r:OWNS]->() RETURN count(r) AS n")
+    assert edges[0]["n"] == 0
