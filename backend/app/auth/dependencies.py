@@ -38,3 +38,11 @@ def require_contributor(user: dict = Depends(get_current_user)):
     if user.get("role") not in ("admin", "contributor"):
         raise HTTPException(status_code=403, detail="Contributor or admin access required")
     return user
+
+
+def require_moderator(user: dict = Depends(get_current_user)):
+    """Data-moderation actions (e.g. the verification flag queue). `admin`
+    implies moderator; `contributor` / `viewer` do not."""
+    if user.get("role") not in ("admin", "moderator"):
+        raise HTTPException(status_code=403, detail="Moderator or admin access required")
+    return user

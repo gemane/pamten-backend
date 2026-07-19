@@ -140,3 +140,30 @@ def test_admin_can_delete_other_account(client, fake_db, make_token):
     tok = make_token(role="admin", sub="admin-1")
     r = client.delete("/auth/users/other-2", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
+
+
+def test_update_role_accepts_moderator(client, fake_db, make_token):
+    tok = make_token(role="admin", sub="admin-1")
+    fake_db.queue([{"id": "u2"}])
+    r = client.patch("/auth/users/u2/role", json={"role": "moderator"},
+                     headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+
+
+# ── require_moderator guard ─────────────────────────────────────────────────────
+
+import pytest  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
+from app.auth.dependencies import require_moderator  # noqa: E402
+
+
+def test_require_moderator_allows_moderator_and_admin():
+    assert require_moderator({"role": "moderator"})["role"] == "moderator"
+    assert require_moderator({"role": "admin"})["role"] == "admin"
+
+
+@pytest.mark.parametrize("role", ["contributor", "viewer"])
+def test_require_moderator_rejects_lower_roles(role):
+    with pytest.raises(HTTPException) as exc:
+        require_moderator({"role": role})
+    assert exc.value.status_code == 403
