@@ -1,7 +1,11 @@
 """
 Tests for the BODS (Beneficial Ownership Data Standard) importer.
 
-All DB calls are mocked — these tests validate field mapping logic only.
+All DB writes are mocked — these tests validate field-mapping logic only.
+The importer buffers writes in a ``_BatchWriter`` and flushes them as batched
+``sqlscript`` requests, so the ``_process_*`` functions take a ``batch`` and call
+the ``_entity``/``_person``/``_owns``/``_role`` enqueue helpers; the tests patch
+those helpers to capture what would be written.
 """
 
 import pytest
@@ -153,13 +157,20 @@ RELATIONSHIP_ROLE = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_mock_session(upsert_return="new-id"):
-    """Return a mock db session whose .run().single() returns a record with id."""
-    session = MagicMock()
-    single_mock = MagicMock()
-    single_mock.return_value = None  # default: no existing record → create
-    session.run.return_value = single_mock
-    return session
+def _capturing_node(store, return_id):
+    """A fake _entity/_person: capture kwargs (+node_id) and return a fixed id."""
+    def fake(batch, node_id, **kwargs):
+        store.update(kwargs)
+        store["node_id"] = node_id
+        return return_id
+    return fake
+
+
+def _capturing_edge(store):
+    """A fake _owns/_role: capture the kwargs it was enqueued with."""
+    def fake(batch, **kwargs):
+        store.update(kwargs)
+    return fake
 
 
 # ── _process_entity_statement ─────────────────────────────────────────────────
@@ -168,20 +179,16 @@ class TestProcessEntityStatement:
     def test_maps_fields_correctly(self):
         from app.scraper.bods import _process_entity_statement
 
-        captured = {}
-
-        def fake_upsert(**kwargs):
-            captured.update(kwargs)
-            return "eid-1"
-
+        captured: dict = {}
         bods_map: dict = {}
-        with patch("app.scraper.bods._upsert_entity_bods", side_effect=fake_upsert):
+        with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid-1")):
             result = _process_entity_statement(
-                ENTITY_STMT, bods_map, "src-1", 92, None
+                ENTITY_STMT, bods_map, MagicMock(), "src-1", 92, None
             )
 
         assert result == "eid-1"
         assert bods_map["entity-001"] == "eid-1"
+        assert captured["node_id"] == "entity-001"       # keyed on the stable BODS id
         assert captured["name"] == "AstraZeneca PLC"
         assert captured["entity_type"] == "company"
         assert captured["country"] == "GB"  # canonical ISO-2, matching the Wikidata scraper
@@ -199,14 +206,9 @@ class TestProcessEntityStatement:
                 "entityType": {"type": "arrangement"},
             },
         }
-        captured = {}
-
-        def fake_upsert(**kwargs):
-            captured.update(kwargs)
-            return "eid-2"
-
-        with patch("app.scraper.bods._upsert_entity_bods", side_effect=fake_upsert):
-            _process_entity_statement(stmt, {}, "src-1", 92, None)
+        captured: dict = {}
+        with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid-2")):
+            _process_entity_statement(stmt, {}, MagicMock(), "src-1", 92, None)
 
         assert captured["entity_type"] == "holding"
 
@@ -214,21 +216,21 @@ class TestProcessEntityStatement:
         from app.scraper.bods import _process_entity_statement
 
         bods_map: dict = {}
-        with patch("app.scraper.bods._upsert_entity_bods") as mock_upsert:
+        with patch("app.scraper.bods._entity") as mock_entity:
             result = _process_entity_statement(
-                ENTITY_STMT, bods_map, "src-1", 92, "DE"
+                ENTITY_STMT, bods_map, MagicMock(), "src-1", 92, "DE"
             )
 
         assert result is None
         assert "entity-001" not in bods_map
-        mock_upsert.assert_not_called()
+        mock_entity.assert_not_called()
 
     def test_filter_jurisdiction_accepts_matching(self):
         from app.scraper.bods import _process_entity_statement
 
-        with patch("app.scraper.bods._upsert_entity_bods", return_value="eid-gb"):
+        with patch("app.scraper.bods._entity", return_value="eid-gb"):
             result = _process_entity_statement(
-                ENTITY_STMT, {}, "src-1", 92, "GB"
+                ENTITY_STMT, {}, MagicMock(), "src-1", 92, "GB"
             )
 
         assert result == "eid-gb"
@@ -237,11 +239,11 @@ class TestProcessEntityStatement:
         from app.scraper.bods import _process_entity_statement
 
         stmt = {**ENTITY_STMT, "recordDetails": {"name": ""}}
-        with patch("app.scraper.bods._upsert_entity_bods") as mock_upsert:
-            result = _process_entity_statement(stmt, {}, "src-1", 92, None)
+        with patch("app.scraper.bods._entity") as mock_entity:
+            result = _process_entity_statement(stmt, {}, MagicMock(), "src-1", 92, None)
 
         assert result is None
-        mock_upsert.assert_not_called()
+        mock_entity.assert_not_called()
 
     def test_partial_founding_date(self):
         from app.scraper.bods import _process_entity_statement
@@ -253,11 +255,9 @@ class TestProcessEntityStatement:
                 "foundingDate": "2005",
             },
         }
-        captured = {}
-
-        with patch("app.scraper.bods._upsert_entity_bods",
-                   side_effect=lambda **kw: captured.update(kw) or "eid"):
-            _process_entity_statement(stmt, {}, "src-1", 92, None)
+        captured: dict = {}
+        with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid")):
+            _process_entity_statement(stmt, {}, MagicMock(), "src-1", 92, None)
 
         assert captured["founded"] == 2005
 
@@ -268,18 +268,14 @@ class TestProcessPersonStatement:
     def test_maps_fields_correctly(self):
         from app.scraper.bods import _process_person_statement
 
-        captured = {}
-
-        def fake_upsert(**kwargs):
-            captured.update(kwargs)
-            return "pid-1"
-
+        captured: dict = {}
         bods_map: dict = {}
-        with patch("app.scraper.bods._upsert_person_bods", side_effect=fake_upsert):
-            result = _process_person_statement(PERSON_STMT, bods_map, "src-1", 97)
+        with patch("app.scraper.bods._person", side_effect=_capturing_node(captured, "pid-1")):
+            result = _process_person_statement(PERSON_STMT, bods_map, MagicMock(), "src-1", 97)
 
         assert result == "pid-1"
         assert bods_map["person-001"] == "pid-1"
+        assert captured["node_id"] == "person-001"
         assert captured["full_name"] == "Jennifer Hewitson-Smith"
         assert captured["first_name"] == "Jennifer"
         assert captured["last_name"] == "Hewitson-Smith"
@@ -288,11 +284,9 @@ class TestProcessPersonStatement:
     def test_partial_birth_date_stored_as_is(self):
         from app.scraper.bods import _process_person_statement
 
-        captured = {}
-
-        with patch("app.scraper.bods._upsert_person_bods",
-                   side_effect=lambda **kw: captured.update(kw) or "pid"):
-            _process_person_statement(PERSON_STMT, {}, "src-1", 97)
+        captured: dict = {}
+        with patch("app.scraper.bods._person", side_effect=_capturing_node(captured, "pid")):
+            _process_person_statement(PERSON_STMT, {}, MagicMock(), "src-1", 97)
 
         assert captured["birth_date"] == "1978-07"
 
@@ -300,12 +294,12 @@ class TestProcessPersonStatement:
         from app.scraper.bods import _process_person_statement
 
         bods_map: dict = {}
-        with patch("app.scraper.bods._upsert_person_bods") as mock_upsert:
-            result = _process_person_statement(ANON_PERSON_STMT, bods_map, "src-1", 97)
+        with patch("app.scraper.bods._person") as mock_person:
+            result = _process_person_statement(ANON_PERSON_STMT, bods_map, MagicMock(), "src-1", 97)
 
         assert result is None
         assert "person-anon" not in bods_map
-        mock_upsert.assert_not_called()
+        mock_person.assert_not_called()
 
 
 # ── _process_relationship_statement ──────────────────────────────────────────
@@ -320,15 +314,11 @@ class TestProcessRelationshipStatement:
     def test_shareholding_maps_correctly(self):
         from app.scraper.bods import _process_relationship_statement
 
-        captured = {}
-
-        def fake_owns(**kwargs):
-            captured.update(kwargs)
-
+        captured: dict = {}
         bods_map = self._bods_map()
-        with patch("app.scraper.bods._upsert_owns_bods", side_effect=fake_owns):
+        with patch("app.scraper.bods._owns", side_effect=_capturing_edge(captured)):
             edges = _process_relationship_statement(
-                RELATIONSHIP_STMT, bods_map, self._name_map(), "src-1", 97
+                RELATIONSHIP_STMT, bods_map, self._name_map(), MagicMock(), "src-1", 97
             )
 
         assert edges == 1
@@ -340,12 +330,10 @@ class TestProcessRelationshipStatement:
     def test_closed_record_sets_until(self):
         from app.scraper.bods import _process_relationship_statement
 
-        captured = {}
-
-        with patch("app.scraper.bods._upsert_owns_bods",
-                   side_effect=lambda **kw: captured.update(kw)):
+        captured: dict = {}
+        with patch("app.scraper.bods._owns", side_effect=_capturing_edge(captured)):
             _process_relationship_statement(
-                CLOSED_RELATIONSHIP_STMT, self._bods_map(), self._name_map(), "src-1", 97
+                CLOSED_RELATIONSHIP_STMT, self._bods_map(), self._name_map(), MagicMock(), "src-1", 97
             )
 
         assert captured["until"] == "2023-05-01"
@@ -353,12 +341,10 @@ class TestProcessRelationshipStatement:
     def test_missing_share_exact_falls_back_to_minimum(self):
         from app.scraper.bods import _process_relationship_statement
 
-        captured = {}
-
-        with patch("app.scraper.bods._upsert_owns_bods",
-                   side_effect=lambda **kw: captured.update(kw)):
+        captured: dict = {}
+        with patch("app.scraper.bods._owns", side_effect=_capturing_edge(captured)):
             _process_relationship_statement(
-                RELATIONSHIP_NO_EXACT, self._bods_map(), self._name_map(), "src-1", 97
+                RELATIONSHIP_NO_EXACT, self._bods_map(), self._name_map(), MagicMock(), "src-1", 97
             )
 
         assert captured["stake_percent"] == 25.0
@@ -366,13 +352,11 @@ class TestProcessRelationshipStatement:
     def test_unknown_interest_type_maps_to_minority(self):
         from app.scraper.bods import _process_relationship_statement
 
-        captured = {}
-
-        with patch("app.scraper.bods._upsert_owns_bods",
-                   side_effect=lambda **kw: captured.update(kw)), \
-             patch("app.scraper.bods._upsert_entity_bods", return_value="eid-new"):
+        captured: dict = {}
+        with patch("app.scraper.bods._owns", side_effect=_capturing_edge(captured)), \
+             patch("app.scraper.bods._entity", return_value="eid-new"):
             _process_relationship_statement(
-                RELATIONSHIP_UNKNOWN_INTEREST, self._bods_map(), self._name_map(), "src-1", 97
+                RELATIONSHIP_UNKNOWN_INTEREST, self._bods_map(), self._name_map(), MagicMock(), "src-1", 97
             )
 
         assert captured["ownership_type"] == "minority"
@@ -380,10 +364,10 @@ class TestProcessRelationshipStatement:
     def test_senior_managing_official_creates_role_edge(self):
         from app.scraper.bods import _process_relationship_statement
 
-        with patch("app.scraper.bods._upsert_role_bods") as mock_role, \
-             patch("app.scraper.bods._upsert_owns_bods") as mock_owns:
+        with patch("app.scraper.bods._role") as mock_role, \
+             patch("app.scraper.bods._owns") as mock_owns:
             edges = _process_relationship_statement(
-                RELATIONSHIP_ROLE, self._bods_map(), self._name_map(), "src-1", 97
+                RELATIONSHIP_ROLE, self._bods_map(), self._name_map(), MagicMock(), "src-1", 97
             )
 
         assert edges == 1
@@ -393,13 +377,11 @@ class TestProcessRelationshipStatement:
     def test_bods_to_pamten_id_lookup_resolves_correctly(self):
         from app.scraper.bods import _process_relationship_statement
 
-        captured = {}
+        captured: dict = {}
         bods_map = {"entity-001": "OWNED-UUID", "entity-002": "OWNER-UUID"}
-
-        with patch("app.scraper.bods._upsert_owns_bods",
-                   side_effect=lambda **kw: captured.update(kw)):
+        with patch("app.scraper.bods._owns", side_effect=_capturing_edge(captured)):
             _process_relationship_statement(
-                RELATIONSHIP_STMT, bods_map, self._name_map(), "src-1", 97
+                RELATIONSHIP_STMT, bods_map, self._name_map(), MagicMock(), "src-1", 97
             )
 
         assert captured["owned_id"] == "OWNED-UUID"
@@ -424,11 +406,9 @@ class TestProcessRelationshipStatement:
                 ],
             },
         }
-        captured = {}
-
-        with patch("app.scraper.bods._upsert_owns_bods",
-                   side_effect=lambda **kw: captured.update(kw)):
-            _process_relationship_statement(stmt, self._bods_map(), self._name_map(), "src-1", 97)
+        captured: dict = {}
+        with patch("app.scraper.bods._owns", side_effect=_capturing_edge(captured)):
+            _process_relationship_statement(stmt, self._bods_map(), self._name_map(), MagicMock(), "src-1", 97)
 
         assert captured["stake_percent"] == 8.5
         assert captured["ownership_type"] == "minority"
@@ -439,13 +419,13 @@ class TestProcessRelationshipStatement:
         from app.scraper.bods import _process_relationship_statement
 
         bods_map = {"entity-001": "eid-1"}   # entity-002 intentionally absent
-        owns_calls = []
+        owns_calls: list = []
 
-        with patch("app.scraper.bods._upsert_entity_bods", return_value="placeholder-id") as mock_e, \
-             patch("app.scraper.bods._upsert_owns_bods",
-                   side_effect=lambda **kw: owns_calls.append(kw)):
+        with patch("app.scraper.bods._entity", return_value="placeholder-id") as mock_e, \
+             patch("app.scraper.bods._owns",
+                   side_effect=lambda batch, **kw: owns_calls.append(kw)):
             edges = _process_relationship_statement(
-                RELATIONSHIP_STMT, bods_map, self._name_map(), "src-1", 97
+                RELATIONSHIP_STMT, bods_map, self._name_map(), MagicMock(), "src-1", 97
             )
 
         # A placeholder was created for the unknown party
@@ -472,10 +452,10 @@ class TestRunImport:
     def test_filter_jurisdiction_skips_non_matching_entities(self):
         from app.scraper.bods import _run_import
 
-        with patch("app.scraper.bods._upsert_entity_bods", return_value="eid") as mock_e, \
-             patch("app.scraper.bods._upsert_person_bods", return_value="pid"), \
-             patch("app.scraper.bods._upsert_owns_bods"), \
-             patch("app.scraper.bods._upsert_role_bods"):
+        with patch("app.scraper.bods._entity", return_value="eid"), \
+             patch("app.scraper.bods._person", return_value="pid"), \
+             patch("app.scraper.bods._owns"), \
+             patch("app.scraper.bods._role"):
             counts = _run_import(
                 iter(self._make_statements()),
                 source_id="src-1",
@@ -496,10 +476,10 @@ class TestRunImport:
             for i in range(20)
         ]
 
-        with patch("app.scraper.bods._upsert_entity_bods", return_value="eid"), \
-             patch("app.scraper.bods._upsert_person_bods", return_value="pid"), \
-             patch("app.scraper.bods._upsert_owns_bods"), \
-             patch("app.scraper.bods._upsert_role_bods"):
+        with patch("app.scraper.bods._entity", return_value="eid"), \
+             patch("app.scraper.bods._person", return_value="pid"), \
+             patch("app.scraper.bods._owns"), \
+             patch("app.scraper.bods._role"):
             counts = _run_import(
                 iter(many_stmts),
                 source_id="src-1",
@@ -509,6 +489,44 @@ class TestRunImport:
             )
 
         assert counts["entities"] == 5
+
+
+# ── _BatchWriter: batching and flush semantics ───────────────────────────────
+
+class TestBatchWriter:
+    def test_flushes_when_batch_size_reached(self):
+        from app.scraper.bods import _BatchWriter
+
+        with patch("app.scraper.bods.run_sqlscript") as mock_sql:
+            b = _BatchWriter(batch_size=2)
+            b.entity("e1", {"name": "A", "country": "GB"})
+            mock_sql.assert_not_called()          # under the threshold
+            b.entity("e2", {"name": "B", "country": "US"})
+            assert mock_sql.called                 # threshold reached → auto-flush
+
+    def test_nodes_flushed_before_edges(self):
+        from app.scraper.bods import _BatchWriter
+
+        scripts: list = []
+        with patch("app.scraper.bods.run_sqlscript",
+                   side_effect=lambda script, params=None: scripts.append(script)):
+            b = _BatchWriter(batch_size=100)
+            b.owns("e1", "Entity", "e2", {"stake_percent": 50.0})
+            b.entity("e1", {"name": "A"})
+            b.flush()
+
+        # Entity upsert must be issued before the edge CREATE, so endpoints exist.
+        joined = "\n---\n".join(scripts)
+        assert "UPDATE Entity" in joined
+        assert "CREATE EDGE OWNS" in joined
+        assert joined.index("UPDATE Entity") < joined.index("CREATE EDGE OWNS")
+
+    def test_empty_flush_issues_no_request(self):
+        from app.scraper.bods import _BatchWriter
+
+        with patch("app.scraper.bods.run_sqlscript") as mock_sql:
+            _BatchWriter().flush()
+            mock_sql.assert_not_called()
 
 
 # ── Runner permission checks ──────────────────────────────────────────────────

@@ -101,6 +101,19 @@ def _create_query(module_name: str, invoke) -> str:
     return creates[0] if creates else ""
 
 
+def _bods_script(invoke) -> str:
+    """Run a BODS writer against a real _BatchWriter with run_sqlscript captured,
+    and return the SQL it would send. BODS doesn't write via db.get_session —
+    it enqueues onto a _BatchWriter that flushes batched `sqlscript` requests."""
+    scripts: list[str] = []
+    with patch("app.scraper.bods.run_sqlscript",
+               side_effect=lambda script, params=None: scripts.append(script)):
+        batch = bods._BatchWriter(batch_size=1000)
+        invoke(batch)
+        batch.flush()
+    return "\n".join(scripts)
+
+
 # ── 1. Gating: nothing runs unless explicitly enabled ────────────────────────
 
 class TestScraperGating:
@@ -144,8 +157,6 @@ EDGE_WRITERS = [
     ("sec_edgar HAS_ROLE",   "runner", lambda: runner._upsert_role_sec("p", "e", "CEO", "s", source_url="u", source_date="d")),
     ("sec_edgar OWNS",       "runner", lambda: runner._upsert_owns_sec("o", "n", "s", "minority", "2024-01-01", 5.0, source_url="u")),
     ("open_corp HAS_ROLE",   "runner", lambda: runner._upsert_role_oc("p", "e", "Director", None, None, "s", source_url="u")),
-    ("bods OWNS",            "bods",   lambda: bods._upsert_owns_bods("o", "n", 50.0, "majority", None, None, "s", 90, "u", "d")),
-    ("bods HAS_ROLE",        "bods",   lambda: bods._upsert_role_bods("p", "e", "Official", None, None, "s", 90, "u", "d")),
 ]
 
 
@@ -162,13 +173,11 @@ class TestEdgeProvenance:
 
 ENTITY_WRITERS = [
     ("wikidata entity", "runner", lambda: runner._upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")),
-    ("bods entity",     "bods",   lambda: bods._upsert_entity_bods("Acme", "company", "US", None, "LEI1", None, "s", 90)),
 ]
 
 # Persons from a source that carries a date of birth must persist it.
 PERSON_WRITERS_WITH_DOB = [
     ("wikidata person", "runner", lambda: runner._upsert_person("Elon Musk", None, None, "Q1", birth_date="1971-06-28")),
-    ("bods person",     "bods",   lambda: bods._upsert_person_bods("Jane Doe", None, None, None, "1980-01")),
 ]
 
 
@@ -189,3 +198,46 @@ class TestMinimumFields:
         # SEC/OC officers arrive as a name only — the floor is still a full_name.
         q = _create_query("runner", lambda: runner._upsert_person_by_name("Jane Doe"))
         assert "full_name:" in q
+
+
+# ── 4. BODS writer conformance (batched sqlscript, not db.get_session) ────────
+
+class TestBodsWriterConformance:
+    def test_owns_stamps_full_provenance(self):
+        q = _bods_script(lambda b: bods._owns(
+            b, owner_id="o", owned_id="n", stake_percent=50.0, ownership_type="majority",
+            since=None, until=None, source_id="s", credibility_score=90,
+            source_url="u", source_date="d",
+        ))
+        assert "CREATE EDGE OWNS" in q
+        for field in ("source_url", "source_date", "last_scraped_at"):
+            assert field in q, f"bods OWNS must stamp {field} — got:\n{q}"
+
+    def test_role_stamps_full_provenance(self):
+        q = _bods_script(lambda b: bods._role(
+            b, person_id="p", entity_id="e", role="Official",
+            since=None, until=None, source_id="s", credibility_score=90,
+            source_url="u", source_date="d",
+        ))
+        assert "CREATE EDGE HAS_ROLE" in q
+        for field in ("source_url", "source_date", "last_scraped_at"):
+            assert field in q, f"bods HAS_ROLE must stamp {field} — got:\n{q}"
+
+    def test_entity_captures_name_and_country(self):
+        q = _bods_script(lambda b: bods._entity(
+            b, "e1", name="Acme", entity_type="company", country="US",
+            founded=None, lei_id="LEI1", companies_house_id=None,
+            source_id="s", credibility_score=90,
+        ))
+        assert "UPDATE Entity" in q
+        assert "name" in q, "bods entity must capture a name"
+        assert "country" in q, "bods entity must capture a country"
+
+    def test_person_captures_name_and_birth_date(self):
+        q = _bods_script(lambda b: bods._person(
+            b, "p1", full_name="Jane Doe", first_name=None, last_name=None,
+            nationality=None, birth_date="1980-01",
+        ))
+        assert "UPDATE Person" in q
+        assert "full_name" in q, "bods person must capture a full name"
+        assert "birth_date" in q, "bods person from a DOB source must persist birth_date"

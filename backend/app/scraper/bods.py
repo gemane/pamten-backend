@@ -17,14 +17,17 @@ Provenance (per OWNS/HAS_ROLE edge, for later verification):
   last_scraped_at → import time (refreshed when an existing edge is re-imported)
 
 Processing strategy:
-  Single streaming pass through the file.
-  Entity and person statements are written to the DB immediately.
-  Relationship statements are buffered in memory (they are smaller than
-  entity/person records) and processed in a second pass once all nodes
-  are known, so forward-references resolve correctly.
+  Single streaming pass through the file. Nodes and edges are buffered and
+  flushed to ArcadeDB in batched `sqlscript` requests (_BatchWriter) rather than
+  one HTTP round-trip per record — the dominant cost of a full import. Nodes use
+  a stable id (the BODS record id) upserted by id, so the writer is idempotent
+  and needs no per-record read; the bods-id → node-id / id → name maps are
+  SQLite-backed (_DiskMap) so a full 46 GB import doesn't have to fit in RAM.
+  Relationships whose endpoints aren't yet imported get a named placeholder,
+  upgraded when the real statement arrives (same id).
 
-  For very large datasets use filter_jurisdiction (e.g. "GB") or limit
-  to constrain memory and runtime.
+  For a subset use filter_jurisdiction (e.g. "GB") or limit — but note the whole
+  file is still read and parsed either way; the filter only trims what's written.
 """
 
 import json
@@ -34,7 +37,6 @@ import sqlite3
 import sys
 import tempfile
 import time
-import uuid
 import zipfile
 from collections.abc import Iterator
 from typing import IO
@@ -44,7 +46,7 @@ import ijson
 
 from datetime import datetime, timezone
 
-from app.database import db
+from app.db.arcadedb import run_sqlscript
 from app.scraper.mapper import derive_ownership_type, normalize_entity_name, parse_full_name
 
 log = logging.getLogger(__name__)
@@ -113,6 +115,91 @@ class _DiskMap:
 
     def __del__(self):  # backstop: drop the temp file even if close() isn't called
         self.close()
+
+
+class _BatchWriter:
+    """
+    Buffers BODS node upserts and edge creates, flushing them to ArcadeDB in
+    batched ``sqlscript`` requests instead of one HTTP round-trip per record —
+    the dominant cost of a full import (~12× faster in local benchmarks).
+
+    Nodes are keyed on a stable ``id`` (the BODS record id) via ``UPSERT WHERE
+    id``, so the writer is idempotent and needs no per-record read. On each flush
+    nodes are written before edges, so an edge's endpoints exist by the time it
+    is created. Edges are bulk-created (ArcadeDB has no ``CREATE EDGE IF NOT
+    EXISTS``); a re-import can duplicate active edges — collapse them with
+    ``POST /scraper/deduplicate-edges``.
+    """
+
+    def __init__(self, batch_size: int = 400):
+        self._batch = batch_size
+        self._entities: list[tuple[str, dict]] = []
+        self._persons:  list[tuple[str, dict]] = []
+        self._edges:    list[tuple] = []   # (etype, from_label, from_id, to_label, to_id, props)
+        self._pending = 0
+
+    def entity(self, node_id: str, props: dict) -> None:
+        self._entities.append((node_id, props))
+        self._bump()
+
+    def person(self, node_id: str, props: dict) -> None:
+        self._persons.append((node_id, props))
+        self._bump()
+
+    def owns(self, owner_id: str, owner_label: str, owned_id: str, props: dict) -> None:
+        self._edges.append(("OWNS", owner_label, owner_id, "Entity", owned_id, props))
+        self._bump()
+
+    def role(self, person_id: str, entity_id: str, props: dict) -> None:
+        self._edges.append(("HAS_ROLE", "Person", person_id, "Entity", entity_id, props))
+        self._bump()
+
+    def _bump(self) -> None:
+        self._pending += 1
+        if self._pending >= self._batch:
+            self.flush()
+
+    def flush(self) -> None:
+        self._flush_nodes("Entity", self._entities)
+        self._flush_nodes("Person", self._persons)
+        self._flush_edges()
+        self._entities.clear()
+        self._persons.clear()
+        self._edges.clear()
+        self._pending = 0
+
+    @staticmethod
+    def _flush_nodes(label: str, buf: list) -> None:
+        if not buf:
+            return
+        stmts, params = [], {}
+        for k, (node_id, props) in enumerate(buf):
+            sets = []
+            for name, val in props.items():
+                pk = f"{name}__{k}"
+                params[pk] = val
+                sets.append(f"{name} = :{pk}")
+            params[f"id__{k}"] = node_id
+            stmts.append(f"UPDATE {label} SET {', '.join(sets)} UPSERT WHERE id = :id__{k};")
+        run_sqlscript("\n".join(stmts), params)
+
+    def _flush_edges(self) -> None:
+        if not self._edges:
+            return
+        stmts, params = [], {}
+        for k, (etype, flabel, fid, tlabel, tid, props) in enumerate(self._edges):
+            sets = []
+            for name, val in props.items():
+                pk = f"e_{name}__{k}"
+                params[pk] = val
+                sets.append(f"{name} = :{pk}")
+            params[f"ef__{k}"] = fid
+            params[f"et__{k}"] = tid
+            setclause = f" SET {', '.join(sets)}" if sets else ""
+            stmts.append(
+                f"CREATE EDGE {etype} FROM (SELECT FROM {flabel} WHERE id = :ef__{k}) "
+                f"TO (SELECT FROM {tlabel} WHERE id = :et__{k}){setclause};")
+        run_sqlscript("\n".join(stmts), params)
 
 
 def _now_iso() -> str:
@@ -262,258 +349,76 @@ def _ref_id(ref: object) -> str | None:
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
-def _upsert_entity_bods(
-    name: str,
-    entity_type: str,
-    country: str | None,
-    founded: int | None,
-    lei_id: str | None,
-    companies_house_id: str | None,
-    source_id: str,
-    credibility_score: int,
-) -> str:
-    """Find or create an Entity node, updating identifiers if found."""
-    name_norm = normalize_entity_name(name)
-    with db.get_session() as session:
-        # Query each indexed property separately so ArcadeDB can use its indexes.
-        # A single OR across multiple properties forces a full scan even when indexes exist.
-        # Wrap each lookup in a try/except: DELETE FROM Entity removes records but can
-        # leave stale index entries pointing to deleted RIDs, causing RecordNotFoundException.
-        # Treating that as "not found" is correct — the record is gone.
-        rec = None
-        if lei_id:
-            try:
-                rec = session.run(
-                    "MATCH (e:Entity {lei_id: $lei}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
-                    lei=lei_id,
-                ).single()
-            except RuntimeError as exc:
-                if "RecordNotFoundException" not in str(exc):
-                    raise
-        if not rec and companies_house_id:
-            try:
-                rec = session.run(
-                    "MATCH (e:Entity {companies_house_id: $ch}) RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
-                    ch=companies_house_id,
-                ).single()
-            except RuntimeError as exc:
-                if "RecordNotFoundException" not in str(exc):
-                    raise
-        if not rec:
-            try:
-                rec = session.run(
-                    "MATCH (e:Entity) WHERE e.name_normalized = $name_norm OR e.name = $name RETURN e.id AS id, COALESCE(e.name_credibility, 0) AS cred LIMIT 1",
-                    name_norm=name_norm, name=name,
-                ).single()
-            except RuntimeError as exc:
-                if "RecordNotFoundException" not in str(exc):
-                    raise
-
-        if rec:
-            entity_id   = rec["id"]
-            stored_cred = rec["cred"]
-            if credibility_score >= stored_cred:
-                session.run(
-                    """
-                    MATCH (e:Entity {id: $id})
-                    SET e.name                = $name,
-                        e.name_credibility    = $cred,
-                        e.source_id           = $sid,
-                        e.country             = COALESCE($country,  e.country),
-                        e.founded             = COALESCE($founded,  e.founded),
-                        e.lei_id              = COALESCE($lei,      e.lei_id),
-                        e.companies_house_id  = COALESCE($ch,       e.companies_house_id)
-                    """,
-                    id=entity_id, name=name, cred=credibility_score, sid=source_id,
-                    country=country, founded=founded, lei=lei_id, ch=companies_house_id,
-                )
-            else:
-                # Lower credibility — stamp identifiers only, don't overwrite name
-                session.run(
-                    """
-                    MATCH (e:Entity {id: $id})
-                    SET e.lei_id             = COALESCE($lei, e.lei_id),
-                        e.companies_house_id = COALESCE($ch,  e.companies_house_id)
-                    """,
-                    id=entity_id, lei=lei_id, ch=companies_house_id,
-                )
-            return entity_id
-
-        entity_id = str(uuid.uuid4())
-        session.run(
-            """
-            CREATE (e:Entity {
-                id: $id, name: $name, name_normalized: $name_norm,
-                name_credibility: $cred, source_id: $sid,
-                type: $type, country: $country, founded: $founded,
-                revenue: null, description: null,
-                lei_id: $lei, companies_house_id: $ch,
-                wikidata_id: null, verified: false
-            })
-            """,
-            id=entity_id, name=name, name_norm=name_norm, cred=credibility_score,
-            sid=source_id, type=entity_type, country=country, founded=founded,
-            lei=lei_id, ch=companies_house_id,
-        )
-        return entity_id
+def _entity(batch, node_id, name, entity_type, country, founded,
+            lei_id, companies_house_id, source_id, credibility_score):
+    """Enqueue an Entity upsert (keyed on the stable node id) and return the id."""
+    batch.entity(node_id, {
+        "name": name,
+        "name_normalized": normalize_entity_name(name),
+        "name_credibility": credibility_score,
+        "source_id": source_id,
+        "type": entity_type,
+        "country": country,
+        "founded": founded,
+        "lei_id": lei_id,
+        "companies_house_id": companies_house_id,
+        "verified": False,
+    })
+    return node_id
 
 
-def _upsert_person_bods(
-    full_name: str,
-    first_name: str | None,
-    last_name: str | None,
-    nationality: str | None,
-    birth_date: str | None,
-) -> str:
-    """Find or create a Person node."""
+def _person(batch, node_id, full_name, first_name, last_name, nationality, birth_date):
+    """Enqueue a Person upsert (keyed on the stable node id) and return the id."""
     first = first_name or ""
-    last  = last_name  or ""
+    last = last_name or ""
     if not first and not last:
         first, last = parse_full_name(full_name)
-
-    with db.get_session() as session:
-        rec = session.run(
-            "MATCH (p:Person) WHERE p.full_name = $name RETURN p.id AS id LIMIT 1",
-            name=full_name,
-        ).single()
-        if rec:
-            return rec["id"]
-
-        person_id = str(uuid.uuid4())
-        session.run(
-            """
-            CREATE (p:Person {
-                id: $id, first_name: $first, last_name: $last,
-                full_name: $full, nationality: $nat, birth_date: $bdate,
-                description: '', wikidata_id: null,
-                verified: false, alias: [], nationalities: []
-            })
-            """,
-            id=person_id, first=first, last=last, full=full_name,
-            nat=nationality or "", bdate=birth_date or "",
-        )
-        return person_id
+    batch.person(node_id, {
+        "first_name": first,
+        "last_name": last,
+        "full_name": full_name,
+        "nationality": nationality or "",
+        "birth_date": birth_date or "",
+        "description": "",
+        "verified": False,
+        "alias": [],
+        "nationalities": [],
+    })
+    return node_id
 
 
-def _upsert_owns_bods(
-    owner_id: str,
-    owned_id: str,
-    stake_percent: float | None,
-    ownership_type: str,
-    since: str | None,
-    until: str | None,
-    source_id: str,
-    credibility_score: int,
-    source_url: str | None = None,
-    source_date: str | None = None,
-    owner_label: str = "Entity",
-):
-    """Create an active OWNS edge if one does not already exist.
-
-    The owner is an Entity (GLEIF: company owns company) OR a Person (UK PSC:
-    person with significant control) — `owner_label` selects which, so the match
-    stays index-backed. The owned side is always an Entity. Stamps per-entry
-    provenance: source_url, source_date (statementDate), last_scraped_at.
-    """
+def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until,
+          source_id, credibility_score, source_url=None, source_date=None, owner_label="Entity"):
+    """Enqueue an OWNS edge (owner is an Entity or a Person; owned is an Entity)."""
     if owner_label not in ("Entity", "Person"):
         owner_label = "Entity"
-    now = _now_iso()
-    a = f"(a:{owner_label} {{id: $oid}})"
-    with db.get_session() as session:
-        exists = session.run(
-            f"MATCH {a}-[r:OWNS]->(b:Entity {{id: $nid}}) WHERE r.until IS NULL RETURN r LIMIT 1",
-            oid=owner_id, nid=owned_id,
-        ).single()
-        if exists:
-            session.run(
-                f"""
-                MATCH {a}-[r:OWNS]->(b:Entity {{id: $nid}})
-                WHERE r.until IS NULL
-                SET r.last_scraped_at = $now,
-                    r.source_url  = COALESCE($surl,  r.source_url),
-                    r.source_date = COALESCE($sdate, r.source_date)
-                """,
-                oid=owner_id, nid=owned_id, now=now,
-                surl=source_url, sdate=source_date,
-            )
-            return
-        session.run(
-            f"""
-            MATCH {a}, (b:Entity {{id: $nid}})
-            CREATE (a)-[:OWNS {{
-                stake_percent:    $stake,
-                ownership_type:   $otype,
-                voting_power_pct: null,
-                since:            $since,
-                until:            $until,
-                source_id:        $sid,
-                credibility_score: $score,
-                source_url:       $surl,
-                source_date:      $sdate,
-                last_scraped_at:  $now
-            }}]->(b)
-            """,
-            oid=owner_id, nid=owned_id,
-            stake=stake_percent, otype=ownership_type,
-            since=since, until=until,
-            sid=source_id, score=credibility_score,
-            surl=source_url, sdate=source_date, now=now,
-        )
+    batch.owns(owner_id, owner_label, owned_id, {
+        "stake_percent": stake_percent,
+        "ownership_type": ownership_type,
+        "voting_power_pct": None,
+        "since": since,
+        "until": until,
+        "source_id": source_id,
+        "credibility_score": credibility_score,
+        "source_url": source_url,
+        "source_date": source_date,
+        "last_scraped_at": _now_iso(),
+    })
 
 
-def _upsert_role_bods(
-    person_id: str,
-    entity_id: str,
-    role: str,
-    since: str | None,
-    until: str | None,
-    source_id: str,
-    credibility_score: int,
-    source_url: str | None = None,
-    source_date: str | None = None,
-):
-    """Create a HAS_ROLE edge if one does not already exist.
-
-    Stamps per-entry provenance (source_url/source_date/last_scraped_at),
-    refreshing last_scraped_at on re-import of an existing edge.
-    """
-    now = _now_iso()
-    with db.get_session() as session:
-        exists = session.run(
-            """
-            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-            WHERE r.role = $role AND r.until IS NULL
-            RETURN r LIMIT 1
-            """,
-            pid=person_id, eid=entity_id, role=role,
-        ).single()
-        if exists:
-            session.run(
-                """
-                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-                WHERE r.role = $role AND r.until IS NULL
-                SET r.last_scraped_at = $now,
-                    r.source_url  = COALESCE($surl,  r.source_url),
-                    r.source_date = COALESCE($sdate, r.source_date)
-                """,
-                pid=person_id, eid=entity_id, role=role, now=now,
-                surl=source_url, sdate=source_date,
-            )
-            return
-        session.run(
-            """
-            MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
-            CREATE (p)-[:HAS_ROLE {
-                role: $role, since: $since, until: $until,
-                source_id: $sid, credibility_score: $score,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $now
-            }]->(e)
-            """,
-            pid=person_id, eid=entity_id, role=role,
-            since=since, until=until,
-            sid=source_id, score=credibility_score,
-            surl=source_url, sdate=source_date, now=now,
-        )
+def _role(batch, person_id, entity_id, role, since, until,
+          source_id, credibility_score, source_url=None, source_date=None):
+    """Enqueue a HAS_ROLE edge."""
+    batch.role(person_id, entity_id, {
+        "role": role,
+        "since": since,
+        "until": until,
+        "source_id": source_id,
+        "credibility_score": credibility_score,
+        "source_url": source_url,
+        "source_date": source_date,
+        "last_scraped_at": _now_iso(),
+    })
 
 
 # ── BODS statement processors ─────────────────────────────────────────────────
@@ -521,6 +426,7 @@ def _upsert_role_bods(
 def _process_entity_statement(
     stmt: dict,
     bods_to_pamten_id: dict,
+    batch: "_BatchWriter",
     source_id: str,
     credibility_score: int,
     filter_jurisdiction: str | None,
@@ -573,7 +479,8 @@ def _process_entity_statement(
         elif scheme == "GB-COH":
             companies_house_id = value
 
-    entity_id = _upsert_entity_bods(
+    entity_id = _entity(
+        batch, record_id,
         name=name,
         entity_type=entity_type,
         country=country,
@@ -590,6 +497,7 @@ def _process_entity_statement(
 def _process_person_statement(
     stmt: dict,
     bods_to_pamten_id: dict,
+    batch: "_BatchWriter",
     source_id: str,
     credibility_score: int,
 ) -> str | None:
@@ -636,7 +544,8 @@ def _process_person_statement(
     # Birth date — may be partial ("1978-07"); store as-is, don't parse
     birth_date = details.get("birthDate") or None
 
-    person_id = _upsert_person_bods(
+    person_id = _person(
+        batch, record_id,
         full_name=full_name,
         first_name=first_name,
         last_name=last_name,
@@ -651,6 +560,7 @@ def _process_relationship_statement(
     stmt: dict,
     bods_to_pamten_id: dict,
     bods_id_to_name: dict,
+    batch: "_BatchWriter",
     source_id: str,
     credibility_score: int,
 ) -> int:
@@ -690,7 +600,8 @@ def _process_relationship_statement(
     # If either side is unknown, create a named placeholder so the edge is preserved.
     owned_id = bods_to_pamten_id.get(subject_ref)
     if not owned_id:
-        owned_id = _upsert_entity_bods(
+        owned_id = _entity(
+            batch, subject_ref,
             name=_placeholder_name(subject_ref), entity_type="company",
             country=None, founded=None,
             lei_id=_placeholder_lei(subject_ref), companies_house_id=None,
@@ -703,12 +614,14 @@ def _process_relationship_statement(
         if party_is_person:
             # A person owner not yet imported — create a bare Person placeholder
             # (don't misfile it as a company Entity).
-            owner_id = _upsert_person_bods(
+            owner_id = _person(
+                batch, party_ref,
                 full_name=_placeholder_name(party_ref),
                 first_name=None, last_name=None, nationality=None, birth_date=None,
             )
         else:
-            owner_id = _upsert_entity_bods(
+            owner_id = _entity(
+                batch, party_ref,
                 name=_placeholder_name(party_ref), entity_type="company",
                 country=None, founded=None,
                 lei_id=_placeholder_lei(party_ref), companies_house_id=None,
@@ -739,8 +652,8 @@ def _process_relationship_statement(
 
         if mapped == "role":
             # seniorManagingOfficial → HAS_ROLE (owner should be a Person)
-            _upsert_role_bods(
-                person_id=owner_id, entity_id=owned_id,
+            _role(
+                batch, person_id=owner_id, entity_id=owned_id,
                 role="Senior Managing Official",
                 since=start_date, until=end_date,
                 source_id=source_id, credibility_score=credibility_score,
@@ -773,8 +686,8 @@ def _process_relationship_statement(
         else:
             ownership_type = mapped
 
-        _upsert_owns_bods(
-            owner_id=owner_id, owned_id=owned_id,
+        _owns(
+            batch, owner_id=owner_id, owned_id=owned_id,
             stake_percent=stake, ownership_type=ownership_type,
             since=start_date, until=end_date,
             source_id=source_id, credibility_score=credibility_score,
@@ -993,6 +906,7 @@ def _run_import(
     # has tens of millions of entries and would otherwise OOM a small box.
     bods_to_pamten_id = _DiskMap()
     bods_id_to_name   = _DiskMap()   # entity names, for placeholder labelling
+    batch = _BatchWriter()           # buffers writes, flushes in batched sqlscript
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
 
     counts = dict(entities=0, persons=0, relationships=0, skipped=0, errors=0)
@@ -1027,7 +941,7 @@ def _run_import(
                     bods_id_to_name[_rid] = _nm
             try:
                 result = _process_entity_statement(
-                    stmt, bods_to_pamten_id, source_id, credibility_score, jur,
+                    stmt, bods_to_pamten_id, batch, source_id, credibility_score, jur,
                 )
                 if result:
                     counts["entities"] += 1
@@ -1041,7 +955,7 @@ def _run_import(
         elif record_type == "person":
             try:
                 result = _process_person_statement(
-                    stmt, bods_to_pamten_id, source_id, credibility_score,
+                    stmt, bods_to_pamten_id, batch, source_id, credibility_score,
                 )
                 if result:
                     counts["persons"] += 1
@@ -1061,13 +975,14 @@ def _run_import(
             if _subj in bods_to_pamten_id or _party in bods_to_pamten_id:
                 try:
                     edges = _process_relationship_statement(
-                        stmt, bods_to_pamten_id, bods_id_to_name, source_id, credibility_score,
+                        stmt, bods_to_pamten_id, bods_id_to_name, batch, source_id, credibility_score,
                     )
                     counts["relationships"] += edges
                 except Exception as exc:
                     log.warning("BODS relationship error: %s", exc)
                     counts["errors"] += 1
 
+    batch.flush()   # write any remaining buffered nodes/edges
     bods_to_pamten_id.close()
     bods_id_to_name.close()
 
