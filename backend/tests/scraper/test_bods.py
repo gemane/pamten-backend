@@ -173,6 +173,27 @@ def _capturing_edge(store):
     return fake
 
 
+# ── _entity_node_id: stable identity ──────────────────────────────────────────
+
+class TestEntityNodeId:
+    def test_prefers_lei(self):
+        from app.scraper.bods import _entity_node_id
+        assert _entity_node_id("LEI123", "COH9", "rec-1") == "lei:LEI123"
+
+    def test_falls_back_to_companies_house(self):
+        from app.scraper.bods import _entity_node_id
+        assert _entity_node_id(None, "COH9", "rec-1") == "gb-coh:COH9"
+
+    def test_falls_back_to_record_id_when_no_external_id(self):
+        from app.scraper.bods import _entity_node_id
+        assert _entity_node_id(None, None, "rec-1") == "rec-1"
+
+    def test_same_lei_different_recordid_yields_same_id(self):
+        # The whole point: two dumps, same company, different recordId → one id.
+        from app.scraper.bods import _entity_node_id
+        assert _entity_node_id("LEI-X", None, "AT-001") == _entity_node_id("LEI-X", None, "GLEIF-999")
+
+
 # ── _process_entity_statement ─────────────────────────────────────────────────
 
 class TestProcessEntityStatement:
@@ -188,7 +209,9 @@ class TestProcessEntityStatement:
 
         assert result == "eid-1"
         assert bods_map["entity-001"] == "eid-1"
-        assert captured["node_id"] == "entity-001"       # keyed on the stable BODS id
+        # Node is keyed on the LEI (stable across dumps), NOT the per-dump recordId —
+        # this is what stops re-imports from duplicating the same company.
+        assert captured["node_id"] == "lei:PY6ZZQWO2IZFZC3IOL08"
         assert captured["name"] == "AstraZeneca PLC"
         assert captured["entity_type"] == "company"
         assert captured["country"] == "GB"  # canonical ISO-2, matching the Wikidata scraper
