@@ -18,6 +18,12 @@ run the real read/write Cypher end-to-end, so they catch that class of bug.
 
 ## Run
 
+**Quick path:** `./arcadedb-it.sh test` starts a throwaway ArcadeDB, runs this
+suite against it, and tears it down. Or drive it in steps: `arcadedb-it.sh start`
+(prints the `ARCADEDB_IT_*` exports) / `stop` / `status`. The script falls back to
+`sg docker` when the daemon socket needs group membership, so it works on a fresh
+`usermod -aG docker` without a re-login. The manual steps below are equivalent.
+
 Start a throwaway ArcadeDB with Docker:
 
 ```bash
