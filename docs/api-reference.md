@@ -55,6 +55,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | GET | `/flags` | moderator | Moderation queue, newest first; filter `?status=`, `?target_kind=`, `?category=` |
 | GET | `/flags/summary` | public | Open-flag count for one target (`?node_id=` or `?from_id=&to_id=[&role=]`) — powers the "disputed" badge |
 | PATCH | `/flags/{id}` | moderator | Triage status: `open` ⇄ `reviewing`, `→ rejected` |
+| DELETE | `/flags/{id}` | moderator | Remove a flag entirely (spam/test/duplicate); any Suppression/Pin it made is left untouched |
 | POST | `/flags/{id}/suppress` | moderator | Resolve a flag by **suppressing** its target — an *edge* flag deletes the edge + records a `Suppression`; a *node* flag (entity/person) is a pure read-time hide (search, own profile, related-node lists). Survives re-scrapes; flag → `resolved` |
 | GET | `/flags/suppressions` | moderator | Active suppression overrides |
 | DELETE | `/flags/suppressions/{id}` | moderator | Un-suppress (edge reappears if a re-scrape recreates it) |
