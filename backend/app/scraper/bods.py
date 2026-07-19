@@ -37,7 +37,6 @@ import sqlite3
 import sys
 import tempfile
 import time
-import uuid
 import zipfile
 from collections.abc import Iterator
 from typing import IO
