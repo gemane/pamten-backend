@@ -231,6 +231,19 @@ panel or the `/federation/*` API.
 
 ---
 
+## Import verification (planned)
+
+Almost every node and edge comes from a scraper, and scrapers are sometimes
+wrong. Phase A lets anyone (logged in or not) **⚑ report** a node or edge that
+looks wrong and gives **moderators** a **queue of what's disputed** — without a
+manual-entry UI.
+Corrections live as a re-scrape-surviving overlay (like the dedup keep-separate
+log), not as in-place edits that the next scrape would clobber.
+
+📄 **Design (not yet implemented):** [`docs/verification.md`](docs/verification.md) — the `Flag` node and stable edge addressing, anonymous rate-limited reporting, the endpoints, the read-time "disputed" badge, GDPR intake, and the Phase-B non-goals (suppress/pin).
+
+---
+
 ## Environment variables
 
 | Variable | Default | Description |
