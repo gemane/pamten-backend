@@ -23,13 +23,15 @@ def test_wipe_data_drops_types_then_recreates_schema(monkeypatch):
     import manage
     manage.cmd_wipe_data(_args(yes=True))
 
-    # every data/overlay type is DROPPED (metadata op — scales where DELETE FROM
-    # times out on a full GLEIF import); core data, edges, overlays and logs
+    # each data/overlay type is drained in batches (short requests that stay
+    # under the DB proxy timeout) then the emptied type is dropped
     for t in ("OWNS", "HAS_ROLE", "Entity", "Person", "Location", "Source",
               "Flag", "Suppression", "Pin", "ScrapeRun", "MergeLog"):
+        assert f"DELETE FROM {t} LIMIT 10000" in calls
         assert f"DROP TYPE {t} IF EXISTS UNSAFE" in calls
     # ... but user accounts and config are left alone
     for t in ("User", "ScraperSource", "Peer"):
+        assert f"DELETE FROM {t} LIMIT 10000" not in calls
         assert f"DROP TYPE {t} IF EXISTS UNSAFE" not in calls
     # ... and the empty types + indexes are recreated afterward
     assert recreated == [True]
