@@ -406,7 +406,21 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     return migrated
 
 
-def deduplicate_entities() -> dict:
+def _duplicate_keys(key_prop: str) -> list[str]:
+    """Return only the identifier values that appear on more than one Entity.
+
+    Aggregated server-side (GROUP BY … HAVING count > 1) so we ship back just the
+    handful of *duplicated* keys, never the whole entity set — the difference
+    between a bounded response and loading a full GLEIF import into memory.
+    """
+    rows = run_query(
+        f"MATCH (e:Entity) WHERE e.{key_prop} IS NOT NULL "
+        f"WITH e.{key_prop} AS key, count(e) AS cnt WHERE cnt > 1 RETURN key"
+    )
+    return [r["key"] for r in rows]
+
+
+def deduplicate_entities(limit: int = 300) -> dict:
     """
     Merge Entity nodes that share a stable external identifier — the same LEI or
     the same Companies House number — into one, migrating their edges and deleting
@@ -414,42 +428,47 @@ def deduplicate_entities() -> dict:
     entities on the per-dump BODS recordId, so the same company imported in two
     runs became two nodes. Admin only.
 
-    For each duplicate group the surviving node is the one with the highest
-    ``name_credibility`` (then verified, then the lexically-smallest id for a
-    deterministic result).
+    Processes at most ``limit`` duplicate groups per call and reports how many
+    remain, so a large heal is done in bounded batches that each finish under the
+    HTTP/proxy request timeout — call repeatedly until ``remaining`` is 0. For
+    each group the survivor is the highest ``name_credibility`` node (then
+    verified, then the lexically-smallest id, for a deterministic result).
     """
+    # All duplicate groups across both identifier kinds (cheap aggregation).
+    dup_keys = [("lei_id", k) for k in _duplicate_keys("lei_id")]
+    dup_keys += [("companies_house_id", k) for k in _duplicate_keys("companies_house_id")]
+    total = len(dup_keys)
+    batch = dup_keys[:limit]
+
     merged: list[dict] = []
-
-    def _pass(key_prop: str) -> None:
-        rows = run_query(
-            f"MATCH (e:Entity) WHERE e.{key_prop} IS NOT NULL "
-            f"RETURN e.id AS id, e.{key_prop} AS key, e.name AS name, "
-            f"COALESCE(e.name_credibility, 0) AS cred, COALESCE(e.verified, false) AS verified"
+    for key_prop, key in batch:
+        members = run_query(
+            f"MATCH (e:Entity) WHERE e.{key_prop} = $key "
+            f"RETURN e.id AS id, e.name AS name, "
+            f"COALESCE(e.name_credibility, 0) AS cred, COALESCE(e.verified, false) AS verified",
+            {"key": key},
         )
-        groups: dict[str, list[dict]] = {}
-        for r in rows:
-            groups.setdefault(r["key"], []).append(r)
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
+        keep = members[0]
+        for dead in members[1:]:
+            migrated = _migrate_entity_edges(dead["id"], keep["id"])
+            run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+            merged.append({
+                "key": f"{key_prop}={key}",
+                "kept": keep["name"], "kept_id": keep["id"],
+                "deleted": dead["name"], "deleted_id": dead["id"],
+                "edges_migrated": migrated,
+            })
 
-        for key, members in groups.items():
-            if len(members) < 2:
-                continue
-            # Keep the richest node; deterministic tie-break on id.
-            members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
-            keep = members[0]
-            for dead in members[1:]:
-                migrated = _migrate_entity_edges(dead["id"], keep["id"])
-                run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
-                merged.append({
-                    "key": f"{key_prop}={key}",
-                    "kept": keep["name"], "kept_id": keep["id"],
-                    "deleted": dead["name"], "deleted_id": dead["id"],
-                    "edges_migrated": migrated,
-                })
-
-    _pass("lei_id")               # LEI first (GLEIF)
-    _pass("companies_house_id")   # then Companies House number (UK PSC); re-reads live data
-
-    return {"entities_merged": len(merged), "detail": merged}
+    return {
+        "entities_merged": len(merged),
+        "groups_processed": len(batch),
+        "duplicate_groups_found": total,
+        "remaining": max(0, total - len(batch)),
+        "detail": merged[:100],   # cap payload; counts above are complete
+    }
 
 
 def migrate_ownership_types() -> dict:
