@@ -52,7 +52,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/flags` | public (rate-limited) | Report a node/edge as wrong. Anonymous **or** logged-in; anon capped at 2/hour per IP fingerprint, users higher. Repeat of the same target+category is collapsed |
-| GET | `/flags` | moderator | Moderation queue, newest first; filter `?status=`, `?target_kind=`, `?category=` |
+| GET | `/flags` | moderator | Moderation queue, newest first; filter `?status=`, `?target_kind=`, `?category=`. `?group=true` collapses to one row per target+category (`count` + `flag_ids`) |
 | GET | `/flags/summary` | public | Open-flag count for one target (`?node_id=` or `?from_id=&to_id=[&role=]`) — powers the "disputed" badge |
 | PATCH | `/flags/{id}` | moderator | Triage status: `open` ⇄ `reviewing`, `→ rejected` |
 | DELETE | `/flags/{id}` | moderator | Remove a flag entirely (spam/test/duplicate); any Suppression/Pin it made is left untouched |
