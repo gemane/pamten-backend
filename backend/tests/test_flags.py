@@ -140,6 +140,24 @@ def test_patch_unknown_flag_404(client, fake_db, make_token):
     assert r.status_code == 404
 
 
+def test_delete_flag_requires_moderator(client, fake_db, make_token):
+    assert client.delete("/flags/f1").status_code == 401
+    assert client.delete("/flags/f1", headers=_auth(make_token(role="contributor"))).status_code == 403
+
+
+def test_delete_flag_success(client, fake_db, make_token):
+    fake_db.queue([{"id": "f1"}])   # existence check finds it
+    r = client.delete("/flags/f1", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 200
+    assert r.json()["status"] == "deleted"
+
+
+def test_delete_flag_404(client, fake_db, make_token):
+    fake_db.queue([])
+    r = client.delete("/flags/nope", headers=_auth(make_token(role="moderator")))
+    assert r.status_code == 404
+
+
 # ── Suppression (Phase B) ────────────────────────────────────────────────────
 
 def test_suppress_requires_moderator(client, fake_db, make_token):

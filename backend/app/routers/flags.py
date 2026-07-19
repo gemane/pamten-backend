@@ -180,6 +180,18 @@ def update_flag_status(flag_id: str, data: FlagStatusUpdate,
     return {"id": flag_id, "status": data.status.value}
 
 
+@router.delete("/{flag_id}")
+def delete_flag(flag_id: str, _: dict = Depends(require_moderator)):
+    """Remove a flag entirely (spam, a test, or a duplicate). Moderator only. Any
+    Suppression/Pin it produced is a separate record and is left untouched."""
+    with db.get_session() as session:
+        exists = session.run("MATCH (f:Flag {id:$id}) RETURN f.id AS id", id=flag_id).single()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Flag not found")
+        session.run("MATCH (f:Flag {id:$id}) DETACH DELETE f", id=flag_id)
+    return {"id": flag_id, "status": "deleted"}
+
+
 # ── Suppression (Phase-B resolution) ─────────────────────────────────────────
 # Suppressing an edge flag deletes the wrong edge now AND records a Suppression
 # override keyed by the edge's natural key, so read endpoints (app.suppressions)
