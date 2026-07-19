@@ -48,6 +48,14 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | GET | `/sources/entity/{id}` | Sources behind an entity's facts (from its edges + node) |
 | GET | `/sources/person/{id}` | Sources behind a person's roles/ownership |
 
+## Verification flags
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/flags` | public (rate-limited) | Report a node/edge as wrong. Anonymous **or** logged-in; anon capped at 2/hour per IP fingerprint, users higher. Repeat of the same target+category is collapsed |
+| GET | `/flags` | moderator | Moderation queue, newest first; filter `?status=`, `?target_kind=`, `?category=` |
+| GET | `/flags/summary` | public | Open-flag count for one target (`?node_id=` or `?from_id=&to_id=[&role=]`) — powers the "disputed" badge |
+| PATCH | `/flags/{id}` | moderator | Triage status: `open` ⇄ `reviewing`, `→ rejected` (`resolved` is Phase B) |
+
 ## Relationships
 | Method | Path | Description |
 |---|---|---|

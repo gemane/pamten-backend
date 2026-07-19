@@ -1,9 +1,10 @@
 # Import verification — Phase A design notes
 
-> **Status: design, not yet implemented.** This is the agreed plan for the first
-> cut of user-facing data verification. Endpoints, node types, and UI described
-> here do not exist yet. When Phase A ships, fold the real behaviour into this
-> file and add the endpoints to [api-reference.md](api-reference.md).
+> **Status: backend implemented; frontend pending.** The `moderator` role, the
+> `Flag` node, and the endpoints (`POST /flags`, `GET /flags`, `GET
+> /flags/summary`, `PATCH /flags/{id}`) are live — see
+> [api-reference.md](api-reference.md). The ⚑ Report control, disputed badge, and
+> moderator queue UI are the remaining frontend slice.
 
 ## The problem
 
