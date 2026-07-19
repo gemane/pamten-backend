@@ -293,7 +293,7 @@ python3 manage.py init-schema
 |---|---|
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
 | `seed` | Seed the built-in company list |
-| `wipe-data` | Delete all imported data (keeps user accounts + schema); rebuilds indexes. Guarded behind `DEBUG=true` |
+| `wipe-data` | Delete all imported data (keeps user accounts + schema); rebuilds indexes. Requires `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-data --confirm-database pamten` |
 | `geocode` | Backfill HQ/location coordinates via Nominatim |
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |

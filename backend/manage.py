@@ -62,11 +62,33 @@ def cmd_init_schema(args):
 
 def cmd_wipe_data(args):
     import os
-    if os.getenv("DEBUG", "").lower() not in ("1", "true", "yes"):
-        print("wipe-data only runs with DEBUG=true. Aborted.")
-        sys.exit(1)
+    from app.config import settings
     from app.db.arcadedb import run_sql
     from app.db.schema import ensure_indexes
+
+    target_db = settings.ARCADEDB_DATABASE
+
+    # Guard 1 — a DEDICATED opt-in var. Deliberately NOT DEBUG: DEBUG gets flipped
+    # on a live box to diagnose problems, and that must never arm an irreversible
+    # wipe. This var has no other purpose, so it's only ever set on purpose.
+    if os.getenv("ALLOW_DESTRUCTIVE_WIPE", "").lower() not in ("1", "true", "yes"):
+        print("wipe-data is disabled. Set ALLOW_DESTRUCTIVE_WIPE=true to enable it.")
+        print("(Not tied to DEBUG on purpose, so debugging prod cannot arm a wipe.)")
+        sys.exit(1)
+
+    # Guard 2 — the caller must name the database they intend to wipe, and it must
+    # match the one actually connected. This kills the "aimed at the wrong DB"
+    # failure mode: you cannot wipe prod without typing prod's real name.
+    confirm_db = getattr(args, "confirm_database", None)
+    if not confirm_db:
+        print(f"Refusing to wipe: connected database is '{target_db}'.")
+        print(f"Re-run with --confirm-database {target_db} to confirm the target.")
+        sys.exit(1)
+    if confirm_db != target_db:
+        print(f"Refusing to wipe: --confirm-database '{confirm_db}' does not match "
+              f"the connected database '{target_db}'.")
+        sys.exit(1)
+
     batch = getattr(args, "batch", None) or 10000
     # Clear each type's rows in small batches, THEN drop the now-empty type and
     # recreate it. A single DROP/DELETE on millions of rows exceeds the DB's
@@ -82,13 +104,16 @@ def cmd_wipe_data(args):
         "Entity", "Person", "Location", "Source",
         "MergeLog", "ScrapeRun", "Flag", "Suppression", "Pin", "Conflict",
     ]
+    # Guard 3 — final interactive check: retype the DB name (not a generic YES),
+    # so muscle memory can't fire it against the wrong target. --yes skips this
+    # for the user's own `!` runs, but Guards 1 & 2 still apply.
     if not args.yes:
-        print("This will delete ALL imported data (entities, persons, edges, sources)")
-        print("plus verification flags/suppressions/pins, merge logs and scrape-run logs.")
-        print("User accounts and scraper/federation config are NOT affected.")
+        print(f"This will delete ALL imported data from '{target_db}' (entities, persons,")
+        print("edges, sources) plus verification flags/suppressions/pins, merge logs and")
+        print("scrape-run logs. User accounts and scraper/federation config are NOT affected.")
         print(f"Types to clear: {', '.join(types)}")
-        confirm = input("Type YES to confirm: ")
-        if confirm.strip() != "YES":
+        confirm = input(f"Retype the database name '{target_db}' to confirm: ")
+        if confirm.strip() != target_db:
             print("Aborted.")
             sys.exit(1)
     for t in types:
@@ -180,7 +205,9 @@ def _build_parser():
 
     # wipe-data command
     p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')
-    p_wipe.add_argument('--yes', action='store_true', help='Skip confirmation prompt')
+    p_wipe.add_argument('--confirm-database',
+                        help='Name of the database you intend to wipe; must match the connected DB')
+    p_wipe.add_argument('--yes', action='store_true', help='Skip the interactive retype-the-name prompt')
     p_wipe.add_argument('--batch', type=int, default=10000,
                         help='Rows deleted per request — keep each well under the DB proxy timeout (default 10000)')
     p_wipe.set_defaults(func=cmd_wipe_data)
