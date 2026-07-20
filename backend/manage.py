@@ -69,9 +69,13 @@ def cmd_backfill_search(args):
     search_text NULL (which would re-match the WHERE and loop forever)."""
     from app.db.arcadedb import run_sql
     batch = getattr(args, "batch", None) or 20000
+    # Fold aliases into search_text so a merged duplicate stays findable by its
+    # alias (a LIST can't take a FULL_TEXT index directly). ifnull(...) guards
+    # keep the result non-null even when name/aliases are absent, so a row can't
+    # re-match `search_text IS NULL` and loop forever.
     specs = [
-        ("Entity", "ifnull(name, '') + ' ' + ifnull(description, '')"),
-        ("Person", "ifnull(full_name, '')"),
+        ("Entity", "ifnull(name, '') + ' ' + ifnull(description, '') + ' ' + ifnull(aliases, []).join(' ')"),
+        ("Person", "ifnull(full_name, '') + ' ' + ifnull(alias, []).join(' ')"),
     ]
     for t, expr in specs:
         total = 0

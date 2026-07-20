@@ -33,11 +33,12 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     """
     Full-text search for entities and persons.
 
-    Backed by a FULL_TEXT index on `search_text` (Entity: name + description;
-    Person: full_name), queried with `CONTAINSTEXT`. Matching is by whole word/
-    token and position-independent — "busch" finds "Anheuser-Busch InBev" — but
-    it does NOT match arbitrary mid-word substrings ("ovarti" won't find
-    "Novartis"). Populate `search_text` with `manage.py backfill-search`.
+    Backed by a FULL_TEXT index on `search_text` (Entity: name + description +
+    aliases; Person: full_name + aliases), queried with `CONTAINSTEXT`. Matching
+    is by whole word/token and position-independent — "busch" finds "Anheuser-
+    Busch InBev", and an alias finds the node it was merged into — but it does
+    NOT match arbitrary mid-word substrings ("ovarti" won't find "Novartis").
+    Populate `search_text` with `manage.py backfill-search`.
 
     Results are ranked by match quality against the name:
     1. **Exact name match** — query equals the full name
