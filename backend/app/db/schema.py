@@ -70,6 +70,18 @@ _EDGE_TYPES: list[str] = [
     "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
 ]
 
+# Full-text indexes powering /search. A FULL_TEXT index (tokenized, queried with
+# the `CONTAINSTEXT` operator) turns name search from an un-indexable
+# `toLower(name) CONTAINS` full scan — ~12s on 3M entities — into an index
+# lookup. It lives on a dedicated `search_text` column (name [+ description])
+# because FULL_TEXT can't share a property with the existing LSM indexes the
+# scrapers use for exact-match resolution. Populate search_text with
+# `manage.py backfill-search` (and the BODS importer sets it inline).
+_FULLTEXT_INDEXES: list[tuple[str, str]] = [
+    ("Entity", "search_text"),
+    ("Person", "search_text"),
+]
+
 
 def _statements() -> list[str]:
     stmts: list[str] = []
@@ -80,6 +92,9 @@ def _statements() -> list[str]:
     for vtype, prop, kind in _INDEXES:
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}")
+    for vtype, prop in _FULLTEXT_INDEXES:
+        stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING")
+        stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT")
     return stmts
 
 

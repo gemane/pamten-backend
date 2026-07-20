@@ -298,6 +298,7 @@ python3 manage.py init-schema
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `bods-gleif` / `bods-uk-psc` | Import a local BODS file. Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild them after (much faster; collapse any duplicate edges afterwards with `POST /scraper/deduplicate-edges`) |
+| `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the BODS importer sets it inline, but this covers pre-existing rows). |
 
 ---
 

@@ -21,6 +21,21 @@ def _arm(monkeypatch):
     monkeypatch.setenv("ALLOW_DESTRUCTIVE_WIPE", "true")
 
 
+def test_backfill_search_updates_entity_and_person(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: calls.append(q))
+
+    import manage
+    manage.cmd_backfill_search(_args(batch=20000))
+
+    assert any("UPDATE Entity SET search_text" in c and "WHERE search_text IS NULL LIMIT 20000" in c
+               for c in calls)
+    assert any("UPDATE Person SET search_text" in c and "WHERE search_text IS NULL LIMIT 20000" in c
+               for c in calls)
+    # name is null-guarded so a null name can't leave search_text NULL and loop forever
+    assert any("ifnull(name, '')" in c for c in calls)
+
+
 def test_wipe_data_drops_types_then_recreates_schema(monkeypatch):
     _arm(monkeypatch)
     calls: list[str] = []

@@ -1,9 +1,15 @@
 from fastapi import APIRouter, Query, HTTPException
 from app.database import db
+from app.db.arcadedb import run_sql
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 
 router = APIRouter(prefix="/search", tags=["Search"])
+
+
+def _clean(row: dict) -> dict:
+    """Drop ArcadeDB's @rid/@type/@cat metadata keys from a raw SQL row."""
+    return {k: v for k, v in row.items() if not k.startswith("@")}
 
 
 def _rank(node: dict, q: str) -> tuple:
@@ -25,67 +31,47 @@ def _rank(node: dict, q: str) -> tuple:
 @router.get("/")
 def search(q: str = Query(..., min_length=2), country: str | None = Query(default=None)):
     """
-    Search for entities and persons by name, alias, or description.
+    Full-text search for entities and persons.
 
-    Matches against:
-    - `name` (primary field)
-    - `aliases` — Wikidata alternate labels (e.g. "AB InBev" finds "Anheuser-Busch InBev")
-    - `description` — short Wikidata description
+    Backed by a FULL_TEXT index on `search_text` (Entity: name + description +
+    aliases; Person: full_name + aliases), queried with `CONTAINSTEXT`. Matching
+    is by whole word/token and position-independent — "busch" finds "Anheuser-
+    Busch InBev", and an alias finds the node it was merged into — but it does
+    NOT match arbitrary mid-word substrings ("ovarti" won't find "Novartis").
+    Populate `search_text` with `manage.py backfill-search`.
 
-    Results are ranked by match quality:
+    Results are ranked by match quality against the name:
     1. **Exact name match** — query equals the full name
     2. **Starts-with** — name begins with the query; shorter names rank higher within this tier
     3. **Contains** — query appears anywhere in the name
-    4. **Alias / description match** — query only matched a secondary field
 
     Up to 20 entities and 10 persons are returned (30 total, trimmed to 20 after ranking).
     """
     q_lower = q.lower()
 
-    # Run Entity and Person queries separately — ArcadeDB UNION + LIMIT is unreliable.
+    # Index-backed full-text search via the FULL_TEXT index on `search_text`
+    # (see db/schema.py). `CONTAINSTEXT` uses the index — an un-indexable
+    # `toLower(name) CONTAINS` scan of every Entity took ~12s on 3M rows.
+    # Entity and Person run separately — ArcadeDB UNION + LIMIT is unreliable.
     if country:
-        entity_cypher = """
-            MATCH (n:Entity)
-            WHERE toLower(n.name) CONTAINS $q AND n.country = $country
-            RETURN n AS node, 1.0 AS score, 'Entity' AS type
-            LIMIT 20
-        """
+        entity_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
+                      "AND country = :country LIMIT 20")
         entity_params: dict = {"q": q_lower, "country": country}
     else:
-        entity_cypher = """
-            MATCH (n:Entity)
-            WHERE toLower(n.name) CONTAINS $q
-               OR toLower(coalesce(n.description, '')) CONTAINS $q
-               OR any(alias IN coalesce(n.aliases, []) WHERE toLower(alias) CONTAINS $q)
-            RETURN n AS node, 1.0 AS score, 'Entity' AS type
-            LIMIT 20
-        """
+        entity_sql = "SELECT FROM Entity WHERE search_text CONTAINSTEXT :q LIMIT 20"
         entity_params = {"q": q_lower}
 
-    person_cypher = """
-        MATCH (n:Person)
-        WHERE toLower(n.full_name) CONTAINS $q
-           OR any(a IN coalesce(n.alias, []) WHERE toLower(a) CONTAINS $q)
-        RETURN n AS node, 1.0 AS score, 'Person' AS type
-        LIMIT 10
-    """
+    person_sql = "SELECT FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 10"
 
     results = []
+    for row in run_sql(entity_sql, entity_params):
+        results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
+    if not country:
+        for row in run_sql(person_sql, {"q": q_lower}):
+            results.append({"node": _clean(row), "score": 1.0, "type": "Person"})
+
+    # Hide moderator-suppressed nodes from search.
     with db.get_session() as session:
-        for record in session.run(entity_cypher, **entity_params):
-            results.append({
-                "node":  dict(record["node"]),
-                "score": record["score"],
-                "type":  record["type"],
-            })
-        if not country:
-            for record in session.run(person_cypher, q=q_lower):
-                results.append({
-                    "node":  dict(record["node"]),
-                    "score": record["score"],
-                    "type":  record["type"],
-                })
-        # Hide moderator-suppressed nodes from search.
         hidden = load_suppressed_nodes(session)
 
     results = [r for r in results if r["node"].get("id") not in hidden]
