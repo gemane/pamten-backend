@@ -51,6 +51,30 @@ from app.scraper.mapper import derive_ownership_type, normalize_entity_name, par
 
 log = logging.getLogger(__name__)
 
+
+# BODS imports run for hours against a remote, nginx-fronted ArcadeDB. A single
+# slow batch (index maintenance on 10M+ row types) can blow past the proxy's
+# ~60s timeout and 504 — which otherwise kills the whole run. Retry each flush
+# with backoff so a transient timeout costs seconds, not the entire import.
+# NOTE: node flushes are idempotent (UPSERT WHERE id); edge flushes are NOT, so a
+# retry after a 504 that actually committed server-side can duplicate edges —
+# collapse them afterwards with POST /scraper/deduplicate-edges.
+_FLUSH_ATTEMPTS = 4
+_FLUSH_BASE_DELAY = 2.0
+
+
+def _flush_script(script: str, params: dict) -> list[dict]:
+    for attempt in range(_FLUSH_ATTEMPTS):
+        try:
+            return run_sqlscript(script, params)
+        except (RuntimeError, ConnectionError) as exc:
+            if attempt == _FLUSH_ATTEMPTS - 1:
+                raise
+            delay = _FLUSH_BASE_DELAY * (2 ** attempt)
+            log.warning("BODS flush failed (attempt %d/%d): %s — retrying in %.0fs",
+                        attempt + 1, _FLUSH_ATTEMPTS, str(exc)[:140], delay)
+            time.sleep(delay)
+
 # Fast JSON parse for the (huge) NDJSON BODS files; fall back to stdlib if orjson
 # isn't installed. orjson is ~2–3× faster and accepts bytes directly.
 try:
@@ -181,7 +205,7 @@ class _BatchWriter:
                 sets.append(f"{name} = :{pk}")
             params[f"id__{k}"] = node_id
             stmts.append(f"UPDATE {label} SET {', '.join(sets)} UPSERT WHERE id = :id__{k};")
-        run_sqlscript("\n".join(stmts), params)
+        _flush_script("\n".join(stmts), params)
 
     def _flush_edges(self) -> None:
         if not self._edges:
@@ -199,7 +223,7 @@ class _BatchWriter:
             stmts.append(
                 f"CREATE EDGE {etype} FROM (SELECT FROM {flabel} WHERE id = :ef__{k}) "
                 f"TO (SELECT FROM {tlabel} WHERE id = :et__{k}){setclause};")
-        run_sqlscript("\n".join(stmts), params)
+        _flush_script("\n".join(stmts), params)
 
 
 def _now_iso() -> str:
@@ -897,6 +921,36 @@ def stream_bods_json(url: str) -> Iterator[dict]:
             pass
 
 
+# ── Bulk-load index handling ──────────────────────────────────────────────────
+
+def _bulk_load_secondary_indexes() -> list[str]:
+    """Type-level secondary indexes the import never reads (endpoint resolution is
+    by `id` via the on-disk id-map, not DB queries). Dropping them removes the
+    per-write index maintenance on the huge Entity/Person types — the dominant
+    cost of a full load. ensure_indexes() rebuilds them afterwards."""
+    from app.db.schema import _INDEXES
+    return [f"{t}[{p}]" for (t, p, _k) in _INDEXES
+            if t in ("Entity", "Person") and p != "id"]
+
+
+def _drop_secondary_indexes() -> None:
+    from app.db.arcadedb import run_sql
+    for name in _bulk_load_secondary_indexes():
+        try:
+            run_sql(f"DROP INDEX `{name}` IF EXISTS")
+            log.info("bulk-load: dropped index %s", name)
+        except Exception as exc:  # noqa: BLE001 - best effort
+            log.warning("bulk-load: could not drop index %s: %s", name, exc)
+
+
+def _rebuild_indexes() -> None:
+    from app.db.schema import ensure_indexes
+    log.info("bulk-load: rebuilding indexes…")
+    res = ensure_indexes()
+    log.info("bulk-load: index rebuild — %d applied, %d failed",
+             len(res.get("ok", [])), len(res.get("failed", [])))
+
+
 # ── Core import engine ────────────────────────────────────────────────────────
 
 def _run_import(
@@ -906,6 +960,7 @@ def _run_import(
     limit: int | None,
     filter_jurisdiction: str | None,
     pass1_bar: _ProgressBar | None = None,
+    bulk_load: bool = False,
 ) -> dict:
     """
     Single-pass streaming import — nodes AND edges written inline.
@@ -928,6 +983,10 @@ def _run_import(
     bods_id_to_name   = _DiskMap()   # entity names, for placeholder labelling
     batch = _BatchWriter()           # buffers writes, flushes in batched sqlscript
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
+
+    if bulk_load:
+        log.info("BODS: bulk-load mode — dropping secondary indexes for the load")
+        _drop_secondary_indexes()
 
     counts = dict(entities=0, persons=0, relationships=0, skipped=0, errors=0)
     processed = 0
@@ -1006,6 +1065,9 @@ def _run_import(
     bods_to_pamten_id.close()
     bods_id_to_name.close()
 
+    if bulk_load:
+        _rebuild_indexes()   # recreate the secondary indexes dropped for the load
+
     elapsed = time.time() - t0
     log.info(
         "BODS: import complete in %.0fs — %d entities, %d persons, %d ownership edges (%s statements)",
@@ -1030,6 +1092,7 @@ def import_bods_source(
     credibility_score: int,
     limit: int | None = None,
     filter_jurisdiction: str | None = None,
+    bulk_load: bool = False,
 ) -> dict:
     """
     Import a full BODS dataset from a remote ZIP URL into ArcadeDB.
@@ -1085,6 +1148,7 @@ def import_bods_source(
             limit=limit,
             filter_jurisdiction=filter_jurisdiction,
             pass1_bar=bar,
+            bulk_load=bulk_load,
         )
 
     finally:
@@ -1100,6 +1164,7 @@ def import_bods_file(
     credibility_score: int,
     limit: int | None = None,
     filter_jurisdiction: str | None = None,
+    bulk_load: bool = False,
 ) -> dict:
     """
     Import BODS statements from a local .json or .zip file into ArcadeDB.
@@ -1139,6 +1204,7 @@ def import_bods_file(
             limit=limit,
             filter_jurisdiction=filter_jurisdiction,
             pass1_bar=bar,
+            bulk_load=bulk_load,
         )
     finally:
         raw_stream.close()
