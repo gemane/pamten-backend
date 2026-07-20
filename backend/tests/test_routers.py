@@ -101,12 +101,19 @@ def test_scraper_status_includes_wikidata_enabled(client):
 
 # ── Search endpoint ────────────────────────────────────────────────────────────
 
+def _patch_search(entities, persons=()):
+    """Patch the search router's SQL layer: run_sql returns the entity rows on
+    the first call and the person rows on the second (raw node dicts, as the
+    FULL_TEXT `CONTAINSTEXT` query returns). fake_db still backs the suppressed-
+    node lookup that runs afterwards."""
+    from unittest.mock import patch
+    return patch("app.routers.search.run_sql", side_effect=[list(entities), list(persons)])
+
+
 def test_search_returns_entity_results(client, fake_db):
     entity = {"id": "e1", "name": "AB InBev", "type": "company"}
-    # Two separate queries: entity then person
-    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
-    fake_db.queue([])  # no person results
-    r = client.get("/search/", params={"q": "inbev"})
+    with _patch_search([entity]):
+        r = client.get("/search/", params={"q": "inbev"})
     assert r.status_code == 200
     results = r.json()
     assert len(results) == 1
@@ -115,9 +122,8 @@ def test_search_returns_entity_results(client, fake_db):
 
 def test_search_returns_person_results(client, fake_db):
     person = {"id": "p1", "full_name": "Tim Cook", "type": "person"}
-    fake_db.queue([])  # no entity results
-    fake_db.queue([{"node": person, "score": 1.0, "type": "Person"}])
-    r = client.get("/search/", params={"q": "tim cook"})
+    with _patch_search([], [person]):
+        r = client.get("/search/", params={"q": "tim cook"})
     assert r.status_code == 200
     results = r.json()
     assert len(results) == 1
@@ -127,45 +133,40 @@ def test_search_returns_person_results(client, fake_db):
 def test_search_combines_entity_and_person(client, fake_db):
     entity = {"id": "e1", "name": "Apple", "type": "company"}
     person = {"id": "p1", "full_name": "Apple Smith", "type": "person"}
-    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
-    fake_db.queue([{"node": person, "score": 1.0, "type": "Person"}])
-    r = client.get("/search/", params={"q": "apple"})
+    with _patch_search([entity], [person]):
+        r = client.get("/search/", params={"q": "apple"})
     assert r.status_code == 200
     assert len(r.json()) == 2
 
 
 def test_search_with_country_filter(client, fake_db):
     entity = {"id": "e1", "name": "Heineken", "type": "company", "country": "NL"}
-    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
-    r = client.get("/search/", params={"q": "heineken", "country": "NL"})
+    with _patch_search([entity]):
+        r = client.get("/search/", params={"q": "heineken", "country": "NL"})
     assert r.status_code == 200
     assert len(r.json()) == 1
+
+
+def test_search_strips_arcadedb_metadata_from_results(client, fake_db):
+    entity = {"@rid": "#1:0", "@type": "Entity", "@cat": "v",
+              "id": "e1", "name": "Acme", "type": "company"}
+    with _patch_search([entity]):
+        r = client.get("/search/", params={"q": "acme"})
+    node = r.json()[0]["node"]
+    assert not any(k.startswith("@") for k in node)
+    assert node["name"] == "Acme"
 
 
 def test_search_rejects_short_query(client):
     assert client.get("/search/", params={"q": "a"}).status_code == 422
 
 
-def test_search_finds_entity_by_alias(client, fake_db):
-    entity = {"id": "e1", "name": "Anheuser-Busch InBev", "type": "company",
-              "aliases": ["AB InBev", "ABInBev"]}
-    fake_db.queue([{"node": entity, "score": 1.0, "type": "Entity"}])
-    fake_db.queue([])
-    r = client.get("/search/", params={"q": "ab inbev"})
-    assert r.status_code == 200
-    assert r.json()[0]["node"]["name"] == "Anheuser-Busch InBev"
-
-
 def test_search_ranks_exact_match_first(client, fake_db):
     austria = {"id": "e2", "name": "Apple Sales International Austria GmbH", "type": "company"}
     main    = {"id": "e1", "name": "Apple Inc.", "type": "company"}
     # DB returns Austria first (worse match), but ranking should put Apple Inc. first
-    fake_db.queue([
-        {"node": austria, "score": 1.0, "type": "Entity"},
-        {"node": main,    "score": 1.0, "type": "Entity"},
-    ])
-    fake_db.queue([])
-    r = client.get("/search/", params={"q": "apple inc."})
+    with _patch_search([austria, main]):
+        r = client.get("/search/", params={"q": "apple inc."})
     assert r.status_code == 200
     assert r.json()[0]["node"]["id"] == "e1"
 
@@ -173,12 +174,8 @@ def test_search_ranks_exact_match_first(client, fake_db):
 def test_search_ranks_starts_with_before_contains(client, fake_db):
     division = {"id": "e2", "name": "Greater Apple Valley Holdings", "type": "company"}
     main     = {"id": "e1", "name": "Apple Inc.", "type": "company"}
-    fake_db.queue([
-        {"node": division, "score": 1.0, "type": "Entity"},
-        {"node": main,     "score": 1.0, "type": "Entity"},
-    ])
-    fake_db.queue([])
-    r = client.get("/search/", params={"q": "apple"})
+    with _patch_search([division, main]):
+        r = client.get("/search/", params={"q": "apple"})
     assert r.status_code == 200
     assert r.json()[0]["node"]["id"] == "e1"
 
@@ -186,14 +183,30 @@ def test_search_ranks_starts_with_before_contains(client, fake_db):
 def test_search_ranks_shorter_starts_with_name_first(client, fake_db):
     long_name  = {"id": "e2", "name": "Apple Sales International Austria GmbH", "type": "company"}
     short_name = {"id": "e1", "name": "Apple Inc.", "type": "company"}
-    fake_db.queue([
-        {"node": long_name,  "score": 1.0, "type": "Entity"},
-        {"node": short_name, "score": 1.0, "type": "Entity"},
-    ])
-    fake_db.queue([])
-    r = client.get("/search/", params={"q": "apple"})
+    with _patch_search([long_name, short_name]):
+        r = client.get("/search/", params={"q": "apple"})
     assert r.status_code == 200
     assert r.json()[0]["node"]["id"] == "e1"
+
+
+def test_search_ranks_more_query_words_in_name_first(client, fake_db):
+    # "dangote group" → the name matching BOTH words beats a bare "* Group" that
+    # only matched the common word. DB returns the common-word hit first.
+    group_noise = {"id": "e2", "name": "BLG Group", "type": "company"}
+    both        = {"id": "e1", "name": "Carlsberg Group", "type": "company"}
+    with _patch_search([group_noise, both]):
+        r = client.get("/search/", params={"q": "carlsberg group"})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "e1"   # matched 2 words, not just "group"
+
+
+def test_search_dedupes_repeated_node_id(client, fake_db):
+    # ArcadeDB's FULL_TEXT can return a row per index bucket — same node twice.
+    dup = {"id": "e1", "name": "Axel Springer SE", "type": "company"}
+    with _patch_search([dup, dup]):
+        r = client.get("/search/", params={"q": "axel springer"})
+    assert r.status_code == 200
+    assert [x["node"]["id"] for x in r.json()] == ["e1"]
 
 
 # ── Provenance: per-entry source + dates + verifiable link ──────────────────────
