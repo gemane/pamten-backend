@@ -483,11 +483,12 @@ class TestRunScrapeWikidata:
 
 class TestUpsertEntity:
     def test_creates_new_entity_when_not_found(self):
-        ctx, session = _make_session_mock(single_returns=[None])
+        ctx, session = _make_session_mock()   # all lookups miss
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
-        # run called twice: MATCH then CREATE
-        assert session.run.call_count == 2
+        # 3 sequential indexed resolution lookups (wikidata_id/name/name_normalized)
+        # all miss, then CREATE
+        assert session.run.call_count == 4
 
     def test_updates_existing_entity_when_found(self):
         ctx, session = _make_session_mock(single_returns=[{"id": "existing-uuid"}])
@@ -498,7 +499,7 @@ class TestUpsertEntity:
         assert session.run.call_count == 2
 
     def test_returns_string_id(self):
-        ctx, _ = _make_session_mock(single_returns=[None])
+        ctx, _ = _make_session_mock()   # all lookups miss → creates a new node
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Acme", "company", None, None, None, None, "Q1")
         assert isinstance(eid, str) and len(eid) > 0
@@ -506,10 +507,11 @@ class TestUpsertEntity:
 
 class TestUpsertPerson:
     def test_creates_new_person_when_not_found(self):
-        ctx, session = _make_session_mock(single_returns=[None])
+        ctx, session = _make_session_mock()   # all lookups miss
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_person("Tim Cook", "US", "Apple CEO", "Q88")
-        assert session.run.call_count == 2
+        # 2 sequential indexed lookups (wikidata_id/full_name) miss, then CREATE
+        assert session.run.call_count == 3
 
     def test_returns_existing_id_and_backfills_without_create(self):
         ctx, session = _make_session_mock(single_returns=[{"id": "person-uuid"}])

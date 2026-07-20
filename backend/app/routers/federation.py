@@ -23,6 +23,7 @@ import httpx
 from app.auth.dependencies import require_admin, require_contributor
 from app.config import settings
 from app.database import db
+from app.entity_resolution import resolve_entity_id
 from app.models.federation import PeerCreate
 from app.scraper.mapper import normalize_entity_name
 from app.routers.persons import deduplicate_high_confidence
@@ -194,15 +195,16 @@ def _upsert_entity(session, ref: dict, source_id: str) -> str | None:
     if not name:
         return None
     nn = normalize_entity_name(name)
-    rec = session.run(
-        "MATCH (e:Entity) WHERE ($wd IS NOT NULL AND e.wikidata_id=$wd) "
-        "OR ($cik IS NOT NULL AND e.sec_cik=$cik) OR ($lei IS NOT NULL AND e.lei_id=$lei) "
-        "OR ($ch IS NOT NULL AND e.companies_house_id=$ch) OR e.name_normalized=$nn "
-        "RETURN e.id AS id LIMIT 1",
-        wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"), lei=ref.get("lei_id"),
-        ch=ref.get("companies_house_id"), nn=nn).single()
-    if rec:
-        return rec["id"]
+    # Sequential indexed lookups — an OR across these fields full-scans the
+    # Entity type on ArcadeDB (see app.entity_resolution).
+    found = resolve_entity_id(
+        session,
+        wikidata_id=ref.get("wikidata_id"), sec_cik=ref.get("sec_cik"),
+        lei_id=ref.get("lei_id"), companies_house_id=ref.get("companies_house_id"),
+        name_normalized=nn,
+    )
+    if found:
+        return found
     eid = str(uuid.uuid4())
     session.run(
         "CREATE (e:Entity {id:$id, name:$name, name_normalized:$nn, type:$type, "
