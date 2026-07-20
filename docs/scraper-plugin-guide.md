@@ -427,6 +427,18 @@ curl -X POST "/scraper/bods/gleif/run?filter_jurisdiction=DE&local_file=/data/gl
 curl -X POST "/scraper/bods/uk-psc/run?local_file=/data/uk_psc.zip"
 ```
 
+For a **full load** run it from the CLI with `--bulk-load`, which drops the
+secondary indexes on `Entity`/`Person` for the duration and rebuilds them at the
+end. On 10M+ row types those indexes dominate per-write cost, so this is
+substantially faster; each flush also retries with backoff so a transient proxy
+timeout doesn't kill a multi-hour import. `id` indexes are kept (the load needs
+them). Because `CREATE EDGE` isn't idempotent, collapse any duplicate ownership
+edges afterwards with `POST /scraper/deduplicate-edges`:
+
+```bash
+python manage.py bods-uk-psc --file /data/uk_psc.zip --bulk-load
+```
+
 ### Licence
 
 Both datasets are published under CC0 1.0 Universal.

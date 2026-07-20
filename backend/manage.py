@@ -28,7 +28,8 @@ def cmd_bods_gleif(args):
     result = run_import_bods_gleif(
         limit=args.limit,
         filter_jurisdiction=args.jurisdiction,
-        local_file=args.file
+        local_file=args.file,
+        bulk_load=getattr(args, "bulk_load", False),
     )
     print(result)
 
@@ -39,7 +40,8 @@ def cmd_bods_uk_psc(args):
     from app.scraper.runner import run_import_bods_uk_psc
     result = run_import_bods_uk_psc(
         limit=args.limit,
-        local_file=args.file
+        local_file=args.file,
+        bulk_load=getattr(args, "bulk_load", False),
     )
     print(result)
 
@@ -181,12 +183,16 @@ def _build_parser():
     p_gleif.add_argument('--file', help='Path to local gleif.zip')
     p_gleif.add_argument('--limit', type=int, help='Max statements')
     p_gleif.add_argument('--jurisdiction', help='Country code e.g. AT')
+    p_gleif.add_argument('--bulk-load', action='store_true',
+                         help='Drop secondary indexes during the load and rebuild after (faster on full imports)')
     p_gleif.set_defaults(func=cmd_bods_gleif)
 
     # bods-uk-psc command
     p_psc = subparsers.add_parser('bods-uk-psc')
     p_psc.add_argument('--file', help='Path to local uk_psc.zip')
     p_psc.add_argument('--limit', type=int, help='Max statements')
+    p_psc.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after (faster on full imports)')
     p_psc.set_defaults(func=cmd_bods_uk_psc)
 
     # seed command

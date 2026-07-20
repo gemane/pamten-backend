@@ -588,3 +588,98 @@ class TestRunnerPermissions:
 
         with pytest.raises(PermissionError, match="SCRAPER_BODS_UK_PSC_ENABLED"):
             r.run_import_bods_uk_psc()
+
+
+# ── _flush_script: retry-with-backoff (survives transient proxy 504s) ─────────
+
+class TestFlushRetry:
+    def test_retries_then_succeeds(self):
+        from app.scraper import bods
+
+        calls = {"n": 0}
+
+        def flaky(script, params):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RuntimeError("ArcadeDB command failed [504]: gateway timeout")
+            return [{"ok": True}]
+
+        with patch("app.scraper.bods.run_sqlscript", side_effect=flaky), \
+             patch("app.scraper.bods.time.sleep") as sleep:
+            out = bods._flush_script("UPDATE Entity ...", {"a": 1})
+
+        assert out == [{"ok": True}]
+        assert calls["n"] == 3            # failed twice, third attempt worked
+        assert sleep.call_count == 2      # backed off before each retry
+
+    def test_reraises_after_exhausting_attempts(self):
+        from app.scraper import bods
+
+        with patch("app.scraper.bods.run_sqlscript",
+                   side_effect=RuntimeError("504")) as sql, \
+             patch("app.scraper.bods.time.sleep"):
+            with pytest.raises(RuntimeError, match="504"):
+                bods._flush_script("UPDATE Entity ...", {})
+
+        assert sql.call_count == bods._FLUSH_ATTEMPTS
+
+
+# ── bulk-load mode: drop secondary indexes for the load, rebuild after ────────
+
+class TestBulkLoad:
+    def test_secondary_index_list_excludes_id_and_other_types(self):
+        from app.scraper.bods import _bulk_load_secondary_indexes
+
+        names = _bulk_load_secondary_indexes()
+        assert "Entity[name_normalized]" in names
+        assert "Person[full_name]" in names
+        # never drop the id indexes the import relies on
+        assert "Entity[id]" not in names
+        assert "Person[id]" not in names
+        # only Entity/Person are touched
+        assert all(n.startswith("Entity[") or n.startswith("Person[") for n in names)
+
+    def test_bulk_load_drops_then_rebuilds_around_the_import(self):
+        from app.scraper import bods
+
+        order = []
+        with patch("app.scraper.bods._drop_secondary_indexes",
+                   side_effect=lambda: order.append("drop")), \
+             patch("app.scraper.bods._rebuild_indexes",
+                   side_effect=lambda: order.append("rebuild")), \
+             patch("app.scraper.bods._entity", return_value="eid"), \
+             patch("app.scraper.bods._person", return_value="pid"), \
+             patch("app.scraper.bods._owns"), \
+             patch("app.scraper.bods._role"), \
+             patch("app.scraper.bods.run_sqlscript"):
+            bods._run_import(
+                iter([ENTITY_STMT]),
+                source_id="src-1",
+                credibility_score=92,
+                limit=None,
+                filter_jurisdiction=None,
+                bulk_load=True,
+            )
+
+        assert order == ["drop", "rebuild"]   # drop before load, rebuild after
+
+    def test_no_index_changes_without_bulk_load(self):
+        from app.scraper import bods
+
+        with patch("app.scraper.bods._drop_secondary_indexes") as drop, \
+             patch("app.scraper.bods._rebuild_indexes") as rebuild, \
+             patch("app.scraper.bods._entity", return_value="eid"), \
+             patch("app.scraper.bods._person", return_value="pid"), \
+             patch("app.scraper.bods._owns"), \
+             patch("app.scraper.bods._role"), \
+             patch("app.scraper.bods.run_sqlscript"):
+            bods._run_import(
+                iter([ENTITY_STMT]),
+                source_id="src-1",
+                credibility_score=92,
+                limit=None,
+                filter_jurisdiction=None,
+            )
+
+        drop.assert_not_called()
+        rebuild.assert_not_called()

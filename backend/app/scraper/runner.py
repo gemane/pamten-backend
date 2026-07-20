@@ -1332,6 +1332,7 @@ def run_import_bods_gleif(
     limit: int | None = None,
     filter_jurisdiction: str | None = None,
     local_file: str | None = None,
+    bulk_load: bool = False,
 ) -> dict:
     """
     Import GLEIF dataset.
@@ -1342,6 +1343,8 @@ def run_import_bods_gleif(
         limit:               Max entity statements to process (None = full dataset).
         filter_jurisdiction: ISO alpha-2 country code to restrict entity imports.
         local_file:          Path to a pre-downloaded .zip or .json file.
+        bulk_load:           Drop secondary indexes for the load, rebuild after
+                             (much faster on a full import; see bods._run_import).
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1368,6 +1371,7 @@ def run_import_bods_gleif(
             credibility_score=BODS_GLEIF_CREDIBILITY,
             limit=limit,
             filter_jurisdiction=filter_jurisdiction,
+            bulk_load=bulk_load,
         )
     else:
         counts = import_bods_source(
@@ -1377,6 +1381,7 @@ def run_import_bods_gleif(
             credibility_score=BODS_GLEIF_CREDIBILITY,
             limit=limit,
             filter_jurisdiction=filter_jurisdiction,
+            bulk_load=bulk_load,
         )
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 
@@ -1387,6 +1392,7 @@ def run_import_bods_uk_psc(
     limit: int | None = None,
     filter_jurisdiction: str | None = None,
     local_file: str | None = None,
+    bulk_load: bool = False,
 ) -> dict:
     """
     Import UK PSC dataset.
@@ -1397,6 +1403,8 @@ def run_import_bods_uk_psc(
         limit:               Max entity statements to process (None = full ~8 M-entity dataset).
         filter_jurisdiction: ISO alpha-2 country code (defaults to "GB" for UK PSC).
         local_file:          Path to a pre-downloaded .zip or .json file.
+        bulk_load:           Drop secondary indexes for the load, rebuild after
+                             (much faster on a full import; see bods._run_import).
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1423,6 +1431,7 @@ def run_import_bods_uk_psc(
             credibility_score=BODS_UK_PSC_CREDIBILITY,
             limit=limit,
             filter_jurisdiction=jur,
+            bulk_load=bulk_load,
         )
     else:
         counts = import_bods_source(
@@ -1432,5 +1441,6 @@ def run_import_bods_uk_psc(
             credibility_score=BODS_UK_PSC_CREDIBILITY,
             limit=limit,
             filter_jurisdiction=jur,
+            bulk_load=bulk_load,
         )
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts}
