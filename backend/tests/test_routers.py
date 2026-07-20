@@ -189,6 +189,26 @@ def test_search_ranks_shorter_starts_with_name_first(client, fake_db):
     assert r.json()[0]["node"]["id"] == "e1"
 
 
+def test_search_ranks_more_query_words_in_name_first(client, fake_db):
+    # "dangote group" → the name matching BOTH words beats a bare "* Group" that
+    # only matched the common word. DB returns the common-word hit first.
+    group_noise = {"id": "e2", "name": "BLG Group", "type": "company"}
+    both        = {"id": "e1", "name": "Carlsberg Group", "type": "company"}
+    with _patch_search([group_noise, both]):
+        r = client.get("/search/", params={"q": "carlsberg group"})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "e1"   # matched 2 words, not just "group"
+
+
+def test_search_dedupes_repeated_node_id(client, fake_db):
+    # ArcadeDB's FULL_TEXT can return a row per index bucket — same node twice.
+    dup = {"id": "e1", "name": "Axel Springer SE", "type": "company"}
+    with _patch_search([dup, dup]):
+        r = client.get("/search/", params={"q": "axel springer"})
+    assert r.status_code == 200
+    assert [x["node"]["id"] for x in r.json()] == ["e1"]
+
+
 # ── Provenance: per-entry source + dates + verifiable link ──────────────────────
 
 def test_sources_for_entity_returns_provenance(client, fake_db):

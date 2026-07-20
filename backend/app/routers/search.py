@@ -12,20 +12,34 @@ def _clean(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("@")}
 
 
-def _rank(node: dict, q: str) -> tuple:
+def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0) -> tuple:
     """
-    Sort key: (match_tier ASC, name_length ASC).
-    Tier 0 = exact, 1 = starts-with, 2 = contains name, 3 = alias/description only.
-    Lower tier and shorter name float to the top.
+    Sort key (all ascending): (-name_token_matches, match_tier, db_index).
+
+    - name_token_matches: how many query words appear in the NAME. Entities whose
+      name contains more of the query ("Axel Springer SE" for "axel springer",
+      "Carlsberg Group" for "carlsberg group") float above bare single-word hits.
+    - match_tier: 0 exact, 1 starts-with, 2 contains full query, 3 otherwise.
+    - db_index: preserves ArcadeDB's FULL_TEXT relevance order for ties, so a
+      rare-token match (Dangote…) stays above a common-token one (…GROUP) — we
+      deliberately do NOT tiebreak on name length (which floated "BLG GROUP" up).
     """
     name = (node.get("name") or "").lower()
+    toks = tokens if tokens is not None else q.split()
+    matches = sum(1 for t in toks if t and t in name)
     if name == q:
-        return (0, len(name))
-    if name.startswith(q):
-        return (1, len(name))
-    if q in name:
-        return (2, len(name))
-    return (3, len(name))
+        tier = 0
+    elif name.startswith(q):
+        tier = 1
+    elif q in name:
+        tier = 2
+    else:
+        tier = 3
+    # Shorter name wins only when the name actually matches the full query
+    # (tiers 0-2) — e.g. "Apple Inc." over "Apple Sales International". For
+    # weaker matches, keep the DB's relevance order instead of name length.
+    name_len = len(name) if tier <= 2 else 0
+    return (-matches, tier, name_len, idx)
 
 
 @router.get("/")
@@ -38,7 +52,9 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     is by whole word/token and position-independent — "busch" finds "Anheuser-
     Busch InBev", and an alias finds the node it was merged into — but it does
     NOT match arbitrary mid-word substrings ("ovarti" won't find "Novartis").
-    Populate `search_text` with `manage.py backfill-search`.
+    Multi-word queries require ALL words (AND), so "carlsberg group" won't match
+    every unrelated "* GROUP" company. Populate `search_text` with
+    `manage.py backfill-search`.
 
     Results are ranked by match quality against the name:
     1. **Exact name match** — query equals the full name
@@ -48,20 +64,24 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     Up to 20 entities and 10 persons are returned (30 total, trimmed to 20 after ranking).
     """
     q_lower = q.lower()
+    tokens = q_lower.split()
 
     # Index-backed full-text search via the FULL_TEXT index on `search_text`
     # (see db/schema.py). `CONTAINSTEXT` uses the index — an un-indexable
     # `toLower(name) CONTAINS` scan of every Entity took ~12s on 3M rows.
+    # ArcadeDB's FULL_TEXT is OR-only (no AND/phrase/`+` operators) but returns
+    # rows already ranked by relevance (rows matching more/rarer tokens first),
+    # so we keep that order and only re-rank by NAME token coverage below.
     # Entity and Person run separately — ArcadeDB UNION + LIMIT is unreliable.
     if country:
         entity_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
-                      "AND country = :country LIMIT 20")
+                      "AND country = :country LIMIT 30")
         entity_params: dict = {"q": q_lower, "country": country}
     else:
-        entity_sql = "SELECT FROM Entity WHERE search_text CONTAINSTEXT :q LIMIT 20"
+        entity_sql = "SELECT FROM Entity WHERE search_text CONTAINSTEXT :q LIMIT 30"
         entity_params = {"q": q_lower}
 
-    person_sql = "SELECT FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 10"
+    person_sql = "SELECT FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 15"
 
     results = []
     for row in run_sql(entity_sql, entity_params):
@@ -75,8 +95,25 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
         hidden = load_suppressed_nodes(session)
 
     results = [r for r in results if r["node"].get("id") not in hidden]
-    results.sort(key=lambda r: _rank(r["node"], q_lower))
-    return results[:20]
+    # Rank: entities whose NAME contains more of the query words first (so
+    # "carlsberg group" beats a bare "* GROUP"), then exact/starts-with, then the
+    # DB's own relevance order (index position) — never name length, which used
+    # to float short unrelated names like "BLG GROUP" to the top.
+    results = [{**r, "_i": i} for i, r in enumerate(results)]
+    results.sort(key=lambda r: _rank(r["node"], q_lower, tokens, r["_i"]))
+    # De-dupe by node id (CONTAINSTEXT can return a row per index bucket), keeping
+    # the highest-ranked instance, and cap at 20.
+    out: list[dict] = []
+    seen: set = set()
+    for r in results:
+        nid = r["node"].get("id")
+        if nid in seen:
+            continue
+        seen.add(nid)
+        out.append({k: v for k, v in r.items() if k != "_i"})
+        if len(out) >= 20:
+            break
+    return out
 
 
 @router.get("/entity/{entity_id}/full-profile")
