@@ -241,15 +241,20 @@ def _upsert_person(
     # Prefer an explicit single nationality; else the first of the list.
     nat = nationality or (nationalities[0] if nationalities else "")
     with db.get_session() as session:
-        rec = session.run(
-            """
-            MATCH (p:Person)
-            WHERE ($wid IS NOT NULL AND p.wikidata_id = $wid) OR p.full_name = $name
-            RETURN p.id AS id LIMIT 1
-            """,
-            wid=wikidata_id,
-            name=full_name,
-        ).single()
+        # Sequential indexed lookups (wikidata_id then full_name) — an OR across
+        # them full-scans the Person type, which matters once UK PSC loads
+        # millions of persons.
+        rec = None
+        if wikidata_id:
+            rec = session.run(
+                "MATCH (p:Person) WHERE p.wikidata_id = $wid RETURN p.id AS id LIMIT 1",
+                wid=wikidata_id,
+            ).single()
+        if not rec:
+            rec = session.run(
+                "MATCH (p:Person) WHERE p.full_name = $name RETURN p.id AS id LIMIT 1",
+                name=full_name,
+            ).single()
         if rec:
             # Backfill detail for a person first seen from a source that lacked it
             # (e.g. created as a bare founder name, later enriched on re-scrape).
@@ -299,18 +304,24 @@ def _upsert_person(
 
 
 def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
-                 source_url: str | None = None, source_date: str | None = None):
+                 source_url: str | None = None, source_date: str | None = None,
+                 owner_label: str = "Entity"):
     """Create an active OWNS edge if one doesn't already exist.
 
     Stamps per-entry provenance (source_url/source_date/last_scraped_at). On a
     re-scrape of an existing edge, refresh last_scraped_at so the UI shows when
     the fact was last confirmed against the source.
+
+    Both endpoints are labelled (owner is Entity or Person, owned is always
+    Entity) so the id lookups use the per-type index — a label-less
+    `MATCH (a {id}), (b {id})` full-scans every node (~14s on 3M) per edge.
     """
+    owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = _now_iso()
     with db.get_session() as session:
         exists = session.run(
-            """
-            MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+            f"""
+            MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
             WHERE r.until IS NULL RETURN r LIMIT 1
             """,
             oid=owner_id,
@@ -318,8 +329,8 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
         ).single()
         if exists:
             session.run(
-                """
-                MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+                f"""
+                MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
                 WHERE r.until IS NULL
                 SET r.last_scraped_at = $now,
                     r.source_url  = COALESCE($surl,  r.source_url),
@@ -330,14 +341,14 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
             )
             return
         session.run(
-            """
-            MATCH (a {id: $oid}), (b {id: $nid})
-            CREATE (a)-[:OWNS {
+            f"""
+            MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
+            CREATE (a)-[:OWNS {{
                 stake_percent: null, ownership_type: 'majority',
                 since: null, until: null,
                 source_id: $sid, credibility_score: $score,
                 source_url: $surl, source_date: $sdate, last_scraped_at: $now
-            }]->(b)
+            }}]->(b)
             """,
             oid=owner_id,
             nid=owned_id,
@@ -527,6 +538,7 @@ def _scrape_node(
                                       birth_place=owner.get("birth_place"),
                                       aliases=owner.get("aliases"),
                                       nationalities=owner.get("nationalities"))
+            owner_label = "Person"
         else:
             owner_id = _upsert_entity(
                 name=owner["label"],
@@ -534,7 +546,9 @@ def _scrape_node(
                 country=None, founded=None, revenue=None, description=None,
                 wikidata_id=owner["qid"],
             )
-        _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid))
+            owner_label = "Entity"
+        _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid),
+                     owner_label=owner_label)
 
 
 # ── Wikidata public entry point ───────────────────────────────────────────────
@@ -712,19 +726,25 @@ def _upsert_person_by_name(full_name: str) -> str:
 
 def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
-                     stake_percent: float | None, source_url: str | None = None):
+                     stake_percent: float | None, source_url: str | None = None,
+                     owner_label: str = "Entity"):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
     source_date = the filing date, last_scraped_at = now. On a re-scrape of an
     existing edge we refresh last_scraped_at so the UI can show when we last
     confirmed the fact against the source.
+
+    Endpoints are labelled (owner is Entity or Person, owned always Entity) so
+    the id lookups use the index — a label-less two-node match full-scans every
+    node (~14s on 3M) per edge.
     """
+    owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
         existing = session.run(
-            """
-            MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+            f"""
+            MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
             WHERE r.source_id = $sid AND r.until IS NULL
             RETURN r LIMIT 1
             """,
@@ -735,8 +755,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             # onto edges created before provenance (COALESCE keeps existing
             # values when this scrape didn't yield a URL).
             session.run(
-                """
-                MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
+                f"""
+                MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
                 WHERE r.source_id = $sid AND r.until IS NULL
                 SET r.last_scraped_at = $now,
                     r.source_url  = COALESCE($surl,  r.source_url),
@@ -747,9 +767,9 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             )
             return
         session.run(
-            """
-            MATCH (a {id: $oid}), (b {id: $nid})
-            CREATE (a)-[:OWNS {
+            f"""
+            MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
+            CREATE (a)-[:OWNS {{
                 stake_percent:    $stake,
                 ownership_type:   $otype,
                 since:            $since,
@@ -759,7 +779,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 source_url:       $surl,
                 source_date:      $sdate,
                 last_scraped_at:  $now
-            }]->(b)
+            }}]->(b)
             """,
             oid=owner_id, nid=owned_id,
             stake=stake_percent, otype=ownership_type,
@@ -894,6 +914,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             file_date=filing.get("file_date"),
             stake_percent=filing.get("stake_percent"),
             source_url=filing.get("source_url"),
+            owner_label="Person" if is_individual else "Entity",
         )
         log.info(
             "SEC EDGAR: wrote OWNS %r → %r (%s)",
@@ -928,6 +949,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
                 file_date=exec_rec.get("source_date"),
                 stake_percent=stake,
                 source_url=exec_rec.get("source_url"),
+                owner_label="Person",
             )
             scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             log.info("SEC EDGAR: wrote insider OWNS %r → %r (%s shares)", name, data["name"], shares)
@@ -967,6 +989,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
                 file_date=holding.get("source_date"),
                 stake_percent=stake,
                 source_url=holding.get("source_url"),
+                owner_label="Person",
             )
             scraped.append({"type": "owns", "name": pname, "role": "insider owner"})
             log.info("SEC EDGAR: person-centric insider OWNS %r → %r (%s shares)",
