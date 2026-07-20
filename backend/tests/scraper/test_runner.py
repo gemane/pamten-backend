@@ -507,10 +507,11 @@ class TestUpsertEntity:
 
 class TestUpsertPerson:
     def test_creates_new_person_when_not_found(self):
-        ctx, session = _make_session_mock(single_returns=[None])
+        ctx, session = _make_session_mock()   # all lookups miss
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_person("Tim Cook", "US", "Apple CEO", "Q88")
-        assert session.run.call_count == 2
+        # 2 sequential indexed lookups (wikidata_id/full_name) miss, then CREATE
+        assert session.run.call_count == 3
 
     def test_returns_existing_id_and_backfills_without_create(self):
         ctx, session = _make_session_mock(single_returns=[{"id": "person-uuid"}])
