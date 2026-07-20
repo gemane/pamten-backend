@@ -62,6 +62,38 @@ def cmd_init_schema(args):
     for f in result["failed"]:
         print(f"  FAILED: {f['stmt']}\n          -> {f['error']}")
 
+def cmd_backfill_search(args):
+    """Populate the FULL_TEXT-indexed `search_text` column for existing rows so
+    /search can use the index instead of a full scan. Batched to stay under the
+    DB proxy timeout. `ifnull(name, '')` guards against a null name leaving
+    search_text NULL (which would re-match the WHERE and loop forever)."""
+    from app.db.arcadedb import run_sql
+    batch = getattr(args, "batch", None) or 20000
+    specs = [
+        ("Entity", "ifnull(name, '') + ' ' + ifnull(description, '')"),
+        ("Person", "ifnull(full_name, '')"),
+    ]
+    for t, expr in specs:
+        total = 0
+        while True:
+            try:
+                r = run_sql(f"UPDATE {t} SET search_text = ({expr}) "
+                            f"WHERE search_text IS NULL LIMIT {batch}")
+            except RuntimeError as exc:
+                if "was not found" in str(exc):
+                    break
+                print(f"  {t}: {exc}")
+                break
+            n = int(r[0].get("count", 0)) if r and isinstance(r[0], dict) else 0
+            total += n
+            if n:
+                print(f"  {t}: +{n} (total {total})")
+            if n < batch:
+                break
+        print(f"  Done {t}: {total} rows")
+    print("Backfill complete. Ensure the FULL_TEXT index exists: python manage.py init-schema")
+
+
 def cmd_wipe_data(args):
     import os
     from app.config import settings
@@ -208,6 +240,13 @@ def _build_parser():
     # init-schema command
     p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
     p_schema.set_defaults(func=cmd_init_schema)
+
+    # backfill-search command
+    p_bfs = subparsers.add_parser('backfill-search',
+        help='Populate the FULL_TEXT search_text column for existing rows (run after a bulk import)')
+    p_bfs.add_argument('--batch', type=int, default=20000,
+                       help='Rows updated per request — keep under the DB proxy timeout (default 20000)')
+    p_bfs.set_defaults(func=cmd_backfill_search)
 
     # wipe-data command
     p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')

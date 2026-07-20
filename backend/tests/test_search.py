@@ -2,7 +2,18 @@
 Unit tests for the search router's pure helpers (no DB needed). The endpoint
 itself is exercised end-to-end in tests/integration/test_person_profile_it.py.
 """
-from app.routers.search import _dedupe_positions, _dedupe_holdings
+from app.routers.search import _dedupe_positions, _dedupe_holdings, _clean
+
+
+class TestClean:
+    def test_strips_arcadedb_metadata_keys(self):
+        row = {"@rid": "#1:0", "@type": "Entity", "@cat": "v",
+               "id": "acme", "name": "Acme"}
+        assert _clean(row) == {"id": "acme", "name": "Acme"}
+
+    def test_keeps_all_data_keys(self):
+        row = {"id": "x", "name": "X", "country": "US", "search_text": "X"}
+        assert _clean(row) == row
 
 
 def _row(entity, rel):

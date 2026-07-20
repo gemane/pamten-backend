@@ -439,6 +439,17 @@ edges afterwards with `POST /scraper/deduplicate-edges`:
 python manage.py bods-uk-psc --file /data/uk_psc.zip --bulk-load
 ```
 
+After a full import, populate the full-text search column so `/search` uses its
+FULL_TEXT index instead of scanning every row (`toLower(name) CONTAINS` on
+millions of entities takes ~12s; `CONTAINSTEXT` on the index is instant). The
+BODS importer sets `search_text` inline, so this is only needed for rows loaded
+by other sources or before this field existed:
+
+```bash
+python manage.py init-schema        # ensures the FULL_TEXT index exists
+python manage.py backfill-search    # fills search_text for existing rows
+```
+
 ### Licence
 
 Both datasets are published under CC0 1.0 Universal.

@@ -397,6 +397,7 @@ def _entity(batch, node_id, name, entity_type, country, founded,
     batch.entity(node_id, {
         "name": name,
         "name_normalized": normalize_entity_name(name),
+        "search_text": name,   # FULL_TEXT-indexed field powering /search
         "name_credibility": credibility_score,
         "source_id": source_id,
         "type": entity_type,
@@ -419,6 +420,7 @@ def _person(batch, node_id, full_name, first_name, last_name, nationality, birth
         "first_name": first,
         "last_name": last,
         "full_name": full_name,
+        "search_text": full_name,   # FULL_TEXT-indexed field powering /search
         "nationality": nationality or "",
         "birth_date": birth_date or "",
         "description": "",
