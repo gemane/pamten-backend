@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
+from app.entity_resolution import resolve_entity_id
 from app.scraper.wikidata import search_entity, fetch_company_data
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type
 from app.scraper.sources import get_source_enabled
@@ -149,21 +150,13 @@ def _upsert_entity(
     """
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
-        rec = session.run(
-            """
-            MATCH (e:Entity)
-            WHERE ($wid IS NOT NULL AND e.wikidata_id = $wid)
-               OR e.name = $name
-               OR e.name_normalized = $name_norm
-            RETURN e.id AS id LIMIT 1
-            """,
-            wid=wikidata_id,
-            name=name,
-            name_norm=name_norm,
-        ).single()
+        # Sequential indexed lookups — an OR across these fields full-scans the
+        # Entity type on ArcadeDB (see app.entity_resolution).
+        entity_id = resolve_entity_id(
+            session, wikidata_id=wikidata_id, name=name, name_normalized=name_norm,
+        )
 
-        if rec:
-            entity_id = rec["id"]
+        if entity_id:
             session.run(
                 """
                 MATCH (e:Entity {id: $id})
@@ -621,25 +614,28 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     """Find or create an Entity node matched by CIK, exact name, or normalized name."""
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
-        rec = session.run(
-            """
-            MATCH (e:Entity)
-            WHERE ($cik IS NOT NULL AND e.sec_cik = $cik)
-               OR e.name = $name
-               OR e.name_normalized = $name_norm
-               OR ($cik IS NOT NULL
-                   AND e.name_normalized IS NOT NULL
-                   AND size(e.name_normalized) >= 4
-                   AND $name_norm STARTS WITH e.name_normalized)
-            RETURN e.id AS id LIMIT 1
-            """,
-            cik=cik,
-            name=name,
-            name_norm=name_norm,
-        ).single()
+        # Indexed lookups first (an OR full-scans the Entity type on ArcadeDB).
+        entity_id = resolve_entity_id(
+            session, sec_cik=cik, name=name, name_normalized=name_norm,
+        )
+        # Fuzzy CIK fallback: an EDGAR filer whose stored normalized name is a
+        # prefix of this one. This can't use an index (variable-length prefix of
+        # the *parameter*), so only run it as a last resort when a CIK is known
+        # and the indexed lookups missed.
+        if not entity_id and cik:
+            rec = session.run(
+                """
+                MATCH (e:Entity)
+                WHERE e.name_normalized IS NOT NULL
+                  AND size(e.name_normalized) >= 4
+                  AND $name_norm STARTS WITH e.name_normalized
+                RETURN e.id AS id LIMIT 1
+                """,
+                name_norm=name_norm,
+            ).single()
+            entity_id = rec["id"] if rec else None
 
-        if rec:
-            entity_id = rec["id"]
+        if entity_id:
             # Only stamp the CIK onto the existing entity; preserve whatever
             # name and credibility the entity already has (Wikidata names are
             # human-readable; EDGAR registered names are all-caps legal strings).
