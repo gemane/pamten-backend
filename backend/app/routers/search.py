@@ -151,34 +151,46 @@ def get_full_profile(entity_id: str):
         if entity_id in hidden:
             raise HTTPException(status_code=404, detail="Entity not found")
 
-        owners = []
+        # Collapse duplicate OWNS/HAS_ROLE edges (a re-imported BODS dump can
+        # create a second identical edge to the same node — CREATE EDGE isn't
+        # idempotent), keeping the largest stake so the row isn't shown twice.
+        owners_by: dict[str, dict] = {}
         for o in record["owners"]:
             if not o["owner"]:
                 continue
             owner = dict(o["owner"])
-            if owner.get("id") in hidden or is_suppressed(sup, "owns", owner.get("id"), entity_id):
+            oid = owner.get("id")
+            if oid in hidden or is_suppressed(sup, "owns", oid, entity_id):
                 continue
-            rel = apply_pin(pins, owner.get("id"), entity_id, dict(o["rel"]))
-            owners.append({"owner": owner, "relationship": rel})
+            rel = apply_pin(pins, oid, entity_id, dict(o["rel"]))
+            cur = owners_by.get(oid)
+            if cur is None or (rel.get("stake_percent") or -1) > (cur["relationship"].get("stake_percent") or -1):
+                owners_by[oid] = {"owner": owner, "relationship": rel}
+        owners = list(owners_by.values())
 
-        subsidiaries = []
+        subs_by: dict[str, dict] = {}
         for s in record["subsidiaries"]:
             if not s["entity"]:
                 continue
             sub = dict(s["entity"])
-            if sub.get("id") in hidden or is_suppressed(sup, "owns", entity_id, sub.get("id")):
+            sid = sub.get("id")
+            if sid in hidden or is_suppressed(sup, "owns", entity_id, sid):
                 continue
-            rel = apply_pin(pins, entity_id, sub.get("id"), dict(s["rel"]))
-            subsidiaries.append({"entity": sub, "relationship": rel})
+            rel = apply_pin(pins, entity_id, sid, dict(s["rel"]))
+            cur = subs_by.get(sid)
+            if cur is None or (rel.get("stake_percent") or -1) > (cur["relationship"].get("stake_percent") or -1):
+                subs_by[sid] = {"entity": sub, "relationship": rel}
+        subsidiaries = list(subs_by.values())
 
-        executives = []
+        execs_by: dict[tuple, dict] = {}
         for ex in record["executives"]:
             if not ex["person"]:
                 continue
             person, role = dict(ex["person"]), dict(ex["role"])
             if person.get("id") in hidden or is_suppressed(sup, "role", person.get("id"), entity_id, role.get("role")):
                 continue
-            executives.append({"person": person, "role": role})
+            execs_by.setdefault((person.get("id"), role.get("role")), {"person": person, "role": role})
+        executives = list(execs_by.values())
 
         return {
             "entity": dict(record["e"]),
