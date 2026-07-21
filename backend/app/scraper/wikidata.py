@@ -47,9 +47,12 @@ How to verify:
   3. Run the SPARQL query directly at https://query.wikidata.org/ to inspect raw rows.
 """
 
+import logging
 import re
 import time
 import httpx
+
+log = logging.getLogger(__name__)
 
 WIKIDATA_API  = "https://www.wikidata.org/w/api.php"
 SPARQL_URL    = "https://query.wikidata.org/sparql"
@@ -158,12 +161,23 @@ def _sparql(qid: str) -> list:
     LIMIT 1
     """
     rows: list = []
-    for query in (core, people, relations, employees):
+    # core/people/relations are essential — a failure there fails the scrape.
+    for query in (core, people, relations):
         time.sleep(REQUEST_DELAY)
         r = httpx.get(SPARQL_URL, params={"query": query, "format": "json"},
                       headers=HEADERS, timeout=30)
         r.raise_for_status()
         rows.extend(r.json()["results"]["bindings"])
+    # Employees is supplementary: a flaky 4th request must NOT abort the whole
+    # company scrape — just skip the field on error.
+    try:
+        time.sleep(REQUEST_DELAY)
+        r = httpx.get(SPARQL_URL, params={"query": employees, "format": "json"},
+                      headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        rows.extend(r.json()["results"]["bindings"])
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        log.warning("Wikidata employees query failed for %s (skipping field): %s", qid, exc)
     return rows
 
 

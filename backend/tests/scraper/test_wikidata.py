@@ -423,6 +423,19 @@ class TestFetchCompanyData:
         query = mock_get.call_args.kwargs["params"]["query"]
         assert "Q380" in query
 
+    def test_flaky_employees_query_does_not_abort_the_scrape(self):
+        import httpx
+        # core/people/relations succeed; the 4th (employees) request 502s. The
+        # company data must still come back — just without the employees field.
+        good = self._sparql_response([{"itemLabel": {"value": "Apple Inc."}}])
+        boom = httpx.HTTPError("502 Bad Gateway")
+        with patch("httpx.get", side_effect=[good, good, good, boom]), \
+             patch("time.sleep"):
+            result = fetch_company_data("Q1")
+        assert result is not None
+        assert result["name"] == "Apple Inc."
+        assert result["employees"] is None
+
     def test_sleeps_before_request(self):
         # One polite sleep before each targeted query (core, people, relations,
         # employees).
