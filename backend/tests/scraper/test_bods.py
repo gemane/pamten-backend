@@ -97,6 +97,22 @@ RELATIONSHIP_STMT = {
     },
 }
 
+RELATIONSHIP_MULTI_INTEREST = {
+    "recordId":     "rel-multi",
+    "recordType":   "relationship",
+    "recordStatus": "new",
+    "recordDetails": {
+        "subject":          "entity-001",
+        "interestedParty":  "entity-002",
+        # Two interests for the SAME pair that both map to "controlling"
+        # (GLEIF direct+ultimate consolidation) — must NOT become two OWNS edges.
+        "interests": [
+            {"type": "votingRights", "startDate": "2020-01-01"},
+            {"type": "appointmentOfBoard", "startDate": "2020-01-01"},
+        ],
+    },
+}
+
 CLOSED_RELATIONSHIP_STMT = {
     "recordId":     "rel-002",
     "recordType":   "relationship",
@@ -349,6 +365,25 @@ class TestProcessRelationshipStatement:
         assert captured["ownership_type"] == "majority"
         assert captured["since"] == "2016-04-06"
         assert captured["until"] is None
+
+    def test_multiple_interests_same_type_emit_one_edge(self):
+        from app.scraper.bods import _process_relationship_statement
+
+        calls: list = []
+
+        def capture(batch, **kw):
+            calls.append(kw)
+
+        with patch("app.scraper.bods._owns", side_effect=capture):
+            edges = _process_relationship_statement(
+                RELATIONSHIP_MULTI_INTEREST, self._bods_map(), self._name_map(),
+                MagicMock(), "src-1", 97,
+            )
+
+        # Both interests → "controlling" for the same pair → a single OWNS edge.
+        assert edges == 1
+        assert len(calls) == 1
+        assert calls[0]["ownership_type"] == "controlling"
 
     def test_closed_record_sets_until(self):
         from app.scraper.bods import _process_relationship_statement
