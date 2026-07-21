@@ -198,9 +198,16 @@ def purge_company(
 
 # ── Deduplication endpoint ─────────────────────────────────────────────────────
 
+@router.get("/duplicate-edges/count")
+def count_duplicate_owns_edges(_: dict = Depends(require_admin)):
+    """How many duplicate active OWNS edges exist (read-only observability):
+    {active_edges, distinct_pairs, duplicate_pairs, redundant_edges}. Admin only."""
+    return maintenance.count_duplicate_owns_edges()
+
+
 @router.post("/deduplicate-edges")
 def deduplicate_owns_edges(_: dict = Depends(require_admin)):
-    """Collapse duplicate active OWNS edges, keeping the most informative. Admin only."""
+    """Collapse duplicate active OWNS edges, keeping the largest stake. Admin only."""
     return maintenance.deduplicate_owns_edges()
 
 
