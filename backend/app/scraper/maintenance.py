@@ -124,7 +124,9 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     deleted = 0
     for i in range(0, len(to_delete), batch_size):
         chunk = to_delete[i:i + batch_size]
-        run_sqlscript(";".join(f"DELETE FROM OWNS WHERE @rid = {rid}" for rid in chunk))
+        # `DELETE FROM <rid>` is direct record access; `DELETE FROM OWNS WHERE
+        # @rid = <rid>` scans the whole (700k-edge) type per statement instead.
+        run_sqlscript(";".join(f"DELETE FROM {rid}" for rid in chunk))
         deleted += len(chunk)
 
     return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs}
