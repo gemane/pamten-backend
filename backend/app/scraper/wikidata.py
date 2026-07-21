@@ -143,8 +143,22 @@ def _sparql(qid: str) -> list:
       {_LABEL_SERVICE}
     }}
     """
+    # 4. Employees (P1128) — the latest statement by point-in-time (P585).
+    # P1128 usually has one statement per year; take the most recent value and
+    # keep its as-of year for provenance. Its own query so the yearly statements
+    # don't multiply the core query's rows.
+    employees = f"""
+    SELECT ?employees ?employeesAsOf
+    WHERE {{
+      wd:{qid} p:P1128 ?empStmt .
+      ?empStmt ps:P1128 ?employees .
+      OPTIONAL {{ ?empStmt pq:P585 ?employeesAsOf }}
+    }}
+    ORDER BY DESC(?employeesAsOf)
+    LIMIT 1
+    """
     rows: list = []
-    for query in (core, people, relations):
+    for query in (core, people, relations, employees):
         time.sleep(REQUEST_DELAY)
         r = httpx.get(SPARQL_URL, params={"query": query, "format": "json"},
                       headers=HEADERS, timeout=30)
@@ -281,6 +295,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "countries":   set(),  # all P17 domiciles (dual-listed companies have >1)
         "founded":     None,
         "revenue":     None,
+        "employees":   None,   # latest P1128 value
+        "employees_as_of": None,  # year of that value (P585 qualifier)
         "subsidiaries": {},
         "parents":     set(),
         "ceos":        {},
@@ -311,6 +327,19 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if raw_rev := _v(row, "revenue"):
                 try:
                     result["revenue"] = float(raw_rev)
+                except (ValueError, TypeError):
+                    pass
+
+        # Employees — from the dedicated employees query (its own rows, so read
+        # independently of the name block above). Latest value + its as-of year.
+        if result["employees"] is None and (raw_emp := _v(row, "employees")):
+            try:
+                result["employees"] = int(float(raw_emp))
+            except (ValueError, TypeError):
+                pass
+            if raw_asof := _v(row, "employeesAsOf"):
+                try:
+                    result["employees_as_of"] = int(raw_asof[:4])
                 except (ValueError, TypeError):
                     pass
 

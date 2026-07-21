@@ -7,7 +7,7 @@ roles, and locations are edges.
 
 | Label | Key properties |
 |---|---|
-| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding), `country`, `countries`, `founded`, `revenue`, `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `hq_lat`/`hq_lng`/`hq_city`/`hq_country`, `source_id` |
+| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding), `country`, `countries`, `founded`, `revenue`, `employees` (+ `employees_as_of` year, from Wikidata P1128), `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `hq_lat`/`hq_lng`/`hq_city`/`hq_country`, `source_id` |
 | `Person` | `id`, `full_name`, `first_name`, `last_name`, `alias[]`, `nationality`, `birth_date`, `birth_place`, `wikidata_id`, `sec_cik`, `wikipedia_url` |
 | `Location` | `id`, `city`, `country`, `latitude`, `longitude` |
 | `Source` | `id`, `name`, `url`, `type`, `credibility_score`; for peers also `verified`, `key_id` |
