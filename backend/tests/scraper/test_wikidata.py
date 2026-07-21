@@ -108,6 +108,23 @@ class TestAggregate:
         result = _aggregate("Q1", [APPLE_ROW])
         assert result["revenue"] == pytest.approx(394328000000.0)
 
+    def test_parses_employees_and_as_of_year(self):
+        # employees come from a separate query row (no itemLabel)
+        emp_row = _row(employees="164000", employeesAsOf="2022-01-01T00:00:00Z")
+        result = _aggregate("Q1", [APPLE_ROW, emp_row])
+        assert result["employees"] == 164000
+        assert result["employees_as_of"] == 2022
+
+    def test_employees_none_when_absent(self):
+        result = _aggregate("Q1", [APPLE_ROW])
+        assert result["employees"] is None
+        assert result["employees_as_of"] is None
+
+    def test_employees_without_as_of_qualifier(self):
+        result = _aggregate("Q1", [APPLE_ROW, _row(employees="5000")])
+        assert result["employees"] == 5000
+        assert result["employees_as_of"] is None
+
     def test_extracts_instance_qids(self):
         result = _aggregate("Q1", [APPLE_ROW])
         assert "Q4830453" in result["instances"]
@@ -407,11 +424,12 @@ class TestFetchCompanyData:
         assert "Q380" in query
 
     def test_sleeps_before_request(self):
-        # One polite sleep before each of the three targeted queries.
+        # One polite sleep before each targeted query (core, people, relations,
+        # employees).
         with patch("httpx.get", return_value=self._sparql_response([])), \
              patch("time.sleep") as mock_sleep:
             fetch_company_data("Q1")
-        assert mock_sleep.call_count == 3
+        assert mock_sleep.call_count == 4
         mock_sleep.assert_called_with(0.4)
 
 
