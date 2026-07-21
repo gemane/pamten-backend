@@ -688,6 +688,12 @@ def _process_relationship_statement(
     record_url     = _bods_record_url(subject_ref, stmt)
     statement_date = stmt.get("statementDate")
 
+    # A single BODS/GLEIF relationship statement can list several interests for
+    # the SAME pair (e.g. votingRights + appointmentOfBoard, both → "controlling",
+    # or GLEIF direct+ultimate consolidation). Emitting one OWNS edge per interest
+    # then created duplicate edges between the same two nodes in a single import.
+    # Collapse them to one OWNS edge per ownership_type, keeping the largest stake.
+    owns_by_type: dict[str, dict] = {}
     edges = 0
     for interest in interests:
         interest_type = interest.get("type", "shareholding")
@@ -732,10 +738,16 @@ def _process_relationship_statement(
         else:
             ownership_type = mapped
 
+        prev = owns_by_type.get(ownership_type)
+        if prev is None or (stake or -1) > (prev["stake"] or -1):
+            owns_by_type[ownership_type] = {
+                "stake": stake, "since": start_date, "until": end_date}
+
+    for ownership_type, info in owns_by_type.items():
         _owns(
             batch, owner_id=owner_id, owned_id=owned_id,
-            stake_percent=stake, ownership_type=ownership_type,
-            since=start_date, until=end_date,
+            stake_percent=info["stake"], ownership_type=ownership_type,
+            since=info["since"], until=info["until"],
             source_id=source_id, credibility_score=credibility_score,
             source_url=record_url, source_date=statement_date,
             owner_label=owner_label,
