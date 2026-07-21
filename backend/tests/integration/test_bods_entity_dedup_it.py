@@ -68,6 +68,29 @@ def test_deduplicate_entities_heals_legacy_doubles(it_db):
     assert out[0]["n"] == 1
 
 
+def test_deduplicate_entities_migrates_person_owner_edge(it_db):
+    from app.scraper import maintenance
+
+    # A person owns the dead node. Migration must relabel the OWNS source as
+    # :Person (captured via labels(s)); a label-less match would full-scan and
+    # hang at scale, and a wrong :Entity label would silently drop the edge.
+    it_db.run_command("CREATE (e:Entity {id:'old-uuid', name:'Acme AG', lei_id:'LEI-P', "
+                      "name_credibility:80, verified:false})")
+    it_db.run_command("CREATE (e:Entity {id:'lei:LEI-P', name:'Acme AG', lei_id:'LEI-P', "
+                      "name_credibility:90, verified:false})")
+    it_db.run_command("CREATE (p:Person {id:'person-1', full_name:'Jane Owner'})")
+    it_db.run_command("MATCH (p:Person {id:'person-1'}), (e:Entity {id:'old-uuid'}) "
+                      "CREATE (p)-[:OWNS {stake_percent:30, until:null}]->(e)")
+
+    res = maintenance.deduplicate_entities()
+    assert res["entities_merged"] == 1
+
+    # The person→entity OWNS edge is rehomed onto the survivor, still from a Person.
+    rows = it_db.run_command(
+        "MATCH (p:Person)-[:OWNS]->(e:Entity {id:'lei:LEI-P'}) RETURN p.id AS pid")
+    assert [r["pid"] for r in rows] == ["person-1"]
+
+
 def test_deduplicate_entities_batches_with_limit(it_db):
     from app.scraper import maintenance
 

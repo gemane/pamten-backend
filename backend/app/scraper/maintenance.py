@@ -295,10 +295,12 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     """
     migrated = 0
 
-    # 1. Outgoing OWNS  (dead)-[:OWNS]->(t)
+    # 1. Outgoing OWNS  (dead)-[:OWNS]->(t)  — OWNS always points to an Entity, so
+    # label t:Entity: a label-less `(t {id})` can't use the per-type id index and
+    # full-scans every node (~14s each on 3M nodes), which hung the last merge.
     for e in run_query(
         """
-        MATCH (a:Entity {id: $id})-[r:OWNS]->(t)
+        MATCH (a:Entity {id: $id})-[r:OWNS]->(t:Entity)
         RETURN t.id AS tid, r.stake_percent AS stake, r.ownership_type AS otype,
                r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
                r.source_id AS source_id, r.credibility_score AS cred,
@@ -307,13 +309,13 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         {"id": dead_id},
     ):
         if run_query(
-            "MATCH (a:Entity {id: $k})-[r:OWNS]->(t {id: $tid}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            "MATCH (a:Entity {id: $k})-[r:OWNS]->(t:Entity {id: $tid}) WHERE r.until IS NULL RETURN r LIMIT 1",
             {"k": keep_id, "tid": e["tid"]},
         ):
             continue
         run_command(
             """
-            MATCH (a:Entity {id: $k}), (t {id: $tid})
+            MATCH (a:Entity {id: $k}), (t:Entity {id: $tid})
             CREATE (a)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
                 voting_power_pct: $vpp, since: $since, until: $until,
                 source_id: $source_id, credibility_score: $cred,
@@ -326,29 +328,35 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         )
         migrated += 1
 
-    # 2. Incoming OWNS  (s)-[:OWNS]->(dead)   — owner may be Person or Entity
+    # 2. Incoming OWNS  (s)-[:OWNS]->(dead)   — owner may be Person or Entity, so
+    # capture its label at read time (labels(s)) and interpolate it into the
+    # write, again so the id match is index-backed rather than a full scan.
     for e in run_query(
         """
         MATCH (s)-[r:OWNS]->(b:Entity {id: $id})
-        RETURN s.id AS sid, r.stake_percent AS stake, r.ownership_type AS otype,
+        RETURN s.id AS sid, labels(s) AS slabels,
+               r.stake_percent AS stake, r.ownership_type AS otype,
                r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
                r.source_id AS source_id, r.credibility_score AS cred,
                r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
         """,
         {"id": dead_id},
     ):
+        slabels = e.get("slabels") or []
+        slabel = slabels[0] if slabels and slabels[0] in ("Entity", "Person") else "Entity"
         if run_query(
-            "MATCH (s {id: $sid})-[r:OWNS]->(b:Entity {id: $k}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            f"MATCH (s:{slabel} {{id: $sid}})-[r:OWNS]->(b:Entity {{id: $k}}) "
+            "WHERE r.until IS NULL RETURN r LIMIT 1",
             {"sid": e["sid"], "k": keep_id},
         ):
             continue
         run_command(
-            """
-            MATCH (s {id: $sid}), (b:Entity {id: $k})
-            CREATE (s)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
+            f"""
+            MATCH (s:{slabel} {{id: $sid}}), (b:Entity {{id: $k}})
+            CREATE (s)-[:OWNS {{stake_percent: $stake, ownership_type: $otype,
                 voting_power_pct: $vpp, since: $since, until: $until,
                 source_id: $source_id, credibility_score: $cred,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(b)
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}}]->(b)
             """,
             {"sid": e["sid"], "k": keep_id, "stake": e.get("stake"), "otype": e.get("otype"),
              "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
