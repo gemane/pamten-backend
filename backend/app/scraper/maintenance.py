@@ -55,93 +55,79 @@ def purge_company(name: str) -> dict:
     }
 
 
-def deduplicate_owns_edges() -> dict:
+_OWNS_PAGE = 20000
+
+
+def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
+    """Group active OWNS edges by their (owner, target) vertex pair, returning
+    {(out_rid, in_rid): [(edge_rid, stake_percent), ...]}.
+
+    Pages through the edges by @rid ordering and groups in Python, so there's NO
+    server-side GROUP BY — a global `GROUP BY a.id, b.id` over the ~700k OWNS
+    edges blows the dev DB's query heap (OutOfMemoryError). @out/@in are the
+    endpoint vertex rids; @rid identifies the edge for a precise delete.
     """
-    For every (owner → target) pair that has more than one active OWNS edge,
-    keep the most informative edge (highest stake_percent, then most recent
-    file_date) and delete the rest.  Admin only.
+    pairs: dict[tuple, list[tuple]] = {}
+    last: str | None = None
+    while True:
+        where = "WHERE until IS NULL" + (f" AND @rid > {last}" if last else "")
+        rows = run_sql(
+            f"SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st "
+            f"FROM OWNS {where} ORDER BY @rid LIMIT {_OWNS_PAGE}"
+        )
+        if not rows:
+            break
+        for r in rows:
+            pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st")))
+        last = rows[-1]["rid"]
+        if len(rows) < _OWNS_PAGE:
+            break
+    return pairs
+
+
+def count_duplicate_owns_edges() -> dict:
+    """Report duplicate active OWNS edges without changing anything — a
+    duplicate is a second+ edge between the same (owner, target) pair (e.g. from
+    a multi-interest BODS relationship statement). Admin/observability."""
+    pairs = _owns_pairs_with_rids()
+    dup_pairs = sum(1 for v in pairs.values() if len(v) > 1)
+    redundant = sum(len(v) - 1 for v in pairs.values() if len(v) > 1)
+    return {
+        "active_edges": sum(len(v) for v in pairs.values()),
+        "distinct_pairs": len(pairs),
+        "duplicate_pairs": dup_pairs,
+        "redundant_edges": redundant,
+    }
+
+
+def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     """
-    # Find all pairs with duplicates
-    pairs = run_query(
-        """
-        MATCH (a)-[r:OWNS]->(b)
-        WHERE r.until IS NULL
-        WITH a.id AS owner_id, b.id AS target_id, count(r) AS cnt
-        WHERE cnt > 1
-        RETURN owner_id, target_id, cnt
-        """
-    )
+    For every (owner → target) pair with more than one active OWNS edge, keep one
+    (the largest stake) and delete the rest by @rid. Admin only.
 
-    total_deleted = 0
-    cleaned = []
+    Deleting by @rid preserves the kept edge's full provenance (unlike a
+    delete-all-then-recreate, which drops properties), and the delete is batched
+    in one sqlscript per `batch_size` edges so each request stays under the DB
+    proxy timeout.
+    """
+    pairs = _owns_pairs_with_rids()
+    to_delete: list[str] = []
+    dup_pairs = 0
+    for edges in pairs.values():
+        if len(edges) < 2:
+            continue
+        dup_pairs += 1
+        # keep the largest stake (None treated as -1); delete the rest
+        edges_sorted = sorted(edges, key=lambda e: (e[1] if e[1] is not None else -1), reverse=True)
+        to_delete.extend(rid for rid, _ in edges_sorted[1:])
 
-    for pair in pairs:
-        oid = pair["owner_id"]
-        nid = pair["target_id"]
+    deleted = 0
+    for i in range(0, len(to_delete), batch_size):
+        chunk = to_delete[i:i + batch_size]
+        run_sqlscript(";".join(f"DELETE FROM OWNS WHERE @rid = {rid}" for rid in chunk))
+        deleted += len(chunk)
 
-        # Fetch all active edges for this pair with their properties
-        edges = run_query(
-            """
-            MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
-            WHERE r.until IS NULL
-            RETURN r.stake_percent   AS stake,
-                   r.file_date       AS file_date,
-                   r.source_id       AS source_id,
-                   r.ownership_type  AS ownership_type,
-                   r.since           AS since
-            """,
-            {"oid": oid, "nid": nid},
-        )
-
-        # Sort: prefer edge with stake_percent, then most recent file_date
-        def _sort_key(e):
-            return (
-                0 if e.get("stake") is not None else 1,
-                e.get("file_date") or "",
-            )
-
-        edges_sorted = sorted(edges, key=_sort_key, reverse=True)
-        best = edges_sorted[0]
-
-        # Delete all active edges between this pair
-        run_command(
-            """
-            MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid})
-            WHERE r.until IS NULL
-            DELETE r
-            """,
-            {"oid": oid, "nid": nid},
-        )
-
-        # Recreate the single best edge
-        run_command(
-            """
-            MATCH (a {id: $oid}), (b {id: $nid})
-            CREATE (a)-[:OWNS {
-                stake_percent:  $stake,
-                file_date:      $file_date,
-                source_id:      $source_id,
-                ownership_type: $ownership_type,
-                since:          $since,
-                until:          null
-            }]->(b)
-            """,
-            {
-                "oid":            oid,
-                "nid":            nid,
-                "stake":          best.get("stake"),
-                "file_date":      best.get("file_date"),
-                "source_id":      best.get("source_id"),
-                "ownership_type": best.get("ownership_type"),
-                "since":          best.get("since"),
-            },
-        )
-
-        deleted_count = len(edges_sorted) - 1
-        total_deleted += deleted_count
-        cleaned.append({"owner_id": oid, "target_id": nid, "duplicates_removed": deleted_count})
-
-    return {"duplicates_removed": total_deleted, "pairs_cleaned": len(pairs), "detail": cleaned}
+    return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs}
 
 
 def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
