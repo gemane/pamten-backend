@@ -62,6 +62,20 @@ def cmd_init_schema(args):
     for f in result["failed"]:
         print(f"  FAILED: {f['stmt']}\n          -> {f['error']}")
 
+def cmd_duplicate_names(args):
+    """List same-name entity duplicates (same company under different LEIs/ids)
+    for review after an import."""
+    from app.scraper.maintenance import count_duplicate_entity_names, find_duplicate_entity_names
+    c = count_duplicate_entity_names()
+    print(f"Duplicate-name groups: {c['duplicate_name_groups']}  "
+          f"(redundant nodes: {c['redundant_nodes']})")
+    for g in find_duplicate_entity_names(limit=getattr(args, "limit", None) or 50):
+        print(f"\n  {g['name_normalized']!r}  ({g['count']} nodes):")
+        for m in g["members"]:
+            print(f"    {m.get('id'):<28} {m.get('name')!r:40} "
+                  f"country={m.get('country')} lei={m.get('lei_id')} wd={m.get('wikidata_id')}")
+
+
 def cmd_backfill_search(args):
     """Populate the FULL_TEXT-indexed `search_text` column for existing rows so
     /search can use the index instead of a full scan. Batched to stay under the
@@ -244,6 +258,12 @@ def _build_parser():
     # init-schema command
     p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
     p_schema.set_defaults(func=cmd_init_schema)
+
+    # duplicate-names command
+    p_dn = subparsers.add_parser('duplicate-names',
+        help='List same-name entity duplicates (same company under different LEIs) for review')
+    p_dn.add_argument('--limit', type=int, default=50, help='Max groups to list (default 50)')
+    p_dn.set_defaults(func=cmd_duplicate_names)
 
     # backfill-search command
     p_bfs = subparsers.add_parser('backfill-search',

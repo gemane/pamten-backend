@@ -205,6 +205,21 @@ def count_duplicate_owns_edges(_: dict = Depends(require_admin)):
     return maintenance.count_duplicate_owns_edges()
 
 
+@router.get("/duplicate-entities/name-count")
+def count_duplicate_entity_names(_: dict = Depends(require_admin)):
+    """How many same-name entity duplicate groups exist — the same company under
+    different identifiers (e.g. two GLEIF LEIs) that the id-based dedup can't see.
+    Read-only. Admin only."""
+    return maintenance.count_duplicate_entity_names()
+
+
+@router.get("/duplicate-entities/name-candidates")
+def list_duplicate_entity_names(limit: int = 100, _: dict = Depends(require_admin)):
+    """The biggest same-name duplicate groups (members with id/country/lei) for
+    manual review. Admin only."""
+    return {"candidates": maintenance.find_duplicate_entity_names(limit)}
+
+
 @router.post("/deduplicate-edges")
 def deduplicate_owns_edges(_: dict = Depends(require_admin)):
     """Collapse duplicate active OWNS edges, keeping the largest stake. Admin only."""

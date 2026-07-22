@@ -132,6 +132,76 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs}
 
 
+# ── Cross-source duplicate detection (same company, different identifiers) ─────
+#
+# The BODS importer keys each entity on its LEI / Companies House id (see
+# bods._entity_node_id), so the same real-world company recorded under two LEIs
+# — e.g. BlackRock, Inc. as both 549300… and 529900… — becomes two Entity nodes.
+# The id-based dedup (deduplicate_entities, by shared LEI/CH id) can't see these
+# because the ids differ. What they share is a `name_normalized`. This DETECTS
+# such groups for review (it does not merge — same normalized name isn't always
+# the same company, so a human decides).
+
+# name_normalized is lowercase letters / digits / spaces (see
+# mapper.normalize_entity_name).
+_NAME_SHARD_CHARSET = "0123456789abcdefghijklmnopqrstuvwxyz "
+
+
+def _duplicate_name_groups() -> list[tuple[str, int]]:
+    """(name_normalized, member_count) for every normalized name shared by >1
+    Entity. Server-side GROUP BY sharded by name prefix — split deeper on the
+    query-heap cap — so it never loads the whole Entity set or trips
+    OutOfMemoryError (a single global GROUP BY over millions of names does)."""
+    found: list[tuple[str, int]] = []
+
+    def _collect(prefix: str) -> None:
+        q = ("SELECT FROM (SELECT name_normalized AS k, count(*) AS c FROM Entity "
+             "WHERE name_normalized >= :lo AND name_normalized < :hi "
+             "GROUP BY name_normalized) WHERE c > 1")
+        try:
+            rows = run_sql(q, {"lo": prefix, "hi": prefix + "￿"})
+        except RuntimeError as exc:
+            if not any(m in str(exc) for m in _GROUP_LIMIT_MARKERS):
+                raise
+            for ch in _NAME_SHARD_CHARSET:
+                _collect(prefix + ch)
+            return
+        found.extend((r["k"], int(r["c"])) for r in rows if r.get("k"))
+
+    _collect("")
+    return found
+
+
+def count_duplicate_entity_names() -> dict:
+    """How many same-name duplicate groups exist (observability / post-import):
+    {duplicate_name_groups, redundant_nodes}."""
+    groups = _duplicate_name_groups()
+    return {
+        "duplicate_name_groups": len(groups),
+        "redundant_nodes": sum(c - 1 for _, c in groups),
+    }
+
+
+def find_duplicate_entity_names(limit: int = 100) -> list[dict]:
+    """The biggest same-name duplicate groups for review: each group's normalized
+    name, member count, and the members (id, name, country, lei_id, wikidata_id)
+    so a human can tell a true duplicate (same company, two LEIs) from a
+    coincidental name clash (two unrelated firms)."""
+    groups = sorted(_duplicate_name_groups(), key=lambda g: -g[1])[:limit]
+    out = []
+    for name_norm, cnt in groups:
+        members = run_sql(
+            "SELECT id, name, country, lei_id, wikidata_id FROM Entity "
+            "WHERE name_normalized = :nn LIMIT 25", {"nn": name_norm})
+        out.append({
+            "name_normalized": name_norm,
+            "count": cnt,
+            "members": [{k: v for k, v in m.items() if not k.startswith("@")}
+                        for m in members],
+        })
+    return out
+
+
 def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
     """Move all OWNS and HAS_ROLE edges from dead_id → keep_id, return count migrated."""
     migrated = 0
