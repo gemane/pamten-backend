@@ -214,10 +214,13 @@ def count_duplicate_entity_names(_: dict = Depends(require_admin)):
 
 
 @router.get("/duplicate-entities/name-candidates")
-def list_duplicate_entity_names(limit: int = 100, _: dict = Depends(require_admin)):
-    """The biggest same-name duplicate groups (members with id/country/lei) for
-    manual review. Admin only."""
-    return {"candidates": maintenance.find_duplicate_entity_names(limit)}
+def list_duplicate_entity_names(limit: int = 100, min_confidence: str | None = None,
+                                _: dict = Depends(require_admin)):
+    """The biggest same-name duplicate groups, each tagged with a confidence that
+    the members are the same company (definitive/high/medium/low), with members
+    (id/country/lei/address) for review. `min_confidence` filters the list.
+    Admin only."""
+    return {"candidates": maintenance.find_duplicate_entity_names(limit, min_confidence)}
 
 
 @router.post("/deduplicate-edges")

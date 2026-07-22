@@ -69,11 +69,13 @@ def cmd_duplicate_names(args):
     c = count_duplicate_entity_names()
     print(f"Duplicate-name groups: {c['duplicate_name_groups']}  "
           f"(redundant nodes: {c['redundant_nodes']})")
-    for g in find_duplicate_entity_names(limit=getattr(args, "limit", None) or 50):
-        print(f"\n  {g['name_normalized']!r}  ({g['count']} nodes):")
+    for g in find_duplicate_entity_names(limit=getattr(args, "limit", None) or 50,
+                                         min_confidence=getattr(args, "min_confidence", None)):
+        print(f"\n  [{g['confidence']}] {g['name_normalized']!r}  ({g['count']} nodes):")
         for m in g["members"]:
             print(f"    {m.get('id'):<28} {m.get('name')!r:40} "
-                  f"country={m.get('country')} lei={m.get('lei_id')} wd={m.get('wikidata_id')}")
+                  f"country={m.get('country')} lei={m.get('lei_id')} "
+                  f"wd={m.get('wikidata_id')} addr={m.get('registered_address')}")
 
 
 def cmd_backfill_search(args):
@@ -263,6 +265,8 @@ def _build_parser():
     p_dn = subparsers.add_parser('duplicate-names',
         help='List same-name entity duplicates (same company under different LEIs) for review')
     p_dn.add_argument('--limit', type=int, default=50, help='Max groups to list (default 50)')
+    p_dn.add_argument('--min-confidence', choices=['definitive', 'high', 'medium', 'low'],
+                      help='Only show groups at least this confident they are the same company')
     p_dn.set_defaults(func=cmd_duplicate_names)
 
     # backfill-search command

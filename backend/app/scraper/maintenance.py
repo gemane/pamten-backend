@@ -182,23 +182,58 @@ def count_duplicate_entity_names() -> dict:
     }
 
 
-def find_duplicate_entity_names(limit: int = 100) -> list[dict]:
-    """The biggest same-name duplicate groups for review: each group's normalized
-    name, member count, and the members (id, name, country, lei_id, wikidata_id)
-    so a human can tell a true duplicate (same company, two LEIs) from a
-    coincidental name clash (two unrelated firms)."""
-    groups = sorted(_duplicate_name_groups(), key=lambda g: -g[1])[:limit]
+_CONFIDENCE_RANK = {"definitive": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _group_confidence(members: list[dict]) -> str:
+    """How sure are we the same-name members are the SAME company?
+      definitive — they share a wikidata_id / sec_cik / companies_house_id
+                   (a hard external identifier ⇒ same entity).
+      high       — same registered_address (GLEIF registered office).
+      medium     — same country AND same founded year.
+      low        — name only (differing address/country ⇒ probably different).
+    """
+    def _shared(field: str) -> bool:
+        vals = [m.get(field) for m in members if m.get(field)]
+        return len(vals) >= 2 and len(set(vals)) < len(vals)
+
+    if any(_shared(f) for f in ("wikidata_id", "sec_cik", "companies_house_id")):
+        return "definitive"
+    if _shared("registered_address"):
+        return "high"
+    countries = {m.get("country") for m in members if m.get("country")}
+    founded = {m.get("founded") for m in members if m.get("founded")}
+    if len(countries) == 1 and len(founded) == 1 and (countries or founded):
+        return "medium"
+    return "low"
+
+
+def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = None) -> list[dict]:
+    """The biggest same-name duplicate groups for review, each tagged with a
+    confidence that the members are the SAME company (see _group_confidence), so
+    a true duplicate (two LEIs, same registered address / shared hard id) is told
+    apart from a coincidental name clash. `min_confidence` filters the list
+    (definitive > high > medium > low)."""
+    cutoff = _CONFIDENCE_RANK.get(min_confidence, len(_CONFIDENCE_RANK))
+    groups = sorted(_duplicate_name_groups(), key=lambda g: -g[1])
     out = []
     for name_norm, cnt in groups:
         members = run_sql(
-            "SELECT id, name, country, lei_id, wikidata_id FROM Entity "
+            "SELECT id, name, country, founded, lei_id, companies_house_id, "
+            "sec_cik, wikidata_id, registered_address FROM Entity "
             "WHERE name_normalized = :nn LIMIT 25", {"nn": name_norm})
+        members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
+        confidence = _group_confidence(members)
+        if _CONFIDENCE_RANK[confidence] > cutoff:
+            continue
         out.append({
             "name_normalized": name_norm,
             "count": cnt,
-            "members": [{k: v for k, v in m.items() if not k.startswith("@")}
-                        for m in members],
+            "confidence": confidence,
+            "members": members,
         })
+        if len(out) >= limit:
+            break
     return out
 
 

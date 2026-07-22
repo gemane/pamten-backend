@@ -210,9 +210,43 @@ class TestEntityNodeId:
         assert _entity_node_id("LEI-X", None, "AT-001") == _entity_node_id("LEI-X", None, "GLEIF-999")
 
 
+# ── _registered_address ───────────────────────────────────────────────────────
+
+class TestRegisteredAddress:
+    def test_prefers_registered_over_business_and_normalizes(self):
+        from app.scraper.bods import _registered_address
+        details = {"addresses": [
+            {"type": "business", "address": "Biz St 1, Town", "country": {"code": "GB"}, "postCode": "B1"},
+            {"type": "registered", "address": "Reg Rd. 2, City", "country": {"code": "GB"}, "postCode": "R2 3XY"},
+        ]}
+        assert _registered_address(details) == "reg rd 2 city r2 3xy gb"
+
+    def test_falls_back_to_business_then_first(self):
+        from app.scraper.bods import _registered_address
+        assert _registered_address(
+            {"addresses": [{"type": "business", "address": "Only Biz", "country": {"code": "US"}}]}
+        ) == "only biz us"
+
+    def test_none_when_no_addresses(self):
+        from app.scraper.bods import _registered_address
+        assert _registered_address({}) is None
+        assert _registered_address({"addresses": []}) is None
+
+
 # ── _process_entity_statement ─────────────────────────────────────────────────
 
 class TestProcessEntityStatement:
+    def test_captures_registered_address(self):
+        from app.scraper.bods import _process_entity_statement
+        captured: dict = {}
+        stmt = {**ENTITY_STMT, "recordDetails": {
+            **ENTITY_STMT["recordDetails"],
+            "addresses": [{"type": "registered", "address": "1 King St, London",
+                           "country": {"code": "GB"}, "postCode": "SW1"}]}}
+        with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid-1")):
+            _process_entity_statement(stmt, {}, MagicMock(), "src-1", 92, None)
+        assert captured["registered_address"] == "1 king st london sw1 gb"
+
     def test_maps_fields_correctly(self):
         from app.scraper.bods import _process_entity_statement
 

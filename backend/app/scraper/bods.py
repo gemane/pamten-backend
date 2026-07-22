@@ -37,6 +37,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import re
 import zipfile
 from collections.abc import Iterator
 from typing import IO
@@ -391,8 +392,29 @@ def _entity_node_id(lei_id: str | None, companies_house_id: str | None, fallback
     return fallback
 
 
+def _registered_address(details: dict) -> str | None:
+    """Normalized registered address from a BODS entity statement's `addresses`
+    (prefer type=registered, else business, else the first). Used as a strong
+    'same legal entity' signal in duplicate detection: two same-named nodes with
+    the same registered address are the same company; different addresses mean
+    they are (probably) not. Lowercased, punctuation/whitespace collapsed."""
+    addrs = details.get("addresses") or []
+    if not addrs:
+        return None
+    pick = (next((a for a in addrs if a.get("type") == "registered"), None)
+            or next((a for a in addrs if a.get("type") == "business"), None)
+            or addrs[0])
+    parts = [pick.get("address") or "", pick.get("postCode") or "",
+             (pick.get("country") or {}).get("code") or ""]
+    raw = " ".join(p for p in parts if p)
+    norm = re.sub(r"[^\w\s]", " ", raw.lower())
+    norm = re.sub(r"\s+", " ", norm).strip()
+    return norm or None
+
+
 def _entity(batch, node_id, name, entity_type, country, founded,
-            lei_id, companies_house_id, source_id, credibility_score):
+            lei_id, companies_house_id, source_id, credibility_score,
+            registered_address=None):
     """Enqueue an Entity upsert (keyed on the stable node id) and return the id."""
     batch.entity(node_id, {
         "name": name,
@@ -405,6 +427,7 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         "founded": founded,
         "lei_id": lei_id,
         "companies_house_id": companies_house_id,
+        "registered_address": registered_address,
         "verified": False,
     })
     return node_id
@@ -533,6 +556,7 @@ def _process_entity_statement(
         companies_house_id=companies_house_id,
         source_id=source_id,
         credibility_score=credibility_score,
+        registered_address=_registered_address(details),
     )
     bods_to_pamten_id[record_id] = entity_id
     return entity_id
