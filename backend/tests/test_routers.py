@@ -101,13 +101,14 @@ def test_scraper_status_includes_wikidata_enabled(client):
 
 # ── Search endpoint ────────────────────────────────────────────────────────────
 
-def _patch_search(entities, persons=()):
-    """Patch the search router's SQL layer: run_sql returns the entity rows on
-    the first call and the person rows on the second (raw node dicts, as the
-    FULL_TEXT `CONTAINSTEXT` query returns). fake_db still backs the suppressed-
-    node lookup that runs afterwards."""
+def _patch_search(entities, persons=(), exact=()):
+    """Patch the search router's SQL layer. run_sql is called three times, in
+    order: the exact name_normalized lookup, the entity CONTAINSTEXT query, then
+    the person CONTAINSTEXT query (raw node dicts, as the DB returns). fake_db
+    still backs the suppressed-node lookup that runs afterwards."""
     from unittest.mock import patch
-    return patch("app.routers.search.run_sql", side_effect=[list(entities), list(persons)])
+    return patch("app.routers.search.run_sql",
+                 side_effect=[list(exact), list(entities), list(persons)])
 
 
 def test_search_returns_entity_results(client, fake_db):
@@ -198,6 +199,21 @@ def test_search_ranks_more_query_words_in_name_first(client, fake_db):
         r = client.get("/search/", params={"q": "carlsberg group"})
     assert r.status_code == 200
     assert r.json()[0]["node"]["id"] == "e1"   # matched 2 words, not just "group"
+
+
+def test_search_exact_name_ranks_first(client, fake_db):
+    # "BlackRock, Inc." — CONTAINSTEXT floods with fund variants that share the
+    # common token "inc"; the exact company (fetched by the name_normalized
+    # lookup) must still lead.
+    exact = {"id": "br", "name": "BlackRock, Inc.", "name_normalized": "blackrock", "type": "company"}
+    fund1 = {"id": "f1", "name": "BLACKROCK MUNIYIELD FUND, INC.", "name_normalized": "blackrock muniyield fund", "type": "company"}
+    fund2 = {"id": "f2", "name": "BLACKROCK CAPITAL HOLDINGS, INC.", "name_normalized": "blackrock capital holdings", "type": "company"}
+    # DB returns only the funds from CONTAINSTEXT; the exact node comes from the
+    # name_normalized lookup.
+    with _patch_search([fund1, fund2], exact=[exact]):
+        r = client.get("/search/", params={"q": "BlackRock, Inc."})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "br"
 
 
 def test_search_dedupes_repeated_node_id(client, fake_db):
