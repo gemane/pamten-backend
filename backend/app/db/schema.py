@@ -32,6 +32,7 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Entity",   "sec_cik",            "NOTUNIQUE"),
     ("Entity",   "lei_id",             "NOTUNIQUE"),
     ("Entity",   "companies_house_id", "NOTUNIQUE"),
+    ("Entity",   "registered_address", "NOTUNIQUE"),  # dup-detection corroborator
     ("Person",   "id",              "UNIQUE"),
     ("Person",   "full_name",       "NOTUNIQUE"),
     ("Person",   "wikidata_id",     "NOTUNIQUE"),
