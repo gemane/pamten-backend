@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from app.database import db
 from app.db.arcadedb import run_sql
+from app.scraper.mapper import normalize_entity_name
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 
@@ -12,21 +13,24 @@ def _clean(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("@")}
 
 
-def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0) -> tuple:
+def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
+          nn: str | None = None) -> tuple:
     """
-    Sort key (all ascending): (-name_token_matches, match_tier, db_index).
+    Sort key (all ascending): (exact_norm, -name_token_matches, match_tier,
+    name_len, db_index).
 
-    - name_token_matches: how many query words appear in the NAME. Entities whose
-      name contains more of the query ("Axel Springer SE" for "axel springer",
-      "Carlsberg Group" for "carlsberg group") float above bare single-word hits.
+    - exact_norm: 0 when the node's name_normalized equals the normalized query
+      (so "BlackRock, Inc." leads for that query, above the many "BLACKROCK …
+      FUND, INC." variants that only share common tokens), else 1.
+    - name_token_matches: how many query words appear in the NAME.
     - match_tier: 0 exact, 1 starts-with, 2 contains full query, 3 otherwise.
-    - db_index: preserves ArcadeDB's FULL_TEXT relevance order for ties, so a
-      rare-token match (Dangote…) stays above a common-token one (…GROUP) — we
-      deliberately do NOT tiebreak on name length (which floated "BLG GROUP" up).
+    - name_len (tiers 0-2 only) then db_index: keep the FULL_TEXT relevance order
+      for weak matches; never tiebreak weak matches on length ("BLG GROUP").
     """
     name = (node.get("name") or "").lower()
     toks = tokens if tokens is not None else q.split()
     matches = sum(1 for t in toks if t and t in name)
+    exact_norm = 0 if (nn and node.get("name_normalized") == nn) else 1
     if name == q:
         tier = 0
     elif name.startswith(q):
@@ -35,11 +39,8 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0) -> 
         tier = 2
     else:
         tier = 3
-    # Shorter name wins only when the name actually matches the full query
-    # (tiers 0-2) — e.g. "Apple Inc." over "Apple Sales International". For
-    # weaker matches, keep the DB's relevance order instead of name length.
     name_len = len(name) if tier <= 2 else 0
-    return (-matches, tier, name_len, idx)
+    return (exact_norm, -matches, tier, name_len, idx)
 
 
 @router.get("/")
@@ -65,6 +66,7 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     """
     q_lower = q.lower()
     tokens = q_lower.split()
+    nn = normalize_entity_name(q)   # for the exact-name lookup + ranking
 
     # Index-backed full-text search via the FULL_TEXT index on `search_text`
     # (see db/schema.py). `CONTAINSTEXT` uses the index — an un-indexable
@@ -83,7 +85,22 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
 
     person_sql = "SELECT FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 15"
 
+    # Exact-name lookup (indexed on name_normalized): CONTAINSTEXT is an OR over
+    # tokens, so for "BlackRock, Inc." a common token ("inc") floods the LIMIT'd
+    # candidate set and the exact company never gets fetched. This guarantees it
+    # is in the candidate set; _rank then floats it to the top.
+    if country:
+        exact_sql = ("SELECT FROM Entity WHERE name_normalized = :nn "
+                     "AND country = :country LIMIT 10")
+        exact_params: dict = {"nn": nn, "country": country}
+    else:
+        exact_sql = "SELECT FROM Entity WHERE name_normalized = :nn LIMIT 10"
+        exact_params = {"nn": nn}
+
     results = []
+    if nn:
+        for row in run_sql(exact_sql, exact_params):
+            results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
     for row in run_sql(entity_sql, entity_params):
         results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
     if not country:
@@ -100,7 +117,7 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     # DB's own relevance order (index position) — never name length, which used
     # to float short unrelated names like "BLG GROUP" to the top.
     results = [{**r, "_i": i} for i, r in enumerate(results)]
-    results.sort(key=lambda r: _rank(r["node"], q_lower, tokens, r["_i"]))
+    results.sort(key=lambda r: _rank(r["node"], q_lower, tokens, r["_i"], nn))
     # De-dupe by node id (CONTAINSTEXT can return a row per index bucket), keeping
     # the highest-ranked instance, and cap at 20.
     out: list[dict] = []
