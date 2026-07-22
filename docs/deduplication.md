@@ -1,8 +1,15 @@
-# Person deduplication — design notes
+# Deduplication — design notes
 
-How Pamten finds and resolves duplicate `Person` nodes. Implementation lives in
-`app/routers/persons.py`; the UI is the Scraper tab's **Review duplicate persons**
-modal.
+How Pamten finds and resolves duplicates. Three kinds, each with its own signals:
+
+- **Persons** — same person named differently across sources (`app/routers/persons.py`). Covered below.
+- **Entities** — the same company as multiple nodes (`app/scraper/maintenance.py`). See [Entity deduplication](#entity-deduplication).
+- **OWNS edges** — the same ownership fact recorded twice. See [OWNS edge deduplication](#owns-edge-deduplication).
+
+# Person deduplication
+
+Implementation lives in `app/routers/persons.py`; the UI is the Scraper tab's
+**Review duplicate persons** modal.
 
 ## Why duplicates happen
 
@@ -144,3 +151,64 @@ rows. `GET /persons/merge-log` returns them newest-first.
 | `POST` / `DELETE /persons/keep-separate` | Mark / unmark a group as distinct |
 | `GET /persons/kept-separate` | The "not to be merged" list |
 | `GET /persons/merge-log` | The "already merged" history |
+
+
+# Entity deduplication
+
+Two ways the same company becomes multiple `Entity` nodes, with different fixes.
+
+## Same identifier, two nodes — `deduplicate_entities`
+
+The old recordId-keyed BODS importer could create two nodes for one company. These
+**share an LEI / Companies House id**, so `deduplicate_entities` merges them by that
+id (sharded by id prefix to stay under ArcadeDB's query-heap cap). Exposed at
+`POST /scraper/deduplicate-entities` (background job; `strategy=bulk` deletes losers,
+`strategy=merge` migrates edges first).
+
+## Same company, different identifiers — detection only
+
+The current importer keys each entity on its LEI/CH id (`bods._entity_node_id`), so
+the same company recorded under **two different LEIs** becomes two nodes the id-based
+dedup can't see. Example: BlackRock, Inc. as `549300…` (US) and `529900…` (German).
+An LEI's first four chars are the **issuing LOU, not the country**, so different
+prefixes don't imply different companies — but two *distinct* LEIs do mean GLEIF
+treats them as distinct legal entities, so `name_normalized` alone can't decide.
+
+`maintenance.find_duplicate_entity_names` groups entities by `name_normalized`
+(sharded server-side by name prefix — a global `GROUP BY` over millions of names
+OOMs the heap) and tags each group with a **confidence** it's the same company:
+
+| Confidence | Signal |
+|---|---|
+| `definitive` | members share a `wikidata_id` / `sec_cik` / `companies_house_id` |
+| `high` | same `registered_address` (GLEIF registered office) |
+| `medium` | same `country` **and** `founded` year |
+| `low` | name only — differing address/country ⇒ probably *different* firms |
+
+`registered_address` is captured at import from GLEIF `recordDetails.addresses`
+(`bods._registered_address`, normalized, indexed) — it's the discriminator: same
+name **+ same registered address** ⇒ merge; same name **+ different address** ⇒
+leave alone. It populates on the next import.
+
+This **detects, it does not auto-merge** (a name clash isn't a duplicate). Surfaced
+in the BODS import result as `duplicate_names`, via `GET /scraper/duplicate-entities/{name-count,name-candidates}`
+(`?min_confidence=`), and `manage.py duplicate-names`. Merging a confirmed group is
+manual — reuse the labelled, fast `maintenance._migrate_entity_edges` (copy identity
+fields, drop self-loops, then `deduplicate_owns_edges`).
+
+
+# OWNS edge deduplication
+
+A single BODS relationship statement can list several `interests` for the same
+owner→owned pair (e.g. voting rights + board appointment, both → "controlling"; or
+GLEIF direct + ultimate consolidation). The importer used to emit one OWNS edge per
+interest, so **one import** created duplicate edges (fixed at the source — it now
+collapses interests to one edge per `ownership_type`, keeping the largest stake).
+
+To clean existing duplicates, `maintenance.deduplicate_owns_edges` pages active OWNS
+edges by `@rid`, groups by (`@out`, `@in`) **in Python** (a global `GROUP BY` OOMs),
+keeps the largest-stake edge per pair, and deletes the rest by `DELETE FROM <rid>`
+(direct record access — `WHERE @rid = …` scans the whole edge type). Read-only count
+at `GET /scraper/duplicate-edges/count`; collapse at `POST /scraper/deduplicate-edges`.
+The entity profile also dedupes owners/subsidiaries by node id at read time, so the
+UI never shows a node twice even before the DB is cleaned.
