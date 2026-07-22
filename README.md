@@ -192,7 +192,12 @@ each `run-all` scrape (`SCRAPER_AUTODEDUP_ENABLED`), the rest are resolved from
 the web app's **Scraper tab → Review duplicate persons** panel (merge, keep
 separate, or view the merge log).
 
-📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — the scan signals, confidence model, the ArcadeDB param-mediated merge, keep-separate, and the merge log.
+Entities and ownership edges dedupe too: the same company under two GLEIF LEIs is
+detected by name with a confidence tier (registered address / shared hard id), and
+duplicate `OWNS` edges from multi-interest BODS statements are collapsed — both via
+`/scraper/duplicate-*` endpoints.
+
+📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — person scan signals + confidence model + param-mediated merge, entity same-company detection with confidence tiers, and OWNS edge dedup.
 
 ---
 
