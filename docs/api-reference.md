@@ -111,7 +111,10 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 |---|---|---|---|
 | POST | `/scraper/proxy-statement/run` | contributor | Parse a company's latest DEF 14A proxy and return per-person voting power (read-only) |
 | POST | `/scraper/proxy-statement/write` | contributor | Fetch the latest DEF 14A and write `voting_power_pct` onto OWNS edges (`entity_id` overrides name lookup) |
-| POST | `/scraper/deduplicate-edges` | admin | Collapse duplicate active OWNS edges, keeping the most informative |
+| GET | `/scraper/duplicate-edges/count` | admin | Count duplicate active OWNS edges (read-only): `{active_edges, distinct_pairs, duplicate_pairs, redundant_edges}` |
+| POST | `/scraper/deduplicate-edges` | admin | Collapse duplicate active OWNS edges, keeping the largest stake (by @rid, provenance-preserving) |
+| GET | `/scraper/duplicate-entities/name-count` | admin | Count same-name entity duplicate groups — the same company under different identifiers (e.g. two GLEIF LEIs) the id-based dedup can't see. Also reported in the BODS import result as `duplicate_names` |
+| GET | `/scraper/duplicate-entities/name-candidates` | admin | The biggest same-name duplicate groups with members (id/country/lei/wikidata) for manual review (`?limit=`) |
 | POST | `/scraper/deduplicate-entities` | admin | Collapse Entity duplicates sharing an LEI / Companies House number (heals the recordId-keyed BODS doubling). Background by default (returns `started`; poll `GET /scraper/runs`). `strategy=bulk` (default) keeps one node per id and deletes the rest (fast; drops losers' edges); `strategy=merge` migrates edges first (only finishes on small data). `background=false` runs the sync bounded-batch merge (`?limit=`, returns `remaining`) |
 | POST | `/scraper/deduplicate-persons` | admin | Legacy: merge reversed-name Person duplicates (use `/persons/deduplicate`) |
 | POST | `/scraper/migrate-ownership-types` | admin | One-time migration deriving canonical `ownership_type` values |

@@ -29,6 +29,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _duplicate_name_summary() -> dict:
+    """Same-company-different-identifier duplicates surfaced right after an
+    import (e.g. one company under two GLEIF LEIs). Best-effort — a failure here
+    must never fail the import."""
+    try:
+        from app.scraper.maintenance import count_duplicate_entity_names
+        return count_duplicate_entity_names()
+    except Exception as exc:  # noqa: BLE001 - observability, never fatal
+        log.warning("duplicate-name summary failed: %s", exc)
+        return {"error": str(exc)}
+
+
 def _wikidata_url(qid: str | None) -> str | None:
     """Verifiable per-record URL for a Wikidata entity (QID page)."""
     return f"https://www.wikidata.org/wiki/{qid}" if qid else None
@@ -1411,7 +1423,8 @@ def run_import_bods_gleif(
             filter_jurisdiction=filter_jurisdiction,
             bulk_load=bulk_load,
         )
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME,
+            "duplicate_names": _duplicate_name_summary(), **counts}
 
 
 # ── UK PSC public entry point ─────────────────────────────────────────────────
@@ -1471,4 +1484,5 @@ def run_import_bods_uk_psc(
             filter_jurisdiction=jur,
             bulk_load=bulk_load,
         )
-    return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts}
+    return {"status": "ok", "source": UK_PSC_SOURCE_NAME,
+            "duplicate_names": _duplicate_name_summary(), **counts}
