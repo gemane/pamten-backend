@@ -22,6 +22,45 @@ def test_register_second_user_is_viewer(client, fake_db):
     assert r.json()["role"] == "viewer"
 
 
+def test_register_never_admin_when_env_admin_configured(client, fake_db, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "ADMIN_EMAIL", "boss@x.com")
+    fake_db.queue([], [])  # dup-check empty, then create (no count query on this path)
+    r = client.post("/auth/register", json={"email": "first@x.com", "password": "password123"})
+    assert r.status_code == 200
+    assert r.json()["role"] == "viewer"   # even as the very first user — no self-promotion
+
+
+class TestBootstrapAdmin:
+    def test_creates_admin_when_missing(self, fake_db, monkeypatch):
+        from app.config import settings
+        from app.auth.router import bootstrap_admin
+        monkeypatch.setattr(settings, "ADMIN_EMAIL", "Boss@X.com")
+        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "password123")
+        fake_db.queue([], [])   # not found, then create
+        bootstrap_admin()
+        creates = [c for c in fake_db.calls if "CREATE (u:User" in c[0]]
+        assert len(creates) == 1
+        assert creates[0][1]["email"] == "boss@x.com"   # normalized to lowercase
+        assert "role: 'admin'" in creates[0][0]
+
+    def test_skips_when_admin_already_exists(self, fake_db, monkeypatch):
+        from app.config import settings
+        from app.auth.router import bootstrap_admin
+        monkeypatch.setattr(settings, "ADMIN_EMAIL", "boss@x.com")
+        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "password123")
+        fake_db.queue([{"u": {"id": "1"}}])   # already exists
+        bootstrap_admin()
+        assert not any("CREATE (u:User" in c[0] for c in fake_db.calls)   # no overwrite
+
+    def test_noop_when_unconfigured(self, fake_db, monkeypatch):
+        from app.config import settings
+        from app.auth.router import bootstrap_admin
+        monkeypatch.setattr(settings, "ADMIN_EMAIL", None)
+        bootstrap_admin()
+        assert fake_db.calls == []
+
+
 def test_register_duplicate_email_rejected(client, fake_db):
     fake_db.queue([{"u": {"id": "1"}}])  # existing user found
     r = client.post("/auth/register", json={"email": "dupe@x.com", "password": "password123"})

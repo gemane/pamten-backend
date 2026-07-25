@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
     ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 12  # 12 hours
     CORS_ORIGINS:                     str  = ""
+    # Admin bootstrap: when ADMIN_EMAIL is set, that account is provisioned as
+    # admin on startup (created if missing, from ADMIN_PASSWORD) — so a fresh DB
+    # has an admin without the "first person to /register becomes admin" race.
+    # With ADMIN_EMAIL set, self-registration never grants admin.
+    ADMIN_EMAIL:                      str | None = None
+    ADMIN_PASSWORD:                   str | None = None
     # Only files inside this directory may be passed as local_file to the
     # BODS import endpoints (prevents arbitrary server file reads).
     BODS_DATA_DIR:                    str  = "/data"
