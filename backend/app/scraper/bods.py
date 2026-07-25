@@ -47,10 +47,21 @@ import ijson
 
 from datetime import datetime, timezone
 
+from app.config import settings
 from app.db.arcadedb import run_sqlscript
 from app.scraper.mapper import derive_ownership_type, normalize_entity_name, parse_full_name
 
 log = logging.getLogger(__name__)
+
+
+def _tmp_dir() -> str | None:
+    """Directory for the importer's on-disk id maps and downloads. Uses
+    settings.SCRAPER_TMP_DIR when set (creating it) so a large UK PSC import
+    doesn't fill a small tmpfs /tmp; otherwise the system default."""
+    d = settings.SCRAPER_TMP_DIR
+    if d:
+        os.makedirs(d, exist_ok=True)
+    return d or None
 
 
 # BODS imports run for hours against a remote, nginx-fronted ArcadeDB. A single
@@ -98,7 +109,7 @@ class _DiskMap:
     """
 
     def __init__(self):
-        fd, self._path = tempfile.mkstemp(suffix=".bods-idmap.sqlite")
+        fd, self._path = tempfile.mkstemp(suffix=".bods-idmap.sqlite", dir=_tmp_dir())
         os.close(fd)
         self._con = sqlite3.connect(self._path)
         self._con.executescript(
@@ -933,7 +944,7 @@ def stream_bods_json(url: str) -> Iterator[dict]:
     Downloads to a temp file first (needed for two-pass processing).
     Cleans up the temp file after the iterator is exhausted.
     """
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False, dir=_tmp_dir()) as tmp:
         tmp_path = tmp.name
 
     try:
@@ -1151,7 +1162,7 @@ def import_bods_source(
     """
     log.info("BODS: starting import of %s", source_name)
 
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False, dir=_tmp_dir()) as tmp:
         tmp_path = tmp.name
 
     try:

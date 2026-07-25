@@ -210,6 +210,30 @@ class TestEntityNodeId:
         assert _entity_node_id("LEI-X", None, "AT-001") == _entity_node_id("LEI-X", None, "GLEIF-999")
 
 
+# ── _DiskMap temp location (avoids filling a small tmpfs /tmp) ─────────────────
+
+class TestDiskMapTmpDir:
+    def test_uses_configured_tmp_dir(self, tmp_path, monkeypatch):
+        from app.config import settings
+        from app.scraper.bods import _DiskMap
+        monkeypatch.setattr(settings, "SCRAPER_TMP_DIR", str(tmp_path))
+        m = _DiskMap()
+        try:
+            assert m._path.startswith(str(tmp_path))   # spilled to the big disk, not /tmp
+            m["k"] = "v"
+            assert m["k"] == "v" and "k" in m
+        finally:
+            m.close()
+
+    def test_creates_the_dir_if_missing(self, tmp_path, monkeypatch):
+        from app.config import settings
+        from app.scraper.bods import _tmp_dir
+        target = tmp_path / "does" / "not" / "exist"
+        monkeypatch.setattr(settings, "SCRAPER_TMP_DIR", str(target))
+        assert _tmp_dir() == str(target)
+        assert target.is_dir()
+
+
 # ── _registered_address ───────────────────────────────────────────────────────
 
 class TestRegisteredAddress:
