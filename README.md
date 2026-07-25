@@ -124,7 +124,9 @@ JWTs are signed with `SECRET_KEY` (HS256, 7-day expiry). Set a strong random key
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-The first account registered automatically receives the `admin` role. Protected routes use FastAPI `Depends`:
+**The admin account.** Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` and that account is provisioned as admin on every startup (created if it doesn't exist, from the hashed `ADMIN_PASSWORD`; never overwritten if it already exists). With `ADMIN_EMAIL` set, self-registration only ever creates `viewer`s. This is the recommended way to get an admin on a fresh database — it avoids the race where, on an empty DB, whoever hits the public `/auth/register` first would become admin. If `ADMIN_EMAIL` is **not** set, the legacy fallback applies: the first account to register becomes admin.
+
+Protected routes use FastAPI `Depends`:
 
 | Dependency | Requirement |
 |---|---|
@@ -283,7 +285,9 @@ log), not as in-place edits that the next scrape would clobber.
 
 ## Deployment
 
-Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`.
+Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`. Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` too so the admin is provisioned automatically on boot (see [Authentication](#authentication)).
+
+> **Env var changes apply on a *deploy*, not a restart.** Editing env vars in the dashboard triggers a deploy that applies them. But an env var set via the Render **API** does not auto-deploy, and a plain **"Restart Service"** restarts with the *already-deployed* config — so a value changed via the API only takes effect after a real deploy (**Manual Deploy → "Clear build cache & deploy"**, or a new push to `main`).
 
 ### Schema & indexes
 
