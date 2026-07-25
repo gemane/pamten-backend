@@ -15,7 +15,6 @@ from unittest.mock import patch, MagicMock
 from contextlib import contextmanager
 
 # Import runner at module level (env vars are set in conftest.py before collection)
-from app.scraper import runner as runner_module
 from app.scraper.runner import (
     run_scrape,
     run_scrape_sec_edgar,
@@ -503,6 +502,25 @@ class TestUpsertEntity:
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Acme", "company", None, None, None, None, "Q1")
         assert isinstance(eid, str) and len(eid) > 0
+
+    def test_sets_search_text_on_create(self):
+        # search_text (name + description + aliases) must be written so the
+        # scraped entity enters the FULL_TEXT /search index.
+        ctx, session = _make_session_mock()   # miss → CREATE
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_entity("Acme Corp", "company", None, None, None, "A widget maker",
+                           "Q1", aliases=["Acme", "ACME Inc"])
+        create = session.run.call_args_list[-1]
+        assert "search_text: $search_text" in create.args[0]
+        assert create.kwargs["search_text"] == "Acme Corp A widget maker Acme ACME Inc"
+
+    def test_sets_search_text_on_update(self):
+        ctx, session = _make_session_mock(single_returns=[{"id": "e1"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_entity("Acme", "company", None, None, None, None, "Q1")
+        upd = session.run.call_args_list[-1]
+        assert "e.search_text     = $search_text" in upd.args[0]
+        assert upd.kwargs["search_text"] == "Acme"
 
 
 class TestUpsertPerson:
