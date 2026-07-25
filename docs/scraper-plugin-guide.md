@@ -439,6 +439,12 @@ edges afterwards with `POST /scraper/deduplicate-edges`:
 python manage.py bods-uk-psc --file /data/uk_psc.zip --bulk-load
 ```
 
+> **Temp space:** the importer spills its id maps (tens of millions of entries)
+> to SQLite files under the system temp dir. If `/tmp` is a small **tmpfs** (RAM),
+> a full UK PSC import fills it and SQLite fails with *"database or disk is full"*
+> / *"disk image is malformed"*. Set `SCRAPER_TMP_DIR` to a path on a real disk
+> with tens of GB free: `SCRAPER_TMP_DIR=/data/bods/tmp python manage.py bods-uk-psc …`.
+
 After a full import, populate the full-text search column so `/search` uses its
 FULL_TEXT index instead of scanning every row (`toLower(name) CONTAINS` on
 millions of entities takes ~12s; `CONTAINSTEXT` on the index is instant). The

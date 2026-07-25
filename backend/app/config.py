@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     SCRAPER_OPENCORPORATES_ENABLED:   bool = False
     SCRAPER_BODS_GLEIF_ENABLED:       bool = False
     SCRAPER_BODS_UK_PSC_ENABLED:      bool = False
+    # Where the BODS importer spills its on-disk id maps (and downloads) for a
+    # multi-GB import. Defaults to the system temp dir — but on boxes where /tmp
+    # is a small tmpfs (RAM), a full UK PSC import fills it and SQLite corrupts
+    # ("database or disk is full" / "disk image is malformed"). Point this at a
+    # path on a real disk with tens of GB free for large imports.
+    SCRAPER_TMP_DIR:                  str | None = None
     # After each run-all scrape, auto-merge high-confidence duplicate persons that
     # different sources spelled differently. Only high-confidence, non-distinct
     # groups are merged; medium/low go to the review panel. Set false to disable.
