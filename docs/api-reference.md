@@ -80,10 +80,10 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 |---|---|---|---|
 | GET | `/scraper/status` | — | Master + per-source flag states (incl. `autodedup_enabled`) |
 | GET | `/scraper/runs` | contributor | Recent scrape run log — status, counts, failures (see [Scrape run log](../README.md#scrape-run-log)) |
-| POST | `/scraper/run` | admin | Run a Wikidata scrape by company name |
+| POST | `/scraper/run` | admin | Run a Wikidata scrape by company name. `?depth=` (0–3, default 2) = how many levels **down the subsidiary tree** to recursively expand — each level fetches up to 15 subsidiaries per node, so it grows ~exponentially (depth 3 ≈ up to 15³ nodes and thousands of Wikidata calls). Owners/executives are recorded but not recursed |
 | POST | `/scraper/sec-edgar/run` | admin | Run an SEC EDGAR scrape by company name |
 | POST | `/scraper/open-corporates/run` | admin | Run an OpenCorporates scrape by company name |
-| POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company (then auto-dedup) |
+| POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company (then auto-dedup). `?depth=` passes through to the Wikidata scrape (see `/scraper/run`) |
 | POST | `/scraper/geocode` | contributor | Backfill HQ coordinates via Nominatim (needs `GEOCODING_ENABLED`) |
 | POST | `/scraper/bods/gleif/run` | contributor | Import GLEIF beneficial-ownership data (BODS) |
 | POST | `/scraper/bods/uk-psc/run` | contributor | Import UK PSC beneficial-ownership data (BODS) |
