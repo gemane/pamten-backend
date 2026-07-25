@@ -260,6 +260,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `SECRET_KEY` | insecure default | JWT signing key — **must be overridden when `DEBUG=false`, or the app refuses to start** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | none | Provision this account as admin on startup (created if missing). When set, self-registration never grants admin — avoids the "first person to `/register` becomes admin" race on a fresh DB |
 | `SCRAPER_ENABLED` | `false` | Master scraper switch (required for any scrape) |
 | `SCRAPER_WIKIDATA_ENABLED` | `true` | Wikidata source switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |

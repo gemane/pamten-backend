@@ -1,14 +1,45 @@
+import logging
 import time
 import uuid
 import threading
 from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, EmailStr, field_validator
+from app.config import settings
 from app.database import db
 from app.auth.security import hash_password, verify_password, create_access_token
 from app.auth.dependencies import get_current_user, require_admin
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+def bootstrap_admin() -> None:
+    """Provision the ADMIN_EMAIL account as admin on startup, if configured.
+    Idempotent (only creates when the email doesn't exist — never overwrites a
+    later password change) and best-effort (never crashes startup). This removes
+    the 'first person to hit /register becomes admin' race on a fresh DB."""
+    email = (settings.ADMIN_EMAIL or "").strip().lower()
+    password = settings.ADMIN_PASSWORD
+    if not email or not password:
+        return
+    try:
+        with db.get_session() as session:
+            if session.run("MATCH (u:User {email: $e}) RETURN u", e=email).single():
+                return  # already exists — leave it (respects password changes)
+            session.run(
+                """
+                CREATE (u:User {
+                    id: $id, email: $email, password_hash: $hash,
+                    role: 'admin', created_at: toString(datetime())
+                })
+                """,
+                id=str(uuid.uuid4()), email=email, hash=hash_password(password),
+            )
+        log.info("Bootstrapped admin user %s from ADMIN_EMAIL", email)
+    except Exception as exc:  # noqa: BLE001 - never fail startup on this
+        log.warning("Admin bootstrap skipped: %s", exc)
 
 LOGIN_RATE_LIMIT = 5           # attempts
 LOGIN_RATE_WINDOW = 15 * 60    # seconds
@@ -73,8 +104,14 @@ def register(data: RegisterRequest):
         if session.run("MATCH (u:User {email: $e}) RETURN u", e=data.email).single():
             raise HTTPException(status_code=400, detail="Email already registered")
 
-        count = session.run("MATCH (u:User) RETURN count(u) AS n").single()["n"]
-        role = "admin" if count == 0 else "viewer"
+        # When an admin is provisioned from env (ADMIN_EMAIL), self-registration
+        # NEVER grants admin — closing the "first registrant becomes admin" hole.
+        # Otherwise fall back to the legacy bootstrap: the first user is admin.
+        if settings.ADMIN_EMAIL:
+            role = "viewer"
+        else:
+            count = session.run("MATCH (u:User) RETURN count(u) AS n").single()["n"]
+            role = "admin" if count == 0 else "viewer"
         user_id = str(uuid.uuid4())
 
         session.run(

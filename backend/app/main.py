@@ -23,6 +23,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 async def lifespan(app: FastAPI):
     # Best-effort schema/index bootstrap (idempotent, never fatal).
     ensure_indexes()
+    # Provision the env-configured admin (after the schema exists), so a fresh DB
+    # has an admin without the first-registrant-becomes-admin race.
+    auth_router.bootstrap_admin()
     yield
     # Close pooled HTTP clients on shutdown.
     close_client()
