@@ -807,3 +807,55 @@ def normalize_entity_countries() -> dict:
             skipped += 1
 
     return {"converted": converted, "skipped": skipped}
+
+
+def backfill_entity_sources() -> dict:
+    """
+    One-time backfill: stamp ``Entity.source_id`` on nodes the Wikidata / SEC
+    EDGAR scrapers created before they set it. Without it, a pure *owner* (whose
+    subsidiaries are deliberately excluded from its own source panel, and which
+    has no inbound owners/roles) shows no source at all — e.g. "Government of
+    Abu Dhabi" or "Vanguard Group Inc".
+
+    Attribution is by identifier: a node with a ``wikidata_id`` → the Wikidata
+    Source; else a ``sec_cik`` → the SEC EDGAR Source. Only fills nodes whose
+    ``source_id`` is null (idempotent), and only when the Source node exists.
+    Nodes with neither identifier are left untouched (can't attribute a source).
+    """
+    def _source_id(name: str) -> str | None:
+        rows = run_query(
+            "MATCH (s:Source {name: $name}) RETURN s.id AS id", {"name": name}
+        )
+        return rows[0]["id"] if rows else None
+
+    def _count(where: str) -> int:
+        rows = run_query(f"MATCH (e:Entity) WHERE {where} RETURN count(e) AS c")
+        return rows[0]["c"] if rows else 0
+
+    wikidata_src = _source_id("Wikidata")
+    sec_src      = _source_id("SEC EDGAR")
+
+    updated = {"wikidata": 0, "sec_edgar": 0}
+    # Order matters: wikidata_id is the more specific attribution, so claim those
+    # first; the SEC pass then only catches CIK-only nodes still missing a source.
+    if wikidata_src:
+        updated["wikidata"] = _count("e.source_id IS NULL AND e.wikidata_id IS NOT NULL")
+        run_command(
+            "MATCH (e:Entity) WHERE e.source_id IS NULL AND e.wikidata_id IS NOT NULL "
+            "SET e.source_id = $sid",
+            {"sid": wikidata_src},
+        )
+    if sec_src:
+        updated["sec_edgar"] = _count("e.source_id IS NULL AND e.sec_cik IS NOT NULL")
+        run_command(
+            "MATCH (e:Entity) WHERE e.source_id IS NULL AND e.sec_cik IS NOT NULL "
+            "SET e.source_id = $sid",
+            {"sid": sec_src},
+        )
+
+    return {
+        "updated": updated,
+        "still_missing": _count("e.source_id IS NULL"),
+        "wikidata_source_found": wikidata_src is not None,
+        "sec_edgar_source_found": sec_src is not None,
+    }

@@ -350,6 +350,14 @@ def migrate_ownership_types(_: dict = Depends(require_admin)):
     return maintenance.migrate_ownership_types()
 
 
+@router.post("/backfill-entity-sources")
+def backfill_entity_sources(_: dict = Depends(require_admin)):
+    """One-time backfill stamping source_id on Wikidata/SEC entities that predate
+    the fix — restores the source panel for pure owners (e.g. a government or a
+    large fund with no inbound owners). Idempotent. Admin only."""
+    return maintenance.backfill_entity_sources()
+
+
 # ── BODS endpoints ────────────────────────────────────────────────────────────
 
 def _validate_bods_local_file(local_file: str | None) -> str | None:
