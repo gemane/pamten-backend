@@ -821,15 +821,18 @@ def backfill_entity_sources() -> dict:
     Source; else a ``sec_cik`` → the SEC EDGAR Source. Only fills nodes whose
     ``source_id`` is null (idempotent), and only when the Source node exists.
     Nodes with neither identifier are left untouched (can't attribute a source).
+
+    Reads and writes go through ArcadeDB **SQL** (run_sql), not Cypher: a Cypher
+    ``MATCH … SET`` via the command endpoint did not persist the update on this
+    engine, whereas a plain ``UPDATE … WHERE`` does (the path the BODS importer
+    relies on). ``source_id IS NULL`` matches both null and absent properties.
     """
     def _source_id(name: str) -> str | None:
-        rows = run_query(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id", {"name": name}
-        )
+        rows = run_sql("SELECT id FROM Source WHERE name = :name", {"name": name})
         return rows[0]["id"] if rows else None
 
     def _count(where: str) -> int:
-        rows = run_query(f"MATCH (e:Entity) WHERE {where} RETURN count(e) AS c")
+        rows = run_sql(f"SELECT count(*) AS c FROM Entity WHERE {where}")
         return rows[0]["c"] if rows else 0
 
     wikidata_src = _source_id("Wikidata")
@@ -839,23 +842,23 @@ def backfill_entity_sources() -> dict:
     # Order matters: wikidata_id is the more specific attribution, so claim those
     # first; the SEC pass then only catches CIK-only nodes still missing a source.
     if wikidata_src:
-        updated["wikidata"] = _count("e.source_id IS NULL AND e.wikidata_id IS NOT NULL")
-        run_command(
-            "MATCH (e:Entity) WHERE e.source_id IS NULL AND e.wikidata_id IS NOT NULL "
-            "SET e.source_id = $sid",
+        updated["wikidata"] = _count("source_id IS NULL AND wikidata_id IS NOT NULL")
+        run_sql(
+            "UPDATE Entity SET source_id = :sid "
+            "WHERE source_id IS NULL AND wikidata_id IS NOT NULL",
             {"sid": wikidata_src},
         )
     if sec_src:
-        updated["sec_edgar"] = _count("e.source_id IS NULL AND e.sec_cik IS NOT NULL")
-        run_command(
-            "MATCH (e:Entity) WHERE e.source_id IS NULL AND e.sec_cik IS NOT NULL "
-            "SET e.source_id = $sid",
+        updated["sec_edgar"] = _count("source_id IS NULL AND sec_cik IS NOT NULL")
+        run_sql(
+            "UPDATE Entity SET source_id = :sid "
+            "WHERE source_id IS NULL AND sec_cik IS NOT NULL",
             {"sid": sec_src},
         )
 
     return {
         "updated": updated,
-        "still_missing": _count("e.source_id IS NULL"),
+        "still_missing": _count("source_id IS NULL"),
         "wikidata_source_found": wikidata_src is not None,
         "sec_edgar_source_found": sec_src is not None,
     }
