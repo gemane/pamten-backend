@@ -91,6 +91,14 @@ class TestInferEntityType:
         from app.scraper.mapper import infer_entity_type
         assert infer_entity_type(["Q1061648"]) == "fund"
 
+    def test_fund_wins_over_government_when_both_present(self):
+        # Kuwait Investment Authority is P31 both government agency (Q327333) and
+        # sovereign wealth fund (Q1061648) — the fund role should win.
+        from app.scraper.mapper import infer_entity_type
+        assert infer_entity_type(["Q327333", "Q1061648"]) == "fund"
+        # a pure government body (no fund P31) stays government
+        assert infer_entity_type(["Q327333"]) == "government"
+
     def test_existing_categories_unchanged(self):
         from app.scraper.mapper import infer_entity_type
         assert infer_entity_type(["Q4830453"]) == "company"
