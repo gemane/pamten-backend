@@ -5,19 +5,53 @@ Covers both Wikidata (QID-based) and SEC EDGAR (name-based) sources.
 
 import re
 
-# Wikidata Q-ids for entity types we care about
-INSTANCE_TYPE_MAP = {
-    "Q4830453": "company",   # business
-    "Q891723":  "company",   # public company
-    "Q167037":  "company",   # corporation
-    "Q6881511": "company",   # enterprise
-    "Q783794":  "company",   # company
-    "Q2659062": "company",   # organization
-    "Q1616075": "company",   # media company
-    "Q18388277":"company",   # technology company
-    "Q219577":  "holding",   # holding company
-    "Q431289":  "brand",     # brand
-}
+# Wikidata P31 ("instance of") QIDs → Pamten entity type, in PRIORITY order: the
+# most specific category wins when an entity is an instance of several classes
+# (e.g. a foundation that is also an "organization" → foundation, not company).
+_TYPE_QIDS: list[tuple[str, set[str]]] = [
+    ("government", {
+        "Q1802419",   # state government (e.g. Government of Abu Dhabi)
+        "Q327333",    # government agency
+        "Q4383245",   # public authority
+        "Q2659904",   # government organization
+        "Q1061648",   # sovereign wealth fund (state investment arm)
+    }),
+    ("fund", {
+        "Q4201895",   # investment fund
+        "Q791974",    # mutual fund
+        "Q845477",    # exchange-traded fund
+        "Q105611",    # hedge fund
+    }),
+    ("foundation", {
+        "Q157031",    # foundation
+    }),
+    ("nonprofit", {
+        "Q163740",    # nonprofit organization
+        "Q48204",     # voluntary association
+        "Q79913",     # non-governmental organization (NGO)
+        "Q708676",    # charitable organization
+        "Q510785",    # non-profit organisation (legal form)
+    }),
+    ("holding", {
+        "Q219577",    # holding company
+    }),
+    ("brand", {
+        "Q431289",    # brand
+    }),
+    ("company", {
+        "Q4830453",   # business
+        "Q891723",    # public company
+        "Q167037",    # corporation
+        "Q6881511",   # enterprise
+        "Q783794",    # company
+        "Q2659062",   # organization
+        "Q1616075",   # media company
+        "Q18388277",  # technology company
+    }),
+]
+
+# Flat lookup kept for reference/tests.
+INSTANCE_TYPE_MAP = {qid: etype for etype, qids in _TYPE_QIDS for qid in qids}
 
 # Name suffixes that indicate a legal entity (not a natural person)
 _ENTITY_SUFFIXES = re.compile(
@@ -36,9 +70,11 @@ _ENTITY_SUFFIXES = re.compile(
 
 
 def infer_entity_type(instances: list) -> str:
-    for qid in instances:
-        if qid in INSTANCE_TYPE_MAP:
-            return INSTANCE_TYPE_MAP[qid]
+    """Classify by Wikidata P31 QIDs, most-specific category first."""
+    inst = set(instances)
+    for etype, qids in _TYPE_QIDS:
+        if inst & qids:
+            return etype
     return "company"
 
 

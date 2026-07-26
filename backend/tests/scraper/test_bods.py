@@ -234,6 +234,55 @@ class TestDiskMapTmpDir:
         assert target.is_dir()
 
 
+# ── _legal_form_type (GLEIF legal form → finer category) ──────────────────────
+
+class TestLegalFormType:
+    def test_foundation_forms(self):
+        from app.scraper.bods import _legal_form_type
+        assert _legal_form_type("Stiftung des privaten Rechts") == "foundation"
+        assert _legal_form_type("stichting") == "foundation"
+        assert _legal_form_type("Fundación") == "foundation"
+
+    def test_fund_forms(self):
+        from app.scraper.bods import _legal_form_type
+        assert _legal_form_type("Mutual Fund-Sub Scheme") == "fund"
+        assert _legal_form_type("Fonds à forme sociétale") == "fund"
+        assert _legal_form_type("Statutory Trust") == "fund"
+
+    def test_nonprofit_forms(self):
+        from app.scraper.bods import _legal_form_type
+        assert _legal_form_type("eingetragener Verein") == "nonprofit"
+        assert _legal_form_type("Association loi 1901") == "nonprofit"
+
+    def test_plain_company_form_is_none(self):
+        from app.scraper.bods import _legal_form_type
+        assert _legal_form_type("Gesellschaft mit beschränkter Haftung") is None
+        assert _legal_form_type("Private Limited Company") is None
+        assert _legal_form_type(None) is None
+
+
+class TestProcessEntityStatementCategory:
+    def test_legal_form_refines_registered_entity_to_foundation(self):
+        from app.scraper.bods import _process_entity_statement
+        captured: dict = {}
+        stmt = {**ENTITY_STMT, "recordDetails": {
+            **ENTITY_STMT["recordDetails"],
+            "entityType": {"type": "registeredEntity", "details": "Stiftung"}}}
+        with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid-1")):
+            _process_entity_statement(stmt, {}, MagicMock(), "src-1", 92, None)
+        assert captured["entity_type"] == "foundation"
+
+    def test_plain_legal_form_stays_company(self):
+        from app.scraper.bods import _process_entity_statement
+        captured: dict = {}
+        stmt = {**ENTITY_STMT, "recordDetails": {
+            **ENTITY_STMT["recordDetails"],
+            "entityType": {"type": "registeredEntity", "details": "Private Limited Company"}}}
+        with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid-1")):
+            _process_entity_statement(stmt, {}, MagicMock(), "src-1", 92, None)
+        assert captured["entity_type"] == "company"
+
+
 # ── _registered_address ───────────────────────────────────────────────────────
 
 class TestRegisteredAddress:
