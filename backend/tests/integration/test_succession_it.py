@@ -18,17 +18,20 @@ def test_succession_surfaces_on_both_sides_of_full_profile(it_db):
     # Directed predecessor → successor.
     it_db.run_command(
         "MATCH (p:Entity {id: 'twitter'}), (s:Entity {id: 'x-corp'}) "
-        "CREATE (p)-[:SUCCEEDED_BY {source_id: 'src', source_url: 'https://www.wikidata.org/wiki/Q1390577'}]->(s)"
+        "CREATE (p)-[:SUCCEEDED_BY {since: '2023-04-00', source_id: 'src', "
+        "source_url: 'https://www.wikidata.org/wiki/Q1390577'}]->(s)"
     )
 
-    # Predecessor's panel shows who it was 'succeeded_by'.
+    # Predecessor's panel shows who it was 'succeeded_by' + when.
     pred = get_full_profile("twitter")
     assert [e["name"] for e in pred["succeeded_by"]] == ["X Corp."]
+    assert pred["succeeded_by"][0]["since"] == "2023-04-00"
     assert pred["replaces"] == []
 
-    # Successor's panel shows who it 'replaces'.
+    # Successor's panel shows who it 'replaces' + when.
     succ = get_full_profile("x-corp")
     assert [e["name"] for e in succ["replaces"]] == ["Twitter"]
+    assert succ["replaces"][0]["since"] == "2023-04-00"
     assert succ["succeeded_by"] == []
 
 

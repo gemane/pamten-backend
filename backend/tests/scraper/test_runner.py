@@ -814,7 +814,7 @@ class TestSuccession:
         data = {
             "qid": "Q1390577", "name": "Twitter", "description": None,
             "instances": ["Q4830453"], "country": None, "founded": None, "revenue": None,
-            "successors":   [{"qid": "Q117617480", "name": "X Corp."}],
+            "successors":   [{"qid": "Q117617480", "name": "X Corp.", "date": "2023-04-00"}],
             "predecessors": [],
         }
         calls = []
@@ -822,10 +822,10 @@ class TestSuccession:
              patch("app.scraper.runner._upsert_entity",
                    side_effect=lambda **kw: f"id:{kw['wikidata_id']}"), \
              patch("app.scraper.runner._upsert_succession",
-                   side_effect=lambda p, s, *a, **k: calls.append((p, s))):
+                   side_effect=lambda p, s, *a, **k: calls.append((p, s, k.get("since")))):
             _scrape_node("Q1390577", depth=0, visited=set(), scraped=[], source_id="src-1")
-        # predecessor (Twitter) → successor (X Corp.)
-        assert ("id:Q1390577", "id:Q117617480") in calls
+        # predecessor (Twitter) → successor (X Corp.), carrying the succession date
+        assert ("id:Q1390577", "id:Q117617480", "2023-04-00") in calls
 
     def test_scrape_node_predecessor_points_into_current_entity(self):
         data = {

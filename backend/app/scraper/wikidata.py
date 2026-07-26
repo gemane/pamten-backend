@@ -138,14 +138,19 @@ def _sparql(qid: str) -> list:
     relations = f"""
     SELECT ?subsidiary ?subsidiaryLabel ?subsidiaryInstance ?parent
            ?owner ?ownerLabel ?ownerInstance
-           ?successor ?successorLabel ?predecessor ?predecessorLabel
+           ?successor ?successorLabel ?successorDate
+           ?predecessor ?predecessorLabel ?predecessorDate
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item wdt:P355 ?subsidiary . OPTIONAL {{ ?subsidiary wdt:P31 ?subsidiaryInstance }} }}
       OPTIONAL {{ ?item wdt:P749 ?parent }}
       OPTIONAL {{ ?item wdt:P127 ?owner . OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }} }}
-      OPTIONAL {{ ?item wdt:P1366 ?successor }}     # replaced by  (this → successor)
-      OPTIONAL {{ ?item wdt:P1365 ?predecessor }}   # replaces     (predecessor → this)
+      # Succession — read the full statement so the P585 point-in-time qualifier
+      # (when the rename/merger took effect) can be attached to the edge.
+      OPTIONAL {{ ?item p:P1366 ?succStmt . ?succStmt ps:P1366 ?successor .   # replaced by (this → successor)
+                  OPTIONAL {{ ?succStmt pq:P585 ?successorDate }} }}
+      OPTIONAL {{ ?item p:P1365 ?predStmt . ?predStmt ps:P1365 ?predecessor . # replaces (predecessor → this)
+                  OPTIONAL {{ ?predStmt pq:P585 ?predecessorDate }} }}
       {_LABEL_SERVICE}
     }}
     """
@@ -408,11 +413,15 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         if succ_uri := _v(row, "successor"):
             succ_qid = _qid(succ_uri)
             if succ_qid and succ_qid not in result["successors"]:
-                result["successors"][succ_qid] = {"qid": succ_qid, "name": _v(row, "successorLabel")}
+                result["successors"][succ_qid] = {
+                    "qid": succ_qid, "name": _v(row, "successorLabel"),
+                    "date": (_v(row, "successorDate") or "")[:10] or None}
         if pred_uri := _v(row, "predecessor"):
             pred_qid = _qid(pred_uri)
             if pred_qid and pred_qid not in result["predecessors"]:
-                result["predecessors"][pred_qid] = {"qid": pred_qid, "name": _v(row, "predecessorLabel")}
+                result["predecessors"][pred_qid] = {
+                    "qid": pred_qid, "name": _v(row, "predecessorLabel"),
+                    "date": (_v(row, "predecessorDate") or "")[:10] or None}
 
         # CEO (keyed by qid+since to capture multiple tenures)
         if ceo_uri := _v(row, "ceo"):

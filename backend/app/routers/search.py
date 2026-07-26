@@ -154,6 +154,23 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     return out
 
 
+def _succession_rows(rows: list, hidden: set) -> list[dict]:
+    """Flatten collected {entity, rel} SUCCEEDED_BY maps into entity dicts with the
+    succession date (`since`) attached. Drops empty rows and suppressed nodes."""
+    out: list[dict] = []
+    for r in rows:
+        ent = r["entity"]
+        if not ent:
+            continue
+        ent = dict(ent)
+        if ent.get("id") in hidden:
+            continue
+        rel = dict(r["rel"]) if r["rel"] else {}
+        ent["since"] = rel.get("since")
+        out.append(ent)
+    return out
+
+
 @router.get("/entity/{entity_id}/full-profile")
 def get_full_profile(entity_id: str):
     # Everything about an entity in one call
@@ -165,8 +182,8 @@ def get_full_profile(entity_id: str):
         OPTIONAL MATCH (e)-[sub_r:OWNS]->(subsidiary) WHERE sub_r.until IS NULL
         OPTIONAL MATCH (p:Person)-[role_r:HAS_ROLE]->(e) WHERE role_r.until IS NULL
         OPTIONAL MATCH (e)-[:DUAL_LISTED_WITH]->(dlc:Entity)
-        OPTIONAL MATCH (e)-[:SUCCEEDED_BY]->(succ:Entity)
-        OPTIONAL MATCH (pred:Entity)-[:SUCCEEDED_BY]->(e)
+        OPTIONAL MATCH (e)-[succ_r:SUCCEEDED_BY]->(succ:Entity)
+        OPTIONAL MATCH (pred:Entity)-[pred_r:SUCCEEDED_BY]->(e)
         RETURN e,
                hq,
                collect(DISTINCT ops) as operations,
@@ -174,8 +191,8 @@ def get_full_profile(entity_id: str):
                collect(DISTINCT {entity: subsidiary, rel: sub_r}) as subsidiaries,
                collect(DISTINCT {person: p, role: role_r}) as executives,
                collect(DISTINCT dlc) as dual_listed,
-               collect(DISTINCT succ) as succeeded_by,
-               collect(DISTINCT pred) as replaces
+               collect(DISTINCT {entity: succ, rel: succ_r}) as succeeded_by,
+               collect(DISTINCT {entity: pred, rel: pred_r}) as replaces
     """
 
     with db.get_session() as session:
@@ -242,10 +259,8 @@ def get_full_profile(entity_id: str):
             "subsidiaries": subsidiaries,
             "executives": executives,
             "dual_listed": [dict(d) for d in record["dual_listed"] if d],
-            "succeeded_by": [dict(s) for s in record["succeeded_by"]
-                             if s and dict(s).get("id") not in hidden],
-            "replaces": [dict(p) for p in record["replaces"]
-                         if p and dict(p).get("id") not in hidden],
+            "succeeded_by": _succession_rows(record["succeeded_by"], hidden),
+            "replaces": _succession_rows(record["replaces"], hidden),
         }
 
 

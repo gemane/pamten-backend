@@ -26,7 +26,7 @@ roles, and locations are edges.
 | `(Person)-[:RELATED_TO]->(Person)` | `relation`, `source_id` |
 | `(Person)-[:NOT_DUPLICATE]->(Person)` | `at` — marks two people confirmed to be *different* (keep-separate) |
 | `(Entity)-[:DUAL_LISTED_WITH]->(Entity)` | links share classes of a dual-listed company |
-| `(Entity)-[:SUCCEEDED_BY]->(Entity)` | corporate succession/rename, directed predecessor → successor (e.g. Twitter → X Corp.); from Wikidata P1366/P1365. `source_id`, `source_url`, `source_date` |
+| `(Entity)-[:SUCCEEDED_BY]->(Entity)` | corporate succession/rename, directed predecessor → successor (e.g. Twitter → X Corp.); from Wikidata P1366/P1365. `since` (when it took effect, from the P585 qualifier), `source_id`, `source_url`, `source_date` |
 | `(Entity)-[:HEADQUARTERED_IN\|REGISTERED_IN\|OPERATES_IN]->(Location)` | — |
 
 `until = null` means the relationship is currently active.  

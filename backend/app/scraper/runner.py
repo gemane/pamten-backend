@@ -401,12 +401,14 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
 
 
 def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
+                       since: str | None = None,
                        source_url: str | None = None, source_date: str | None = None):
     """Create a SUCCEEDED_BY edge (predecessor → successor) if none exists.
 
     Models corporate succession/rename (e.g. Twitter → X Corp., from Wikidata
-    P1366 'replaced by' / P1365 'replaces'). Directed predecessor → successor;
-    a re-scrape refreshes provenance instead of duplicating the edge. Both
+    P1366 'replaced by' / P1365 'replaces'). `since` is when the succession took
+    effect (Wikidata P585 qualifier). Directed predecessor → successor; a
+    re-scrape refreshes provenance instead of duplicating the edge. Both
     endpoints are Entity, labelled so the id lookups use the per-type index.
     """
     if predecessor_id == successor_id:
@@ -425,22 +427,23 @@ def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
                 """
                 MATCH (a:Entity {id: $pid})-[r:SUCCEEDED_BY]->(b:Entity {id: $sid})
                 SET r.last_scraped_at = $now,
+                    r.since       = COALESCE($since, r.since),
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 pid=predecessor_id, sid=successor_id, now=now,
-                surl=source_url, sdate=source_date,
+                since=since, surl=source_url, sdate=source_date,
             )
             return
         session.run(
             """
             MATCH (a:Entity {id: $pid}), (b:Entity {id: $sid})
             CREATE (a)-[:SUCCEEDED_BY {
-                source_id: $srcid, credibility_score: $score,
+                since: $since, source_id: $srcid, credibility_score: $score,
                 source_url: $surl, source_date: $sdate, last_scraped_at: $now
             }]->(b)
             """,
-            pid=predecessor_id, sid=successor_id, srcid=source_id,
+            pid=predecessor_id, sid=successor_id, srcid=source_id, since=since,
             score=WIKIDATA_CREDIBILITY, surl=source_url, sdate=source_date, now=now,
         )
 
@@ -656,7 +659,8 @@ def _scrape_node(
             country=None, founded=None, revenue=None, description=None,
             wikidata_id=succ["qid"], source_id=source_id,
         )
-        _upsert_succession(entity_id, succ_id, source_id, source_url=_wikidata_url(qid))
+        _upsert_succession(entity_id, succ_id, source_id, since=succ.get("date"),
+                           source_url=_wikidata_url(qid))
     for pred in data.get("predecessors", []):
         if not pred.get("name"):
             continue
@@ -665,7 +669,8 @@ def _scrape_node(
             country=None, founded=None, revenue=None, description=None,
             wikidata_id=pred["qid"], source_id=source_id,
         )
-        _upsert_succession(pred_id, entity_id, source_id, source_url=_wikidata_url(qid))
+        _upsert_succession(pred_id, entity_id, source_id, since=pred.get("date"),
+                           source_url=_wikidata_url(qid))
 
 
 # ── Wikidata public entry point ───────────────────────────────────────────────
