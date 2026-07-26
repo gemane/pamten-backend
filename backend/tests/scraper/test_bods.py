@@ -209,6 +209,37 @@ class TestEntityNodeId:
         from app.scraper.bods import _entity_node_id
         assert _entity_node_id("LEI-X", None, "AT-001") == _entity_node_id("LEI-X", None, "GLEIF-999")
 
+    def test_id_less_entity_keys_on_normalized_name(self):
+        from app.scraper.bods import _entity_node_id
+        from app.scraper.mapper import normalize_entity_name
+        name = "Government Of The Emirate Of Abu Dhabi"
+        assert _entity_node_id(None, None, "rec-1", name=name) == f"name:{normalize_entity_name(name)}"
+
+    def test_id_less_same_name_different_recordid_collapses(self):
+        # The UK PSC fix: one interested party re-declared per controlled company
+        # (different recordId each time) must resolve to a single node.
+        from app.scraper.bods import _entity_node_id
+        a = _entity_node_id(None, None, "GB-COH-ENT-A", name="Government Of The Emirate Of Abu Dhabi")
+        b = _entity_node_id(None, None, "GB-COH-ENT-B", name="Government Of The Emirate Of Abu Dhabi")
+        assert a == b
+
+    def test_name_variant_stays_separate(self):
+        # A meaningful variant normalizes differently and must NOT collapse.
+        from app.scraper.bods import _entity_node_id
+        base = _entity_node_id(None, None, "r1", name="Government Of Abu Dhabi")
+        thru = _entity_node_id(None, None, "r2", name="Government Of Abu Dhabi (Through Mubadala)")
+        assert base != thru
+
+    def test_hard_id_wins_over_name(self):
+        from app.scraper.bods import _entity_node_id
+        assert _entity_node_id("LEI-X", None, "r1", name="Anything") == "lei:LEI-X"
+        assert _entity_node_id(None, "COH9", "r1", name="Anything") == "gb-coh:COH9"
+
+    def test_falls_back_to_record_id_when_no_id_and_no_name(self):
+        from app.scraper.bods import _entity_node_id
+        assert _entity_node_id(None, None, "rec-1", name="") == "rec-1"
+        assert _entity_node_id(None, None, "rec-1", name=None) == "rec-1"
+
 
 # ── _DiskMap temp location (avoids filling a small tmpfs /tmp) ─────────────────
 
@@ -281,6 +312,58 @@ class TestProcessEntityStatementCategory:
         with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid-1")):
             _process_entity_statement(stmt, {}, MagicMock(), "src-1", 92, None)
         assert captured["entity_type"] == "company"
+
+
+# ── source_statement_ids: per-statement provenance survives the name collapse ──
+
+class TestSourceStatementIds:
+    def _id_less_stmt(self, record_id, name="Government Of The Emirate Of Abu Dhabi"):
+        return {
+            "recordId": record_id, "recordType": "entity", "recordStatus": "new",
+            "recordDetails": {"name": name, "entityType": {"type": "registeredEntity"},
+                              "identifiers": []},
+        }
+
+    def test_hard_id_entity_lists_its_own_statement(self):
+        from app.scraper.bods import _process_entity_statement
+        captured: dict = {}
+        with patch("app.scraper.bods._entity", side_effect=_capturing_node(captured, "eid-1")):
+            _process_entity_statement(ENTITY_STMT, {}, MagicMock(), "src-1", 92, None)
+        assert captured["source_statement_ids"] == ["entity-001"]
+
+    def test_id_less_collapse_accumulates_all_statement_ids(self):
+        # 3 filings re-declare the same id-less party → one node, all 3 ids listed.
+        from app.scraper.bods import _process_entity_statement, _DiskMap
+        stmt_map = _DiskMap()
+        try:
+            node_ids, last = set(), {}
+            for rid in ("GB-COH-ENT-A", "GB-COH-ENT-B", "GB-COH-ENT-C"):
+                captured: dict = {}
+                with patch("app.scraper.bods._entity",
+                           side_effect=_capturing_node(captured, "eid")):
+                    _process_entity_statement(self._id_less_stmt(rid), {}, MagicMock(),
+                                              "src-1", 92, None, stmt_map)
+                node_ids.add(captured["node_id"])
+                last = captured
+            assert len(node_ids) == 1                        # collapsed to one node
+            assert last["source_statement_ids"] == ["GB-COH-ENT-A", "GB-COH-ENT-B", "GB-COH-ENT-C"]
+        finally:
+            stmt_map.close()
+
+    def test_reprocessing_same_statement_is_idempotent(self):
+        from app.scraper.bods import _process_entity_statement, _DiskMap
+        stmt_map = _DiskMap()
+        try:
+            captured: dict = {}
+            for _ in range(2):
+                captured = {}
+                with patch("app.scraper.bods._entity",
+                           side_effect=_capturing_node(captured, "eid")):
+                    _process_entity_statement(self._id_less_stmt("GB-COH-ENT-A"), {}, MagicMock(),
+                                              "src-1", 92, None, stmt_map)
+            assert captured["source_statement_ids"] == ["GB-COH-ENT-A"]
+        finally:
+            stmt_map.close()
 
 
 # ── _registered_address ───────────────────────────────────────────────────────

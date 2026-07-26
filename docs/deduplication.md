@@ -165,6 +165,30 @@ id (sharded by id prefix to stay under ArcadeDB's query-heap cap). Exposed at
 `POST /scraper/deduplicate-entities` (background job; `strategy=bulk` deletes losers,
 `strategy=merge` migrates edges first).
 
+## Id-less parties — collapsed by name at import
+
+Not every BODS entity has an identifier. UK PSC files interested parties as
+free text with an **empty `identifiers` array** (no LEI, no company number), and
+re-declares each controlling party *once per controlled company* — each filing
+carrying its own `recordId`. Keying those on the recordId spawned one node per
+subsidiary (e.g. ~21 separate "Government Of The Emirate Of Abu Dhabi" nodes).
+
+`bods._entity_node_id` therefore falls back to a **name key** `name:{normalized}`
+for id-less entities (after LEI, after Companies House id), collapsing them into a
+single node at import. Meaningful variants stay separate because they normalize
+differently — "Government Of Abu Dhabi (Through Mubadala)" is its own node. There
+is no secondary signal to lean on: the jurisdiction is too coarse (a whole
+country) and the per-filing *service* address varies between statements, so name
+is the reliable key. Trade-off: two genuinely-distinct id-less parties sharing a
+normalized name would merge — rare, and confined to parties with no registration
+number. Takes effect on the next import (existing nodes need a re-import).
+
+Provenance survives the collapse. Each `OWNS` edge keeps its own
+`source_url`/`source_date`, so every controlled-company → party link still cites
+its filing; and the merged node accumulates every declaring statement id in
+`Entity.source_statement_ids[]` (capped at 1000 — beyond that the edges still
+carry per-relationship provenance).
+
 ## Same company, different identifiers — detection only
 
 The current importer keys each entity on its LEI/CH id (`bods._entity_node_id`), so
