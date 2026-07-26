@@ -101,14 +101,14 @@ def test_scraper_status_includes_wikidata_enabled(client):
 
 # ── Search endpoint ────────────────────────────────────────────────────────────
 
-def _patch_search(entities, persons=(), exact=()):
-    """Patch the search router's SQL layer. run_sql is called three times, in
-    order: the exact name_normalized lookup, the entity CONTAINSTEXT query, then
-    the person CONTAINSTEXT query (raw node dicts, as the DB returns). fake_db
-    still backs the suppressed-node lookup that runs afterwards."""
+def _patch_search(entities, persons=(), exact=(), notable=()):
+    """Patch the search router's SQL layer. run_sql is called four times, in
+    order: the exact name_normalized lookup, the notable (wikidata) lookup, the
+    entity CONTAINSTEXT query, then the person CONTAINSTEXT query (raw node dicts,
+    as the DB returns). fake_db still backs the suppressed-node lookup after."""
     from unittest.mock import patch
     return patch("app.routers.search.run_sql",
-                 side_effect=[list(exact), list(entities), list(persons)])
+                 side_effect=[list(exact), list(notable), list(entities), list(persons)])
 
 
 def test_search_returns_entity_results(client, fake_db):
@@ -160,6 +160,42 @@ def test_search_strips_arcadedb_metadata_from_results(client, fake_db):
 
 def test_search_rejects_short_query(client):
     assert client.get("/search/", params={"q": "a"}).status_code == 422
+
+
+def test_search_ranks_notable_wikidata_entity_first(client, fake_db):
+    # Same match quality (both contain "heineken", tier 2): the curated Wikidata
+    # company should float above raw GLEIF registry entries.
+    gleif = {"id": "g1", "name": "HEINEKEN VIETNAM BEER", "type": "company"}
+    notable = {"id": "w1", "name": "Heineken Holding", "type": "company", "wikidata_id": "Q1"}
+    # DB returns the GLEIF one first; ranking should surface the notable one.
+    with _patch_search([gleif, notable]):
+        r = client.get("/search/", params={"q": "heineken"})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "w1"
+
+
+def test_search_notable_lookup_guarantees_parent_in_results(client, fake_db):
+    # The curated parent is crowded OUT of the main CONTAINSTEXT results (only
+    # GLEIF subsidiaries there) but the dedicated notable lookup still fetches it,
+    # so it appears and ranks first.
+    subs = [{"id": f"g{i}", "name": f"HEINEKEN SUB {i}", "type": "company"} for i in range(5)]
+    notable = {"id": "w1", "name": "Heineken Holding", "type": "company", "wikidata_id": "Q1"}
+    with _patch_search(subs, notable=[notable]):
+        r = client.get("/search/", params={"q": "heineken"})
+    assert r.status_code == 200
+    ids = [x["node"]["id"] for x in r.json()]
+    assert ids[0] == "w1" and "w1" in ids
+
+
+def test_search_notable_does_not_beat_a_better_name_match(client, fake_db):
+    # A GLEIF subsidiary that matches BOTH query words must still beat a notable
+    # entity that matches only one — notable is a tiebreaker, not an override.
+    notable = {"id": "w1", "name": "Heineken Holding", "type": "company", "wikidata_id": "Q1"}
+    subsidiary = {"id": "g1", "name": "Heineken Vietnam Brewery", "type": "company"}
+    with _patch_search([notable, subsidiary]):
+        r = client.get("/search/", params={"q": "heineken vietnam"})
+    assert r.status_code == 200
+    assert r.json()[0]["node"]["id"] == "g1"
 
 
 def test_search_ranks_exact_match_first(client, fake_db):

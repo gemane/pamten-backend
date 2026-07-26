@@ -24,6 +24,11 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
       FUND, INC." variants that only share common tokens), else 1.
     - name_token_matches: how many query words appear in the NAME.
     - match_tier: 0 exact, 1 starts-with, 2 contains full query, 3 otherwise.
+    - notable: 0 for a curated (wikidata_id) entity, else 1 — so within the same
+      match quality the notable parent company ("Heineken Holding") floats above
+      raw GLEIF registry entries ("HEINEKEN VIETNAM …"). Placed AFTER tokens+tier
+      so a better name match still wins (searching "Heineken Vietnam" surfaces the
+      subsidiary, not the parent).
     - name_len (tiers 0-2 only) then db_index: keep the FULL_TEXT relevance order
       for weak matches; never tiebreak weak matches on length ("BLG GROUP").
     """
@@ -31,6 +36,7 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
     toks = tokens if tokens is not None else q.split()
     matches = sum(1 for t in toks if t and t in name)
     exact_norm = 0 if (nn and node.get("name_normalized") == nn) else 1
+    notable = 0 if node.get("wikidata_id") else 1
     if name == q:
         tier = 0
     elif name.startswith(q):
@@ -40,7 +46,7 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
     else:
         tier = 3
     name_len = len(name) if tier <= 2 else 0
-    return (exact_norm, -matches, tier, name_len, idx)
+    return (exact_norm, -matches, tier, notable, name_len, idx)
 
 
 @router.get("/")
@@ -71,10 +77,10 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     # Index-backed full-text search via the FULL_TEXT index on `search_text`
     # (see db/schema.py). `CONTAINSTEXT` uses the index — an un-indexable
     # `toLower(name) CONTAINS` scan of every Entity took ~12s on 3M rows.
-    # ArcadeDB's FULL_TEXT is OR-only (no AND/phrase/`+` operators) but returns
-    # rows already ranked by relevance (rows matching more/rarer tokens first),
-    # so we keep that order and only re-rank by NAME token coverage below.
-    # Entity and Person run separately — ArcadeDB UNION + LIMIT is unreliable.
+    # ArcadeDB's FULL_TEXT is OR-only over tokens (no phrase/`+` operators) but
+    # returns rows already ranked by relevance; we re-rank by NAME token coverage
+    # below. Entity and Person run separately — ArcadeDB UNION + LIMIT is unreliable.
+    # (CONTAINSTEXT composes with an extra AND filter on ArcadeDB 26.7.2+.)
     if country:
         entity_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
                       "AND country = :country LIMIT 30")
@@ -97,10 +103,25 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
         exact_sql = "SELECT FROM Entity WHERE name_normalized = :nn LIMIT 10"
         exact_params = {"nn": nn}
 
+    # Notable-entity lookup: at GLEIF scale the CONTAINSTEXT LIMIT is crowded out
+    # by thousands of registry subsidiaries, so a curated Wikidata company
+    # ("Heineken Holding") may never be fetched. Guarantee wikidata-tagged matches
+    # are in the candidate set; _rank floats them up within their match tier.
+    if country:
+        notable_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
+                       "AND wikidata_id IS NOT NULL AND country = :country LIMIT 15")
+        notable_params: dict = {"q": q_lower, "country": country}
+    else:
+        notable_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
+                       "AND wikidata_id IS NOT NULL LIMIT 15")
+        notable_params = {"q": q_lower}
+
     results = []
     if nn:
         for row in run_sql(exact_sql, exact_params):
             results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
+    for row in run_sql(notable_sql, notable_params):
+        results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
     for row in run_sql(entity_sql, entity_params):
         results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
     if not country:
