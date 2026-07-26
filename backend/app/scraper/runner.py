@@ -157,10 +157,16 @@ def _upsert_entity(
     aliases: list[str] | None = None,
     countries: list[str] | None = None,      # all domiciles (dual-listed → >1)
     hq_locations: list[str] | None = None,   # all HQs as "City|CC" strings
+    source_id: str | None = None,
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
     Returns the entity's internal id.
+
+    ``source_id`` (the Wikidata Source node) is stamped onto the entity so its
+    own provenance shows in the node panel. It only *fills* a missing value
+    (COALESCE) on update, so an entity first seen from a register (GLEIF/SEC)
+    keeps that higher-credibility source when Wikidata later enriches it.
     """
     name_norm = normalize_entity_name(name)
     # FULL_TEXT search field (name + description + aliases), so scraped entities
@@ -198,11 +204,13 @@ def _upsert_entity(
                     e.hq_city         = COALESCE(e.hq_city, $hq_city),
                     e.hq_country      = COALESCE(e.hq_country, $hq_country),
                     e.name            = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
-                    e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END
+                    e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END,
+                    e.source_id       = COALESCE(e.source_id, $source_id)
                 """,
                 id=entity_id,
                 name=name,
                 wid=wikidata_id,
+                source_id=source_id,
                 type=entity_type,
                 country=country,
                 founded=founded,
@@ -228,7 +236,7 @@ def _upsert_entity(
                 type: $type, country: $country, founded: $founded,
                 revenue: $revenue, employees: $employees, employees_as_of: $employees_as_of,
                 description: $desc,
-                wikidata_id: $wid, verified: false,
+                wikidata_id: $wid, verified: false, source_id: $source_id,
                 aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
                 hq_city: $hq_city, hq_country: $hq_country
@@ -246,6 +254,7 @@ def _upsert_entity(
             employees=employees, employees_as_of=employees_as_of,
             desc=description,
             wid=wikidata_id,
+            source_id=source_id,
             aliases=aliases or [],
             countries=countries or [], hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
@@ -263,6 +272,7 @@ def _upsert_person(
     birth_place: str | None = None,
     aliases: list[str] | None = None,
     nationalities: list[str] | None = None,
+    source_id: str | None = None,
 ) -> str:
     first_name, last_name = parse_full_name(full_name)
     aliases       = aliases or []
@@ -297,11 +307,12 @@ def _upsert_person(
                     p.description   = CASE WHEN COALESCE(p.description, '') = '' THEN $desc ELSE p.description END,
                     p.nationality   = CASE WHEN COALESCE(p.nationality, '') = '' THEN $nat  ELSE p.nationality END,
                     p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
-                    p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 THEN p.nationalities ELSE $nats END
+                    p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 THEN p.nationalities ELSE $nats END,
+                    p.source_id     = COALESCE(p.source_id, $source_id)
                 """,
                 id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
                 desc=description or "", nat=nat,
-                aliases=aliases, nats=nationalities,
+                aliases=aliases, nats=nationalities, source_id=source_id,
             )
             return rec["id"]
 
@@ -313,7 +324,8 @@ def _upsert_person(
                 full_name: $full, nationality: $nat,
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
-                verified: false, alias: $aliases, nationalities: $nats
+                verified: false, alias: $aliases, nationalities: $nats,
+                source_id: $source_id
             })
             """,
             id=person_id,
@@ -328,6 +340,7 @@ def _upsert_person(
             bplace=birth_place,
             aliases=aliases,
             nats=nationalities,
+            source_id=source_id,
         )
         return person_id
 
@@ -474,6 +487,7 @@ def _scrape_node(
         aliases=data.get("aliases", []),
         countries=data.get("countries", []),
         hq_locations=data.get("hq_locations", []),
+        source_id=source_id,
     )
     scraped.append({
         "qid":  qid,
@@ -499,6 +513,7 @@ def _scrape_node(
             revenue=None,
             description=None,
             wikidata_id=sub["qid"],
+            source_id=source_id,
         )
         _upsert_owns(entity_id, sub_id, source_id,
                      source_url=_wikidata_url(sub["qid"]))
@@ -534,6 +549,7 @@ def _scrape_node(
             birth_place=ceo.get("birth_place"),
             aliases=ceo.get("aliases"),
             nationalities=ceo.get("nationalities"),
+            source_id=source_id,
         )
         _upsert_role(person_id, entity_id, "CEO", source_id,
                      since=ceo.get("since"), until=ceo.get("until"),
@@ -551,7 +567,8 @@ def _scrape_node(
                                    death_date=off.get("death_date"),
                                    birth_place=off.get("birth_place"),
                                    aliases=off.get("aliases"),
-                                   nationalities=off.get("nationalities"))
+                                   nationalities=off.get("nationalities"),
+                                   source_id=source_id)
         _upsert_role(person_id, entity_id, off["role"], source_id,
                      source_url=_wikidata_url(qid))
 
@@ -568,7 +585,8 @@ def _scrape_node(
                                       death_date=owner.get("death_date"),
                                       birth_place=owner.get("birth_place"),
                                       aliases=owner.get("aliases"),
-                                      nationalities=owner.get("nationalities"))
+                                      nationalities=owner.get("nationalities"),
+                                      source_id=source_id)
             owner_label = "Person"
         else:
             owner_id = _upsert_entity(
@@ -576,6 +594,7 @@ def _scrape_node(
                 entity_type=infer_entity_type(instances),
                 country=None, founded=None, revenue=None, description=None,
                 wikidata_id=owner["qid"],
+                source_id=source_id,
             )
             owner_label = "Entity"
         _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid),
@@ -655,8 +674,14 @@ def _ensure_sec_edgar_source() -> str:
 
 
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
-                            cik: str | None = None) -> str:
-    """Find or create an Entity node matched by CIK, exact name, or normalized name."""
+                            cik: str | None = None,
+                            source_id: str | None = None) -> str:
+    """Find or create an Entity node matched by CIK, exact name, or normalized name.
+
+    ``source_id`` (the calling scraper's Source node — SEC EDGAR or
+    OpenCorporates) is stamped so the entity's own provenance shows in the node
+    panel. On an existing node it only fills a missing value, so a register or
+    Wikidata source already recorded isn't overwritten."""
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
         # Indexed lookups first (an OR full-scans the Entity type on ArcadeDB).
@@ -685,8 +710,12 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             # name and credibility the entity already has (Wikidata names are
             # human-readable; EDGAR registered names are all-caps legal strings).
             session.run(
-                "MATCH (e:Entity {id: $id}) SET e.sec_cik = COALESCE($cik, e.sec_cik)",
-                id=entity_id, cik=cik,
+                """
+                MATCH (e:Entity {id: $id})
+                SET e.sec_cik   = COALESCE($cik, e.sec_cik),
+                    e.source_id = COALESCE(e.source_id, $source_id)
+                """,
+                id=entity_id, cik=cik, source_id=source_id,
             )
             return entity_id
 
@@ -696,18 +725,18 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
                 name_credibility: $cred,
-                type: $type, sec_cik: $cik, verified: false,
+                type: $type, sec_cik: $cik, verified: false, source_id: $source_id,
                 country: null, founded: null, revenue: null,
                 description: null, wikidata_id: null
             })
             """,
             id=entity_id, name=name, name_norm=name_norm,
-            cred=SEC_EDGAR_CREDIBILITY, type=entity_type, cik=cik,
+            cred=SEC_EDGAR_CREDIBILITY, type=entity_type, cik=cik, source_id=source_id,
         )
         return entity_id
 
 
-def _upsert_person_by_name(full_name: str) -> str:
+def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
     """
     Find or create a Person node matched by full_name.
 
@@ -746,11 +775,12 @@ def _upsert_person_by_name(full_name: str) -> str:
             CREATE (p:Person {
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, nationality: '', description: '',
-                wikidata_id: null, verified: false,
+                wikidata_id: null, verified: false, source_id: $source_id,
                 alias: [], nationalities: []
             })
             """,
             id=person_id, first=first_name, last=last_name, full=full_name,
+            source_id=source_id,
         )
         return person_id
 
@@ -910,6 +940,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         name=data["name"],
         entity_type="company",
         cik=data.get("cik"),
+        source_id=source_id,
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 
@@ -927,13 +958,14 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             is_individual = is_person_name(investor_name)
 
         if is_individual:
-            investor_node_id = _upsert_person_by_name(investor_name)
+            investor_node_id = _upsert_person_by_name(investor_name, source_id=source_id)
             scraped.append({"type": "person", "name": investor_name, "role": "investor"})
         else:
             investor_node_id = _upsert_entity_by_name(
                 name=investor_name,
                 entity_type="company",
                 cik=filing.get("investor_cik"),
+                source_id=source_id,
             )
             scraped.append({"type": "entity", "name": investor_name, "role": "investor"})
 
@@ -959,7 +991,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         if not name:
             continue
 
-        person_id = _upsert_person_by_name(name)
+        person_id = _upsert_person_by_name(name, source_id=source_id)
         _upsert_role_sec(person_id, target_id, role, source_id,
                          source_url=exec_rec.get("source_url"),
                          source_date=exec_rec.get("source_date"))
@@ -1270,6 +1302,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
     target_id = _upsert_entity_by_name(
         name=data["name"],
         entity_type="company",
+        source_id=source_id,
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 
@@ -1299,7 +1332,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
             continue
 
         if is_person_name(name):
-            person_id = _upsert_person_by_name(name)
+            person_id = _upsert_person_by_name(name, source_id=source_id)
             _upsert_role_oc(
                 person_id, target_id, role,
                 officer.get("start_date"), officer.get("end_date"),
@@ -1307,7 +1340,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
             )
             scraped.append({"type": "person", "name": name, "role": role})
         else:
-            _upsert_entity_by_name(name=name, entity_type="company")
+            _upsert_entity_by_name(name=name, entity_type="company", source_id=source_id)
             scraped.append({"type": "entity", "name": name, "role": role})
 
         log.info("OpenCorporates: wrote %r → %r (%s)", name, data["name"], role)

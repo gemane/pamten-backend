@@ -21,6 +21,7 @@ from app.scraper.runner import (
     run_scrape_open_corporates,
     run_scrape_all,
     _upsert_entity,
+    _upsert_entity_by_name,
     _upsert_person,
     _upsert_owns,
     _upsert_role,
@@ -727,3 +728,61 @@ def test_sec_person_centric_insider_owns():
 
     assert len(owns) == 1
     assert owns[0]["owner_id"] == "fink" and owns[0]["stake_percent"] == 2.0
+
+
+# ── source_id stamping on entity nodes (provenance for the node panel) ─────────
+
+class TestEntitySourceStamping:
+    """Regression: a big owner (e.g. a government or fund) whose subsidiaries are
+    excluded from its own source panel showed *no* source, because the scrapers
+    never stamped Entity.source_id. These lock in that they now do."""
+
+    def _create_call(self, session):
+        return next((c for c in session.run.call_args_list
+                     if "CREATE (e:Entity" in c.args[0]), None)
+
+    def _update_calls(self, session):
+        return [c for c in session.run.call_args_list
+                if "COALESCE(e.source_id" in c.args[0]]
+
+    def test_wikidata_upsert_stamps_source_id_on_create(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value=None):
+            _upsert_entity(name="Gov", entity_type="government", country=None,
+                           founded=None, revenue=None, description=None,
+                           wikidata_id="Q1", source_id="WD-SRC")
+        create = self._create_call(session)
+        assert create is not None
+        assert "source_id: $source_id" in create.args[0]
+        assert create.kwargs["source_id"] == "WD-SRC"
+
+    def test_wikidata_upsert_only_fills_missing_source_on_update(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value="eid-1"):
+            _upsert_entity(name="Gov", entity_type="government", country=None,
+                           founded=None, revenue=None, description=None,
+                           wikidata_id="Q1", source_id="WD-SRC")
+        updates = self._update_calls(session)
+        assert updates and updates[0].kwargs["source_id"] == "WD-SRC"
+
+    def test_by_name_stamps_source_id_on_create(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value=None):
+            _upsert_entity_by_name(name="Vanguard Group Inc", cik="0000102909",
+                                   source_id="SEC-SRC")
+        create = self._create_call(session)
+        assert create is not None
+        assert "source_id: $source_id" in create.args[0]
+        assert create.kwargs["source_id"] == "SEC-SRC"
+
+    def test_by_name_fills_missing_source_on_update(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value="eid-2"):
+            _upsert_entity_by_name(name="Vanguard Group Inc", cik="0000102909",
+                                   source_id="SEC-SRC")
+        updates = self._update_calls(session)
+        assert updates and updates[0].kwargs["source_id"] == "SEC-SRC"
