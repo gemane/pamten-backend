@@ -2,7 +2,6 @@
 Tests for mapper.py — pure functions, no mocks needed.
 """
 
-import pytest
 from app.scraper.mapper import normalize_entity_name, is_person_name
 
 
@@ -73,3 +72,30 @@ class TestIsPersonName:
 
     def test_empty(self):
         assert is_person_name("") is False
+
+
+class TestInferEntityType:
+    def test_new_categories(self):
+        from app.scraper.mapper import infer_entity_type
+        assert infer_entity_type(["Q1802419"]) == "government"   # state government
+        assert infer_entity_type(["Q327333"]) == "government"    # government agency
+        assert infer_entity_type(["Q157031"]) == "foundation"
+        assert infer_entity_type(["Q845477"]) == "fund"          # ETF
+        assert infer_entity_type(["Q791974"]) == "fund"          # mutual fund
+        assert infer_entity_type(["Q79913"]) == "nonprofit"      # NGO
+        assert infer_entity_type(["Q48204"]) == "nonprofit"      # voluntary association
+
+    def test_existing_categories_unchanged(self):
+        from app.scraper.mapper import infer_entity_type
+        assert infer_entity_type(["Q4830453"]) == "company"
+        assert infer_entity_type(["Q219577"]) == "holding"
+        assert infer_entity_type(["Q431289"]) == "brand"
+        assert infer_entity_type([]) == "company"
+        assert infer_entity_type(["Q999999999"]) == "company"    # unknown → default
+
+    def test_priority_specific_over_company(self):
+        from app.scraper.mapper import infer_entity_type
+        # an entity that is both a foundation and a generic organization → foundation
+        assert infer_entity_type(["Q2659062", "Q157031"]) == "foundation"
+        assert infer_entity_type(["Q4830453", "Q845477"]) == "fund"
+        assert infer_entity_type(["Q783794", "Q1802419"]) == "government"

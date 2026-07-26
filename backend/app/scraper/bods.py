@@ -371,6 +371,27 @@ _ENTITY_TYPE_MAP: dict[str, str] = {
     "unknownEntity":    "company",
 }
 
+# GLEIF's entityType.type is always "registeredEntity", but the LEGAL FORM
+# (entityType.details, free text) names foundations, funds and associations. Map
+# it to a finer category by keyword — checked in order (first match wins), so a
+# statement like "Stiftung des privaten Rechts" → foundation instead of company.
+_LEGAL_FORM_TYPE: list[tuple[str, "re.Pattern[str]"]] = [
+    ("foundation", re.compile(r"stiftung|stichting|foundation|fondation|fundaci|fundacja|fundo", re.I)),
+    ("fund",       re.compile(r"\bfund\b|fonds|sicav|mutual fund|unit trust|investment trust|\btrust\b|\boeic\b|\bfcp\b", re.I)),
+    ("nonprofit",  re.compile(r"verein|\be\.?\s?v\.?\b|association|vereniging|associazione|asociaci|onlus|gemeinnütz|non[- ]?profit|\bngo\b|stowarzyszenie", re.I)),
+]
+
+
+def _legal_form_type(details: str | None) -> str | None:
+    """Finer entity category from a GLEIF legal-form string, or None if it doesn't
+    match a known foundation/fund/association form."""
+    if not details:
+        return None
+    for etype, pat in _LEGAL_FORM_TYPE:
+        if pat.search(details):
+            return etype
+    return None
+
 
 def _ref_id(ref: object) -> str | None:
     """Extract a BODS record-ID from either a bare string or a BODS v0.3 dict ref.
@@ -531,9 +552,12 @@ def _process_entity_statement(
     # Wikidata scraper, so by-country grouping doesn't split (frontend localizes).
     country = country_code
 
-    # Entity type
-    raw_type    = (details.get("entityType") or {}).get("type", "registeredEntity")
-    entity_type = _ENTITY_TYPE_MAP.get(raw_type, "company")
+    # Entity type: GLEIF's type is always "registeredEntity" → company; refine to
+    # foundation/fund/nonprofit from the legal form when it names one.
+    entity_type_raw = details.get("entityType") or {}
+    raw_type    = entity_type_raw.get("type", "registeredEntity")
+    entity_type = _legal_form_type(entity_type_raw.get("details")) \
+        or _ENTITY_TYPE_MAP.get(raw_type, "company")
 
     # Founding year
     founding_date = details.get("foundingDate") or ""

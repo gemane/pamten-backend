@@ -7,6 +7,10 @@ class EntityType(str, Enum):
     company = "company"
     brand = "brand"
     holding = "holding"
+    government = "government"
+    foundation = "foundation"
+    fund = "fund"
+    nonprofit = "nonprofit"
     person = "person"
 
 
