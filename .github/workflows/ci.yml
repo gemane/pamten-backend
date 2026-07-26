@@ -59,7 +59,7 @@ jobs:
         # Pinned to the version verified locally; ArcadeDB enforces a password
         # policy, so the root password must be strong (weak ones like
         # "playwithdata" are rejected and the server falls back to a prompt).
-        image: arcadedata/arcadedb:26.7.2
+        image: arcadedata/arcadedb:26.7.3
         ports:
           - 2480:2480
         env:

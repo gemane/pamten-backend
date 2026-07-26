@@ -12,7 +12,7 @@
 # See tests/integration/README.md for the full explanation.
 set -euo pipefail
 
-IMAGE="${ARCADEDB_IT_IMAGE:-arcadedata/arcadedb:26.7.2}"
+IMAGE="${ARCADEDB_IT_IMAGE:-arcadedata/arcadedb:26.7.3}"
 NAME="${ARCADEDB_IT_NAME:-arcadedb-it}"
 PORT="${ARCADEDB_IT_PORT:-2480}"
 PASS="${ARCADEDB_IT_PASSWORD:-RootPass123!}"   # must satisfy ArcadeDB's policy (upper+lower+digit+symbol)
