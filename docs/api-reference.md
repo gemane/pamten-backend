@@ -42,6 +42,11 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
 | GET | `/search/geographic` | Entities grouped by country for map view |
 
+## Stats
+| Method | Path | Description |
+|---|---|---|
+| GET | `/stats` | **Public.** Data-scale counts for the landing page: `{companies, people, relationships, sources}`. Read from ArcadeDB `schema:types` metadata (O(1), no scan), cached ~60s, best-effort (returns zeros rather than erroring) |
+
 ## Sources (provenance)
 | Method | Path | Description |
 |---|---|---|
