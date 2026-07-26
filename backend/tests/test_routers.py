@@ -99,6 +99,43 @@ def test_scraper_status_includes_wikidata_enabled(client):
     assert "wikidata_enabled" in data
 
 
+# ── Stats endpoint ──────────────────────────────────────────────────────────────
+
+def test_stats_is_public_and_maps_types(client, monkeypatch):
+    import app.routers.stats as stats
+    monkeypatch.setattr(stats, "_cache", None)  # bypass any cached value
+    monkeypatch.setattr(stats, "run_sql", lambda *a, **k: [
+        {"name": "Entity", "records": 14156151},
+        {"name": "Person", "records": 10712221},
+        {"name": "OWNS", "records": 1122319},
+        {"name": "Source", "records": 4},
+        {"name": "ScrapeRun", "records": 45},   # ignored (not in the map)
+    ])
+    r = client.get("/stats")   # no auth token — public
+    assert r.status_code == 200
+    assert r.json() == {"companies": 14156151, "people": 10712221,
+                        "relationships": 1122319, "sources": 4}
+
+
+def test_stats_defaults_missing_types_to_zero(client, monkeypatch):
+    import app.routers.stats as stats
+    monkeypatch.setattr(stats, "_cache", None)
+    monkeypatch.setattr(stats, "run_sql", lambda *a, **k: [{"name": "Entity", "records": 5}])
+    body = client.get("/stats").json()
+    assert body == {"companies": 5, "people": 0, "relationships": 0, "sources": 0}
+
+
+def test_stats_never_500s_on_db_error(client, monkeypatch):
+    import app.routers.stats as stats
+    monkeypatch.setattr(stats, "_cache", None)
+    def boom(*a, **k):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(stats, "run_sql", boom)
+    r = client.get("/stats")
+    assert r.status_code == 200
+    assert r.json() == {"companies": 0, "people": 0, "relationships": 0, "sources": 0}
+
+
 # ── Search endpoint ────────────────────────────────────────────────────────────
 
 def _patch_search(entities, persons=(), exact=(), notable=()):
