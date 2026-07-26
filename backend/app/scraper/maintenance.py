@@ -807,3 +807,61 @@ def normalize_entity_countries() -> dict:
             skipped += 1
 
     return {"converted": converted, "skipped": skipped}
+
+
+def backfill_entity_sources() -> dict:
+    """
+    One-time backfill: stamp ``Entity.source_id`` on nodes the Wikidata / SEC
+    EDGAR scrapers created before they set it. Without it, a pure *owner* (whose
+    subsidiaries are deliberately excluded from its own source panel, and which
+    has no inbound owners/roles) shows no source at all — e.g. "Government of
+    Abu Dhabi" or "Vanguard Group Inc".
+
+    Attribution is by identifier: a node with a ``wikidata_id`` → the Wikidata
+    Source; else a ``sec_cik`` → the SEC EDGAR Source. Only fills nodes whose
+    ``source_id`` is null (idempotent), and only when the Source node exists.
+    Nodes with neither identifier are left untouched (can't attribute a source).
+
+    Reads use ArcadeDB SQL SELECT; writes go through ``run_sqlscript`` — the only
+    path in this codebase proven to *commit* a data write (a single Cypher
+    ``MATCH … SET`` and a single ``run_sql`` UPDATE both left the rows unchanged
+    on this engine; the BODS importer writes via sqlscript). SQL ``IS NULL``
+    matches an *absent* property too, so the pre-fix nodes (whose ``source_id``
+    key was never written) are found. Candidates are updated by ``id`` in
+    batches — an indexed, fast write that avoids a full-type UPDATE scan.
+    """
+    def _source_id(name: str) -> str | None:
+        rows = run_sql("SELECT id FROM Source WHERE name = :name", {"name": name})
+        return rows[0]["id"] if rows else None
+
+    def _stamp(where: str, sid: str, chunk: int = 200) -> int:
+        ids = [r["id"] for r in run_sql(f"SELECT id FROM Entity WHERE {where}")]
+        for i in range(0, len(ids), chunk):
+            batch = ids[i:i + chunk]
+            stmts  = ";\n".join(
+                f"UPDATE Entity SET source_id = :sid WHERE id = :id{j}"
+                for j in range(len(batch)))
+            params = {"sid": sid, **{f"id{j}": batch[j] for j in range(len(batch))}}
+            run_sqlscript(stmts, params)
+        return len(ids)
+
+    wikidata_src = _source_id("Wikidata")
+    sec_src      = _source_id("SEC EDGAR")
+
+    updated = {"wikidata": 0, "sec_edgar": 0}
+    # Order matters: wikidata_id is the more specific attribution, so claim those
+    # first; the SEC pass then only catches CIK-only nodes still missing a source.
+    if wikidata_src:
+        updated["wikidata"] = _stamp(
+            "source_id IS NULL AND wikidata_id IS NOT NULL", wikidata_src)
+    if sec_src:
+        updated["sec_edgar"] = _stamp(
+            "source_id IS NULL AND sec_cik IS NOT NULL", sec_src)
+
+    remaining = run_sql("SELECT count(*) AS c FROM Entity WHERE source_id IS NULL")
+    return {
+        "updated": updated,
+        "still_missing": remaining[0]["c"] if remaining else None,
+        "wikidata_source_found": wikidata_src is not None,
+        "sec_edgar_source_found": sec_src is not None,
+    }

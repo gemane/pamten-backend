@@ -212,6 +212,18 @@ def cmd_normalize_countries(args):
     print(f"Converted {len(result['converted'])} country values "
           f"({result['skipped']} already canonical or unrecognized)")
 
+def cmd_backfill_entity_sources(args):
+    from app.scraper.maintenance import backfill_entity_sources
+    result = backfill_entity_sources()
+    u = result["updated"]
+    print(f"Stamped source_id on {u['wikidata']} Wikidata + {u['sec_edgar']} SEC EDGAR entities")
+    print(f"{result['still_missing']} entities still have no source_id "
+          f"(no wikidata_id/sec_cik to attribute)")
+    if not result["wikidata_source_found"] or not result["sec_edgar_source_found"]:
+        print("  note: a Source node was missing — "
+              f"Wikidata found={result['wikidata_source_found']}, "
+              f"SEC EDGAR found={result['sec_edgar_source_found']}")
+
 def cmd_gen_federation_key(args):
     from app.federation_keys import generate_keypair, fingerprint
     priv, pub = generate_keypair()
@@ -294,6 +306,11 @@ def _build_parser():
     p_norm = subparsers.add_parser('normalize-countries',
                                    help='Convert full-name Entity.country values to ISO-2 codes')
     p_norm.set_defaults(func=cmd_normalize_countries)
+
+    # backfill-entity-sources command
+    p_bes = subparsers.add_parser('backfill-entity-sources',
+                                  help='Stamp source_id on Wikidata/SEC entities created before it was set')
+    p_bes.set_defaults(func=cmd_backfill_entity_sources)
     return parser
 
 
