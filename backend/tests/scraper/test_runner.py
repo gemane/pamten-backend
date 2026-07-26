@@ -24,6 +24,8 @@ from app.scraper.runner import (
     _upsert_entity_by_name,
     _upsert_person,
     _upsert_owns,
+    _upsert_succession,
+    _scrape_node,
     _upsert_role,
     _upsert_role_sec,
     _wikidata_url,
@@ -786,3 +788,58 @@ class TestEntitySourceStamping:
                                    source_id="SEC-SRC")
         updates = self._update_calls(session)
         assert updates and updates[0].kwargs["source_id"] == "SEC-SRC"
+
+
+# ── Succession (SUCCEEDED_BY, from Wikidata P1366/P1365) ──────────────────────
+
+class TestSuccession:
+    def test_upsert_succession_creates_directed_edge(self):
+        ctx, session = _make_session_mock()  # .single() → None: edge doesn't exist yet
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_succession("id:pred", "id:succ", "src-1", source_url="http://wd/Q1")
+        create = next((c for c in session.run.call_args_list
+                       if "CREATE (a)-[:SUCCEEDED_BY" in c.args[0]), None)
+        assert create is not None
+        assert create.kwargs["pid"] == "id:pred" and create.kwargs["sid"] == "id:succ"
+
+    def test_upsert_succession_skips_self_loop(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_succession("id:x", "id:x", "src-1")
+        session.run.assert_not_called()
+
+    def test_scrape_node_wires_successor_and_predecessor_direction(self):
+        # Twitter (Q1390577) replaced by X Corp (Q117617480), and replaces nothing;
+        # X Corp replaces Twitter. Verify predecessor→successor direction both ways.
+        data = {
+            "qid": "Q1390577", "name": "Twitter", "description": None,
+            "instances": ["Q4830453"], "country": None, "founded": None, "revenue": None,
+            "successors":   [{"qid": "Q117617480", "name": "X Corp.", "date": "2023-04-00"}],
+            "predecessors": [],
+        }
+        calls = []
+        with patch("app.scraper.runner.fetch_company_data", return_value=data), \
+             patch("app.scraper.runner._upsert_entity",
+                   side_effect=lambda **kw: f"id:{kw['wikidata_id']}"), \
+             patch("app.scraper.runner._upsert_succession",
+                   side_effect=lambda p, s, *a, **k: calls.append((p, s, k.get("since")))):
+            _scrape_node("Q1390577", depth=0, visited=set(), scraped=[], source_id="src-1")
+        # predecessor (Twitter) → successor (X Corp.), carrying the succession date
+        assert ("id:Q1390577", "id:Q117617480", "2023-04-00") in calls
+
+    def test_scrape_node_predecessor_points_into_current_entity(self):
+        data = {
+            "qid": "Q117617480", "name": "X Corp.", "description": None,
+            "instances": ["Q4830453"], "country": None, "founded": None, "revenue": None,
+            "successors":   [],
+            "predecessors": [{"qid": "Q1390577", "name": "Twitter"}],
+        }
+        calls = []
+        with patch("app.scraper.runner.fetch_company_data", return_value=data), \
+             patch("app.scraper.runner._upsert_entity",
+                   side_effect=lambda **kw: f"id:{kw['wikidata_id']}"), \
+             patch("app.scraper.runner._upsert_succession",
+                   side_effect=lambda p, s, *a, **k: calls.append((p, s))):
+            _scrape_node("Q117617480", depth=0, visited=set(), scraped=[], source_id="src-1")
+        # predecessor (Twitter) → successor (X Corp., the scraped entity)
+        assert ("id:Q1390577", "id:Q117617480") in calls
