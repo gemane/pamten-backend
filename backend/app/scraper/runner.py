@@ -400,6 +400,51 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
         )
 
 
+def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
+                       source_url: str | None = None, source_date: str | None = None):
+    """Create a SUCCEEDED_BY edge (predecessor → successor) if none exists.
+
+    Models corporate succession/rename (e.g. Twitter → X Corp., from Wikidata
+    P1366 'replaced by' / P1365 'replaces'). Directed predecessor → successor;
+    a re-scrape refreshes provenance instead of duplicating the edge. Both
+    endpoints are Entity, labelled so the id lookups use the per-type index.
+    """
+    if predecessor_id == successor_id:
+        return  # guard against a self-loop from bad data
+    now = _now_iso()
+    with db.get_session() as session:
+        exists = session.run(
+            """
+            MATCH (a:Entity {id: $pid})-[r:SUCCEEDED_BY]->(b:Entity {id: $sid})
+            RETURN r LIMIT 1
+            """,
+            pid=predecessor_id, sid=successor_id,
+        ).single()
+        if exists:
+            session.run(
+                """
+                MATCH (a:Entity {id: $pid})-[r:SUCCEEDED_BY]->(b:Entity {id: $sid})
+                SET r.last_scraped_at = $now,
+                    r.source_url  = COALESCE($surl,  r.source_url),
+                    r.source_date = COALESCE($sdate, r.source_date)
+                """,
+                pid=predecessor_id, sid=successor_id, now=now,
+                surl=source_url, sdate=source_date,
+            )
+            return
+        session.run(
+            """
+            MATCH (a:Entity {id: $pid}), (b:Entity {id: $sid})
+            CREATE (a)-[:SUCCEEDED_BY {
+                source_id: $srcid, credibility_score: $score,
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now
+            }]->(b)
+            """,
+            pid=predecessor_id, sid=successor_id, srcid=source_id,
+            score=WIKIDATA_CREDIBILITY, surl=source_url, sdate=source_date, now=now,
+        )
+
+
 def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                  since: str | None = None, until: str | None = None,
                  source_url: str | None = None):
@@ -599,6 +644,28 @@ def _scrape_node(
             owner_label = "Entity"
         _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid),
                      owner_label=owner_label)
+
+    # Succession (P1366 replaced-by / P1365 replaces) → SUCCEEDED_BY edge, always
+    # directed predecessor → successor. Each side is a distinct entity (e.g.
+    # Twitter → X Corp.), so upsert a minimal node for it like a subsidiary.
+    for succ in data.get("successors", []):
+        if not succ.get("name"):
+            continue
+        succ_id = _upsert_entity(
+            name=succ["name"], entity_type="company",
+            country=None, founded=None, revenue=None, description=None,
+            wikidata_id=succ["qid"], source_id=source_id,
+        )
+        _upsert_succession(entity_id, succ_id, source_id, source_url=_wikidata_url(qid))
+    for pred in data.get("predecessors", []):
+        if not pred.get("name"):
+            continue
+        pred_id = _upsert_entity(
+            name=pred["name"], entity_type="company",
+            country=None, founded=None, revenue=None, description=None,
+            wikidata_id=pred["qid"], source_id=source_id,
+        )
+        _upsert_succession(pred_id, entity_id, source_id, source_url=_wikidata_url(qid))
 
 
 # ── Wikidata public entry point ───────────────────────────────────────────────

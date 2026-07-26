@@ -134,15 +134,18 @@ def _sparql(qid: str) -> list:
       {_LABEL_SERVICE}
     }}
     """
-    # 3. Relations: subsidiaries, parent, owners.
+    # 3. Relations: subsidiaries, parent, owners, succession (replaced-by / replaces).
     relations = f"""
     SELECT ?subsidiary ?subsidiaryLabel ?subsidiaryInstance ?parent
            ?owner ?ownerLabel ?ownerInstance
+           ?successor ?successorLabel ?predecessor ?predecessorLabel
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item wdt:P355 ?subsidiary . OPTIONAL {{ ?subsidiary wdt:P31 ?subsidiaryInstance }} }}
       OPTIONAL {{ ?item wdt:P749 ?parent }}
       OPTIONAL {{ ?item wdt:P127 ?owner . OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }} }}
+      OPTIONAL {{ ?item wdt:P1366 ?successor }}     # replaced by  (this → successor)
+      OPTIONAL {{ ?item wdt:P1365 ?predecessor }}   # replaces     (predecessor → this)
       {_LABEL_SERVICE}
     }}
     """
@@ -313,6 +316,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "employees_as_of": None,  # year of that value (P585 qualifier)
         "subsidiaries": {},
         "parents":     set(),
+        "successors":   {},  # replaced by (P1366): this entity → successor (SUCCEEDED_BY)
+        "predecessors": {},  # replaces (P1365): predecessor → this entity (SUCCEEDED_BY)
         "ceos":        {},
         "officers":    {},   # founder / chairperson / board member → HAS_ROLE
         "owners":      {},   # owned by (P127) → OWNS edge (owner → company)
@@ -398,6 +403,17 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         if parent_uri := _v(row, "parent"):
             result["parents"].add(_qid(parent_uri))
 
+        # Succession (P1366 replaced-by / P1365 replaces) → SUCCEEDED_BY edges.
+        # Directed predecessor → successor; store just qid + name (like an owner).
+        if succ_uri := _v(row, "successor"):
+            succ_qid = _qid(succ_uri)
+            if succ_qid and succ_qid not in result["successors"]:
+                result["successors"][succ_qid] = {"qid": succ_qid, "name": _v(row, "successorLabel")}
+        if pred_uri := _v(row, "predecessor"):
+            pred_qid = _qid(pred_uri)
+            if pred_qid and pred_qid not in result["predecessors"]:
+                result["predecessors"][pred_qid] = {"qid": pred_qid, "name": _v(row, "predecessorLabel")}
+
         # CEO (keyed by qid+since to capture multiple tenures)
         if ceo_uri := _v(row, "ceo"):
             ceo_qid = _qid(ceo_uri)
@@ -477,6 +493,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
     result["instances"]    = list(result["instances"])
     result["subsidiaries"] = list(result["subsidiaries"].values())
     result["parents"]      = list(result["parents"])
+    result["successors"]   = list(result["successors"].values())
+    result["predecessors"] = list(result["predecessors"].values())
     result["ceos"]         = list(result["ceos"].values())
     result["officers"]     = list(result["officers"].values())
     for o in result["owners"].values():
