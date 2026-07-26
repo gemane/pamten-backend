@@ -67,7 +67,7 @@ _INDEXES: list[tuple[str, str, str]] = [
 # Edge types the app creates via Cypher and needs to exist up front (also what
 # wipe-data recreates after dropping them).
 _EDGE_TYPES: list[str] = [
-    "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH",
+    "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY",
     "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
 ]
 

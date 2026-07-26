@@ -38,7 +38,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | Method | Path | Description |
 |---|---|---|
 | GET | `/search/?q=` | Full-text search across entities and persons |
-| GET | `/search/entity/{id}/full-profile` | Entity with owners, subsidiaries, executives, HQ |
+| GET | `/search/entity/{id}/full-profile` | Entity with owners, subsidiaries, executives, HQ, dual-listed pairs, and succession (`succeeded_by` / `replaces`) |
 | GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
 | GET | `/search/geographic` | Entities grouped by country for map view |
 
