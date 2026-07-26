@@ -9,19 +9,24 @@ import re
 # most specific category wins when an entity is an instance of several classes
 # (e.g. a foundation that is also an "organization" → foundation, not company).
 _TYPE_QIDS: list[tuple[str, set[str]]] = [
-    ("government", {
-        "Q1802419",   # state government (e.g. Government of Abu Dhabi)
-        "Q327333",    # government agency
-        "Q4383245",   # public authority
-        "Q2659904",   # government organization
-    }),
+    # Fund is checked BEFORE government: a state investment vehicle is often
+    # classified on Wikidata as *both* a sovereign wealth fund and a government
+    # agency (e.g. Kuwait Investment Authority). Every fund QID is investment-
+    # specific, so matching one means it really is a fund — the more useful type
+    # in an ownership graph — even when a government P31 is also present.
     ("fund", {
         "Q4201895",   # investment fund
         "Q791974",    # mutual fund
         "Q845477",    # exchange-traded fund
         "Q105611",    # hedge fund
         "Q1061648",   # sovereign wealth fund (a state investment vehicle, e.g.
-                      # Mubadala — a fund, NOT a government body)
+                      # Mubadala / PIF / KIA — a fund, NOT a government body)
+    }),
+    ("government", {
+        "Q1802419",   # state government (e.g. Government of Abu Dhabi)
+        "Q327333",    # government agency
+        "Q4383245",   # public authority
+        "Q2659904",   # government organization
     }),
     ("foundation", {
         "Q157031",    # foundation
