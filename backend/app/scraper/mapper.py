@@ -14,13 +14,14 @@ _TYPE_QIDS: list[tuple[str, set[str]]] = [
         "Q327333",    # government agency
         "Q4383245",   # public authority
         "Q2659904",   # government organization
-        "Q1061648",   # sovereign wealth fund (state investment arm)
     }),
     ("fund", {
         "Q4201895",   # investment fund
         "Q791974",    # mutual fund
         "Q845477",    # exchange-traded fund
         "Q105611",    # hedge fund
+        "Q1061648",   # sovereign wealth fund (a state investment vehicle, e.g.
+                      # Mubadala — a fund, NOT a government body)
     }),
     ("foundation", {
         "Q157031",    # foundation
@@ -44,7 +45,6 @@ _TYPE_QIDS: list[tuple[str, set[str]]] = [
         "Q167037",    # corporation
         "Q6881511",   # enterprise
         "Q783794",    # company
-        "Q2659062",   # organization
         "Q1616075",   # media company
         "Q18388277",  # technology company
     }),

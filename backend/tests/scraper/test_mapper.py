@@ -85,6 +85,12 @@ class TestInferEntityType:
         assert infer_entity_type(["Q79913"]) == "nonprofit"      # NGO
         assert infer_entity_type(["Q48204"]) == "nonprofit"      # voluntary association
 
+    def test_sovereign_wealth_fund_is_fund_not_government(self):
+        # Regression: Q1061648 (sovereign wealth fund, e.g. Mubadala Investment
+        # Company) was mis-mapped to government despite being an investment vehicle.
+        from app.scraper.mapper import infer_entity_type
+        assert infer_entity_type(["Q1061648"]) == "fund"
+
     def test_existing_categories_unchanged(self):
         from app.scraper.mapper import infer_entity_type
         assert infer_entity_type(["Q4830453"]) == "company"
@@ -95,7 +101,7 @@ class TestInferEntityType:
 
     def test_priority_specific_over_company(self):
         from app.scraper.mapper import infer_entity_type
-        # an entity that is both a foundation and a generic organization → foundation
-        assert infer_entity_type(["Q2659062", "Q157031"]) == "foundation"
+        # an entity that is both a foundation and a generic company → foundation
+        assert infer_entity_type(["Q783794", "Q157031"]) == "foundation"
         assert infer_entity_type(["Q4830453", "Q845477"]) == "fund"
         assert infer_entity_type(["Q783794", "Q1802419"]) == "government"
