@@ -259,6 +259,11 @@ def _bods_record_url(subject_ref: str | None, stmt: dict) -> str | None:
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB per download chunk
 
+# Upper bound on Entity.source_statement_ids for an id-less party collapsed under
+# one name key, so a party controlling very many companies can't bloat the node.
+# Beyond the cap, the ownership edges still each carry their own source provenance.
+_MAX_SOURCE_STATEMENT_IDS = 1000
+
 # ISO 3166-1 alpha-2 → full English country name
 _ISO2_COUNTRY: dict[str, str] = {
     "AF": "Afghanistan", "AX": "Åland Islands", "AL": "Albania", "DZ": "Algeria",
@@ -406,7 +411,12 @@ def _ref_id(ref: object) -> str | None:
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
-def _entity_node_id(lei_id: str | None, companies_house_id: str | None, fallback: str) -> str:
+def _entity_node_id(
+    lei_id: str | None,
+    companies_house_id: str | None,
+    fallback: str,
+    name: str | None = None,
+) -> str:
     """Deterministic Entity node id derived from a stable external identifier.
 
     Keying an Entity on its LEI / company number — rather than the BODS
@@ -415,12 +425,27 @@ def _entity_node_id(lei_id: str | None, companies_house_id: str | None, fallback
     later full run), so id-by-recordId silently creates a *second* node for the
     same company (the Austria-doubling bug). It also lets a forward-reference
     placeholder merge with the real statement, since a GLEIF ref encodes the LEI.
-    Falls back to the record id / ref only when no external id is available.
+
+    For an entity with **no** external id (UK PSC files interested parties as
+    free-text with an empty ``identifiers`` array), fall back to a name key
+    ``name:{normalized}``. UK PSC re-declares each controlling party once per
+    *controlled* company, each with its own per-filing ``recordId`` — keying
+    those on the recordId spawns one node per subsidiary (e.g. ~21 separate
+    "Government Of The Emirate Of Abu Dhabi" nodes). The name key collapses them
+    into one, while meaningful variants ("… (Through Mubadala)") normalize
+    differently and stay separate. Trade-off: two genuinely-distinct id-less
+    parties sharing a normalized name would merge — rare, and only for parties
+    with no LEI/company number. Falls back to the raw record id / ref only when
+    neither an external id nor a name is available.
     """
     if lei_id:
         return f"lei:{lei_id}"
     if companies_house_id:
         return f"gb-coh:{companies_house_id}"
+    if name:
+        norm = normalize_entity_name(name)
+        if norm:
+            return f"name:{norm}"
     return fallback
 
 
@@ -446,14 +471,20 @@ def _registered_address(details: dict) -> str | None:
 
 def _entity(batch, node_id, name, entity_type, country, founded,
             lei_id, companies_house_id, source_id, credibility_score,
-            registered_address=None):
-    """Enqueue an Entity upsert (keyed on the stable node id) and return the id."""
+            registered_address=None, source_statement_ids=None):
+    """Enqueue an Entity upsert (keyed on the stable node id) and return the id.
+
+    ``source_statement_ids`` lists every BODS statement (recordId) that declared
+    this entity. For id-less parties collapsed under one name key it holds all
+    contributing PSC statement ids, so per-statement provenance survives the
+    collapse (the ownership edges keep their own source_url/date independently)."""
     batch.entity(node_id, {
         "name": name,
         "name_normalized": normalize_entity_name(name),
         "search_text": name,   # FULL_TEXT-indexed field powering /search
         "name_credibility": credibility_score,
         "source_id": source_id,
+        "source_statement_ids": source_statement_ids or [],
         "type": entity_type,
         "country": country,
         "founded": founded,
@@ -529,6 +560,7 @@ def _process_entity_statement(
     source_id: str,
     credibility_score: int,
     filter_jurisdiction: str | None,
+    stmt_id_map: "_DiskMap | None" = None,
 ) -> str | None:
     """
     Map a BODS entity statement to a Pamten Entity node.
@@ -581,8 +613,24 @@ def _process_entity_statement(
         elif scheme == "GB-COH":
             companies_house_id = value
 
+    node_id = _entity_node_id(lei_id, companies_house_id, record_id, name=name)
+
+    # Provenance: list of every statement that declared this entity. Entities with
+    # an LEI/company number are unique, so a single-element list; id-less parties
+    # collapse under one name key, so accumulate all contributing statement ids
+    # (capped — beyond the cap, per-edge source_url/date still carries provenance).
+    if lei_id or companies_house_id or stmt_id_map is None:
+        source_statement_ids = [record_id]
+    else:
+        raw = stmt_id_map.get(node_id)
+        ids = _loads(raw) if raw else []
+        if record_id not in ids and len(ids) < _MAX_SOURCE_STATEMENT_IDS:
+            ids.append(record_id)
+            stmt_id_map[node_id] = json.dumps(ids)
+        source_statement_ids = ids
+
     entity_id = _entity(
-        batch, _entity_node_id(lei_id, companies_house_id, record_id),
+        batch, node_id,
         name=name,
         entity_type=entity_type,
         country=country,
@@ -592,6 +640,7 @@ def _process_entity_statement(
         source_id=source_id,
         credibility_score=credibility_score,
         registered_address=_registered_address(details),
+        source_statement_ids=source_statement_ids,
     )
     bods_to_pamten_id[record_id] = entity_id
     return entity_id
@@ -704,9 +753,10 @@ def _process_relationship_statement(
     owned_id = bods_to_pamten_id.get(subject_ref)
     if not owned_id:
         _lei = _placeholder_lei(subject_ref)
+        _subj_name = _placeholder_name(subject_ref)
         owned_id = _entity(
-            batch, _entity_node_id(_lei, None, subject_ref),
-            name=_placeholder_name(subject_ref), entity_type="company",
+            batch, _entity_node_id(_lei, None, subject_ref, name=_subj_name),
+            name=_subj_name, entity_type="company",
             country=None, founded=None,
             lei_id=_lei, companies_house_id=None,
             source_id=source_id, credibility_score=0,
@@ -725,9 +775,10 @@ def _process_relationship_statement(
             )
         else:
             _lei = _placeholder_lei(party_ref)
+            _party_name = _placeholder_name(party_ref)
             owner_id = _entity(
-                batch, _entity_node_id(_lei, None, party_ref),
-                name=_placeholder_name(party_ref), entity_type="company",
+                batch, _entity_node_id(_lei, None, party_ref, name=_party_name),
+                name=_party_name, entity_type="company",
                 country=None, founded=None,
                 lei_id=_lei, companies_house_id=None,
                 source_id=source_id, credibility_score=0,
@@ -1054,6 +1105,7 @@ def _run_import(
     # has tens of millions of entries and would otherwise OOM a small box.
     bods_to_pamten_id = _DiskMap()
     bods_id_to_name   = _DiskMap()   # entity names, for placeholder labelling
+    stmt_id_map       = _DiskMap()   # name-keyed node id -> JSON list of declaring statement ids
     batch = _BatchWriter()           # buffers writes, flushes in batched sqlscript
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
 
@@ -1094,6 +1146,7 @@ def _run_import(
             try:
                 result = _process_entity_statement(
                     stmt, bods_to_pamten_id, batch, source_id, credibility_score, jur,
+                    stmt_id_map,
                 )
                 if result:
                     counts["entities"] += 1
@@ -1137,6 +1190,7 @@ def _run_import(
     batch.flush()   # write any remaining buffered nodes/edges
     bods_to_pamten_id.close()
     bods_id_to_name.close()
+    stmt_id_map.close()
 
     if bulk_load:
         _rebuild_indexes()   # recreate the secondary indexes dropped for the load
