@@ -163,6 +163,12 @@ def _upsert_entity(
     Returns the entity's internal id.
     """
     name_norm = normalize_entity_name(name)
+    # FULL_TEXT search field (name + description + aliases), so scraped entities
+    # are findable via /search — same content as manage.py backfill-search. The
+    # BODS importer sets this inline too; the Wikidata scraper must as well or the
+    # companies it adds never enter the search index.
+    search_text = " ".join(p for p in (
+        name, description or "", " ".join(aliases or [])) if p).strip()
     with db.get_session() as session:
         # Sequential indexed lookups — an OR across these fields full-scans the
         # Entity type on ArcadeDB (see app.entity_resolution).
@@ -182,6 +188,7 @@ def _upsert_entity(
                     e.employees       = COALESCE($employees, e.employees),
                     e.employees_as_of = COALESCE($employees_as_of, e.employees_as_of),
                     e.description     = COALESCE($desc, e.description),
+                    e.search_text     = $search_text,
                     e.name_normalized = $name_norm,
                     e.aliases         = CASE WHEN size($aliases) > 0 THEN $aliases ELSE COALESCE(e.aliases, []) END,
                     e.countries       = CASE WHEN size($countries) > 0 THEN $countries ELSE COALESCE(e.countries, []) END,
@@ -202,6 +209,7 @@ def _upsert_entity(
                 revenue=revenue,
                 desc=description,
                 name_norm=name_norm,
+                search_text=search_text,
                 cred=WIKIDATA_CREDIBILITY,
                 employees=employees, employees_as_of=employees_as_of,
                 aliases=aliases or [],
@@ -215,6 +223,7 @@ def _upsert_entity(
             """
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
+                search_text: $search_text,
                 name_credibility: $cred,
                 type: $type, country: $country, founded: $founded,
                 revenue: $revenue, employees: $employees, employees_as_of: $employees_as_of,
@@ -228,6 +237,7 @@ def _upsert_entity(
             id=entity_id,
             name=name,
             name_norm=name_norm,
+            search_text=search_text,
             cred=WIKIDATA_CREDIBILITY,
             type=entity_type,
             country=country,
