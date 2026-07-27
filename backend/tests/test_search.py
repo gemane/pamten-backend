@@ -2,7 +2,42 @@
 Unit tests for the search router's pure helpers (no DB needed). The endpoint
 itself is exercised end-to-end in tests/integration/test_person_profile_it.py.
 """
-from app.routers.search import _dedupe_positions, _dedupe_holdings, _clean
+from app.routers.search import (
+    _dedupe_positions, _dedupe_holdings, _clean, _ownership_summary,
+)
+
+
+def _owner(stake):
+    return {"owner": {"id": "x"}, "relationship": {"stake_percent": stake}}
+
+
+class TestOwnershipSummary:
+    def test_free_float_is_the_residual_when_all_known(self):
+        s = _ownership_summary([_owner(7.0), _owner(5.0)])
+        assert s["disclosed_pct"] == 12.0
+        assert s["free_float_pct"] == 88.0
+        assert s["exceeds_100"] is False
+
+    def test_no_free_float_when_an_owner_stake_is_unknown(self):
+        # can't tell what's left if one owner's % is missing
+        s = _ownership_summary([_owner(30.0), _owner(None)])
+        assert s["unknown_owners"] == 1
+        assert s["free_float_pct"] is None
+
+    def test_flags_over_100_and_no_free_float(self):
+        s = _ownership_summary([_owner(80.0), _owner(63.0)])
+        assert s["disclosed_pct"] == 143.0
+        assert s["exceeds_100"] is True
+        assert s["free_float_pct"] is None
+
+    def test_no_free_float_when_fully_held(self):
+        # residual below the 0.5% noise threshold → nothing to show
+        assert _ownership_summary([_owner(100.0)])["free_float_pct"] is None
+        assert _ownership_summary([_owner(99.8)])["free_float_pct"] is None
+
+    def test_no_owners_or_no_known_stakes(self):
+        assert _ownership_summary([])["disclosed_pct"] is None
+        assert _ownership_summary([_owner(None)])["free_float_pct"] is None
 
 
 class TestClean:
