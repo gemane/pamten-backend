@@ -1648,6 +1648,41 @@ def run_import_gleif_succession(local_file: str, limit: int | None = None) -> di
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 
 
+def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
+                             filter_jurisdiction: str | None = None,
+                             bulk_load: bool = False) -> dict:
+    """
+    Import GLEIF entities from the LEI-CDF golden copy (current, authoritative) —
+    the replacement for the frozen OpenOwnership GLEIF BODS entity data. Reuses
+    the GLEIF source + flags. Checks SCRAPER_ENABLED and SCRAPER_BODS_GLEIF_ENABLED.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
+
+    source_id = _ensure_bods_gleif_source()
+    log.info("GLEIF LEI-CDF entities: importing from %s (limit=%s, jur=%s)",
+             local_file, limit, filter_jurisdiction)
+    counts = import_lei_cdf_entities(
+        filepath=local_file,
+        source_id=source_id,
+        credibility_score=BODS_GLEIF_CREDIBILITY,
+        limit=limit,
+        filter_jurisdiction=filter_jurisdiction,
+        bulk_load=bulk_load,
+    )
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts,
+            "duplicate_names": _duplicate_name_summary()}
+
+
 def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
     """
     Import GLEIF RR-CDF (Level 2) direct/ultimate consolidation parents as

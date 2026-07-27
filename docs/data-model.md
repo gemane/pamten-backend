@@ -34,3 +34,13 @@ roles, and locations are edges.
 
 Vertex/edge types and lookup indexes are created idempotently on startup and via
 `python manage.py init-schema` (see the README's *Deployment → Schema & indexes*).
+
+## GLEIF sourcing
+
+GLEIF data comes from the **GLEIF golden copy** (current, daily), keyed `lei:{LEI}`:
+`manage.py gleif-lei-cdf` imports the **entities** (name, country, legal address,
+legal-form type) from LEI-CDF; `gleif-rr` imports the **relationships** (direct/
+ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF.
+This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
+at 2025‑03. **UK PSC** (natural-person beneficial ownership) has no golden-copy
+equivalent and still uses the BODS importer (`bods-uk-psc`).

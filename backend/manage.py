@@ -49,6 +49,16 @@ def cmd_gleif_rr(args):
     result = run_import_gleif_rr(local_file=args.file, limit=args.limit)
     print(result)
 
+def cmd_gleif_lei_cdf(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    from app.scraper.runner import run_import_gleif_lei_cdf
+    result = run_import_gleif_lei_cdf(
+        local_file=args.file, limit=args.limit,
+        filter_jurisdiction=args.jurisdiction, bulk_load=getattr(args, "bulk_load", False))
+    print(result)
+
 def cmd_flag_nominees(args):
     from app.scraper.maintenance import flag_nominee_entities
     result = flag_nominee_entities()
@@ -347,6 +357,16 @@ def _build_parser():
     p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
     p_rr.add_argument('--limit', type=int, help='Max records to scan')
     p_rr.set_defaults(func=cmd_gleif_rr)
+
+    # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)
+    p_lei = subparsers.add_parser('gleif-lei-cdf',
+                                  help='Import GLEIF entities from the LEI-CDF golden copy (name/country/address)')
+    p_lei.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
+    p_lei.add_argument('--limit', type=int, help='Max records to scan')
+    p_lei.add_argument('--jurisdiction', help='Country code filter, e.g. AT')
+    p_lei.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after (faster on the full 3.4M)')
+    p_lei.set_defaults(func=cmd_gleif_lei_cdf)
 
     # flag-nominees command
     p_nom = subparsers.add_parser('flag-nominees',
