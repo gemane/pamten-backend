@@ -1542,6 +1542,37 @@ def run_import_bods_gleif(
             "duplicate_names": _duplicate_name_summary(), **counts}
 
 
+def run_import_gleif_succession(local_file: str, limit: int | None = None) -> dict:
+    """
+    Import GLEIF LEI-CDF succession (MERGED/DUPLICATE/RETIRED → SuccessorLEI) into
+    SUCCEEDED_BY edges. Reuses the GLEIF source + flags. `local_file` is a
+    pre-downloaded LEI-CDF golden-copy .json/.zip (multi-GB — a local batch job,
+    not a URL fetch, so no download path here). Checks SCRAPER_ENABLED and
+    SCRAPER_BODS_GLEIF_ENABLED.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.gleif_succession import import_lei_cdf_succession
+
+    source_id = _ensure_bods_gleif_source()
+    log.info("GLEIF succession: importing from %s (limit=%s)", local_file, limit)
+    counts = import_lei_cdf_succession(
+        filepath=local_file,
+        source_id=source_id,
+        credibility_score=BODS_GLEIF_CREDIBILITY,
+        limit=limit,
+    )
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+
+
 # ── UK PSC public entry point ─────────────────────────────────────────────────
 
 def run_import_bods_uk_psc(
