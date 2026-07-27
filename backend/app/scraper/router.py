@@ -366,6 +366,16 @@ def flag_nominees(_: dict = Depends(require_admin)):
     return maintenance.flag_nominee_entities()
 
 
+@router.get("/ownership-quality")
+def ownership_quality(limit: int = 100, _: dict = Depends(require_admin)):
+    """Ownership data-quality report: self-loop OWNS edges (A owns A — treasury/
+    error) and circular ownership pairs (A↔B). Read-only. Admin only."""
+    return {
+        **maintenance.count_self_loop_owns(),
+        "cross_holdings": maintenance.find_cross_holdings(limit),
+    }
+
+
 # ── BODS endpoints ────────────────────────────────────────────────────────────
 
 def _validate_bods_local_file(local_file: str | None) -> str | None:

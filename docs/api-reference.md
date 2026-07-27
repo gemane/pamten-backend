@@ -38,7 +38,8 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | Method | Path | Description |
 |---|---|---|
 | GET | `/search/?q=` | Full-text search across entities and persons |
-| GET | `/search/entity/{id}/full-profile` | Entity with owners, subsidiaries, executives, HQ, dual-listed pairs, succession (`succeeded_by` / `replaces`), and an `ownership` summary — `free_float_pct` (computed residual = 100 − disclosed, when every owner's stake is known) + `exceeds_100` flag |
+| GET | `/search/entity/{id}/full-profile` | Entity with owners (self-loops excluded), subsidiaries, executives, HQ, dual-listed pairs, succession (`succeeded_by` / `replaces`), `cross_holdings` (reciprocal/circular owners), and an `ownership` summary — `free_float_pct` (computed residual = 100 − disclosed, when every owner's stake is known) + `exceeds_100` flag |
+| GET | `/scraper/ownership-quality` | admin | Data-quality report: `self_loops` count (A owns A) + `cross_holdings` pairs (A↔B) |
 | GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
 | GET | `/search/geographic` | Entities grouped by country for map view |
 
