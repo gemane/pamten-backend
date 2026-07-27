@@ -370,6 +370,29 @@ _INTEREST_OWNERSHIP_TYPE: dict[str, str | None] = {
     "beneficiaryOfLegalArrangement":    "minority",
 }
 
+
+def _share_pct(share: dict | None) -> float | None:
+    """A percentage from a BODS interest `share` — the exact value, else the
+    minimum of the disclosed band (UK PSC reports bands, e.g. 75–100%)."""
+    share = share or {}
+    for key in ("exact", "minimum"):
+        val = share.get(key)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _max_pct(a: float | None, b: float | None) -> float | None:
+    """max of two possibly-None percentages."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return max(a, b)
+
 # ── BODS entityType → Pamten entity type ──────────────────────────────────────
 
 _ENTITY_TYPE_MAP: dict[str, str] = {
@@ -522,14 +545,22 @@ def _person(batch, node_id, full_name, first_name, last_name, nationality, birth
 
 
 def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until,
-          source_id, credibility_score, source_url=None, source_date=None, owner_label="Entity"):
-    """Enqueue an OWNS edge (owner is an Entity or a Person; owned is an Entity)."""
+          source_id, credibility_score, source_url=None, source_date=None, owner_label="Entity",
+          voting_power_pct=None, interest_types=None):
+    """Enqueue an OWNS edge (owner is an Entity or a Person; owned is an Entity).
+
+    `stake_percent` is the *economic* holding (shareholding interest);
+    `voting_power_pct` the *voting* rights (votingRights interest) — kept separate
+    so voting control isn't conflated with the economic stake. `interest_types`
+    is the set of BODS interest types behind the edge (shareholding/votingRights/
+    appointmentOfBoard/…) for transparency."""
     if owner_label not in ("Entity", "Person"):
         owner_label = "Entity"
     batch.owns(owner_id, owner_label, owned_id, {
         "stake_percent": stake_percent,
         "ownership_type": ownership_type,
-        "voting_power_pct": None,
+        "voting_power_pct": voting_power_pct,
+        "interest_types": interest_types or [],
         "since": since,
         "until": until,
         "source_id": source_id,
@@ -802,21 +833,26 @@ def _process_relationship_statement(
     record_url     = _bods_record_url(subject_ref, stmt)
     statement_date = stmt.get("statementDate")
 
-    # A single BODS/GLEIF relationship statement can list several interests for
-    # the SAME pair (e.g. votingRights + appointmentOfBoard, both → "controlling",
-    # or GLEIF direct+ultimate consolidation). Emitting one OWNS edge per interest
-    # then created duplicate edges between the same two nodes in a single import.
-    # Collapse them to one OWNS edge per ownership_type, keeping the largest stake.
-    owns_by_type: dict[str, dict] = {}
+    # A statement lists several interests for the SAME pair (e.g. a UK PSC filing
+    # carries shareholding + votingRights + appointmentOfBoard together). Collapse
+    # them into ONE OWNS edge, keeping the *economic* stake (shareholding) and the
+    # *voting* rights (votingRights) in separate fields rather than conflating
+    # them — plus the set of interest types behind the edge.
+    econ_stake: float | None = None   # from shareholding / economic interests
+    voting_pct: float | None = None   # from votingRights
+    itypes: set[str] = set()
+    control = settlor = beneficiary = False
+    starts: list[str] = []
+    ends: list[str | None] = []
     edges = 0
+
     for interest in interests:
         interest_type = interest.get("type", "shareholding")
-        start_date    = interest.get("startDate") or None
-        end_date      = interest.get("endDate") or (close_date if closed else None)
+        itypes.add(interest_type)
+        start_date = interest.get("startDate") or None
+        end_date   = interest.get("endDate") or (close_date if closed else None)
 
-        mapped = _INTEREST_OWNERSHIP_TYPE.get(interest_type)
-
-        if mapped == "role":
+        if _INTEREST_OWNERSHIP_TYPE.get(interest_type) == "role":
             # seniorManagingOfficial → HAS_ROLE (owner should be a Person)
             _role(
                 batch, person_id=owner_id, entity_id=owned_id,
@@ -828,47 +864,49 @@ def _process_relationship_statement(
             edges += 1
             continue
 
-        # All other types → OWNS edge
-        share: dict = interest.get("share") or {}
-        stake: float | None = None
-        if share.get("exact") is not None:
-            try:
-                stake = float(share["exact"])
-            except (TypeError, ValueError):
-                pass
-        elif share.get("minimum") is not None:
-            # Approximate — use minimum as a floor
-            try:
-                stake = float(share["minimum"])
-            except (TypeError, ValueError):
-                pass
-
-        if interest_type not in _INTEREST_OWNERSHIP_TYPE:
-            # Unknown / future interest type — fall back to minority
-            ownership_type = derive_ownership_type(stake) if stake is not None else "minority"
-        elif mapped is None:
-            # "shareholding" — derive from stake %
-            ownership_type = derive_ownership_type(stake)
+        starts.append(start_date)
+        ends.append(end_date)
+        pct = _share_pct(interest.get("share"))
+        if interest_type == "votingRights":
+            voting_pct = _max_pct(voting_pct, pct)
+            control = True
+        elif interest_type in ("appointmentOfBoard", "otherInfluenceOrControl", "trustee"):
+            control = True
+        elif interest_type == "settlor":
+            settlor = True
         else:
-            ownership_type = mapped
+            # shareholding, beneficiaryOfLegalArrangement, rightsToSurplusAssets…,
+            # unknown → economic stake
+            if interest_type == "beneficiaryOfLegalArrangement":
+                beneficiary = True
+            econ_stake = _max_pct(econ_stake, pct)
 
-        prev = owns_by_type.get(ownership_type)
-        if prev is None or (stake or -1) > (prev["stake"] or -1):
-            owns_by_type[ownership_type] = {
-                "stake": stake, "since": start_date, "until": end_date}
+    if not starts:            # only role interests (or none) — no OWNS edge
+        return edges
 
-    for ownership_type, info in owns_by_type.items():
-        _owns(
-            batch, owner_id=owner_id, owned_id=owned_id,
-            stake_percent=info["stake"], ownership_type=ownership_type,
-            since=info["since"], until=info["until"],
-            source_id=source_id, credibility_score=credibility_score,
-            source_url=record_url, source_date=statement_date,
-            owner_label=owner_label,
-        )
-        edges += 1
+    if control:
+        ownership_type = "controlling"
+    elif settlor:
+        ownership_type = "partnership"
+    elif beneficiary and econ_stake is None:
+        ownership_type = "minority"
+    elif econ_stake is not None:
+        ownership_type = derive_ownership_type(econ_stake)
+    else:
+        ownership_type = "minority"
 
-    return edges
+    known_starts = [s for s in starts if s]
+    until = None if any(e is None for e in ends) else max(ends)  # active if any open
+    _owns(
+        batch, owner_id=owner_id, owned_id=owned_id,
+        stake_percent=econ_stake, ownership_type=ownership_type,
+        voting_power_pct=voting_pct, interest_types=sorted(itypes),
+        since=min(known_starts) if known_starts else None, until=until,
+        source_id=source_id, credibility_score=credibility_score,
+        source_url=record_url, source_date=statement_date,
+        owner_label=owner_label,
+    )
+    return edges + 1
 
 
 # ── Streaming helpers ─────────────────────────────────────────────────────────

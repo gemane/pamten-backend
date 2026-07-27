@@ -531,6 +531,15 @@ class TestProcessPersonStatement:
         mock_person.assert_not_called()
 
 
+class TestSharePct:
+    def test_prefers_exact_then_minimum(self):
+        from app.scraper.bods import _share_pct
+        assert _share_pct({"exact": 12.5, "minimum": 10}) == 12.5
+        assert _share_pct({"exact": None, "minimum": 25, "maximum": 50}) == 25.0   # band → floor
+        assert _share_pct({}) is None
+        assert _share_pct(None) is None
+
+
 # ── _process_relationship_statement ──────────────────────────────────────────
 
 class TestProcessRelationshipStatement:
@@ -621,6 +630,42 @@ class TestProcessRelationshipStatement:
         assert edges == 1
         mock_role.assert_called_once()
         mock_owns.assert_not_called()
+
+    def test_voting_rights_populate_voting_not_stake(self):
+        # A voting-rights band (UK PSC: 75–100%) → voting_power_pct, NOT the
+        # economic stake_percent (which must stay unset without a shareholding).
+        from app.scraper.bods import _process_relationship_statement
+        stmt = {**RELATIONSHIP_STMT, "recordDetails": {
+            **RELATIONSHIP_STMT["recordDetails"],
+            "interests": [{"type": "votingRights", "share": {"minimum": 75, "maximum": 100}}]}}
+        captured: dict = {}
+        with patch("app.scraper.bods._owns", side_effect=_capturing_edge(captured)):
+            _process_relationship_statement(stmt, self._bods_map(), self._name_map(),
+                                            MagicMock(), "src-1", 97)
+        assert captured["voting_power_pct"] == 75.0
+        assert captured["stake_percent"] is None
+        assert captured["ownership_type"] == "controlling"
+        assert captured["interest_types"] == ["votingRights"]
+
+    def test_shareholding_and_voting_kept_separate_on_one_edge(self):
+        # Economic 10% + voting 75% in one statement → one edge carrying both,
+        # typed "controlling" (voting control), interest types recorded.
+        from app.scraper.bods import _process_relationship_statement
+        calls: list = []
+        stmt = {**RELATIONSHIP_STMT, "recordDetails": {
+            **RELATIONSHIP_STMT["recordDetails"],
+            "interests": [
+                {"type": "shareholding", "share": {"exact": 10.0}},
+                {"type": "votingRights", "share": {"minimum": 75}},
+            ]}}
+        with patch("app.scraper.bods._owns", side_effect=lambda batch, **kw: calls.append(kw)):
+            edges = _process_relationship_statement(stmt, self._bods_map(), self._name_map(),
+                                                    MagicMock(), "src-1", 97)
+        assert edges == 1 and len(calls) == 1
+        assert calls[0]["stake_percent"] == 10.0
+        assert calls[0]["voting_power_pct"] == 75.0
+        assert calls[0]["ownership_type"] == "controlling"
+        assert calls[0]["interest_types"] == ["shareholding", "votingRights"]
 
     def test_bods_to_pamten_id_lookup_resolves_correctly(self):
         from app.scraper.bods import _process_relationship_statement
