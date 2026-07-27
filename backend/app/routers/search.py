@@ -171,6 +171,40 @@ def _succession_rows(rows: list, hidden: set) -> list[dict]:
     return out
 
 
+_FREE_FLOAT_MIN = 0.5    # don't surface a residual smaller than this (rounding noise)
+_OVER_100_TOL   = 0.5    # tolerance before flagging disclosed ownership > 100%
+
+
+def _ownership_summary(owners: list[dict]) -> dict:
+    """Derive a free-float / data-quality summary from an entity's owners.
+
+    `free_float_pct` = 100 − Σ(disclosed stakes), i.e. the widely-held remainder
+    (Streubesitz) — but only when EVERY owner has a known stake (an owner with an
+    unknown % means we can't tell what's left) and the disclosed total is under
+    100%. `exceeds_100` flags aggregation conflicts (overlapping sources/dates)
+    rather than silently capping. Percentages, not sourced — computed on read.
+    """
+    known = [o["relationship"].get("stake_percent") for o in owners
+             if isinstance(o["relationship"].get("stake_percent"), (int, float))]
+    unknown_owners = sum(
+        1 for o in owners
+        if not isinstance(o["relationship"].get("stake_percent"), (int, float))
+    )
+    disclosed = round(sum(known), 4) if known else None
+    exceeds = disclosed is not None and disclosed > 100.0 + _OVER_100_TOL
+    free_float = None
+    if disclosed is not None and unknown_owners == 0 and not exceeds:
+        residual = round(100.0 - disclosed, 4)
+        if residual >= _FREE_FLOAT_MIN:
+            free_float = residual
+    return {
+        "disclosed_pct": disclosed,
+        "free_float_pct": free_float,
+        "unknown_owners": unknown_owners,
+        "exceeds_100": exceeds,
+    }
+
+
 @router.get("/entity/{entity_id}/full-profile")
 def get_full_profile(entity_id: str):
     # Everything about an entity in one call
@@ -256,6 +290,7 @@ def get_full_profile(entity_id: str):
             "headquarters": dict(record["hq"]) if record["hq"] else None,
             "operations": [dict(loc) for loc in record["operations"] if loc],
             "owners": owners,
+            "ownership": _ownership_summary(owners),
             "subsidiaries": subsidiaries,
             "executives": executives,
             "dual_listed": [dict(d) for d in record["dual_listed"] if d],

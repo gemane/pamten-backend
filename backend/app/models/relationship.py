@@ -9,6 +9,7 @@ class OwnershipType(str, Enum):
     minority = "minority"
     controlling = "controlling"
     partnership = "partnership"
+    free_float = "free_float"   # widely-held public shareholders (Streubesitz); computed residual
 
 
 class RoleType(str, Enum):
