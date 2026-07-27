@@ -33,6 +33,14 @@ def cmd_bods_gleif(args):
     )
     print(result)
 
+def cmd_gleif_succession(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    from app.scraper.runner import run_import_gleif_succession
+    result = run_import_gleif_succession(local_file=args.file, limit=args.limit)
+    print(result)
+
 def cmd_bods_uk_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -311,6 +319,13 @@ def _build_parser():
     p_bes = subparsers.add_parser('backfill-entity-sources',
                                   help='Stamp source_id on Wikidata/SEC entities created before it was set')
     p_bes.set_defaults(func=cmd_backfill_entity_sources)
+
+    # gleif-succession command
+    p_succ = subparsers.add_parser('gleif-succession',
+                                   help='Import GLEIF LEI-CDF succession (MERGED/DUPLICATE → SuccessorLEI) as SUCCEEDED_BY edges')
+    p_succ.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
+    p_succ.add_argument('--limit', type=int, help='Max records to scan')
+    p_succ.set_defaults(func=cmd_gleif_succession)
     return parser
 
 

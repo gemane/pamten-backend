@@ -190,6 +190,10 @@ class _BatchWriter:
         self._edges.append(("HAS_ROLE", "Person", person_id, "Entity", entity_id, props))
         self._bump()
 
+    def succeeded_by(self, predecessor_id: str, successor_id: str, props: dict) -> None:
+        self._edges.append(("SUCCEEDED_BY", "Entity", predecessor_id, "Entity", successor_id, props))
+        self._bump()
+
     def _bump(self) -> None:
         self._pending += 1
         if self._pending >= self._batch:
