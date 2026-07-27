@@ -876,3 +876,32 @@ def backfill_entity_sources() -> dict:
         "wikidata_source_found": wikidata_src is not None,
         "sec_edgar_source_found": sec_src is not None,
     }
+
+
+def flag_nominee_entities() -> dict:
+    """
+    Flag existing Entity nodes whose name is a nominee / custodian (holder of
+    record, not a beneficial owner — "… Nominees Limited", custodians, Cede & Co).
+    Name-derived, so this backfills nodes imported before the flag existed without
+    a full re-import. Idempotent.
+
+    Candidates come from the FULL_TEXT index (fast), then the precise
+    `is_nominee_name` regex decides; matches are set `is_nominee = true` by id in
+    batches via run_sqlscript (the write path proven to commit).
+    """
+    from app.scraper.mapper import is_nominee_name
+
+    candidates: dict[str, str] = {}   # id -> name
+    for token in ("nominee", "nominees", "custodian", "custody", "cede"):
+        for r in run_sql(f"SELECT id, name FROM Entity WHERE search_text CONTAINSTEXT '{token}'"):
+            if r.get("id"):
+                candidates[r["id"]] = r.get("name")
+
+    ids = [eid for eid, name in candidates.items() if is_nominee_name(name)]
+    for i in range(0, len(ids), 200):
+        chunk = ids[i:i + 200]
+        stmts = ";\n".join(
+            f"UPDATE Entity SET is_nominee = true WHERE id = :id{j}" for j in range(len(chunk)))
+        run_sqlscript(stmts, {f"id{j}": chunk[j] for j in range(len(chunk))})
+
+    return {"candidates": len(candidates), "flagged": len(ids)}

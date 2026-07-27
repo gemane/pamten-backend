@@ -19,7 +19,7 @@ from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.wikidata import search_entity, fetch_company_data
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
 from app.scraper.sources import get_source_enabled
 from app.scraper.geocode import geocode_address
 
@@ -237,6 +237,7 @@ def _upsert_entity(
                 revenue: $revenue, employees: $employees, employees_as_of: $employees_as_of,
                 description: $desc,
                 wikidata_id: $wid, verified: false, source_id: $source_id,
+                is_nominee: $is_nominee,
                 aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
                 hq_city: $hq_city, hq_country: $hq_country
@@ -255,6 +256,7 @@ def _upsert_entity(
             desc=description,
             wid=wikidata_id,
             source_id=source_id,
+            is_nominee=is_nominee_name(name),
             aliases=aliases or [],
             countries=countries or [], hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
@@ -848,6 +850,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 id: $id, name: $name, name_normalized: $name_norm,
                 name_credibility: $cred, search_text: $search_text, aliases: $aliases,
                 type: $type, sec_cik: $cik, verified: false, source_id: $source_id,
+                is_nominee: $is_nominee,
                 country: null, founded: null, revenue: null,
                 description: null, wikidata_id: null
             })
@@ -855,6 +858,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             id=entity_id, name=name, name_norm=name_norm,
             cred=SEC_EDGAR_CREDIBILITY, type=entity_type, cik=cik, source_id=source_id,
             search_text=_search_text(name, None, aliases), aliases=aliases,
+            is_nominee=is_nominee_name(name),
         )
         return entity_id
 

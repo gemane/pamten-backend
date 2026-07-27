@@ -49,6 +49,12 @@ def cmd_gleif_rr(args):
     result = run_import_gleif_rr(local_file=args.file, limit=args.limit)
     print(result)
 
+def cmd_flag_nominees(args):
+    from app.scraper.maintenance import flag_nominee_entities
+    result = flag_nominee_entities()
+    print(f"Flagged {result['flagged']} nominee/custodian entities "
+          f"(of {result['candidates']} name candidates)")
+
 def cmd_bods_uk_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -341,6 +347,11 @@ def _build_parser():
     p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
     p_rr.add_argument('--limit', type=int, help='Max records to scan')
     p_rr.set_defaults(func=cmd_gleif_rr)
+
+    # flag-nominees command
+    p_nom = subparsers.add_parser('flag-nominees',
+                                  help='Flag nominee/custodian entities (holders of record) by name')
+    p_nom.set_defaults(func=cmd_flag_nominees)
     return parser
 
 

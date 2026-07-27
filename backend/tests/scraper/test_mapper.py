@@ -2,7 +2,7 @@
 Tests for mapper.py — pure functions, no mocks needed.
 """
 
-from app.scraper.mapper import normalize_entity_name, is_person_name
+from app.scraper.mapper import normalize_entity_name, is_person_name, is_nominee_name
 
 
 class TestNormalizeEntityName:
@@ -74,7 +74,24 @@ class TestIsPersonName:
         assert is_person_name("") is False
 
 
-class TestInferEntityType:
+class TestIsNomineeName:
+    def test_nominee_vehicles(self):
+        assert is_nominee_name("TALBOT NOMINEES LIMITED") is True
+        assert is_nominee_name("UBS Nominees Pty Ltd") is True
+        assert is_nominee_name("Coach Nominee Inc.") is True
+
+    def test_custodian_and_cede(self):
+        assert is_nominee_name("Stichting SF0 Custodian") is True
+        assert is_nominee_name("Global Custody Services Ltd") is True
+        assert is_nominee_name("Cede & Co") is True
+        assert is_nominee_name("Cede and Co.") is True
+
+    def test_ordinary_companies_are_not_nominees(self):
+        assert is_nominee_name("BlackRock, Inc.") is False
+        assert is_nominee_name("Apple Inc") is False
+        assert is_nominee_name("State Street Corporation") is False   # the bank itself, not its nominee
+        assert is_nominee_name("") is False
+        assert is_nominee_name(None) is False
     def test_new_categories(self):
         from app.scraper.mapper import infer_entity_type
         assert infer_entity_type(["Q1802419"]) == "government"   # state government
