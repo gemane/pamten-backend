@@ -49,9 +49,14 @@ at 2025‑03.
 UK beneficial ownership comes from the **Companies House PSC snapshot** (current,
 published daily), imported by `manage.py ch-psc`. Each line is one PSC controlling
 a company identified only by its **company number**, so the controlled company is a
-node keyed `gb-coh:{number}` — this import ensures it exists but leaves it un-named;
-company **names/addresses** come from the Companies House BasicCompanyData product
-(companion importer). Individuals become `Person` nodes, corporate/legal PSCs become
+node keyed `gb-coh:{number}` — this import ensures it exists but leaves it un-named.
+Company **names, addresses, incorporation dates and former names** are filled in by
+the companion `manage.py ch-company-data` importer from the Companies House
+**BasicCompanyData** product (the full UK register, monthly). That importer is a
+pure *enrichment* pass — it only `UPDATE`s companies already in the graph (matched
+on `gb-coh:{number}`), so the 5.6M-row register never creates isolated company
+nodes; former names land in `aliases` + `search_text`. Individuals become `Person`
+nodes, corporate/legal PSCs become
 `Entity` nodes (keyed on their own UK company number where present). `natures_of_control`
 map to `stake_percent` (ownership-of-shares band floor), `voting_power_pct` (voting-rights
 band floor) and `ownership_type` (`controlling` when they carry voting / appointment /
