@@ -253,7 +253,9 @@ def get_full_profile(entity_id: str):
                 continue
             owner = dict(o["owner"])
             oid = owner.get("id")
-            if oid in hidden or is_suppressed(sup, "owns", oid, entity_id):
+            # Drop a self-loop (A owns A — treasury shares or a data error): it's
+            # not a real owner and would inflate the disclosed % / free-float.
+            if oid == entity_id or oid in hidden or is_suppressed(sup, "owns", oid, entity_id):
                 continue
             rel = apply_pin(pins, oid, entity_id, dict(o["rel"]))
             cur = owners_by.get(oid)
@@ -267,7 +269,7 @@ def get_full_profile(entity_id: str):
                 continue
             sub = dict(s["entity"])
             sid = sub.get("id")
-            if sid in hidden or is_suppressed(sup, "owns", entity_id, sid):
+            if sid == entity_id or sid in hidden or is_suppressed(sup, "owns", entity_id, sid):
                 continue
             rel = apply_pin(pins, entity_id, sid, dict(s["rel"]))
             cur = subs_by.get(sid)
@@ -285,12 +287,18 @@ def get_full_profile(entity_id: str):
             execs_by.setdefault((person.get("id"), role.get("role")), {"person": person, "role": role})
         executives = list(execs_by.values())
 
+        # Circular ownership: an entity that is BOTH an owner and a subsidiary of
+        # this one (A↔B reciprocal holding). Surface it as a data-quality signal.
+        sub_ids = {s["entity"]["id"] for s in subsidiaries}
+        cross_holdings = [o["owner"] for o in owners if o["owner"].get("id") in sub_ids]
+
         return {
             "entity": dict(record["e"]),
             "headquarters": dict(record["hq"]) if record["hq"] else None,
             "operations": [dict(loc) for loc in record["operations"] if loc],
             "owners": owners,
             "ownership": _ownership_summary(owners),
+            "cross_holdings": cross_holdings,
             "subsidiaries": subsidiaries,
             "executives": executives,
             "dual_listed": [dict(d) for d in record["dual_listed"] if d],

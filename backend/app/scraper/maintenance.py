@@ -905,3 +905,23 @@ def flag_nominee_entities() -> dict:
         run_sqlscript(stmts, {f"id{j}": chunk[j] for j in range(len(chunk))})
 
     return {"candidates": len(candidates), "flagged": len(ids)}
+
+
+def count_self_loop_owns() -> dict:
+    """Count OWNS edges where owner == target (A owns A) — treasury shares or a
+    data error. The full-profile drops these from the owners list on read; this
+    is the global tally."""
+    rows = run_sql("SELECT count(*) AS c FROM OWNS WHERE @out = @in")
+    return {"self_loops": rows[0]["c"] if rows else 0}
+
+
+def find_cross_holdings(limit: int = 100) -> list[dict]:
+    """Reciprocal (circular) ownership: entity pairs where A owns B AND B owns A.
+    `a.id < b.id` reports each pair once. A data-quality signal and the groundwork
+    for a future ultimate-owner traversal (cycles must be broken)."""
+    rows = run_query(
+        "MATCH (a:Entity)-[:OWNS]->(b:Entity)-[:OWNS]->(a:Entity) WHERE a.id < b.id "
+        "RETURN a.id AS a_id, a.name AS a_name, b.id AS b_id, b.name AS b_name "
+        f"LIMIT {int(limit)}"
+    )
+    return [dict(r) for r in rows]
