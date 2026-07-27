@@ -42,5 +42,18 @@ GLEIF data comes from the **GLEIF golden copy** (current, daily), keyed `lei:{LE
 legal-form type) from LEI-CDF; `gleif-rr` imports the **relationships** (direct/
 ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF.
 This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
-at 2025‑03. **UK PSC** (natural-person beneficial ownership) has no golden-copy
-equivalent and still uses the BODS importer (`bods-uk-psc`).
+at 2025‑03.
+
+## UK PSC sourcing
+
+UK beneficial ownership comes from the **Companies House PSC snapshot** (current,
+published daily), imported by `manage.py ch-psc`. Each line is one PSC controlling
+a company identified only by its **company number**, so the controlled company is a
+node keyed `gb-coh:{number}` — this import ensures it exists but leaves it un-named;
+company **names/addresses** come from the Companies House BasicCompanyData product
+(companion importer). Individuals become `Person` nodes, corporate/legal PSCs become
+`Entity` nodes (keyed on their own UK company number where present). `natures_of_control`
+map to `stake_percent` (ownership-of-shares band floor), `voting_power_pct` (voting-rights
+band floor) and `ownership_type` (`controlling` when they carry voting / appointment /
+significant-influence rights). This replaces the OpenOwnership UK PSC BODS export
+(`bods-uk-psc`), which was frozen at 2025‑03.
