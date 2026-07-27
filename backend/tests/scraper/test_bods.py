@@ -831,7 +831,7 @@ class TestRunnerPermissions:
         monkeypatch.setattr(r.settings, "SCRAPER_ENABLED", False)
 
         with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):
-            r.run_import_bods_gleif()
+            r.run_import_gleif_lei_cdf("dummy.zip")
 
     def test_gleif_raises_when_source_flag_disabled(self, monkeypatch):
         from app.scraper import runner as r
@@ -840,7 +840,7 @@ class TestRunnerPermissions:
         monkeypatch.setattr(r.settings, "SCRAPER_BODS_GLEIF_ENABLED", False)
 
         with pytest.raises(PermissionError, match="SCRAPER_BODS_GLEIF_ENABLED"):
-            r.run_import_bods_gleif()
+            r.run_import_gleif_lei_cdf("dummy.zip")
 
     def test_uk_psc_raises_when_master_disabled(self, monkeypatch):
         from app.scraper import runner as r
@@ -858,6 +858,25 @@ class TestRunnerPermissions:
 
         with pytest.raises(PermissionError, match="SCRAPER_BODS_UK_PSC_ENABLED"):
             r.run_import_bods_uk_psc()
+
+
+class TestPostBodsImport:
+    """Every BODS import auto-runs nominee flagging + edge dedup, best-effort."""
+
+    def test_runs_nominees_and_edge_dedup(self):
+        from app.scraper import runner as r
+        with patch("app.scraper.maintenance.flag_nominee_entities", return_value={"flagged": 3}), \
+             patch("app.scraper.maintenance.deduplicate_owns_edges", return_value={"duplicates_removed": 5}):
+            out = r._post_bods_import()
+        assert out == {"nominees": {"flagged": 3}, "edge_dedup": {"duplicates_removed": 5}}
+
+    def test_best_effort_one_step_failing_still_runs_the_other(self):
+        from app.scraper import runner as r
+        with patch("app.scraper.maintenance.flag_nominee_entities", side_effect=RuntimeError("boom")), \
+             patch("app.scraper.maintenance.deduplicate_owns_edges", return_value={"duplicates_removed": 0}):
+            out = r._post_bods_import()
+        assert "nominees" not in out                       # failure swallowed
+        assert out["edge_dedup"] == {"duplicates_removed": 0}
 
 
 # ── _flush_script: retry-with-backoff (survives transient proxy 504s) ─────────

@@ -417,14 +417,20 @@ wget https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip \
 Then import with local file path:
 
 ```bash
-# Test with limit first
-curl -X POST "/scraper/bods/gleif/run?limit=1000&local_file=/data/gleif.zip"
+# UK PSC (BODS) via HTTP — test with a limit first
+curl -X POST "/scraper/bods/uk-psc/run?limit=1000&local_file=/data/uk_psc.zip"
 
-# Import specific jurisdiction only
-curl -X POST "/scraper/bods/gleif/run?filter_jurisdiction=DE&local_file=/data/gleif.zip"
-
-# Full import (takes hours for large files)
+# Full UK PSC import (takes hours for large files)
 curl -X POST "/scraper/bods/uk-psc/run?local_file=/data/uk_psc.zip"
+```
+
+GLEIF is imported from the golden copy via the CLI (multi-GB local batch loads),
+not an HTTP endpoint:
+
+```bash
+python manage.py gleif-lei-cdf --file /data/lei-cdf/gleif-lei2.json.zip --bulk-load  # entities
+python manage.py gleif-rr      --file /data/rr-cdf/gleif-rr.json.zip                 # relationships
+python manage.py gleif-succession --file /data/lei-cdf/gleif-lei2.json.zip           # mergers
 ```
 
 For a **full load** run it from the CLI with `--bulk-load`, which drops the

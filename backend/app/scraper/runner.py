@@ -103,7 +103,6 @@ OPENCORPORATES_CREDIBILITY = 85
 
 GLEIF_SOURCE_NAME        = "GLEIF"
 GLEIF_SOURCE_URL         = "https://www.gleif.org"
-GLEIF_BODS_URL           = "https://oo-bodsdata.s3.amazonaws.com/data/gleif_version_0_4/json.zip"
 BODS_GLEIF_CREDIBILITY   = 92   # authoritative LEI data, CC0 — corporate not beneficial ownership
 
 UK_PSC_SOURCE_NAME       = "UK PSC"
@@ -1537,66 +1536,27 @@ def _ensure_bods_uk_psc_source() -> str:
         return source_id
 
 
-# ── GLEIF public entry point ──────────────────────────────────────────────────
+def _post_bods_import() -> dict:
+    """Housekeeping every BODS import needs, so it isn't a separate manual step:
+    flag nominee/custodian entities the load added, and collapse duplicate active
+    OWNS edges (CREATE EDGE isn't idempotent, so a re-import doubles them).
+    Best-effort — a failure here must not fail the import."""
+    from app.scraper.maintenance import flag_nominee_entities, deduplicate_owns_edges
+    out: dict = {}
+    try:
+        out["nominees"] = flag_nominee_entities()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("post-import flag-nominees failed: %s", exc)
+    try:
+        out["edge_dedup"] = deduplicate_owns_edges()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("post-import edge dedup failed: %s", exc)
+    return out
 
-def run_import_bods_gleif(
-    limit: int | None = None,
-    filter_jurisdiction: str | None = None,
-    local_file: str | None = None,
-    bulk_load: bool = False,
-) -> dict:
-    """
-    Import GLEIF dataset.
-    Checks SCRAPER_ENABLED and SCRAPER_BODS_GLEIF_ENABLED.
-    If local_file is given, import from file instead of URL.
 
-    Args:
-        limit:               Max entity statements to process (None = full dataset).
-        filter_jurisdiction: ISO alpha-2 country code to restrict entity imports.
-        local_file:          Path to a pre-downloaded .zip or .json file.
-        bulk_load:           Drop secondary indexes for the load, rebuild after
-                             (much faster on a full import; see bods._run_import).
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise PermissionError(
-            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
-        )
-    if not get_source_enabled("bods_gleif"):
-        raise PermissionError("GLEIF source is disabled. Enable it in the Scraper panel.")
-
-    from app.scraper.bods import import_bods_source, import_bods_file
-
-    source_id = _ensure_bods_gleif_source()
-    log.info("GLEIF runner: starting BODS import (limit=%s, jurisdiction=%s, local=%s)",
-             limit, filter_jurisdiction, local_file)
-
-    if local_file:
-        counts = import_bods_file(
-            filepath=local_file,
-            source_id=source_id,
-            credibility_score=BODS_GLEIF_CREDIBILITY,
-            limit=limit,
-            filter_jurisdiction=filter_jurisdiction,
-            bulk_load=bulk_load,
-        )
-    else:
-        counts = import_bods_source(
-            source_name=GLEIF_SOURCE_NAME,
-            url=GLEIF_BODS_URL,
-            source_id=source_id,
-            credibility_score=BODS_GLEIF_CREDIBILITY,
-            limit=limit,
-            filter_jurisdiction=filter_jurisdiction,
-            bulk_load=bulk_load,
-        )
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME,
-            "duplicate_names": _duplicate_name_summary(), **counts}
-
+# ── GLEIF public entry points (golden copy) ───────────────────────────────────
+# The OpenOwnership GLEIF BODS import was retired — GLEIF entities/relationships/
+# succession now come from the current golden copy (LEI-CDF + RR-CDF), below.
 
 def run_import_gleif_succession(local_file: str, limit: int | None = None) -> dict:
     """
@@ -1627,6 +1587,41 @@ def run_import_gleif_succession(local_file: str, limit: int | None = None) -> di
         limit=limit,
     )
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+
+
+def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
+                             filter_jurisdiction: str | None = None,
+                             bulk_load: bool = False) -> dict:
+    """
+    Import GLEIF entities from the LEI-CDF golden copy (current, authoritative) —
+    the replacement for the frozen OpenOwnership GLEIF BODS entity data. Reuses
+    the GLEIF source + flags. Checks SCRAPER_ENABLED and SCRAPER_BODS_GLEIF_ENABLED.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
+
+    source_id = _ensure_bods_gleif_source()
+    log.info("GLEIF LEI-CDF entities: importing from %s (limit=%s, jur=%s)",
+             local_file, limit, filter_jurisdiction)
+    counts = import_lei_cdf_entities(
+        filepath=local_file,
+        source_id=source_id,
+        credibility_score=BODS_GLEIF_CREDIBILITY,
+        limit=limit,
+        filter_jurisdiction=filter_jurisdiction,
+        bulk_load=bulk_load,
+    )
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts,
+            "duplicate_names": _duplicate_name_summary()}
 
 
 def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
@@ -1723,4 +1718,5 @@ def run_import_bods_uk_psc(
             bulk_load=bulk_load,
         )
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME,
-            "duplicate_names": _duplicate_name_summary(), **counts}
+            "duplicate_names": _duplicate_name_summary(), **counts,
+            **_post_bods_import()}

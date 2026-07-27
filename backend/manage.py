@@ -6,32 +6,20 @@ Usage:
   python3 manage.py init-schema
   python3 manage.py geocode [--limit N]
   python3 manage.py normalize-countries
-  python3 manage.py bods-gleif [options]
+  python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
+  python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
   python3 manage.py bods-uk-psc [options]
   python3 manage.py seed [options]
 
 Run inside a tmux session to keep running after SSH disconnect:
   tmux new -s import
-  python3 manage.py bods-gleif --file /data/bods/gleif.zip
+  python3 manage.py gleif-lei-cdf --file /data/lei-cdf/gleif-lei2.json.zip --bulk-load
   Ctrl+B then D   (detach)
   tmux attach -t import   (reattach to check progress)
 """
 
 import argparse
 import sys
-
-def cmd_bods_gleif(args):
-    from app.config import settings
-    settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
-    from app.scraper.runner import run_import_bods_gleif
-    result = run_import_bods_gleif(
-        limit=args.limit,
-        filter_jurisdiction=args.jurisdiction,
-        local_file=args.file,
-        bulk_load=getattr(args, "bulk_load", False),
-    )
-    print(result)
 
 def cmd_gleif_succession(args):
     from app.config import settings
@@ -47,6 +35,16 @@ def cmd_gleif_rr(args):
     settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_rr
     result = run_import_gleif_rr(local_file=args.file, limit=args.limit)
+    print(result)
+
+def cmd_gleif_lei_cdf(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    from app.scraper.runner import run_import_gleif_lei_cdf
+    result = run_import_gleif_lei_cdf(
+        local_file=args.file, limit=args.limit,
+        filter_jurisdiction=args.jurisdiction, bulk_load=getattr(args, "bulk_load", False))
     print(result)
 
 def cmd_flag_nominees(args):
@@ -264,15 +262,6 @@ def _build_parser():
         help='Generate an Ed25519 signing keypair for federation')
     p_fedkey.set_defaults(func=cmd_gen_federation_key)
 
-    # bods-gleif command
-    p_gleif = subparsers.add_parser('bods-gleif')
-    p_gleif.add_argument('--file', help='Path to local gleif.zip')
-    p_gleif.add_argument('--limit', type=int, help='Max statements')
-    p_gleif.add_argument('--jurisdiction', help='Country code e.g. AT')
-    p_gleif.add_argument('--bulk-load', action='store_true',
-                         help='Drop secondary indexes during the load and rebuild after (faster on full imports)')
-    p_gleif.set_defaults(func=cmd_bods_gleif)
-
     # bods-uk-psc command
     p_psc = subparsers.add_parser('bods-uk-psc')
     p_psc.add_argument('--file', help='Path to local uk_psc.zip')
@@ -347,6 +336,16 @@ def _build_parser():
     p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
     p_rr.add_argument('--limit', type=int, help='Max records to scan')
     p_rr.set_defaults(func=cmd_gleif_rr)
+
+    # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)
+    p_lei = subparsers.add_parser('gleif-lei-cdf',
+                                  help='Import GLEIF entities from the LEI-CDF golden copy (name/country/address)')
+    p_lei.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
+    p_lei.add_argument('--limit', type=int, help='Max records to scan')
+    p_lei.add_argument('--jurisdiction', help='Country code filter, e.g. AT')
+    p_lei.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after (faster on the full 3.4M)')
+    p_lei.set_defaults(func=cmd_gleif_lei_cdf)
 
     # flag-nominees command
     p_nom = subparsers.add_parser('flag-nominees',
