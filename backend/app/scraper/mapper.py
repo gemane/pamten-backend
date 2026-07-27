@@ -110,6 +110,24 @@ def is_person_name(name: str) -> bool:
     )
 
 
+# Names of holders-of-record that are NOT beneficial owners: nominee vehicles
+# ("… Nominees Limited"), custodians, and Cede & Co (the DTC nominee that is the
+# registered holder of most US listed shares). Flagging these keeps a custodial
+# holder from masquerading as a real owner — the beneficial owners sit behind it.
+_NOMINEE_NAME = re.compile(
+    r"\bnominees?\b"
+    r"|\bcustodian\b|\bcustody\b"
+    r"|\bcede\s*(?:&|and)\s*co\b",
+    re.IGNORECASE,
+)
+
+
+def is_nominee_name(name: str | None) -> bool:
+    """True if `name` looks like a nominee / custodian (holder of record), not a
+    beneficial owner."""
+    return bool(name and _NOMINEE_NAME.search(name))
+
+
 def derive_ownership_type(stake_pct: float | None, form_type: str | None = None) -> str:
     """
     Derive a canonical ownership type from stake % and SEC form type.

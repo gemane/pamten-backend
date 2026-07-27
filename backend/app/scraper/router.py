@@ -358,6 +358,14 @@ def backfill_entity_sources(_: dict = Depends(require_admin)):
     return maintenance.backfill_entity_sources()
 
 
+@router.post("/flag-nominees")
+def flag_nominees(_: dict = Depends(require_admin)):
+    """Flag nominee/custodian entities (holders of record — '… Nominees Limited',
+    custodians, Cede & Co) by name, so they don't masquerade as beneficial owners.
+    Name-derived + idempotent; backfills nodes imported before the flag. Admin only."""
+    return maintenance.flag_nominee_entities()
+
+
 # ── BODS endpoints ────────────────────────────────────────────────────────────
 
 def _validate_bods_local_file(local_file: str | None) -> str | None:

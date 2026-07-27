@@ -49,7 +49,9 @@ from datetime import datetime, timezone
 
 from app.config import settings
 from app.db.arcadedb import run_sqlscript
-from app.scraper.mapper import derive_ownership_type, normalize_entity_name, parse_full_name
+from app.scraper.mapper import (
+    derive_ownership_type, normalize_entity_name, parse_full_name, is_nominee_name,
+)
 
 log = logging.getLogger(__name__)
 
@@ -518,6 +520,7 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         "lei_id": lei_id,
         "companies_house_id": companies_house_id,
         "registered_address": registered_address,
+        "is_nominee": is_nominee_name(name),   # holder-of-record, not a beneficial owner
         "verified": False,
     })
     return node_id
