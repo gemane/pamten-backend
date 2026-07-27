@@ -1643,6 +1643,7 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
         )
 
     from app.scraper.gleif_rr import import_rr_cdf
+    from app.scraper.maintenance import deduplicate_owns_edges
 
     source_id = _ensure_bods_gleif_source()
     log.info("GLEIF RR-CDF: importing from %s (limit=%s)", local_file, limit)
@@ -1652,7 +1653,12 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
         credibility_score=BODS_GLEIF_CREDIBILITY,
         limit=limit,
     )
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+    # RR consolidation edges overlap the GLEIF parent edges from the BODS import,
+    # so collapse the duplicates automatically (keeps the direct/indirect-flagged
+    # edge) — no separate "remember to dedup" step.
+    log.info("GLEIF RR-CDF: deduplicating overlapping OWNS edges")
+    dedup = deduplicate_owns_edges()
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts, "edge_dedup": dedup}
 
 
 # ── UK PSC public entry point ─────────────────────────────────────────────────

@@ -60,7 +60,7 @@ _OWNS_PAGE = 20000
 
 def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
     """Group active OWNS edges by their (owner, target) vertex pair, returning
-    {(out_rid, in_rid): [(edge_rid, stake_percent), ...]}.
+    {(out_rid, in_rid): [(edge_rid, stake_percent, direct_or_indirect), ...]}.
 
     Pages through the edges by @rid ordering and groups in Python, so there's NO
     server-side GROUP BY — a global `GROUP BY a.id, b.id` over the ~700k OWNS
@@ -72,13 +72,13 @@ def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
     while True:
         where = "WHERE until IS NULL" + (f" AND @rid > {last}" if last else "")
         rows = run_sql(
-            f"SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st "
-            f"FROM OWNS {where} ORDER BY @rid LIMIT {_OWNS_PAGE}"
+            f"SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
+            f"direct_or_indirect AS doi FROM OWNS {where} ORDER BY @rid LIMIT {_OWNS_PAGE}"
         )
         if not rows:
             break
         for r in rows:
-            pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st")))
+            pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
         last = rows[-1]["rid"]
         if len(rows) < _OWNS_PAGE:
             break
@@ -103,7 +103,13 @@ def count_duplicate_owns_edges() -> dict:
 def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     """
     For every (owner → target) pair with more than one active OWNS edge, keep one
-    (the largest stake) and delete the rest by @rid. Admin only.
+    and delete the rest by @rid. Admin only.
+
+    Survivor priority: largest stake first, then — among edges with an equal/absent
+    stake — the one carrying a `direct_or_indirect` marker. That keeps the GLEIF
+    RR-CDF direct/ultimate edge (stakeless but flagged) over a flagless duplicate
+    from the BODS import, so auto-running dedup after an RR import can't silently
+    drop the direct/indirect signal.
 
     Deleting by @rid preserves the kept edge's full provenance (unlike a
     delete-all-then-recreate, which drops properties), and the delete is batched
@@ -117,9 +123,14 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
         if len(edges) < 2:
             continue
         dup_pairs += 1
-        # keep the largest stake (None treated as -1); delete the rest
-        edges_sorted = sorted(edges, key=lambda e: (e[1] if e[1] is not None else -1), reverse=True)
-        to_delete.extend(rid for rid, _ in edges_sorted[1:])
+        # keep the largest stake (None treated as -1); tie-break on having a
+        # direct_or_indirect marker; delete the rest
+        edges_sorted = sorted(
+            edges,
+            key=lambda e: (e[1] if e[1] is not None else -1, 1 if e[2] else 0),
+            reverse=True,
+        )
+        to_delete.extend(rid for rid, _, _ in edges_sorted[1:])
 
     deleted = 0
     for i in range(0, len(to_delete), batch_size):

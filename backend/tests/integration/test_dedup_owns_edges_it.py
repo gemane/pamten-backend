@@ -51,3 +51,21 @@ def test_dedup_collapses_and_keeps_largest_stake(it_db):
     ab = it_db.run_query(
         "MATCH (a:Entity {id:'a'})-[r:OWNS]->(b:Entity {id:'b'}) RETURN r.stake_percent AS s")
     assert [r["s"] for r in ab] == [50]
+
+
+def test_dedup_keeps_direct_indirect_flagged_edge(it_db):
+    """RR-CDF vs BODS overlap: two stakeless edges for one pair, one carrying the
+    direct/indirect marker — the flagged (RR) edge must survive."""
+    from app.scraper import maintenance
+    for x in ("p", "c"):
+        it_db.run_command(f"CREATE (:Entity {{id:'{x}'}})")
+    it_db.run_command("MATCH (p:Entity{id:'p'}),(c:Entity{id:'c'}) "
+                      "CREATE (p)-[:OWNS{until:null}]->(c)")                      # BODS: flagless
+    it_db.run_command("MATCH (p:Entity{id:'p'}),(c:Entity{id:'c'}) "
+                      "CREATE (p)-[:OWNS{until:null, direct_or_indirect:'direct'}]->(c)")  # RR
+
+    res = maintenance.deduplicate_owns_edges()
+    assert res["duplicates_removed"] == 1
+    rows = it_db.run_query(
+        "MATCH (p:Entity{id:'p'})-[r:OWNS]->(c:Entity{id:'c'}) RETURN r.direct_or_indirect AS d")
+    assert [r["d"] for r in rows] == ["direct"]      # flagged edge survived
