@@ -1537,6 +1537,24 @@ def _ensure_bods_uk_psc_source() -> str:
         return source_id
 
 
+def _post_bods_import() -> dict:
+    """Housekeeping every BODS import needs, so it isn't a separate manual step:
+    flag nominee/custodian entities the load added, and collapse duplicate active
+    OWNS edges (CREATE EDGE isn't idempotent, so a re-import doubles them).
+    Best-effort — a failure here must not fail the import."""
+    from app.scraper.maintenance import flag_nominee_entities, deduplicate_owns_edges
+    out: dict = {}
+    try:
+        out["nominees"] = flag_nominee_entities()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("post-import flag-nominees failed: %s", exc)
+    try:
+        out["edge_dedup"] = deduplicate_owns_edges()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("post-import edge dedup failed: %s", exc)
+    return out
+
+
 # ── GLEIF public entry point ──────────────────────────────────────────────────
 
 def run_import_bods_gleif(
@@ -1595,7 +1613,8 @@ def run_import_bods_gleif(
             bulk_load=bulk_load,
         )
     return {"status": "ok", "source": GLEIF_SOURCE_NAME,
-            "duplicate_names": _duplicate_name_summary(), **counts}
+            "duplicate_names": _duplicate_name_summary(), **counts,
+            **_post_bods_import()}
 
 
 def run_import_gleif_succession(local_file: str, limit: int | None = None) -> dict:
@@ -1723,4 +1742,5 @@ def run_import_bods_uk_psc(
             bulk_load=bulk_load,
         )
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME,
-            "duplicate_names": _duplicate_name_summary(), **counts}
+            "duplicate_names": _duplicate_name_summary(), **counts,
+            **_post_bods_import()}
