@@ -1625,6 +1625,36 @@ def run_import_gleif_succession(local_file: str, limit: int | None = None) -> di
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 
 
+def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
+    """
+    Import GLEIF RR-CDF (Level 2) direct/ultimate consolidation parents as
+    direct/indirect OWNS edges. Reuses the GLEIF source + flags. `local_file` is a
+    pre-downloaded RR-CDF golden-copy .json/.zip. Checks SCRAPER_ENABLED and
+    SCRAPER_BODS_GLEIF_ENABLED.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.gleif_rr import import_rr_cdf
+
+    source_id = _ensure_bods_gleif_source()
+    log.info("GLEIF RR-CDF: importing from %s (limit=%s)", local_file, limit)
+    counts = import_rr_cdf(
+        filepath=local_file,
+        source_id=source_id,
+        credibility_score=BODS_GLEIF_CREDIBILITY,
+        limit=limit,
+    )
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+
+
 # ── UK PSC public entry point ─────────────────────────────────────────────────
 
 def run_import_bods_uk_psc(
