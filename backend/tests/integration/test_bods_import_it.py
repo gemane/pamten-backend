@@ -61,6 +61,38 @@ def test_run_import_writes_person_and_entity_ownership_inline(it_db):
     assert entity_owns and entity_owns[0]["s"] == 30
 
 
+def test_voting_and_economic_kept_separate_on_edge(it_db):
+    """A statement with shareholding + votingRights → one edge carrying both the
+    economic stake and the voting %, plus the interest_types list."""
+    from app.scraper.bods import _run_import
+
+    rel = {"recordType": "relationship", "recordId": "R-mix",
+           "recordDetails": {
+               "subject": {"describedByEntityStatement": "E1"},
+               "interestedParty": {"describedByEntityStatement": "E2"},
+               "interests": [
+                   {"type": "shareholding", "share": {"exact": 10}},
+                   {"type": "votingRights", "share": {"minimum": 75}},
+               ]}}
+    stmts = [
+        _entity("E1", "Target AG", "LEI-TGT"),
+        _entity("E2", "Controller AG", "LEI-CTL"),
+        rel,
+    ]
+    _run_import(iter(stmts), source_id="src", credibility_score=97,
+                limit=None, filter_jurisdiction=None)
+
+    row = it_db.run_command(
+        "MATCH (a:Entity {name:'Controller AG'})-[o:OWNS]->(e:Entity {name:'Target AG'}) "
+        "RETURN o.stake_percent AS stake, o.voting_power_pct AS voting, "
+        "o.ownership_type AS type, o.interest_types AS interests")
+    assert row, "expected one OWNS edge"
+    r = row[0]
+    assert r["stake"] == 10 and r["voting"] == 75      # economic vs voting kept apart
+    assert r["type"] == "controlling"
+    assert set(r["interests"]) == {"shareholding", "votingRights"}
+
+
 def test_relationship_before_its_foreign_parent_uses_placeholder(it_db):
     """An imported company owned by a not-yet-seen foreign parent still gets an
     edge (to a placeholder), inline — nothing is lost."""

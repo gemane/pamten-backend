@@ -21,7 +21,7 @@ roles, and locations are edges.
 
 | Pattern | Properties |
 |---|---|
-| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent`, `voting_power_pct`, `ownership_type` (full/majority/minority/controlling/partnership/free_float), `since`, `until`, `source_id`, `source_url`, `source_date`. Free float / >100% conflicts aren't stored — the full-profile endpoint derives them from the disclosed stakes on read (`ownership` summary) |
+| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent` (economic holding), `voting_power_pct` (voting rights — kept separate from the stake; from BODS `votingRights` interests and DEF 14A proxies), `interest_types[]` (BODS interest kinds behind the edge: shareholding/votingRights/appointmentOfBoard/…), `ownership_type` (full/majority/minority/controlling/partnership/free_float), `since`, `until`, `source_id`, `source_url`, `source_date`. Free float / >100% conflicts aren't stored — the full-profile endpoint derives them from the disclosed stakes on read (`ownership` summary) |
 | `(Person)-[:HAS_ROLE]->(Entity)` | `role`, `since`, `until`, `source_id`, `source_url`, `source_date` |
 | `(Person)-[:RELATED_TO]->(Person)` | `relation`, `source_id` |
 | `(Person)-[:NOT_DUPLICATE]->(Person)` | `at` — marks two people confirmed to be *different* (keep-separate) |
