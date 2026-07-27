@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.scraper.runner import (
     run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
-    run_import_bods_gleif, run_import_bods_uk_psc,
+    run_import_bods_uk_psc,
 )
 from app.auth.dependencies import require_admin, require_contributor
 from app.scraper import maintenance, proxy_write
@@ -413,46 +413,9 @@ def bods_status():
     }
 
 
-@router.post("/bods/gleif/run")
-def bods_gleif_run(
-    limit: int | None = Query(
-        None, ge=1,
-        description="Max entity statements to process. Omit for the full ~5 M-entity dataset.",
-    ),
-    filter_jurisdiction: str | None = Query(
-        None, min_length=2, max_length=2,
-        description="ISO alpha-2 country code to restrict entity imports, e.g. 'DE'.",
-    ),
-    local_file: str | None = Query(
-        None,
-        description="Path to a pre-downloaded .zip or .json file. "
-                    "Skips the ~1.1 GB download when given.",
-    ),
-    _: dict = Depends(require_contributor),
-):
-    """
-    Import the GLEIF BODS dataset (CC0) into the graph.
-    Downloads ~1.1 GB if no local_file is given; allow 10–30 min for the full dataset.
-    Requires SCRAPER_ENABLED=true AND SCRAPER_BODS_GLEIF_ENABLED=true.
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise HTTPException(status_code=403,
-            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise HTTPException(status_code=403,
-            detail="GLEIF scraper is disabled. Set SCRAPER_BODS_GLEIF_ENABLED=true.")
-    local_file = _validate_bods_local_file(local_file)
-    try:
-        return run_import_bods_gleif(
-            limit=limit,
-            filter_jurisdiction=filter_jurisdiction,
-            local_file=local_file,
-        )
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception:
-        logger.exception("GLEIF BODS import failed")
-        raise HTTPException(status_code=500, detail="GLEIF import failed. Check server logs for details.")
+# GLEIF is imported from the golden copy (LEI-CDF/RR-CDF) via the CLI
+# (manage.py gleif-lei-cdf / gleif-rr / gleif-succession), not this HTTP endpoint —
+# the golden-copy files are multi-GB local batch loads, not a URL fetch.
 
 
 @router.post("/bods/uk-psc/run")
@@ -495,8 +458,8 @@ def bods_run_all(
     _: dict = Depends(require_contributor),
 ):
     """
-    Run both GLEIF and UK PSC imports if their respective flags are enabled.
-    Disabled sources are skipped and reported with status 'disabled'.
+    Run the UK PSC BODS import if its flag is enabled (GLEIF is imported from the
+    golden copy via the CLI, not over BODS). Disabled sources report 'disabled'.
     Requires SCRAPER_ENABLED=true.
     """
     if not settings.SCRAPER_ENABLED:
@@ -504,17 +467,6 @@ def bods_run_all(
             detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
 
     results: dict = {}
-
-    if settings.SCRAPER_BODS_GLEIF_ENABLED:
-        try:
-            results["gleif"] = run_import_bods_gleif(limit=limit)
-        except PermissionError as e:
-            results["gleif"] = {"status": "disabled", "detail": str(e)}
-        except Exception:
-            logger.exception("GLEIF BODS import failed (run-all)")
-            results["gleif"] = {"status": "error", "detail": "Import failed. Check server logs for details."}
-    else:
-        results["gleif"] = {"status": "disabled"}
 
     if settings.SCRAPER_BODS_UK_PSC_ENABLED:
         try:

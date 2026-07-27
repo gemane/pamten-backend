@@ -103,7 +103,6 @@ OPENCORPORATES_CREDIBILITY = 85
 
 GLEIF_SOURCE_NAME        = "GLEIF"
 GLEIF_SOURCE_URL         = "https://www.gleif.org"
-GLEIF_BODS_URL           = "https://oo-bodsdata.s3.amazonaws.com/data/gleif_version_0_4/json.zip"
 BODS_GLEIF_CREDIBILITY   = 92   # authoritative LEI data, CC0 — corporate not beneficial ownership
 
 UK_PSC_SOURCE_NAME       = "UK PSC"
@@ -1555,67 +1554,9 @@ def _post_bods_import() -> dict:
     return out
 
 
-# ── GLEIF public entry point ──────────────────────────────────────────────────
-
-def run_import_bods_gleif(
-    limit: int | None = None,
-    filter_jurisdiction: str | None = None,
-    local_file: str | None = None,
-    bulk_load: bool = False,
-) -> dict:
-    """
-    Import GLEIF dataset.
-    Checks SCRAPER_ENABLED and SCRAPER_BODS_GLEIF_ENABLED.
-    If local_file is given, import from file instead of URL.
-
-    Args:
-        limit:               Max entity statements to process (None = full dataset).
-        filter_jurisdiction: ISO alpha-2 country code to restrict entity imports.
-        local_file:          Path to a pre-downloaded .zip or .json file.
-        bulk_load:           Drop secondary indexes for the load, rebuild after
-                             (much faster on a full import; see bods._run_import).
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise PermissionError(
-            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
-        )
-    if not get_source_enabled("bods_gleif"):
-        raise PermissionError("GLEIF source is disabled. Enable it in the Scraper panel.")
-
-    from app.scraper.bods import import_bods_source, import_bods_file
-
-    source_id = _ensure_bods_gleif_source()
-    log.info("GLEIF runner: starting BODS import (limit=%s, jurisdiction=%s, local=%s)",
-             limit, filter_jurisdiction, local_file)
-
-    if local_file:
-        counts = import_bods_file(
-            filepath=local_file,
-            source_id=source_id,
-            credibility_score=BODS_GLEIF_CREDIBILITY,
-            limit=limit,
-            filter_jurisdiction=filter_jurisdiction,
-            bulk_load=bulk_load,
-        )
-    else:
-        counts = import_bods_source(
-            source_name=GLEIF_SOURCE_NAME,
-            url=GLEIF_BODS_URL,
-            source_id=source_id,
-            credibility_score=BODS_GLEIF_CREDIBILITY,
-            limit=limit,
-            filter_jurisdiction=filter_jurisdiction,
-            bulk_load=bulk_load,
-        )
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME,
-            "duplicate_names": _duplicate_name_summary(), **counts,
-            **_post_bods_import()}
-
+# ── GLEIF public entry points (golden copy) ───────────────────────────────────
+# The OpenOwnership GLEIF BODS import was retired — GLEIF entities/relationships/
+# succession now come from the current golden copy (LEI-CDF + RR-CDF), below.
 
 def run_import_gleif_succession(local_file: str, limit: int | None = None) -> dict:
     """

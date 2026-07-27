@@ -831,7 +831,7 @@ class TestRunnerPermissions:
         monkeypatch.setattr(r.settings, "SCRAPER_ENABLED", False)
 
         with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):
-            r.run_import_bods_gleif()
+            r.run_import_gleif_lei_cdf("dummy.zip")
 
     def test_gleif_raises_when_source_flag_disabled(self, monkeypatch):
         from app.scraper import runner as r
@@ -840,7 +840,7 @@ class TestRunnerPermissions:
         monkeypatch.setattr(r.settings, "SCRAPER_BODS_GLEIF_ENABLED", False)
 
         with pytest.raises(PermissionError, match="SCRAPER_BODS_GLEIF_ENABLED"):
-            r.run_import_bods_gleif()
+            r.run_import_gleif_lei_cdf("dummy.zip")
 
     def test_uk_psc_raises_when_master_disabled(self, monkeypatch):
         from app.scraper import runner as r
