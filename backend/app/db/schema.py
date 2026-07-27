@@ -91,10 +91,13 @@ def _statements() -> list[str]:
     for etype in _EDGE_TYPES:
         stmts.append(f"CREATE EDGE TYPE {etype} IF NOT EXISTS")
     for vtype, prop, kind in _INDEXES:
-        stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING")
+        # `IF NOT EXISTS` goes BEFORE the type in ArcadeDB SQL — makes the DDL
+        # idempotent so re-runs (startup, bulk-load index rebuild) don't log a
+        # "property already exists" failure for every property.
+        stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}")
     for vtype, prop in _FULLTEXT_INDEXES:
-        stmts.append(f"CREATE PROPERTY {vtype}.{prop} STRING")
+        stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT")
     return stmts
 

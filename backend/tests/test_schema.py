@@ -24,7 +24,7 @@ def test_creates_property_and_index_for_each_entry():
     issued = [c.args[0] for c in m.call_args_list]
     # spot-check the hot-path lookup indexes
     assert any("CREATE INDEX IF NOT EXISTS ON Entity (name_normalized) NOTUNIQUE" == s for s in issued)
-    assert any("CREATE PROPERTY Entity.wikidata_id STRING" == s for s in issued)
+    assert any("CREATE PROPERTY Entity.wikidata_id IF NOT EXISTS STRING" == s for s in issued)
     assert result["skipped"] is False
     assert result["failed"] == []
 
@@ -37,16 +37,17 @@ def test_id_and_email_indexes_are_unique():
     assert "CREATE INDEX IF NOT EXISTS ON Entity (id) UNIQUE" in issued
 
 
-def test_is_idempotent_vertex_types_and_indexes_use_if_not_exists():
+def test_is_idempotent_all_ddl_uses_if_not_exists():
     with _run() as m:
         schema.ensure_indexes()
     issued = [c.args[0] for c in m.call_args_list]
-    # VERTEX TYPE and INDEX statements use IF NOT EXISTS; PROPERTY statements do not
+    # Every DDL statement is idempotent — VERTEX TYPE, EDGE TYPE, PROPERTY and
+    # INDEX all use IF NOT EXISTS, so a re-run (startup, bulk-load rebuild) logs
+    # no "already exists" failures. For PROPERTY it must sit BEFORE the type.
     for s in issued:
-        if s.startswith("CREATE VERTEX TYPE") or s.startswith("CREATE INDEX"):
-            assert "IF NOT EXISTS" in s, s
-        elif s.startswith("CREATE PROPERTY"):
-            assert "IF NOT EXISTS" not in s, s
+        assert "IF NOT EXISTS" in s, s
+        if s.startswith("CREATE PROPERTY"):
+            assert s.endswith("IF NOT EXISTS STRING"), s
 
 
 def test_continues_and_records_failures():
