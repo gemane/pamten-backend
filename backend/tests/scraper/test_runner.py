@@ -25,6 +25,7 @@ from app.scraper.runner import (
     _upsert_person,
     _upsert_owns,
     _upsert_succession,
+    _merge_aliases,
     _scrape_node,
     _upsert_role,
     _upsert_role_sec,
@@ -843,3 +844,41 @@ class TestSuccession:
             _scrape_node("Q117617480", depth=0, visited=set(), scraped=[], source_id="src-1")
         # predecessor (Twitter) → successor (X Corp., the scraped entity)
         assert ("id:Q1390577", "id:Q117617480") in calls
+
+
+# ── SEC formerNames → aliases / search_text ───────────────────────────────────
+
+class TestFormerNamesAliases:
+    def test_merge_aliases_unions_dedupes_drops_current_name(self):
+        assert _merge_aliases(["Old A"], ["Old B", "old a", "Meta"], "Meta") == ["Old A", "Old B"]
+        assert _merge_aliases(None, None) == []
+        assert _merge_aliases([" X "], [" x "]) == ["X"]     # trim + case-fold
+
+    def test_create_sets_aliases_and_search_text(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value=None):
+            _upsert_entity_by_name("Meta Platforms, Inc.", cik="1326801",
+                                   source_id="sec", former_names=["Facebook Inc"])
+        create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
+        assert create.kwargs["aliases"] == ["Facebook Inc"]
+        assert "Facebook Inc" in create.kwargs["search_text"]
+        assert "Meta Platforms, Inc." in create.kwargs["search_text"]
+
+    def test_existing_merges_without_duplicating(self):
+        ctx, session = _make_session_mock(single_returns=[
+            {"name": "Meta Platforms, Inc.", "aliases": ["Facebook Inc"], "descr": None},
+        ])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value="eid-1"):
+            _upsert_entity_by_name("Meta Platforms, Inc.", cik="1326801", source_id="sec",
+                                   former_names=["Facebook Inc", "TheFacebook, Inc."])
+        setcall = next(c for c in session.run.call_args_list if "aliases" in c.kwargs)
+        assert setcall.kwargs["aliases"] == ["Facebook Inc", "TheFacebook, Inc."]  # no dup
+
+    def test_no_former_names_leaves_aliases_untouched(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value="eid-1"):
+            _upsert_entity_by_name("Acme Corp", cik="999", source_id="sec")
+        assert not any("aliases" in c.kwargs for c in session.run.call_args_list)

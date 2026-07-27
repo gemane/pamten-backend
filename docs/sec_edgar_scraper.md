@@ -17,12 +17,21 @@ No API key is required. All endpoints are public. The SEC requires a descriptive
 | Endpoint | Purpose |
 |---|---|
 | `https://www.sec.gov/files/company_tickers.json` | CIK lookup for all listed companies |
-| `https://data.sec.gov/submissions/CIK{cik}.json` | Company filing index (recent filings metadata) |
+| `https://data.sec.gov/submissions/CIK{cik}.json` | Company filing index (recent filings metadata) + `formerNames` |
 | `https://www.sec.gov/cgi-bin/browse-edgar?output=atom` | SC 13D/13G filing list per company (Atom feed) |
 | `https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/` | Individual filing documents |
 | `https://efts.sec.gov/LATEST/search-index` | Full-text search (fallback for company CIK lookup only) |
 
 **Rate limit:** 10 requests/second. The scraper sleeps 0.12 s between every request.
+
+## Former names → aliases
+
+The submissions JSON carries `formerNames` (prior registered names under the **same
+CIK** — e.g. *Meta Platforms, Inc.* ⟵ "Facebook Inc"). EDGAR has no distinct-entity
+successor link, so these are a rename of one legal entity, not a `SUCCEEDED_BY`
+edge. `fetch_former_names(cik)` reads them and `_upsert_entity_by_name` folds them
+into the entity's `aliases` + `search_text` (merged, never clobbering existing
+aliases), so the old name is searchable ("Facebook" → Meta Platforms).
 
 ---
 

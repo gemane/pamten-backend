@@ -10,7 +10,6 @@ during development:
   - company_tickers.json preferred over full-text search to avoid ambiguity
 """
 
-import pytest
 import textwrap
 from unittest.mock import patch, MagicMock
 
@@ -24,8 +23,32 @@ from app.scraper.sec_edgar import (
     _ticker_normalize,
     _lookup_in_tickers,
     search_company,
-    scrape_company,
+    fetch_former_names,
 )
+
+
+class TestFetchFormerNames:
+    _SUBS = {"name": "Meta Platforms, Inc.", "formerNames": [
+        {"name": "Facebook Inc", "from": "2005-05-06T00:00:00.000Z", "to": "2021-10-27T00:00:00.000Z"},
+        {"name": "TheFacebook, Inc.", "from": "2004-01-01T00:00:00.000Z", "to": "2005-05-05T00:00:00.000Z"},
+    ]}
+
+    def test_returns_former_names_in_order(self):
+        with patch("app.scraper.sec_edgar._get", return_value=self._SUBS):
+            assert fetch_former_names("0001326801") == ["Facebook Inc", "TheFacebook, Inc."]
+
+    def test_dedupes_case_insensitively(self):
+        subs = {"formerNames": [{"name": "Square, Inc."}, {"name": "SQUARE, INC."}, {"name": ""}]}
+        with patch("app.scraper.sec_edgar._get", return_value=subs):
+            assert fetch_former_names("x") == ["Square, Inc."]
+
+    def test_empty_or_missing(self):
+        with patch("app.scraper.sec_edgar._get", return_value={"name": "Acme"}):
+            assert fetch_former_names("x") == []
+
+    def test_swallows_fetch_error(self):
+        with patch("app.scraper.sec_edgar._get", side_effect=RuntimeError("404")):
+            assert fetch_former_names("x") == []
 
 
 # ── Pure helpers ───────────────────────────────────────────────────────────────

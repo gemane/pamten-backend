@@ -745,15 +745,43 @@ def _ensure_sec_edgar_source() -> str:
         return source_id
 
 
+def _search_text(name: str, description: str | None, aliases: list[str] | None) -> str:
+    """FULL_TEXT search field: name + description + aliases (same recipe as the
+    Wikidata scraper and manage.py backfill-search)."""
+    return " ".join(p for p in (
+        name, description or "", " ".join(aliases or [])) if p).strip()
+
+
+def _merge_aliases(existing: list[str] | None, new: list[str] | None,
+                   current_name: str | None = None) -> list[str]:
+    """Union of `existing` + `new` aliases, order-preserving, deduped
+    case-insensitively, excluding the entity's current legal name."""
+    out: list[str] = []
+    seen: set[str] = set()
+    skip = (current_name or "").strip().lower()
+    for a in list(existing or []) + list(new or []):
+        a = (a or "").strip()
+        k = a.lower()
+        if a and k != skip and k not in seen:
+            seen.add(k)
+            out.append(a)
+    return out
+
+
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None,
-                            source_id: str | None = None) -> str:
+                            source_id: str | None = None,
+                            former_names: list[str] | None = None) -> str:
     """Find or create an Entity node matched by CIK, exact name, or normalized name.
 
     ``source_id`` (the calling scraper's Source node — SEC EDGAR or
     OpenCorporates) is stamped so the entity's own provenance shows in the node
     panel. On an existing node it only fills a missing value, so a register or
-    Wikidata source already recorded isn't overwritten."""
+    Wikidata source already recorded isn't overwritten.
+
+    ``former_names`` (SEC EDGAR ``formerNames`` — prior names of the *same* CIK)
+    are folded into the entity's ``aliases`` + ``search_text`` so the old name is
+    searchable (e.g. "Facebook" → Meta Platforms). Merged, never clobbered."""
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
         # Indexed lookups first (an OR full-scans the Entity type on ArcadeDB).
@@ -781,22 +809,44 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             # Only stamp the CIK onto the existing entity; preserve whatever
             # name and credibility the entity already has (Wikidata names are
             # human-readable; EDGAR registered names are all-caps legal strings).
-            session.run(
-                """
-                MATCH (e:Entity {id: $id})
-                SET e.sec_cik   = COALESCE($cik, e.sec_cik),
-                    e.source_id = COALESCE(e.source_id, $source_id)
-                """,
-                id=entity_id, cik=cik, source_id=source_id,
-            )
+            if former_names:
+                # Fold former names into aliases + search_text (union, no clobber).
+                rec = session.run(
+                    "MATCH (e:Entity {id: $id}) RETURN e.name AS name, "
+                    "e.aliases AS aliases, e.description AS descr",
+                    id=entity_id,
+                ).single()
+                cur_name = (rec["name"] if rec else None) or name
+                merged   = _merge_aliases(rec["aliases"] if rec else None, former_names, cur_name)
+                session.run(
+                    """
+                    MATCH (e:Entity {id: $id})
+                    SET e.sec_cik     = COALESCE($cik, e.sec_cik),
+                        e.source_id   = COALESCE(e.source_id, $source_id),
+                        e.aliases     = $aliases,
+                        e.search_text = $search_text
+                    """,
+                    id=entity_id, cik=cik, source_id=source_id, aliases=merged,
+                    search_text=_search_text(cur_name, rec["descr"] if rec else None, merged),
+                )
+            else:
+                session.run(
+                    """
+                    MATCH (e:Entity {id: $id})
+                    SET e.sec_cik   = COALESCE($cik, e.sec_cik),
+                        e.source_id = COALESCE(e.source_id, $source_id)
+                    """,
+                    id=entity_id, cik=cik, source_id=source_id,
+                )
             return entity_id
 
         entity_id = str(uuid.uuid4())
+        aliases = _merge_aliases([], former_names, name)
         session.run(
             """
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
-                name_credibility: $cred,
+                name_credibility: $cred, search_text: $search_text, aliases: $aliases,
                 type: $type, sec_cik: $cik, verified: false, source_id: $source_id,
                 country: null, founded: null, revenue: null,
                 description: null, wikidata_id: null
@@ -804,6 +854,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             """,
             id=entity_id, name=name, name_norm=name_norm,
             cred=SEC_EDGAR_CREDIBILITY, type=entity_type, cik=cik, source_id=source_id,
+            search_text=_search_text(name, None, aliases), aliases=aliases,
         )
         return entity_id
 
@@ -1013,6 +1064,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         entity_type="company",
         cik=data.get("cik"),
         source_id=source_id,
+        former_names=data.get("former_names"),
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 

@@ -871,6 +871,30 @@ def fetch_shares_outstanding(cik: str) -> float | None:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+def fetch_former_names(cik: str) -> list[str]:
+    """
+    Prior registered names of a company from its EDGAR submissions (``formerNames``).
+
+    EDGAR records a rename under the *same* CIK (e.g. "Facebook Inc" → "Meta
+    Platforms, Inc."), so these are aliases of one legal entity, not a successor
+    link. Returns the distinct former names (order preserved), or [] on any error.
+    """
+    try:
+        sub = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+    except Exception as exc:  # noqa: BLE001 - a missing/failed submissions file mustn't abort the scrape
+        log.warning("SEC EDGAR: formerNames fetch failed for CIK=%s: %s", cik, exc)
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in sub.get("formerNames") or []:
+        name = (entry.get("name") or "").strip()
+        key = name.lower()
+        if name and key not in seen:
+            seen.add(key)
+            out.append(name)
+    return out
+
+
 def scrape_company(company_name: str) -> dict | None:
     """
     Full SEC EDGAR scrape for one company.
@@ -881,9 +905,10 @@ def scrape_company(company_name: str) -> dict | None:
     if not company:
         return None
 
-    cik        = company.get("cik")
-    ownership  = fetch_ownership_filings(company_name, company_cik=cik)
-    executives = fetch_executives(cik) if cik else []
+    cik          = company.get("cik")
+    former_names = fetch_former_names(cik) if cik else []
+    ownership    = fetch_ownership_filings(company_name, company_cik=cik)
+    executives   = fetch_executives(cik) if cik else []
 
     # Turn each insider's Form-4 share holding into a stake %, when we can read
     # the issuer's shares outstanding.
@@ -897,6 +922,7 @@ def scrape_company(company_name: str) -> dict | None:
     return {
         "cik":                company["cik"],
         "name":               company["name"],
+        "former_names":       former_names,
         "ownership_filings":  ownership,
         "executives":         executives,
         "shares_outstanding": shares_out,
