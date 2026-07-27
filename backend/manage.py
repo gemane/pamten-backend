@@ -46,6 +46,15 @@ def cmd_ch_psc(args):
                                bulk_load=getattr(args, "bulk_load", False))
     print(result)
 
+def cmd_ch_company_data(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
+    from app.scraper.runner import run_import_basic_company_data
+    result = run_import_basic_company_data(local_file=args.file, limit=args.limit,
+                                           bulk_load=getattr(args, "bulk_load", False))
+    print(result)
+
 def cmd_gleif_lei_cdf(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -354,6 +363,15 @@ def _build_parser():
     p_chp.add_argument('--bulk-load', action='store_true',
                        help='Drop secondary indexes during the load and rebuild after')
     p_chp.set_defaults(func=cmd_ch_psc)
+
+    # ch-company-data command (Companies House register — names/addresses for PSC companies)
+    p_chc = subparsers.add_parser('ch-company-data',
+                                  help='Enrich UK companies with names/addresses from a Companies House BasicCompanyData snapshot')
+    p_chc.add_argument('--file', required=True, help='Path to a local BasicCompanyData .zip')
+    p_chc.add_argument('--limit', type=int, help='Max rows to scan')
+    p_chc.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after')
+    p_chc.set_defaults(func=cmd_ch_company_data)
 
     # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)
     p_lei = subparsers.add_parser('gleif-lei-cdf',

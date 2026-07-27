@@ -110,6 +110,10 @@ UK_PSC_SOURCE_URL        = "https://www.gov.uk/government/publications/persons-w
 UK_PSC_BODS_URL          = "https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip"
 BODS_UK_PSC_CREDIBILITY  = 97   # statutory UK legal register, CC0
 
+# Companies House BasicCompanyData (the UK company register) — names/addresses for
+# the number-keyed companies the PSC import creates. Enrichment only, no edges.
+CH_REGISTER_CREDIBILITY  = 97   # statutory UK register, authoritative for the name
+
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
@@ -1588,6 +1592,37 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
     )
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts,
             **_post_bods_import()}
+
+
+def run_import_basic_company_data(local_file: str, limit: int | None = None,
+                                  bulk_load: bool = False) -> dict:
+    """
+    Enrich number-keyed UK companies (gb-coh:{number}) with names/addresses/former
+    names from a Companies House BasicCompanyData snapshot — the companion to the
+    PSC import, which leaves controlled companies un-named. Enrichment only (no
+    nodes/edges created), so no _post_bods_import housekeeping is needed. Gated on
+    SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED (same UK-data switch as PSC).
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
+        raise PermissionError(
+            "UK PSC scraper is disabled. "
+            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.basic_company_data import import_basic_company_data
+
+    log.info("CH BasicData: importing from %s (limit=%s)", local_file, limit)
+    counts = import_basic_company_data(
+        filepath=local_file,
+        credibility_score=CH_REGISTER_CREDIBILITY,
+        limit=limit,
+        bulk_load=bulk_load,
+    )
+    return {"status": "ok", "source": "Companies House Register", **counts}
 
 
 def run_import_gleif_succession(local_file: str, limit: int | None = None) -> dict:
