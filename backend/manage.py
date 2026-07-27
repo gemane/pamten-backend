@@ -41,6 +41,14 @@ def cmd_gleif_succession(args):
     result = run_import_gleif_succession(local_file=args.file, limit=args.limit)
     print(result)
 
+def cmd_gleif_rr(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    from app.scraper.runner import run_import_gleif_rr
+    result = run_import_gleif_rr(local_file=args.file, limit=args.limit)
+    print(result)
+
 def cmd_bods_uk_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -326,6 +334,13 @@ def _build_parser():
     p_succ.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
     p_succ.add_argument('--limit', type=int, help='Max records to scan')
     p_succ.set_defaults(func=cmd_gleif_succession)
+
+    # gleif-rr command
+    p_rr = subparsers.add_parser('gleif-rr',
+                                 help='Import GLEIF RR-CDF direct/ultimate parents as direct/indirect OWNS edges')
+    p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
+    p_rr.add_argument('--limit', type=int, help='Max records to scan')
+    p_rr.set_defaults(func=cmd_gleif_rr)
     return parser
 
 

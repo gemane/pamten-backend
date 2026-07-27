@@ -546,14 +546,16 @@ def _person(batch, node_id, full_name, first_name, last_name, nationality, birth
 
 def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until,
           source_id, credibility_score, source_url=None, source_date=None, owner_label="Entity",
-          voting_power_pct=None, interest_types=None):
+          voting_power_pct=None, interest_types=None, direct_or_indirect=None):
     """Enqueue an OWNS edge (owner is an Entity or a Person; owned is an Entity).
 
     `stake_percent` is the *economic* holding (shareholding interest);
     `voting_power_pct` the *voting* rights (votingRights interest) — kept separate
     so voting control isn't conflated with the economic stake. `interest_types`
     is the set of BODS interest types behind the edge (shareholding/votingRights/
-    appointmentOfBoard/…) for transparency."""
+    appointmentOfBoard/…) for transparency. `direct_or_indirect` (from GLEIF RR-CDF:
+    'direct' = directly-consolidated parent, 'indirect' = ultimate parent) marks
+    whether the edge is a direct holding or an indirect/ultimate control summary."""
     if owner_label not in ("Entity", "Person"):
         owner_label = "Entity"
     batch.owns(owner_id, owner_label, owned_id, {
@@ -561,6 +563,7 @@ def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until
         "ownership_type": ownership_type,
         "voting_power_pct": voting_power_pct,
         "interest_types": interest_types or [],
+        "direct_or_indirect": direct_or_indirect,
         "since": since,
         "until": until,
         "source_id": source_id,
