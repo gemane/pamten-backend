@@ -7,6 +7,13 @@ from unittest.mock import MagicMock, patch
 from app.notifications import email as mail
 
 
+def test_suite_never_uses_smtp_by_default():
+    # Safety net: the test suite must resolve to the console backend, so no test
+    # can open a real SMTP connection (once sent verification mail to the fake
+    # addresses new@x.com / first@x.com when a local .env had Gmail creds).
+    assert mail._resolve_backend() == "console"
+
+
 def test_backend_auto_selects_console_without_smtp_host(monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "EMAIL_BACKEND", "")
