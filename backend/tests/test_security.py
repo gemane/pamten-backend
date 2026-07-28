@@ -114,7 +114,7 @@ def test_totp_round_trip_and_rejects_wrong_code():
 
 def test_provisioning_uri_is_scannable():
     secret = generate_totp_secret()
-    uri = totp_provisioning_uri(secret, "user@x.com")
+    uri = totp_provisioning_uri(secret, "user@example.com")
     assert uri.startswith("otpauth://totp/Pamten:")
     assert f"secret={secret}" in uri and "issuer=Pamten" in uri
     assert "digits=6" in uri and "period=30" in uri

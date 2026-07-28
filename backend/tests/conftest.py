@@ -29,7 +29,7 @@ for k, v in _TEST_ENV.items():
 # Never send real email from the test suite. Some tests exercise the register /
 # reset paths without stubbing the sender, so with real SMTP creds in a local
 # .env the suite would actually send verification mail to the fake test addresses
-# (new@x.com, first@x.com, …) and get bounced. Force the console backend here —
+# (new@example.com, first@example.com, …) and get bounced. Force the console backend here —
 # an env var beats the .env file, so this overrides any real SMTP config.
 os.environ["EMAIL_BACKEND"] = "console"
 os.environ["SMTP_HOST"] = ""
@@ -112,7 +112,7 @@ def client():
 
 @pytest.fixture
 def make_token():
-    """Factory: make_token(role='admin', sub='u1', email='a@x.com') -> JWT string."""
+    """Factory: make_token(role='admin', sub='u1', email='a@example.com') -> JWT string."""
     from app.auth.security import create_access_token
 
     def _make(role="viewer", sub="user-1", email="user@example.com"):
