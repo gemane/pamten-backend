@@ -1,8 +1,26 @@
+import base64
 import hashlib
+import os
+import secrets
+import time as _time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
+
 import bcrypt
 import jwt
+from cryptography.hazmat.primitives.hashes import SHA1
+from cryptography.hazmat.primitives.twofactor import InvalidToken
+from cryptography.hazmat.primitives.twofactor.totp import TOTP
+
 from app.config import settings
+
+# TOTP parameters (RFC 6238) — the defaults every authenticator app assumes.
+_TOTP_DIGITS = 6
+_TOTP_PERIOD = 30
+_TOTP_SECRET_BYTES = 20          # 160-bit shared secret
+_TOTP_SKEW_STEPS = 1             # accept the adjacent 30s windows (clock drift)
+_MFA_ISSUER = "Pamten"
+_RECOVERY_CODE_COUNT = 10
 
 # bcrypt only considers the first 72 bytes of a password; bcrypt >= 4.1 raises
 # if given more, so truncate to match (passlib truncated internally too). This
@@ -74,3 +92,58 @@ def verify_purpose_token(token: str, purpose: str) -> dict:
     if claims.get("purpose") != purpose:
         raise TokenError("Invalid link")
     return claims
+
+
+# ── TOTP two-factor auth (RFC 6238) + recovery codes ──────────────────────────
+
+def generate_totp_secret() -> str:
+    """A fresh base32 TOTP shared secret (what authenticator apps store)."""
+    return base64.b32encode(os.urandom(_TOTP_SECRET_BYTES)).decode("ascii")
+
+
+def totp_provisioning_uri(secret_b32: str, account: str) -> str:
+    """otpauth:// URI for a QR code — scanned by Google Authenticator/Authy. The
+    label is `Issuer:Account` with the colon separator kept literal (as apps
+    expect) and each part percent-encoded."""
+    label = f"{quote(_MFA_ISSUER)}:{quote(account)}"
+    return (f"otpauth://totp/{label}?secret={secret_b32}&issuer={quote(_MFA_ISSUER)}"
+            f"&algorithm=SHA1&digits={_TOTP_DIGITS}&period={_TOTP_PERIOD}")
+
+
+def _totp(secret_b32: str) -> TOTP:
+    key = base64.b32decode(secret_b32)
+    return TOTP(key, _TOTP_DIGITS, SHA1(), _TOTP_PERIOD)
+
+
+def verify_totp(secret_b32: str, code: str) -> bool:
+    """True if `code` is valid for the secret now (± one step for clock drift)."""
+    code = (code or "").strip()
+    if not code.isdigit():
+        return False
+    try:
+        totp = _totp(secret_b32)
+    except (ValueError, TypeError):
+        return False
+    now = int(_time.time())
+    for step in range(-_TOTP_SKEW_STEPS, _TOTP_SKEW_STEPS + 1):
+        try:
+            totp.verify(code.encode("ascii"), now + step * _TOTP_PERIOD)
+            return True
+        except InvalidToken:
+            continue
+    return False
+
+
+def generate_recovery_codes(n: int = _RECOVERY_CODE_COUNT) -> list[str]:
+    """One-time backup codes shown once at enrolment (formatted xxxxx-xxxxx)."""
+    codes = []
+    for _ in range(n):
+        raw = secrets.token_hex(5)   # 10 hex chars
+        codes.append(f"{raw[:5]}-{raw[5:]}")
+    return codes
+
+
+def hash_recovery_code(code: str) -> str:
+    """Stable digest for storing/matching a recovery code (case/format-insensitive)."""
+    normalized = (code or "").strip().lower().replace("-", "")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
