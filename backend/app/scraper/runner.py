@@ -1558,6 +1558,38 @@ def _post_bods_import() -> dict:
 # The OpenOwnership GLEIF BODS import was retired — GLEIF entities/relationships/
 # succession now come from the current golden copy (LEI-CDF + RR-CDF), below.
 
+def run_import_ch_psc(local_file: str, limit: int | None = None,
+                      bulk_load: bool = False) -> dict:
+    """
+    Import a Companies House PSC snapshot (current UK beneficial ownership, daily)
+    — the replacement for the frozen OpenOwnership UK PSC BODS export. Reuses the
+    UK PSC source + flag. Checks SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
+        raise PermissionError(
+            "UK PSC scraper is disabled. "
+            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.companies_house_psc import import_ch_psc
+
+    source_id = _ensure_bods_uk_psc_source()
+    log.info("CH PSC: importing from %s (limit=%s)", local_file, limit)
+    counts = import_ch_psc(
+        filepath=local_file,
+        source_id=source_id,
+        credibility_score=BODS_UK_PSC_CREDIBILITY,
+        limit=limit,
+        bulk_load=bulk_load,
+    )
+    return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts,
+            **_post_bods_import()}
+
+
 def run_import_gleif_succession(local_file: str, limit: int | None = None) -> dict:
     """
     Import GLEIF LEI-CDF succession (MERGED/DUPLICATE/RETIRED → SuccessorLEI) into

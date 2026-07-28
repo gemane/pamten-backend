@@ -37,6 +37,15 @@ def cmd_gleif_rr(args):
     result = run_import_gleif_rr(local_file=args.file, limit=args.limit)
     print(result)
 
+def cmd_ch_psc(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
+    from app.scraper.runner import run_import_ch_psc
+    result = run_import_ch_psc(local_file=args.file, limit=args.limit,
+                               bulk_load=getattr(args, "bulk_load", False))
+    print(result)
+
 def cmd_gleif_lei_cdf(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -336,6 +345,15 @@ def _build_parser():
     p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
     p_rr.add_argument('--limit', type=int, help='Max records to scan')
     p_rr.set_defaults(func=cmd_gleif_rr)
+
+    # ch-psc command (Companies House PSC snapshot — replaces UK PSC BODS)
+    p_chp = subparsers.add_parser('ch-psc',
+                                  help='Import a Companies House PSC snapshot (current UK beneficial ownership)')
+    p_chp.add_argument('--file', required=True, help='Path to a local PSC snapshot .zip/.txt')
+    p_chp.add_argument('--limit', type=int, help='Max records to scan')
+    p_chp.add_argument('--bulk-load', action='store_true',
+                       help='Drop secondary indexes during the load and rebuild after')
+    p_chp.set_defaults(func=cmd_ch_psc)
 
     # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)
     p_lei = subparsers.add_parser('gleif-lei-cdf',
