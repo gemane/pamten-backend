@@ -84,3 +84,46 @@ def test_password_hash_fingerprint_changes_with_the_hash():
     a = password_hash_fingerprint(hash_password("one"))
     b = password_hash_fingerprint(hash_password("two"))
     assert a != b and len(a) == 16          # 16-hex-char digest, hash-specific
+
+
+# ── TOTP two-factor + recovery codes ──────────────────────────────────────────
+
+import base64  # noqa: E402
+import time as _time  # noqa: E402
+from cryptography.hazmat.primitives.hashes import SHA1  # noqa: E402
+from cryptography.hazmat.primitives.twofactor.totp import TOTP  # noqa: E402
+from app.auth.security import (  # noqa: E402
+    generate_totp_secret, verify_totp, totp_provisioning_uri,
+    generate_recovery_codes, hash_recovery_code,
+)
+
+
+def _current_code(secret_b32: str) -> str:
+    key = base64.b32decode(secret_b32)
+    return TOTP(key, 6, SHA1(), 30).generate(int(_time.time())).decode()
+
+
+def test_totp_round_trip_and_rejects_wrong_code():
+    secret = generate_totp_secret()
+    code = _current_code(secret)
+    assert verify_totp(secret, code) is True
+    wrong = f"{(int(code) + 1) % 1000000:06d}"     # a different value at the same instant
+    assert verify_totp(secret, wrong) is False
+    assert verify_totp(secret, "not-digits") is False
+
+
+def test_provisioning_uri_is_scannable():
+    secret = generate_totp_secret()
+    uri = totp_provisioning_uri(secret, "user@x.com")
+    assert uri.startswith("otpauth://totp/Pamten:")
+    assert f"secret={secret}" in uri and "issuer=Pamten" in uri
+    assert "digits=6" in uri and "period=30" in uri
+
+
+def test_recovery_codes_are_unique_and_hash_is_format_insensitive():
+    codes = generate_recovery_codes(10)
+    assert len(codes) == 10 and len(set(codes)) == 10
+    assert all("-" in c for c in codes)
+    # matching ignores case and the dash separator
+    assert hash_recovery_code("ABcdE-FGHij") == hash_recovery_code("abcdefghij")
+    assert hash_recovery_code("aaaaa-bbbbb") != hash_recovery_code("aaaaa-bbbbc")

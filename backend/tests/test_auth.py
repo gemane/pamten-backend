@@ -301,6 +301,101 @@ def test_email_send_endpoints_are_rate_limited(client, fake_db):
     assert client.post("/auth/forgot-password", json={"email": "spam@x.com"}).status_code == 429
 
 
+# ── Two-factor auth (TOTP) ────────────────────────────────────────────────────
+
+def _mfa_user_row(**over):
+    u = {"id": "u1", "email": "user@x.com", "role": "viewer",
+         "password_hash": hash_password("password123"), "email_verified": True,
+         "mfa_enabled": True, "totp_secret": "SECRET", "recovery_code_hashes": []}
+    u.update(over)
+    return [{"u": u}]
+
+
+def test_login_with_mfa_returns_pending_token_not_access(client, fake_db):
+    fake_db.queue(_mfa_user_row())
+    r = client.post("/auth/login", json={"email": "user@x.com", "password": "password123"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mfa_required"] is True and body["mfa_token"]
+    assert "access_token" not in body
+
+
+def test_mfa_setup_returns_secret_and_uri(client, fake_db, make_token):
+    tok = make_token(sub="u1")
+    fake_db.queue([{"email": "user@x.com"}])   # the SET ... RETURN email
+    r = client.post("/auth/mfa/setup", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert r.json()["secret"] and r.json()["otpauth_uri"].startswith("otpauth://totp/")
+
+
+def test_mfa_enable_confirms_code_and_returns_recovery_codes(client, fake_db, make_token):
+    tok = make_token(sub="u1")
+    fake_db.queue(_mfa_user_row(mfa_enabled=False, mfa_pending_secret="PENDING"), [])
+    with patch.object(auth_router, "verify_totp", return_value=True):
+        r = client.post("/auth/mfa/enable", json={"code": "123456"},
+                        headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert r.json()["enabled"] is True and len(r.json()["recovery_codes"]) == 10
+
+
+def test_mfa_enable_rejects_bad_code(client, fake_db, make_token):
+    tok = make_token(sub="u1")
+    fake_db.queue(_mfa_user_row(mfa_enabled=False, mfa_pending_secret="PENDING"))
+    with patch.object(auth_router, "verify_totp", return_value=False):
+        r = client.post("/auth/mfa/enable", json={"code": "000000"},
+                        headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 400
+
+
+def test_mfa_verify_with_totp_returns_access_token(client, fake_db):
+    from app.auth.security import create_purpose_token
+    from datetime import timedelta
+    mfa_token = create_purpose_token("u1", auth_router.MFA_PENDING_PURPOSE, timedelta(minutes=5))
+    fake_db.queue(_mfa_user_row())
+    with patch.object(auth_router, "verify_totp", return_value=True):
+        r = client.post("/auth/mfa/verify", json={"mfa_token": mfa_token, "code": "123456"})
+    assert r.status_code == 200 and r.json()["access_token"]
+
+
+def test_mfa_verify_consumes_a_recovery_code(client, fake_db):
+    from app.auth.security import create_purpose_token, hash_recovery_code
+    from datetime import timedelta
+    mfa_token = create_purpose_token("u1", auth_router.MFA_PENDING_PURPOSE, timedelta(minutes=5))
+    good = hash_recovery_code("aaaaa-bbbbb")
+    # lookup returns the user (TOTP will fail via patch), then the SET consuming the code
+    fake_db.queue(_mfa_user_row(recovery_code_hashes=[good]), [])
+    with patch.object(auth_router, "verify_totp", return_value=False):
+        r = client.post("/auth/mfa/verify", json={"mfa_token": mfa_token, "code": "aaaaa-bbbbb"})
+    assert r.status_code == 200 and r.json()["access_token"]
+    # the consuming UPDATE dropped the used hash
+    set_call = [c for c in fake_db.calls if "recovery_code_hashes = $h" in c[0]][-1]
+    assert set_call[1]["h"] == []
+
+
+def test_mfa_verify_rejects_bad_code(client, fake_db):
+    from app.auth.security import create_purpose_token
+    from datetime import timedelta
+    mfa_token = create_purpose_token("u1", auth_router.MFA_PENDING_PURPOSE, timedelta(minutes=5))
+    fake_db.queue(_mfa_user_row(recovery_code_hashes=[]))
+    with patch.object(auth_router, "verify_totp", return_value=False):
+        r = client.post("/auth/mfa/verify", json={"mfa_token": mfa_token, "code": "999999"})
+    assert r.status_code == 401
+
+
+def test_mfa_verify_rejects_non_mfa_token(client, make_token):
+    r = client.post("/auth/mfa/verify", json={"mfa_token": make_token(), "code": "123456"})
+    assert r.status_code == 400
+
+
+def test_mfa_disable_requires_a_valid_code(client, fake_db, make_token):
+    tok = make_token(sub="u1")
+    fake_db.queue(_mfa_user_row())
+    with patch.object(auth_router, "verify_totp", return_value=False):
+        r = client.post("/auth/mfa/disable", json={"code": "000000"},
+                        headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 400
+
+
 # ── require_moderator guard ─────────────────────────────────────────────────────
 
 import pytest  # noqa: E402
