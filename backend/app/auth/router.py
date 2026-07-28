@@ -11,6 +11,8 @@ from app.database import db
 from app.auth.security import (
     hash_password, verify_password, create_access_token,
     create_purpose_token, verify_purpose_token, password_hash_fingerprint, TokenError,
+    generate_totp_secret, totp_provisioning_uri, verify_totp,
+    generate_recovery_codes, hash_recovery_code,
 )
 from app.auth.dependencies import get_current_user, require_admin
 from app.notifications.email import send_verification_email, send_password_reset_email
@@ -18,6 +20,8 @@ from app.notifications.email import send_verification_email, send_password_reset
 MIN_PASSWORD_LENGTH = 8
 VERIFY_EMAIL_PURPOSE = "verify_email"
 RESET_PASSWORD_PURPOSE = "pwd_reset"
+MFA_PENDING_PURPOSE = "mfa_pending"
+MFA_PENDING_TTL_MINUTES = 5
 
 log = logging.getLogger(__name__)
 
@@ -224,6 +228,14 @@ def login(data: LoginRequest, request: Request):
             detail={"code": "email_not_verified",
                     "message": "Please verify your email before logging in."})
 
+    # Second factor: password alone isn't enough once MFA is on — hand back a
+    # short-lived pending token the client exchanges (with a TOTP / recovery code)
+    # at /auth/mfa/verify for the real access token.
+    if user.get("mfa_enabled"):
+        pending = create_purpose_token(user["id"], MFA_PENDING_PURPOSE,
+                                       timedelta(minutes=MFA_PENDING_TTL_MINUTES))
+        return {"mfa_required": True, "mfa_token": pending}
+
     return _token_response(user["id"], user["email"], user["role"])
 
 
@@ -304,6 +316,127 @@ def reset_password(data: ResetPasswordRequest):
             id=claims["sub"], hash=hash_password(data.new_password),
         )
     return {"message": "Password updated. You can now log in."}
+
+
+# ── Two-factor auth (TOTP) ────────────────────────────────────────────────────
+
+class MfaCodeRequest(BaseModel):
+    code: str
+
+
+class MfaVerifyRequest(BaseModel):
+    mfa_token: str
+    code: str
+
+
+def _load_user(session, user_id: str) -> dict | None:
+    rec = session.run("MATCH (u:User {id: $id}) RETURN u", id=user_id).single()
+    return dict(rec["u"]) if rec else None
+
+
+@router.get("/mfa/status")
+def mfa_status(user: dict = Depends(get_current_user)):
+    with db.get_session() as session:
+        u = _load_user(session, user["sub"])
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"mfa_enabled": bool(u.get("mfa_enabled"))}
+
+
+@router.post("/mfa/setup")
+def mfa_setup(user: dict = Depends(get_current_user)):
+    """Start enrolment: stash a pending secret, return the otpauth URI + secret so
+    the client can show a QR / manual key. Not active until /mfa/enable confirms a
+    code."""
+    secret = generate_totp_secret()
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (u:User {id: $id}) SET u.mfa_pending_secret = $s RETURN u.email AS email",
+            id=user["sub"], s=secret,
+        ).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail="User not found")
+    return {"secret": secret, "otpauth_uri": totp_provisioning_uri(secret, rec["email"])}
+
+
+@router.post("/mfa/enable")
+def mfa_enable(data: MfaCodeRequest, user: dict = Depends(get_current_user)):
+    """Confirm enrolment with a code from the authenticator, then return the
+    one-time recovery codes (shown once)."""
+    with db.get_session() as session:
+        u = _load_user(session, user["sub"])
+        if not u:
+            raise HTTPException(status_code=404, detail="User not found")
+        if u.get("mfa_enabled"):
+            raise HTTPException(status_code=400, detail="Two-factor auth is already enabled")
+        pending = u.get("mfa_pending_secret")
+        if not pending:
+            raise HTTPException(status_code=400, detail="Start setup first")
+        if not verify_totp(pending, data.code):
+            raise HTTPException(status_code=400, detail="That code isn't valid. Try again.")
+        codes = generate_recovery_codes()
+        session.run(
+            "MATCH (u:User {id: $id}) SET u.mfa_enabled = true, u.totp_secret = $s, "
+            "u.mfa_pending_secret = '', u.recovery_code_hashes = $h",
+            id=user["sub"], s=pending, h=[hash_recovery_code(c) for c in codes],
+        )
+    return {"enabled": True, "recovery_codes": codes}
+
+
+@router.post("/mfa/disable")
+def mfa_disable(data: MfaCodeRequest, user: dict = Depends(get_current_user)):
+    """Turn MFA off — requires a current authenticator or recovery code, so a
+    hijacked session alone can't remove the second factor."""
+    with db.get_session() as session:
+        u = _load_user(session, user["sub"])
+        if not u:
+            raise HTTPException(status_code=404, detail="User not found")
+        if not u.get("mfa_enabled"):
+            return {"enabled": False}
+        ok = (verify_totp(u.get("totp_secret") or "", data.code)
+              or hash_recovery_code(data.code) in (u.get("recovery_code_hashes") or []))
+        if not ok:
+            raise HTTPException(status_code=400, detail="That code isn't valid.")
+        session.run(
+            "MATCH (u:User {id: $id}) SET u.mfa_enabled = false, u.totp_secret = '', "
+            "u.mfa_pending_secret = '', u.recovery_code_hashes = $empty",
+            id=user["sub"], empty=[],
+        )
+    return {"enabled": False}
+
+
+@router.post("/mfa/verify")
+def mfa_verify(data: MfaVerifyRequest):
+    """Exchange the login-issued pending token + a TOTP (or recovery) code for the
+    real access token. Rate-limited per account against code brute-force."""
+    try:
+        claims = verify_purpose_token(data.mfa_token, MFA_PENDING_PURPOSE)
+    except TokenError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    key = f"mfa:{claims['sub']}"
+    _check_login_rate_limit(key)
+    with db.get_session() as session:
+        u = _load_user(session, claims["sub"])
+        if not u or not u.get("mfa_enabled"):
+            raise HTTPException(status_code=400, detail="Invalid request")
+
+        if verify_totp(u.get("totp_secret") or "", data.code):
+            _clear_login_attempts(key)
+            return _token_response(u["id"], u["email"], u["role"])
+
+        # Recovery code — single use, so consume it on success.
+        digest = hash_recovery_code(data.code)
+        remaining = list(u.get("recovery_code_hashes") or [])
+        if digest in remaining:
+            remaining.remove(digest)
+            session.run("MATCH (u:User {id: $id}) SET u.recovery_code_hashes = $h",
+                        id=u["id"], h=remaining)
+            _clear_login_attempts(key)
+            return _token_response(u["id"], u["email"], u["role"])
+
+    _record_login_failure(key)
+    raise HTTPException(status_code=401, detail="Invalid code")
 
 
 class RoleRequest(BaseModel):

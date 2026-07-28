@@ -14,6 +14,11 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/auth/forgot-password` | — | Email a password-reset link `{email}` (always `200` — no user enumeration) |
 | POST | `/auth/reset-password` | — | Set a new password from the emailed token `{token, new_password}` (link is single-use) |
 | GET | `/auth/me` | bearer | Current user info |
+| GET | `/auth/mfa/status` | bearer | Whether TOTP two-factor is enabled |
+| POST | `/auth/mfa/setup` | bearer | Begin TOTP enrolment → `{secret, otpauth_uri}` for a QR |
+| POST | `/auth/mfa/enable` | bearer | Confirm enrolment `{code}` → `{enabled, recovery_codes[]}` (shown once) |
+| POST | `/auth/mfa/disable` | bearer | Turn MFA off `{code}` (TOTP or recovery code required) |
+| POST | `/auth/mfa/verify` | — | Exchange the login `mfa_token` + `{code}` (TOTP or recovery) for an access token |
 
 ## Entities
 | Method | Path | Description |

@@ -130,6 +130,8 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 **Email transport** is provider-agnostic (`app/notifications/email.py`): `EMAIL_BACKEND=smtp` sends via `SMTP_*` (stdlib `smtplib`; works with Gmail + an App Password), while the default `console` backend (used when `SMTP_HOST` is empty) just logs the message + link — so local dev and tests need no credentials. `APP_BASE_URL` sets the origin used in the emailed links.
 
+**Two-factor auth (TOTP).** Users can enable an authenticator-app second factor (`POST /auth/mfa/setup` → scan the returned `otpauth://` QR → `POST /auth/mfa/enable` with a code, which returns 10 one-time **recovery codes**). Once enabled, `login` returns `{mfa_required, mfa_token}` instead of an access token; the client exchanges that pending token + a 6-digit code (or a recovery code) at `POST /auth/mfa/verify` for the real token. TOTP uses `cryptography` (RFC 6238, ±1 step for clock drift); the secret + hashed recovery codes live as schemaless `User` props. `mfa/verify` is rate-limited per account, and disabling requires a current code.
+
 Protected routes use FastAPI `Depends`:
 
 | Dependency | Requirement |
