@@ -1,33 +1,22 @@
 """
-BODS (Beneficial Ownership Data Standard) v0.4 importer for Pamten.
+Shared bulk-import helpers for Pamten's dataset scrapers.
 
-Imports GLEIF and UK PSC datasets published by Open Ownership.
-Both datasets are CC0 licensed — fully open, no restrictions.
+Historically this module was the OpenOwnership **BODS** (Beneficial Ownership
+Data Standard) importer. Both BODS exports (GLEIF and UK PSC) were frozen at
+2025-03, so the ingest was migrated to current sources — the GLEIF golden copy
+(``gleif_lei_cdf`` / ``gleif_rr`` / ``gleif_succession``) and the Companies House
+snapshots (``companies_house_psc`` / ``basic_company_data``). The BODS
+statement-processing engine has been removed; what remains here is the reusable
+plumbing those newer importers all build on:
 
-Datasets:
-  GLEIF:   https://oo-bodsdata.s3.amazonaws.com/data/gleif_version_0_4/json.zip   (~1.1 GB)
-  UK PSC:  https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip      (~3.3 GB)
-
-Data licence: CC0 1.0 (compatible with ODbL — see DATA_LICENSE.md)
-
-Provenance (per OWNS/HAS_ROLE edge, for later verification):
-  source_url   → GLEIF record (search.gleif.org/#/record/<LEI>) for XI-LEI refs,
-                 else the statement's own source.url (UK PSC → Companies House)
-  source_date  → BODS statementDate
-  last_scraped_at → import time (refreshed when an existing edge is re-imported)
-
-Processing strategy:
-  Single streaming pass through the file. Nodes and edges are buffered and
-  flushed to ArcadeDB in batched `sqlscript` requests (_BatchWriter) rather than
-  one HTTP round-trip per record — the dominant cost of a full import. Nodes use
-  a stable id (the BODS record id) upserted by id, so the writer is idempotent
-  and needs no per-record read; the bods-id → node-id / id → name maps are
-  SQLite-backed (_DiskMap) so a full 46 GB import doesn't have to fit in RAM.
-  Relationships whose endpoints aren't yet imported get a named placeholder,
-  upgraded when the real statement arrives (same id).
-
-  For a subset use filter_jurisdiction (e.g. "GB") or limit — but note the whole
-  file is still read and parsed either way; the filter only trims what's written.
+  * ``_BatchWriter`` — buffers node upserts / edge creates and flushes them to
+    ArcadeDB in batched ``sqlscript`` requests (the dominant cost of a bulk load).
+  * ``_DiskMap`` — SQLite-backed id/name map so a multi-GB import doesn't have to
+    fit in RAM.
+  * ``_entity`` / ``_owns`` — Entity-upsert and OWNS-edge writers.
+  * ``_ProgressBar`` / ``_ProgressStream`` — terminal progress + byte-counting.
+  * ``_drop_secondary_indexes`` / ``_rebuild_indexes`` — bulk-load index toggling.
+  * ``_ISO2_COUNTRY`` / ``_legal_form_type`` / ``_max_pct`` / ``_now_iso`` — mapping utils.
 """
 
 import json
@@ -38,19 +27,15 @@ import sys
 import tempfile
 import time
 import re
-import zipfile
-from collections.abc import Iterator
 from typing import IO
 
-import httpx
-import ijson
 
 from datetime import datetime, timezone
 
 from app.config import settings
 from app.db.arcadedb import run_sqlscript
 from app.scraper.mapper import (
-    derive_ownership_type, normalize_entity_name, parse_full_name, is_nominee_name,
+    normalize_entity_name, is_nominee_name,
 )
 
 log = logging.getLogger(__name__)
@@ -249,27 +234,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _bods_record_url(subject_ref: str | None, stmt: dict) -> str | None:
-    """
-    Verifiable per-record URL for a BODS statement.
-
-    GLEIF record ids are "XI-LEI-{LEI}" → link to the public GLEIF record.
-    Otherwise fall back to the statement's own declared source URL (UK PSC
-    statements carry a Companies House link), or None if neither is available.
-    """
-    if subject_ref and subject_ref.startswith("XI-LEI-"):
-        return f"https://search.gleif.org/#/record/{subject_ref[7:]}"
-    src = stmt.get("source") or {}
-    url = src.get("url")
-    return url or None
-
-CHUNK_SIZE = 1024 * 1024  # 1 MB per download chunk
-
-# Upper bound on Entity.source_statement_ids for an id-less party collapsed under
-# one name key, so a party controlling very many companies can't bloat the node.
-# Beyond the cap, the ownership edges still each carry their own source provenance.
-_MAX_SOURCE_STATEMENT_IDS = 1000
-
 # ISO 3166-1 alpha-2 → full English country name
 _ISO2_COUNTRY: dict[str, str] = {
     "AF": "Afghanistan", "AX": "Åland Islands", "AL": "Albania", "DZ": "Algeria",
@@ -350,42 +314,9 @@ _ISO2_COUNTRY: dict[str, str] = {
 }
 
 
-def _country_name(code: str | None) -> str | None:
-    """Convert an ISO alpha-2 code to a full English country name. Returns the
-    code unchanged if no mapping is found, and None for empty/None input."""
-    if not code:
-        return None
-    return _ISO2_COUNTRY.get(code.upper(), code)
-
 # ── Interest type → Pamten ownership_type ─────────────────────────────────────
 # None means "derive from stake_percent via derive_ownership_type()".
 # "role" signals a HAS_ROLE edge rather than an OWNS edge.
-
-_INTEREST_OWNERSHIP_TYPE: dict[str, str | None] = {
-    "shareholding":                     None,           # derive from stake %
-    "votingRights":                     "controlling",
-    "appointmentOfBoard":               "controlling",
-    "otherInfluenceOrControl":          "controlling",
-    "seniorManagingOfficial":           "role",         # → HAS_ROLE
-    "trustee":                          "controlling",
-    "settlor":                          "partnership",
-    "beneficiaryOfLegalArrangement":    "minority",
-}
-
-
-def _share_pct(share: dict | None) -> float | None:
-    """A percentage from a BODS interest `share` — the exact value, else the
-    minimum of the disclosed band (UK PSC reports bands, e.g. 75–100%)."""
-    share = share or {}
-    for key in ("exact", "minimum"):
-        val = share.get(key)
-        if val is not None:
-            try:
-                return float(val)
-            except (TypeError, ValueError):
-                pass
-    return None
-
 
 def _max_pct(a: float | None, b: float | None) -> float | None:
     """max of two possibly-None percentages."""
@@ -396,14 +327,6 @@ def _max_pct(a: float | None, b: float | None) -> float | None:
     return max(a, b)
 
 # ── BODS entityType → Pamten entity type ──────────────────────────────────────
-
-_ENTITY_TYPE_MAP: dict[str, str] = {
-    "registeredEntity": "company",
-    "legalEntity":      "company",
-    "arrangement":      "holding",
-    "anonymousEntity":  "company",
-    "unknownEntity":    "company",
-}
 
 # GLEIF's entityType.type is always "registeredEntity", but the LEGAL FORM
 # (entityType.details, free text) names foundations, funds and associations. Map
@@ -427,76 +350,7 @@ def _legal_form_type(details: str | None) -> str | None:
     return None
 
 
-def _ref_id(ref: object) -> str | None:
-    """Extract a BODS record-ID from either a bare string or a BODS v0.3 dict ref.
-
-    BODS v0.2 used plain string IDs; v0.3+ wraps them in objects:
-      {"describedByEntityStatement": "id"} or {"describedByPersonStatement": "id"}
-    """
-    if isinstance(ref, dict):
-        return ref.get("describedByEntityStatement") or ref.get("describedByPersonStatement") or None
-    return ref or None
-
-
 # ── Database helpers ──────────────────────────────────────────────────────────
-
-def _entity_node_id(
-    lei_id: str | None,
-    companies_house_id: str | None,
-    fallback: str,
-    name: str | None = None,
-) -> str:
-    """Deterministic Entity node id derived from a stable external identifier.
-
-    Keying an Entity on its LEI / company number — rather than the BODS
-    ``recordId`` — is what lets the same real company reconcile across imports:
-    the recordId varies between dumps (and between an old filtered run and a
-    later full run), so id-by-recordId silently creates a *second* node for the
-    same company (the Austria-doubling bug). It also lets a forward-reference
-    placeholder merge with the real statement, since a GLEIF ref encodes the LEI.
-
-    For an entity with **no** external id (UK PSC files interested parties as
-    free-text with an empty ``identifiers`` array), fall back to a name key
-    ``name:{normalized}``. UK PSC re-declares each controlling party once per
-    *controlled* company, each with its own per-filing ``recordId`` — keying
-    those on the recordId spawns one node per subsidiary (e.g. ~21 separate
-    "Government Of The Emirate Of Abu Dhabi" nodes). The name key collapses them
-    into one, while meaningful variants ("… (Through Mubadala)") normalize
-    differently and stay separate. Trade-off: two genuinely-distinct id-less
-    parties sharing a normalized name would merge — rare, and only for parties
-    with no LEI/company number. Falls back to the raw record id / ref only when
-    neither an external id nor a name is available.
-    """
-    if lei_id:
-        return f"lei:{lei_id}"
-    if companies_house_id:
-        return f"gb-coh:{companies_house_id}"
-    if name:
-        norm = normalize_entity_name(name)
-        if norm:
-            return f"name:{norm}"
-    return fallback
-
-
-def _registered_address(details: dict) -> str | None:
-    """Normalized registered address from a BODS entity statement's `addresses`
-    (prefer type=registered, else business, else the first). Used as a strong
-    'same legal entity' signal in duplicate detection: two same-named nodes with
-    the same registered address are the same company; different addresses mean
-    they are (probably) not. Lowercased, punctuation/whitespace collapsed."""
-    addrs = details.get("addresses") or []
-    if not addrs:
-        return None
-    pick = (next((a for a in addrs if a.get("type") == "registered"), None)
-            or next((a for a in addrs if a.get("type") == "business"), None)
-            or addrs[0])
-    parts = [pick.get("address") or "", pick.get("postCode") or "",
-             (pick.get("country") or {}).get("code") or ""]
-    raw = " ".join(p for p in parts if p)
-    norm = re.sub(r"[^\w\s]", " ", raw.lower())
-    norm = re.sub(r"\s+", " ", norm).strip()
-    return norm or None
-
 
 def _entity(batch, node_id, name, entity_type, country, founded,
             lei_id, companies_house_id, source_id, credibility_score,
@@ -522,27 +376,6 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         "registered_address": registered_address,
         "is_nominee": is_nominee_name(name),   # holder-of-record, not a beneficial owner
         "verified": False,
-    })
-    return node_id
-
-
-def _person(batch, node_id, full_name, first_name, last_name, nationality, birth_date):
-    """Enqueue a Person upsert (keyed on the stable node id) and return the id."""
-    first = first_name or ""
-    last = last_name or ""
-    if not first and not last:
-        first, last = parse_full_name(full_name)
-    batch.person(node_id, {
-        "first_name": first,
-        "last_name": last,
-        "full_name": full_name,
-        "search_text": full_name,   # FULL_TEXT-indexed field powering /search
-        "nationality": nationality or "",
-        "birth_date": birth_date or "",
-        "description": "",
-        "verified": False,
-        "alias": [],
-        "nationalities": [],
     })
     return node_id
 
@@ -577,372 +410,9 @@ def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until
     })
 
 
-def _role(batch, person_id, entity_id, role, since, until,
-          source_id, credibility_score, source_url=None, source_date=None):
-    """Enqueue a HAS_ROLE edge."""
-    batch.role(person_id, entity_id, {
-        "role": role,
-        "since": since,
-        "until": until,
-        "source_id": source_id,
-        "credibility_score": credibility_score,
-        "source_url": source_url,
-        "source_date": source_date,
-        "last_scraped_at": _now_iso(),
-    })
-
-
 # ── BODS statement processors ─────────────────────────────────────────────────
 
-def _process_entity_statement(
-    stmt: dict,
-    bods_to_pamten_id: dict,
-    batch: "_BatchWriter",
-    source_id: str,
-    credibility_score: int,
-    filter_jurisdiction: str | None,
-    stmt_id_map: "_DiskMap | None" = None,
-) -> str | None:
-    """
-    Map a BODS entity statement to a Pamten Entity node.
-    Returns the Pamten entity id, or None if the statement was skipped.
-    """
-    record_id = stmt.get("recordId") or stmt.get("statementId")
-    if not record_id:
-        return None
-
-    details = stmt.get("recordDetails") or {}
-    name = (details.get("name") or "").strip()
-    if not name:
-        return None
-
-    # Jurisdiction filter
-    jurisdiction = details.get("jurisdiction") or {}
-    country_code = (jurisdiction.get("code") or "").upper()[:2] or None
-    if filter_jurisdiction and country_code != filter_jurisdiction.upper():
-        return None
-    # Store the ISO-2 code — the canonical Entity.country form shared with the
-    # Wikidata scraper, so by-country grouping doesn't split (frontend localizes).
-    country = country_code
-
-    # Entity type: GLEIF's type is always "registeredEntity" → company; refine to
-    # foundation/fund/nonprofit from the legal form when it names one.
-    entity_type_raw = details.get("entityType") or {}
-    raw_type    = entity_type_raw.get("type", "registeredEntity")
-    entity_type = _legal_form_type(entity_type_raw.get("details")) \
-        or _ENTITY_TYPE_MAP.get(raw_type, "company")
-
-    # Founding year
-    founding_date = details.get("foundingDate") or ""
-    founded: int | None = None
-    if founding_date and len(founding_date) >= 4:
-        try:
-            founded = int(founding_date[:4])
-        except ValueError:
-            pass
-
-    # Identifiers
-    lei_id             = None
-    companies_house_id = None
-    for ident in details.get("identifiers") or []:
-        scheme = ident.get("scheme", "")
-        value  = (ident.get("id") or ident.get("value") or "").strip()
-        if not value:
-            continue
-        if scheme == "XI-LEI":
-            lei_id = value
-        elif scheme == "GB-COH":
-            companies_house_id = value
-
-    node_id = _entity_node_id(lei_id, companies_house_id, record_id, name=name)
-
-    # Provenance: list of every statement that declared this entity. Entities with
-    # an LEI/company number are unique, so a single-element list; id-less parties
-    # collapse under one name key, so accumulate all contributing statement ids
-    # (capped — beyond the cap, per-edge source_url/date still carries provenance).
-    if lei_id or companies_house_id or stmt_id_map is None:
-        source_statement_ids = [record_id]
-    else:
-        raw = stmt_id_map.get(node_id)
-        ids = _loads(raw) if raw else []
-        if record_id not in ids and len(ids) < _MAX_SOURCE_STATEMENT_IDS:
-            ids.append(record_id)
-            stmt_id_map[node_id] = json.dumps(ids)
-        source_statement_ids = ids
-
-    entity_id = _entity(
-        batch, node_id,
-        name=name,
-        entity_type=entity_type,
-        country=country,
-        founded=founded,
-        lei_id=lei_id,
-        companies_house_id=companies_house_id,
-        source_id=source_id,
-        credibility_score=credibility_score,
-        registered_address=_registered_address(details),
-        source_statement_ids=source_statement_ids,
-    )
-    bods_to_pamten_id[record_id] = entity_id
-    return entity_id
-
-
-def _process_person_statement(
-    stmt: dict,
-    bods_to_pamten_id: dict,
-    batch: "_BatchWriter",
-    source_id: str,
-    credibility_score: int,
-) -> str | None:
-    """
-    Map a BODS person statement to a Pamten Person node.
-    Returns the Pamten person id, or None if skipped (e.g. anonymousPerson).
-    """
-    record_id = stmt.get("recordId") or stmt.get("statementId")
-    if not record_id:
-        return None
-
-    details = stmt.get("recordDetails") or {}
-
-    # Skip redacted beneficial owners — no useful data
-    if details.get("personType") == "anonymousPerson":
-        return None
-
-    # Name — prefer "legal" type, fall back to first available
-    names   = details.get("names") or []
-    name_rec = next((n for n in names if n.get("type") == "legal"), None)
-    if not name_rec and names:
-        name_rec = names[0]
-    if not name_rec:
-        return None
-
-    full_name  = (name_rec.get("fullName")   or "").strip()
-    first_name = (name_rec.get("givenName")  or "").strip() or None
-    last_name  = (name_rec.get("familyName") or "").strip() or None
-
-    if not full_name:
-        if first_name and last_name:
-            full_name = f"{first_name} {last_name}"
-        elif first_name:
-            full_name = first_name
-        elif last_name:
-            full_name = last_name
-    if not full_name:
-        return None
-
-    # Nationality
-    nationalities = details.get("nationalities") or []
-    nationality   = (nationalities[0].get("code") or "") if nationalities else ""
-
-    # Birth date — may be partial ("1978-07"); store as-is, don't parse
-    birth_date = details.get("birthDate") or None
-
-    person_id = _person(
-        batch, record_id,
-        full_name=full_name,
-        first_name=first_name,
-        last_name=last_name,
-        nationality=nationality or None,
-        birth_date=birth_date,
-    )
-    bods_to_pamten_id[record_id] = person_id
-    return person_id
-
-
-def _process_relationship_statement(
-    stmt: dict,
-    bods_to_pamten_id: dict,
-    bods_id_to_name: dict,
-    batch: "_BatchWriter",
-    source_id: str,
-    credibility_score: int,
-) -> int:
-    """
-    Map a BODS relationship statement to OWNS or HAS_ROLE edges.
-    Returns the number of edges written.
-    """
-    details       = stmt.get("recordDetails") or {}
-    record_status = stmt.get("recordStatus", "new")
-
-    subject_raw = details.get("subject")        or details.get("subjectId")
-    party_raw   = details.get("interestedParty") or details.get("interestedPartyId")
-    subject_ref = _ref_id(subject_raw)
-    party_ref   = _ref_id(party_raw)
-
-    if not subject_ref or not party_ref:
-        return 0
-
-    # The interested party (owner) may be a Person (UK PSC) or an Entity (GLEIF).
-    party_is_person = isinstance(party_raw, dict) and "describedByPersonStatement" in party_raw
-
-    def _placeholder_name(ref: str) -> str:
-        """Return the real entity name when available, else a cleaned-up fallback."""
-        if ref in bods_id_to_name:
-            return bods_id_to_name[ref]
-        # GLEIF BODS record IDs are "XI-LEI-{LEI}" — strip the prefix
-        if ref.startswith("XI-LEI-"):
-            return f"Unknown [{ref[7:]}]"
-        return ref[:200]
-
-    def _placeholder_lei(ref: str) -> str | None:
-        if ref.startswith("XI-LEI-"):
-            return ref[7:]
-        return None
-
-    # Resolve BODS record ids to Pamten node ids.
-    # If either side is unknown, create a named placeholder so the edge is preserved.
-    owned_id = bods_to_pamten_id.get(subject_ref)
-    if not owned_id:
-        _lei = _placeholder_lei(subject_ref)
-        _subj_name = _placeholder_name(subject_ref)
-        owned_id = _entity(
-            batch, _entity_node_id(_lei, None, subject_ref, name=_subj_name),
-            name=_subj_name, entity_type="company",
-            country=None, founded=None,
-            lei_id=_lei, companies_house_id=None,
-            source_id=source_id, credibility_score=0,
-        )
-        bods_to_pamten_id[subject_ref] = owned_id
-
-    owner_id = bods_to_pamten_id.get(party_ref)
-    if not owner_id:
-        if party_is_person:
-            # A person owner not yet imported — create a bare Person placeholder
-            # (don't misfile it as a company Entity).
-            owner_id = _person(
-                batch, party_ref,
-                full_name=_placeholder_name(party_ref),
-                first_name=None, last_name=None, nationality=None, birth_date=None,
-            )
-        else:
-            _lei = _placeholder_lei(party_ref)
-            _party_name = _placeholder_name(party_ref)
-            owner_id = _entity(
-                batch, _entity_node_id(_lei, None, party_ref, name=_party_name),
-                name=_party_name, entity_type="company",
-                country=None, founded=None,
-                lei_id=_lei, companies_house_id=None,
-                source_id=source_id, credibility_score=0,
-            )
-        bods_to_pamten_id[party_ref] = owner_id
-    owner_label = "Person" if party_is_person else "Entity"
-
-    interests = details.get("interests") or []
-    if not interests:
-        return 0
-
-    # "closed" record → ownership ended; use statementDate as until date
-    closed     = record_status == "closed"
-    close_date = stmt.get("statementDate") if closed else None
-
-    # Provenance: verifiable record URL + the statement's own date
-    record_url     = _bods_record_url(subject_ref, stmt)
-    statement_date = stmt.get("statementDate")
-
-    # A statement lists several interests for the SAME pair (e.g. a UK PSC filing
-    # carries shareholding + votingRights + appointmentOfBoard together). Collapse
-    # them into ONE OWNS edge, keeping the *economic* stake (shareholding) and the
-    # *voting* rights (votingRights) in separate fields rather than conflating
-    # them — plus the set of interest types behind the edge.
-    econ_stake: float | None = None   # from shareholding / economic interests
-    voting_pct: float | None = None   # from votingRights
-    itypes: set[str] = set()
-    control = settlor = beneficiary = False
-    starts: list[str] = []
-    ends: list[str | None] = []
-    edges = 0
-
-    for interest in interests:
-        interest_type = interest.get("type", "shareholding")
-        itypes.add(interest_type)
-        start_date = interest.get("startDate") or None
-        end_date   = interest.get("endDate") or (close_date if closed else None)
-
-        if _INTEREST_OWNERSHIP_TYPE.get(interest_type) == "role":
-            # seniorManagingOfficial → HAS_ROLE (owner should be a Person)
-            _role(
-                batch, person_id=owner_id, entity_id=owned_id,
-                role="Senior Managing Official",
-                since=start_date, until=end_date,
-                source_id=source_id, credibility_score=credibility_score,
-                source_url=record_url, source_date=statement_date,
-            )
-            edges += 1
-            continue
-
-        starts.append(start_date)
-        ends.append(end_date)
-        pct = _share_pct(interest.get("share"))
-        if interest_type == "votingRights":
-            voting_pct = _max_pct(voting_pct, pct)
-            control = True
-        elif interest_type in ("appointmentOfBoard", "otherInfluenceOrControl", "trustee"):
-            control = True
-        elif interest_type == "settlor":
-            settlor = True
-        else:
-            # shareholding, beneficiaryOfLegalArrangement, rightsToSurplusAssets…,
-            # unknown → economic stake
-            if interest_type == "beneficiaryOfLegalArrangement":
-                beneficiary = True
-            econ_stake = _max_pct(econ_stake, pct)
-
-    if not starts:            # only role interests (or none) — no OWNS edge
-        return edges
-
-    if control:
-        ownership_type = "controlling"
-    elif settlor:
-        ownership_type = "partnership"
-    elif beneficiary and econ_stake is None:
-        ownership_type = "minority"
-    elif econ_stake is not None:
-        ownership_type = derive_ownership_type(econ_stake)
-    else:
-        ownership_type = "minority"
-
-    known_starts = [s for s in starts if s]
-    until = None if any(e is None for e in ends) else max(ends)  # active if any open
-    _owns(
-        batch, owner_id=owner_id, owned_id=owned_id,
-        stake_percent=econ_stake, ownership_type=ownership_type,
-        voting_power_pct=voting_pct, interest_types=sorted(itypes),
-        since=min(known_starts) if known_starts else None, until=until,
-        source_id=source_id, credibility_score=credibility_score,
-        source_url=record_url, source_date=statement_date,
-        owner_label=owner_label,
-    )
-    return edges + 1
-
-
 # ── Streaming helpers ─────────────────────────────────────────────────────────
-
-class _CombinedStream:
-    """Prepend a byte-buffer to a binary stream (needed after format-detection peek)."""
-    def __init__(self, prefix: bytes, rest: IO[bytes]):
-        self._prefix = prefix
-        self._offset = 0
-        self._rest = rest
-
-    def read(self, n: int = -1) -> bytes:
-        prefix_remaining = len(self._prefix) - self._offset
-        if prefix_remaining <= 0:
-            return self._rest.read(n)
-        if n == -1:
-            chunk = self._prefix[self._offset:]
-            self._offset = len(self._prefix)
-            return chunk + self._rest.read()
-        if n <= prefix_remaining:
-            chunk = self._prefix[self._offset:self._offset + n]
-            self._offset += n
-            return chunk
-        chunk = self._prefix[self._offset:]
-        self._offset = len(self._prefix)
-        return chunk + self._rest.read(n - len(chunk))
-
-    def readable(self) -> bool:
-        return True
-
 
 class _ProgressBar:
     """Terminal progress bar that writes to stderr via carriage return."""
@@ -1016,83 +486,6 @@ class _ProgressStream:
         return True
 
 
-def _iter_ndjson(stream: IO[bytes]) -> Iterator[dict]:
-    """Parse a NDJSON (one JSON object per line) binary stream."""
-    buf = b""
-    while True:
-        chunk = stream.read(1 << 20)
-        if not chunk:
-            line = buf.strip()
-            if line:
-                yield _loads(line)
-            return
-        buf += chunk
-        while b"\n" in buf:
-            line, buf = buf.split(b"\n", 1)
-            line = line.strip()
-            if line:
-                yield _loads(line)
-
-
-def _iter_statements(stream: IO[bytes]) -> Iterator[dict]:
-    """Stream BODS statements. Handles both JSON array ([…]) and NDJSON formats."""
-    prefix = b""
-    while len(prefix) < 512:
-        chunk = stream.read(512)
-        if not chunk:
-            return
-        prefix += chunk
-
-    combined = _CombinedStream(prefix, stream)
-    if prefix.lstrip().startswith(b"["):
-        yield from ijson.items(combined, "item")
-    else:
-        yield from _iter_ndjson(combined)
-
-
-def _open_zip_stream(zip_path: str) -> IO[bytes]:
-    """Open the first .json file inside a ZIP archive for streaming."""
-    zf = zipfile.ZipFile(zip_path)
-    json_names = [n for n in zf.namelist() if n.lower().endswith(".json")]
-    if not json_names:
-        raise ValueError(f"No .json file found inside ZIP: {zip_path}")
-    log.info("BODS: reading %s from zip", json_names[0])
-    return zf.open(json_names[0])
-
-
-def stream_bods_json(url: str) -> Iterator[dict]:
-    """
-    Download a BODS ZIP from a URL and stream statements one at a time.
-
-    Downloads to a temp file first (needed for two-pass processing).
-    Cleans up the temp file after the iterator is exhausted.
-    """
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False, dir=_tmp_dir()) as tmp:
-        tmp_path = tmp.name
-
-    try:
-        log.info("BODS: downloading %s", url)
-        with open(tmp_path, "wb") as out:
-            with httpx.stream("GET", url, timeout=300, follow_redirects=True) as resp:
-                resp.raise_for_status()
-                total      = int(resp.headers.get("content-length", 0))
-                downloaded = 0
-                for chunk in resp.iter_bytes(CHUNK_SIZE):
-                    out.write(chunk)
-                    downloaded += len(chunk)
-                    if total and downloaded % (100 * CHUNK_SIZE) == 0:
-                        log.info("BODS: %.0f%% downloaded", 100 * downloaded / total)
-        log.info("BODS: download complete (%d bytes)", downloaded)
-
-        stream = _open_zip_stream(tmp_path)
-        yield from _iter_statements(stream)
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-
-
 # ── Bulk-load index handling ──────────────────────────────────────────────────
 
 def _bulk_load_secondary_indexes() -> list[str]:
@@ -1125,261 +518,5 @@ def _rebuild_indexes() -> None:
 
 # ── Core import engine ────────────────────────────────────────────────────────
 
-def _run_import(
-    statements: Iterator[dict],
-    source_id: str,
-    credibility_score: int,
-    limit: int | None,
-    filter_jurisdiction: str | None,
-    pass1_bar: _ProgressBar | None = None,
-    bulk_load: bool = False,
-) -> dict:
-    """
-    Single-pass streaming import — nodes AND edges written inline.
-
-    Every statement is written as it streams: entities/persons become nodes, and
-    a relationship becomes OWNS/HAS_ROLE edges immediately (creating a named
-    placeholder for any endpoint not imported yet). This means a partial or
-    interrupted run still leaves *connected* data — no separate end-pass that
-    could be skipped. Endpoints resolve/merge by LEI (or Companies House id), so
-    a placeholder is reconciled with its real node whenever that node's statement
-    arrives.
-
-    A relationship is only written when at least one endpoint has already been
-    imported, so foreign-to-foreign ownership isn't materialised as placeholders
-    when running under a jurisdiction filter.
-    """
-    # SQLite-backed so the id/name maps don't have to fit in RAM — full UK PSC
-    # has tens of millions of entries and would otherwise OOM a small box.
-    bods_to_pamten_id = _DiskMap()
-    bods_id_to_name   = _DiskMap()   # entity names, for placeholder labelling
-    stmt_id_map       = _DiskMap()   # name-keyed node id -> JSON list of declaring statement ids
-    batch = _BatchWriter()           # buffers writes, flushes in batched sqlscript
-    jur = filter_jurisdiction.upper() if filter_jurisdiction else None
-
-    if bulk_load:
-        log.info("BODS: bulk-load mode — dropping secondary indexes for the load")
-        _drop_secondary_indexes()
-
-    counts = dict(entities=0, persons=0, relationships=0, skipped=0, errors=0)
-    processed = 0
-    streamed = 0
-    t0 = time.time()
-
-    log.info("BODS: streaming import%s", f" (limit={limit})" if limit else "")
-
-    for stmt in statements:
-        if limit and processed >= limit:
-            break
-
-        streamed += 1
-        if streamed % 250000 == 0:
-            elapsed = time.time() - t0
-            log.info(
-                "BODS: %s statements in %.0fs (%.0f/s) — entities=%s persons=%s edges=%s",
-                f"{streamed:,}", elapsed, streamed / max(elapsed, 1e-9),
-                f"{counts['entities']:,}", f"{counts['persons']:,}", f"{counts['relationships']:,}")
-
-        record_type = stmt.get("recordType")
-
-        if record_type == "entity":
-            # Cache the name for every entity so foreign-company placeholders
-            # get their real name instead of the raw BODS record ID.
-            _rid = stmt.get("recordId") or stmt.get("statementId")
-            if _rid:
-                _det = stmt.get("recordDetails") or {}
-                _nm  = (_det.get("name") or "").strip()
-                if _nm:
-                    bods_id_to_name[_rid] = _nm
-            try:
-                result = _process_entity_statement(
-                    stmt, bods_to_pamten_id, batch, source_id, credibility_score, jur,
-                    stmt_id_map,
-                )
-                if result:
-                    counts["entities"] += 1
-                    processed += 1
-                else:
-                    counts["skipped"] += 1
-            except Exception as exc:
-                log.warning("BODS entity error: %s", exc)
-                counts["errors"] += 1
-
-        elif record_type == "person":
-            try:
-                result = _process_person_statement(
-                    stmt, bods_to_pamten_id, batch, source_id, credibility_score,
-                )
-                if result:
-                    counts["persons"] += 1
-                    processed += 1
-                else:
-                    counts["skipped"] += 1
-            except Exception as exc:
-                log.warning("BODS person error: %s", exc)
-                counts["errors"] += 1
-
-        elif record_type == "relationship":
-            # Write the edge now, but only if at least one endpoint was imported
-            # (avoids materialising foreign-to-foreign ownership under a filter).
-            _details = stmt.get("recordDetails") or {}
-            _subj  = _ref_id(_details.get("subject")        or _details.get("subjectId"))
-            _party = _ref_id(_details.get("interestedParty") or _details.get("interestedPartyId"))
-            if _subj in bods_to_pamten_id or _party in bods_to_pamten_id:
-                try:
-                    edges = _process_relationship_statement(
-                        stmt, bods_to_pamten_id, bods_id_to_name, batch, source_id, credibility_score,
-                    )
-                    counts["relationships"] += edges
-                except Exception as exc:
-                    log.warning("BODS relationship error: %s", exc)
-                    counts["errors"] += 1
-
-    batch.flush()   # write any remaining buffered nodes/edges
-    bods_to_pamten_id.close()
-    bods_id_to_name.close()
-    stmt_id_map.close()
-
-    if bulk_load:
-        _rebuild_indexes()   # recreate the secondary indexes dropped for the load
-
-    elapsed = time.time() - t0
-    log.info(
-        "BODS: import complete in %.0fs — %d entities, %d persons, %d ownership edges (%s statements)",
-        elapsed, counts["entities"], counts["persons"], counts["relationships"], f"{streamed:,}",
-    )
-    if pass1_bar:
-        pass1_bar.finish(
-            f"entities={counts['entities']:,}  persons={counts['persons']:,}"
-            f"  edges={counts['relationships']:,}"
-        )
-
-    log.info("BODS: import complete — %s", counts)
-    return counts
-
-
 # ── Public entry points ───────────────────────────────────────────────────────
 
-def import_bods_source(
-    source_name: str,
-    url: str,
-    source_id: str,
-    credibility_score: int,
-    limit: int | None = None,
-    filter_jurisdiction: str | None = None,
-    bulk_load: bool = False,
-) -> dict:
-    """
-    Import a full BODS dataset from a remote ZIP URL into ArcadeDB.
-
-    Args:
-        source_name:         Human-readable name, e.g. "GLEIF" or "UK PSC"
-        url:                 ZIP download URL
-        source_id:           Pamten Source node id (from _ensure_bods_source)
-        credibility_score:   92 for GLEIF, 97 for UK PSC
-        limit:               Max entity/person statements to process (None = no limit).
-                             Relationship statements are always processed for resolved nodes.
-        filter_jurisdiction: ISO alpha-2 country code to restrict entity imports,
-                             e.g. "GB" to import only UK-registered entities.
-                             Persons and relationships are always included.
-
-    Returns:
-        dict with keys: entities, persons, relationships, skipped, errors
-    """
-    log.info("BODS: starting import of %s", source_name)
-
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False, dir=_tmp_dir()) as tmp:
-        tmp_path = tmp.name
-
-    try:
-        log.info("BODS: downloading %s…", url)
-        dl_bar     = _ProgressBar("Download")
-        downloaded = 0
-        with open(tmp_path, "wb") as out:
-            with httpx.stream("GET", url, timeout=300, follow_redirects=True) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("content-length", 0))
-                for chunk in resp.iter_bytes(CHUNK_SIZE):
-                    out.write(chunk)
-                    downloaded += len(chunk)
-                    dl_bar.render(downloaded, total or None)
-        dl_bar.finish(f"{downloaded / 1e6:.0f} MB")
-        log.info("BODS: download complete — %d bytes", downloaded)
-
-        zf         = zipfile.ZipFile(tmp_path)
-        json_names = [n for n in zf.namelist() if n.lower().endswith(".json")]
-        if not json_names:
-            raise ValueError(f"No .json file found inside ZIP: {tmp_path}")
-        entry       = json_names[0]
-        total_bytes = zf.getinfo(entry).file_size
-        raw_stream  = zf.open(entry)
-
-        bar    = _ProgressBar("Pass 1")
-        stream = _ProgressStream(raw_stream, total_bytes, bar)
-        return _run_import(
-            _iter_statements(stream),
-            source_id=source_id,
-            credibility_score=credibility_score,
-            limit=limit,
-            filter_jurisdiction=filter_jurisdiction,
-            pass1_bar=bar,
-            bulk_load=bulk_load,
-        )
-
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-
-
-def import_bods_file(
-    filepath: str,
-    source_id: str,
-    credibility_score: int,
-    limit: int | None = None,
-    filter_jurisdiction: str | None = None,
-    bulk_load: bool = False,
-) -> dict:
-    """
-    Import BODS statements from a local .json or .zip file into ArcadeDB.
-
-    Args:
-        filepath:            Absolute path to a .json or .zip file
-        source_id:           Pamten Source node id
-        credibility_score:   Source credibility (0–100)
-        limit:               Max entity/person statements to process (None = no limit)
-        filter_jurisdiction: ISO alpha-2 country code filter for entities
-
-    Returns:
-        dict with keys: entities, persons, relationships, skipped, errors
-    """
-    log.info("BODS: importing from local file %s", filepath)
-
-    if filepath.lower().endswith(".zip"):
-        zf         = zipfile.ZipFile(filepath)
-        json_names = [n for n in zf.namelist() if n.lower().endswith(".json")]
-        if not json_names:
-            raise ValueError(f"No .json file found inside ZIP: {filepath}")
-        entry        = json_names[0]
-        total_bytes  = zf.getinfo(entry).file_size
-        raw_stream   = zf.open(entry)
-        log.info("BODS: reading %s  (%s bytes uncompressed)", entry, f"{total_bytes:,}")
-    else:
-        total_bytes = os.path.getsize(filepath)
-        raw_stream  = open(filepath, "rb")  # noqa: WPS515
-
-    try:
-        bar    = _ProgressBar("Pass 1")
-        stream = _ProgressStream(raw_stream, total_bytes, bar)
-        return _run_import(
-            _iter_statements(stream),
-            source_id=source_id,
-            credibility_score=credibility_score,
-            limit=limit,
-            filter_jurisdiction=filter_jurisdiction,
-            pass1_bar=bar,
-            bulk_load=bulk_load,
-        )
-    finally:
-        raw_stream.close()

@@ -213,16 +213,6 @@ class TestBodsWriterConformance:
         for field in ("source_url", "source_date", "last_scraped_at"):
             assert field in q, f"bods OWNS must stamp {field} — got:\n{q}"
 
-    def test_role_stamps_full_provenance(self):
-        q = _bods_script(lambda b: bods._role(
-            b, person_id="p", entity_id="e", role="Official",
-            since=None, until=None, source_id="s", credibility_score=90,
-            source_url="u", source_date="d",
-        ))
-        assert "CREATE EDGE HAS_ROLE" in q
-        for field in ("source_url", "source_date", "last_scraped_at"):
-            assert field in q, f"bods HAS_ROLE must stamp {field} — got:\n{q}"
-
     def test_entity_captures_name_and_country(self):
         q = _bods_script(lambda b: bods._entity(
             b, "e1", name="Acme", entity_type="company", country="US",
@@ -232,12 +222,3 @@ class TestBodsWriterConformance:
         assert "UPDATE Entity" in q
         assert "name" in q, "bods entity must capture a name"
         assert "country" in q, "bods entity must capture a country"
-
-    def test_person_captures_name_and_birth_date(self):
-        q = _bods_script(lambda b: bods._person(
-            b, "p1", full_name="Jane Doe", first_name=None, last_name=None,
-            nationality=None, birth_date="1980-01",
-        ))
-        assert "UPDATE Person" in q
-        assert "full_name" in q, "bods person must capture a full name"
-        assert "birth_date" in q, "bods person from a DOB source must persist birth_date"

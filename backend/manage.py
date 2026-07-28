@@ -8,7 +8,8 @@ Usage:
   python3 manage.py normalize-countries
   python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
-  python3 manage.py bods-uk-psc [options]
+  python3 manage.py ch-psc [options]          # Companies House PSC snapshot (UK ownership)
+  python3 manage.py ch-company-data [options] # Companies House register (UK company names)
   python3 manage.py seed [options]
 
 Run inside a tmux session to keep running after SSH disconnect:
@@ -70,18 +71,6 @@ def cmd_flag_nominees(args):
     result = flag_nominee_entities()
     print(f"Flagged {result['flagged']} nominee/custodian entities "
           f"(of {result['candidates']} name candidates)")
-
-def cmd_bods_uk_psc(args):
-    from app.config import settings
-    settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
-    from app.scraper.runner import run_import_bods_uk_psc
-    result = run_import_bods_uk_psc(
-        limit=args.limit,
-        local_file=args.file,
-        bulk_load=getattr(args, "bulk_load", False),
-    )
-    print(result)
 
 def cmd_seed(args):
     from app.config import settings
@@ -279,14 +268,6 @@ def _build_parser():
     p_fedkey = subparsers.add_parser('gen-federation-key',
         help='Generate an Ed25519 signing keypair for federation')
     p_fedkey.set_defaults(func=cmd_gen_federation_key)
-
-    # bods-uk-psc command
-    p_psc = subparsers.add_parser('bods-uk-psc')
-    p_psc.add_argument('--file', help='Path to local uk_psc.zip')
-    p_psc.add_argument('--limit', type=int, help='Max statements')
-    p_psc.add_argument('--bulk-load', action='store_true',
-                       help='Drop secondary indexes during the load and rebuild after (faster on full imports)')
-    p_psc.set_defaults(func=cmd_bods_uk_psc)
 
     # seed command
     p_seed = subparsers.add_parser('seed')

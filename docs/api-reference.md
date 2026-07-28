@@ -91,8 +91,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/scraper/open-corporates/run` | admin | Run an OpenCorporates scrape by company name |
 | POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company (then auto-dedup). `?depth=` passes through to the Wikidata scrape (see `/scraper/run`) |
 | POST | `/scraper/geocode` | contributor | Backfill HQ coordinates via Nominatim (needs `GEOCODING_ENABLED`) |
-| POST | `/scraper/bods/uk-psc/run` | contributor | Import UK PSC beneficial-ownership data (BODS) |
-| POST | `/scraper/bods/run-all` | contributor | Run the UK PSC BODS import (GLEIF comes from the golden-copy CLI, not BODS) |
+| GET | `/scraper/bods/status` | — | Enabled state of the bulk GLEIF / UK datasets (imported from the CLI, not HTTP) |
 | GET | `/scraper/sources` | — | Per-source toggle states |
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
 | DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
