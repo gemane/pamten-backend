@@ -393,39 +393,18 @@ but is a heuristic — it will occasionally misclassify unusual names.
 
 ---
 
-## Importing BODS Data
+## Importing bulk ownership datasets
 
-BODS (Beneficial Ownership Data Standard) datasets are large
-bulk imports, not real-time scrapers. They should be run
-manually, not on a schedule.
+The bulk ownership datasets (GLEIF golden copy + Companies House snapshots) are
+large batch imports, not real-time scrapers, and are run **manually from the CLI**
+in a tmux session on the server — not over HTTP and not on a schedule. (They
+replaced the OpenOwnership BODS exports, which were frozen at 2025-03; the BODS
+importer and its `/scraper/bods/*/run` endpoints have been removed.)
 
-### Recommended approach
+### GLEIF (worldwide corporate ownership)
 
-For initial data population, download files locally first
-to avoid re-downloading on retries:
-
-```bash
-# Download GLEIF (1.1 GB)
-wget https://oo-bodsdata.s3.amazonaws.com/data/gleif_version_0_4/json.zip \
-     -O /data/gleif.zip
-
-# Download UK PSC (3.3 GB)
-wget https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip \
-     -O /data/uk_psc.zip
-```
-
-Then import with local file path:
-
-```bash
-# UK PSC (BODS) via HTTP — test with a limit first
-curl -X POST "/scraper/bods/uk-psc/run?limit=1000&local_file=/data/uk_psc.zip"
-
-# Full UK PSC import (takes hours for large files)
-curl -X POST "/scraper/bods/uk-psc/run?local_file=/data/uk_psc.zip"
-```
-
-GLEIF is imported from the golden copy via the CLI (multi-GB local batch loads),
-not an HTTP endpoint:
+Imported from the current GLEIF golden copy (download the LEI-CDF and RR-CDF
+files first):
 
 ```bash
 python manage.py gleif-lei-cdf --file /data/lei-cdf/gleif-lei2.json.zip --bulk-load  # entities
@@ -433,28 +412,38 @@ python manage.py gleif-rr      --file /data/rr-cdf/gleif-rr.json.zip            
 python manage.py gleif-succession --file /data/lei-cdf/gleif-lei2.json.zip           # mergers
 ```
 
-For a **full load** run it from the CLI with `--bulk-load`, which drops the
-secondary indexes on `Entity`/`Person` for the duration and rebuilds them at the
-end. On 10M+ row types those indexes dominate per-write cost, so this is
-substantially faster; each flush also retries with backoff so a transient proxy
-timeout doesn't kill a multi-hour import. `id` indexes are kept (the load needs
-them). Because `CREATE EDGE` isn't idempotent, collapse any duplicate ownership
-edges afterwards with `POST /scraper/deduplicate-edges`:
+### UK (Companies House)
+
+Two companion imports — beneficial ownership (PSC) then company names (register):
 
 ```bash
-python manage.py bods-uk-psc --file /data/uk_psc.zip --bulk-load
+python manage.py ch-psc          --file /data/companies-house-psc/psc-snapshot.zip --bulk-load
+python manage.py ch-company-data --file /data/companies-house-basic/basic-company-data.zip --bulk-load
 ```
 
-> **Temp space:** the importer spills its id maps (tens of millions of entries)
-> to SQLite files under the system temp dir. If `/tmp` is a small **tmpfs** (RAM),
-> a full UK PSC import fills it and SQLite fails with *"database or disk is full"*
-> / *"disk image is malformed"*. Set `SCRAPER_TMP_DIR` to a path on a real disk
-> with tens of GB free: `SCRAPER_TMP_DIR=/data/bods/tmp python manage.py bods-uk-psc …`.
+`ch-psc` creates controlled companies keyed on their number (`gb-coh:{number}`);
+`ch-company-data` fills in their names/addresses/former-names by enriching those
+existing nodes (it never creates isolated companies for the ~5.6M-row register).
+
+### `--bulk-load`
+
+For a **full load** pass `--bulk-load`, which drops the secondary indexes on
+`Entity`/`Person` for the duration and rebuilds them at the end. On 10M+ row types
+those indexes dominate per-write cost, so this is substantially faster; each flush
+also retries with backoff so a transient proxy timeout doesn't kill a multi-hour
+import. `id` indexes are kept (the load needs them). Because `CREATE EDGE` isn't
+idempotent, collapse any duplicate ownership edges afterwards with
+`POST /scraper/deduplicate-edges`.
+
+> **Temp space:** `gleif-succession` spills its id map to SQLite under the system
+> temp dir. If `/tmp` is a small **tmpfs** (RAM), a full run can fill it and SQLite
+> fails with *"database or disk is full"*. Set `SCRAPER_TMP_DIR` to a path on a real
+> disk with tens of GB free: `SCRAPER_TMP_DIR=/data/tmp python manage.py gleif-succession …`.
 
 After a full import, populate the full-text search column so `/search` uses its
 FULL_TEXT index instead of scanning every row (`toLower(name) CONTAINS` on
 millions of entities takes ~12s; `CONTAINSTEXT` on the index is instant). The
-BODS importer sets `search_text` inline, so this is only needed for rows loaded
+importers set `search_text` inline, so this is only needed for rows loaded
 by other sources or before this field existed:
 
 ```bash

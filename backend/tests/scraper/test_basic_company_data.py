@@ -1,10 +1,48 @@
 """Unit tests for Companies House BasicCompanyData parsing (DB not involved).
 End-to-end enrichment is covered against a real ArcadeDB in
 tests/integration/test_basic_company_data_it.py."""
+import csv
+import io
+import zipfile
+from unittest.mock import patch
 
 from app.scraper.basic_company_data import (
-    _company_type, _founded, _prev_names, _reg_address,
+    _company_type, _founded, _prev_names, _reg_address, import_basic_company_data,
 )
+
+
+def _one_row_zip(tmp_path):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["CompanyName", "CompanyNumber", "CompanyCategory", "IncorporationDate"])
+    w.writerow(["ACME LTD", "00000001", "Private Limited Company", "01/01/2000"])
+    zpath = tmp_path / "basic.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("BasicCompanyData.csv", buf.getvalue())
+    return str(zpath)
+
+
+class TestBulkLoad:
+    """The importer owns the bulk-load index toggling (drop before, rebuild after)."""
+
+    def test_bulk_load_drops_then_rebuilds_around_the_load(self, tmp_path):
+        order = []
+        with patch("app.scraper.basic_company_data._drop_secondary_indexes",
+                   side_effect=lambda: order.append("drop")), \
+             patch("app.scraper.basic_company_data._rebuild_indexes",
+                   side_effect=lambda: order.append("rebuild")), \
+             patch("app.scraper.basic_company_data._flush_script",
+                   side_effect=lambda *a, **k: order.append("load")):
+            import_basic_company_data(_one_row_zip(tmp_path), 97, bulk_load=True)
+        assert order == ["drop", "load", "rebuild"]   # drop before load, rebuild after
+
+    def test_no_index_changes_without_bulk_load(self, tmp_path):
+        with patch("app.scraper.basic_company_data._drop_secondary_indexes") as drop, \
+             patch("app.scraper.basic_company_data._rebuild_indexes") as rebuild, \
+             patch("app.scraper.basic_company_data._flush_script"):
+            import_basic_company_data(_one_row_zip(tmp_path), 97)
+        drop.assert_not_called()
+        rebuild.assert_not_called()
 
 
 class TestFieldParsing:

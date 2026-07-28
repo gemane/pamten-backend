@@ -1,12 +1,10 @@
 import logging
 import threading
-from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from app.config import settings
 from app.scraper.runner import (
     run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
-    run_import_bods_uk_psc,
 )
 from app.auth.dependencies import require_admin, require_contributor
 from app.scraper import maintenance, proxy_write
@@ -376,30 +374,7 @@ def ownership_quality(limit: int = 100, _: dict = Depends(require_admin)):
     }
 
 
-# ── BODS endpoints ────────────────────────────────────────────────────────────
-
-def _validate_bods_local_file(local_file: str | None) -> str | None:
-    """
-    Restrict local_file to .zip/.json files inside BODS_DATA_DIR.
-
-    The importer opens whatever path it is handed, so without this check any
-    contributor could read arbitrary server files into the graph. resolve()
-    follows symlinks, so a link pointing outside the data dir is rejected too.
-    """
-    if local_file is None:
-        return None
-    data_dir = Path(settings.BODS_DATA_DIR).resolve()
-    path = Path(local_file).resolve()
-    if path.suffix.lower() not in (".zip", ".json"):
-        raise HTTPException(status_code=400, detail="local_file must be a .zip or .json file")
-    if not path.is_relative_to(data_dir):
-        raise HTTPException(
-            status_code=400,
-            detail=f"local_file must be inside the data directory ({settings.BODS_DATA_DIR})",
-        )
-    if not path.is_file():
-        raise HTTPException(status_code=400, detail="local_file not found")
-    return str(path)
+# ── Bulk-import status ────────────────────────────────────────────────────────
 
 @router.get("/bods/status")
 def bods_status():
@@ -413,70 +388,7 @@ def bods_status():
     }
 
 
-# GLEIF is imported from the golden copy (LEI-CDF/RR-CDF) via the CLI
-# (manage.py gleif-lei-cdf / gleif-rr / gleif-succession), not this HTTP endpoint —
-# the golden-copy files are multi-GB local batch loads, not a URL fetch.
-
-
-@router.post("/bods/uk-psc/run")
-def bods_uk_psc_run(
-    limit: int | None = Query(
-        None, ge=1,
-        description="Max entity statements to process. Omit for the full ~8 M-entity dataset.",
-    ),
-    local_file: str | None = Query(
-        None,
-        description="Path to a pre-downloaded .zip or .json file. "
-                    "Skips the ~3.3 GB download when given.",
-    ),
-    _: dict = Depends(require_contributor),
-):
-    """
-    Import the UK PSC BODS dataset (CC0) into the graph.
-    Downloads ~3.3 GB if no local_file is given; allow 30–90 min for the full dataset.
-    Requires SCRAPER_ENABLED=true AND SCRAPER_BODS_UK_PSC_ENABLED=true.
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise HTTPException(status_code=403,
-            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise HTTPException(status_code=403,
-            detail="UK PSC scraper is disabled. Set SCRAPER_BODS_UK_PSC_ENABLED=true.")
-    local_file = _validate_bods_local_file(local_file)
-    try:
-        return run_import_bods_uk_psc(limit=limit, local_file=local_file)
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception:
-        logger.exception("UK PSC BODS import failed")
-        raise HTTPException(status_code=500, detail="UK PSC import failed. Check server logs for details.")
-
-
-@router.post("/bods/run-all")
-def bods_run_all(
-    limit: int | None = Query(None, ge=1, description="Max entity statements per source."),
-    _: dict = Depends(require_contributor),
-):
-    """
-    Run the UK PSC BODS import if its flag is enabled (GLEIF is imported from the
-    golden copy via the CLI, not over BODS). Disabled sources report 'disabled'.
-    Requires SCRAPER_ENABLED=true.
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise HTTPException(status_code=403,
-            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
-
-    results: dict = {}
-
-    if settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        try:
-            results["uk_psc"] = run_import_bods_uk_psc(limit=limit)
-        except PermissionError as e:
-            results["uk_psc"] = {"status": "disabled", "detail": str(e)}
-        except Exception:
-            logger.exception("UK PSC BODS import failed (run-all)")
-            results["uk_psc"] = {"status": "error", "detail": "Import failed. Check server logs for details."}
-    else:
-        results["uk_psc"] = {"status": "disabled"}
-
-    return {"status": "ok", "results": results}
+# Bulk datasets (GLEIF golden copy + Companies House PSC / register) are imported
+# from the CLI — manage.py gleif-lei-cdf / gleif-rr / gleif-succession / ch-psc /
+# ch-company-data — not over HTTP: the source files are multi-GB local batch loads
+# run in a tmux session on the server, not URL fetches triggered from the web app.

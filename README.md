@@ -169,18 +169,23 @@ Investor names are classified as Person or Entity using heuristics that recognis
 ### OpenCorporates
 Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 
-### BODS (GLEIF & UK PSC)
-Beneficial-ownership data imported via the **Beneficial Ownership Data Standard**:
-**GLEIF** (Global LEI, corporate ownership worldwide, CC0) and the **UK PSC**
-register (people with significant control, CC0). Controlled by
-`SCRAPER_BODS_GLEIF_ENABLED` / `SCRAPER_BODS_UK_PSC_ENABLED`.
+### Bulk ownership datasets (GLEIF & UK)
+Beneficial-ownership data is loaded in bulk from current, authoritative sources —
+**GLEIF** (Global LEI, corporate ownership worldwide, CC0) and the UK **Companies
+House** register (people with significant control + the company register, Open
+Government Licence). Controlled by `SCRAPER_BODS_GLEIF_ENABLED` /
+`SCRAPER_BODS_UK_PSC_ENABLED`.
 
-Unlike the per-company scrapers above, BODS is a **bulk dataset import**, not a
-name lookup — so it is *not* part of `run-all` and has its own endpoints
-(`/scraper/bods/*`) and, in the web app, its own **Bulk import** card. It streams
-a BODS file (URL or a local file inside `BODS_DATA_DIR`), reconciles endpoints by
-LEI / Companies House id, and can be filtered by `jurisdiction` and `limit`. Both
-sources still appear in `/scraper/sources` with independent on/off toggles.
+Unlike the per-company scrapers above, these are **bulk dataset imports**, not name
+lookups — so they are *not* part of `run-all`. Because the source files are multi-GB,
+they run from the **CLI** (`manage.py gleif-lei-cdf` / `gleif-rr` / `gleif-succession`
+/ `ch-psc` / `ch-company-data`) in a tmux session on the server, not over HTTP. Both
+sources still appear in `/scraper/sources` with independent on/off toggles, and
+`/scraper/bods/status` reports their enabled state.
+
+> These replaced the OpenOwnership **BODS** exports (GLEIF + UK PSC), which were
+> frozen at 2025-03. The BODS importer and its `/scraper/bods/*/run` endpoints have
+> been removed; only the CLI importers above remain.
 
 ---
 
@@ -196,7 +201,7 @@ separate, or view the merge log).
 
 Entities and ownership edges dedupe too: the same company under two GLEIF LEIs is
 detected by name with a confidence tier (registered address / shared hard id), and
-duplicate `OWNS` edges from multi-interest BODS statements are collapsed — both via
+duplicate `OWNS` edges from multi-interest ownership records are collapsed — both via
 `/scraper/duplicate-*` endpoints.
 
 📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — person scan signals + confidence model + param-mediated merge, entity same-company detection with confidence tiers, and OWNS edge dedup.
@@ -267,13 +272,12 @@ log), not as in-place edits that the next scrape would clobber.
 | `SCRAPER_WIKIDATA_ENABLED` | `true` | Wikidata source switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |
 | `SCRAPER_OPENCORPORATES_ENABLED` | `false` | OpenCorporates source switch |
-| `SCRAPER_BODS_GLEIF_ENABLED` | `false` | GLEIF BODS import switch |
-| `SCRAPER_BODS_UK_PSC_ENABLED` | `false` | UK PSC BODS import switch |
+| `SCRAPER_BODS_GLEIF_ENABLED` | `false` | GLEIF bulk-import switch (golden-copy CLI importers) |
+| `SCRAPER_BODS_UK_PSC_ENABLED` | `false` | UK Companies House bulk-import switch (`ch-psc` / `ch-company-data`) |
 | `SCRAPER_AUTODEDUP_ENABLED` | `true` | Auto-merge high-confidence duplicate persons after each `run-all` scrape |
 | `FEDERATION_ENABLED` | `false` | Enable trusted-peer federation (publish/pull) |
 | `FEDERATION_SIGNING_KEY` | — | Ed25519 private seed (base64) for signing exports; generate with `manage.py gen-federation-key`. Secret — env only |
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
-| `BODS_DATA_DIR` | `/data` | Only .zip/.json files inside this directory may be passed as `local_file` to BODS imports |
 | `GEOCODING_ENABLED` | `false` | Geocode addresses to coordinates via Nominatim |
 | `GEOCODING_CONTACT` | — | Contact email added to the Nominatim User-Agent (required by their usage policy) |
 | `GEOCODING_USER_AGENT` | `pamten-ownership-platform` | Base User-Agent for Nominatim requests |
@@ -308,9 +312,8 @@ python3 manage.py init-schema
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers) — see *GLEIF sourcing* in [`docs/data-model.md`](docs/data-model.md) |
-| `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership; replaces `bods-uk-psc`). Company names come from a companion BasicCompanyData import |
+| `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`). Company names come from a companion `ch-company-data` import |
 | `ch-company-data` | Enrich UK companies with names/addresses/former-names from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph (from `ch-psc`), never creates isolated nodes |
-| `bods-uk-psc` | **Legacy** — import a local UK PSC BODS file (frozen at 2025‑03; being replaced by `ch-psc`). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild them after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`) |
 | `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
 
 ---

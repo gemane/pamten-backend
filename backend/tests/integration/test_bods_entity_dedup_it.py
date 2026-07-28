@@ -1,10 +1,10 @@
 """
-Real-ArcadeDB tests for BODS entity identity + the dedup heal.
+Real-ArcadeDB tests for Entity identity + the dedup heal.
 
 Two guarantees the mocked suite can't check:
-  1. Re-importing the same company (same LEI) with a different BODS recordId
-     across two runs must NOT create a second Entity node — the Austria-doubling
-     regression from the recordId-keyed importer.
+  1. Re-importing the same company (same LEI) across two runs must NOT create a
+     second Entity node — the importers key on `lei:{LEI}`, so the upsert collapses
+     them (the Austria-doubling regression from the old recordId-keyed importer).
   2. POST /scraper/deduplicate-entities (maintenance.deduplicate_entities) heals
      pre-existing doubles by merging on the LEI and migrating their edges.
 """
@@ -13,22 +13,17 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def _entity(rid, name, lei):
-    return {"recordType": "entity", "recordId": rid,
-            "recordDetails": {"name": name, "jurisdiction": {"code": "AT"},
-                              "entityType": {"type": "registeredEntity"},
-                              "identifiers": [{"scheme": "XI-LEI", "id": lei}]}}
+def test_reupsert_same_lei_is_idempotent(it_db):
+    from app.scraper.bods import _BatchWriter, _entity
 
-
-def test_reimport_same_lei_different_recordid_is_idempotent(it_db):
-    from app.scraper.bods import _run_import
-
-    # 1) "Austria-only" run, then 2) "full GLEIF" run — same company + LEI,
-    # different bods recordId (as a fresh dump would assign).
-    _run_import(iter([_entity("AT-001", "Acme AG", "LEI-ACME")]),
-                source_id="s", credibility_score=90, limit=None, filter_jurisdiction="AT")
-    _run_import(iter([_entity("GLEIF-999", "Acme AG", "LEI-ACME")]),
-                source_id="s", credibility_score=90, limit=None, filter_jurisdiction=None)
+    # Two separate imports of the same company, keyed on its LEI (as GLEIF LEI-CDF
+    # does), must upsert onto one node — never a second.
+    for _ in range(2):
+        batch = _BatchWriter()
+        _entity(batch, "lei:LEI-ACME", name="Acme AG", entity_type="company",
+                country="AT", founded=None, lei_id="LEI-ACME",
+                companies_house_id=None, source_id="s", credibility_score=90)
+        batch.flush()
 
     rows = it_db.run_command("MATCH (e:Entity) WHERE e.lei_id = 'LEI-ACME' RETURN count(e) AS n")
     assert rows[0]["n"] == 1                      # one company, not two

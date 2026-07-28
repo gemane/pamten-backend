@@ -107,7 +107,6 @@ BODS_GLEIF_CREDIBILITY   = 92   # authoritative LEI data, CC0 — corporate not 
 
 UK_PSC_SOURCE_NAME       = "UK PSC"
 UK_PSC_SOURCE_URL        = "https://www.gov.uk/government/publications/persons-with-significant-control-register"
-UK_PSC_BODS_URL          = "https://oo-bodsdata.s3.amazonaws.com/data/uk_version_0_4/json.zip"
 BODS_UK_PSC_CREDIBILITY  = 97   # statutory UK legal register, CC0
 
 # Companies House BasicCompanyData (the UK company register) — names/addresses for
@@ -1725,65 +1724,3 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
     log.info("GLEIF RR-CDF: deduplicating overlapping OWNS edges")
     dedup = deduplicate_owns_edges()
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts, "edge_dedup": dedup}
-
-
-# ── UK PSC public entry point ─────────────────────────────────────────────────
-
-def run_import_bods_uk_psc(
-    limit: int | None = None,
-    filter_jurisdiction: str | None = None,
-    local_file: str | None = None,
-    bulk_load: bool = False,
-) -> dict:
-    """
-    Import UK PSC dataset.
-    Checks SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED.
-    If local_file is given, import from file instead of URL.
-
-    Args:
-        limit:               Max entity statements to process (None = full ~8 M-entity dataset).
-        filter_jurisdiction: ISO alpha-2 country code (defaults to "GB" for UK PSC).
-        local_file:          Path to a pre-downloaded .zip or .json file.
-        bulk_load:           Drop secondary indexes for the load, rebuild after
-                             (much faster on a full import; see bods._run_import).
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise PermissionError(
-            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise PermissionError(
-            "UK PSC scraper is disabled. "
-            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
-        )
-    if not get_source_enabled("bods_uk_psc"):
-        raise PermissionError("UK PSC source is disabled. Enable it in the Scraper panel.")
-
-    from app.scraper.bods import import_bods_source, import_bods_file
-
-    source_id = _ensure_bods_uk_psc_source()
-    jur = filter_jurisdiction or "GB"
-    log.info("UK PSC runner: starting BODS import (limit=%s, local=%s)", limit, local_file)
-
-    if local_file:
-        counts = import_bods_file(
-            filepath=local_file,
-            source_id=source_id,
-            credibility_score=BODS_UK_PSC_CREDIBILITY,
-            limit=limit,
-            filter_jurisdiction=jur,
-            bulk_load=bulk_load,
-        )
-    else:
-        counts = import_bods_source(
-            source_name=UK_PSC_SOURCE_NAME,
-            url=UK_PSC_BODS_URL,
-            source_id=source_id,
-            credibility_score=BODS_UK_PSC_CREDIBILITY,
-            limit=limit,
-            filter_jurisdiction=jur,
-            bulk_load=bulk_load,
-        )
-    return {"status": "ok", "source": UK_PSC_SOURCE_NAME,
-            "duplicate_names": _duplicate_name_summary(), **counts,
-            **_post_bods_import()}

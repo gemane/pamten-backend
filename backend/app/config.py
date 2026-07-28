@@ -44,9 +44,6 @@ class Settings(BaseSettings):
     # With ADMIN_EMAIL set, self-registration never grants admin.
     ADMIN_EMAIL:                      str | None = None
     ADMIN_PASSWORD:                   str | None = None
-    # Only files inside this directory may be passed as local_file to the
-    # BODS import endpoints (prevents arbitrary server file reads).
-    BODS_DATA_DIR:                    str  = "/data"
     # Geocoding (Nominatim / OpenStreetMap). Disabled by default; the public
     # endpoint requires a descriptive User-Agent with a contact and enforces
     # ~1 request/second, which GEOCODING_MIN_INTERVAL respects.

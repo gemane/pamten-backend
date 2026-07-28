@@ -1,8 +1,8 @@
 """
-Real-ArcadeDB test for nominee/custodian detection: the BODS importer flags a
-nominee-named entity, and flag_nominee_entities backfills existing ones via the
-FULL_TEXT index. The regex + CONTAINSTEXT + boolean write can't be checked by the
-mocked suite.
+Real-ArcadeDB test for nominee/custodian detection: the shared `_entity` writer
+flags a nominee-named entity inline (as every importer built on it does), and
+flag_nominee_entities backfills existing ones via the FULL_TEXT index. The regex +
+CONTAINSTEXT + boolean write can't be checked by the mocked suite.
 
 Skipped unless ARCADEDB_IT_URL is set — see conftest.py.
 """
@@ -11,20 +11,17 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def test_bods_import_flags_nominee_entity(it_db):
-    from app.scraper.bods import _run_import
+def test_entity_writer_flags_nominee_inline(it_db):
+    from app.scraper.bods import _BatchWriter, _entity
 
-    stmts = [{
-        "recordType": "entity", "recordId": "E1",
-        "recordDetails": {"name": "Talbot Nominees Limited",
-                          "identifiers": [{"scheme": "XI-LEI", "id": "LEI-NOMINEE"}]},
-    }, {
-        "recordType": "entity", "recordId": "E2",
-        "recordDetails": {"name": "Acme Trading AG",
-                          "identifiers": [{"scheme": "XI-LEI", "id": "LEI-ACME"}]},
-    }]
-    _run_import(iter(stmts), source_id="src", credibility_score=90,
-                limit=None, filter_jurisdiction=None)
+    batch = _BatchWriter()
+    _entity(batch, "lei:LEI-NOMINEE", name="Talbot Nominees Limited",
+            entity_type="company", country=None, founded=None, lei_id="LEI-NOMINEE",
+            companies_house_id=None, source_id="src", credibility_score=90)
+    _entity(batch, "lei:LEI-ACME", name="Acme Trading AG",
+            entity_type="company", country=None, founded=None, lei_id="LEI-ACME",
+            companies_house_id=None, source_id="src", credibility_score=90)
+    batch.flush()
 
     nominee = it_db.run_sql("SELECT is_nominee FROM Entity WHERE lei_id = 'LEI-NOMINEE'")
     assert nominee and nominee[0]["is_nominee"] is True
