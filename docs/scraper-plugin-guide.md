@@ -435,6 +435,25 @@ import. `id` indexes are kept (the load needs them). Because `CREATE EDGE` isn't
 idempotent, collapse any duplicate ownership edges afterwards with
 `POST /scraper/deduplicate-edges`.
 
+### Speed behind a proxy (`--db-url`, `--batch-size`)
+
+The **dominant cost of a slow import is a proxy read timeout**, not the DB. dev-db
+sits behind an nginx with a **60s** timeout; when a flush of `--batch-size` records
+crosses 60s, nginx returns a 504, the importer waits the full 60s, then backs off
+and retries — so every slow flush burns a minute-plus. Measured on the CH PSC
+snapshot (~35M nodes) this turned the run into ~17h. Two knobs (`ch-psc` /
+`ch-company-data`):
+
+- **`--db-url http://<arcadedb-host>:2480`** — point the import **straight at
+  ArcadeDB**, bypassing the proxy and its timeout entirely. Biggest win when the
+  DB port is reachable from the import host; also drops per-round-trip latency.
+- **`--batch-size N`** (default 400) — **lower it** (e.g. 100) when stuck behind
+  the proxy so each flush finishes well under the timeout; **raise it** on a direct
+  connection to cut round-trips.
+
+Alternatively, raise the proxy's `proxy_read_timeout` server-side. Either removes
+the 504-retry churn.
+
 > **Temp space:** `gleif-succession` spills its id map to SQLite under the system
 > temp dir. If `/tmp` is a small **tmpfs** (RAM), a full run can fill it and SQLite
 > fails with *"database or disk is full"*. Set `SCRAPER_TMP_DIR` to a path on a real

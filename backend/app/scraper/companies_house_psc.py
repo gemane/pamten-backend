@@ -147,8 +147,15 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
 
 
 def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
-                  limit: int | None = None, bulk_load: bool = False) -> dict:
-    """Import a Companies House PSC snapshot (.zip/.txt). Returns counts."""
+                  limit: int | None = None, bulk_load: bool = False,
+                  batch_size: int = 400) -> dict:
+    """Import a Companies House PSC snapshot (.zip/.txt). Returns counts.
+
+    ``batch_size`` sets how many records flush per ``sqlscript`` round-trip. Behind
+    a proxy with a short read timeout (e.g. dev-db's 60s nginx), a smaller batch
+    keeps each flush well under the limit so heavy flushes don't 504-then-retry
+    (the dominant cost of a slow import); connected directly to ArcadeDB, a larger
+    batch cuts round-trips."""
     if filepath.lower().endswith(".zip"):
         zf = zipfile.ZipFile(filepath)
         entry = zf.namelist()[0]
@@ -162,7 +169,7 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
     counts = {"records": 0, "persons": 0, "entities": 0, "skipped": 0, "errors": 0}
     if bulk_load:
         _drop_secondary_indexes()
-    batch = _BatchWriter()
+    batch = _BatchWriter(batch_size=batch_size)
     bar = _ProgressBar("CH PSC")
     done = 0
     try:

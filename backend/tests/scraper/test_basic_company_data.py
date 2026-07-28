@@ -44,6 +44,20 @@ class TestBulkLoad:
         drop.assert_not_called()
         rebuild.assert_not_called()
 
+    def test_batch_size_is_threaded_to_the_writer(self, tmp_path):
+        from app.scraper import basic_company_data as m
+        captured = {}
+        orig = m._UpdateBatch.__init__
+
+        def spy(self, batch_size=400):
+            captured["bs"] = batch_size
+            orig(self, batch_size)
+
+        with patch.object(m._UpdateBatch, "__init__", spy), \
+             patch("app.scraper.basic_company_data._flush_script"):
+            import_basic_company_data(_one_row_zip(tmp_path), 97, batch_size=50)
+        assert captured["bs"] == 50
+
 
 class TestFieldParsing:
     def test_company_type_default_and_nonprofit(self):
