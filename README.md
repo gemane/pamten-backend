@@ -309,6 +309,7 @@ python3 manage.py init-schema
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers) — see *GLEIF sourcing* in [`docs/data-model.md`](docs/data-model.md) |
 | `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership; replaces `bods-uk-psc`). Company names come from a companion BasicCompanyData import |
+| `ch-company-data` | Enrich UK companies with names/addresses/former-names from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph (from `ch-psc`), never creates isolated nodes |
 | `bods-uk-psc` | **Legacy** — import a local UK PSC BODS file (frozen at 2025‑03; being replaced by `ch-psc`). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild them after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`) |
 | `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
 
