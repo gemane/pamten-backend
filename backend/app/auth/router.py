@@ -4,7 +4,7 @@ import uuid
 import threading
 from datetime import timedelta
 from collections import defaultdict
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from pydantic import BaseModel, EmailStr, field_validator
 from app.config import settings
 from app.database import db
@@ -116,17 +116,30 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
-def _issue_verification_email(user_id: str, email: str) -> None:
+def _safe_send(send_fn, *args) -> None:
+    """Run an email send best-effort — the transport can be slow or blocked (e.g.
+    Render blocks outbound SMTP), and that must never fail the user's request or
+    leak whether an account exists. Failures are logged, not raised."""
+    try:
+        send_fn(*args)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("email send failed (%s): %s", getattr(send_fn, "__name__", send_fn), exc)
+
+
+def _issue_verification_email(background: BackgroundTasks, user_id: str, email: str) -> None:
+    # Token minted synchronously (cheap); the actual send runs after the response
+    # so a slow/blocked transport can't hang or 500 the endpoint.
     token = create_purpose_token(
         user_id, VERIFY_EMAIL_PURPOSE, timedelta(hours=settings.EMAIL_VERIFY_TTL_HOURS))
-    send_verification_email(email, token)
+    background.add_task(_safe_send, send_verification_email, email, token)
 
 
-def _issue_password_reset_email(user_id: str, email: str, password_hash: str) -> None:
+def _issue_password_reset_email(background: BackgroundTasks, user_id: str, email: str,
+                                password_hash: str) -> None:
     token = create_purpose_token(
         user_id, RESET_PASSWORD_PURPOSE, timedelta(minutes=settings.PASSWORD_RESET_TTL_MINUTES),
         extra={"ph": password_hash_fingerprint(password_hash)})
-    send_password_reset_email(email, token)
+    background.add_task(_safe_send, send_password_reset_email, email, token)
 
 
 def _token_response(user_id: str, email: str, role: str):
@@ -159,7 +172,7 @@ def _clear_login_attempts(key: str) -> None:
 
 
 @router.post("/register")
-def register(data: RegisterRequest):
+def register(data: RegisterRequest, background: BackgroundTasks):
     if len(data.password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(status_code=400,
                             detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
@@ -196,7 +209,7 @@ def register(data: RegisterRequest):
     if verified:
         return _token_response(user_id, data.email, role)
 
-    _issue_verification_email(user_id, data.email)
+    _issue_verification_email(background, user_id, data.email)
     return {"message": "Account created. Check your email to verify your address before logging in.",
             "email": data.email, "verification_required": True}
 
@@ -261,7 +274,7 @@ def verify_email(data: VerifyEmailRequest):
 
 
 @router.post("/resend-verification")
-def resend_verification(data: _EmailOnlyRequest):
+def resend_verification(data: _EmailOnlyRequest, background: BackgroundTasks):
     """Re-send the verification link. Always returns 200 (never reveals whether
     the address exists or is already verified)."""
     _rate_limit_email(data.email)
@@ -271,12 +284,12 @@ def resend_verification(data: _EmailOnlyRequest):
             e=data.email,
         ).single()
     if rec and not rec["verified"]:
-        _issue_verification_email(rec["id"], data.email)
+        _issue_verification_email(background, rec["id"], data.email)
     return {"message": "If that account exists and is unverified, a verification email was sent."}
 
 
 @router.post("/forgot-password")
-def forgot_password(data: _EmailOnlyRequest):
+def forgot_password(data: _EmailOnlyRequest, background: BackgroundTasks):
     """Send a password-reset link. Always returns 200 — no user enumeration."""
     _rate_limit_email(data.email)
     with db.get_session() as session:
@@ -285,7 +298,7 @@ def forgot_password(data: _EmailOnlyRequest):
             e=data.email,
         ).single()
     if rec:
-        _issue_password_reset_email(rec["id"], data.email, rec["hash"])
+        _issue_password_reset_email(background, rec["id"], data.email, rec["hash"])
     return {"message": "If that account exists, a password-reset email was sent."}
 
 

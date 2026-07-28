@@ -46,7 +46,7 @@ def test_smtp_backend_logs_in_and_sends(monkeypatch):
     with patch("app.notifications.email.smtplib.SMTP", return_value=ctx) as SMTP:
         mail.SMTPBackend().send("to@x.com", "Verify", "click the link")
 
-    SMTP.assert_called_once_with("smtp.gmail.com", 587, timeout=20)
+    SMTP.assert_called_once_with("smtp.gmail.com", 587, timeout=10)
     smtp.starttls.assert_called_once()
     smtp.login.assert_called_once_with("me@gmail.com", "app-password")
     smtp.send_message.assert_called_once()
