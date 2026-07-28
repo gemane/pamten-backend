@@ -10,7 +10,7 @@ from app.notifications import email as mail
 def test_suite_never_uses_smtp_by_default():
     # Safety net: the test suite must resolve to the console backend, so no test
     # can open a real SMTP connection (once sent verification mail to the fake
-    # addresses new@x.com / first@x.com when a local .env had Gmail creds).
+    # addresses new@example.com / first@example.com when a local .env had Gmail creds).
     assert mail._resolve_backend() == "console"
 
 
@@ -36,7 +36,7 @@ def test_explicit_backend_overrides_auto(monkeypatch):
 
 
 def test_console_backend_does_not_raise():
-    mail.ConsoleBackend().send("a@x.com", "Subj", "body text")
+    mail.ConsoleBackend().send("a@example.com", "Subj", "body text")
 
 
 def test_smtp_backend_logs_in_and_sends(monkeypatch):
@@ -51,7 +51,7 @@ def test_smtp_backend_logs_in_and_sends(monkeypatch):
     ctx = MagicMock()
     ctx.__enter__.return_value = smtp
     with patch("app.notifications.email.smtplib.SMTP", return_value=ctx) as SMTP:
-        mail.SMTPBackend().send("to@x.com", "Verify", "click the link")
+        mail.SMTPBackend().send("to@example.com", "Verify", "click the link")
 
     SMTP.assert_called_once_with("smtp.gmail.com", 587, timeout=10)
     smtp.starttls.assert_called_once()
@@ -66,6 +66,6 @@ def test_verification_email_contains_action_link(monkeypatch):
     with patch.object(mail, "get_email_sender") as factory:
         factory.return_value.send = lambda to, subject, text, html=None: sent.update(
             to=to, subject=subject, text=text, html=html)
-        mail.send_verification_email("u@x.com", "TOK123")
+        mail.send_verification_email("u@example.com", "TOK123")
     assert "https://app.example/?action=verify-email&token=TOK123" in sent["text"]
     assert "TOK123" in sent["html"]
