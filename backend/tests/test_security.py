@@ -45,3 +45,42 @@ def test_long_password_does_not_raise():
 def test_malformed_hash_fails_closed():
     assert verify_password("anything", "not-a-bcrypt-hash") is False
     assert verify_password("anything", "") is False
+
+
+# ── Purpose tokens (email verify / password reset links) ──────────────────────
+
+from datetime import timedelta  # noqa: E402
+import pytest  # noqa: E402
+from app.auth.security import (  # noqa: E402
+    create_purpose_token, verify_purpose_token, password_hash_fingerprint, TokenError,
+)
+
+
+def test_purpose_token_round_trip():
+    tok = create_purpose_token("user-1", "verify_email", timedelta(hours=1))
+    claims = verify_purpose_token(tok, "verify_email")
+    assert claims["sub"] == "user-1" and claims["purpose"] == "verify_email"
+
+
+def test_purpose_token_wrong_purpose_rejected():
+    tok = create_purpose_token("user-1", "verify_email", timedelta(hours=1))
+    with pytest.raises(TokenError):
+        verify_purpose_token(tok, "pwd_reset")
+
+
+def test_purpose_token_expired_rejected():
+    tok = create_purpose_token("user-1", "pwd_reset", timedelta(seconds=-1))
+    with pytest.raises(TokenError):
+        verify_purpose_token(tok, "pwd_reset")
+
+
+def test_purpose_token_tampered_signature_rejected():
+    tok = create_purpose_token("user-1", "verify_email", timedelta(hours=1))
+    with pytest.raises(TokenError):
+        verify_purpose_token(tok + "x", "verify_email")
+
+
+def test_password_hash_fingerprint_changes_with_the_hash():
+    a = password_hash_fingerprint(hash_password("one"))
+    b = password_hash_fingerprint(hash_password("two"))
+    assert a != b and len(a) == 16          # 16-hex-char digest, hash-specific

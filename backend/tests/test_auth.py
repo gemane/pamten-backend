@@ -15,11 +15,14 @@ def test_register_first_user_becomes_admin(client, fake_db):
     assert r.json()["role"] == "admin"
 
 
-def test_register_second_user_is_viewer(client, fake_db):
+def test_register_second_user_is_viewer_and_must_verify(client, fake_db):
     fake_db.queue([], [{"n": 3}], [])  # existing users present
     r = client.post("/auth/register", json={"email": "new@x.com", "password": "password123"})
     assert r.status_code == 200
-    assert r.json()["role"] == "viewer"
+    # A non-admin registrant gets no token — they must verify their email first.
+    body = r.json()
+    assert body["verification_required"] is True
+    assert "access_token" not in body
 
 
 def test_register_never_admin_when_env_admin_configured(client, fake_db, monkeypatch):
@@ -28,7 +31,8 @@ def test_register_never_admin_when_env_admin_configured(client, fake_db, monkeyp
     fake_db.queue([], [])  # dup-check empty, then create (no count query on this path)
     r = client.post("/auth/register", json={"email": "first@x.com", "password": "password123"})
     assert r.status_code == 200
-    assert r.json()["role"] == "viewer"   # even as the very first user — no self-promotion
+    # even as the very first user — no self-promotion, and must verify
+    assert r.json()["verification_required"] is True
 
 
 class TestBootstrapAdmin:
@@ -88,10 +92,10 @@ def test_register_normalizes_email_to_lowercase(client, fake_db):
 
 # ── Login ──────────────────────────────────────────────────────────────────────
 
-def _user_row(password="password123", role="viewer"):
+def _user_row(password="password123", role="viewer", email_verified=True):
     return [{"u": {
         "id": "u1", "email": "user@x.com", "role": role,
-        "password_hash": hash_password(password),
+        "password_hash": hash_password(password), "email_verified": email_verified,
     }}]
 
 
@@ -107,6 +111,22 @@ def test_login_wrong_password_rejected(client, fake_db):
     fake_db.queue(_user_row(password="rightpass"))
     r = client.post("/auth/login", json={"email": "user@x.com", "password": "wrongpass"})
     assert r.status_code == 401
+
+
+def test_login_blocked_until_email_verified(client, fake_db):
+    fake_db.queue(_user_row(email_verified=False))
+    r = client.post("/auth/login", json={"email": "user@x.com", "password": "password123"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "email_not_verified"
+
+
+def test_login_allowed_unverified_when_requirement_disabled(client, fake_db, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "REQUIRE_EMAIL_VERIFICATION", False)
+    fake_db.queue(_user_row(email_verified=False))
+    r = client.post("/auth/login", json={"email": "user@x.com", "password": "password123"})
+    assert r.status_code == 200
+    assert r.json()["access_token"]
 
 
 def test_login_unknown_email_rejected(client, fake_db):
@@ -153,7 +173,8 @@ def test_admin_endpoint_rejects_viewer(client, make_token):
 
 
 def test_admin_endpoint_allows_admin(client, fake_db, make_token):
-    fake_db.queue([{"id": "u1", "email": "a@x.com", "role": "admin", "created_at": "2026"}])
+    fake_db.queue([{"id": "u1", "email": "a@x.com", "role": "admin",
+                    "email_verified": True, "created_at": "2026"}])
     tok = make_token(role="admin")
     r = client.get("/auth/users", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
@@ -187,6 +208,97 @@ def test_update_role_accepts_moderator(client, fake_db, make_token):
     r = client.patch("/auth/users/u2/role", json={"role": "moderator"},
                      headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
+
+
+# ── Email verification + password reset ──────────────────────────────────────
+
+from unittest.mock import patch  # noqa: E402
+from app.auth.security import (  # noqa: E402
+    create_purpose_token, password_hash_fingerprint,
+)
+from app.auth import router as auth_router  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+
+def test_register_sends_verification_email(client, fake_db):
+    fake_db.queue([], [{"n": 3}], [])  # dup empty, count=3 -> viewer, create
+    with patch.object(auth_router, "send_verification_email") as send:
+        r = client.post("/auth/register", json={"email": "new@x.com", "password": "password123"})
+    assert r.status_code == 200
+    send.assert_called_once()
+    to, token = send.call_args.args[0], send.call_args.args[1]
+    assert to == "new@x.com"
+    # the emailed token is a valid verify-email token
+    claims = auth_router.verify_purpose_token(token, auth_router.VERIFY_EMAIL_PURPOSE)
+    assert claims["sub"]
+
+
+def test_verify_email_marks_verified(client, fake_db):
+    token = create_purpose_token("u1", auth_router.VERIFY_EMAIL_PURPOSE, timedelta(hours=1))
+    fake_db.queue([{"email": "new@x.com"}])   # the UPDATE ... RETURN email
+    r = client.post("/auth/verify-email", json={"token": token})
+    assert r.status_code == 200
+    assert "UPDATE" in fake_db.calls[0][0] or "SET u.email_verified = true" in fake_db.calls[0][0]
+
+
+def test_verify_email_rejects_non_verify_token(client, make_token):
+    # an access token has no verify_email purpose -> rejected
+    r = client.post("/auth/verify-email", json={"token": make_token()})
+    assert r.status_code == 400
+
+
+def test_resend_verification_is_always_200_and_silent_for_unknown(client, fake_db):
+    fake_db.queue([])   # no such user
+    with patch.object(auth_router, "send_verification_email") as send:
+        r = client.post("/auth/resend-verification", json={"email": "ghost@x.com"})
+    assert r.status_code == 200
+    send.assert_not_called()   # nothing sent, but no hint that the user is missing
+
+
+def test_forgot_password_no_enumeration_but_sends_when_present(client, fake_db):
+    # unknown email -> 200, no email
+    fake_db.queue([])
+    with patch.object(auth_router, "send_password_reset_email") as send:
+        r = client.post("/auth/forgot-password", json={"email": "ghost@x.com"})
+    assert r.status_code == 200 and not send.called
+    # known email -> 200, email sent with a reset token
+    fake_db.queue([{"id": "u1", "hash": hash_password("oldpassword")}])
+    with patch.object(auth_router, "send_password_reset_email") as send:
+        r = client.post("/auth/forgot-password", json={"email": "real@x.com"})
+    assert r.status_code == 200 and send.called
+
+
+def test_reset_password_updates_hash_then_self_invalidates(client, fake_db):
+    old_hash = hash_password("oldpassword")
+    token = create_purpose_token(
+        "u1", auth_router.RESET_PASSWORD_PURPOSE, timedelta(minutes=30),
+        extra={"ph": password_hash_fingerprint(old_hash)})
+
+    # first use: lookup returns the old hash (fingerprint matches) -> update
+    fake_db.queue([{"hash": old_hash}], [])
+    r = client.post("/auth/reset-password", json={"token": token, "new_password": "brandnewpass"})
+    assert r.status_code == 200
+
+    # reuse: the password hash has since changed, so the token's fingerprint no
+    # longer matches -> rejected (single-use in practice)
+    fake_db.queue([{"hash": hash_password("brandnewpass")}])
+    r = client.post("/auth/reset-password", json={"token": token, "new_password": "another12"})
+    assert r.status_code == 400
+
+
+def test_reset_password_short_password_rejected(client):
+    token = create_purpose_token("u1", auth_router.RESET_PASSWORD_PURPOSE, timedelta(minutes=30),
+                                 extra={"ph": "x"})
+    r = client.post("/auth/reset-password", json={"token": token, "new_password": "short"})
+    assert r.status_code == 400
+
+
+def test_email_send_endpoints_are_rate_limited(client, fake_db):
+    for _ in range(3):
+        fake_db.queue([])
+        assert client.post("/auth/forgot-password", json={"email": "spam@x.com"}).status_code == 200
+    # 4th within the window is throttled
+    assert client.post("/auth/forgot-password", json={"email": "spam@x.com"}).status_code == 429
 
 
 # ── require_moderator guard ─────────────────────────────────────────────────────

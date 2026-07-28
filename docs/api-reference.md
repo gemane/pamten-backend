@@ -7,8 +7,12 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 ## Auth
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/auth/register` | — | Create account (first → admin, rest → viewer) |
-| POST | `/auth/login` | — | Returns JWT access token |
+| POST | `/auth/register` | — | Create account (first → admin, rest → viewer). Non-admins are created unverified and emailed a link; response has `verification_required:true` and **no token** |
+| POST | `/auth/login` | — | Returns a JWT access token. `403 {code:"email_not_verified"}` when the email isn't verified yet |
+| POST | `/auth/verify-email` | — | Confirm an email from the emailed token `{token}` |
+| POST | `/auth/resend-verification` | — | Re-send the verification link `{email}` (rate-limited; always `200`) |
+| POST | `/auth/forgot-password` | — | Email a password-reset link `{email}` (always `200` — no user enumeration) |
+| POST | `/auth/reset-password` | — | Set a new password from the emailed token `{token, new_password}` (link is single-use) |
 | GET | `/auth/me` | bearer | Current user info |
 
 ## Entities
