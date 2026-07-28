@@ -1562,7 +1562,7 @@ def _post_bods_import() -> dict:
 # succession now come from the current golden copy (LEI-CDF + RR-CDF), below.
 
 def run_import_ch_psc(local_file: str, limit: int | None = None,
-                      bulk_load: bool = False) -> dict:
+                      bulk_load: bool = False, batch_size: int = 400) -> dict:
     """
     Import a Companies House PSC snapshot (current UK beneficial ownership, daily)
     — the replacement for the frozen OpenOwnership UK PSC BODS export. Reuses the
@@ -1588,13 +1588,14 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
         credibility_score=BODS_UK_PSC_CREDIBILITY,
         limit=limit,
         bulk_load=bulk_load,
+        batch_size=batch_size,
     )
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts,
             **_post_bods_import()}
 
 
 def run_import_basic_company_data(local_file: str, limit: int | None = None,
-                                  bulk_load: bool = False) -> dict:
+                                  bulk_load: bool = False, batch_size: int = 400) -> dict:
     """
     Enrich number-keyed UK companies (gb-coh:{number}) with names/addresses/former
     names from a Companies House BasicCompanyData snapshot — the companion to the
@@ -1620,6 +1621,7 @@ def run_import_basic_company_data(local_file: str, limit: int | None = None,
         credibility_score=CH_REGISTER_CREDIBILITY,
         limit=limit,
         bulk_load=bulk_load,
+        batch_size=batch_size,
     )
     return {"status": "ok", "source": "Companies House Register", **counts}
 

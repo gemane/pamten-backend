@@ -38,22 +38,38 @@ def cmd_gleif_rr(args):
     result = run_import_gleif_rr(local_file=args.file, limit=args.limit)
     print(result)
 
+def _apply_direct_db_url(args):
+    """--db-url points the importer straight at ArcadeDB, bypassing a proxy that
+    imposes a short read timeout (e.g. dev-db's 60s nginx). Removing that ceiling
+    stops heavy flushes 504-ing and retrying — the main cause of a slow import."""
+    url = getattr(args, "db_url", None)
+    if url:
+        from app.config import settings
+        from app.db import arcadedb
+        settings.ARCADEDB_URL = url
+        arcadedb.close_client()   # drop the pooled client so it reconnects to url
+        print(f"Using direct ArcadeDB URL: {url}")
+
 def cmd_ch_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_BODS_UK_PSC_ENABLED = True
+    _apply_direct_db_url(args)
     from app.scraper.runner import run_import_ch_psc
     result = run_import_ch_psc(local_file=args.file, limit=args.limit,
-                               bulk_load=getattr(args, "bulk_load", False))
+                               bulk_load=getattr(args, "bulk_load", False),
+                               batch_size=getattr(args, "batch_size", None) or 400)
     print(result)
 
 def cmd_ch_company_data(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_BODS_UK_PSC_ENABLED = True
+    _apply_direct_db_url(args)
     from app.scraper.runner import run_import_basic_company_data
     result = run_import_basic_company_data(local_file=args.file, limit=args.limit,
-                                           bulk_load=getattr(args, "bulk_load", False))
+                                           bulk_load=getattr(args, "bulk_load", False),
+                                           batch_size=getattr(args, "batch_size", None) or 400)
     print(result)
 
 def cmd_gleif_lei_cdf(args):
@@ -357,6 +373,10 @@ def _build_parser():
     p_chp.add_argument('--limit', type=int, help='Max records to scan')
     p_chp.add_argument('--bulk-load', action='store_true',
                        help='Drop secondary indexes during the load and rebuild after')
+    p_chp.add_argument('--batch-size', type=int,
+                       help='Records per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
+    p_chp.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_chp.set_defaults(func=cmd_ch_psc)
 
     # ch-company-data command (Companies House register — names/addresses for PSC companies)
@@ -366,6 +386,10 @@ def _build_parser():
     p_chc.add_argument('--limit', type=int, help='Max rows to scan')
     p_chc.add_argument('--bulk-load', action='store_true',
                        help='Drop secondary indexes during the load and rebuild after')
+    p_chc.add_argument('--batch-size', type=int,
+                       help='Rows per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
+    p_chc.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_chc.set_defaults(func=cmd_ch_company_data)
 
     # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)

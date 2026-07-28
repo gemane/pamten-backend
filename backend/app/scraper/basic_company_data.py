@@ -123,9 +123,11 @@ class _UpdateBatch:
 
 
 def import_basic_company_data(filepath: str, credibility_score: int,
-                              limit: int | None = None, bulk_load: bool = False) -> dict:
+                              limit: int | None = None, bulk_load: bool = False,
+                              batch_size: int = 400) -> dict:
     """Enrich existing ``gb-coh:{number}`` companies from a BasicCompanyData CSV
-    snapshot (.zip). Returns counts."""
+    snapshot (.zip). Returns counts. ``batch_size`` = rows per flush (smaller stays
+    under a short proxy timeout; larger cuts round-trips on a direct connection)."""
     zf = zipfile.ZipFile(filepath)
     entry = zf.namelist()[0]
     total_bytes = zf.getinfo(entry).file_size
@@ -135,7 +137,7 @@ def import_basic_company_data(filepath: str, credibility_score: int,
     counts = {"rows": 0, "companies": 0, "errors": 0}
     if bulk_load:
         _drop_secondary_indexes()
-    batch = _UpdateBatch()
+    batch = _UpdateBatch(batch_size=batch_size)
     bar = _ProgressBar("CH BasicData")
     try:
         reader = csv.reader(_text_lines(raw, total_bytes, bar))
