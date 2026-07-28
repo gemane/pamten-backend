@@ -293,6 +293,22 @@ def test_reset_password_short_password_rejected(client):
     assert r.status_code == 400
 
 
+def test_forgot_password_survives_email_send_failure(client, fake_db):
+    # A blocked/failing transport (e.g. Render blocks SMTP) must not 500 or hang —
+    # the send is best-effort in a background task.
+    fake_db.queue([{"id": "u1", "hash": hash_password("oldpassword")}])
+    with patch.object(auth_router, "send_password_reset_email", side_effect=RuntimeError("smtp blocked")):
+        r = client.post("/auth/forgot-password", json={"email": "real@x.com"})
+    assert r.status_code == 200
+
+
+def test_register_survives_email_send_failure(client, fake_db):
+    fake_db.queue([], [{"n": 3}], [])  # dup empty, count=3 -> viewer, create
+    with patch.object(auth_router, "send_verification_email", side_effect=RuntimeError("smtp blocked")):
+        r = client.post("/auth/register", json={"email": "new@x.com", "password": "password123"})
+    assert r.status_code == 200 and r.json()["verification_required"] is True
+
+
 def test_email_send_endpoints_are_rate_limited(client, fake_db):
     for _ in range(3):
         fake_db.queue([])

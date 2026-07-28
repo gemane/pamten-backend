@@ -61,7 +61,7 @@ class SMTPBackend(EmailSender):
         if html:
             msg.add_alternative(html, subtype="html")
 
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as smtp:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as smtp:
             if settings.SMTP_STARTTLS:
                 smtp.starttls()
             if settings.SMTP_USERNAME:
