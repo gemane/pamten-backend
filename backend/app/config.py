@@ -44,6 +44,26 @@ class Settings(BaseSettings):
     # With ADMIN_EMAIL set, self-registration never grants admin.
     ADMIN_EMAIL:                      str | None = None
     ADMIN_PASSWORD:                   str | None = None
+    # ── Transactional email (verification + password reset) ───────────────────
+    # Provider-agnostic sender. EMAIL_BACKEND selects the transport: "smtp" sends
+    # via SMTP_*, "console" just logs the message (with the link) — the default
+    # when SMTP_HOST is unset, so local dev + tests need no secrets. For Gmail:
+    # SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USERNAME=<you@gmail.com>,
+    # SMTP_PASSWORD=<Google App Password> (needs 2-Step Verification enabled).
+    EMAIL_BACKEND:                    str  = ""     # "smtp" | "console" | "" (auto)
+    SMTP_HOST:                        str  = ""
+    SMTP_PORT:                        int  = 587
+    SMTP_USERNAME:                    str  = ""
+    SMTP_PASSWORD:                    str  = ""     # secret — env only
+    SMTP_STARTTLS:                    bool = True
+    EMAIL_FROM:                       str  = ""     # defaults to SMTP_USERNAME
+    # Frontend origin used to build the links in verification / reset emails.
+    APP_BASE_URL:                     str  = "http://localhost:5173"
+    # Gate login on a verified email. Verify/reset links are self-invalidating
+    # JWTs (no server-side token store); TTLs below bound their validity.
+    REQUIRE_EMAIL_VERIFICATION:       bool = True
+    EMAIL_VERIFY_TTL_HOURS:           int  = 24
+    PASSWORD_RESET_TTL_MINUTES:       int  = 60
     # Geocoding (Nominatim / OpenStreetMap). Disabled by default; the public
     # endpoint requires a descriptive User-Agent with a contact and enforces
     # ~1 request/second, which GEOCODING_MIN_INTERVAL respects.

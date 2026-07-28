@@ -72,6 +72,20 @@ def cmd_flag_nominees(args):
     print(f"Flagged {result['flagged']} nominee/custodian entities "
           f"(of {result['candidates']} name candidates)")
 
+def cmd_verify_users(args):
+    """One-off: mark all existing accounts email-verified. Login now requires a
+    verified email, so accounts created before that feature would otherwise be
+    locked out. New sign-ups still verify via the emailed link."""
+    from app.db.arcadedb import run_sql
+    target = getattr(args, "email", None)
+    if target:
+        rows = run_sql("UPDATE User SET email_verified = true WHERE email = :e",
+                       {"e": target.strip().lower()})
+    else:
+        rows = run_sql("UPDATE User SET email_verified = true WHERE email_verified IS NULL OR email_verified = false")
+    n = int(rows[0].get("count", 0)) if rows and isinstance(rows[0], dict) else 0
+    print(f"Marked {n} user(s) email-verified.")
+
 def cmd_seed(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -368,6 +382,13 @@ def _build_parser():
     p_nom = subparsers.add_parser('flag-nominees',
                                   help='Flag nominee/custodian entities (holders of record) by name')
     p_nom.set_defaults(func=cmd_flag_nominees)
+
+    # verify-users command (one-off: unblock pre-existing accounts under the new
+    # "login requires a verified email" rule)
+    p_vu = subparsers.add_parser('verify-users',
+                                 help='Mark existing user accounts email-verified (login now requires it)')
+    p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
+    p_vu.set_defaults(func=cmd_verify_users)
     return parser
 
 

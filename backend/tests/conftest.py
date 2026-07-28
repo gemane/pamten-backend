@@ -115,10 +115,15 @@ def make_token():
 
 @pytest.fixture(autouse=True)
 def _reset_login_rate_limit():
-    """Clear the in-memory login rate-limit state between tests."""
+    """Clear the in-memory login + email-send rate-limit state between tests."""
     from app.auth import router as auth_router
-    with auth_router._login_attempts_lock:
-        auth_router._login_attempts.clear()
+
+    def _clear():
+        with auth_router._login_attempts_lock:
+            auth_router._login_attempts.clear()
+        with auth_router._email_send_lock:
+            auth_router._email_send_attempts.clear()
+
+    _clear()
     yield
-    with auth_router._login_attempts_lock:
-        auth_router._login_attempts.clear()
+    _clear()

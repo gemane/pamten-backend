@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
@@ -36,3 +37,40 @@ def create_access_token(data: dict) -> str:
 
 def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+
+
+# ── Purpose-scoped, self-contained links (email verify / password reset) ──────
+# These are signed JWTs — no server-side token store. A ``purpose`` claim keeps
+# an access token from being usable as a reset link and vice-versa.
+
+class TokenError(Exception):
+    """Raised when a purpose token is invalid, expired, or the wrong purpose."""
+
+
+def password_hash_fingerprint(password_hash: str) -> str:
+    """Short digest of the current password hash. Embedding it in a reset token
+    makes the token self-invalidating: once the password changes the hash changes,
+    so an old (or already-used) reset link no longer matches and is rejected."""
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()[:16]
+
+
+def create_purpose_token(sub: str, purpose: str, ttl: timedelta, extra: dict | None = None) -> str:
+    payload = {"sub": sub, "purpose": purpose,
+               "exp": datetime.now(timezone.utc) + ttl}
+    if extra:
+        payload.update(extra)
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+
+
+def verify_purpose_token(token: str, purpose: str) -> dict:
+    """Decode and check a purpose token. Raises TokenError on expiry, bad
+    signature, or a purpose mismatch. Returns the claims on success."""
+    try:
+        claims = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError as exc:
+        raise TokenError("Link has expired") from exc
+    except jwt.InvalidTokenError as exc:
+        raise TokenError("Invalid link") from exc
+    if claims.get("purpose") != purpose:
+        raise TokenError("Invalid link")
+    return claims

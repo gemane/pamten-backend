@@ -126,6 +126,10 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 **The admin account.** Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` and that account is provisioned as admin on every startup (created if it doesn't exist, from the hashed `ADMIN_PASSWORD`; never overwritten if it already exists). With `ADMIN_EMAIL` set, self-registration only ever creates `viewer`s. This is the recommended way to get an admin on a fresh database — it avoids the race where, on an empty DB, whoever hits the public `/auth/register` first would become admin. If `ADMIN_EMAIL` is **not** set, the legacy fallback applies: the first account to register becomes admin.
 
+**Email verification & password reset.** Registration creates the account with `email_verified=false`, emails a verification link, and — with `REQUIRE_EMAIL_VERIFICATION=true` (default) — **blocks login until the email is verified** (`403 email_not_verified`, which the UI turns into a *resend* prompt). `POST /auth/forgot-password` emails a reset link and always returns `200` (no account-existence leak); `POST /auth/reset-password` sets the new password. The verify/reset links are **self-contained signed JWTs** (purpose-scoped, TTL-bounded) — no server-side token table; a reset link embeds a fingerprint of the current password hash so it **self-invalidates** once used. The env/bootstrap admin and the legacy first-user admin are stamped verified so they're never locked out; run `python manage.py verify-users` once to mark pre-existing accounts verified.
+
+**Email transport** is provider-agnostic (`app/notifications/email.py`): `EMAIL_BACKEND=smtp` sends via `SMTP_*` (stdlib `smtplib`; works with Gmail + an App Password), while the default `console` backend (used when `SMTP_HOST` is empty) just logs the message + link — so local dev and tests need no credentials. `APP_BASE_URL` sets the origin used in the emailed links.
+
 Protected routes use FastAPI `Depends`:
 
 | Dependency | Requirement |
@@ -268,6 +272,12 @@ log), not as in-place edits that the next scrape would clobber.
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | none | Provision this account as admin on startup (created if missing). When set, self-registration never grants admin — avoids the "first person to `/register` becomes admin" race on a fresh DB |
+| `REQUIRE_EMAIL_VERIFICATION` | `true` | Block login until the account's email is verified |
+| `EMAIL_BACKEND` | `` (auto) | `smtp` sends via `SMTP_*`; `console` logs the message; empty = auto (console unless `SMTP_HOST` set) |
+| `SMTP_HOST` / `SMTP_PORT` | `` / `587` | SMTP server (e.g. `smtp.gmail.com`) |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | none | SMTP credentials — for Gmail, the account + an **App Password**. Secret — env only |
+| `EMAIL_FROM` | = `SMTP_USERNAME` | `From` header on outgoing mail |
+| `APP_BASE_URL` | `http://localhost:5173` | Frontend origin used to build verification / reset links in emails |
 | `SCRAPER_ENABLED` | `false` | Master scraper switch (required for any scrape) |
 | `SCRAPER_WIKIDATA_ENABLED` | `true` | Wikidata source switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |
@@ -315,6 +325,7 @@ python3 manage.py init-schema
 | `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`). Company names come from a companion `ch-company-data` import |
 | `ch-company-data` | Enrich UK companies with names/addresses/former-names from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph (from `ch-psc`), never creates isolated nodes |
 | `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
+| `verify-users` | Mark existing accounts email-verified (login now requires it). Run once after enabling verification so pre-existing users aren't locked out; `--email <addr>` targets one account. |
 
 ---
 
