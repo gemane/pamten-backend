@@ -26,6 +26,14 @@ _TEST_ENV = {
 for k, v in _TEST_ENV.items():
     os.environ.setdefault(k, v)
 
+# Never send real email from the test suite. Some tests exercise the register /
+# reset paths without stubbing the sender, so with real SMTP creds in a local
+# .env the suite would actually send verification mail to the fake test addresses
+# (new@x.com, first@x.com, …) and get bounced. Force the console backend here —
+# an env var beats the .env file, so this overrides any real SMTP config.
+os.environ["EMAIL_BACKEND"] = "console"
+os.environ["SMTP_HOST"] = ""
+
 import pytest  # noqa: E402  (env vars above must be set before app imports)
 from contextlib import contextmanager  # noqa: E402
 from unittest.mock import patch  # noqa: E402
