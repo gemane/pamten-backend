@@ -82,6 +82,16 @@ def cmd_gleif_lei_cdf(args):
         filter_jurisdiction=args.jurisdiction, bulk_load=getattr(args, "bulk_load", False))
     print(result)
 
+def cmd_gleif_update(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    _apply_direct_db_url(args)
+    from app.scraper.runner import run_gleif_update
+    result = run_gleif_update(interval=args.interval, lei_file=args.lei_file,
+                              rr_file=args.rr_file, limit=args.limit)
+    print(result)
+
 def cmd_flag_nominees(args):
     from app.scraper.maintenance import flag_nominee_entities
     result = flag_nominee_entities()
@@ -401,6 +411,19 @@ def _build_parser():
     p_lei.add_argument('--bulk-load', action='store_true',
                        help='Drop secondary indexes during the load and rebuild after (faster on the full 3.4M)')
     p_lei.set_defaults(func=cmd_gleif_lei_cdf)
+
+    # gleif-update command (retirement-aware daily delta on top of the full load)
+    p_gu = subparsers.add_parser('gleif-update',
+                                 help='Apply a GLEIF delta update (daily refresh: new/changed entities, merges, and closed relationships)')
+    p_gu.add_argument('--interval', default='LastDay',
+                      choices=['IntraDay', 'LastDay', 'LastWeek', 'LastMonth'],
+                      help='Which published delta to fetch (default LastDay)')
+    p_gu.add_argument('--lei-file', help='Use a local LEI-CDF delta .json/.zip instead of fetching')
+    p_gu.add_argument('--rr-file', help='Use a local RR-CDF delta .json/.zip instead of fetching')
+    p_gu.add_argument('--limit', type=int, help='Max records to scan (per file)')
+    p_gu.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_gu.set_defaults(func=cmd_gleif_update)
 
     # flag-nominees command
     p_nom = subparsers.add_parser('flag-nominees',

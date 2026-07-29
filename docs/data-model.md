@@ -44,6 +44,20 @@ ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF.
 This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
 at 2025‑03.
 
+Once the full copy is loaded, `manage.py gleif-update` applies GLEIF's published
+**delta files** (only records changed since the last publish) as a fast daily
+refresh — see [`app/scraper/gleif_incremental.py`](../backend/app/scraper/gleif_incremental.py).
+It is **retirement-aware**: a relationship whose `RelationshipStatus` becomes
+non-ACTIVE has its `OWNS` edge *closed* (`until` = the relationship period's
+`EndDate`), and an entity whose `EntityStatus` is `INACTIVE` is flagged
+`active=false` with its `gleif_registration_status` recorded — neither is ever
+deleted (GLEIF never deletes; merges keep flowing through `SUCCEEDED_BY`). All
+writes are idempotent — nodes UPSERT by id (batched) and edges are matched by
+endpoints+marker before create — so re-applying a delta can't duplicate, hence no
+`--bulk-load` and no whole-DB dedup. UK PSC has no equivalent clean delta feed
+(Companies House republishes a daily *full* snapshot), so its incremental refresh
+is deferred to a separate design.
+
 ## UK PSC sourcing
 
 UK beneficial ownership comes from the **Companies House PSC snapshot** (current,

@@ -1624,3 +1624,50 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
     log.info("GLEIF RR-CDF: deduplicating overlapping OWNS edges")
     dedup = deduplicate_owns_edges()
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts, "edge_dedup": dedup}
+
+
+def run_gleif_update(interval: str = "LastDay", lei_file: str | None = None,
+                     rr_file: str | None = None, limit: int | None = None) -> dict:
+    """
+    Apply a GLEIF **delta** update on top of the full golden-copy load — the
+    retirement-aware daily refresh (see `app/scraper/gleif_incremental.py`). Fetches
+    the LEI-CDF + RR delta files for `interval` (LastDay by default; or pass
+    pre-downloaded `lei_file`/`rr_file`), then idempotently upserts changed entities
+    + succession edges and upserts/closes changed OWNS edges. Unlike the full load
+    this runs against the live-indexed DB (no `--bulk-load`, no whole-DB dedup) and
+    is logged as a `gleif-update` ScrapeRun (visible in GET /scraper/runs).
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.gleif_incremental import (
+        fetch_gleif_deltas,
+        import_lei_cdf_delta,
+        import_rr_delta,
+    )
+    from app.scraper.run_log import record_run
+
+    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
+    with record_run("gleif-update", interval) as run:
+        if lei_file and rr_file:
+            log.info("GLEIF update: using local delta files")
+        else:
+            log.info("GLEIF update: fetching %s deltas", interval)
+            paths = fetch_gleif_deltas(interval=interval)
+            lei_file, rr_file = lei_file or paths["lei2"], rr_file or paths["rr"]
+
+        log.info("GLEIF update: applying LEI-CDF delta %s", lei_file)
+        lei = import_lei_cdf_delta(lei_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit)
+        log.info("GLEIF update: applying RR delta %s", rr_file)
+        rr = import_rr_delta(rr_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit)
+        run["total"] = lei["updated"] + rr["created"] + rr["closed"]
+
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, "interval": interval,
+            "lei_cdf": lei, "rr": rr}
