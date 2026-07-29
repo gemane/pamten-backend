@@ -62,6 +62,9 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Pin",         "id",           "UNIQUE"),
     ("Pin",         "from_id",      "NOTUNIQUE"),
     ("Pin",         "to_id",        "NOTUNIQUE"),
+    # Import checkpoints — e.g. the last GLEIF publish a delta update applied, so
+    # the daily refresh can pick a catch-up interval that covers any missed runs.
+    ("ImportState", "key",          "UNIQUE"),
 ]
 
 # Edge types the app creates via Cypher and needs to exist up front (also what

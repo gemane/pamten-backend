@@ -415,9 +415,10 @@ def _build_parser():
     # gleif-update command (retirement-aware daily delta on top of the full load)
     p_gu = subparsers.add_parser('gleif-update',
                                  help='Apply a GLEIF delta update (daily refresh: new/changed entities, merges, and closed relationships)')
-    p_gu.add_argument('--interval', default='LastDay',
-                      choices=['IntraDay', 'LastDay', 'LastWeek', 'LastMonth'],
-                      help='Which published delta to fetch (default LastDay)')
+    p_gu.add_argument('--interval', default='auto',
+                      choices=['auto', 'IntraDay', 'LastDay', 'LastWeek', 'LastMonth'],
+                      help='Delta window to fetch. Default "auto" = gap-aware: pick the '
+                           'smallest window covering any missed runs since the last one')
     p_gu.add_argument('--lei-file', help='Use a local LEI-CDF delta .json/.zip instead of fetching')
     p_gu.add_argument('--rr-file', help='Use a local RR-CDF delta .json/.zip instead of fetching')
     p_gu.add_argument('--limit', type=int, help='Max records to scan (per file)')

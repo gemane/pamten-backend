@@ -1626,16 +1626,22 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts, "edge_dedup": dedup}
 
 
-def run_gleif_update(interval: str = "LastDay", lei_file: str | None = None,
+def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
                      rr_file: str | None = None, limit: int | None = None) -> dict:
     """
     Apply a GLEIF **delta** update on top of the full golden-copy load — the
-    retirement-aware daily refresh (see `app/scraper/gleif_incremental.py`). Fetches
-    the LEI-CDF + RR delta files for `interval` (LastDay by default; or pass
-    pre-downloaded `lei_file`/`rr_file`), then idempotently upserts changed entities
-    + succession edges and upserts/closes changed OWNS edges. Unlike the full load
-    this runs against the live-indexed DB (no `--bulk-load`, no whole-DB dedup) and
-    is logged as a `gleif-update` ScrapeRun (visible in GET /scraper/runs).
+    retirement-aware daily refresh (see `app/scraper/gleif_incremental.py`). It
+    idempotently upserts changed entities + succession edges and upserts/closes
+    changed OWNS edges against the live-indexed DB (no `--bulk-load`, no whole-DB
+    dedup), and is logged as a `gleif-update` ScrapeRun (visible in GET /scraper/runs).
+
+    `interval="auto"` (the default) is **gap-aware**: it checkpoints the last GLEIF
+    publish it applied (an `ImportState` node) and, on each run, picks the smallest
+    delta window (LastDay/Week/Month) that still covers the gap since that
+    checkpoint — so a few missed daily runs self-heal on the next one. A gap wider
+    than ~30 days can't be covered by a delta and raises (run a full reload). Pass an
+    explicit `interval` (IntraDay/LastDay/LastWeek/LastMonth) to override, or
+    pre-downloaded `lei_file`/`rr_file` to skip the fetch.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1648,26 +1654,50 @@ def run_gleif_update(interval: str = "LastDay", lei_file: str | None = None,
         )
 
     from app.scraper.gleif_incremental import (
-        fetch_gleif_deltas,
+        choose_catchup_interval,
+        download_deltas,
+        fetch_publish_metadata,
         import_lei_cdf_delta,
         import_rr_delta,
+        read_last_publish,
+        write_last_publish,
     )
     from app.scraper.run_log import record_run
 
     source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
     with record_run("gleif-update", interval) as run:
+        current_publish = None
         if lei_file and rr_file:
+            resolved = "local"
             log.info("GLEIF update: using local delta files")
         else:
-            log.info("GLEIF update: fetching %s deltas", interval)
-            paths = fetch_gleif_deltas(interval=interval)
-            lei_file, rr_file = lei_file or paths["lei2"], rr_file or paths["rr"]
+            publish = fetch_publish_metadata()
+            current_publish = publish.get("publish_date")
+            if (interval or "auto").lower() == "auto":
+                last = read_last_publish()
+                resolved = choose_catchup_interval(last, current_publish)
+                if resolved is None:
+                    raise RuntimeError(
+                        f"GLEIF delta can't cover the gap since last applied publish "
+                        f"{last!r} (current {current_publish!r}) — too stale for a delta. "
+                        "Run a full reload (full-import.sh).")
+                log.info("GLEIF update: auto interval=%s (last applied publish=%s, current=%s)",
+                         resolved, last, current_publish)
+            else:
+                resolved = interval
+                log.info("GLEIF update: fetching %s deltas", resolved)
+            paths = download_deltas(publish, resolved)
+            lei_file, rr_file = paths["lei2"], paths["rr"]
 
         log.info("GLEIF update: applying LEI-CDF delta %s", lei_file)
         lei = import_lei_cdf_delta(lei_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit)
         log.info("GLEIF update: applying RR delta %s", rr_file)
         rr = import_rr_delta(rr_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit)
         run["total"] = lei["updated"] + rr["created"] + rr["closed"]
+        # Advance the checkpoint only after a clean apply, and only when we fetched a
+        # published delta in full (not local files, not a --limit spot check).
+        if current_publish and not limit:
+            write_last_publish(current_publish)
 
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME, "interval": interval,
-            "lei_cdf": lei, "rr": rr}
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, "interval": resolved,
+            "publish_date": current_publish, "lei_cdf": lei, "rr": rr}

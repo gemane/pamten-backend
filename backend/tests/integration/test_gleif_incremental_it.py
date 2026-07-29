@@ -118,3 +118,25 @@ def test_delta_apply_idempotent_and_retirement(it_db, tmp_path):
         {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})[0]["until"]
     assert until == "2024-05-01"
     assert owns_count() == 1                                # closed, not removed
+
+
+def test_publish_checkpoint_roundtrip(it_db):
+    """The gap-aware checkpoint (ImportState) persists across runs so the next run
+    can size its catch-up window."""
+    from app.scraper.gleif_incremental import (
+        choose_catchup_interval,
+        read_last_publish,
+        write_last_publish,
+    )
+
+    assert read_last_publish() is None                     # nothing applied yet
+    write_last_publish("2026-07-01 16:00:00")
+    assert read_last_publish() == "2026-07-01 16:00:00"
+
+    # re-write (idempotent UPSERT on the key — one row, updated in place)
+    write_last_publish("2026-07-20 16:00:00")
+    assert read_last_publish() == "2026-07-20 16:00:00"
+    assert it_db.run_command("MATCH (s:ImportState) RETURN count(s) AS n")[0]["n"] == 1
+
+    # a 3-day gap from that checkpoint → LastWeek covers it
+    assert choose_catchup_interval(read_last_publish(), "2026-07-23 16:00:00") == "LastWeek"

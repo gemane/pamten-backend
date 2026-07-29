@@ -3,13 +3,16 @@
 Idempotency of the edge upserts and end-to-end apply are covered against a real
 ArcadeDB in tests/integration/test_gleif_incremental_it.py."""
 
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from app.scraper.gleif_incremental import (
+    _PUBLISH_FMT,
     _entity_status,
     _registration_status,
     _relationship_end_date,
     _rr_delta_relationship,
+    choose_catchup_interval,
     fetch_gleif_deltas,
 )
 
@@ -85,6 +88,41 @@ class TestRrDeltaRelationship:
 
     def test_self_reference_skipped(self):
         assert _rr_delta_relationship(_rr("IS_DIRECTLY_CONSOLIDATED_BY", "X", "X")) is None
+
+
+class TestChooseCatchupInterval:
+    """Gap-aware window selection — the heart of the missed-run catch-up."""
+
+    NOW = "2026-07-29 16:00:00"
+
+    def _ago(self, days):
+        return (datetime.strptime(self.NOW, _PUBLISH_FMT) - timedelta(days=days)).strftime(_PUBLISH_FMT)
+
+    def test_cold_start_goes_wide(self):
+        # No checkpoint (e.g. first run after the full load) → widest safe delta.
+        assert choose_catchup_interval(None, self.NOW) == "LastMonth"
+
+    def test_normal_daily_cadence(self):
+        assert choose_catchup_interval(self._ago(1), self.NOW) == "LastDay"
+
+    def test_one_missed_day_escalates_to_week(self):
+        assert choose_catchup_interval(self._ago(2), self.NOW) == "LastWeek"
+
+    def test_within_a_week(self):
+        assert choose_catchup_interval(self._ago(6), self.NOW) == "LastWeek"
+
+    def test_over_a_week_escalates_to_month(self):
+        assert choose_catchup_interval(self._ago(10), self.NOW) == "LastMonth"
+
+    def test_within_a_month(self):
+        assert choose_catchup_interval(self._ago(28), self.NOW) == "LastMonth"
+
+    def test_too_stale_for_a_delta(self):
+        # Past ~30 days no delta window covers it → caller must full-reload.
+        assert choose_catchup_interval(self._ago(45), self.NOW) is None
+
+    def test_unparseable_checkpoint_is_safe(self):
+        assert choose_catchup_interval("not-a-date", self.NOW) == "LastMonth"
 
 
 class TestFetchDeltas:

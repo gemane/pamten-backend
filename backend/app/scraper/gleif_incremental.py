@@ -25,6 +25,7 @@ import logging
 import os
 import tempfile
 import zipfile
+from datetime import datetime
 from typing import IO
 
 import httpx
@@ -39,6 +40,16 @@ from app.scraper.gleif_succession import _iter_lei_records, _pairs_from_record, 
 log = logging.getLogger(__name__)
 
 _PUBLISHES_API = "https://goldencopy.gleif.org/api/v2/golden-copies/publishes"
+
+# Checkpoint key for the last GLEIF publish a delta update applied (ImportState).
+_STATE_KEY = "gleif-update"
+# GLEIF publishes the `publish_date` as "YYYY-MM-DD HH:MM:SS".
+_PUBLISH_FMT = "%Y-%m-%d %H:%M:%S"
+# Delta windows GLEIF offers, and the max gap (days) each safely covers. A wider
+# window is always a superset (idempotent), so on a missed run we escalate to the
+# smallest window that still spans the gap; past LastMonth a delta can't cover it
+# → the caller must full-reload. Buffers sit under each nominal window (1/7/30).
+_INTERVAL_MAX_GAP_DAYS = (("LastDay", 1.5), ("LastWeek", 6.5), ("LastMonth", 29.0))
 
 
 # ── delta-record field extraction (reuses the full importers' _v/parsers) ─────
@@ -255,12 +266,17 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
 
 # ── delta fetch (GLEIF golden-copy API) ───────────────────────────────────────
 
-def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -> dict:
-    """Download the current LEI-CDF + RR delta .json.zip files for `interval`
-    (IntraDay | LastDay | LastWeek | LastMonth). Returns {'lei2': path, 'rr': path}."""
-    dest = dest_dir or tempfile.mkdtemp(prefix="gleif-delta-")
+def fetch_publish_metadata() -> dict:
+    """The latest GLEIF golden-copy publish record (its `publish_date` + the
+    `full_file`/`delta_files` URLs for each section)."""
     data = httpx.get(_PUBLISHES_API, params={"per_page": 1}, timeout=60).json()
-    publish = data["data"][0] if "data" in data else data
+    return data["data"][0] if "data" in data else data
+
+
+def download_deltas(publish: dict, interval: str, dest_dir: str | None = None) -> dict:
+    """Download the LEI-CDF + RR delta .json.zip files for `interval` from a
+    publish record. Returns {'lei2': path, 'rr': path}."""
+    dest = dest_dir or tempfile.mkdtemp(prefix="gleif-delta-")
     out: dict = {}
     for section in ("lei2", "rr"):
         url = publish[section]["delta_files"][interval]["json"]["url"]
@@ -273,3 +289,47 @@ def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -
         out[section] = path
         log.info("GLEIF %s %s delta: %s", section, interval, path)
     return out
+
+
+def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -> dict:
+    """Fetch + download the current delta files for a fixed `interval`
+    (IntraDay | LastDay | LastWeek | LastMonth)."""
+    return download_deltas(fetch_publish_metadata(), interval, dest_dir)
+
+
+# ── gap-aware catch-up (pick a window that covers any missed runs) ────────────
+
+def read_last_publish() -> str | None:
+    """The `publish_date` of the last GLEIF publish a delta update applied, or None
+    (never run — e.g. right after the initial full load)."""
+    rows = run_command(
+        "MATCH (s:ImportState {key:$k}) RETURN s.last_publish_date AS d", {"k": _STATE_KEY})
+    return rows[0]["d"] if rows and rows[0].get("d") else None
+
+
+def write_last_publish(publish_date: str) -> None:
+    """Checkpoint the publish just applied (idempotent UPSERT on the key)."""
+    run_sql(
+        "UPDATE ImportState SET key = :k, last_publish_date = :d, last_run_at = :now "
+        "UPSERT WHERE key = :k",
+        {"k": _STATE_KEY, "d": publish_date, "now": _now_iso()})
+
+
+def choose_catchup_interval(last_publish: str | None, current_publish: str) -> str | None:
+    """Smallest delta window covering the gap since `last_publish`. None means the
+    gap is too wide for any delta (> ~30 days) → the caller should full-reload.
+
+    Cold start (no checkpoint — e.g. the first run after the full load) uses
+    LastMonth: the widest delta, so it reconciles up to a month of drift since the
+    load rather than assuming the graph is current."""
+    if not last_publish:
+        return "LastMonth"
+    try:
+        gap_days = (datetime.strptime(current_publish.strip(), _PUBLISH_FMT)
+                    - datetime.strptime(last_publish.strip(), _PUBLISH_FMT)).total_seconds() / 86400
+    except (ValueError, AttributeError):
+        return "LastMonth"          # unparseable checkpoint → be safe, go wide
+    for interval, max_gap in _INTERVAL_MAX_GAP_DAYS:
+        if gap_days <= max_gap:
+            return interval
+    return None
