@@ -1,5 +1,5 @@
 """
-Tests for the shared bulk-import helpers in ``app.scraper.bods``.
+Tests for the shared bulk-import helpers in ``app.scraper.bulk_import``.
 
 The BODS statement-processing engine was removed when the ingest migrated to the
 GLEIF golden copy and Companies House snapshots; what remains here are unit tests
@@ -17,7 +17,7 @@ from unittest.mock import patch
 class TestDiskMapTmpDir:
     def test_uses_configured_tmp_dir(self, tmp_path, monkeypatch):
         from app.config import settings
-        from app.scraper.bods import _DiskMap
+        from app.scraper.bulk_import import _DiskMap
         monkeypatch.setattr(settings, "SCRAPER_TMP_DIR", str(tmp_path))
         m = _DiskMap()
         try:
@@ -29,7 +29,7 @@ class TestDiskMapTmpDir:
 
     def test_creates_the_dir_if_missing(self, tmp_path, monkeypatch):
         from app.config import settings
-        from app.scraper.bods import _tmp_dir
+        from app.scraper.bulk_import import _tmp_dir
         target = tmp_path / "does" / "not" / "exist"
         monkeypatch.setattr(settings, "SCRAPER_TMP_DIR", str(target))
         assert _tmp_dir() == str(target)
@@ -40,24 +40,24 @@ class TestDiskMapTmpDir:
 
 class TestLegalFormType:
     def test_foundation_forms(self):
-        from app.scraper.bods import _legal_form_type
+        from app.scraper.bulk_import import _legal_form_type
         assert _legal_form_type("Stiftung des privaten Rechts") == "foundation"
         assert _legal_form_type("stichting") == "foundation"
         assert _legal_form_type("Fundación") == "foundation"
 
     def test_fund_forms(self):
-        from app.scraper.bods import _legal_form_type
+        from app.scraper.bulk_import import _legal_form_type
         assert _legal_form_type("Mutual Fund-Sub Scheme") == "fund"
         assert _legal_form_type("Fonds à forme sociétale") == "fund"
         assert _legal_form_type("Statutory Trust") == "fund"
 
     def test_nonprofit_forms(self):
-        from app.scraper.bods import _legal_form_type
+        from app.scraper.bulk_import import _legal_form_type
         assert _legal_form_type("eingetragener Verein") == "nonprofit"
         assert _legal_form_type("Association loi 1901") == "nonprofit"
 
     def test_plain_company_form_is_none(self):
-        from app.scraper.bods import _legal_form_type
+        from app.scraper.bulk_import import _legal_form_type
         assert _legal_form_type("Gesellschaft mit beschränkter Haftung") is None
         assert _legal_form_type("Private Limited Company") is None
         assert _legal_form_type(None) is None
@@ -79,9 +79,9 @@ class TestLegalFormType:
 
 class TestBatchWriter:
     def test_flushes_when_batch_size_reached(self):
-        from app.scraper.bods import _BatchWriter
+        from app.scraper.bulk_import import _BatchWriter
 
-        with patch("app.scraper.bods.run_sqlscript") as mock_sql:
+        with patch("app.scraper.bulk_import.run_sqlscript") as mock_sql:
             b = _BatchWriter(batch_size=2)
             b.entity("e1", {"name": "A", "country": "GB"})
             mock_sql.assert_not_called()          # under the threshold
@@ -89,10 +89,10 @@ class TestBatchWriter:
             assert mock_sql.called                 # threshold reached → auto-flush
 
     def test_nodes_flushed_before_edges(self):
-        from app.scraper.bods import _BatchWriter
+        from app.scraper.bulk_import import _BatchWriter
 
         scripts: list = []
-        with patch("app.scraper.bods.run_sqlscript",
+        with patch("app.scraper.bulk_import.run_sqlscript",
                    side_effect=lambda script, params=None: scripts.append(script)):
             b = _BatchWriter(batch_size=100)
             b.owns("e1", "Entity", "e2", {"stake_percent": 50.0})
@@ -106,9 +106,9 @@ class TestBatchWriter:
         assert joined.index("UPDATE Entity") < joined.index("CREATE EDGE OWNS")
 
     def test_empty_flush_issues_no_request(self):
-        from app.scraper.bods import _BatchWriter
+        from app.scraper.bulk_import import _BatchWriter
 
-        with patch("app.scraper.bods.run_sqlscript") as mock_sql:
+        with patch("app.scraper.bulk_import.run_sqlscript") as mock_sql:
             _BatchWriter().flush()
             mock_sql.assert_not_called()
 
@@ -156,7 +156,7 @@ class TestPostBodsImport:
 
 class TestFlushRetry:
     def test_retries_then_succeeds(self):
-        from app.scraper import bods
+        from app.scraper import bulk_import
 
         calls = {"n": 0}
 
@@ -166,31 +166,31 @@ class TestFlushRetry:
                 raise RuntimeError("ArcadeDB command failed [504]: gateway timeout")
             return [{"ok": True}]
 
-        with patch("app.scraper.bods.run_sqlscript", side_effect=flaky), \
-             patch("app.scraper.bods.time.sleep") as sleep:
-            out = bods._flush_script("UPDATE Entity ...", {"a": 1})
+        with patch("app.scraper.bulk_import.run_sqlscript", side_effect=flaky), \
+             patch("app.scraper.bulk_import.time.sleep") as sleep:
+            out = bulk_import._flush_script("UPDATE Entity ...", {"a": 1})
 
         assert out == [{"ok": True}]
         assert calls["n"] == 3            # failed twice, third attempt worked
         assert sleep.call_count == 2      # backed off before each retry
 
     def test_reraises_after_exhausting_attempts(self):
-        from app.scraper import bods
+        from app.scraper import bulk_import
 
-        with patch("app.scraper.bods.run_sqlscript",
+        with patch("app.scraper.bulk_import.run_sqlscript",
                    side_effect=RuntimeError("504")) as sql, \
-             patch("app.scraper.bods.time.sleep"):
+             patch("app.scraper.bulk_import.time.sleep"):
             with pytest.raises(RuntimeError, match="504"):
-                bods._flush_script("UPDATE Entity ...", {})
+                bulk_import._flush_script("UPDATE Entity ...", {})
 
-        assert sql.call_count == bods._FLUSH_ATTEMPTS
+        assert sql.call_count == bulk_import._FLUSH_ATTEMPTS
 
 
 # ── bulk-load mode: drop secondary indexes for the load, rebuild after ────────
 
 class TestBulkLoad:
     def test_secondary_index_list_excludes_id_and_other_types(self):
-        from app.scraper.bods import _bulk_load_secondary_indexes
+        from app.scraper.bulk_import import _bulk_load_secondary_indexes
 
         names = _bulk_load_secondary_indexes()
         assert "Entity[name_normalized]" in names

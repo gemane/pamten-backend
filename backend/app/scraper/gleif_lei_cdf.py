@@ -8,8 +8,8 @@ jurisdictions) but current, and it names the entities the RR-CDF importer would
 otherwise leave as LEI-only placeholders. Relationships still come from RR-CDF,
 succession from the LEI-CDF succession importer.
 
-Entities are keyed `lei:{LEI}` — same as bods._entity_node_id — so this and the
-RR/succession importers all upsert the same nodes. It refreshes name/country/
+Entities are keyed `lei:{LEI}` (the same key the RR/succession importers use),
+so they all upsert the same nodes. It refreshes name/country/
 address/legal-form-type + is_nominee, and leaves enrichment from other sources
 (description, wikidata_id, hq_lat, revenue, verified) untouched.
 
@@ -21,7 +21,7 @@ import re
 import zipfile
 from typing import IO
 
-from app.scraper.bods import (
+from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _legal_form_type, _ProgressBar,
     _ProgressStream, _rebuild_indexes,
 )

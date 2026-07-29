@@ -3,7 +3,7 @@ import pytest
 
 
 def test_diskmap_behaves_like_dict():
-    from app.scraper.bods import _DiskMap
+    from app.scraper.bulk_import import _DiskMap
     m = _DiskMap()
     try:
         assert "x" not in m
@@ -24,7 +24,7 @@ def test_diskmap_behaves_like_dict():
 
 def test_diskmap_survives_commit_threshold():
     # >20k inserts crosses the periodic commit; reads must still see everything.
-    from app.scraper.bods import _DiskMap
+    from app.scraper.bulk_import import _DiskMap
     m = _DiskMap()
     try:
         for i in range(45_000):
@@ -37,6 +37,6 @@ def test_diskmap_survives_commit_threshold():
 
 
 def test_loads_parses_bytes_and_str():
-    from app.scraper.bods import _loads
+    from app.scraper.bulk_import import _loads
     assert _loads(b'{"a": 1, "b": "x"}') == {"a": 1, "b": "x"}
     assert _loads('{"n": null}') == {"n": None}

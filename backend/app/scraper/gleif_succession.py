@@ -1,15 +1,15 @@
 """
 GLEIF LEI-CDF (Level 1) succession importer.
 
-The BODS export we import (``bods.py``) has no succession data. GLEIF records a
+The LEI-CDF entity + RR-CDF relationship imports carry no succession data. GLEIF records a
 legal entity's succession/merger in the **LEI-CDF golden copy** instead: a record
 whose registration is MERGED / DUPLICATE / RETIRED carries ``Entity.SuccessorEntity``
 → ``SuccessorLEI``, the surviving entity that replaced it.
 
 This streams that (multi-GB) file and emits the same
 ``(predecessor)-[:SUCCEEDED_BY]->(successor)`` edge the Wikidata scraper creates,
-keyed ``lei:{LEI}`` → ``lei:{SuccessorLEI}`` — exactly how ``bods._entity_node_id``
-keys GLEIF entities, so both endpoints resolve by LEI with no matching logic.
+keyed ``lei:{LEI}`` → ``lei:{SuccessorLEI}`` — the same `lei:{LEI}` key the other
+GLEIF imports use, so both endpoints resolve by LEI with no matching logic.
 
 LEI-CDF JSON quirks (verified against a real golden copy):
   * every scalar is wrapped as ``{"$": value}``,
@@ -27,7 +27,7 @@ from typing import IO
 
 import ijson
 
-from app.scraper.bods import (
+from app.scraper.bulk_import import (
     _BatchWriter, _DiskMap, _now_iso, _ProgressBar, _ProgressStream,
 )
 from app.scraper.mapper import normalize_entity_name

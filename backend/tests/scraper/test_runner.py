@@ -719,7 +719,7 @@ def test_sec_person_centric_insider_owns():
 
     owns = []
     with patch("app.scraper.runner.get_source_enabled", return_value=True), \
-         patch("app.scraper.runner._ensure_sec_edgar_source", return_value="src"), \
+         patch("app.scraper.runner._ensure_source", return_value="src"), \
          patch("app.scraper.runner._upsert_entity_by_name", return_value="blk"), \
          patch("app.scraper.runner.db.get_session", fake_ctx), \
          patch("app.scraper.sec_edgar.scrape_company", return_value=data), \

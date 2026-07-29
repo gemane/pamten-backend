@@ -78,7 +78,7 @@ class TestScraperSendsIdentifyingUserAgent:
 # ── Shared helpers for node/edge-writer conformance ──────────────────────────
 from contextlib import contextmanager           # noqa: E402
 from app.config import Settings, settings        # noqa: E402
-from app.scraper import runner, bods             # noqa: E402
+from app.scraper import runner, bulk_import             # noqa: E402
 from app.scraper.sources import KNOWN_SOURCES    # noqa: E402
 
 
@@ -106,9 +106,9 @@ def _bods_script(invoke) -> str:
     and return the SQL it would send. BODS doesn't write via db.get_session —
     it enqueues onto a _BatchWriter that flushes batched `sqlscript` requests."""
     scripts: list[str] = []
-    with patch("app.scraper.bods.run_sqlscript",
+    with patch("app.scraper.bulk_import.run_sqlscript",
                side_effect=lambda script, params=None: scripts.append(script)):
-        batch = bods._BatchWriter(batch_size=1000)
+        batch = bulk_import._BatchWriter(batch_size=1000)
         invoke(batch)
         batch.flush()
     return "\n".join(scripts)
@@ -204,21 +204,21 @@ class TestMinimumFields:
 
 class TestBodsWriterConformance:
     def test_owns_stamps_full_provenance(self):
-        q = _bods_script(lambda b: bods._owns(
+        q = _bods_script(lambda b: bulk_import._owns(
             b, owner_id="o", owned_id="n", stake_percent=50.0, ownership_type="majority",
             since=None, until=None, source_id="s", credibility_score=90,
             source_url="u", source_date="d",
         ))
         assert "CREATE EDGE OWNS" in q
         for field in ("source_url", "source_date", "last_scraped_at"):
-            assert field in q, f"bods OWNS must stamp {field} — got:\n{q}"
+            assert field in q, f"bulk_import OWNS must stamp {field} — got:\n{q}"
 
     def test_entity_captures_name_and_country(self):
-        q = _bods_script(lambda b: bods._entity(
+        q = _bods_script(lambda b: bulk_import._entity(
             b, "e1", name="Acme", entity_type="company", country="US",
             founded=None, lei_id="LEI1", companies_house_id=None,
             source_id="s", credibility_score=90,
         ))
         assert "UPDATE Entity" in q
-        assert "name" in q, "bods entity must capture a name"
-        assert "country" in q, "bods entity must capture a country"
+        assert "name" in q, "bulk_import entity must capture a name"
+        assert "country" in q, "bulk_import entity must capture a country"

@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_reupsert_same_lei_is_idempotent(it_db):
-    from app.scraper.bods import _BatchWriter, _entity
+    from app.scraper.bulk_import import _BatchWriter, _entity
 
     # Two separate imports of the same company, keyed on its LEI (as GLEIF LEI-CDF
     # does), must upsert onto one node — never a second.

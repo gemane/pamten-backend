@@ -116,12 +116,13 @@ CH_REGISTER_CREDIBILITY  = 97   # statutory UK register, authoritative for the n
 
 # ── Database helpers ──────────────────────────────────────────────────────────
 
-def _ensure_source() -> str:
-    """Get or create the Wikidata source node, return its id."""
+def _ensure_source(name: str, url: str, credibility: int, type_: str = "register") -> str:
+    """Get or create a Source node by name, return its id. One helper for every
+    source (Wikidata / SEC / OpenCorporates / GLEIF / UK PSC) — pass its constants;
+    Wikidata is the lone ``knowledge_base``, the rest are ``register``."""
     with db.get_session() as session:
         rec = session.run(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
-            name=WIKIDATA_SOURCE_NAME,
+            "MATCH (s:Source {name: $name}) RETURN s.id AS id", name=name,
         ).single()
         if rec:
             return rec["id"]
@@ -131,13 +132,10 @@ def _ensure_source() -> str:
             """
             CREATE (s:Source {
                 id: $id, name: $name, url: $url,
-                credibility_score: $score, type: 'knowledge_base'
+                credibility_score: $score, type: $type
             })
             """,
-            id=source_id,
-            name=WIKIDATA_SOURCE_NAME,
-            url=WIKIDATA_SOURCE_URL,
-            score=WIKIDATA_CREDIBILITY,
+            id=source_id, name=name, url=url, score=credibility, type=type_,
         )
         return source_id
 
@@ -706,7 +704,7 @@ def run_scrape(query: str, depth: int = 2) -> dict:
     top = results[0]
     qid = top["id"]
 
-    source_id = _ensure_source()
+    source_id = _ensure_source(WIKIDATA_SOURCE_NAME, WIKIDATA_SOURCE_URL, WIKIDATA_CREDIBILITY, "knowledge_base")
     scraped: list = []
     visited: set  = set()
 
@@ -722,32 +720,6 @@ def run_scrape(query: str, depth: int = 2) -> dict:
 
 
 # ── SEC EDGAR helpers ─────────────────────────────────────────────────────────
-
-def _ensure_sec_edgar_source() -> str:
-    """Get or create the SEC EDGAR source node, return its id."""
-    with db.get_session() as session:
-        rec = session.run(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
-            name=SEC_EDGAR_SOURCE_NAME,
-        ).single()
-        if rec:
-            return rec["id"]
-
-        source_id = str(uuid.uuid4())
-        session.run(
-            """
-            CREATE (s:Source {
-                id: $id, name: $name, url: $url,
-                credibility_score: $score, type: 'register'
-            })
-            """,
-            id=source_id,
-            name=SEC_EDGAR_SOURCE_NAME,
-            url=SEC_EDGAR_SOURCE_URL,
-            score=SEC_EDGAR_CREDIBILITY,
-        )
-        return source_id
-
 
 def _search_text(name: str, description: str | None, aliases: list[str] | None) -> str:
     """FULL_TEXT search field: name + description + aliases (same recipe as the
@@ -1061,7 +1033,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             "scraped": [],
         }
 
-    source_id = _ensure_sec_edgar_source()
+    source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     scraped: list[dict] = []
 
     # Upsert the target company
@@ -1273,32 +1245,6 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
 
 # ── OpenCorporates helpers ────────────────────────────────────────────────────
 
-def _ensure_open_corporates_source() -> str:
-    """Get or create the OpenCorporates source node, return its id."""
-    with db.get_session() as session:
-        rec = session.run(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
-            name=OPENCORPORATES_SOURCE_NAME,
-        ).single()
-        if rec:
-            return rec["id"]
-
-        source_id = str(uuid.uuid4())
-        session.run(
-            """
-            CREATE (s:Source {
-                id: $id, name: $name, url: $url,
-                credibility_score: $score, type: 'register'
-            })
-            """,
-            id=source_id,
-            name=OPENCORPORATES_SOURCE_NAME,
-            url=OPENCORPORATES_SOURCE_URL,
-            score=OPENCORPORATES_CREDIBILITY,
-        )
-        return source_id
-
-
 def _upsert_location_oc(address: dict) -> str | None:
     """
     Find or create a Location node from a registered address dict.
@@ -1420,7 +1366,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
             "scraped": [],
         }
 
-    source_id = _ensure_open_corporates_source()
+    source_id = _ensure_source(OPENCORPORATES_SOURCE_NAME, OPENCORPORATES_SOURCE_URL, OPENCORPORATES_CREDIBILITY)
     scraped: list[dict] = []
 
     # Verifiable per-record URL for this company on OpenCorporates
@@ -1491,54 +1437,6 @@ def run_scrape_open_corporates(company_name: str) -> dict:
 
 # ── BODS (GLEIF / UK PSC) helpers ─────────────────────────────────────────────
 
-def _ensure_bods_gleif_source() -> str:
-    """Get or create Source node for GLEIF, return its id."""
-    with db.get_session() as session:
-        rec = session.run(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
-            name=GLEIF_SOURCE_NAME,
-        ).single()
-        if rec:
-            return rec["id"]
-
-        source_id = str(uuid.uuid4())
-        session.run(
-            """
-            CREATE (s:Source {
-                id: $id, name: $name, url: $url,
-                credibility_score: $score, type: 'register'
-            })
-            """,
-            id=source_id, name=GLEIF_SOURCE_NAME,
-            url=GLEIF_SOURCE_URL, score=BODS_GLEIF_CREDIBILITY,
-        )
-        return source_id
-
-
-def _ensure_bods_uk_psc_source() -> str:
-    """Get or create Source node for UK PSC, return its id."""
-    with db.get_session() as session:
-        rec = session.run(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
-            name=UK_PSC_SOURCE_NAME,
-        ).single()
-        if rec:
-            return rec["id"]
-
-        source_id = str(uuid.uuid4())
-        session.run(
-            """
-            CREATE (s:Source {
-                id: $id, name: $name, url: $url,
-                credibility_score: $score, type: 'register'
-            })
-            """,
-            id=source_id, name=UK_PSC_SOURCE_NAME,
-            url=UK_PSC_SOURCE_URL, score=BODS_UK_PSC_CREDIBILITY,
-        )
-        return source_id
-
-
 def _post_bods_import() -> dict:
     """Housekeeping every BODS import needs, so it isn't a separate manual step:
     flag nominee/custodian entities the load added, and collapse duplicate active
@@ -1580,7 +1478,7 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
 
     from app.scraper.companies_house_psc import import_ch_psc
 
-    source_id = _ensure_bods_uk_psc_source()
+    source_id = _ensure_source(UK_PSC_SOURCE_NAME, UK_PSC_SOURCE_URL, BODS_UK_PSC_CREDIBILITY)
     log.info("CH PSC: importing from %s (limit=%s)", local_file, limit)
     counts = import_ch_psc(
         filepath=local_file,
@@ -1646,7 +1544,7 @@ def run_import_gleif_succession(local_file: str, limit: int | None = None) -> di
 
     from app.scraper.gleif_succession import import_lei_cdf_succession
 
-    source_id = _ensure_bods_gleif_source()
+    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
     log.info("GLEIF succession: importing from %s (limit=%s)", local_file, limit)
     counts = import_lei_cdf_succession(
         filepath=local_file,
@@ -1677,7 +1575,7 @@ def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
 
     from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
 
-    source_id = _ensure_bods_gleif_source()
+    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
     log.info("GLEIF LEI-CDF entities: importing from %s (limit=%s, jur=%s)",
              local_file, limit, filter_jurisdiction)
     counts = import_lei_cdf_entities(
@@ -1712,7 +1610,7 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
     from app.scraper.gleif_rr import import_rr_cdf
     from app.scraper.maintenance import deduplicate_owns_edges
 
-    source_id = _ensure_bods_gleif_source()
+    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
     log.info("GLEIF RR-CDF: importing from %s (limit=%s)", local_file, limit)
     counts = import_rr_cdf(
         filepath=local_file,
