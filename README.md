@@ -128,7 +128,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 **Email verification & password reset.** Registration creates the account with `email_verified=false`, emails a verification link, and — with `REQUIRE_EMAIL_VERIFICATION=true` (default) — **blocks login until the email is verified** (`403 email_not_verified`, which the UI turns into a *resend* prompt). `POST /auth/forgot-password` emails a reset link and always returns `200` (no account-existence leak); `POST /auth/reset-password` sets the new password. The verify/reset links are **self-contained signed JWTs** (purpose-scoped, TTL-bounded) — no server-side token table; a reset link embeds a fingerprint of the current password hash so it **self-invalidates** once used. The env/bootstrap admin and the legacy first-user admin are stamped verified so they're never locked out; run `python manage.py verify-users` once to mark pre-existing accounts verified.
 
-**Email transport** is provider-agnostic (`app/notifications/email.py`): `EMAIL_BACKEND=smtp` sends via `SMTP_*` (stdlib `smtplib`; works with Gmail + an App Password), while the default `console` backend (used when `SMTP_HOST` is empty) just logs the message + link — so local dev and tests need no credentials. `APP_BASE_URL` sets the origin used in the emailed links.
+**Email transport** is provider-agnostic (`app/notifications/email.py`) — `EMAIL_BACKEND` picks the backend: `resend` (Resend HTTPS API via `RESEND_API_KEY` — recommended for a real deploy, since **Render blocks outbound SMTP**), `smtp` (stdlib `smtplib`; works with Gmail locally), or the default `console` (logs the message + link, so local dev and tests need no credentials). Adding another provider is a ~15-line `EmailSender` subclass. `EMAIL_FROM` must be a sender the backend accepts (a Resend-verified domain, or your SMTP account); `APP_BASE_URL` sets the origin used in the emailed links.
 
 **Two-factor auth (TOTP).** Users can enable an authenticator-app second factor (`POST /auth/mfa/setup` → scan the returned `otpauth://` QR → `POST /auth/mfa/enable` with a code, which returns 10 one-time **recovery codes**). Once enabled, `login` returns `{mfa_required, mfa_token}` instead of an access token; the client exchanges that pending token + a 6-digit code (or a recovery code) at `POST /auth/mfa/verify` for the real token. TOTP uses `cryptography` (RFC 6238, ±1 step for clock drift); the secret + hashed recovery codes live as schemaless `User` props. `mfa/verify` is rate-limited per account, and disabling requires a current code.
 
@@ -275,8 +275,9 @@ log), not as in-place edits that the next scrape would clobber.
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | none | Provision this account as admin on startup (created if missing). When set, self-registration never grants admin — avoids the "first person to `/register` becomes admin" race on a fresh DB |
 | `REQUIRE_EMAIL_VERIFICATION` | `true` | Block login until the account's email is verified |
-| `EMAIL_BACKEND` | `` (auto) | `smtp` sends via `SMTP_*`; `console` logs the message; empty = auto (console unless `SMTP_HOST` set) |
-| `SMTP_HOST` / `SMTP_PORT` | `` / `587` | SMTP server (e.g. `smtp.gmail.com`) |
+| `EMAIL_BACKEND` | `` (auto) | `resend` \| `smtp` \| `console`; empty = auto (console unless `SMTP_HOST` set) |
+| `RESEND_API_KEY` | — | Resend API key (for `EMAIL_BACKEND=resend`). Secret — env only |
+| `SMTP_HOST` / `SMTP_PORT` | `` / `587` | SMTP server (e.g. `smtp.gmail.com`) — note Render blocks outbound SMTP |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | none | SMTP credentials — for Gmail, the account + an **App Password**. Secret — env only |
 | `EMAIL_FROM` | = `SMTP_USERNAME` | `From` header on outgoing mail |
 | `APP_BASE_URL` | `http://localhost:5173` | Frontend origin used to build verification / reset links in emails |

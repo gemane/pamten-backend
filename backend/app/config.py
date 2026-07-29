@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     # when SMTP_HOST is unset, so local dev + tests need no secrets. For Gmail:
     # SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USERNAME=<you@gmail.com>,
     # SMTP_PASSWORD=<Google App Password> (needs 2-Step Verification enabled).
-    EMAIL_BACKEND:                    str  = ""     # "smtp" | "console" | "" (auto)
+    EMAIL_BACKEND:                    str  = ""     # "console" | "smtp" | "resend" | "" (auto)
+    RESEND_API_KEY:                   str  = ""     # secret — env only; for EMAIL_BACKEND=resend
     SMTP_HOST:                        str  = ""
     SMTP_PORT:                        int  = 587
     SMTP_USERNAME:                    str  = ""

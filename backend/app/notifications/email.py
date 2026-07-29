@@ -1,29 +1,37 @@
 """
 Provider-agnostic transactional email — verification and password-reset messages.
 
-Two backends, chosen by ``settings.EMAIL_BACKEND``:
-  * ``smtp``    — send via ``settings.SMTP_*`` using the stdlib ``smtplib`` (works
-                  with Gmail: host ``smtp.gmail.com``, port 587, an App Password).
+Backends, chosen by ``settings.EMAIL_BACKEND``:
   * ``console`` — log the whole message (subject, recipient, body incl. the link)
-                  instead of sending. This is the default when ``SMTP_HOST`` is
-                  unset, so local dev and the test suite need no credentials.
+                  instead of sending. The default when nothing is configured, so
+                  local dev and the test suite need no credentials.
+  * ``smtp``    — send via ``settings.SMTP_*`` using the stdlib ``smtplib`` (works
+                  with Gmail locally, but Render blocks outbound SMTP).
+  * ``resend``  — send via the Resend HTTPS API (``RESEND_API_KEY``). Works from
+                  Render (HTTPS, port 443). ``EMAIL_FROM`` must be a Resend-verified
+                  sender (a verified domain, or ``onboarding@resend.dev`` in test
+                  mode — which only delivers to the account owner).
 
-Only stdlib is used (``smtplib`` + ``email.message``) — no third-party dependency.
+Uses only stdlib + ``httpx`` (already a dependency) — no provider SDKs.
 """
 import logging
 import smtplib
 from email.message import EmailMessage
 
+import httpx
+
 from app.config import settings
 
 log = logging.getLogger(__name__)
 
+_KNOWN_BACKENDS = ("console", "smtp", "resend")
+
 
 def _resolve_backend() -> str:
-    """'smtp' or 'console'. Explicit EMAIL_BACKEND wins; otherwise auto: 'smtp'
-    when an SMTP host is configured, else 'console'."""
+    """The backend name. An explicit, recognised EMAIL_BACKEND wins; otherwise
+    auto: 'smtp' when an SMTP host is configured, else 'console'."""
     choice = (settings.EMAIL_BACKEND or "").strip().lower()
-    if choice in ("smtp", "console"):
+    if choice in _KNOWN_BACKENDS:
         return choice
     return "smtp" if settings.SMTP_HOST.strip() else "console"
 
@@ -70,8 +78,29 @@ class SMTPBackend(EmailSender):
         log.info("[email:smtp] sent %r to %s", subject, to)
 
 
+class ResendBackend(EmailSender):
+    """Sends via the Resend HTTPS API — works from Render (unlike SMTP)."""
+
+    def send(self, to: str, subject: str, text: str, html: str | None = None) -> None:
+        payload: dict = {"from": _from_address(), "to": [to], "subject": subject, "text": text}
+        if html:
+            payload["html"] = html
+        resp = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
+            json=payload, timeout=10,
+        )
+        resp.raise_for_status()
+        log.info("[email:resend] sent %r to %s", subject, to)
+
+
 def get_email_sender() -> EmailSender:
-    return SMTPBackend() if _resolve_backend() == "smtp" else ConsoleBackend()
+    backend = _resolve_backend()
+    if backend == "resend":
+        return ResendBackend()
+    if backend == "smtp":
+        return SMTPBackend()
+    return ConsoleBackend()
 
 
 # ── Message templates ─────────────────────────────────────────────────────────
