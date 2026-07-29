@@ -193,6 +193,19 @@ sources still appear in `/scraper/sources` with independent on/off toggles, and
 > frozen at 2025-03. The BODS importer and its `/scraper/bods/*/run` endpoints have
 > been removed; only the CLI importers above remain.
 
+**Daily GLEIF refresh (delta).** Re-running the full ~3.4M-record load every day is
+wasteful, so once the full copy is loaded, `manage.py gleif-update` rides on top of
+it: it fetches GLEIF's published **delta files** (only what changed since the last
+publish — ~14k entities + ~2k relationships) and applies them in seconds/minutes.
+It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` edge
+**closed** (`until` set to the relationship's end date), and a dissolved LEI is
+**marked** (`active=false`), never deleted (GLEIF never deletes; merges flow through
+`SUCCEEDED_BY`). Writes are idempotent (re-applying a delta never duplicates), so no
+`--bulk-load` and no whole-DB dedup. `~/scripts/cron-gleif-update.sh` (flock + log →
+a `gleif-update` ScrapeRun) is the one crontab line for a daily run. UK PSC has no
+clean delta feed (Companies House publishes a daily *full* snapshot), so its
+incremental refresh is a later, separate design.
+
 ---
 
 ## Duplicate persons
@@ -325,6 +338,7 @@ python3 manage.py init-schema
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers) — see *GLEIF sourcing* in [`docs/data-model.md`](docs/data-model.md) |
+| `gleif-update` | Apply a GLEIF **delta** on top of the full load — the retirement-aware daily refresh (new/changed entities, merges, closed relationships). Fetches the current `--interval` (LastDay by default) delta, or pass `--lei-file`/`--rr-file`. Idempotent; runs against the live-indexed DB (no `--bulk-load`). Daily via `~/scripts/cron-gleif-update.sh` |
 | `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`). Company names come from a companion `ch-company-data` import |
 | `ch-company-data` | Enrich UK companies with names/addresses/former-names from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph (from `ch-psc`), never creates isolated nodes |
 | `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
