@@ -14,7 +14,7 @@ the relationship explicitly per record:
 
 Each record is ``StartNode`` (child LEI) reported-as-consolidated-by ``EndNode``
 (parent LEI), so we emit ``(parent)-[:OWNS]->(child)`` keyed ``lei:{LEI}`` — the
-same keying as ``bods._entity_node_id`` — carrying ``direct_or_indirect`` so the
+same key the LEI-CDF importer uses — carrying ``direct_or_indirect`` so the
 direct holding can be told apart from the ultimate/indirect control summary
 (which is what lets downstream stop double-counting toward >100%).
 
@@ -31,7 +31,7 @@ from typing import IO
 
 import ijson
 
-from app.scraper.bods import _BatchWriter, _owns, _ProgressBar, _ProgressStream
+from app.scraper.bulk_import import _BatchWriter, _owns, _ProgressBar, _ProgressStream
 
 log = logging.getLogger(__name__)
 

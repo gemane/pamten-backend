@@ -145,8 +145,8 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
 
 # ── Cross-source duplicate detection (same company, different identifiers) ─────
 #
-# The BODS importer keys each entity on its LEI / Companies House id (see
-# bods._entity_node_id), so the same real-world company recorded under two LEIs
+# The GLEIF/CH importers key each entity on its LEI / Companies House id, so the
+# same real-world company recorded under two LEIs
 # — e.g. BlackRock, Inc. as both 549300… and 529900… — becomes two Entity nodes.
 # The id-based dedup (deduplicate_entities, by shared LEI/CH id) can't see these
 # because the ids differ. What they share is a `name_normalized`. This DETECTS
@@ -792,7 +792,7 @@ def normalize_entity_countries() -> dict:
     appear twice in by-country groupings. Idempotent: values that are
     already codes (or unrecognized) are left untouched.
     """
-    from app.scraper.bods import _ISO2_COUNTRY
+    from app.scraper.bulk_import import _ISO2_COUNTRY
     # Case-insensitive name lookup, extended with spellings other sources use.
     name_to_code = {name.lower(): code for code, name in _ISO2_COUNTRY.items()}
     name_to_code.update({name.lower(): code for name, code in _COUNTRY_NAME_VARIANTS.items()})

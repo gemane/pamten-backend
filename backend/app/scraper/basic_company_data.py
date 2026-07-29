@@ -21,7 +21,7 @@ import logging
 import zipfile
 from typing import IO, Iterator
 
-from app.scraper.bods import (
+from app.scraper.bulk_import import (
     _drop_secondary_indexes, _flush_script, _now_iso, _ProgressBar,
     _rebuild_indexes,
 )

@@ -27,7 +27,7 @@ import re
 import zipfile
 from typing import IO
 
-from app.scraper.bods import (
+from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
     _ProgressBar, _rebuild_indexes,
 )

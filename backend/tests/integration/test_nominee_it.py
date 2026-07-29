@@ -12,7 +12,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_entity_writer_flags_nominee_inline(it_db):
-    from app.scraper.bods import _BatchWriter, _entity
+    from app.scraper.bulk_import import _BatchWriter, _entity
 
     batch = _BatchWriter()
     _entity(batch, "lei:LEI-NOMINEE", name="Talbot Nominees Limited",
