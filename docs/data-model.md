@@ -54,7 +54,12 @@ non-ACTIVE has its `OWNS` edge *closed* (`until` = the relationship period's
 deleted (GLEIF never deletes; merges keep flowing through `SUCCEEDED_BY`). All
 writes are idempotent — nodes UPSERT by id (batched) and edges are matched by
 endpoints+marker before create — so re-applying a delta can't duplicate, hence no
-`--bulk-load` and no whole-DB dedup. UK PSC has no equivalent clean delta feed
+`--bulk-load` and no whole-DB dedup. The default `--interval auto` is **gap-aware**:
+it checkpoints the last publish it applied (an `ImportState` node) and picks the
+smallest delta window (`LastDay`/`LastWeek`/`LastMonth`) that covers the gap since
+then, so a few missed daily runs self-heal on the next one; a gap past ~30 days
+can't be covered by a delta and fails loudly (→ full reload). UK PSC has no
+equivalent clean delta feed
 (Companies House republishes a daily *full* snapshot), so its incremental refresh
 is deferred to a separate design.
 
