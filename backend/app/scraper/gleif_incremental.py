@@ -303,8 +303,8 @@ def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -
 # The delta update rides *on top of* the full golden copy — applying a delta to a
 # DB without that baseline would build a partial, wrong graph (only the recently
 # changed records, no foundation). The full LEI-CDF importer stamps this marker on
-# success; the update refuses to run without it, and `wipe-data` clears it so a wipe
-# forces a fresh full load before deltas resume.
+# success; the update refuses to run without it, and `wipe-source --source GLEIF`
+# (or dropping the database) clears it so a fresh full load is required before deltas resume.
 
 def mark_full_load_done() -> None:
     """Record that a full GLEIF LEI-CDF load has established the entity baseline."""

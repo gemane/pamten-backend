@@ -532,6 +532,66 @@ def _duplicate_keys(key_prop: str) -> list[str]:
     return [r["key"] for r in rows]
 
 
+# Edges are single-source (one fact, one source) → deleting by source_id is exact.
+_WIPE_EDGE_TYPES = ["OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY",
+                    "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN"]
+# Nodes carry a single origin source_id; only delete the ones this source created
+# that are left with no edges (degree 0) after its edges go — a node another source
+# still references is kept.
+_WIPE_NODE_TYPES = ["Entity", "Person", "Location"]
+
+
+def _batched_delete(where_sql: str, params: dict, batch: int) -> int:
+    """`DELETE FROM … WHERE … LIMIT batch` in a loop until drained. Small batches
+    keep each request under the proxy timeout and never hold a whole-DB lock (the
+    dev-db gotcha). A missing type is treated as nothing to delete."""
+    total = 0
+    while True:
+        try:
+            r = run_sql(f"{where_sql} LIMIT {batch}", params)
+        except RuntimeError as exc:
+            if "was not found" in str(exc):
+                return total
+            raise
+        n = int(r[0].get("count", 0)) if r and isinstance(r[0], dict) else 0
+        total += n
+        if n < batch:
+            return total
+
+
+def wipe_source(source_name: str, batch: int = 10000) -> dict:
+    """Delete one source's contribution to the graph — its edges, then the nodes
+    only it created (now orphaned). Nodes/edges another source also references are
+    kept: a scraped GLEIF company that also has Wikidata edges survives (minus
+    GLEIF's own edges). Batched (never a single mass delete), and it never drops a
+    type — other sources' data lives in the same types — so this can't wipe the
+    whole DB. A fresh start is a database drop, not this command.
+    """
+    src = run_sql("SELECT id FROM Source WHERE name = :n", {"n": source_name})
+    if not src:
+        known = ", ".join(r["name"] for r in run_sql("SELECT name FROM Source ORDER BY name"))
+        raise ValueError(f"No Source named {source_name!r}. Known sources: {known or '(none)'}")
+    sid = src[0]["id"]
+    out: dict = {"source": source_name, "source_id": sid, "edges": {}, "nodes": {}}
+
+    # 1) Edges first — single-source, so this is exact and it orphans the nodes only
+    #    this source connected.
+    for et in _WIPE_EDGE_TYPES:
+        out["edges"][et] = _batched_delete(f"DELETE FROM {et} WHERE source_id = :s", {"s": sid}, batch)
+    # 2) The source's own nodes that are now orphaned (degree 0). Shared/corroborated
+    #    nodes still carry another source's edge → not orphaned → kept.
+    for nt in _WIPE_NODE_TYPES:
+        out["nodes"][nt] = _batched_delete(
+            f"DELETE FROM {nt} WHERE source_id = :s AND both().size() = 0", {"s": sid}, batch)
+    # 3) Removing GLEIF's baseline must reset the incremental checkpoint, or the
+    #    gleif-update cron would apply deltas onto a graph with no foundation.
+    if source_name.strip().upper() == "GLEIF":
+        for key in ("gleif-full-load", "gleif-update"):
+            run_sql("DELETE FROM ImportState WHERE key = :k", {"k": key})
+        out["reset_import_state"] = True
+    return out
+
+
 def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     """Scoped, high-confidence-only entity auto-merge — the entity twin of the
     post-scrape person dedup. For the entities a scrape just touched, merge any
