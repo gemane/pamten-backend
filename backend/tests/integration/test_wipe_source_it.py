@@ -41,6 +41,7 @@ def test_wipe_source_keeps_shared_and_other_sources(it_db):
     res = wipe_source("Wipe Me")
     assert res["edges"]["OWNS"] == 1                 # only A's edge
     assert res["nodes"]["Entity"] == 3              # a-parent, a-child, a-lonely
+    assert res.get("reindexed") is not False         # stale-entry cleanup ran (REBUILD INDEX *)
 
     remaining = {r["id"] for r in it_db.run_command("MATCH (e:Entity) RETURN e.id AS id")}
     assert remaining == {"b-node", "shared"}         # A's orphans gone; shared + B kept
