@@ -532,6 +532,56 @@ def _duplicate_keys(key_prop: str) -> list[str]:
     return [r["key"] for r in rows]
 
 
+def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
+    """Scoped, high-confidence-only entity auto-merge — the entity twin of the
+    post-scrape person dedup. For the entities a scrape just touched, merge any
+    same-``name_normalized`` group whose confidence is ``definitive`` (members share
+    a hard external id) or ``high`` (same registered address); ``medium``/``low``
+    groups are left for human review (``find_duplicate_entity_names``).
+
+    Scoped via indexed id/name lookups over the (small) touched set, so it never
+    runs the full-DB same-name aggregation (``_duplicate_name_groups``). The
+    survivor is the highest ``name_credibility`` node (then verified, then smallest
+    id), and the loser's edges are migrated onto it before it's deleted.
+    """
+    if not entity_ids:
+        return {"entities_merged": 0, "groups_checked": 0, "needs_review": 0, "detail": []}
+
+    # Normalized names of the touched entities (id is UNIQUE-indexed → fast).
+    names: set[str] = set()
+    for eid in dict.fromkeys(entity_ids):
+        rows = run_sql("SELECT name_normalized AS n FROM Entity WHERE id = :id", {"id": eid})
+        n = rows[0].get("n") if rows else None
+        if n:
+            names.add(n)
+
+    merged: list[dict] = []
+    review = 0
+    for nn in names:
+        members = run_sql(
+            "SELECT id, name, country, founded, lei_id, companies_house_id, sec_cik, "
+            "wikidata_id, registered_address, COALESCE(name_credibility, 0) AS cred, "
+            "COALESCE(verified, false) AS verified FROM Entity "
+            "WHERE name_normalized = :nn LIMIT 50", {"nn": nn})
+        members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
+        if len(members) < 2:
+            continue
+        if _group_confidence(members) not in ("definitive", "high"):
+            review += 1
+            continue
+        members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
+        keep = members[0]
+        for dead in members[1:]:
+            if apply:
+                _migrate_entity_edges(dead["id"], keep["id"])
+                run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+            merged.append({"kept": keep["name"], "kept_id": keep["id"],
+                           "deleted": dead["name"], "deleted_id": dead["id"]})
+
+    return {"entities_merged": len(merged), "groups_checked": len(names),
+            "needs_review": review, "detail": merged[:100]}
+
+
 def deduplicate_entities(limit: int | None = 300) -> dict:
     """
     Merge Entity nodes that share a stable external identifier — the same LEI or

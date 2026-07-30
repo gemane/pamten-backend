@@ -228,11 +228,24 @@ OOMs the heap) and tags each group with a **confidence** it's the same company:
 name **+ same registered address** ⇒ merge; same name **+ different address** ⇒
 leave alone. It populates on the next import.
 
-This **detects, it does not auto-merge** (a name clash isn't a duplicate). Surfaced
-in the BODS import result as `duplicate_names`, via `GET /scraper/duplicate-entities/{name-count,name-candidates}`
-(`?min_confidence=`), and `manage.py duplicate-names`. Merging a confirmed group is
-manual — reuse the labelled, fast `maintenance._migrate_entity_edges` (copy identity
-fields, drop self-loops, then `deduplicate_owns_edges`).
+The **full-DB** scan **detects, it does not auto-merge** (a name clash isn't a
+duplicate). Surfaced in the BODS import result as `duplicate_names`, via
+`GET /scraper/duplicate-entities/{name-count,name-candidates}` (`?min_confidence=`),
+and `manage.py duplicate-names`. Merging a confirmed group is manual — reuse the
+labelled, fast `maintenance._migrate_entity_edges` (copy identity fields, drop
+self-loops, then `deduplicate_owns_edges`).
+
+**Scoped after scraping — `deduplicate_entities_for`.** After each `run-all`, the
+same confidence model *is* applied automatically, but **only to the entities that
+scrape touched** (collected via a context-local set in the scraper) and **only for
+`definitive` + `high`** groups — the safe tiers (shared hard id, or same registered
+address, e.g. one company under two GLEIF LEIs). `medium`/`low` are still left for
+human review. It's the entity twin of the person auto-dedup: gated by
+`SCRAPER_AUTODEDUP_ENABLED`, best-effort (never fails a scrape), and scoped via
+indexed `id`/`name_normalized` lookups so it never runs the full same-name
+aggregation (sub-second even on a multi-million-entity DB). Fuzzy name near-misses
+(`Alphabet` vs `Google`) are deliberately **not** auto-merged — nothing can safely
+merge those, so they stay for review.
 
 
 # OWNS edge deduplication
