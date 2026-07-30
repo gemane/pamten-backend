@@ -181,89 +181,58 @@ def cmd_backfill_search(args):
     print("Backfill complete. Ensure the FULL_TEXT index exists: python manage.py init-schema")
 
 
-def cmd_wipe_data(args):
+def cmd_wipe_source(args):
+    """Delete ONE source's data (edges + the nodes only it created). There is no
+    whole-database wipe — a fresh dev start is a database DROP. Guards mirror the
+    old wipe-data: an opt-in env var, a --confirm-database that must match the
+    connected DB, and a final interactive retype (of the source name)."""
     import os
     from app.config import settings
-    from app.db.arcadedb import run_sql
-    from app.db.schema import ensure_indexes
+    from app.scraper.maintenance import wipe_source
 
     target_db = settings.ARCADEDB_DATABASE
+    source = args.source
 
-    # Guard 1 — a DEDICATED opt-in var. Deliberately NOT DEBUG: DEBUG gets flipped
-    # on a live box to diagnose problems, and that must never arm an irreversible
-    # wipe. This var has no other purpose, so it's only ever set on purpose.
+    # Guard 1 — a dedicated opt-in var (NOT DEBUG, so debugging prod can't arm it).
     if os.getenv("ALLOW_DESTRUCTIVE_WIPE", "").lower() not in ("1", "true", "yes"):
-        print("wipe-data is disabled. Set ALLOW_DESTRUCTIVE_WIPE=true to enable it.")
-        print("(Not tied to DEBUG on purpose, so debugging prod cannot arm a wipe.)")
+        print("wipe-source is disabled. Set ALLOW_DESTRUCTIVE_WIPE=true to enable it.")
+        print("(Not tied to DEBUG on purpose, so debugging prod cannot arm a delete.)")
         sys.exit(1)
 
-    # Guard 2 — the caller must name the database they intend to wipe, and it must
-    # match the one actually connected. This kills the "aimed at the wrong DB"
-    # failure mode: you cannot wipe prod without typing prod's real name.
+    # Guard 2 — name the database you intend to modify; it must match the connected one.
     confirm_db = getattr(args, "confirm_database", None)
     if not confirm_db:
-        print(f"Refusing to wipe: connected database is '{target_db}'.")
+        print(f"Refusing: connected database is '{target_db}'.")
         print(f"Re-run with --confirm-database {target_db} to confirm the target.")
         sys.exit(1)
     if confirm_db != target_db:
-        print(f"Refusing to wipe: --confirm-database '{confirm_db}' does not match "
-              f"the connected database '{target_db}'.")
+        print(f"Refusing: --confirm-database '{confirm_db}' does not match the "
+              f"connected database '{target_db}'.")
         sys.exit(1)
 
-    batch = getattr(args, "batch", None) or 10000
-    # Clear each type's rows in small batches, THEN drop the now-empty type and
-    # recreate it. A single DROP/DELETE on millions of rows exceeds the DB's
-    # reverse-proxy timeout (dev-db is behind nginx, ~60s) and locks ArcadeDB
-    # until it's restarted — batched `DELETE ... LIMIT` keeps every request short
-    # and never holds a whole-DB lock; the final DROP is instant on the emptied
-    # type and clears the stale index entries DELETE leaves behind. User accounts
-    # and config (ScraperSource toggles, federation Peers) are kept; types that
-    # don't exist are skipped.
-    types = [
-        "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH",
-        "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
-        "Entity", "Person", "Location", "Source",
-        "MergeLog", "ScrapeRun", "Flag", "Suppression", "Pin", "Conflict",
-        # Import checkpoints/markers: wiping the data removes the GLEIF baseline, so
-        # the gleif-update precondition must reset too — deltas can't resume until a
-        # fresh full load re-stamps the marker.
-        "ImportState",
-    ]
-    # Guard 3 — final interactive check: retype the DB name (not a generic YES),
-    # so muscle memory can't fire it against the wrong target. --yes skips this
-    # for the user's own `!` runs, but Guards 1 & 2 still apply.
+    # Guard 3 — final interactive check: retype the SOURCE name (the delete target).
     if not args.yes:
-        print(f"This will delete ALL imported data from '{target_db}' (entities, persons,")
-        print("edges, sources) plus verification flags/suppressions/pins, merge logs and")
-        print("scrape-run logs. User accounts and scraper/federation config are NOT affected.")
-        print(f"Types to clear: {', '.join(types)}")
-        confirm = input(f"Retype the database name '{target_db}' to confirm: ")
-        if confirm.strip() != target_db:
+        print(f"This will delete the '{source}' source's data from '{target_db}': its ownership/")
+        print("role edges and the nodes ONLY it created. Nodes another source also references")
+        print("are kept. Other sources, user accounts and config are NOT affected.")
+        print("(There is no whole-DB wipe — drop the database for a fresh start.)")
+        confirm = input(f"Retype the source name '{source}' to confirm: ")
+        if confirm.strip() != source:
             print("Aborted.")
             sys.exit(1)
-    for t in types:
-        deleted = 0
-        while True:
-            try:
-                r = run_sql(f"DELETE FROM {t} LIMIT {batch}")
-            except RuntimeError as exc:
-                if "was not found" in str(exc):   # type doesn't exist — nothing to clear
-                    break
-                print(f"  {t}: {exc}")
-                break
-            n = int(r[0].get("count", 0)) if r and isinstance(r[0], dict) else 0
-            deleted += n
-            if n < batch:                          # last (partial) batch drained the type
-                break
-        try:
-            run_sql(f"DROP TYPE {t} IF EXISTS UNSAFE")   # instant on the emptied type
-        except Exception as exc:
-            print(f"  {t} (drop): {exc}")
-        print(f"  Cleared {t}" + (f" ({deleted} rows)" if deleted else ""))
-    # Recreate the now-empty vertex/edge types + indexes.
-    print("Recreating schema (types + indexes)...")
-    res = ensure_indexes()
-    print(f"  schema: {len(res.get('ok', []))} applied, {len(res.get('failed', []))} failed")
+
+    try:
+        result = wipe_source(source, batch=getattr(args, "batch", None) or 10000)
+    except ValueError as exc:
+        print(exc)
+        sys.exit(1)
+    edges = sum(result["edges"].values())
+    nodes = sum(result["nodes"].values())
+    print(f"Wiped source '{source}': {edges:,} edges, {nodes:,} nodes deleted.")
+    print(f"  edges: {result['edges']}")
+    print(f"  nodes: {result['nodes']}")
+    if result.get("reset_import_state"):
+        print("  reset GLEIF import checkpoints (re-baseline with full-import.sh before the delta cron).")
     print("Done.")
 
 def cmd_geocode(args):
@@ -342,14 +311,19 @@ def _build_parser():
                        help='Rows updated per request — keep under the DB proxy timeout (default 20000)')
     p_bfs.set_defaults(func=cmd_backfill_search)
 
-    # wipe-data command
-    p_wipe = subparsers.add_parser('wipe-data', help='Delete all imported data (keeps user accounts and schema)')
+    # wipe-source command (replaces the removed whole-DB wipe-data; drop the
+    # database for a fresh start instead)
+    p_wipe = subparsers.add_parser('wipe-source',
+                                   help="Delete ONE source's data (its edges + the nodes only it created). "
+                                        "No whole-DB wipe — drop the database for a fresh start.")
+    p_wipe.add_argument('--source', required=True,
+                        help='Source name to delete, e.g. "UK PSC" / "GLEIF" / "Wikidata" / "SEC EDGAR"')
     p_wipe.add_argument('--confirm-database',
-                        help='Name of the database you intend to wipe; must match the connected DB')
-    p_wipe.add_argument('--yes', action='store_true', help='Skip the interactive retype-the-name prompt')
+                        help='Name of the connected database; must match, to confirm the target')
+    p_wipe.add_argument('--yes', action='store_true', help='Skip the interactive retype-the-source-name prompt')
     p_wipe.add_argument('--batch', type=int, default=10000,
                         help='Rows deleted per request — keep each well under the DB proxy timeout (default 10000)')
-    p_wipe.set_defaults(func=cmd_wipe_data)
+    p_wipe.set_defaults(func=cmd_wipe_source)
 
     # geocode command
     p_geo = subparsers.add_parser('geocode', help='Backfill lat/lng for Location nodes via Nominatim')

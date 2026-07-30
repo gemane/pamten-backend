@@ -67,8 +67,8 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("ImportState", "key",          "UNIQUE"),
 ]
 
-# Edge types the app creates via Cypher and needs to exist up front (also what
-# wipe-data recreates after dropping them).
+# Edge types the app creates via Cypher and needs to exist up front (init-schema
+# and the startup bootstrap create them).
 _EDGE_TYPES: list[str] = [
     "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY",
     "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",

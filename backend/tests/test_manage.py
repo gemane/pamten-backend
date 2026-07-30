@@ -1,10 +1,8 @@
 """
-Tests for the manage.py wipe-data command.
-
-Covers both the batched-delete mechanics (clears the stale index entries
-DELETE FROM leaves behind, which otherwise 500 the SEC scraper on the next
-import) and the three safety guards that keep it from ever running against a
-production database by accident.
+Tests for the manage.py wipe-source command (there is no whole-DB wipe — a fresh
+start is a database drop). Covers the three safety guards that keep a delete from
+ever running against the wrong database, and that it delegates to
+maintenance.wipe_source once the guards pass.
 """
 import types
 
@@ -13,6 +11,7 @@ import pytest
 
 def _args(**kw):
     kw.setdefault("confirm_database", "test")  # matches ARCADEDB_DATABASE in conftest
+    kw.setdefault("source", "UK PSC")
     return types.SimpleNamespace(**kw)
 
 
@@ -36,64 +35,56 @@ def test_backfill_search_updates_entity_and_person(monkeypatch):
     assert any("ifnull(name, '')" in c for c in calls)
 
 
-def test_wipe_data_drops_types_then_recreates_schema(monkeypatch):
+def _stub_wipe(monkeypatch):
+    """Record calls to maintenance.wipe_source without touching the DB."""
+    calls: list[dict] = []
+    def fake(source, batch=10000):
+        calls.append({"source": source, "batch": batch})
+        return {"edges": {"OWNS": 3}, "nodes": {"Entity": 2, "Person": 5}}
+    monkeypatch.setattr("app.scraper.maintenance.wipe_source", fake)
+    return calls
+
+
+def test_wipe_source_delegates_after_guards(monkeypatch):
     _arm(monkeypatch)
-    calls: list[str] = []
-    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: calls.append(q))
-    recreated: list[bool] = []
-    monkeypatch.setattr("app.db.schema.ensure_indexes",
-                        lambda: recreated.append(True) or {"ok": [], "failed": []})
+    calls = _stub_wipe(monkeypatch)
 
     import manage
-    manage.cmd_wipe_data(_args(yes=True))
+    manage.cmd_wipe_source(_args(yes=True, source="UK PSC", batch=500))
 
-    # each data/overlay type is drained in batches (short requests that stay
-    # under the DB proxy timeout) then the emptied type is dropped
-    for t in ("OWNS", "HAS_ROLE", "Entity", "Person", "Location", "Source",
-              "Flag", "Suppression", "Pin", "ScrapeRun", "MergeLog"):
-        assert f"DELETE FROM {t} LIMIT 10000" in calls
-        assert f"DROP TYPE {t} IF EXISTS UNSAFE" in calls
-    # ... but user accounts and config are left alone
-    for t in ("User", "ScraperSource", "Peer"):
-        assert f"DELETE FROM {t} LIMIT 10000" not in calls
-        assert f"DROP TYPE {t} IF EXISTS UNSAFE" not in calls
-    # ... and the empty types + indexes are recreated afterward
-    assert recreated == [True]
+    assert calls == [{"source": "UK PSC", "batch": 500}]
 
 
-def test_wipe_data_refuses_without_the_dedicated_flag(monkeypatch):
+def test_wipe_source_refuses_without_the_dedicated_flag(monkeypatch):
     # Guard 1: DEBUG must NOT be enough — only ALLOW_DESTRUCTIVE_WIPE arms it.
     monkeypatch.delenv("ALLOW_DESTRUCTIVE_WIPE", raising=False)
     monkeypatch.setenv("DEBUG", "true")
-    ran: list[str] = []
-    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: ran.append(q))
+    calls = _stub_wipe(monkeypatch)
 
     import manage
     with pytest.raises(SystemExit):
-        manage.cmd_wipe_data(_args(yes=True))
-    assert ran == []  # bailed before touching the DB
+        manage.cmd_wipe_source(_args(yes=True))
+    assert calls == []  # bailed before touching the DB
 
 
-def test_wipe_data_refuses_without_confirm_database(monkeypatch):
+def test_wipe_source_refuses_without_confirm_database(monkeypatch):
     # Guard 2: must name the target DB explicitly.
     _arm(monkeypatch)
-    ran: list[str] = []
-    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: ran.append(q))
+    calls = _stub_wipe(monkeypatch)
 
     import manage
     with pytest.raises(SystemExit):
-        manage.cmd_wipe_data(_args(yes=True, confirm_database=None))
-    assert ran == []
+        manage.cmd_wipe_source(_args(yes=True, confirm_database=None))
+    assert calls == []
 
 
-def test_wipe_data_refuses_on_database_name_mismatch(monkeypatch):
-    # Guard 2: the named DB must match the connected one — this is what stops a
-    # wipe aimed at the wrong (e.g. production) database.
+def test_wipe_source_refuses_on_database_name_mismatch(monkeypatch):
+    # Guard 2: the named DB must match the connected one — this stops a delete
+    # aimed at the wrong (e.g. production) database.
     _arm(monkeypatch)
-    ran: list[str] = []
-    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda q, *a, **k: ran.append(q))
+    calls = _stub_wipe(monkeypatch)
 
     import manage
     with pytest.raises(SystemExit):
-        manage.cmd_wipe_data(_args(yes=True, confirm_database="pamten"))  # != "test"
-    assert ran == []
+        manage.cmd_wipe_source(_args(yes=True, confirm_database="pamten"))  # != "test"
+    assert calls == []

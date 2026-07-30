@@ -205,8 +205,9 @@ It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` 
 a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
 
 The delta rides **on top of** the full load, so `gleif-update` refuses to run until a
-full load has baselined the graph (the full LEI-CDF import stamps a marker; `wipe-data`
-clears it, forcing a fresh full load before deltas resume) — it never builds a partial
+full load has baselined the graph (the full LEI-CDF import stamps a marker;
+`wipe-source --source GLEIF` or dropping the database clears it, forcing a fresh full
+load before deltas resume) — it never builds a partial
 graph from deltas alone.
 
 The default `--interval auto` is **gap-aware**: it checkpoints the last GLEIF publish
@@ -351,7 +352,7 @@ python3 manage.py init-schema
 |---|---|
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
 | `seed` | Seed the built-in company list |
-| `wipe-data` | Delete all imported data (keeps user accounts + schema); rebuilds indexes. Requires `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-data --confirm-database pamten` |
+| `wipe-source` | Delete **one source's** data — its edges + the nodes only it created (nodes another source still references are kept); keeps user accounts, schema, and other sources. There is **no** whole-DB wipe — drop the database for a fresh start. Requires `--source <name>` plus `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-source --source "UK PSC" --confirm-database pamten` |
 | `geocode` | Backfill HQ/location coordinates via Nominatim |
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
