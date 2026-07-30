@@ -1662,7 +1662,13 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
         read_last_publish,
         write_last_publish,
     )
+    from app.db.schema import ensure_indexes
     from app.scraper.run_log import record_run
+
+    # Idempotent, ~1s. Guarantees the checkpoint type (ImportState) + indexes exist
+    # even when the cron runs before the API has ever started on a fresh DB — the
+    # intended "full-import.sh, then let the daily delta take over" bootstrap.
+    ensure_indexes()
 
     source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
     with record_run("gleif-update", interval) as run:
