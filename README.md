@@ -202,9 +202,27 @@ It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` 
 **marked** (`active=false`), never deleted (GLEIF never deletes; merges flow through
 `SUCCEEDED_BY`). Writes are idempotent (re-applying a delta never duplicates), so no
 `--bulk-load` and no whole-DB dedup. `~/scripts/cron-gleif-update.sh` (flock + log →
-a `gleif-update` ScrapeRun) is the one crontab line for a daily run. UK PSC has no
-clean delta feed (Companies House publishes a daily *full* snapshot), so its
-incremental refresh is a later, separate design.
+a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
+
+The delta rides **on top of** the full load, so `gleif-update` refuses to run until a
+full load has baselined the graph (the full LEI-CDF import stamps a marker; `wipe-data`
+clears it, forcing a fresh full load before deltas resume) — it never builds a partial
+graph from deltas alone.
+
+The default `--interval auto` is **gap-aware**: it checkpoints the last GLEIF publish
+it applied (an `ImportState` node) and, on each run, picks the smallest delta window
+that still covers the gap since then — `LastDay` normally, escalating to `LastWeek` /
+`LastMonth` if the box was off for a few days, so a missed run self-heals on the next
+one. A gap wider than ~30 days can't be covered by a delta, so the run **fails loudly**
+(telling you to full-reload) rather than silently under-applying. Pass an explicit
+`--interval LastDay|LastWeek|LastMonth` to override.
+
+**Bootstrap order:** run `full-import.sh` (loads the full copy + stamps the baseline
+marker), then let the daily `gleif-update` cron take over — the first run cold-starts
+`LastMonth` (reconciles up to a month), then settles into nightly `LastDay`.
+
+UK PSC has no clean delta feed (Companies House publishes a daily *full* snapshot), so
+its incremental refresh is a later, separate design.
 
 ---
 
@@ -338,7 +356,7 @@ python3 manage.py init-schema
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers) — see *GLEIF sourcing* in [`docs/data-model.md`](docs/data-model.md) |
-| `gleif-update` | Apply a GLEIF **delta** on top of the full load — the retirement-aware daily refresh (new/changed entities, merges, closed relationships). Fetches the current `--interval` (LastDay by default) delta, or pass `--lei-file`/`--rr-file`. Idempotent; runs against the live-indexed DB (no `--bulk-load`). Daily via `~/scripts/cron-gleif-update.sh` |
+| `gleif-update` | Apply a GLEIF **delta** on top of the full load — the retirement-aware daily refresh (new/changed entities, merges, closed relationships). `--interval auto` (default) is gap-aware: it picks the smallest delta window covering any missed runs since the last one (fails loudly past ~30 days → full-reload). Override with `--interval LastDay\|LastWeek\|LastMonth` or pass `--lei-file`/`--rr-file`. Idempotent; runs against the live-indexed DB (no `--bulk-load`). Daily via `~/scripts/cron-gleif-update.sh` |
 | `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`). Company names come from a companion `ch-company-data` import |
 | `ch-company-data` | Enrich UK companies with names/addresses/former-names from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph (from `ch-psc`), never creates isolated nodes |
 | `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
