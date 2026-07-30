@@ -97,8 +97,13 @@ under `needs_review`. It runs:
 
 - on demand via `POST /persons/deduplicate` (`apply=false` = dry run) — a **full**
   scan of every person, and
-- automatically after every `run-all` scrape, gated by `SCRAPER_AUTODEDUP_ENABLED`
-  (default on) — best-effort, so a dedup failure never fails the scrape.
+- automatically after **every** scrape — `run-all` *and* the single-source runs
+  (`/scraper/run`, `/scraper/sec-edgar/run`, `/scraper/open-corporates/run`), gated by
+  `SCRAPER_AUTODEDUP_ENABLED` (default on) — best-effort, so a dedup failure never
+  fails the scrape. Wired via a re-entrant `_with_autodedup` decorator on the scrape
+  entry points: a scrape nested inside another (run-all calls the single-source
+  runners) shares the outer touched-set and skips its own dedup, so the merge runs
+  exactly once, at the outermost scrape.
 
 **Scoped after scraping.** The full person scan is O(all persons) — fine at a few
 thousand, but it crawls once the graph holds millions (e.g. after a UK PSC import).
