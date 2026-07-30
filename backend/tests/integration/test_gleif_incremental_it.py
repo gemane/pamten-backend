@@ -140,3 +140,22 @@ def test_publish_checkpoint_roundtrip(it_db):
 
     # a 3-day gap from that checkpoint → LastWeek covers it
     assert choose_catchup_interval(read_last_publish(), "2026-07-23 16:00:00") == "LastWeek"
+
+
+def test_update_refused_without_full_load(it_db, monkeypatch):
+    """The incremental refuses to run until a full load has baselined the graph."""
+    from app.config import settings
+    from app.scraper.gleif_incremental import full_load_present, mark_full_load_done
+    from app.scraper.runner import run_gleif_update
+
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    monkeypatch.setattr(settings, "SCRAPER_BODS_GLEIF_ENABLED", True)
+
+    assert full_load_present() is False
+    # refuses before fetching anything — no baseline
+    with pytest.raises(RuntimeError, match="No GLEIF full load"):
+        run_gleif_update(interval="LastDay")
+
+    # once the full load stamps its marker, the precondition is satisfied
+    mark_full_load_done()
+    assert full_load_present() is True

@@ -204,6 +204,11 @@ It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` 
 `--bulk-load` and no whole-DB dedup. `~/scripts/cron-gleif-update.sh` (flock + log →
 a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
 
+The delta rides **on top of** the full load, so `gleif-update` refuses to run until a
+full load has baselined the graph (the full LEI-CDF import stamps a marker; `wipe-data`
+clears it, forcing a fresh full load before deltas resume) — it never builds a partial
+graph from deltas alone.
+
 The default `--interval auto` is **gap-aware**: it checkpoints the last GLEIF publish
 it applied (an `ImportState` node) and, on each run, picks the smallest delta window
 that still covers the gap since then — `LastDay` normally, escalating to `LastWeek` /
@@ -211,6 +216,10 @@ that still covers the gap since then — `LastDay` normally, escalating to `Last
 one. A gap wider than ~30 days can't be covered by a delta, so the run **fails loudly**
 (telling you to full-reload) rather than silently under-applying. Pass an explicit
 `--interval LastDay|LastWeek|LastMonth` to override.
+
+**Bootstrap order:** run `full-import.sh` (loads the full copy + stamps the baseline
+marker), then let the daily `gleif-update` cron take over — the first run cold-starts
+`LastMonth` (reconciles up to a month), then settles into nightly `LastDay`.
 
 UK PSC has no clean delta feed (Companies House publishes a daily *full* snapshot), so
 its incremental refresh is a later, separate design.

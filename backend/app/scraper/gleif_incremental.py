@@ -43,6 +43,8 @@ _PUBLISHES_API = "https://goldencopy.gleif.org/api/v2/golden-copies/publishes"
 
 # Checkpoint key for the last GLEIF publish a delta update applied (ImportState).
 _STATE_KEY = "gleif-update"
+# Marker key stamped by the full LEI-CDF load — the delta update's precondition.
+_FULL_LOAD_KEY = "gleif-full-load"
 # GLEIF publishes the `publish_date` as "YYYY-MM-DD HH:MM:SS".
 _PUBLISH_FMT = "%Y-%m-%d %H:%M:%S"
 # Delta windows GLEIF offers, and the max gap (days) each safely covers. A wider
@@ -295,6 +297,27 @@ def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -
     """Fetch + download the current delta files for a fixed `interval`
     (IntraDay | LastDay | LastWeek | LastMonth)."""
     return download_deltas(fetch_publish_metadata(), interval, dest_dir)
+
+
+# ── full-load precondition ────────────────────────────────────────────────────
+# The delta update rides *on top of* the full golden copy — applying a delta to a
+# DB without that baseline would build a partial, wrong graph (only the recently
+# changed records, no foundation). The full LEI-CDF importer stamps this marker on
+# success; the update refuses to run without it, and `wipe-data` clears it so a wipe
+# forces a fresh full load before deltas resume.
+
+def mark_full_load_done() -> None:
+    """Record that a full GLEIF LEI-CDF load has established the entity baseline."""
+    run_sql(
+        "UPDATE ImportState SET key = :k, last_run_at = :now UPSERT WHERE key = :k",
+        {"k": _FULL_LOAD_KEY, "now": _now_iso()})
+
+
+def full_load_present() -> bool:
+    """True once a full LEI-CDF load has run (the delta update's precondition)."""
+    rows = run_command(
+        "MATCH (s:ImportState {key:$k}) RETURN s.last_run_at AS t", {"k": _FULL_LOAD_KEY})
+    return bool(rows and rows[0].get("t"))
 
 
 # ── gap-aware catch-up (pick a window that covers any missed runs) ────────────

@@ -224,6 +224,10 @@ def cmd_wipe_data(args):
         "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
         "Entity", "Person", "Location", "Source",
         "MergeLog", "ScrapeRun", "Flag", "Suppression", "Pin", "Conflict",
+        # Import checkpoints/markers: wiping the data removes the GLEIF baseline, so
+        # the gleif-update precondition must reset too — deltas can't resume until a
+        # fresh full load re-stamps the marker.
+        "ImportState",
     ]
     # Guard 3 — final interactive check: retype the DB name (not a generic YES),
     # so muscle memory can't fire it against the wrong target. --yes skips this
