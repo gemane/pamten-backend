@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest, KeepSeparateRequest
 from app.auth.dependencies import require_contributor
 from app.database import db
+from app.db.arcadedb import run_sql
 from collections import defaultdict
 from datetime import datetime, timezone
 from itertools import combinations
@@ -84,9 +85,78 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
     return {"count": len(groups), "groups": groups}
 
 
-def scan_duplicate_groups() -> list[dict]:
+_PERSON_RETURN = (
+    "RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id, "
+    "p.birth_date AS birth_date, p.birth_place AS birth_place, "
+    "p.first_name AS first_name, p.last_name AS last_name, p.alias AS alias"
+)
+
+
+def _person_row(r) -> dict:
+    return {"id": r.get("id"), "full_name": r.get("full_name"), "wikidata_id": r.get("wikidata_id"),
+            "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
+            "first_name": r.get("first_name"), "last_name": r.get("last_name"),
+            "alias": r.get("alias") or []}
+
+
+def _all_persons(session) -> list[dict]:
+    return [_person_row(r) for r in session.run(f"MATCH (p:Person) {_PERSON_RETURN}")]
+
+
+def _dismissed_pairs(session, scan_ids: list[str] | None) -> set:
+    """Pairs a human confirmed are distinct (NOT_DUPLICATE edges). These are rare
+    (only from 'keep separate'), so short-circuit via a SQL count over the edge type
+    — a vertex-anchored `MATCH (a:Person)-[:NOT_DUPLICATE]->` full-scans every person
+    (18s+ on millions) even when there are none. When some exist, resolve them
+    scoped to the persons being scanned (id-indexed) rather than scanning all."""
+    if run_sql("SELECT count(*) AS n FROM NOT_DUPLICATE")[0]["n"] == 0:
+        return set()
+    pairs: set = set()
+    if scan_ids is None:
+        for r in session.run(
+                "MATCH (a:Person)-[:NOT_DUPLICATE]->(b:Person) RETURN a.id AS a, b.id AS b"):
+            pairs.add(frozenset((r.get("a"), r.get("b"))))
+    else:
+        for pid in dict.fromkeys(scan_ids):
+            for r in session.run(
+                    "MATCH (p:Person {id:$id})-[:NOT_DUPLICATE]-(o:Person) RETURN o.id AS o", id=pid):
+                pairs.add(frozenset((pid, r.get("o"))))
+    return pairs
+
+
+def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
+    """The scan set for a *scoped* dedup: the seed persons a scrape just touched,
+    plus existing persons sharing an exact full_name/alias or wikidata_id with a seed.
+    Uses per-value equality (index-backed) — ArcadeDB does NOT use the index for `IN`,
+    which full-scans, so on a multi-million-person DB that would defeat the point.
+    Cross-spelling matches against *pre-existing* persons (surname/birth signals) are
+    left to the periodic full scan; the common within-scrape cross-source duplicates
+    are all in the seed set and grouped here."""
+    rows: dict[str, dict] = {}
+    for pid in dict.fromkeys(seed_ids):                       # de-dup, keep order
+        r = session.run(f"MATCH (p:Person {{id:$id}}) {_PERSON_RETURN}", id=pid).single()
+        if r:
+            rows[pid] = _person_row(r)
+    # Expand from the SEEDS only (one hop) — exact full_name/alias and wikidata_id.
+    names = {n for p in rows.values() for n in [p["full_name"], *p["alias"]] if n}
+    wids  = {p["wikidata_id"] for p in rows.values() if p["wikidata_id"]}
+    for name in names:
+        for r in session.run(f"MATCH (p:Person) WHERE p.full_name = $n {_PERSON_RETURN}", n=name):
+            rows.setdefault(r.get("id"), _person_row(r))
+    for wid in wids:
+        for r in session.run(f"MATCH (p:Person) WHERE p.wikidata_id = $w {_PERSON_RETURN}", w=wid):
+            rows.setdefault(r.get("id"), _person_row(r))
+    return list(rows.values())
+
+
+def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
     """
-    Suggest likely-duplicate person nodes for review (does NOT merge). Signals:
+    Suggest likely-duplicate person nodes for review (does NOT merge).
+
+    `seed_ids=None` scans every person (the full, periodic dedup). Passing a list
+    scopes the scan to just those persons + their exact-name/wikidata match
+    candidates — the post-scrape auto-dedup uses this so it stays fast on a large DB
+    (an empty list means "nothing was touched" → no groups). Signals:
       - same name token set, across a person's full name AND every Wikidata
         alias (catches SEC "Last First" order + honorific/spelling, e.g. SEC's
         "Gates William H Iii" vs the "Bill Gates" node's "William H. Gates III"
@@ -103,20 +173,11 @@ def scan_duplicate_groups() -> list[dict]:
     low = common 2-token name match with no corroboration.
     Feed a group's members into POST /persons/merge to resolve it.
     """
+    if seed_ids is not None and not seed_ids:
+        return []                                            # scrape touched no persons
+
     with db.get_session() as session:
-        persons = [
-            {"id": r.get("id"), "full_name": r.get("full_name"), "wikidata_id": r.get("wikidata_id"),
-             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
-             "first_name": r.get("first_name"), "last_name": r.get("last_name"),
-             "alias": r.get("alias") or []}
-            for r in session.run("""
-                MATCH (p:Person)
-                RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id,
-                       p.birth_date AS birth_date, p.birth_place AS birth_place,
-                       p.first_name AS first_name, p.last_name AS last_name,
-                       p.alias AS alias
-            """)
-        ]
+        persons = _all_persons(session) if seed_ids is None else _candidate_persons(session, seed_ids)
 
         by_name: dict[tuple, list] = defaultdict(list)
         by_birth: dict[tuple, list] = defaultdict(list)
@@ -220,11 +281,8 @@ def scan_duplicate_groups() -> list[dict]:
                         _emit([a, b], "same surname + shared company (name variant)", variant=True)
 
         # Drop groups a human has confirmed are different people (NOT_DUPLICATE).
-        dismissed = {
-            frozenset((r.get("a"), r.get("b")))
-            for r in session.run(
-                "MATCH (a:Person)-[:NOT_DUPLICATE]->(b:Person) RETURN a.id AS a, b.id AS b")
-        }
+        scan_ids = None if seed_ids is None else [p["id"] for p in persons]
+        dismissed = _dismissed_pairs(session, scan_ids)
 
     groups = [g for g in groups if not _all_pairs_dismissed(g["members"], dismissed)]
     rank = {"high": 0, "medium": 1, "low": 2}
@@ -238,17 +296,21 @@ def _all_pairs_dismissed(members: list, dismissed: set) -> bool:
     return all(frozenset((a, b)) in dismissed for a, b in combinations(ids, 2))
 
 
-def deduplicate_high_confidence(apply: bool = True) -> dict:
+def deduplicate_high_confidence(apply: bool = True, seed_ids: list[str] | None = None) -> dict:
     """
     Scan for duplicate persons and auto-merge only HIGH-confidence, non-distinct
     groups — a matching name/alias token set backed by a shared company or birth
     date. Medium/low groups (surname/company name variants, conflicting-birth
     pairs) are returned untouched under `needs_review` for a human to resolve via
     POST /persons/merge. Pass apply=False for a dry run (report only).
+
+    `seed_ids` scopes the scan to just the persons a scrape touched (+ their exact
+    match candidates) so the post-scrape auto-dedup stays fast on a large DB; None
+    scans everything (the manual/periodic full dedup).
     """
     merged: list[dict] = []
     needs_review: list[dict] = []
-    for g in scan_duplicate_groups():
+    for g in scan_duplicate_groups(seed_ids=seed_ids):
         if g["confidence"] != "high" or g.get("likely_distinct"):
             needs_review.append(g)
             continue
