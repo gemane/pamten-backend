@@ -13,6 +13,7 @@ All entry points:
 """
 
 import contextvars
+import functools
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -55,6 +56,57 @@ def _record_touched_entity(entity_id: str) -> str:
     if bucket is not None and entity_id:
         bucket.add(entity_id)
     return entity_id
+
+
+def _run_scoped_autodedup(touched_persons: list, touched_entities: list) -> dict:
+    """Scoped, high-confidence auto-merge over the ids a scrape touched — persons
+    (SEC 'Page Lawrence' ↔ Wikidata 'Larry Page') and entities (the same company
+    under different ids/sources, e.g. two GLEIF LEIs at one registered address).
+    Only high-confidence merges apply; the rest stay for review. Best-effort — a
+    dedup failure never fails the scrape. Gated by SCRAPER_AUTODEDUP_ENABLED."""
+    out: dict = {}
+    if not settings.SCRAPER_AUTODEDUP_ENABLED:
+        return out
+    try:
+        from app.routers.persons import deduplicate_high_confidence
+        dd = deduplicate_high_confidence(apply=True, seed_ids=touched_persons)
+        out["deduplication"] = {"merged_count": dd["merged_count"], "review_count": dd["review_count"]}
+    except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
+        log.error("Auto-dedup (persons) after scrape failed: %s", exc)
+        out["deduplication"] = {"status": "error", "detail": str(exc)}
+    try:
+        from app.scraper.maintenance import deduplicate_entities_for
+        ed = deduplicate_entities_for(touched_entities, apply=True)
+        out["entity_deduplication"] = {"merged_count": ed["entities_merged"], "review_count": ed["needs_review"]}
+    except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
+        log.error("Auto-dedup (entities) after scrape failed: %s", exc)
+        out["entity_deduplication"] = {"status": "error", "detail": str(exc)}
+    return out
+
+
+def _with_autodedup(fn):
+    """Wrap a scrape entry point so it collects the persons/entities it touches and,
+    when it finishes, runs the scoped auto-dedup and stitches the summary into the
+    returned dict. Re-entrant: a scrape nested inside another (run_scrape_all calls
+    the single-source runners) shares the outer collector and skips its own dedup,
+    so the merge runs exactly once — at the outermost scrape."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if _touched_persons.get() is not None:      # nested — outer scope owns dedup
+            return fn(*args, **kwargs)
+        ptoken = _touched_persons.set(set())
+        etoken = _touched_entities.set(set())
+        try:
+            result = fn(*args, **kwargs)
+            touched_p = list(_touched_persons.get() or [])
+            touched_e = list(_touched_entities.get() or [])
+        finally:
+            _touched_persons.reset(ptoken)
+            _touched_entities.reset(etoken)
+        if isinstance(result, dict):
+            result.update(_run_scoped_autodedup(touched_p, touched_e))
+        return result
+    return wrapper
 
 
 def _duplicate_name_summary() -> dict:
@@ -705,6 +757,7 @@ def _scrape_node(
 
 # ── Wikidata public entry point ───────────────────────────────────────────────
 
+@_with_autodedup
 def run_scrape(query: str, depth: int = 2) -> dict:
     """
     Trigger a Wikidata scrape for a company name.
@@ -1028,6 +1081,7 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
 
 # ── SEC EDGAR public entry point ──────────────────────────────────────────────
 
+@_with_autodedup
 def run_scrape_sec_edgar(company_name: str) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.
@@ -1203,6 +1257,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
 
 # ── Run-all entry point ───────────────────────────────────────────────────────
 
+@_with_autodedup
 def run_scrape_all(query: str, depth: int = 2) -> dict:
     """
     Run all enabled scrapers for a given company name.
@@ -1215,10 +1270,6 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
         )
 
     results: dict[str, dict] = {}
-
-    # Collect the persons + entities this scrape touches, to scope the auto-dedup below.
-    ptoken = _touched_persons.set(set())
-    etoken = _touched_entities.set(set())
 
     # Wikidata
     if settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"):
@@ -1256,45 +1307,7 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     else:
         results["open_corporates"] = {"status": "disabled"}
 
-    touched_persons = list(_touched_persons.get() or [])
-    touched_entities = list(_touched_entities.get() or [])
-    _touched_persons.reset(ptoken)
-    _touched_entities.reset(etoken)
-
-    out: dict = {"status": "ok", "query": query, "results": results}
-
-    # Auto-merge high-confidence duplicate persons the sources spelled differently
-    # (SEC "Page Lawrence" ↔ Wikidata "Larry Page"). Only safe, high-confidence
-    # merges are applied; the rest surface in the review panel. Best-effort — a
-    # dedup failure must never fail the scrape. Scoped to the persons THIS scrape
-    # touched (+ their exact match candidates) so it stays fast on a large DB — a
-    # full-DB person scan per company doesn't scale to millions of nodes. The full
-    # scan is still available on demand via POST /persons/deduplicate.
-    if settings.SCRAPER_AUTODEDUP_ENABLED:
-        try:
-            from app.routers.persons import deduplicate_high_confidence
-            dd = deduplicate_high_confidence(apply=True, seed_ids=touched_persons)
-            out["deduplication"] = {
-                "merged_count": dd["merged_count"], "review_count": dd["review_count"]}
-        except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
-            log.error("Auto-dedup after scrape failed for %r: %s", query, exc)
-            out["deduplication"] = {"status": "error", "detail": str(exc)}
-
-        # Entity twin: merge the same company recorded under different ids/sources
-        # (e.g. two GLEIF LEIs at one registered address) — but ONLY high-confidence
-        # (shared hard id, or same registered address). Same-name-only groups are
-        # left for review (find_duplicate_entity_names). Scoped to the touched
-        # entities so it never runs the full-DB same-name aggregation.
-        try:
-            from app.scraper.maintenance import deduplicate_entities_for
-            ed = deduplicate_entities_for(touched_entities, apply=True)
-            out["entity_deduplication"] = {
-                "merged_count": ed["entities_merged"], "review_count": ed["needs_review"]}
-        except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
-            log.error("Auto entity-dedup after scrape failed for %r: %s", query, exc)
-            out["entity_deduplication"] = {"status": "error", "detail": str(exc)}
-
-    return out
+    return {"status": "ok", "query": query, "results": results}
 
 
 # ── OpenCorporates helpers ────────────────────────────────────────────────────
@@ -1388,6 +1401,7 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
 
 # ── OpenCorporates public entry point ─────────────────────────────────────────
 
+@_with_autodedup
 def run_scrape_open_corporates(company_name: str) -> dict:
     """
     Scrape OpenCorporates for registration details and officers for one company.
