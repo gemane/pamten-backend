@@ -45,6 +45,18 @@ def _record_touched(person_id: str) -> str:
     return person_id
 
 
+# Same idea for entities — scope the post-scrape high-confidence entity auto-merge
+# to the companies this scrape touched (a full-DB same-name scan doesn't scale).
+_touched_entities: contextvars.ContextVar = contextvars.ContextVar("touched_entities", default=None)
+
+
+def _record_touched_entity(entity_id: str) -> str:
+    bucket = _touched_entities.get()
+    if bucket is not None and entity_id:
+        bucket.add(entity_id)
+    return entity_id
+
+
 def _duplicate_name_summary() -> dict:
     """Same-company-different-identifier duplicates surfaced right after an
     import (e.g. one company under two GLEIF LEIs). Best-effort — a failure here
@@ -240,7 +252,7 @@ def _upsert_entity(
                 countries=countries or [], hq_locations=hq_locations or [],
                 hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
             )
-            return entity_id
+            return _record_touched_entity(entity_id)
 
         entity_id = str(uuid.uuid4())
         session.run(
@@ -277,7 +289,7 @@ def _upsert_entity(
             countries=countries or [], hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
         )
-        return entity_id
+        return _record_touched_entity(entity_id)
 
 
 def _upsert_person(
@@ -830,7 +842,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                     """,
                     id=entity_id, cik=cik, source_id=source_id,
                 )
-            return entity_id
+            return _record_touched_entity(entity_id)
 
         entity_id = str(uuid.uuid4())
         aliases = _merge_aliases([], former_names, name)
@@ -850,7 +862,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             search_text=_search_text(name, None, aliases), aliases=aliases,
             is_nominee=is_nominee_name(name),
         )
-        return entity_id
+        return _record_touched_entity(entity_id)
 
 
 def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
@@ -1204,8 +1216,9 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
 
     results: dict[str, dict] = {}
 
-    # Collect the persons this scrape touches, to scope the auto-dedup below.
-    token = _touched_persons.set(set())
+    # Collect the persons + entities this scrape touches, to scope the auto-dedup below.
+    ptoken = _touched_persons.set(set())
+    etoken = _touched_entities.set(set())
 
     # Wikidata
     if settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"):
@@ -1243,8 +1256,10 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     else:
         results["open_corporates"] = {"status": "disabled"}
 
-    touched = list(_touched_persons.get() or [])
-    _touched_persons.reset(token)
+    touched_persons = list(_touched_persons.get() or [])
+    touched_entities = list(_touched_entities.get() or [])
+    _touched_persons.reset(ptoken)
+    _touched_entities.reset(etoken)
 
     out: dict = {"status": "ok", "query": query, "results": results}
 
@@ -1258,12 +1273,26 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     if settings.SCRAPER_AUTODEDUP_ENABLED:
         try:
             from app.routers.persons import deduplicate_high_confidence
-            dd = deduplicate_high_confidence(apply=True, seed_ids=touched)
+            dd = deduplicate_high_confidence(apply=True, seed_ids=touched_persons)
             out["deduplication"] = {
                 "merged_count": dd["merged_count"], "review_count": dd["review_count"]}
         except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
             log.error("Auto-dedup after scrape failed for %r: %s", query, exc)
             out["deduplication"] = {"status": "error", "detail": str(exc)}
+
+        # Entity twin: merge the same company recorded under different ids/sources
+        # (e.g. two GLEIF LEIs at one registered address) — but ONLY high-confidence
+        # (shared hard id, or same registered address). Same-name-only groups are
+        # left for review (find_duplicate_entity_names). Scoped to the touched
+        # entities so it never runs the full-DB same-name aggregation.
+        try:
+            from app.scraper.maintenance import deduplicate_entities_for
+            ed = deduplicate_entities_for(touched_entities, apply=True)
+            out["entity_deduplication"] = {
+                "merged_count": ed["entities_merged"], "review_count": ed["needs_review"]}
+        except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
+            log.error("Auto entity-dedup after scrape failed for %r: %s", query, exc)
+            out["entity_deduplication"] = {"status": "error", "detail": str(exc)}
 
     return out
 
