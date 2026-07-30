@@ -95,9 +95,23 @@ scan (`_all_pairs_dismissed`).
 `high`-confidence, non-`likely_distinct`** groups; everything else is returned
 under `needs_review`. It runs:
 
-- on demand via `POST /persons/deduplicate` (`apply=false` = dry run), and
+- on demand via `POST /persons/deduplicate` (`apply=false` = dry run) — a **full**
+  scan of every person, and
 - automatically after every `run-all` scrape, gated by `SCRAPER_AUTODEDUP_ENABLED`
   (default on) — best-effort, so a dedup failure never fails the scrape.
+
+**Scoped after scraping.** The full person scan is O(all persons) — fine at a few
+thousand, but it crawls once the graph holds millions (e.g. after a UK PSC import).
+So the post-scrape auto-dedup passes `seed_ids` — the persons that *this* scrape
+created/updated (tracked via a context-local collector in the scraper). The scan is
+then restricted to those seeds plus existing persons sharing an exact full-name /
+alias / `wikidata_id` (index-backed equality lookups — ArcadeDB does **not** use an
+index for `IN`, so candidates are probed per value). The within-scrape cross-source
+duplicates (SEC "Page Lawrence" ↔ Wikidata "Larry Page") are all in the seed set and
+still caught; cross-spelling matches against *pre-existing* persons are left to the
+periodic full scan (`POST /persons/deduplicate`). The dismissed-pairs
+(`NOT_DUPLICATE`) lookup is short-circuited by a SQL count so it never full-scans
+persons when there are none.
 
 Medium/low and father/son cases are left for a human, deliberately.
 

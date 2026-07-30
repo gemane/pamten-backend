@@ -12,6 +12,7 @@ All entry points:
 - Write using MERGE so repeated runs are safe (no duplicates).
 """
 
+import contextvars
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -27,6 +28,21 @@ from app.scraper.geocode import geocode_address
 def _now_iso() -> str:
     """UTC timestamp for last_scraped_at provenance."""
     return datetime.now(timezone.utc).isoformat()
+
+
+# During a run_scrape_all, collect the ids of persons the scrape created/updated so
+# the post-scrape auto-dedup can be scoped to just them — a full-DB person scan per
+# company is O(all persons) and crawls once the DB grows to millions of nodes.
+_touched_persons: contextvars.ContextVar = contextvars.ContextVar("touched_persons", default=None)
+
+
+def _record_touched(person_id: str) -> str:
+    """Note a person id in the active scrape's touched-set (if one is active), and
+    return it — so callers can `return _record_touched(pid)`."""
+    bucket = _touched_persons.get()
+    if bucket is not None and person_id:
+        bucket.add(person_id)
+    return person_id
 
 
 def _duplicate_name_summary() -> dict:
@@ -316,7 +332,7 @@ def _upsert_person(
                 desc=description or "", nat=nat,
                 aliases=aliases, nats=nationalities, source_id=source_id,
             )
-            return rec["id"]
+            return _record_touched(rec["id"])
 
         person_id = str(uuid.uuid4())
         session.run(
@@ -344,7 +360,7 @@ def _upsert_person(
             nats=nationalities,
             source_id=source_id,
         )
-        return person_id
+        return _record_touched(person_id)
 
 
 def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
@@ -858,7 +874,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
             name=full_name,
         ).single()
         if rec:
-            return rec["id"]
+            return _record_touched(rec["id"])
 
         # 2. Reversed two-word form — catches "Brin Sergey" when "Sergey Brin"
         #    already exists (or vice-versa)
@@ -868,7 +884,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
                 name=reversed_name,
             ).single()
             if rec:
-                return rec["id"]
+                return _record_touched(rec["id"])
 
         person_id = str(uuid.uuid4())
         session.run(
@@ -883,7 +899,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
             id=person_id, first=first_name, last=last_name, full=full_name,
             source_id=source_id,
         )
-        return person_id
+        return _record_touched(person_id)
 
 
 def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
@@ -1188,6 +1204,9 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
 
     results: dict[str, dict] = {}
 
+    # Collect the persons this scrape touches, to scope the auto-dedup below.
+    token = _touched_persons.set(set())
+
     # Wikidata
     if settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"):
         try:
@@ -1224,16 +1243,22 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
     else:
         results["open_corporates"] = {"status": "disabled"}
 
+    touched = list(_touched_persons.get() or [])
+    _touched_persons.reset(token)
+
     out: dict = {"status": "ok", "query": query, "results": results}
 
     # Auto-merge high-confidence duplicate persons the sources spelled differently
     # (SEC "Page Lawrence" ↔ Wikidata "Larry Page"). Only safe, high-confidence
     # merges are applied; the rest surface in the review panel. Best-effort — a
-    # dedup failure must never fail the scrape.
+    # dedup failure must never fail the scrape. Scoped to the persons THIS scrape
+    # touched (+ their exact match candidates) so it stays fast on a large DB — a
+    # full-DB person scan per company doesn't scale to millions of nodes. The full
+    # scan is still available on demand via POST /persons/deduplicate.
     if settings.SCRAPER_AUTODEDUP_ENABLED:
         try:
             from app.routers.persons import deduplicate_high_confidence
-            dd = deduplicate_high_confidence(apply=True)
+            dd = deduplicate_high_confidence(apply=True, seed_ids=touched)
             out["deduplication"] = {
                 "merged_count": dd["merged_count"], "review_count": dd["review_count"]}
         except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
