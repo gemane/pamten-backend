@@ -24,6 +24,7 @@ from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_touched, _record_touched_entity, _with_autodedup,
 )
+from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.scraper.geocode import geocode_address
 
 
@@ -1197,43 +1198,20 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
         )
 
+    # Dispatch to every registered scraper — no hardcoded per-source chain, so a new
+    # scraper just registers a ScraperSpec (see app/scraper/scraper_registry.py).
     results: dict[str, dict] = {}
-
-    # Wikidata
-    if settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"):
+    for spec in registered():
+        if not spec.enabled():
+            results[spec.name] = {"status": "disabled"}
+            continue
         try:
-            results["wikidata"] = run_scrape(query, depth)
+            results[spec.name] = spec.run(query, depth)
         except PermissionError as exc:
-            results["wikidata"] = {"status": "disabled", "detail": str(exc)}
-        except Exception as exc:
-            log.error("Wikidata scrape failed for %r: %s", query, exc)
-            results["wikidata"] = {"status": "error", "detail": str(exc)}
-    else:
-        results["wikidata"] = {"status": "disabled"}
-
-    # SEC EDGAR
-    if settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar"):
-        try:
-            results["sec_edgar"] = run_scrape_sec_edgar(query)
-        except PermissionError as exc:
-            results["sec_edgar"] = {"status": "disabled", "detail": str(exc)}
-        except Exception as exc:
-            log.error("SEC EDGAR scrape failed for %r: %s", query, exc)
-            results["sec_edgar"] = {"status": "error", "detail": str(exc)}
-    else:
-        results["sec_edgar"] = {"status": "disabled"}
-
-    # OpenCorporates
-    if settings.SCRAPER_OPENCORPORATES_ENABLED and get_source_enabled("open_corporates"):
-        try:
-            results["open_corporates"] = run_scrape_open_corporates(query)
-        except PermissionError as exc:
-            results["open_corporates"] = {"status": "disabled", "detail": str(exc)}
-        except Exception as exc:
-            log.error("OpenCorporates scrape failed for %r: %s", query, exc)
-            results["open_corporates"] = {"status": "error", "detail": str(exc)}
-    else:
-        results["open_corporates"] = {"status": "disabled"}
+            results[spec.name] = {"status": "disabled", "detail": str(exc)}
+        except Exception as exc:  # noqa: BLE001 - one scraper failing mustn't sink the rest
+            log.error("%s scrape failed for %r: %s", spec.name, query, exc)
+            results[spec.name] = {"status": "error", "detail": str(exc)}
 
     return {"status": "ok", "query": query, "results": results}
 
@@ -1715,3 +1693,17 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
 
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, "interval": resolved,
             "publish_date": current_publish, "lei_cdf": lei, "rr": rr}
+
+
+# ── Scraper registry ──────────────────────────────────────────────────────────
+# Register the built-in scrapers so run_scrape_all (and, later, the router) can
+# iterate them. A new scraper registers its own ScraperSpec — no dispatch edits.
+register(ScraperSpec(
+    "wikidata", lambda q, d: run_scrape(q, d),
+    lambda: settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata")))
+register(ScraperSpec(
+    "sec_edgar", lambda q, d: run_scrape_sec_edgar(q),
+    lambda: settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar")))
+register(ScraperSpec(
+    "open_corporates", lambda q, d: run_scrape_open_corporates(q),
+    lambda: settings.SCRAPER_OPENCORPORATES_ENABLED and get_source_enabled("open_corporates")))
