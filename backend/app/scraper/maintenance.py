@@ -559,13 +559,21 @@ def _batched_delete(where_sql: str, params: dict, batch: int) -> int:
             return total
 
 
-def wipe_source(source_name: str, batch: int = 10000) -> dict:
+def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = True) -> dict:
     """Delete one source's contribution to the graph — its edges, then the nodes
     only it created (now orphaned). Nodes/edges another source also references are
     kept: a scraped GLEIF company that also has Wikidata edges survives (minus
     GLEIF's own edges). Batched (never a single mass delete), and it never drops a
     type — other sources' data lives in the same types — so this can't wipe the
     whole DB. A fresh start is a database drop, not this command.
+
+    `rebuild_indexes` (default on) runs `REBUILD INDEX *` afterwards to clear the
+    stale index entries a batched `DELETE` leaves behind — otherwise a later
+    re-import can 500 on a duplicate-key insert against a stale entry. (The old
+    whole-DB wipe got this for free by dropping + recreating the types; wipe-source
+    keeps the types, so it rebuilds instead.) On a large remaining set this can be
+    slow — run with a direct `--db-url` to ArcadeDB so it isn't cut off by a proxy
+    read timeout.
     """
     src = run_sql("SELECT id FROM Source WHERE name = :n", {"n": source_name})
     if not src:
@@ -589,6 +597,14 @@ def wipe_source(source_name: str, batch: int = 10000) -> dict:
         for key in ("gleif-full-load", "gleif-update"):
             run_sql("DELETE FROM ImportState WHERE key = :k", {"k": key})
         out["reset_import_state"] = True
+    # Clear the stale index entries the batched DELETE leaves behind (see docstring).
+    if rebuild_indexes:
+        try:
+            r = run_sql("REBUILD INDEX *")
+            out["reindexed"] = int(r[0].get("totalIndexed", 0)) if r and isinstance(r[0], dict) else True
+        except Exception as exc:  # noqa: BLE001 - don't lose the wipe result over a reindex hiccup
+            out["reindexed"] = False
+            out["reindex_error"] = str(exc)[:300]
     return out
 
 

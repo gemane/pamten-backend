@@ -352,7 +352,7 @@ python3 manage.py init-schema
 |---|---|
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
 | `seed` | Seed the built-in company list |
-| `wipe-source` | Delete **one source's** data — its edges + the nodes only it created (nodes another source still references are kept); keeps user accounts, schema, and other sources. There is **no** whole-DB wipe — drop the database for a fresh start. Requires `--source <name>` plus `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-source --source "UK PSC" --confirm-database pamten` |
+| `wipe-source` | Delete **one source's** data — its edges + the nodes only it created (nodes another source still references are kept); keeps user accounts, schema, and other sources. Finishes with `REBUILD INDEX *` to clear the stale index entries the batched deletes leave behind (else a later re-import can 500). There is **no** whole-DB wipe — drop the database for a fresh start. Requires `--source <name>` plus `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB; add `--db-url http://localhost:2480` so the reindex isn't cut off by a proxy timeout, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-source --source "UK PSC" --confirm-database pamten --db-url http://localhost:2480` |
 | `geocode` | Backfill HQ/location coordinates via Nominatim |
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |

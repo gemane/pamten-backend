@@ -221,6 +221,7 @@ def cmd_wipe_source(args):
             print("Aborted.")
             sys.exit(1)
 
+    _apply_direct_db_url(args)   # point straight at ArcadeDB so the reindex isn't cut off by a proxy timeout
     try:
         result = wipe_source(source, batch=getattr(args, "batch", None) or 10000)
     except ValueError as exc:
@@ -233,6 +234,11 @@ def cmd_wipe_source(args):
     print(f"  nodes: {result['nodes']}")
     if result.get("reset_import_state"):
         print("  reset GLEIF import checkpoints (re-baseline with full-import.sh before the delta cron).")
+    if result.get("reindexed") is False:
+        print(f"  ⚠️ index rebuild failed ({result.get('reindex_error')}) — run REBUILD INDEX * "
+              "against ArcadeDB (e.g. --db-url http://localhost:2480) before any re-import.")
+    else:
+        print(f"  rebuilt indexes (cleared stale entries from the deletes): {result.get('reindexed')}")
     print("Done.")
 
 def cmd_geocode(args):
@@ -323,6 +329,9 @@ def _build_parser():
     p_wipe.add_argument('--yes', action='store_true', help='Skip the interactive retype-the-source-name prompt')
     p_wipe.add_argument('--batch', type=int, default=10000,
                         help='Rows deleted per request — keep each well under the DB proxy timeout (default 10000)')
+    p_wipe.add_argument('--db-url',
+                        help='Override ARCADEDB_URL — point straight at ArcadeDB (e.g. http://localhost:2480) so '
+                             'the final REBUILD INDEX * is not cut off by a proxy read timeout')
     p_wipe.set_defaults(func=cmd_wipe_source)
 
     # geocode command
