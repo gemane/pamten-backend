@@ -16,11 +16,8 @@ def test_single_source_scrape_dedups_and_nesting_runs_once(it_db, monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", True)
 
-    from app.scraper.runner import (
-        _upsert_entity_by_name,
-        _upsert_person_by_name,
-        _with_autodedup,
-    )
+    from app.scraper.graph_writer import _with_autodedup
+    from app.scraper.runner import _upsert_entity_by_name, _upsert_person_by_name
 
     # A standalone single-source scrape (like /scraper/run or /scraper/sec-edgar/run)
     # now collects what it touched and self-cleans.

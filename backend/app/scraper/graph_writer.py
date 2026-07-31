@@ -1,0 +1,94 @@
+"""
+Shared graph-write instrumentation for scrapers — the first slice of the scraper
+write layer (Phase 1 of the multi-scraper refactor).
+
+Right now it holds the **touched-node collectors + the post-scrape auto-dedup
+framework** every scraper reuses: a scrape entry point wrapped in `@with_autodedup`
+collects the persons/entities it creates or updates (recorded via `record_touched` /
+`record_touched_entity` from inside the upsert helpers) and, on completion, runs the
+scoped high-confidence auto-merge over just those — never a full-DB scan.
+
+The entity/person/owns/role upsert helpers themselves will move here next, once
+they're generalized off their per-scraper hardcoded credibility.
+"""
+import contextvars
+import functools
+import logging
+
+from app.config import settings
+
+log = logging.getLogger(__name__)
+
+
+# During a scrape, collect the ids of the persons/entities it created or updated, so
+# the post-scrape auto-dedup can be scoped to just them — a full-DB scan per company
+# is O(all nodes) and crawls once the DB grows to millions of rows.
+_touched_persons: contextvars.ContextVar = contextvars.ContextVar("touched_persons", default=None)
+_touched_entities: contextvars.ContextVar = contextvars.ContextVar("touched_entities", default=None)
+
+
+def _record_touched(person_id: str) -> str:
+    """Note a person id in the active scrape's touched-set (if one is active), and
+    return it — so callers can `return _record_touched(pid)`."""
+    bucket = _touched_persons.get()
+    if bucket is not None and person_id:
+        bucket.add(person_id)
+    return person_id
+
+
+def _record_touched_entity(entity_id: str) -> str:
+    bucket = _touched_entities.get()
+    if bucket is not None and entity_id:
+        bucket.add(entity_id)
+    return entity_id
+
+
+def _run_scoped_autodedup(touched_persons: list, touched_entities: list) -> dict:
+    """Scoped, high-confidence auto-merge over the ids a scrape touched — persons
+    (SEC 'Page Lawrence' ↔ Wikidata 'Larry Page') and entities (the same company
+    under different ids/sources, e.g. two GLEIF LEIs at one registered address).
+    Only high-confidence merges apply; the rest stay for review. Best-effort — a
+    dedup failure never fails the scrape. Gated by SCRAPER_AUTODEDUP_ENABLED."""
+    out: dict = {}
+    if not settings.SCRAPER_AUTODEDUP_ENABLED:
+        return out
+    try:
+        from app.routers.persons import deduplicate_high_confidence
+        dd = deduplicate_high_confidence(apply=True, seed_ids=touched_persons)
+        out["deduplication"] = {"merged_count": dd["merged_count"], "review_count": dd["review_count"]}
+    except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
+        log.error("Auto-dedup (persons) after scrape failed: %s", exc)
+        out["deduplication"] = {"status": "error", "detail": str(exc)}
+    try:
+        from app.scraper.maintenance import deduplicate_entities_for
+        ed = deduplicate_entities_for(touched_entities, apply=True)
+        out["entity_deduplication"] = {"merged_count": ed["entities_merged"], "review_count": ed["needs_review"]}
+    except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
+        log.error("Auto-dedup (entities) after scrape failed: %s", exc)
+        out["entity_deduplication"] = {"status": "error", "detail": str(exc)}
+    return out
+
+
+def _with_autodedup(fn):
+    """Wrap a scrape entry point so it collects the persons/entities it touches and,
+    when it finishes, runs the scoped auto-dedup and stitches the summary into the
+    returned dict. Re-entrant: a scrape nested inside another (run_scrape_all calls
+    the single-source runners) shares the outer collector and skips its own dedup,
+    so the merge runs exactly once — at the outermost scrape."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if _touched_persons.get() is not None:      # nested — outer scope owns dedup
+            return fn(*args, **kwargs)
+        ptoken = _touched_persons.set(set())
+        etoken = _touched_entities.set(set())
+        try:
+            result = fn(*args, **kwargs)
+            touched_p = list(_touched_persons.get() or [])
+            touched_e = list(_touched_entities.get() or [])
+        finally:
+            _touched_persons.reset(ptoken)
+            _touched_entities.reset(etoken)
+        if isinstance(result, dict):
+            result.update(_run_scoped_autodedup(touched_p, touched_e))
+        return result
+    return wrapper
