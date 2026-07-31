@@ -1,10 +1,10 @@
-# Pamten Backend
+# Owlgraph Backend
 
 ![CI](https://github.com/gemane/pamten-backend/actions/workflows/ci.yml/badge.svg)
 [![Licence: MIT](https://img.shields.io/badge/Code-MIT-yellow.svg)](LICENSE)
 [![Data Licence: ODbL](https://img.shields.io/badge/Data-ODbL-brightgreen.svg)](DATA_LICENSE.md)
 
-FastAPI backend for the Pamten ownership mapping platform. Stores corporate ownership hierarchies in an ArcadeDB graph database and exposes a REST API consumed by the frontend.
+FastAPI backend for the Owlgraph ownership mapping platform. Stores corporate ownership hierarchies in an ArcadeDB graph database and exposes a REST API consumed by the frontend.
 
 **Live API:** https://pamten-backend-yrbh.onrender.com  
 **Docs (Swagger):** https://pamten-backend-yrbh.onrender.com/docs  
@@ -52,7 +52,7 @@ Create a `.env` file with your credentials:
 ARCADEDB_URL=http://<your-instance>:2480
 ARCADEDB_USERNAME=root
 ARCADEDB_PASSWORD=<password>
-ARCADEDB_DATABASE=pamten
+ARCADEDB_DATABASE=owlgraph
 SECRET_KEY=<long-random-string>
 SCRAPER_ENABLED=false
 SCRAPER_SEC_EDGAR_ENABLED=false
@@ -301,7 +301,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `ARCADEDB_URL` | required | ArcadeDB HTTP endpoint |
 | `ARCADEDB_USERNAME` | required | Database username |
 | `ARCADEDB_PASSWORD` | required | Database password |
-| `ARCADEDB_DATABASE` | `pamten` | Database name |
+| `ARCADEDB_DATABASE` | `owlgraph` | Database name |
 | `SECRET_KEY` | insecure default | JWT signing key — **must be overridden when `DEBUG=false`, or the app refuses to start** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
@@ -325,7 +325,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
 | `GEOCODING_ENABLED` | `false` | Geocode addresses to coordinates via Nominatim |
 | `GEOCODING_CONTACT` | — | Contact email added to the Nominatim User-Agent (required by their usage policy) |
-| `GEOCODING_USER_AGENT` | `pamten-ownership-platform` | Base User-Agent for Nominatim requests |
+| `GEOCODING_USER_AGENT` | `owlgraph-ownership-platform` | Base User-Agent for Nominatim requests |
 | `NOMINATIM_URL` | public endpoint | Nominatim search URL (override to self-host) |
 | `GEOCODING_MIN_INTERVAL` | `1.0` | Minimum seconds between geocoding requests |
 | `DEBUG` | `false` | FastAPI debug mode |
@@ -352,7 +352,7 @@ python3 manage.py init-schema
 |---|---|
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
 | `seed` | Seed the built-in company list |
-| `wipe-source` | Delete **one source's** data — its edges + the nodes only it created (nodes another source still references are kept); keeps user accounts, schema, and other sources. Finishes with `REBUILD INDEX *` to clear the stale index entries the batched deletes leave behind (else a later re-import can 500). There is **no** whole-DB wipe — drop the database for a fresh start. Requires `--source <name>` plus `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB; add `--db-url http://localhost:2480` so the reindex isn't cut off by a proxy timeout, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-source --source "UK PSC" --confirm-database pamten --db-url http://localhost:2480` |
+| `wipe-source` | Delete **one source's** data — its edges + the nodes only it created (nodes another source still references are kept); keeps user accounts, schema, and other sources. Finishes with `REBUILD INDEX *` to clear the stale index entries the batched deletes leave behind (else a later re-import can 500). There is **no** whole-DB wipe — drop the database for a fresh start. Requires `--source <name>` plus `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB; add `--db-url http://localhost:2480` so the reindex isn't cut off by a proxy timeout, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-source --source "UK PSC" --confirm-database owlgraph --db-url http://localhost:2480` |
 | `geocode` | Backfill HQ/location coordinates via Nominatim |
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
@@ -368,15 +368,15 @@ python3 manage.py init-schema
 ## Licence
 
 ### Source Code
-The Pamten source code is licensed under the
+The Owlgraph source code is licensed under the
 [MIT Licence](LICENSE).
 
 ### Database
-The Pamten ownership database is licensed under the
+The Owlgraph ownership database is licensed under the
 [Open Database Licence (ODbL) v1.0](DATA_LICENSE.md).
 
 You are free to copy, distribute and use the data,
-as long as you attribute Pamten and share any adapted
+as long as you attribute Owlgraph and share any adapted
 databases under ODbL. See [DATA_LICENSE.md](DATA_LICENSE.md)
 for full details.
 

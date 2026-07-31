@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pamten seed script – populates the database with real-world ownership data.
+Owlgraph seed script – populates the database with real-world ownership data.
 Run with: python3 seed.py [--region europe|americas|asia|middleeast|africa|oceania|all]
 Default: all regions
 
@@ -125,7 +125,7 @@ def seed_company(name: str, region: str, use_sec_edgar: bool) -> dict:
 
 def main(region: str | None = None):
     if region is None:
-        parser = argparse.ArgumentParser(description="Seed Pamten database with real-world ownership data.")
+        parser = argparse.ArgumentParser(description="Seed Owlgraph database with real-world ownership data.")
         parser.add_argument(
             "--region",
             default="all",
@@ -143,7 +143,7 @@ def main(region: str | None = None):
         print(f"No companies found for region: {region}")
         sys.exit(1)
 
-    print(f"\n🌱  Pamten seed — region: {region} ({len(companies)} companies)")
+    print(f"\n🌱  Owlgraph seed — region: {region} ({len(companies)} companies)")
     print("─" * 60)
 
     # Ensure ScraperSource nodes exist and are enabled

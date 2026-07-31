@@ -48,7 +48,7 @@ def test_backend_selects_resend_when_configured(monkeypatch):
 def test_resend_backend_posts_to_the_api(monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test_key")
-    monkeypatch.setattr(settings, "EMAIL_FROM", "Pamten <noreply@pamten.org>")
+    monkeypatch.setattr(settings, "EMAIL_FROM", "Owlgraph <noreply@owlgraph.org>")
     resp = MagicMock()
     with patch("app.notifications.email.httpx.post", return_value=resp) as post:
         mail.ResendBackend().send("to@example.com", "Verify", "click the link", "<p>click</p>")
@@ -57,7 +57,7 @@ def test_resend_backend_posts_to_the_api(monkeypatch):
     assert url == "https://api.resend.com/emails"
     assert kwargs["headers"]["Authorization"] == "Bearer re_test_key"
     body = kwargs["json"]
-    assert body["from"] == "Pamten <noreply@pamten.org>"
+    assert body["from"] == "Owlgraph <noreply@owlgraph.org>"
     assert body["to"] == ["to@example.com"]
     assert body["subject"] == "Verify" and body["text"] == "click the link" and body["html"] == "<p>click</p>"
     resp.raise_for_status.assert_called_once()   # non-2xx would surface as an error

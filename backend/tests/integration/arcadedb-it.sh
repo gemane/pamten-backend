@@ -8,7 +8,7 @@
 #   ./arcadedb-it.sh test     # start, run `pytest tests/integration`, then stop
 #
 # Reads no secrets: the root password is a throwaway (the DBs are ephemeral —
-# each test creates a `pamten_it_<random>` database and drops it on teardown).
+# each test creates a `owlgraph_it_<random>` database and drops it on teardown).
 # See tests/integration/README.md for the full explanation.
 set -euo pipefail
 

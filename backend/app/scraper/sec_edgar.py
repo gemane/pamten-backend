@@ -12,7 +12,7 @@ Endpoints used:
   GET https://data.sec.gov/submissions/CIK<CIK>.json  — company filing index
   GET https://www.sec.gov/Archives/edgar/data/<CIK>/<accession>/... — filing docs
 
-Fields returned and Pamten mapping:
+Fields returned and Owlgraph mapping:
   Form 3/4 (insider ownership reports):
     reportingOwner/reportingOwnerId/rptOwnerName → person.name (normalised from LAST FIRST)
     reportingOwner/reportingOwnerRelationship/officerTitle → person.role
@@ -56,7 +56,7 @@ from app.scraper.mapper import _ENTITY_SUFFIXES, derive_ownership_type
 log = logging.getLogger(__name__)
 
 HEADERS = {
-    "User-Agent": "Pamten/1.0 contact@pamten.com",
+    "User-Agent": "Owlgraph/1.0 contact@owlgraph.org",
     "Accept":     "application/json",
 }
 REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s

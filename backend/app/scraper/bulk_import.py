@@ -1,5 +1,5 @@
 """
-Shared bulk-import helpers for Pamten's dataset scrapers.
+Shared bulk-import helpers for Owlgraph's dataset scrapers.
 
 Historically this module was the OpenOwnership **BODS** (Beneficial Ownership
 Data Standard) importer. Both BODS exports (GLEIF and UK PSC) were frozen at
@@ -314,7 +314,7 @@ _ISO2_COUNTRY: dict[str, str] = {
 }
 
 
-# ── Interest type → Pamten ownership_type ─────────────────────────────────────
+# ── Interest type → Owlgraph ownership_type ─────────────────────────────────────
 # None means "derive from stake_percent via derive_ownership_type()".
 # "role" signals a HAS_ROLE edge rather than an OWNS edge.
 
@@ -326,7 +326,7 @@ def _max_pct(a: float | None, b: float | None) -> float | None:
         return a
     return max(a, b)
 
-# ── BODS entityType → Pamten entity type ──────────────────────────────────────
+# ── BODS entityType → Owlgraph entity type ──────────────────────────────────────
 
 # GLEIF's entityType.type is always "registeredEntity", but the LEGAL FORM
 # (entityType.details, free text) names foundations, funds and associations. Map

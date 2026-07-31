@@ -10,7 +10,7 @@ Endpoints used:
   SPARQL:  GET https://query.wikidata.org/sparql?query=<SPARQL>&format=json
              Fetches basic info, subsidiaries, parent org, and CEO for a QID.
 
-Fields returned and Pamten mapping:
+Fields returned and Owlgraph mapping:
   itemLabel        → entity.name
   itemDescription  → entity.description
   altLabel         → entity.aliases (skos:altLabel, English only)
@@ -56,7 +56,7 @@ log = logging.getLogger(__name__)
 
 WIKIDATA_API  = "https://www.wikidata.org/w/api.php"
 SPARQL_URL    = "https://query.wikidata.org/sparql"
-USER_AGENT    = "Pamten/1.0 (https://pamten-frontend.onrender.com)"
+USER_AGENT    = "Owlgraph/1.0 (https://pamten-frontend.onrender.com)"
 HEADERS       = {"User-Agent": USER_AGENT}
 REQUEST_DELAY = 0.4  # seconds between Wikidata calls
 

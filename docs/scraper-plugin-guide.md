@@ -1,4 +1,4 @@
-# How to write a Pamten scraper plugin
+# How to write a Owlgraph scraper plugin
 
 This document covers the full pattern for adding a new data source to the
 scraper pipeline, including the specific pitfalls encountered while building
@@ -8,8 +8,8 @@ the SEC EDGAR and OpenCorporates plugins.
 
 ## Data Licence
 
-All data collected by Pamten scrapers and stored in the
-Pamten database is published under ODbL v1.0.
+All data collected by Owlgraph scrapers and stored in the
+Owlgraph database is published under ODbL v1.0.
 
 When writing a new scraper plugin, ensure:
 1. The source data licence is compatible with ODbL
@@ -76,7 +76,7 @@ Some APIs (SEC EDGAR, OpenCorporates) block requests without a User-Agent
 that identifies your application:
 
 ```python
-HEADERS = {"User-Agent": "Pamten/1.0 contact@pamten.com"}
+HEADERS = {"User-Agent": "Owlgraph/1.0 contact@owlgraph.org"}
 ```
 
 ### Error handling in HTTP helpers
@@ -324,7 +324,7 @@ The same company appears under different names across sources:
 - SEC EDGAR: `"BlackRock, Inc."`
 - OpenCorporates: `"BLACKROCK INC."`
 
-Pamten resolves this with two properties on every Entity node:
+Owlgraph resolves this with two properties on every Entity node:
 
 **`name_normalized`** — produced by `normalize_entity_name()` from `mapper.py`.
 Strips legal suffixes (Inc, Corp, Ltd, …), commas, periods, and lowercases.
@@ -450,7 +450,7 @@ python manage.py backfill-search    # fills search_text for existing rows
 ### Licence
 
 Both datasets are published under CC0 1.0 Universal.
-No attribution required but Pamten credits them in NOTICE.
+No attribution required but Owlgraph credits them in NOTICE.
 
 ### Credibility scores
 

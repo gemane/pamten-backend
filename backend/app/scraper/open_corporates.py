@@ -11,7 +11,7 @@ Endpoints used:
   Officers:GET https://api.opencorporates.com/v0.4/companies/<jurisdiction>/<number>/officers
   Docs: https://api.opencorporates.com/documentation/API-Reference
 
-Fields returned and Pamten mapping:
+Fields returned and Owlgraph mapping:
   company.name              → entity.name
   company.jurisdiction_code → entity.country (first 2 chars = ISO-2)
   company.company_number    → entity.external_id (oc:<jurisdiction>/<number>)
@@ -31,7 +31,7 @@ Data licence:
   Open Database Licence (ODbL) 1.0 for the underlying data.
   API results may also carry individual jurisdiction licences.
   ODbL requires attribution and share-alike for derivative databases,
-  but does NOT restrict use in an application. Pamten displays data,
+  but does NOT restrict use in an application. Owlgraph displays data,
   it does not redistribute a database, so this is compliant.
   Licence: https://opencorporates.com/info/licence
 
@@ -53,7 +53,7 @@ BASE_URL     = "https://api.opencorporates.com/v0.4"
 REQUEST_DELAY = 0.2   # 5 req/s max on free tier
 
 HEADERS = {
-    "User-Agent": "Pamten/1.0 contact@pamten.com",
+    "User-Agent": "Owlgraph/1.0 contact@owlgraph.org",
     "Accept":     "application/json",
 }
 

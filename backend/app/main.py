@@ -69,7 +69,7 @@ app.include_router(auth_router.router)
 @app.get("/", tags=["Health"])
 def root():
     return {
-        "message": "Pamten Ownership Platform API",
+        "message": "Owlgraph Ownership Platform API",
         "status": "running",
         "version": "0.1.0",
         "docs": "/docs",
@@ -77,7 +77,7 @@ def root():
             "code": "MIT",
             "data": "ODbL v1.0",
             "data_url": "https://opendatacommons.org/licenses/odbl/1-0/",
-            "attribution": "Data from Pamten, available under ODbL"
+            "attribution": "Data from Owlgraph, available under ODbL"
         }
     }
 

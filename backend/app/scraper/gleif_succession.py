@@ -85,7 +85,7 @@ def import_lei_cdf_succession(
 
     Args:
         filepath:          Local LEI-CDF golden-copy ``.json`` or ``.zip``.
-        source_id:         Pamten GLEIF Source node id.
+        source_id:         Owlgraph GLEIF Source node id.
         credibility_score: Source credibility (0–100), stamped on each edge.
         limit:             Max records to scan (None = all).
 

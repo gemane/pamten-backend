@@ -68,7 +68,7 @@ def it_db(monkeypatch):
         pytest.skip("ARCADEDB_IT_PASSWORD not set — skipping real-ArcadeDB integration tests")
 
     auth = (user, pw)
-    dbname = f"pamten_it_{uuid.uuid4().hex[:8]}"
+    dbname = f"owlgraph_it_{uuid.uuid4().hex[:8]}"
 
     from app.config import settings
     from app.db import arcadedb

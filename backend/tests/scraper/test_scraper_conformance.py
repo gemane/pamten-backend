@@ -66,7 +66,7 @@ class TestScraperSendsIdentifyingUserAgent:
 
     def test_user_agent_identifies_the_app(self, name):
         ua = self._sent_user_agent(name)
-        assert "Pamten" in ua, f"{name}: User-Agent must identify the app — got {ua!r}"
+        assert "Owlgraph" in ua, f"{name}: User-Agent must identify the app — got {ua!r}"
 
     def test_user_agent_includes_a_contact(self, name):
         # ToS require a reachable contact so the source can get in touch.

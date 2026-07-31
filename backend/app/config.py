@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     ARCADEDB_URL:      str
     ARCADEDB_USERNAME: str
     ARCADEDB_PASSWORD: str
-    ARCADEDB_DATABASE: str = "pamten"
+    ARCADEDB_DATABASE: str = "owlgraph"
     APP_NAME:          str  = "Ownership Platform"
     DEBUG:             bool = False
     SCRAPER_ENABLED:                  bool = False
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     # ~1 request/second, which GEOCODING_MIN_INTERVAL respects.
     GEOCODING_ENABLED:                bool  = False
     NOMINATIM_URL:                    str   = "https://nominatim.openstreetmap.org/search"
-    GEOCODING_USER_AGENT:             str   = "pamten-ownership-platform"
+    GEOCODING_USER_AGENT:             str   = "owlgraph-ownership-platform"
     GEOCODING_CONTACT:                str   = ""
     GEOCODING_MIN_INTERVAL:           float = 1.0
 
