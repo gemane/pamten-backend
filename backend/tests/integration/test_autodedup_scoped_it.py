@@ -22,7 +22,8 @@ def _person(it_db, pid, full_name):
 
 def test_autodedup_scoped_to_touched(it_db):
     from app.routers.persons import deduplicate_high_confidence, scan_duplicate_groups
-    from app.scraper.runner import _touched_persons, _upsert_person_by_name
+    from app.scraper.graph_writer import _touched_persons
+    from app.scraper.runner import _upsert_person_by_name
 
     # A scrape touches two persons the sources spelled differently (same name token
     # set) — the collector records them while it's active.

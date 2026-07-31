@@ -67,7 +67,8 @@ def test_entity_autodedup_scoped_high_confidence(it_db):
 
 
 def test_touched_entity_collector_records_upserts(it_db):
-    from app.scraper.runner import _record_touched_entity, _touched_entities, _upsert_entity_by_name
+    from app.scraper.graph_writer import _record_touched_entity, _touched_entities
+    from app.scraper.runner import _upsert_entity_by_name
 
     token = _touched_entities.set(set())
     a = _upsert_entity_by_name("Acme Holdings", source_id="s")
