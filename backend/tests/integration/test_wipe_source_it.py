@@ -54,6 +54,31 @@ def test_wipe_source_keeps_shared_and_other_sources(it_db):
         wipe_source("Does Not Exist")
 
 
+def test_wipe_source_by_id_prefix_is_degree_aware(it_db):
+    """The fast path: delete a source's nodes by an indexed id range, still keeping
+    a prefixed node another source references."""
+    from app.scraper.maintenance import wipe_source
+
+    _src(it_db, "psc", "UK PSC")
+    _src(it_db, "wd", "Wikidata")
+    it_db.run_command("CREATE (p:Person {id:'chpsc:1', source_id:'psc'})")   # orphan → deleted
+    it_db.run_command("CREATE (p:Person {id:'chpsc:2', source_id:'psc'})")   # orphan → deleted
+    it_db.run_command("CREATE (p:Person {id:'chpsc:kept', source_id:'psc'})")
+    _ent(it_db, "gb-coh:99", "psc")                                          # orphan company → deleted
+    _ent(it_db, "wd:7", "wd")
+    it_db.run_command("MATCH (e:Entity {id:'wd:7'}),(p:Person {id:'chpsc:kept'}) "
+                      "CREATE (e)-[:HAS_ROLE {source_id:'wd'}]->(p)")        # Wikidata keeps chpsc:kept
+
+    res = wipe_source("UK PSC", id_prefixes=["chpsc:", "gb-coh:"])
+    assert res["nodes"]["Person"] == 2      # the two orphaned chpsc persons
+    assert res["nodes"]["Entity"] == 1      # gb-coh:99
+
+    people = {r["id"] for r in it_db.run_command("MATCH (p:Person) RETURN p.id AS id")}
+    ents = {r["id"] for r in it_db.run_command("MATCH (e:Entity) RETURN e.id AS id")}
+    assert people == {"chpsc:kept"}         # kept by the Wikidata edge (degree-aware)
+    assert ents == {"wd:7"}
+
+
 def test_wipe_gleif_resets_import_checkpoint(it_db):
     from app.scraper.gleif_incremental import full_load_present, mark_full_load_done, write_last_publish
     from app.scraper.maintenance import wipe_source
