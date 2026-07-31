@@ -36,6 +36,31 @@ class TestDiskMapTmpDir:
         assert target.is_dir()
 
 
+# ── _max_pct (merge two possibly-None ownership percentages) ──────────────────
+
+class TestMaxPct:
+    def test_both_none(self):
+        from app.scraper.bulk_import import _max_pct
+        assert _max_pct(None, None) is None
+
+    def test_one_none_returns_the_other(self):
+        from app.scraper.bulk_import import _max_pct
+        assert _max_pct(None, 25.0) == 25.0
+        assert _max_pct(25.0, None) == 25.0
+
+    def test_both_present_takes_the_larger(self):
+        from app.scraper.bulk_import import _max_pct
+        assert _max_pct(10.0, 75.0) == 75.0
+        assert _max_pct(75.0, 10.0) == 75.0
+        assert _max_pct(50.0, 50.0) == 50.0
+
+    def test_zero_is_a_value_not_absent(self):
+        # 0.0 is a real percentage, not "missing" — must not be treated like None
+        from app.scraper.bulk_import import _max_pct
+        assert _max_pct(0.0, None) == 0.0
+        assert _max_pct(0.0, 5.0) == 5.0
+
+
 # ── _legal_form_type (GLEIF legal form → finer category) ──────────────────────
 
 class TestLegalFormType:
