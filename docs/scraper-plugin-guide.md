@@ -298,46 +298,22 @@ registered scraper, so a registered spec is all the wiring `run-all` needs.
 
 ---
 
-## Step 5 — Add router endpoints
+## Step 5 — Router endpoints (nothing to write)
 
-**File:** `backend/app/scraper/router.py`
+Once your scraper is registered (Step 4), it's **automatically** reachable through
+the generic registry-driven endpoints — no per-scraper route code:
 
-```python
-from app.scraper.runner import ..., run_scrape_mysource
+- `POST /scraper/source/{name}/run?company=…&depth=…` — run it
+- `GET  /scraper/source/{name}/status` — its enabled state
+- `GET  /scraper/registry` — lists every registered scraper + enabled state
 
-@router.get("/my-source/status")
-def my_source_status():
-    return {
-        "enabled":         settings.SCRAPER_ENABLED and settings.SCRAPER_MYSOURCE_ENABLED,
-        "master_switch":   settings.SCRAPER_ENABLED,
-        "my_source_switch": settings.SCRAPER_MYSOURCE_ENABLED,
-    }
+e.g. `POST /scraper/source/my_source/run?company=Acme`. These dispatch via the
+registry and apply the master-switch / enabled / `PermissionError` / error handling
+uniformly, so there's nothing to add in `router.py`.
 
-@router.post("/my-source/run")
-def my_source_run(
-    company: str = Query(..., min_length=2),
-    _: dict = Depends(require_admin),
-):
-    if not settings.SCRAPER_ENABLED:
-        raise HTTPException(status_code=403, detail="Scraper is disabled.")
-    if not settings.SCRAPER_MYSOURCE_ENABLED:
-        raise HTTPException(status_code=403, detail="My Source scraper is disabled.")
-    try:
-        return run_scrape_mysource(company)
-    except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Scrape failed: {e}")
-```
-
-Update `/scraper/status` to include the new flag:
-
-```python
-return {
-    ...
-    "my_source_enabled": settings.SCRAPER_MYSOURCE_ENABLED,
-}
-```
+(The built-ins additionally keep their older named endpoints — `/scraper/run`,
+`/scraper/sec-edgar/run`, `/scraper/open-corporates/run` — for the current frontend;
+new scrapers just use the generic path above.)
 
 ---
 
