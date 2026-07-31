@@ -10,7 +10,7 @@ def test_import_snapshot_rejects_unknown_format():
 
 def test_export_constants():
     from app.routers import federation
-    assert federation.EXPORT_FORMAT == "pamten-federation"
+    assert federation.EXPORT_FORMAT == "owlgraph-federation"
     assert federation.EXPORT_VERSION == 1
 
 
@@ -29,7 +29,7 @@ def test_sign_verify_roundtrip_and_tamper(monkeypatch):
     priv, pub = fk.generate_keypair()
     monkeypatch.setattr(settings, "FEDERATION_SIGNING_KEY", priv)
 
-    payload = {"format": "pamten-federation", "version": 1, "entities": [{"name": "A"}]}
+    payload = {"format": "owlgraph-federation", "version": 1, "entities": [{"name": "A"}]}
     env = fk.sign(payload)
     assert env["algorithm"] == "ed25519"
     assert env["key_id"] == fk.fingerprint(pub)

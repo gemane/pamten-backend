@@ -86,5 +86,5 @@ def test_wipe_source_refuses_on_database_name_mismatch(monkeypatch):
 
     import manage
     with pytest.raises(SystemExit):
-        manage.cmd_wipe_source(_args(yes=True, confirm_database="pamten"))  # != "test"
+        manage.cmd_wipe_source(_args(yes=True, confirm_database="owlgraph"))  # != "test"
     assert calls == []

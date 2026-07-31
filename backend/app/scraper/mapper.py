@@ -1,11 +1,11 @@
 """
-Maps raw scraper data to Pamten entity types and roles.
+Maps raw scraper data to Owlgraph entity types and roles.
 Covers both Wikidata (QID-based) and SEC EDGAR (name-based) sources.
 """
 
 import re
 
-# Wikidata P31 ("instance of") QIDs → Pamten entity type, in PRIORITY order: the
+# Wikidata P31 ("instance of") QIDs → Owlgraph entity type, in PRIORITY order: the
 # most specific category wins when an entity is an instance of several classes
 # (e.g. a foundation that is also an "organization" → foundation, not company).
 _TYPE_QIDS: list[tuple[str, set[str]]] = [

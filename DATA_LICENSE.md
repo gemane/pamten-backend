@@ -1,6 +1,6 @@
 # Open Database Licence (ODbL) v1.0
 
-The Pamten ownership database is made available under the Open Database
+The Owlgraph ownership database is made available under the Open Database
 Licence (ODbL) v1.0.
 
 **You are free to:**
@@ -25,14 +25,14 @@ Full licence text: https://opendatacommons.org/licenses/odbl/1-0/
 
 ## Attribution
 
-When using Pamten data, please attribute as:
+When using Owlgraph data, please attribute as:
 
-> Data from Pamten (https://pamten-frontend.onrender.com),
+> Data from Owlgraph (https://pamten-frontend.onrender.com),
 > available under the Open Database Licence (ODbL) v1.0.
 
 ## Data Sources
 
-The Pamten database aggregates data from the following sources:
+The Owlgraph database aggregates data from the following sources:
 
 | Source | Licence | Notes |
 |---|---|---|

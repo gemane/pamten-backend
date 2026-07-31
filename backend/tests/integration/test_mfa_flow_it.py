@@ -26,7 +26,7 @@ def _code(secret_b32: str) -> str:
 @pytest.fixture
 def client(it_db, monkeypatch):
     from app.config import settings
-    monkeypatch.setattr(settings, "ADMIN_EMAIL", "admin@pamten.local")
+    monkeypatch.setattr(settings, "ADMIN_EMAIL", "admin@owlgraph.local")
     monkeypatch.setattr(settings, "ADMIN_PASSWORD", None)
     monkeypatch.setattr(settings, "REQUIRE_EMAIL_VERIFICATION", True)
     from app.main import app

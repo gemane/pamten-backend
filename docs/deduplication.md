@@ -1,6 +1,6 @@
 # Deduplication — design notes
 
-How Pamten finds and resolves duplicates. Three kinds, each with its own signals:
+How Owlgraph finds and resolves duplicates. Three kinds, each with its own signals:
 
 - **Persons** — same person named differently across sources (`app/routers/persons.py`). Covered below.
 - **Entities** — the same company as multiple nodes (`app/scraper/maintenance.py`). See [Entity deduplication](#entity-deduplication).

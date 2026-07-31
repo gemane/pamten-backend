@@ -80,7 +80,7 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
 
     Args:
         filepath:          Local RR-CDF golden-copy ``.json`` or ``.zip``.
-        source_id:         Pamten GLEIF Source node id.
+        source_id:         Owlgraph GLEIF Source node id.
         credibility_score: Source credibility (0–100).
         limit:             Max records to scan (None = all).
 

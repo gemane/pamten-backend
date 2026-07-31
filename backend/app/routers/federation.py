@@ -32,7 +32,7 @@ from app import federation_keys
 router = APIRouter(prefix="/federation", tags=["Federation"])
 log = logging.getLogger(__name__)
 
-EXPORT_FORMAT = "pamten-federation"
+EXPORT_FORMAT = "owlgraph-federation"
 EXPORT_VERSION = 1
 
 

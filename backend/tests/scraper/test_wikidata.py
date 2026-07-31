@@ -376,7 +376,7 @@ class TestSearchEntity:
             search_entity("x")
         headers = mock_get.call_args.kwargs["headers"]
         assert "User-Agent" in headers
-        assert "Pamten" in headers["User-Agent"]
+        assert "Owlgraph" in headers["User-Agent"]
 
     def test_sleeps_after_request(self):
         with patch("httpx.get", return_value=self._mock_response([])), \

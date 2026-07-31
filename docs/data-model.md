@@ -1,6 +1,6 @@
 # Data model
 
-Pamten stores an ownership graph in ArcadeDB. Nodes are vertices; ownership,
+Owlgraph stores an ownership graph in ArcadeDB. Nodes are vertices; ownership,
 roles, and locations are edges.
 
 ## Nodes

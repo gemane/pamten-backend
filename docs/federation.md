@@ -1,6 +1,6 @@
 # Federation — design notes
 
-How independent Pamten instances, run by different people on different servers,
+How independent Owlgraph instances, run by different people on different servers,
 share ownership data as **trusted peers**. Implementation: `app/routers/federation.py`,
 `app/federation_keys.py`, `app/models/federation.py`. Gated by `FEDERATION_ENABLED`.
 
@@ -34,7 +34,7 @@ wanted.
 
 ```jsonc
 {
-  "format": "pamten-federation", "version": 1, "generated_at": "…",
+  "format": "owlgraph-federation", "version": 1, "generated_at": "…",
   "entities":  [ { "name", "type", "country", "founded",
                    "wikidata_id", "sec_cik", "lei_id", "companies_house_id" } ],
   "persons":   [ { "full_name", "first_name", "last_name",

@@ -13,7 +13,7 @@ Endpoints used:
   GET https://www.sec.gov/Archives/edgar/data/<CIK>/<accession>/<primary-doc>.htm
     — HTML of the proxy statement, parsed with BeautifulSoup
 
-Fields returned and Pamten mapping:
+Fields returned and Owlgraph mapping:
   Beneficial ownership table in the proxy HTML:
     Person/entity name → person or entity node
     Share class        → ownership.share_class (e.g. "Class A", "Class B")
@@ -49,7 +49,7 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-HEADERS = {"User-Agent": "Pamten/1.0 contact@pamten.com"}
+HEADERS = {"User-Agent": "Owlgraph/1.0 contact@owlgraph.org"}
 BROWSE_URL      = "https://www.sec.gov/cgi-bin/browse-edgar"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions"
 ARCHIVES_URL    = "https://www.sec.gov/Archives/edgar/data"

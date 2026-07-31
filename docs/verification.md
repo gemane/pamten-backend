@@ -8,7 +8,7 @@
 
 ## The problem
 
-Almost every node and edge in Pamten comes from a scraper (Wikidata, SEC EDGAR,
+Almost every node and edge in Owlgraph comes from a scraper (Wikidata, SEC EDGAR,
 OpenCorporates, BODS). Scrapers are wrong sometimes — a bad name match, a stale
 ownership %, a person who isn't really an officer, an entity that shouldn't
 exist. Today a reader who spots this has nowhere to say so, and we have no list

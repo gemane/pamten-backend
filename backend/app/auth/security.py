@@ -19,7 +19,7 @@ _TOTP_DIGITS = 6
 _TOTP_PERIOD = 30
 _TOTP_SECRET_BYTES = 20          # 160-bit shared secret
 _TOTP_SKEW_STEPS = 1             # accept the adjacent 30s windows (clock drift)
-_MFA_ISSUER = "Pamten"
+_MFA_ISSUER = "Owlgraph"
 _RECOVERY_CODE_COUNT = 10
 
 # bcrypt only considers the first 72 bytes of a password; bcrypt >= 4.1 raises

@@ -19,7 +19,7 @@ def test_export_import_roundtrip(it_db):
     it_db.run_command("MATCH (a:Person{id:'p1'}),(b:Entity{id:'e1'}) CREATE (a)-[:OWNS {stake_percent:5.0, ownership_type:'minority'}]->(b)")
 
     snap = build_export()
-    assert snap["format"] == "pamten-federation"
+    assert snap["format"] == "owlgraph-federation"
     assert {e["name"] for e in snap["entities"]} >= {"Alpha Corp", "Beta Holding"}
     assert any(p["full_name"] == "Jane Owner" for p in snap["persons"])
     assert len(snap["ownerships"]) == 2
@@ -47,7 +47,7 @@ def test_import_reconciles_on_external_id_no_duplicate(it_db):
     from app.routers.federation import import_snapshot
     it_db.run_command("CREATE (:Entity {id:'x', name:'Gamma Inc', name_normalized:'gamma inc', type:'company', wikidata_id:'Q900'})")
 
-    snap = {"format": "pamten-federation", "version": 1, "persons": [], "ownerships": [],
+    snap = {"format": "owlgraph-federation", "version": 1, "persons": [], "ownerships": [],
             "entities": [{"name": "Gamma Incorporated", "type": "company", "wikidata_id": "Q900"}]}
     import_snapshot(snap, "Peer: T", 60)
 

@@ -43,7 +43,7 @@ export ARCADEDB_IT_PASSWORD='RootPass123!'
 pytest tests/integration -v
 ```
 
-Each test gets a fresh, isolated database (`pamten_it_<random>`) that is dropped
+Each test gets a fresh, isolated database (`owlgraph_it_<random>`) that is dropped
 on teardown.
 
 > **Note:** ArcadeDB enforces a password policy — a weak root password (e.g.

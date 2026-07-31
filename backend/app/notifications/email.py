@@ -37,7 +37,7 @@ def _resolve_backend() -> str:
 
 
 def _from_address() -> str:
-    return settings.EMAIL_FROM.strip() or settings.SMTP_USERNAME.strip() or "no-reply@pamten.local"
+    return settings.EMAIL_FROM.strip() or settings.SMTP_USERNAME.strip() or "no-reply@owlgraph.local"
 
 
 class EmailSender:
@@ -112,16 +112,16 @@ def _link(action: str, token: str) -> str:
 
 def send_verification_email(to: str, token: str) -> None:
     url = _link("verify-email", token)
-    subject = "Verify your Pamten email"
+    subject = "Verify your Owlgraph email"
     text = (
-        "Welcome to Pamten.\n\n"
+        "Welcome to Owlgraph.\n\n"
         "Please confirm your email address by opening this link:\n\n"
         f"{url}\n\n"
         f"The link expires in {settings.EMAIL_VERIFY_TTL_HOURS} hours. "
         "If you didn't create an account, you can ignore this message.\n"
     )
     html = (
-        f"<p>Welcome to Pamten.</p>"
+        f"<p>Welcome to Owlgraph.</p>"
         f"<p>Please confirm your email address:</p>"
         f'<p><a href="{url}">Verify my email</a></p>'
         f"<p>The link expires in {settings.EMAIL_VERIFY_TTL_HOURS} hours. "
@@ -132,9 +132,9 @@ def send_verification_email(to: str, token: str) -> None:
 
 def send_password_reset_email(to: str, token: str) -> None:
     url = _link("reset-password", token)
-    subject = "Reset your Pamten password"
+    subject = "Reset your Owlgraph password"
     text = (
-        "We received a request to reset your Pamten password.\n\n"
+        "We received a request to reset your Owlgraph password.\n\n"
         "Open this link to choose a new password:\n\n"
         f"{url}\n\n"
         f"The link expires in {settings.PASSWORD_RESET_TTL_MINUTES} minutes. "
@@ -142,7 +142,7 @@ def send_password_reset_email(to: str, token: str) -> None:
         "stays unchanged.\n"
     )
     html = (
-        f"<p>We received a request to reset your Pamten password.</p>"
+        f"<p>We received a request to reset your Owlgraph password.</p>"
         f'<p><a href="{url}">Choose a new password</a></p>'
         f"<p>The link expires in {settings.PASSWORD_RESET_TTL_MINUTES} minutes. "
         f"If you didn't request this, you can ignore this message — your password "
