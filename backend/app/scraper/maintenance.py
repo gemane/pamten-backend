@@ -618,7 +618,10 @@ def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = Tr
     # Clear the stale index entries the batched DELETE leaves behind (see docstring).
     if rebuild_indexes:
         try:
-            r = run_sql("REBUILD INDEX *")
+            # Long timeout — a full rebuild takes far longer than the default 60s.
+            # It only completes over a DIRECT connection (nginx caps at ~600s), so
+            # run wipe-source with --db-url to a tunnel/host for the reindex to land.
+            r = run_sql("REBUILD INDEX *", timeout=3600)
             out["reindexed"] = int(r[0].get("totalIndexed", 0)) if r and isinstance(r[0], dict) else True
         except Exception as exc:  # noqa: BLE001 - don't lose the wipe result over a reindex hiccup
             out["reindexed"] = False

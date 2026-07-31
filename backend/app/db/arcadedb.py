@@ -55,12 +55,19 @@ def close_client() -> None:
 _MAX_RETRIES = 4
 
 
-def _post(endpoint: str, statement: str, params: dict, language: str = "cypher") -> list[dict]:
+def _post(endpoint: str, statement: str, params: dict, language: str = "cypher",
+          timeout: float | None = None) -> list[dict]:
     url  = f"{settings.ARCADEDB_URL}/api/v1/{endpoint}/{settings.ARCADEDB_DATABASE}"
     body = {"language": language, "command": statement, "params": params}
+    # A per-request read/write timeout override (default = the client's 60s). Long
+    # maintenance ops (REBUILD INDEX *) need this — and a direct connection, since
+    # nginx in front of the dev DB caps requests at ~600s.
+    kwargs = {}
+    if timeout is not None:
+        kwargs["timeout"] = httpx.Timeout(connect=10.0, read=timeout, write=timeout, pool=10.0)
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            resp = _get_client().post(url, json=body)
+            resp = _get_client().post(url, json=body, **kwargs)
         except httpx.RequestError as exc:
             raise ConnectionError(f"ArcadeDB unreachable: {exc}") from exc
 
@@ -89,9 +96,11 @@ def run_command(cypher: str, params: dict | None = None) -> list[dict]:
     return _post("command", cypher, params or {})
 
 
-def run_sql(command: str, params: dict | None = None) -> list[dict]:
-    """Execute an ArcadeDB SQL command — used for schema DDL (Cypher can't)."""
-    return _post("command", command, params or {}, language="sql")
+def run_sql(command: str, params: dict | None = None, timeout: float | None = None) -> list[dict]:
+    """Execute an ArcadeDB SQL command — used for schema DDL (Cypher can't).
+    `timeout` (seconds) overrides the client's default read/write timeout for slow
+    maintenance commands such as `REBUILD INDEX *`."""
+    return _post("command", command, params or {}, language="sql", timeout=timeout)
 
 
 def run_sqlscript(script: str, params: dict | None = None) -> list[dict]:
