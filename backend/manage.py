@@ -181,19 +181,6 @@ def cmd_backfill_search(args):
     print("Backfill complete. Ensure the FULL_TEXT index exists: python manage.py init-schema")
 
 
-def cmd_reindex(args):
-    """Rebuild all ArcadeDB indexes (`REBUILD INDEX *`). Clears stale/corrupt index
-    entries a mass DELETE can leave behind. A full rebuild takes longer than the
-    proxy allows (~600s), so point --db-url at a direct connection (SSH tunnel to the
-    DB host, or the host's own localhost)."""
-    _apply_direct_db_url(args)
-    from app.db.arcadedb import run_sql
-    print("Rebuilding all indexes (REBUILD INDEX *) — this can take several minutes...")
-    r = run_sql("REBUILD INDEX *", timeout=getattr(args, "timeout", None) or 3600)
-    row = r[0] if r and isinstance(r[0], dict) else {}
-    print(f"Done: totalIndexed={row.get('totalIndexed')}, recordsMisplaced={row.get('recordsMisplaced')}")
-
-
 def cmd_wipe_source(args):
     """Delete ONE source's data (edges + the nodes only it created). There is no
     whole-database wipe — a fresh dev start is a database DROP. Guards mirror the
@@ -352,14 +339,6 @@ def _build_parser():
                         help='Override ARCADEDB_URL — point straight at ArcadeDB (only via an SSH tunnel to the DB '
                              'host; localhost here is the test container) so the reindex is not cut off by a proxy timeout')
     p_wipe.set_defaults(func=cmd_wipe_source)
-
-    # reindex command (rebuild all indexes — clears stale/corrupt entries a mass DELETE leaves)
-    p_reidx = subparsers.add_parser('reindex',
-                                    help='Rebuild all ArcadeDB indexes (REBUILD INDEX *). Use --db-url to a direct '
-                                         'connection — a full rebuild outlasts the ~600s proxy timeout.')
-    p_reidx.add_argument('--db-url', help='Override ARCADEDB_URL — a direct connection (SSH tunnel / DB host localhost)')
-    p_reidx.add_argument('--timeout', type=int, help='Client read timeout in seconds (default 3600)')
-    p_reidx.set_defaults(func=cmd_reindex)
 
     # geocode command
     p_geo = subparsers.add_parser('geocode', help='Backfill lat/lng for Location nodes via Nominatim')
