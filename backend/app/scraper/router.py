@@ -5,10 +5,11 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.scraper.runner import (
     run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
-)
+)  # noqa: F401 - importing runner also registers the built-in scrapers in the registry
 from app.auth.dependencies import require_admin, require_contributor
 from app.scraper import maintenance, proxy_write
 from app.scraper.run_log import record_run, list_runs
+from app.scraper.scraper_registry import get as _get_scraper, registered as _registered_scrapers
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,66 @@ def scraper_run_all(
     except Exception:
         logger.exception("Run-all scrape failed (company=%r)", company)
         raise HTTPException(status_code=500, detail="Run-all failed. Check server logs for details.")
+
+
+# ── Generic per-source endpoints (registry-driven) ────────────────────────────
+# Any registered scraper is reachable here with NO per-scraper router code — a new
+# scraper just registers a ScraperSpec (see app/scraper/scraper_registry.py). The
+# named endpoints above are kept for the built-ins the current frontend calls.
+
+@router.get("/registry")
+def scraper_registry():
+    """List the registered scrapers and whether each is currently runnable
+    (master switch AND the scraper's own enabled predicate)."""
+    return {
+        "master_switch": settings.SCRAPER_ENABLED,
+        "scrapers": [
+            {"name": s.name, "enabled": settings.SCRAPER_ENABLED and s.enabled()}
+            for s in _registered_scrapers()
+        ],
+    }
+
+
+@router.get("/source/{name}/status")
+def scraper_source_status(name: str):
+    """Enabled state for one registered scraper by name."""
+    spec = _get_scraper(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"No scraper named {name!r}")
+    return {
+        "name": name,
+        "enabled": settings.SCRAPER_ENABLED and spec.enabled(),
+        "master_switch": settings.SCRAPER_ENABLED,
+    }
+
+
+@router.post("/source/{name}/run")
+def scraper_source_run(
+    name: str,
+    company: str = Query(..., min_length=2, description="Company name to scrape"),
+    depth:   int = Query(2, ge=0, le=3, description="Subsidiary depth (0–3; ignored by sources that don't traverse)"),
+    _: dict = Depends(require_contributor),
+):
+    """Run one registered scraper by name — the generic entry point for every
+    scraper, current and future. Requires SCRAPER_ENABLED plus the scraper's own
+    switch/source toggle."""
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403, detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+    spec = _get_scraper(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"No scraper named {name!r}")
+    if not spec.enabled():
+        raise HTTPException(status_code=403, detail=f"{name} scraper is disabled (check its switch / source toggle).")
+    try:
+        with record_run(name, company) as run:
+            result = spec.run(company, depth)
+            run["total"] = result.get("total", 0) if isinstance(result, dict) else 0
+        return result
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
+        logger.exception("%s scrape failed (company=%r)", name, company)
+        raise HTTPException(status_code=500, detail=f"{name} scrape failed. Check server logs for details.")
 
 
 # ── OpenCorporates endpoints ──────────────────────────────────────────────────

@@ -99,6 +99,52 @@ def test_scraper_status_includes_wikidata_enabled(client):
     assert "wikidata_enabled" in data
 
 
+# ── Generic registry-driven scraper endpoints ────────────────────────────────
+
+def test_scraper_registry_lists_builtins(client, monkeypatch):
+    # the built-ins' enabled() consults the per-source toggle (DB) — stub it here
+    monkeypatch.setattr("app.scraper.runner.get_source_enabled", lambda name: True)
+    r = client.get("/scraper/registry")
+    assert r.status_code == 200
+    assert [s["name"] for s in r.json()["scrapers"]] == ["wikidata", "sec_edgar", "open_corporates"]
+
+
+def test_scraper_source_status_known_and_unknown(client, monkeypatch):
+    monkeypatch.setattr("app.scraper.runner.get_source_enabled", lambda name: True)
+    assert client.get("/scraper/source/wikidata/status").status_code == 200
+    assert client.get("/scraper/source/nope/status").status_code == 404   # unknown → 404 before any DB check
+
+
+def test_scraper_source_run_requires_auth(client):
+    r = client.post("/scraper/source/wikidata/run", params={"company": "Acme"})
+    assert r.status_code in (401, 403)   # no token
+
+
+def test_scraper_source_run_master_off_and_unknown(client, make_token, monkeypatch):
+    from app.config import settings
+    tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
+    # master switch off → 403 even for a real scraper
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", False)
+    assert client.post("/scraper/source/wikidata/run", params={"company": "Acme"}, headers=tok).status_code == 403
+    # master on, but no such scraper → 404
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    assert client.post("/scraper/source/nope/run", params={"company": "Acme"}, headers=tok).status_code == 404
+
+
+def test_scraper_source_run_dispatches_to_registered(client, make_token, monkeypatch):
+    from app.config import settings
+    import app.scraper.scraper_registry as reg
+    from app.scraper.scraper_registry import ScraperSpec
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    fake = ScraperSpec("faketest", lambda q, d: {"status": "ok", "total": 7, "echo": q, "depth": d}, lambda: True)
+    monkeypatch.setattr(reg, "_registry", {**reg._registry, "faketest": fake})
+
+    tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
+    r = client.post("/scraper/source/faketest/run", params={"company": "Acme", "depth": 1}, headers=tok)
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok", "total": 7, "echo": "Acme", "depth": 1}
+
+
 # ── Stats endpoint ──────────────────────────────────────────────────────────────
 
 def test_stats_is_public_and_maps_types(client, monkeypatch):
