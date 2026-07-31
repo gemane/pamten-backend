@@ -163,6 +163,7 @@ def _upsert_entity(
     countries: list[str] | None = None,      # all domiciles (dual-listed → >1)
     hq_locations: list[str] | None = None,   # all HQs as "City|CC" strings
     source_id: str | None = None,
+    credibility_score: int = 80,
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
@@ -223,7 +224,7 @@ def _upsert_entity(
                 desc=description,
                 name_norm=name_norm,
                 search_text=search_text,
-                cred=WIKIDATA_CREDIBILITY,
+                cred=credibility_score,
                 employees=employees, employees_as_of=employees_as_of,
                 aliases=aliases or [],
                 countries=countries or [], hq_locations=hq_locations or [],
@@ -252,7 +253,7 @@ def _upsert_entity(
             name=name,
             name_norm=name_norm,
             search_text=search_text,
-            cred=WIKIDATA_CREDIBILITY,
+            cred=credibility_score,
             type=entity_type,
             country=country,
             founded=founded,
@@ -354,7 +355,7 @@ def _upsert_person(
 
 def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
                  source_url: str | None = None, source_date: str | None = None,
-                 owner_label: str = "Entity"):
+                 owner_label: str = "Entity", credibility_score: int = 80):
     """Create an active OWNS edge if one doesn't already exist.
 
     Stamps per-entry provenance (source_url/source_date/last_scraped_at). On a
@@ -402,14 +403,15 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
             oid=owner_id,
             nid=owned_id,
             sid=source_id,
-            score=WIKIDATA_CREDIBILITY,
+            score=credibility_score,
             surl=source_url, sdate=source_date, now=now,
         )
 
 
 def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
                        since: str | None = None,
-                       source_url: str | None = None, source_date: str | None = None):
+                       source_url: str | None = None, source_date: str | None = None,
+                       credibility_score: int = 80):
     """Create a SUCCEEDED_BY edge (predecessor → successor) if none exists.
 
     Models corporate succession/rename (e.g. Twitter → X Corp., from Wikidata
@@ -451,13 +453,13 @@ def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
             }]->(b)
             """,
             pid=predecessor_id, sid=successor_id, srcid=source_id, since=since,
-            score=WIKIDATA_CREDIBILITY, surl=source_url, sdate=source_date, now=now,
+            score=credibility_score, surl=source_url, sdate=source_date, now=now,
         )
 
 
 def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                  since: str | None = None, until: str | None = None,
-                 source_url: str | None = None):
+                 source_url: str | None = None, credibility_score: int = 80):
     """Create a HAS_ROLE edge if one doesn't already exist (matched on role+since)."""
     now = _now_iso()
     with db.get_session() as session:
@@ -501,7 +503,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             since=since,
             until=until,
             sid=source_id,
-            score=WIKIDATA_CREDIBILITY,
+            score=credibility_score,
             surl=source_url, now=now,
         )
 
@@ -753,7 +755,8 @@ def _merge_aliases(existing: list[str] | None, new: list[str] | None,
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None,
                             source_id: str | None = None,
-                            former_names: list[str] | None = None) -> str:
+                            former_names: list[str] | None = None,
+                            credibility_score: int = 98) -> str:
     """Find or create an Entity node matched by CIK, exact name, or normalized name.
 
     ``source_id`` (the calling scraper's Source node — SEC EDGAR or
@@ -836,7 +839,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             })
             """,
             id=entity_id, name=name, name_norm=name_norm,
-            cred=SEC_EDGAR_CREDIBILITY, type=entity_type, cik=cik, source_id=source_id,
+            cred=credibility_score, type=entity_type, cik=cik, source_id=source_id,
             search_text=_search_text(name, None, aliases), aliases=aliases,
             is_nominee=is_nominee_name(name),
         )
@@ -895,7 +898,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
 def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
                      stake_percent: float | None, source_url: str | None = None,
-                     owner_label: str = "Entity"):
+                     owner_label: str = "Entity", credibility_score: int = 98):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
@@ -951,14 +954,14 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             """,
             oid=owner_id, nid=owned_id,
             stake=stake_percent, otype=ownership_type,
-            since=file_date, sid=source_id, score=SEC_EDGAR_CREDIBILITY,
+            since=file_date, sid=source_id, score=credibility_score,
             surl=source_url, sdate=file_date, now=now,
         )
 
 
 def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                      source_id: str, source_url: str | None = None,
-                     source_date: str | None = None):
+                     source_date: str | None = None, credibility_score: int = 98):
     """Create a HAS_ROLE edge attributed to SEC EDGAR if not already present.
 
     Provenance: source_url = the specific Form 3/4 filing document,
@@ -999,7 +1002,7 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             }]->(e)
             """,
             pid=person_id, eid=entity_id, role=role,
-            sid=source_id, score=SEC_EDGAR_CREDIBILITY,
+            sid=source_id, score=credibility_score,
             surl=source_url, sdate=source_date, now=now,
         )
 
@@ -1279,7 +1282,7 @@ def _upsert_location_oc(address: dict) -> str | None:
 
 def _upsert_role_oc(person_id: str, entity_id: str, role: str,
                     start_date: str | None, end_date: str | None,
-                    source_id: str, source_url: str | None = None):
+                    source_id: str, source_url: str | None = None, credibility_score: int = 85):
     """Create a HAS_ROLE edge attributed to OpenCorporates if not already present.
 
     Stamps per-entry provenance: source_url = the OpenCorporates company page,
@@ -1319,7 +1322,7 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
             """,
             pid=person_id, eid=entity_id, role=role,
             since=start_date, until=end_date,
-            sid=source_id, score=OPENCORPORATES_CREDIBILITY,
+            sid=source_id, score=credibility_score,
             surl=source_url, now=now,
         )
 
