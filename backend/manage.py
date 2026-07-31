@@ -222,8 +222,10 @@ def cmd_wipe_source(args):
             sys.exit(1)
 
     _apply_direct_db_url(args)   # point straight at ArcadeDB so the reindex isn't cut off by a proxy timeout
+    prefixes = [p.strip() for p in (getattr(args, "id_prefix", None) or "").split(",") if p.strip()]
     try:
-        result = wipe_source(source, batch=getattr(args, "batch", None) or 10000)
+        result = wipe_source(source, batch=getattr(args, "batch", None) or 10000,
+                             id_prefixes=prefixes or None)
     except ValueError as exc:
         print(exc)
         sys.exit(1)
@@ -329,9 +331,13 @@ def _build_parser():
     p_wipe.add_argument('--yes', action='store_true', help='Skip the interactive retype-the-source-name prompt')
     p_wipe.add_argument('--batch', type=int, default=10000,
                         help='Rows deleted per request — keep each well under the DB proxy timeout (default 10000)')
+    p_wipe.add_argument('--id-prefix',
+                        help='Comma-separated node id prefixes for this source (e.g. "chpsc:,gb-coh:" for UK PSC) — '
+                             'deletes nodes by an indexed id range instead of an unindexed source_id scan (much '
+                             'faster on millions of rows). Still degree-aware + source_id-guarded.')
     p_wipe.add_argument('--db-url',
-                        help='Override ARCADEDB_URL — point straight at ArcadeDB (e.g. http://localhost:2480) so '
-                             'the final REBUILD INDEX * is not cut off by a proxy read timeout')
+                        help='Override ARCADEDB_URL — point straight at ArcadeDB (only via an SSH tunnel to the DB '
+                             'host; localhost here is the test container) so the reindex is not cut off by a proxy timeout')
     p_wipe.set_defaults(func=cmd_wipe_source)
 
     # geocode command

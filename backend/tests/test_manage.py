@@ -38,9 +38,9 @@ def test_backfill_search_updates_entity_and_person(monkeypatch):
 def _stub_wipe(monkeypatch):
     """Record calls to maintenance.wipe_source without touching the DB."""
     calls: list[dict] = []
-    def fake(source, batch=10000):
-        calls.append({"source": source, "batch": batch})
-        return {"edges": {"OWNS": 3}, "nodes": {"Entity": 2, "Person": 5}}
+    def fake(source, batch=10000, id_prefixes=None, **kw):
+        calls.append({"source": source, "batch": batch, "id_prefixes": id_prefixes})
+        return {"edges": {"OWNS": 3}, "nodes": {"Entity": 2, "Person": 5}, "reindexed": 9}
     monkeypatch.setattr("app.scraper.maintenance.wipe_source", fake)
     return calls
 
@@ -50,9 +50,9 @@ def test_wipe_source_delegates_after_guards(monkeypatch):
     calls = _stub_wipe(monkeypatch)
 
     import manage
-    manage.cmd_wipe_source(_args(yes=True, source="UK PSC", batch=500))
+    manage.cmd_wipe_source(_args(yes=True, source="UK PSC", batch=500, id_prefix="chpsc:,gb-coh:"))
 
-    assert calls == [{"source": "UK PSC", "batch": 500}]
+    assert calls == [{"source": "UK PSC", "batch": 500, "id_prefixes": ["chpsc:", "gb-coh:"]}]
 
 
 def test_wipe_source_refuses_without_the_dedicated_flag(monkeypatch):

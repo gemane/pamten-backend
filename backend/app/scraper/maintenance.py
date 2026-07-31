@@ -559,13 +559,20 @@ def _batched_delete(where_sql: str, params: dict, batch: int) -> int:
             return total
 
 
-def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = True) -> dict:
+def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = True,
+                id_prefixes: list[str] | None = None) -> dict:
     """Delete one source's contribution to the graph — its edges, then the nodes
     only it created (now orphaned). Nodes/edges another source also references are
     kept: a scraped GLEIF company that also has Wikidata edges survives (minus
     GLEIF's own edges). Batched (never a single mass delete), and it never drops a
     type — other sources' data lives in the same types — so this can't wipe the
     whole DB. A fresh start is a database drop, not this command.
+
+    `id_prefixes` makes the node deletion fast for a source whose nodes are keyed by
+    a known prefix (UK PSC → `chpsc:` persons, `gb-coh:` companies): it deletes by an
+    index-backed `id` range instead of an unindexed `source_id` full scan (which
+    crawls once a type holds millions of rows + delete tombstones). Still
+    degree-aware (the `both().size() = 0` filter) and still `source_id`-guarded.
 
     `rebuild_indexes` (default on) runs `REBUILD INDEX *` afterwards to clear the
     stale index entries a batched `DELETE` leaves behind — otherwise a later
@@ -587,10 +594,21 @@ def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = Tr
     for et in _WIPE_EDGE_TYPES:
         out["edges"][et] = _batched_delete(f"DELETE FROM {et} WHERE source_id = :s", {"s": sid}, batch)
     # 2) The source's own nodes that are now orphaned (degree 0). Shared/corroborated
-    #    nodes still carry another source's edge → not orphaned → kept.
+    #    nodes still carry another source's edge → not orphaned → kept. With known id
+    #    prefixes, restrict by an indexed id range (fast); else scan by source_id.
+    prefixes = [p for p in (id_prefixes or []) if p]
     for nt in _WIPE_NODE_TYPES:
-        out["nodes"][nt] = _batched_delete(
-            f"DELETE FROM {nt} WHERE source_id = :s AND both().size() = 0", {"s": sid}, batch)
+        if prefixes:
+            deleted = 0
+            for pfx in prefixes:
+                lo, hi = pfx, pfx[:-1] + chr(ord(pfx[-1]) + 1)   # [pfx, next-after-pfx)
+                deleted += _batched_delete(
+                    f"DELETE FROM {nt} WHERE id >= :lo AND id < :hi AND source_id = :s "
+                    "AND both().size() = 0", {"lo": lo, "hi": hi, "s": sid}, batch)
+            out["nodes"][nt] = deleted
+        else:
+            out["nodes"][nt] = _batched_delete(
+                f"DELETE FROM {nt} WHERE source_id = :s AND both().size() = 0", {"s": sid}, batch)
     # 3) Removing GLEIF's baseline must reset the incremental checkpoint, or the
     #    gleif-update cron would apply deltas onto a graph with no foundation.
     if source_name.strip().upper() == "GLEIF":
