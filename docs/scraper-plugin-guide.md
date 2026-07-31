@@ -280,20 +280,21 @@ def run_scrape_mysource(company_name: str) -> dict:
 **Import inside the function.** This avoids circular imports and keeps
 cold-start fast (the module is only loaded when the scraper actually runs).
 
-Then add it to `run_scrape_all()`:
+Then **register** it so `run_scrape_all` picks it up — no edits to the orchestrator,
+which iterates the registry (`app/scraper/scraper_registry.py`):
 
 ```python
-if settings.SCRAPER_MYSOURCE_ENABLED and get_source_enabled("my_source"):
-    try:
-        results["my_source"] = run_scrape_mysource(query)
-    except PermissionError as exc:
-        results["my_source"] = {"status": "disabled", "detail": str(exc)}
-    except Exception as exc:
-        log.error("My Source scrape failed for %r: %s", query, exc)
-        results["my_source"] = {"status": "error", "detail": str(exc)}
-else:
-    results["my_source"] = {"status": "disabled"}
+from app.scraper.scraper_registry import ScraperSpec, register
+
+register(ScraperSpec(
+    "my_source",
+    lambda q, d: run_scrape_mysource(q),   # (query, depth); ignore depth if unused
+    lambda: settings.SCRAPER_MYSOURCE_ENABLED and get_source_enabled("my_source"),
+))
 ```
+
+`run_scrape_all` applies the enabled/disabled/error wrapping uniformly to every
+registered scraper, so a registered spec is all the wiring `run-all` needs.
 
 ---
 
