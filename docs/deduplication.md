@@ -178,11 +178,18 @@ Two ways the same company becomes multiple `Entity` nodes, with different fixes.
 
 ## Same identifier, two nodes — `deduplicate_entities`
 
-The old recordId-keyed BODS importer could create two nodes for one company. These
-**share an LEI / Companies House id**, so `deduplicate_entities` merges them by that
-id (sharded by id prefix to stay under ArcadeDB's query-heap cap). Exposed at
+When the same company arrives from two sources it becomes two nodes that **share a hard
+external id** — an **LEI, Companies House number, SEC CIK or Wikidata id** —
+so `deduplicate_entities` merges them by that id (sharded by id prefix to stay under
+ArcadeDB's query-heap cap). This is the **cross-source merge and needs no name match or
+Wikidata hub**: e.g. a UK company imported from both GLEIF (`lei:…`) and PSC (`gb-coh:…`)
+shares `companies_house_id` — GLEIF stamps it from the registration number when the
+registrar is Companies House (RA000585), the same value PSC keys on — so the two
+collapse to one node carrying the LEI, the name, and the ownership edges. Exposed at
 `POST /scraper/deduplicate-entities` (background job; `strategy=bulk` deletes losers,
-`strategy=merge` migrates edges first).
+`strategy=merge` migrates edges first) and `python manage.py dedupe-entities`. Bridging
+sources that *don't* share a key (GLEIF↔SEC — GLEIF has no CIK) needs a concordance
+first, e.g. GLEIF's OpenCorporates id → the OpenCorporates record's SEC CIK.
 
 ## Id-less parties — collapsed by name at import
 

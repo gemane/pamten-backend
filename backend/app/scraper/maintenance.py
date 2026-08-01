@@ -208,7 +208,7 @@ def _group_confidence(members: list[dict]) -> str:
         vals = [m.get(field) for m in members if m.get(field)]
         return len(vals) >= 2 and len(set(vals)) < len(vals)
 
-    if any(_shared(f) for f in ("wikidata_id", "sec_cik", "companies_house_id")):
+    if any(_shared(f) for f in ("lei_id", "wikidata_id", "sec_cik", "companies_house_id")):
         return "definitive"
     if _shared("registered_address"):
         return "high"
@@ -681,9 +681,12 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
 
 def deduplicate_entities(limit: int | None = 300) -> dict:
     """
-    Merge Entity nodes that share a stable external identifier — the same LEI or
-    the same Companies House number — into one, migrating their edges and deleting
-    the extras. Heals duplicates left by the older BODS importer, which keyed
+    Merge Entity nodes that share a stable external identifier — the same LEI,
+    Companies House number, SEC CIK or Wikidata id — into one, migrating their edges
+    and deleting the extras. This is the cross-source merge: the same company arriving
+    from two sources (e.g. a GLEIF node and a PSC node for one UK company, both keyed
+    on companies_house_id) collapses to one node — no name match or Wikidata required.
+    Also heals duplicates left by the older BODS importer, which keyed
     entities on the per-dump BODS recordId, so the same company imported in two
     runs became two nodes. Admin only.
 
@@ -695,9 +698,14 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     highest ``name_credibility`` node (then verified, then the lexically-smallest
     id, for a deterministic result).
     """
-    # All duplicate groups across both identifier kinds (cheap aggregation).
+    # All duplicate groups across every hard external identifier (cheap aggregation).
+    # A shared LEI / Companies House number / SEC CIK / Wikidata id ⇒ same company,
+    # so this merges across sources (e.g. a GLEIF node and a PSC node for the same UK
+    # company share companies_house_id) — no name match or Wikidata hub required.
     dup_keys = [("lei_id", k) for k in _duplicate_keys("lei_id")]
     dup_keys += [("companies_house_id", k) for k in _duplicate_keys("companies_house_id")]
+    dup_keys += [("sec_cik", k) for k in _duplicate_keys("sec_cik")]
+    dup_keys += [("wikidata_id", k) for k in _duplicate_keys("wikidata_id")]
     total = len(dup_keys)
     batch = dup_keys if limit is None else dup_keys[:limit]
 
