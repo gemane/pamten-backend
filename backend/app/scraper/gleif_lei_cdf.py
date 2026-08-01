@@ -138,6 +138,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "founded": _founded(entity),
         "lei_id": lei,
         "source_id": source_id,
+        # Deep-link to this company's GLEIF record, not the source home page — the
+        # node's "reported / verify" link should open the exact LEI.
+        "source_url": f"https://search.gleif.org/#/record/{lei}",
         "is_nominee": is_nominee_name(name),
     }
     # Real operating location (top of the node). Only set when GLEIF has an HQ address,

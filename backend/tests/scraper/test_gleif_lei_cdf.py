@@ -66,6 +66,7 @@ class TestEntityProps:
         assert props["founded"] == 1990
         assert "main st 1" in props["registered_address"] and props["registered_address"].endswith("de")
         assert props["is_nominee"] is False
+        assert props["source_url"] == "https://search.gleif.org/#/record/LEI123"  # deep link, not home page
         assert "type" not in props            # generic → type left untouched
 
     def test_legal_form_refines_type(self):
