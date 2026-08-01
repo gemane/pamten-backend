@@ -895,6 +895,20 @@ def fetch_former_names(cik: str) -> list[str]:
     return out
 
 
+def fetch_company_lei(cik: str) -> str | None:
+    """The company's LEI from its EDGAR submissions (the ``lei`` field), or None.
+
+    SEC exposes the LEI a filer reported — regulated/financial filers usually do,
+    many operating companies don't — which lets a SEC entity merge with its GLEIF
+    node by ``lei_id`` (no OpenCorporates/Wikidata bridge needed)."""
+    try:
+        sub = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+    except Exception as exc:  # noqa: BLE001 - a missing/failed submissions file mustn't abort the scrape
+        log.warning("SEC EDGAR: LEI fetch failed for CIK=%s: %s", cik, exc)
+        return None
+    return (sub.get("lei") or "").strip() or None
+
+
 def scrape_company(company_name: str) -> dict | None:
     """
     Full SEC EDGAR scrape for one company.
@@ -907,6 +921,7 @@ def scrape_company(company_name: str) -> dict | None:
 
     cik          = company.get("cik")
     former_names = fetch_former_names(cik) if cik else []
+    lei          = fetch_company_lei(cik) if cik else None
     ownership    = fetch_ownership_filings(company_name, company_cik=cik)
     executives   = fetch_executives(cik) if cik else []
 
@@ -922,6 +937,7 @@ def scrape_company(company_name: str) -> dict | None:
     return {
         "cik":                company["cik"],
         "name":               company["name"],
+        "lei":                lei,
         "former_names":       former_names,
         "ownership_filings":  ownership,
         "executives":         executives,

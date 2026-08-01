@@ -24,6 +24,7 @@ from app.scraper.sec_edgar import (
     _lookup_in_tickers,
     search_company,
     fetch_former_names,
+    fetch_company_lei,
 )
 
 
@@ -49,6 +50,26 @@ class TestFetchFormerNames:
     def test_swallows_fetch_error(self):
         with patch("app.scraper.sec_edgar._get", side_effect=RuntimeError("404")):
             assert fetch_former_names("x") == []
+
+
+class TestFetchCompanyLei:
+    """The LEI from EDGAR submissions bridges a SEC entity to its GLEIF node."""
+
+    def test_returns_reported_lei(self):
+        with patch("app.scraper.sec_edgar._get",
+                   return_value={"name": "X", "lei": "5493001KJTIIGC8Y1R12"}):
+            assert fetch_company_lei("x") == "5493001KJTIIGC8Y1R12"
+
+    def test_null_or_missing_lei(self):
+        # Microsoft-style: field present but null, or absent entirely → None
+        with patch("app.scraper.sec_edgar._get", return_value={"lei": None}):
+            assert fetch_company_lei("x") is None
+        with patch("app.scraper.sec_edgar._get", return_value={"name": "X"}):
+            assert fetch_company_lei("x") is None
+
+    def test_swallows_fetch_error(self):
+        with patch("app.scraper.sec_edgar._get", side_effect=RuntimeError("404")):
+            assert fetch_company_lei("x") is None
 
 
 # ── Pure helpers ───────────────────────────────────────────────────────────────

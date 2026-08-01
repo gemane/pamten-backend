@@ -187,9 +187,16 @@ shares `companies_house_id` — GLEIF stamps it from the registration number whe
 registrar is Companies House (RA000585), the same value PSC keys on — so the two
 collapse to one node carrying the LEI, the name, and the ownership edges. Exposed at
 `POST /scraper/deduplicate-entities` (background job; `strategy=bulk` deletes losers,
-`strategy=merge` migrates edges first) and `python manage.py dedupe-entities`. Bridging
-sources that *don't* share a key (GLEIF↔SEC — GLEIF has no CIK) needs a concordance
-first, e.g. GLEIF's OpenCorporates id → the OpenCorporates record's SEC CIK.
+`strategy=merge` migrates edges first) and `python manage.py dedupe-entities`.
+
+**GLEIF↔SEC** don't share the obvious key (GLEIF carries no CIK), but SEC does the work
+for us: EDGAR's submissions JSON has an `lei` field, so the SEC scraper stamps `lei_id`
+on the entity (`fetch_company_lei`) — a SEC filer that reported its LEI then merges with
+its GLEIF node by `lei_id`. Coverage is partial: regulated/financial filers report their
+LEI, many operating companies don't (e.g. Microsoft's is null). For the rest, the only
+LEI↔CIK path is GLEIF's OpenCorporates id → the OpenCorporates record's SEC CIK, which
+needs a **paid OpenCorporates API token** (the API returns 401 anonymously; the CIK is
+only free on their website).
 
 ## Id-less parties — collapsed by name at import
 
