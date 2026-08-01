@@ -105,6 +105,32 @@ def _statements() -> list[str]:
     return stmts
 
 
+def rebuild_fulltext_indexes(timeout: float = 3600) -> dict:
+    """Fully repopulate the FULL_TEXT search indexes and return {"ok", "failed"}.
+
+    A `--bulk-load` leaves these incomplete: the load drops them (per-insert FULL_TEXT
+    maintenance is slow and, when a load is interrupted, unreliable), and afterwards
+    ``ensure_indexes()`` only re-`CREATE`s them — `CREATE INDEX IF NOT EXISTS` is a
+    no-op the moment the index exists, so it never backfills. An explicit `REBUILD`
+    repopulates from the final data in one pass, which is what /search depends on.
+    Runs with a long timeout (REBUILD is synchronous, minutes on millions of rows);
+    a bulk load already talks to ArcadeDB directly (`--db-url`), bypassing any proxy
+    read-timeout ceiling.
+    """
+    ok: list[str] = []
+    failed: list[dict] = []
+    for vtype, prop in _FULLTEXT_INDEXES:
+        name = f"{vtype}[{prop}]"
+        try:
+            run_sql(f"REBUILD INDEX `{name}`", timeout=timeout)
+            ok.append(name)
+        except Exception as exc:  # noqa: BLE001 - best-effort maintenance
+            log.warning("FULL_TEXT rebuild failed (%s): %s", name, exc)
+            failed.append({"index": name, "error": str(exc)})
+    log.info("FULL_TEXT rebuild: %d ok, %d failed", len(ok), len(failed))
+    return {"ok": ok, "failed": failed}
+
+
 def ensure_indexes() -> dict:
     """
     Create the types/properties/indexes best-effort. Returns a summary:

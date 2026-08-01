@@ -223,5 +223,37 @@ class TestBulkLoad:
         # never drop the id indexes the import relies on
         assert "Entity[id]" not in names
         assert "Person[id]" not in names
+        # the FULL_TEXT search indexes are dropped too — maintaining them per-insert
+        # under a bulk load is slow and can leave them incomplete; rebuilt at the end
+        assert "Entity[search_text]" in names
+        assert "Person[search_text]" in names
         # only Entity/Person are touched
         assert all(n.startswith("Entity[") or n.startswith("Person[") for n in names)
+
+    def test_rebuild_indexes_repopulates_fulltext(self):
+        """After a bulk load, _rebuild_indexes() must both re-create the LSM indexes
+        (ensure_indexes) AND explicitly REBUILD the FULL_TEXT indexes — CREATE IF NOT
+        EXISTS never backfills a stale search index, so /search would come up empty."""
+        from app.scraper import bulk_import
+
+        with patch("app.db.schema.ensure_indexes",
+                   return_value={"ok": [], "failed": []}) as ens, \
+             patch("app.db.schema.rebuild_fulltext_indexes",
+                   return_value={"ok": ["Entity[search_text]", "Person[search_text]"],
+                                 "failed": []}) as reb:
+            bulk_import._rebuild_indexes()
+
+        ens.assert_called_once()
+        reb.assert_called_once()
+
+    def test_rebuild_fulltext_issues_rebuild_per_index(self):
+        from app.db import schema
+
+        issued: list[str] = []
+        with patch("app.db.schema.run_sql",
+                   side_effect=lambda cmd, *a, **k: issued.append(cmd) or []):
+            res = schema.rebuild_fulltext_indexes()
+
+        assert res["failed"] == []
+        assert "REBUILD INDEX `Entity[search_text]`" in issued
+        assert "REBUILD INDEX `Person[search_text]`" in issued
