@@ -188,6 +188,10 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "search_text": search_text,
                     "type": _company_type(row.get("CompanyCategory")),
                     "country": "GB",
+                    # Registered-office town → hq so the geocoder can place it on the map
+                    # (a UK Companies House company is GB-registered).
+                    "hq_city": (row.get("RegAddress.PostTown") or "").strip() or None,
+                    "hq_country": "GB",
                     "founded": _founded(row.get("IncorporationDate")),
                     "registered_address": _reg_address(row),
                     "companies_house_id": number,
