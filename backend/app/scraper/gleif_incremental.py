@@ -34,7 +34,7 @@ import ijson
 from app.db.arcadedb import run_command, run_sql
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
 from app.scraper.gleif_lei_cdf import _entity_props
-from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei
+from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei, _relationship_dates
 from app.scraper.gleif_succession import _iter_lei_records, _pairs_from_record, _v
 
 log = logging.getLogger(__name__)
@@ -100,9 +100,11 @@ def _ensure_lei_node(lei: str, source_id: str) -> None:
 
 
 def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str,
-                      source_id: str, credibility_score: int) -> str:
+                      source_id: str, credibility_score: int, since: str | None = None) -> str:
     """Create the (parent)-[:OWNS {marker}]->(child) edge if absent, else refresh it
-    and clear any stale `until`. Assumes both nodes already exist. 'created'|'updated'."""
+    and clear any stale `until`. Assumes both nodes already exist. 'created'|'updated'.
+    `since` (relationship start date) is set on create and backfilled on update without
+    clobbering an existing value."""
     now = _now_iso()
     exists = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
@@ -112,27 +114,29 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
         run_command(
             "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
             "WHERE r.direct_or_indirect = $m "
-            "SET r.until = null, r.last_scraped_at = $now, r.credibility_score = $cred",
-            {"p": parent_id, "c": child_id, "m": marker, "now": now, "cred": credibility_score})
+            "SET r.until = null, r.last_scraped_at = $now, r.credibility_score = $cred, "
+            "r.since = coalesce(r.since, $since)",
+            {"p": parent_id, "c": child_id, "m": marker, "now": now,
+             "cred": credibility_score, "since": since})
         return "updated"
     run_command(
         "MATCH (a:Entity {id:$p}) MATCH (b:Entity {id:$c}) "
         "CREATE (a)-[:OWNS {direct_or_indirect:$m, ownership_type:'controlling', "
         "interest_types:$it, source_id:$src, credibility_score:$cred, "
-        "source_url:$url, last_scraped_at:$now}]->(b)",
+        "source_url:$url, since:$since, last_scraped_at:$now}]->(b)",
         {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
-         "src": source_id, "cred": credibility_score,
+         "src": source_id, "cred": credibility_score, "since": since,
          "url": f"https://search.gleif.org/#/record/{child_lei}", "now": now})
     return "created"
 
 
 def _upsert_owns(parent_lei: str, child_lei: str, marker: str,
-                 source_id: str, credibility_score: int) -> str:
+                 source_id: str, credibility_score: int, since: str | None = None) -> str:
     """Node-ensuring convenience wrapper (standalone use / tests)."""
     _ensure_lei_node(parent_lei, source_id)
     _ensure_lei_node(child_lei, source_id)
     return _owns_edge_upsert(f"lei:{parent_lei}", f"lei:{child_lei}", child_lei,
-                             marker, source_id, credibility_score)
+                             marker, source_id, credibility_score, since)
 
 
 def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str) -> int:
@@ -242,7 +246,7 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 batch.entity(f"lei:{parent}", {"lei_id": parent, "source_id": source_id})
                 batch.entity(f"lei:{child}", {"lei_id": child, "source_id": source_id})
                 if status == "ACTIVE":
-                    active.append((parent, child, marker))
+                    active.append((parent, child, marker, _relationship_dates(rel)[0]))
                 elif status == "INACTIVE":
                     closures.append((parent, child, marker, _relationship_end_date(rel) or _now_iso()))
                 else:
@@ -252,9 +256,9 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 if counts["errors"] <= 5:
                     log.warning("RR delta record error: %s", exc)
         batch.flush()                      # endpoint nodes exist before edge ops
-        for parent, child, marker in active:
+        for parent, child, marker, since in active:
             outcome = _owns_edge_upsert(f"lei:{parent}", f"lei:{child}", child, marker,
-                                        source_id, credibility_score)
+                                        source_id, credibility_score, since)
             counts["created" if outcome == "created" else "updated"] += 1
         for parent, child, marker, until in closures:
             counts["closed"] += _close_owns(parent, child, marker, until)
