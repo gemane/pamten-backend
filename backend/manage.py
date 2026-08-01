@@ -54,7 +54,9 @@ def cmd_gleif_rr(args):
     settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_rr
     result = _run_guarded_import("gleif-rr",
-        lambda: run_import_gleif_rr(local_file=args.file, limit=args.limit))
+        lambda: run_import_gleif_rr(local_file=args.file, limit=args.limit,
+                                    only_leis=_only_ids(args),
+                                    emit_leis_path=getattr(args, "emit_leis", None)))
     if result is not None:
         print(result)
 
@@ -450,6 +452,9 @@ def _build_parser():
                                  help='Import GLEIF RR-CDF direct/ultimate parents as direct/indirect OWNS edges')
     p_rr.add_argument('--file', required=True, help='Path to a local RR-CDF golden-copy .json/.zip')
     p_rr.add_argument('--limit', type=int, help='Max records to scan')
+    p_rr.add_argument('--only', help='Comma-separated seed LEIs — import their whole corporate family')
+    p_rr.add_argument('--only-file', help='File of seed LEIs (one per line, # comments) — their corporate family')
+    p_rr.add_argument('--emit-leis', help='With --only: write the family LEIs here (feed to gleif-lei-cdf --only-file to name them)')
     p_rr.set_defaults(func=cmd_gleif_rr)
 
     # ch-psc command (Companies House PSC snapshot — replaces UK PSC BODS)

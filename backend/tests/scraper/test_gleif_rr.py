@@ -3,7 +3,10 @@
 End-to-end write (edge with direct_or_indirect) is covered against a real
 ArcadeDB in tests/integration/test_gleif_rr_it.py."""
 
-from app.scraper.gleif_rr import _v, _node_lei, _rr_edge
+import json
+import zipfile
+
+from app.scraper.gleif_rr import _family_of, _node_lei, _rr_edge, _v, import_rr_cdf
 
 
 def _rec(rtype, child, parent, status="ACTIVE", child_type="LEI", parent_type="LEI"):
@@ -48,3 +51,48 @@ class TestRrEdge:
 
     def test_non_lei_node_skipped(self):
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", parent_type="MIC")) is None
+
+
+class TestFamilyOf:
+    def test_walks_down_and_up_the_tree(self):
+        children = {"ROOT": ["A", "B"], "A": ["C"]}
+        parents = {"A": ["ROOT"], "B": ["ROOT"], "C": ["A"]}
+        assert _family_of({"ROOT"}, children, parents) == {"ROOT", "A", "B", "C"}
+        # from a leaf: down = nothing, up = its ancestors
+        assert _family_of({"C"}, children, parents) == {"C", "A", "ROOT"}
+
+
+def _rr_zip(tmp_path, edges):
+    """edges: list of (child, parent, rtype)."""
+    records = [_rec(rt, c, p) for (c, p, rt) in edges]
+    zpath = tmp_path / "rr.json.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("rr.json", json.dumps({"relations": records}))
+    return str(zpath)
+
+
+class TestRrFamilySubset:
+    """`--only` seed LEIs → import the whole corporate family + emit its LEIs."""
+
+    def test_imports_only_the_family_and_emits_leis(self, tmp_path, monkeypatch):
+        from app.scraper import gleif_rr as m
+        written = []
+        monkeypatch.setattr(m, "_owns",
+            lambda batch, owner_id, owned_id, **k: written.append((owner_id, owned_id)))
+        monkeypatch.setattr(m._BatchWriter, "entity", lambda self, nid, props: None)
+        monkeypatch.setattr(m._BatchWriter, "flush", lambda self: None)
+
+        z = _rr_zip(tmp_path, [
+            ("A", "ROOT", "IS_DIRECTLY_CONSOLIDATED_BY"),
+            ("B", "ROOT", "IS_ULTIMATELY_CONSOLIDATED_BY"),
+            ("C", "A", "IS_DIRECTLY_CONSOLIDATED_BY"),
+            ("Z", "OUTSIDER", "IS_DIRECTLY_CONSOLIDATED_BY"),   # unrelated family
+        ])
+        emit = tmp_path / "fam.txt"
+        res = import_rr_cdf(z, "src", 92, only_leis={"ROOT"}, emit_leis_path=str(emit))
+
+        assert res["family"] == 4                       # ROOT, A, B, C
+        assert res["edges"] == 3                         # the OUTSIDER→Z edge excluded
+        assert ("lei:OUTSIDER", "lei:Z") not in written
+        assert ("lei:ROOT", "lei:A") in written and ("lei:A", "lei:C") in written
+        assert set(emit.read_text().split()) == {"ROOT", "A", "B", "C"}

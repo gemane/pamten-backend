@@ -73,8 +73,29 @@ def _rr_edge(rec: dict) -> tuple[str, str, str] | None:
     return parent, child, marker
 
 
+def _family_of(seeds: set[str], children: dict, parents: dict) -> set[str]:
+    """The corporate family of `seeds`: the seeds plus everything reachable DOWN
+    (all descendants via child edges) and UP (all ancestors via parent edges). This
+    is the whole vertical tree — bottom to top — around each seed."""
+    family = set(seeds)
+    down = list(seeds)
+    while down:                                   # descendants
+        for c in children.get(down.pop(), ()):
+            if c not in family:
+                family.add(c)
+                down.append(c)
+    up = list(seeds)
+    while up:                                     # ancestors
+        for p in parents.get(up.pop(), ()):
+            if p not in family:
+                family.add(p)
+                up.append(p)
+    return family
+
+
 def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
-                  limit: int | None = None) -> dict:
+                  limit: int | None = None, only_leis: set[str] | None = None,
+                  emit_leis_path: str | None = None) -> dict:
     """
     Import GLEIF RR-CDF consolidation relationships as direct/indirect OWNS edges.
 
@@ -83,8 +104,15 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         source_id:         Owlgraph GLEIF Source node id.
         credibility_score: Source credibility (0–100).
         limit:             Max records to scan (None = all).
+        only_leis:         Restrict to the corporate FAMILY of these seed LEIs — every
+                           edge among the seeds, their ancestors and their descendants —
+                           for a connected test subset. The RR file is small (~34MB), so
+                           this loads all edges once and walks the tree in memory.
+        emit_leis_path:    When set (with only_leis), write the family's LEIs (one per
+                           line) here, so a follow-up ``gleif-lei-cdf --only-file`` can
+                           name them (RR edges alone leave the counterparties unnamed).
 
-    Returns dict: {records, direct, indirect, skipped, nodes, edges}.
+    Returns dict: {records, direct, indirect, skipped, nodes, edges[, family]}.
     """
     if filepath.lower().endswith(".zip"):
         zf = zipfile.ZipFile(filepath)
@@ -110,36 +138,69 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             # name/type (GLEIF BODS/LEI-CDF imports own those).
             batch.entity(f"lei:{lei}", {"lei_id": lei, "source_id": source_id})
 
+    def _emit_edge(parent: str, child: str, marker: str) -> None:
+        counts["direct" if marker == "direct" else "indirect"] += 1
+        _node(parent)
+        _node(child)
+        _owns(
+            batch, owner_id=f"lei:{parent}", owned_id=f"lei:{child}",
+            stake_percent=None, ownership_type="controlling",
+            since=None, until=None, source_id=source_id,
+            credibility_score=credibility_score,
+            source_url=f"https://search.gleif.org/#/record/{child}",
+            interest_types=["accountingConsolidation"], direct_or_indirect=marker,
+        )
+
+    family: set[str] | None = None
     try:
         bar = _ProgressBar("RR-CDF")
         stream = _ProgressStream(raw, total_bytes, bar)
-        for rec in ijson.items(stream, "relations.item"):
-            if limit and counts["records"] >= limit:
-                break
-            counts["records"] += 1
-            edge = _rr_edge(rec)
-            if not edge:
-                counts["skipped"] += 1
-                continue
-            parent, child, marker = edge
-            counts["direct" if marker == "direct" else "indirect"] += 1
-            _node(parent)
-            _node(child)
-            _owns(
-                batch, owner_id=f"lei:{parent}", owned_id=f"lei:{child}",
-                stake_percent=None, ownership_type="controlling",
-                since=None, until=None, source_id=source_id,
-                credibility_score=credibility_score,
-                source_url=f"https://search.gleif.org/#/record/{child}",
-                interest_types=["accountingConsolidation"], direct_or_indirect=marker,
-            )
+        if only_leis is not None:
+            # Load all edges once, keep only the seeds' family (ancestors + descendants).
+            from collections import defaultdict
+            edges: list[tuple[str, str, str]] = []
+            children: dict[str, list[str]] = defaultdict(list)
+            parents: dict[str, list[str]] = defaultdict(list)
+            for rec in ijson.items(stream, "relations.item"):
+                if limit and counts["records"] >= limit:
+                    break
+                counts["records"] += 1
+                edge = _rr_edge(rec)
+                if not edge:
+                    counts["skipped"] += 1
+                    continue
+                parent, child, marker = edge
+                edges.append(edge)
+                children[parent].append(child)
+                parents[child].append(parent)
+            family = _family_of(only_leis, children, parents)
+            for parent, child, marker in edges:
+                if parent in family and child in family:
+                    _emit_edge(parent, child, marker)
+        else:
+            for rec in ijson.items(stream, "relations.item"):
+                if limit and counts["records"] >= limit:
+                    break
+                counts["records"] += 1
+                edge = _rr_edge(rec)
+                if not edge:
+                    counts["skipped"] += 1
+                    continue
+                _emit_edge(*edge)
         batch.flush()
         bar.finish(f"{counts['records']:,} records, "
                    f"{counts['direct']:,} direct + {counts['indirect']:,} indirect edges")
     finally:
         raw.close()
 
+    if emit_leis_path and family is not None:
+        with open(emit_leis_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(sorted(family)) + "\n")
+        log.info("RR-CDF: wrote %d family LEIs to %s", len(family), emit_leis_path)
+
     result = {**counts, "nodes": len(seen_nodes),
               "edges": counts["direct"] + counts["indirect"]}
+    if family is not None:
+        result["family"] = len(family)
     log.info("RR-CDF import done: %s", result)
     return result

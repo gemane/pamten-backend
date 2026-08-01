@@ -441,6 +441,14 @@ wrapper scripts `lei-cdf-import-test.sh` / `psc-import-test.sh` do exactly this;
 bundled `data/test_{leis,companies}.txt` are the curated cases (edit to taste). The
 full loads remain `lei-cdf-import.sh` etc.
 
+`gleif-rr --only-file <seeds> --emit-leis <path>` imports the **corporate family** of
+the seed LEIs — every consolidation edge among the seeds, their ancestors and all their
+descendants (the RR file is small, so it loads the edges and walks the tree in memory)
+— and writes the family's LEIs to `<path>`. Feed that to a second `gleif-lei-cdf
+--only-file <path>` to name the subsidiaries/parents (RR edges alone leave them as
+nameless LEI stubs). `lei-cdf-import-test.sh` chains exactly this: seeds → family edges
+→ name the family → rebuild search.
+
 **After a non-bulk / `--only` import, run `python manage.py rebuild-search`.** The
 FULL_TEXT index isn't maintained incrementally, so freshly imported companies have
 their `search_text` set but aren't findable via `/search` (`CONTAINSTEXT`) until the
