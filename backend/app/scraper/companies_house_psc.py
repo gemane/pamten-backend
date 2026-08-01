@@ -96,6 +96,34 @@ def _entity_psc_id(data: dict) -> tuple[str, str | None]:
     return f"chpsc:{self_link}", None
 
 
+def _iso2_country(name: str | None) -> str | None:
+    """A PSC address ``country`` name → ISO-2 code. Companies House uses UK
+    subdivisions ('England', 'England & Wales', 'Scotland', …) which aren't ISO
+    countries — all map to GB; other names go through the shared name→code table."""
+    if not name:
+        return None
+    n = name.strip().lower()
+    if n in ("uk", "gb") or any(uk in n for uk in (
+            "england", "wales", "scotland", "northern ireland",
+            "united kingdom", "great britain")):
+        return "GB"
+    from app.scraper.bulk_import import _ISO2_COUNTRY
+    return {v.lower(): k for k, v in _ISO2_COUNTRY.items()}.get(n) or (
+        name.strip().upper() if len(name.strip()) == 2 else None)
+
+
+def _psc_address(addr: dict | None) -> tuple[str | None, str | None, str | None]:
+    """(display registered_address, hq_city, hq_country ISO-2) from a PSC record's
+    correspondence ``address`` dict — the corporate PSC's own service address."""
+    addr = addr or {}
+    parts = [addr.get("premises"), addr.get("address_line_1"), addr.get("address_line_2"),
+             addr.get("locality"), addr.get("region"), addr.get("postal_code"),
+             addr.get("country")]
+    display = ", ".join(p.strip() for p in parts if p and str(p).strip()) or None
+    city = (addr.get("locality") or "").strip() or None
+    return display, city, _iso2_country(addr.get("country"))
+
+
 def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int) -> str | None:
     """Write one PSC record's nodes + OWNS edge. Returns 'person' | 'entity' | None."""
     company_number = (rec.get("company_number") or "").strip()
@@ -128,10 +156,14 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
         kind_cat = "person"
     else:
         owner_id, chid = _entity_psc_id(data)
+        # The corporate PSC's own correspondence address (in the record) → its address
+        # + map location; otherwise it's a name-only node.
+        reg_addr, hq_city, hq_country = _psc_address(data.get("address"))
         _entity(batch, owner_id, name=name, entity_type="company",
                 country=((data.get("identification") or {}).get("country_registered") or None),
                 founded=None, lei_id=None, companies_house_id=chid,
-                source_id=source_id, credibility_score=credibility_score)
+                source_id=source_id, credibility_score=credibility_score,
+                registered_address=reg_addr, hq_city=hq_city, hq_country=hq_country)
         owner_label = "Entity"
         kind_cat = "entity"
 
