@@ -182,6 +182,10 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     matched.add(number)
                 aliases = _prev_names(row, name)
                 search_text = name if not aliases else name + " " + " ".join(aliases)
+                # `founded` is the year (consistent with GLEIF); the full incorporation
+                # date goes in `founded_date` for the Details section.
+                founded_date = _founded(row.get("IncorporationDate"))
+                founded_year = int(founded_date[:4]) if founded_date else None
                 batch.update(f"gb-coh:{number}", {
                     "name": name,
                     "name_normalized": normalize_entity_name(name),
@@ -192,7 +196,8 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     # (a UK Companies House company is GB-registered).
                     "hq_city": (row.get("RegAddress.PostTown") or "").strip() or None,
                     "hq_country": "GB",
-                    "founded": _founded(row.get("IncorporationDate")),
+                    "founded": founded_year,
+                    "founded_date": founded_date,
                     "registered_address": _reg_address(row),
                     "companies_house_id": number,
                     "aliases": aliases,
