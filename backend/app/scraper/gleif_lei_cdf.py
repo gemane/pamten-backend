@@ -51,20 +51,41 @@ def _registered_address(entity: dict) -> str | None:
     return norm or None
 
 
+def _address_lines(addr: dict) -> list[str]:
+    """Street lines of a GLEIF address: FirstAddressLine + AdditionalAddressLine.
+    AdditionalAddressLine is a LIST in the CDF (0..n lines) — flatten it so a multi-
+    line address (e.g. 'C/O …', street, suite) isn't truncated to one line."""
+    lines = [_v(addr.get("FirstAddressLine"))]
+    extra = addr.get("AdditionalAddressLine")
+    if isinstance(extra, list):
+        lines += [_v(x) for x in extra]
+    elif extra:
+        lines.append(_v(extra))
+    return [ln.strip() for ln in lines if ln and ln.strip()]
+
+
 def _display_address(entity: dict) -> str | None:
     """Human-readable LegalAddress as GLEIF stores it (original case), comma-joined:
-    line(s), city, postcode, country. For the node Details section. Region is skipped
-    — GLEIF stores it as a raw ISO 3166-2 code (e.g. 'GB-LND'), not a display name."""
+    street line(s), city, postcode, country. For the node Details section. Region is
+    skipped — GLEIF stores it as a raw ISO 3166-2 code (e.g. 'GB-LND'), not a name."""
     addr = entity.get("LegalAddress") or {}
-    parts = [
-        _v(addr.get("FirstAddressLine")),
-        _v(addr.get("AdditionalAddressLine")),
+    parts = _address_lines(addr) + [
         _v(addr.get("City")),
         _v(addr.get("PostalCode")),
         _v(addr.get("Country")),
     ]
     joined = ", ".join(p.strip() for p in parts if p and p.strip())
     return joined or None
+
+
+def _hq_location(entity: dict) -> tuple[str | None, str | None]:
+    """(city, ISO-2 country) from HeadquartersAddress — the entity's real operating
+    location, distinct from the LegalAddress (often a registered-agent office, e.g. a
+    Delaware C/O). Surfaced at the top of the node like other sources' HQ."""
+    hq = entity.get("HeadquartersAddress") or {}
+    city = _v(hq.get("City"))
+    country = _v(hq.get("Country"))
+    return (city or None), (country[:2].upper() if country else None)
 
 
 def _legal_form(entity: dict) -> str | None:
@@ -118,6 +139,13 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "source_id": source_id,
         "is_nominee": is_nominee_name(name),
     }
+    # Real operating location (top of the node). Only set when GLEIF has an HQ address,
+    # so we never clobber an existing (e.g. Wikidata) HQ with a null.
+    hq_city, hq_country = _hq_location(entity)
+    if hq_city:
+        props["hq_city"] = hq_city
+    if hq_country:
+        props["hq_country"] = hq_country
     legal_type = _legal_form_type(_v((entity.get("LegalForm") or {}).get("OtherLegalForm")))
     if legal_type:
         props["type"] = legal_type

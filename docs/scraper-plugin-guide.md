@@ -389,9 +389,13 @@ python manage.py gleif-rr      --file /data/rr-cdf/gleif-rr.json.zip            
 python manage.py gleif-succession --file /data/lei-cdf/gleif-lei2.json.zip           # mergers
 ```
 
-The entity import stores, besides name/country/address, the fields gleif.org shows in
-its detail view: **legal form** (ISO 20275 ELF), **Registered At** (registration
-authority + number), and a display **address**. The LEI-CDF file only carries *codes*
+The entity import stores, besides name/country, the fields gleif.org shows in its
+detail view: **legal form** (ISO 20275 ELF), **Registered At** (registration authority
++ number), and a display **address** (the registered `LegalAddress`, all lines). It also
+sets **`hq_city`/`hq_country` from the `HeadquartersAddress`** — the real operating
+location, shown at the top of the node — which for many entities differs from both the
+jurisdiction and the (often registered-agent) legal address (e.g. MercadoLibre, Inc. is
+US-DE domiciled with a Delaware C/O legal address but HQ in Montevideo, UY). The LEI-CDF file only carries *codes*
 for legal form (e.g. `H0PO`) and authority (e.g. `RA000585`); these are resolved to
 names ("Private Limited Company", "Companies Register") via GLEIF's ELF + RA reference
 code lists, bundled as `app/scraper/data/gleif_{elf,ra}.json` (see

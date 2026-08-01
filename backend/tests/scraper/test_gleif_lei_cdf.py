@@ -9,8 +9,10 @@ def _w(v):
 
 
 def _rec(lei, name, jurisdiction="US", other_form=None, address=None, created=None,
-         elf_code=None, reg=None):
+         elf_code=None, reg=None, hq=None):
     entity = {"LegalName": _w(name), "LegalJurisdiction": _w(jurisdiction)}
+    if hq:
+        entity["HeadquartersAddress"] = hq
     form = {}
     if other_form is not None:
         form["OtherLegalForm"] = _w(other_form)
@@ -93,6 +95,34 @@ class TestDetailFields:
         # display address keeps original case, comma-joined (contrast registered_address)
         assert props["address"] == "1 Example Street, London, EC1A 1BB, GB"
         assert props["registered_address"] == "1 example street london ec1a 1bb gb"
+
+    def test_multiline_address_keeps_all_lines(self):
+        # AdditionalAddressLine is a LIST in the CDF — every line must survive
+        rec = _rec("L1b", "Multi Line Co",
+                   address={"FirstAddressLine": _w("C/O United Corporate Services"),
+                            "AdditionalAddressLine": [_w("800 North State Street"), _w("Suite 304")],
+                            "City": _w("Dover"), "Region": _w("US-DE"),
+                            "PostalCode": _w("19901"), "Country": _w("US")})
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["address"] == (
+            "C/O United Corporate Services, 800 North State Street, Suite 304, "
+            "Dover, 19901, US")   # region (US-DE) intentionally omitted
+
+    def test_hq_address_surfaces_as_location(self):
+        # Real location comes from HeadquartersAddress, not the (registered-agent) legal one
+        rec = _rec("L1c", "MercadoLibre Inc", jurisdiction="US-DE",
+                   address={"FirstAddressLine": _w("C/O Agent"), "City": _w("Dover"),
+                            "Country": _w("US")},
+                   hq={"City": _w("Montevideo"), "Country": _w("UY")})
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["country"] == "US"          # jurisdiction (domicile) unchanged
+        assert props["hq_city"] == "Montevideo"  # top-of-node location = real HQ
+        assert props["hq_country"] == "UY"
+
+    def test_no_hq_leaves_location_unset(self):
+        _, props = _entity_props(_rec("L1d", "No HQ Co"), "gleif", 92)
+        assert "hq_city" not in props            # never clobber an existing HQ with null
+        assert "hq_country" not in props
 
     def test_legal_form_falls_back_to_freetext_then_code(self):
         # unlisted ELF code with an OtherLegalForm free text → free text wins
