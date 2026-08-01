@@ -1,0 +1,20 @@
+# Curated UK Companies House test companies — real companies with varied PSC
+# (beneficial-ownership) structures, loaded from the full PSC snapshot + BasicCompanyData
+# via `ch-psc --only-file` and `ch-company-data --only-file`.
+# Note: household-name UK plcs are exempt from PSC (listed), so PSC test cases are
+# private companies; the meaningful spread here is the ownership STRUCTURE.
+# Format: <company_number>  # PSC / note   ('#' starts a comment; blank lines ignored)
+
+# --- corporate PSC (ownership chains: company controlled by another company/LLP) ---
+07434180   # PSC: Robert Hitchins Limited            (75-100% shares)
+07882791   # PSC: Anacap Financial Partners LLP      (significant influence/control)
+02223330   # PSC: Fleurets Holdings Ltd              (75-100% shares)
+03289951   # PSC: RPC Containers Limited             (75-100% shares)
+09913960   # PSC: Liminal Biosciences Holdings Ltd   (75-100% shares)
+OC397000   # an LLP; PSC: Impax New Energy Investors (GP) Ltd (75-100% voting)
+
+# --- individual PSC (person with significant control), varied control types ---
+08810260   # PSC: Michael Charles Saunders           (75-100% shares)
+06022970   # PSC: Jean Carol Randle                  (50-75% shares)
+08301480   # PSC: Robert Power                       (right to appoint/remove directors)
+07428111   # PSC: Andrew John Cain                   (75-100% shares)

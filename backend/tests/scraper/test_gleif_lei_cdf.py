@@ -1,7 +1,10 @@
 """Unit tests for LEI-CDF entity parsing (DB not involved). End-to-end upsert is
 covered against a real ArcadeDB in tests/integration/test_gleif_lei_cdf_it.py."""
 
-from app.scraper.gleif_lei_cdf import _country, _entity_props, _founded
+import json
+import zipfile
+
+from app.scraper.gleif_lei_cdf import _country, _entity_props, _founded, import_lei_cdf_entities
 
 
 def _w(v):
@@ -139,3 +142,42 @@ class TestDetailFields:
         assert props["registration_authority"] is None
         assert props["registration_number"] is None
         assert props["address"] is None
+
+
+def _lei_zip(tmp_path, leis):
+    """A tiny LEI-CDF golden-copy zip with one record per given LEI, in order."""
+    records = [{"LEI": _w(lei), "Entity": {"LegalName": _w(f"Co {lei}"),
+                                           "LegalJurisdiction": _w("US")}} for lei in leis]
+    zpath = tmp_path / "lei2.json.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("lei2.json", json.dumps({"records": records}))
+    return str(zpath)
+
+
+class TestOnlyLeis:
+    """--only / --only-file curated test subset: import just the listed LEIs."""
+
+    def test_imports_only_listed_leis_and_stops_early(self, tmp_path, monkeypatch):
+        from app.scraper import bulk_import
+        written = []
+        monkeypatch.setattr(bulk_import._BatchWriter, "entity",
+                            lambda self, nid, props: written.append(nid))
+        monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+
+        z = _lei_zip(tmp_path, ["AAA", "BBB", "CCC"])
+        counts = import_lei_cdf_entities(z, "src", 92, only_leis={"BBB"})
+
+        assert written == ["lei:BBB"]        # only the listed one written
+        assert counts["entities"] == 1
+        assert counts["records"] == 2        # stopped after BBB — never scanned CCC
+
+    def test_no_filter_imports_everything(self, tmp_path, monkeypatch):
+        from app.scraper import bulk_import
+        written = []
+        monkeypatch.setattr(bulk_import._BatchWriter, "entity",
+                            lambda self, nid, props: written.append(nid))
+        monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+
+        z = _lei_zip(tmp_path, ["AAA", "BBB"])
+        counts = import_lei_cdf_entities(z, "src", 92)
+        assert counts["entities"] == 2 and set(written) == {"lei:AAA", "lei:BBB"}

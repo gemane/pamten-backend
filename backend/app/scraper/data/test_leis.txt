@@ -1,0 +1,24 @@
+# Curated GLEIF test companies — a big/medium/small spread of recognizable entities,
+# loaded straight from the full LEI-CDF golden copy via `gleif-lei-cdf --only-file`.
+# Test cases for the production import (name/country/HQ/legal-form/registered-at/address).
+# Format: <LEI>  # Name  [jurisdiction]   ('#' starts a comment; blank lines ignored)
+
+# --- big / global ---
+HWUPKR0MPOU8FGXBT394   # Apple Inc.                    [US-CA]
+INR2EJN1ERAN0W5ZP974   # Microsoft Corporation         [US-WA]
+549300S4KLFTLO7GSQ80   # NVIDIA Corporation            [US-DE]
+213800LBQA1Y9L22JB70   # Barclays PLC                  [GB]
+KY37LUS27QQX7BB93L28   # Nestlé S.A.                   [CH]
+549300PSVDV3P50KHS39   # Volkswagen Aktiengesellschaft [DE]
+549300MKFYEKVRWML317   # Unilever PLC                  [GB]
+549300DKPDN9M5S8GB14   # MercadoLibre, Inc.            [US-DE] (HQ Montevideo, UY)
+
+# --- medium ---
+54930089Q7XT501AEA40   # Etsy, Inc.                    [US-DE]
+25490005ZWM1IF9UXU57   # Domino's Pizza, Inc.          [US-DE]
+213800EC7997ZBLZJH69   # Rolls-Royce Holdings PLC      [GB]
+213800RP9QJQYGWHNT41   # Games Workshop Group PLC      [GB]
+
+# --- smaller / niche ---
+2138007AJRLHRVQZLD07   # Fevertree Drinks PLC          [GB]
+213800IYPFIRRQQE9R62   # Naked Wines PLC               [GB]

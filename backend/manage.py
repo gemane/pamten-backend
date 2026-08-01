@@ -70,6 +70,23 @@ def _apply_direct_db_url(args):
         arcadedb.close_client()   # drop the pooled client so it reconnects to url
         print(f"Using direct ArcadeDB URL: {url}")
 
+def _only_ids(args):
+    """Build the allow-list set from --only (comma list) and/or --only-file (one id per
+    line, '#' comments allowed) — the curated test subset. None = import everything.
+    Used to load a handful of test companies straight from the full golden-copy file."""
+    ids: set[str] = set()
+    inline = getattr(args, "only", None)
+    if inline:
+        ids.update(x.strip() for x in inline.split(",") if x.strip())
+    path = getattr(args, "only_file", None)
+    if path:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                tok = line.split("#", 1)[0].strip()
+                if tok:
+                    ids.add(tok)
+    return ids or None
+
 def cmd_ch_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -79,7 +96,8 @@ def cmd_ch_psc(args):
     result = _run_guarded_import("ch-psc",
         lambda: run_import_ch_psc(local_file=args.file, limit=args.limit,
                                   bulk_load=getattr(args, "bulk_load", False),
-                                  batch_size=getattr(args, "batch_size", None) or 400))
+                                  batch_size=getattr(args, "batch_size", None) or 400,
+                                  only_companies=_only_ids(args)))
     if result is not None:
         print(result)
 
@@ -92,7 +110,8 @@ def cmd_ch_company_data(args):
     result = _run_guarded_import("ch-company-data",
         lambda: run_import_basic_company_data(local_file=args.file, limit=args.limit,
                                               bulk_load=getattr(args, "bulk_load", False),
-                                              batch_size=getattr(args, "batch_size", None) or 400))
+                                              batch_size=getattr(args, "batch_size", None) or 400,
+                                              only_companies=_only_ids(args)))
     if result is not None:
         print(result)
 
@@ -104,7 +123,8 @@ def cmd_gleif_lei_cdf(args):
     result = _run_guarded_import("gleif-lei-cdf",
         lambda: run_import_gleif_lei_cdf(
             local_file=args.file, limit=args.limit,
-            filter_jurisdiction=args.jurisdiction, bulk_load=getattr(args, "bulk_load", False)))
+            filter_jurisdiction=args.jurisdiction, bulk_load=getattr(args, "bulk_load", False),
+            only_leis=_only_ids(args)))
     if result is not None:
         print(result)
 
@@ -425,6 +445,8 @@ def _build_parser():
                        help='Records per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
     p_chp.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_chp.add_argument('--only', help='Comma-separated company numbers to import (curated test subset)')
+    p_chp.add_argument('--only-file', help='File of company numbers (one per line, # comments) to import')
     p_chp.set_defaults(func=cmd_ch_psc)
 
     # ch-company-data command (Companies House register — names/addresses for PSC companies)
@@ -438,6 +460,8 @@ def _build_parser():
                        help='Rows per flush (default 400). Lower it behind a short proxy timeout; raise it on a direct connection')
     p_chc.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_chc.add_argument('--only', help='Comma-separated company numbers to import (curated test subset)')
+    p_chc.add_argument('--only-file', help='File of company numbers (one per line, # comments) to import')
     p_chc.set_defaults(func=cmd_ch_company_data)
 
     # gleif-lei-cdf command (entities from the golden copy — replaces GLEIF BODS)
@@ -448,6 +472,8 @@ def _build_parser():
     p_lei.add_argument('--jurisdiction', help='Country code filter, e.g. AT')
     p_lei.add_argument('--bulk-load', action='store_true',
                        help='Drop secondary indexes during the load and rebuild after (faster on the full 3.4M)')
+    p_lei.add_argument('--only', help='Comma-separated LEIs to import (curated test subset)')
+    p_lei.add_argument('--only-file', help='File of LEIs (one per line, # comments) to import')
     p_lei.set_defaults(func=cmd_gleif_lei_cdf)
 
     # import-lock command (inspect/manage the cross-process import lock)

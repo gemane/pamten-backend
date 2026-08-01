@@ -417,6 +417,30 @@ python manage.py ch-company-data --file /data/companies-house-basic/basic-compan
 `ch-company-data` fills in their names/addresses/former-names by enriching those
 existing nodes (it never creates isolated companies for the ~5.6M-row register).
 
+### Curated test subset (`--only` / `--only-file`)
+
+A full load is slow to iterate on. To load just a **handful of test companies straight
+from the same golden-copy files** — for checking the pipeline and the node UI, and as
+repeatable test cases for the production import — pass an allow-list:
+
+```bash
+# GLEIF: a big/medium/small spread (bundled fixture)
+python manage.py gleif-lei-cdf --file …/gleif-lei2.json.zip \
+    --only-file app/scraper/data/test_leis.txt
+# UK: PSC ownership then names, same curated companies
+python manage.py ch-psc          --file …/psc-snapshot.zip       --only-file app/scraper/data/test_companies.txt
+python manage.py ch-company-data --file …/basic-company-data.zip --only-file app/scraper/data/test_companies.txt
+```
+
+`--only LEI1,LEI2` takes an inline comma list; `--only-file` reads ids one per line
+(`#` comments allowed). Reading **stops early** once every listed id is found, and the
+PSC scan rejects non-matching lines before parsing, so a subset loads in seconds–a
+minute rather than the full pass. **Don't** combine with `--bulk-load` — for a few
+records you want the indexes to stay live (and to skip the whole-DB rebuild). The
+wrapper scripts `lei-cdf-import-test.sh` / `psc-import-test.sh` do exactly this; the
+bundled `data/test_{leis,companies}.txt` are the curated cases (edit to taste). The
+full loads remain `lei-cdf-import.sh` etc.
+
 ### `--bulk-load`
 
 For a **full load** pass `--bulk-load`, which drops the secondary indexes on
