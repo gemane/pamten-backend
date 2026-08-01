@@ -22,21 +22,41 @@ Run inside a tmux session to keep running after SSH disconnect:
 import argparse
 import sys
 
+def _run_guarded_import(holder, fn, *, skip_ok=False):
+    """Run an import under the cross-process DB import lock so no two imports write
+    concurrently (which on top of a --bulk-load corrupts the load). If another import
+    already holds the lock, the cron (skip_ok) skips cleanly; a manual run exits 1.
+    A no-op when IMPORT_ORCHESTRATED is set — full-import.sh holds the lock itself."""
+    from app.db.import_lock import ImportLocked, import_lock
+    try:
+        with import_lock(holder):
+            return fn()
+    except ImportLocked as exc:
+        if skip_ok:
+            print(f"{holder} skipped — {exc}")   # a full import (or another update) is running
+            return None
+        print(f"❌ {holder} refused — {exc}")
+        sys.exit(1)
+
 def cmd_gleif_succession(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_succession
-    result = run_import_gleif_succession(local_file=args.file, limit=args.limit)
-    print(result)
+    result = _run_guarded_import("gleif-succession",
+        lambda: run_import_gleif_succession(local_file=args.file, limit=args.limit))
+    if result is not None:
+        print(result)
 
 def cmd_gleif_rr(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_rr
-    result = run_import_gleif_rr(local_file=args.file, limit=args.limit)
-    print(result)
+    result = _run_guarded_import("gleif-rr",
+        lambda: run_import_gleif_rr(local_file=args.file, limit=args.limit))
+    if result is not None:
+        print(result)
 
 def _apply_direct_db_url(args):
     """--db-url points the importer straight at ArcadeDB, bypassing a proxy that
@@ -56,10 +76,12 @@ def cmd_ch_psc(args):
     settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_import_ch_psc
-    result = run_import_ch_psc(local_file=args.file, limit=args.limit,
-                               bulk_load=getattr(args, "bulk_load", False),
-                               batch_size=getattr(args, "batch_size", None) or 400)
-    print(result)
+    result = _run_guarded_import("ch-psc",
+        lambda: run_import_ch_psc(local_file=args.file, limit=args.limit,
+                                  bulk_load=getattr(args, "bulk_load", False),
+                                  batch_size=getattr(args, "batch_size", None) or 400))
+    if result is not None:
+        print(result)
 
 def cmd_ch_company_data(args):
     from app.config import settings
@@ -67,20 +89,24 @@ def cmd_ch_company_data(args):
     settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_import_basic_company_data
-    result = run_import_basic_company_data(local_file=args.file, limit=args.limit,
-                                           bulk_load=getattr(args, "bulk_load", False),
-                                           batch_size=getattr(args, "batch_size", None) or 400)
-    print(result)
+    result = _run_guarded_import("ch-company-data",
+        lambda: run_import_basic_company_data(local_file=args.file, limit=args.limit,
+                                              bulk_load=getattr(args, "bulk_load", False),
+                                              batch_size=getattr(args, "batch_size", None) or 400))
+    if result is not None:
+        print(result)
 
 def cmd_gleif_lei_cdf(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_lei_cdf
-    result = run_import_gleif_lei_cdf(
-        local_file=args.file, limit=args.limit,
-        filter_jurisdiction=args.jurisdiction, bulk_load=getattr(args, "bulk_load", False))
-    print(result)
+    result = _run_guarded_import("gleif-lei-cdf",
+        lambda: run_import_gleif_lei_cdf(
+            local_file=args.file, limit=args.limit,
+            filter_jurisdiction=args.jurisdiction, bulk_load=getattr(args, "bulk_load", False)))
+    if result is not None:
+        print(result)
 
 def cmd_gleif_update(args):
     from app.config import settings
@@ -88,9 +114,28 @@ def cmd_gleif_update(args):
     settings.SCRAPER_BODS_GLEIF_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_gleif_update
-    result = run_gleif_update(interval=args.interval, lei_file=args.lei_file,
-                              rr_file=args.rr_file, limit=args.limit)
-    print(result)
+    result = _run_guarded_import("gleif-update",
+        lambda: run_gleif_update(interval=args.interval, lei_file=args.lei_file,
+                                 rr_file=args.rr_file, limit=args.limit),
+        skip_ok=True)   # the cron rides on top of full-import → skip, don't error
+    if result is not None:
+        print(result)
+
+def cmd_import_lock(args):
+    _apply_direct_db_url(args)
+    from app.db import import_lock
+    if args.action == "status":
+        print(import_lock.status())
+    elif args.action == "release":
+        import_lock.release()
+        print("import lock released")
+    elif args.action == "acquire":
+        try:
+            import_lock.acquire(args.holder or "manual")
+        except import_lock.ImportLocked as exc:
+            print(f"cannot acquire: {exc}")
+            sys.exit(1)
+        print(f"import lock acquired: {import_lock.status()}")
 
 def cmd_flag_nominees(args):
     from app.scraper.maintenance import flag_nominee_entities
@@ -404,6 +449,14 @@ def _build_parser():
     p_lei.add_argument('--bulk-load', action='store_true',
                        help='Drop secondary indexes during the load and rebuild after (faster on the full 3.4M)')
     p_lei.set_defaults(func=cmd_gleif_lei_cdf)
+
+    # import-lock command (inspect/manage the cross-process import lock)
+    p_lock = subparsers.add_parser('import-lock',
+                                   help='Cross-process import lock: status / acquire / release (manual recovery)')
+    p_lock.add_argument('action', choices=['status', 'acquire', 'release'])
+    p_lock.add_argument('--holder', help='Holder label for acquire (default: manual)')
+    p_lock.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_lock.set_defaults(func=cmd_import_lock)
 
     # gleif-update command (retirement-aware daily delta on top of the full load)
     p_gu = subparsers.add_parser('gleif-update',
