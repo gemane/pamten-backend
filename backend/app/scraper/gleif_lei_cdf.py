@@ -15,6 +15,7 @@ address/legal-form-type + is_nominee, and leaves enrichment from other sources
 
 LEI-CDF JSON quirks: array key `records`; scalars wrapped `{"$": value}`.
 """
+import json
 import logging
 import os
 import re
@@ -152,6 +153,67 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     return f"lei:{lei}", props
 
 
+# ── Fast subset path (only_leis) ──────────────────────────────────────────────
+# ijson's pure-Python parse of the whole 3.4M-record file takes ~15 min, which is far
+# too slow for a handful of test companies. When importing a small allow-list we skip
+# ijson entirely: a C-level regex finds each record start + its LEI in the decompressed
+# stream, and we json.loads only the matching records. Each record is a
+# `{ "LEI": { "$": "<LEI>" }, ... }` element of the `records` array; the golden copy is
+# pretty-printed, so the pattern is whitespace-tolerant.
+_LEI_RECORD_RE = re.compile(rb'\{\s*"LEI"\s*:\s*\{\s*"\$"\s*:\s*"([0-9A-Z]{20})"')
+
+
+def _extract_json_object(buf: bytes, start: int) -> bytes | None:
+    """The balanced `{...}` object beginning at buf[start] (string/escape aware), or
+    None if it is not yet fully present in buf (the caller should read more)."""
+    depth = in_str = esc = 0
+    for k in range(start, len(buf)):
+        c = buf[k]
+        if in_str:
+            if esc:
+                esc = 0
+            elif c == 0x5C:          # backslash
+                esc = 1
+            elif c == 0x22:          # closing quote
+                in_str = 0
+        elif c == 0x22:              # opening quote
+            in_str = 1
+        elif c == 0x7B:              # {
+            depth += 1
+        elif c == 0x7D:              # }
+            depth -= 1
+            if depth == 0:
+                return buf[start:k + 1]
+    return None
+
+
+def _iter_records_for_leis(raw: IO[bytes], targets: set[str], chunk_size: int = 8 << 20):
+    """Yield the LEI-CDF records for `targets`, scanning the stream and parsing only
+    those records. Stops once every target is found (or the stream ends)."""
+    remaining = {t.encode() for t in targets}
+    buf = b""
+    while remaining:
+        chunk = raw.read(chunk_size)
+        if not chunk:
+            break
+        buf += chunk
+        consumed = 0
+        for m in _LEI_RECORD_RE.finditer(buf):
+            if m.group(1) not in remaining:
+                consumed = m.end()
+                continue
+            obj = _extract_json_object(buf, m.start())
+            if obj is None:
+                break                         # record continues past buf — keep from its start
+            remaining.discard(m.group(1))
+            try:
+                yield json.loads(obj)
+            except ValueError:
+                pass
+            consumed = m.start() + len(obj)
+        buf = buf[consumed:]                   # retain the (possibly partial) tail
+
+
 def import_lei_cdf_entities(
     filepath: str,
     source_id: str,
@@ -159,9 +221,14 @@ def import_lei_cdf_entities(
     limit: int | None = None,
     filter_jurisdiction: str | None = None,
     bulk_load: bool = False,
+    only_leis: set[str] | None = None,
 ) -> dict:
     """
     Import GLEIF entities from a local LEI-CDF golden-copy .json/.zip.
+
+    `only_leis` restricts the import to that set of LEIs (the curated test subset) —
+    reading stops early once all of them are found, so a handful of companies loads
+    from the real golden copy in seconds instead of the full 3.4M pass.
 
     Returns dict: {records, entities, skipped}.
     """
@@ -184,9 +251,13 @@ def import_lei_cdf_entities(
         _drop_secondary_indexes()
     batch = _BatchWriter()
     try:
-        bar = _ProgressBar("LEI-CDF entities")
-        stream = _ProgressStream(raw, total_bytes, bar)
-        for rec in _iter_lei_records(stream):
+        if only_leis is not None:
+            bar = None                       # fast byte-scan path; yields only targets
+            record_iter = _iter_records_for_leis(raw, only_leis)
+        else:
+            bar = _ProgressBar("LEI-CDF entities")
+            record_iter = _iter_lei_records(_ProgressStream(raw, total_bytes, bar))
+        for rec in record_iter:
             if limit and counts["records"] >= limit:
                 break
             counts["records"] += 1
@@ -201,7 +272,11 @@ def import_lei_cdf_entities(
             batch.entity(node_id, props)
             counts["entities"] += 1
         batch.flush()
-        bar.finish(f"{counts['records']:,} records, {counts['entities']:,} entities")
+        msg = f"{counts['records']:,} records, {counts['entities']:,} entities"
+        if bar:
+            bar.finish(msg)
+        else:
+            log.info("LEI-CDF subset: %s", msg)
     finally:
         raw.close()
         if bulk_load:

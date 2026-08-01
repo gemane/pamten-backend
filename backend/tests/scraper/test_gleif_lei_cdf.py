@@ -1,7 +1,10 @@
 """Unit tests for LEI-CDF entity parsing (DB not involved). End-to-end upsert is
 covered against a real ArcadeDB in tests/integration/test_gleif_lei_cdf_it.py."""
 
-from app.scraper.gleif_lei_cdf import _country, _entity_props, _founded
+import json
+import zipfile
+
+from app.scraper.gleif_lei_cdf import _country, _entity_props, _founded, import_lei_cdf_entities
 
 
 def _w(v):
@@ -139,3 +142,78 @@ class TestDetailFields:
         assert props["registration_authority"] is None
         assert props["registration_number"] is None
         assert props["address"] is None
+
+
+# Valid-format LEIs (20 chars, [0-9A-Z]) so the byte-scan regex matches, like the real file.
+LEI_A = "AAAA1111AAAA1111AAAA"
+LEI_B = "BBBB2222BBBB2222BBBB"
+LEI_C = "CCCC3333CCCC3333CCCC"
+
+
+def _lei_zip(tmp_path, leis, indent=2):
+    """A tiny LEI-CDF golden-copy zip with one record per given LEI, in order.
+    `indent` mirrors the real golden copy, which is pretty-printed (whitespace between
+    the LEI tokens) — the fast-path regex must tolerate it."""
+    records = [{"LEI": _w(lei), "Entity": {"LegalName": _w(f"Co {lei}"),
+                                           "LegalJurisdiction": _w("US")}} for lei in leis]
+    zpath = tmp_path / "lei2.json.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("lei2.json", json.dumps({"records": records}, indent=indent))
+    return str(zpath)
+
+
+class TestOnlyLeis:
+    """--only / --only-file curated test subset: import just the listed LEIs."""
+
+    def test_imports_only_listed_leis(self, tmp_path, monkeypatch):
+        from app.scraper import bulk_import
+        written = []
+        monkeypatch.setattr(bulk_import._BatchWriter, "entity",
+                            lambda self, nid, props: written.append(nid))
+        monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+
+        z = _lei_zip(tmp_path, [LEI_A, LEI_B, LEI_C])
+        counts = import_lei_cdf_entities(z, "src", 92, only_leis={LEI_B})
+
+        assert written == [f"lei:{LEI_B}"]   # only the listed one written
+        assert counts["entities"] == 1
+
+    def test_no_filter_imports_everything(self, tmp_path, monkeypatch):
+        from app.scraper import bulk_import
+        written = []
+        monkeypatch.setattr(bulk_import._BatchWriter, "entity",
+                            lambda self, nid, props: written.append(nid))
+        monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+
+        z = _lei_zip(tmp_path, [LEI_A, LEI_B])
+        counts = import_lei_cdf_entities(z, "src", 92)
+        assert counts["entities"] == 2 and set(written) == {f"lei:{LEI_A}", f"lei:{LEI_B}"}
+
+
+class TestFastLeiScan:
+    """The fast byte-scan record iterator (`_iter_records_for_leis`) used for subsets."""
+
+    def _stream(self, tmp_path, leis, indent):
+        import zipfile as zf_mod
+        path = _lei_zip(tmp_path, leis, indent=indent)
+        z = zf_mod.ZipFile(path)
+        return z.open(z.namelist()[0])
+
+    def test_extracts_targets_across_chunk_boundaries(self, tmp_path):
+        from app.scraper.gleif_lei_cdf import _iter_records_for_leis, _v
+        raw = self._stream(tmp_path, [LEI_A, LEI_B, LEI_C], indent=4)
+        # chunk_size=8 forces records (and even the marker) to span many chunk reads
+        got = [_v(r.get("LEI")) for r in _iter_records_for_leis(raw, {LEI_A, LEI_C}, chunk_size=8)]
+        assert sorted(got) == sorted([LEI_A, LEI_C])   # B skipped, boundaries handled
+
+    def test_compact_json_also_matches(self, tmp_path):
+        # a compact (no-whitespace) file must work too
+        from app.scraper.gleif_lei_cdf import _iter_records_for_leis, _v
+        records = [{"LEI": _w(LEI_A), "Entity": {"LegalName": _w("A")}}]
+        zpath = tmp_path / "c.json.zip"
+        with zipfile.ZipFile(zpath, "w") as zf:
+            zf.writestr("c.json", json.dumps({"records": records}, separators=(",", ":")))
+        z = zipfile.ZipFile(zpath)
+        raw = z.open(z.namelist()[0])
+        got = [_v(r.get("LEI")) for r in _iter_records_for_leis(raw, {LEI_A})]
+        assert got == [LEI_A]

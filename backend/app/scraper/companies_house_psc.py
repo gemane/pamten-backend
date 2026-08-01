@@ -148,14 +148,20 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
 
 def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                   limit: int | None = None, bulk_load: bool = False,
-                  batch_size: int = 400) -> dict:
+                  batch_size: int = 400,
+                  only_companies: set[str] | None = None) -> dict:
     """Import a Companies House PSC snapshot (.zip/.txt). Returns counts.
 
     ``batch_size`` sets how many records flush per ``sqlscript`` round-trip. Behind
     a proxy with a short read timeout (e.g. dev-db's 60s nginx), a smaller batch
     keeps each flush well under the limit so heavy flushes don't 504-then-retry
     (the dominant cost of a slow import); connected directly to ArcadeDB, a larger
-    batch cuts round-trips."""
+    batch cuts round-trips.
+
+    ``only_companies`` restricts the import to that set of company numbers (the curated
+    test subset). A cheap raw-bytes prefilter skips JSON parsing for non-matches, and —
+    since a CH snapshot groups a company's PSC records together — reading stops once all
+    target companies have been seen. So a handful of companies loads in seconds."""
     if filepath.lower().endswith(".zip"):
         zf = zipfile.ZipFile(filepath)
         entry = zf.namelist()[0]
@@ -167,6 +173,8 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
         raw = open(filepath, "rb")  # noqa: WPS515
 
     counts = {"records": 0, "persons": 0, "entities": 0, "skipped": 0, "errors": 0}
+    only_bytes = [c.encode() for c in only_companies] if only_companies else None
+    matched: set[str] = set()
     if bulk_load:
         _drop_secondary_indexes()
     batch = _BatchWriter(batch_size=batch_size)
@@ -180,11 +188,21 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                 continue
             if limit and counts["records"] >= limit:
                 break
+            # Curated subset: reject non-matching lines before the JSON parse (cheap
+            # bytes search), then confirm the exact company_number after parsing.
+            if only_bytes is not None and not any(cb in line for cb in only_bytes):
+                continue
             counts["records"] += 1
             if counts["records"] % 50000 == 0:
                 bar.render(done, total_bytes)
             try:
-                cat = _process(json.loads(line), batch, source_id, credibility_score)
+                rec = json.loads(line)
+                if only_companies is not None:
+                    cn = (rec.get("company_number") or "").strip()
+                    if cn not in only_companies:
+                        continue                  # substring hit in another field
+                    matched.add(cn)
+                cat = _process(rec, batch, source_id, credibility_score)
                 if cat == "person":
                     counts["persons"] += 1
                 elif cat == "entity":
@@ -195,6 +213,8 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                 counts["errors"] += 1
                 if counts["errors"] <= 5:
                     log.warning("CH PSC record error: %s", exc)
+            if only_companies is not None and len(matched) >= len(only_companies):
+                break                             # all target companies loaded
         batch.flush()
         bar.finish(f"{counts['records']:,} records, "
                    f"{counts['persons']:,} persons + {counts['entities']:,} entities")

@@ -92,6 +92,21 @@ def _text_lines(raw: IO[bytes], total: int, bar: _ProgressBar) -> Iterator[str]:
             yield line.decode("utf-8", "replace") + "\n"
 
 
+def _prefiltered_lines(lines: Iterator[str], targets: set[str]) -> Iterator[str]:
+    """For a curated subset: yield the header, then only lines that contain a target
+    company number. A cheap substring reject so csv.reader parses just the handful of
+    matching rows (the exact CompanyNumber is confirmed after parsing) instead of all
+    ~5.7M — the same idea as the PSC importer's prefilter."""
+    it = iter(lines)
+    try:
+        yield next(it)                     # header — always
+    except StopIteration:
+        return
+    for line in it:
+        if any(t in line for t in targets):
+            yield line
+
+
 class _UpdateBatch:
     """Buffers UPDATE-only (no UPSERT) statements keyed on id, flushed via a single
     ``sqlscript`` per batch. Rows whose id isn't already in the graph are silent
@@ -124,10 +139,14 @@ class _UpdateBatch:
 
 def import_basic_company_data(filepath: str, credibility_score: int,
                               limit: int | None = None, bulk_load: bool = False,
-                              batch_size: int = 400) -> dict:
+                              batch_size: int = 400,
+                              only_companies: set[str] | None = None) -> dict:
     """Enrich existing ``gb-coh:{number}`` companies from a BasicCompanyData CSV
     snapshot (.zip). Returns counts. ``batch_size`` = rows per flush (smaller stays
-    under a short proxy timeout; larger cuts round-trips on a direct connection)."""
+    under a short proxy timeout; larger cuts round-trips on a direct connection).
+
+    ``only_companies`` restricts enrichment to that set of company numbers (the curated
+    test subset), stopping once all are found — the companion to ch-psc's ``--only``."""
     zf = zipfile.ZipFile(filepath)
     entry = zf.namelist()[0]
     total_bytes = zf.getinfo(entry).file_size
@@ -135,12 +154,16 @@ def import_basic_company_data(filepath: str, credibility_score: int,
     raw: IO[bytes] = zf.open(entry)
 
     counts = {"rows": 0, "companies": 0, "errors": 0}
+    matched: set[str] = set()
     if bulk_load:
         _drop_secondary_indexes()
     batch = _UpdateBatch(batch_size=batch_size)
     bar = _ProgressBar("CH BasicData")
     try:
-        reader = csv.reader(_text_lines(raw, total_bytes, bar))
+        lines = _text_lines(raw, total_bytes, bar)
+        if only_companies is not None:
+            lines = _prefiltered_lines(lines, only_companies)
+        reader = csv.reader(lines)
         header = [h.strip() for h in next(reader)]
         for values in reader:
             if limit and counts["rows"] >= limit:
@@ -153,6 +176,10 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                 if not number or not name:
                     counts["errors"] += 1
                     continue
+                if only_companies is not None:
+                    if number not in only_companies:
+                        continue                  # curated test subset
+                    matched.add(number)
                 aliases = _prev_names(row, name)
                 search_text = name if not aliases else name + " " + " ".join(aliases)
                 batch.update(f"gb-coh:{number}", {
@@ -174,6 +201,8 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                 counts["errors"] += 1
                 if counts["errors"] <= 5:
                     log.warning("CH BasicData row error: %s", exc)
+            if only_companies is not None and len(matched) >= len(only_companies):
+                break                             # all target companies enriched
         batch.flush()
         bar.finish(f"{counts['rows']:,} rows, {counts['companies']:,} companies enriched")
     finally:

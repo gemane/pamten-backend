@@ -1,9 +1,50 @@
 """Unit tests for Companies House PSC parsing (DB not involved). End-to-end write
 is covered against a real ArcadeDB in tests/integration/test_ch_psc_it.py."""
 
+import json
+import zipfile
+
 from app.scraper.companies_house_psc import (
-    _band_floor, _birth_date, _control, _entity_psc_id, _psc_name,
+    _band_floor, _birth_date, _control, _entity_psc_id, _psc_name, import_ch_psc,
 )
+
+
+def _psc_zip(tmp_path, company_numbers):
+    """A tiny PSC snapshot zip — one individual-PSC line per given company number."""
+    lines = "\n".join(json.dumps({
+        "company_number": cn,
+        "data": {"kind": "individual-person-with-significant-control",
+                 "name": f"Mr {cn}",
+                 "natures_of_control": ["ownership-of-shares-75-to-100-percent"]},
+    }) for cn in company_numbers)
+    zpath = tmp_path / "psc.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("psc.txt", lines)
+    return str(zpath)
+
+
+class TestOnlyCompanies:
+    """--only / --only-file curated subset: import just the listed company numbers."""
+
+    def test_filters_to_listed_company_and_stops_early(self, tmp_path, monkeypatch):
+        from app.scraper import companies_house_psc as m
+        seen = []
+        monkeypatch.setattr(m, "_process",
+                            lambda rec, *a: seen.append(rec["company_number"]) or "person")
+
+        z = _psc_zip(tmp_path, ["00000001", "00000002", "00000003"])
+        counts = import_ch_psc(z, "src", 97, only_companies={"00000002"})
+
+        assert seen == ["00000002"]          # only the listed company processed
+        assert counts["persons"] == 1
+        assert counts["records"] == 1        # non-matches rejected before the JSON parse
+
+    def test_no_filter_processes_all(self, tmp_path, monkeypatch):
+        from app.scraper import companies_house_psc as m
+        monkeypatch.setattr(m, "_process", lambda rec, *a: "person")
+        z = _psc_zip(tmp_path, ["00000001", "00000002"])
+        counts = import_ch_psc(z, "src", 97)
+        assert counts["persons"] == 2
 
 
 class TestBandAndControl:
