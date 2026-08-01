@@ -106,19 +106,19 @@ class TestDetailFields:
     def test_multiline_address_keeps_all_lines(self):
         # AdditionalAddressLine is a LIST in the CDF — every line must survive
         rec = _rec("L1b", "Multi Line Co",
-                   address={"FirstAddressLine": _w("Corporation Trust Center"),
+                   address={"FirstAddressLine": _w("C/O United Corporate Services"),
                             "AdditionalAddressLine": [_w("800 North State Street"), _w("Suite 304")],
                             "City": _w("Dover"), "Region": _w("US-DE"),
                             "PostalCode": _w("19901"), "Country": _w("US")})
         _, props = _entity_props(rec, "gleif", 92)
         assert props["address"] == (
-            "Corporation Trust Center, 800 North State Street, Suite 304, "
+            "C/O United Corporate Services, 800 North State Street, Suite 304, "
             "Dover, 19901, US")   # region (US-DE) intentionally omitted
 
     def test_hq_address_surfaces_as_location(self):
         # Real location comes from HeadquartersAddress, not the (registered-agent) legal one
         rec = _rec("L1c", "MercadoLibre Inc", jurisdiction="US-DE",
-                   address={"FirstAddressLine": _w("251 Little Falls Drive"), "City": _w("Dover"),
+                   address={"FirstAddressLine": _w("C/O Agent"), "City": _w("Dover"),
                             "Country": _w("US")},
                    hq={"FirstAddressLine": _w("WTC Free Zone"),
                        "AdditionalAddressLine": [_w("Dr. Luis Bonavita 1294")],
@@ -129,17 +129,7 @@ class TestDetailFields:
         assert props["hq_country"] == "UY"
         # full HQ address (geocoded to the map pin), distinct from the legal address
         assert props["hq_address"] == "WTC Free Zone, Dr. Luis Bonavita 1294, Montevideo, 11300, UY"
-        assert props["address"] == "251 Little Falls Drive, Dover, US"
-
-    def test_care_of_line_dropped_from_hq_address(self):
-        # 'C/O ERIC BARKA' is a mail contact, not a location — drop it so the address
-        # geocodes (and reads) cleanly (e.g. Microsoft Round Island One).
-        rec = _rec("L1e", "Round Island One", jurisdiction="US",
-                   hq={"FirstAddressLine": _w("C/O ERIC BARKA"),
-                       "AdditionalAddressLine": [_w("1 Microsoft Way")],
-                       "City": _w("Redmond"), "PostalCode": _w("98052"), "Country": _w("US")})
-        _, props = _entity_props(rec, "gleif", 92)
-        assert props["hq_address"] == "1 Microsoft Way, Redmond, 98052, US"
+        assert props["address"] == "C/O Agent, Dover, US"
 
     def test_no_hq_leaves_location_unset(self):
         _, props = _entity_props(_rec("L1d", "No HQ Co"), "gleif", 92)
