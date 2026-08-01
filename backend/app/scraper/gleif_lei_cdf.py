@@ -98,13 +98,20 @@ def _legal_form(entity: dict) -> str | None:
     return legal_form_name(code) or _v(lf.get("OtherLegalForm")) or code
 
 
-def _registration(entity: dict) -> tuple[str | None, str | None]:
-    """(registration authority name, registration number) from RegistrationAuthority —
-    gleif.org's "Registered As / Registered At". Authority code resolved via the RA list."""
+# GLEIF Registration Authority code for the UK Companies House register. A GB company's
+# RegistrationAuthorityEntityID here IS its Companies House number, so we key it the same
+# way the PSC importer keys gb-coh:{number} → the two sources dedup on companies_house_id.
+_COMPANIES_HOUSE_RA = "RA000585"
+
+
+def _registration(entity: dict) -> tuple[str | None, str | None, str | None]:
+    """(registration authority name, registration number, RA code) from
+    RegistrationAuthority — gleif.org's "Registered As / Registered At"."""
     ra = entity.get("RegistrationAuthority") or {}
-    authority = registration_authority_name(_v(ra.get("RegistrationAuthorityID")))
+    code = _v(ra.get("RegistrationAuthorityID"))
+    authority = registration_authority_name(code)
     number = _v(ra.get("RegistrationAuthorityEntityID"))
-    return authority, number
+    return authority, number, code
 
 
 def _founded(entity: dict) -> int | None:
@@ -123,7 +130,7 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     if not lei or not name:
         return None
     entity = rec.get("Entity") or {}
-    reg_authority, reg_number = _registration(entity)
+    reg_authority, reg_number, reg_code = _registration(entity)
     props: dict = {
         "name": name,
         "name_normalized": normalize_entity_name(name),
@@ -150,6 +157,10 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         props["hq_city"] = hq_city
     if hq_country:
         props["hq_country"] = hq_country
+    # UK company: its GLEIF registration number is the Companies House number, so key it
+    # like the PSC import (gb-coh:{number}) → GLEIF and PSC nodes merge on this id.
+    if reg_code == _COMPANIES_HOUSE_RA and reg_number:
+        props["companies_house_id"] = reg_number
     legal_type = _legal_form_type(_v((entity.get("LegalForm") or {}).get("OtherLegalForm")))
     if legal_type:
         props["type"] = legal_type

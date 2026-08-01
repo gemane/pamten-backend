@@ -130,6 +130,16 @@ def cmd_gleif_lei_cdf(args):
     if result is not None:
         print(result)
 
+def cmd_dedupe_entities(args):
+    """Merge entities that share a hard external id (LEI / Companies House / SEC CIK /
+    Wikidata) — the cross-source merge, no name match or Wikidata hub needed. Run after
+    importing overlapping sources (e.g. GLEIF + PSC for UK companies)."""
+    _apply_direct_db_url(args)
+    from app.scraper.maintenance import deduplicate_entities
+    res = deduplicate_entities(limit=getattr(args, "limit", None))
+    print(f"Merged {res['entities_merged']} entities across "
+          f"{res.get('total', '?')} shared-id groups; {res.get('remaining', 0)} groups remaining")
+
 def cmd_gleif_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -403,6 +413,13 @@ def _build_parser():
         help='REBUILD the FULL_TEXT search indexes (run after a non-bulk / --only import)')
     p_rbs.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_rbs.set_defaults(func=cmd_rebuild_search)
+
+    # dedupe-entities command (cross-source merge by shared external id)
+    p_de = subparsers.add_parser('dedupe-entities',
+        help='Merge entities sharing a hard external id (LEI / CH number / SEC CIK / Wikidata)')
+    p_de.add_argument('--limit', type=int, help='Max shared-id groups to process (default: all)')
+    p_de.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_de.set_defaults(func=cmd_dedupe_entities)
 
     # wipe-source command (replaces the removed whole-DB wipe-data; drop the
     # database for a fresh start instead)

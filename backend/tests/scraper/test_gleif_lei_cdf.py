@@ -96,6 +96,8 @@ class TestDetailFields:
         assert props["legal_form"] == "Private Limited Company"      # H0PO resolved
         assert props["registration_authority"] == "Companies Register"  # RA000585 resolved
         assert props["registration_number"] == "07428111"
+        # RA000585 is Companies House → key the CH number like the PSC import does
+        assert props["companies_house_id"] == "07428111"
         # display address keeps original case, comma-joined (contrast registered_address)
         assert props["address"] == "1 Example Street, London, EC1A 1BB, GB"
         assert props["registered_address"] == "1 example street london ec1a 1bb gb"
@@ -143,6 +145,12 @@ class TestDetailFields:
         assert props["registration_authority"] is None
         assert props["registration_number"] is None
         assert props["address"] is None
+
+    def test_companies_house_id_only_for_uk_registrar(self):
+        # a non-Companies-House RA must NOT be treated as a CH number
+        _, props = _entity_props(_rec("L5", "US Co", reg=("RA000602", "3112015")), "gleif", 92)
+        assert "companies_house_id" not in props
+        assert props["registration_number"] == "3112015"
 
 
 # Valid-format LEIs (20 chars, [0-9A-Z]) so the byte-scan regex matches, like the real file.
