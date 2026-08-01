@@ -52,17 +52,24 @@ def _registered_address(entity: dict) -> str | None:
     return norm or None
 
 
+def _is_care_of(line: str) -> bool:
+    """A 'care of' contact line (e.g. 'C/O ERIC BARKA') — a mail recipient, not a
+    geographic address. Dropped so it doesn't clutter the display or break geocoding."""
+    n = re.sub(r"\s+", "", line).lower()
+    return n.startswith("c/o") or line.strip().lower().startswith(("care of", "attn", "attention"))
+
+
 def _address_lines(addr: dict) -> list[str]:
-    """Street lines of a GLEIF address: FirstAddressLine + AdditionalAddressLine.
-    AdditionalAddressLine is a LIST in the CDF (0..n lines) — flatten it so a multi-
-    line address (e.g. 'C/O …', street, suite) isn't truncated to one line."""
+    """Street lines of a GLEIF address: FirstAddressLine + AdditionalAddressLine, minus
+    any 'C/O …' care-of line. AdditionalAddressLine is a LIST in the CDF (0..n lines) —
+    flatten it so a multi-line address (street, suite) isn't truncated to one line."""
     lines = [_v(addr.get("FirstAddressLine"))]
     extra = addr.get("AdditionalAddressLine")
     if isinstance(extra, list):
         lines += [_v(x) for x in extra]
     elif extra:
         lines.append(_v(extra))
-    return [ln.strip() for ln in lines if ln and ln.strip()]
+    return [ln.strip() for ln in lines if ln and ln.strip() and not _is_care_of(ln)]
 
 
 def _display_address(entity: dict) -> str | None:
