@@ -13,9 +13,11 @@ def _enabled(monkeypatch):
     monkeypatch.setattr(settings, "GEOCODING_ENABLED", True)
     monkeypatch.setattr(settings, "GEOCODING_MIN_INTERVAL", 0.0)  # no real sleeping
     geocode._cache.clear()
+    geocode._full_cache.clear()
     geocode.close_client()
     yield
     geocode._cache.clear()
+    geocode._full_cache.clear()
     geocode.close_client()
 
 
@@ -42,6 +44,28 @@ def test_returns_lat_lng_on_match():
     c = _client(_resp([{"lat": "37.3318", "lon": "-122.0312"}]))
     with patch.object(geocode, "_get_client", return_value=c):
         assert geocode.geocode_address(ADDR) == (37.3318, -122.0312)
+
+
+def test_geocode_full_reports_exact_for_street_level():
+    # place_rank >= 26 → a street/building match ⇒ 'exact'
+    c = _client(_resp([{"lat": "51.9", "lon": "-2.07", "place_rank": 30}]))
+    with patch.object(geocode, "_get_client", return_value=c):
+        assert geocode.geocode_full("1 Test St, Cheltenham, GL51 0TJ, GB") == ((51.9, -2.07), "exact")
+
+
+def test_geocode_full_reports_approx_for_coarse_match():
+    # a town/locality-level match (low place_rank) ⇒ 'approx'
+    c = _client(_resp([{"lat": "51.9", "lon": "-2.07", "place_rank": 16}]))
+    with patch.object(geocode, "_get_client", return_value=c):
+        assert geocode.geocode_full("Cheltenham, GB") == ((51.9, -2.07), "approx")
+
+
+def test_geocode_full_none_on_no_match_or_empty():
+    c = _client(_resp([]))
+    with patch.object(geocode, "_get_client", return_value=c):
+        assert geocode.geocode_full("nowhere at all") is None
+    assert geocode.geocode_full("") is None
+    assert geocode.geocode_full(None) is None
 
 
 def test_disabled_returns_none_without_calling_out(monkeypatch):

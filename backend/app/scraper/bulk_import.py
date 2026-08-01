@@ -355,7 +355,7 @@ def _legal_form_type(details: str | None) -> str | None:
 def _entity(batch, node_id, name, entity_type, country, founded,
             lei_id, companies_house_id, source_id, credibility_score,
             registered_address=None, source_statement_ids=None,
-            hq_city=None, hq_country=None):
+            hq_city=None, hq_country=None, hq_address=None):
     """Enqueue an Entity upsert (keyed on the stable node id) and return the id.
 
     ``source_statement_ids`` lists every BODS statement (recordId) that declared
@@ -385,6 +385,8 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         props["hq_city"] = hq_city
     if hq_country:
         props["hq_country"] = hq_country
+    if hq_address:
+        props["hq_address"] = hq_address
     batch.entity(node_id, props)
     return node_id
 

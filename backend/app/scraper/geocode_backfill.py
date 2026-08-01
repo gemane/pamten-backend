@@ -10,7 +10,7 @@ without re-scraping.
 import logging
 
 from app.db.arcadedb import run_query, run_command
-from app.scraper.geocode import geocode_address
+from app.scraper.geocode import geocode_address, geocode_full
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +63,10 @@ def backfill(limit: int | None = None) -> dict:
     # SEC/BODS entity with an address).
     ent_query = """
         MATCH (e:Entity)
-        WHERE e.hq_lat IS NULL AND (e.hq_city IS NOT NULL OR e.hq_country IS NOT NULL)
-        RETURN e.id AS id, e.hq_city AS city, e.hq_country AS country
+        WHERE e.hq_lat IS NULL AND (e.hq_address IS NOT NULL OR e.hq_city IS NOT NULL
+                                    OR e.hq_country IS NOT NULL)
+        RETURN e.id AS id, e.hq_address AS hq_address, e.hq_city AS city,
+               e.hq_country AS country
     """
     if limit is not None:
         ent_query += f"\n        LIMIT {int(limit)}"
@@ -72,13 +74,22 @@ def backfill(limit: int | None = None) -> dict:
     ent_rows = run_query(ent_query)
     ent_geocoded = 0
     for r in ent_rows:
-        coord = geocode_address({"city": r.get("city"), "country": r.get("country")})
+        # Prefer the full HQ address for a street-level pin; fall back to city/country
+        # (approximate). Store which precision we got so the map shows a pin vs a circle.
+        coord = precision = None
+        hit = geocode_full(r.get("hq_address")) if r.get("hq_address") else None
+        if hit:
+            coord, precision = hit
+        if not coord and (r.get("city") or r.get("country")):
+            coord = geocode_address({"city": r.get("city"), "country": r.get("country")})
+            precision = "approx"
         if not coord:
             continue
         lat, lng = coord
         run_command(
-            "MATCH (e:Entity {id: $id}) SET e.hq_lat = $lat, e.hq_lng = $lng",
-            {"id": r["id"], "lat": lat, "lng": lng},
+            "MATCH (e:Entity {id: $id}) SET e.hq_lat = $lat, e.hq_lng = $lng, "
+            "e.hq_geo_precision = $prec",
+            {"id": r["id"], "lat": lat, "lng": lng, "prec": precision},
         )
         ent_geocoded += 1
 
