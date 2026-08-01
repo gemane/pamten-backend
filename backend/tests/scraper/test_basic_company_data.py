@@ -59,6 +59,34 @@ class TestBulkLoad:
         assert captured["bs"] == 50
 
 
+def _multi_row_zip(tmp_path, numbers):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["CompanyName", "CompanyNumber", "CompanyCategory", "IncorporationDate"])
+    for n in numbers:
+        w.writerow([f"CO {n} LTD", n, "Private Limited Company", "01/01/2000"])
+    zpath = tmp_path / "basic.zip"
+    with zipfile.ZipFile(zpath, "w") as zf:
+        zf.writestr("BasicCompanyData.csv", buf.getvalue())
+    return str(zpath)
+
+
+class TestOnlyCompanies:
+    """--only / --only-file curated subset: enrich just the listed company numbers."""
+
+    def test_enriches_only_listed_and_stops_early(self, tmp_path):
+        from app.scraper import basic_company_data as m
+        written = []
+        with patch.object(m._UpdateBatch, "update",
+                          lambda self, nid, props: written.append(nid)), \
+             patch("app.scraper.basic_company_data._flush_script"):
+            counts = import_basic_company_data(
+                _multi_row_zip(tmp_path, ["00000001", "00000002", "00000003"]),
+                97, only_companies={"00000002"})
+        assert written == ["gb-coh:00000002"]
+        assert counts["companies"] == 1
+
+
 class TestFieldParsing:
     def test_company_type_default_and_nonprofit(self):
         assert _company_type("Private Limited Company") == "company"

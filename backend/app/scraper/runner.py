@@ -1434,7 +1434,8 @@ def _post_bods_import() -> dict:
 # succession now come from the current golden copy (LEI-CDF + RR-CDF), below.
 
 def run_import_ch_psc(local_file: str, limit: int | None = None,
-                      bulk_load: bool = False, batch_size: int = 400) -> dict:
+                      bulk_load: bool = False, batch_size: int = 400,
+                      only_companies: set[str] | None = None) -> dict:
     """
     Import a Companies House PSC snapshot (current UK beneficial ownership, daily)
     — the replacement for the frozen OpenOwnership UK PSC BODS export. Reuses the
@@ -1461,13 +1462,15 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
         limit=limit,
         bulk_load=bulk_load,
         batch_size=batch_size,
+        only_companies=only_companies,
     )
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts,
             **_post_bods_import()}
 
 
 def run_import_basic_company_data(local_file: str, limit: int | None = None,
-                                  bulk_load: bool = False, batch_size: int = 400) -> dict:
+                                  bulk_load: bool = False, batch_size: int = 400,
+                                  only_companies: set[str] | None = None) -> dict:
     """
     Enrich number-keyed UK companies (gb-coh:{number}) with names/addresses/former
     names from a Companies House BasicCompanyData snapshot — the companion to the
@@ -1494,6 +1497,7 @@ def run_import_basic_company_data(local_file: str, limit: int | None = None,
         limit=limit,
         bulk_load=bulk_load,
         batch_size=batch_size,
+        only_companies=only_companies,
     )
     return {"status": "ok", "source": "Companies House Register", **counts}
 
@@ -1531,7 +1535,8 @@ def run_import_gleif_succession(local_file: str, limit: int | None = None) -> di
 
 def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
                              filter_jurisdiction: str | None = None,
-                             bulk_load: bool = False) -> dict:
+                             bulk_load: bool = False,
+                             only_leis: set[str] | None = None) -> dict:
     """
     Import GLEIF entities from the LEI-CDF golden copy (current, authoritative) —
     the replacement for the frozen OpenOwnership GLEIF BODS entity data. Reuses
@@ -1559,6 +1564,7 @@ def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
         limit=limit,
         filter_jurisdiction=filter_jurisdiction,
         bulk_load=bulk_load,
+        only_leis=only_leis,
     )
     # Stamp the baseline marker so the incremental `gleif-update` knows the full
     # load has run (it refuses to apply deltas onto an un-baselined graph).

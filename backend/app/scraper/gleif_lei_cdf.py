@@ -159,9 +159,14 @@ def import_lei_cdf_entities(
     limit: int | None = None,
     filter_jurisdiction: str | None = None,
     bulk_load: bool = False,
+    only_leis: set[str] | None = None,
 ) -> dict:
     """
     Import GLEIF entities from a local LEI-CDF golden-copy .json/.zip.
+
+    `only_leis` restricts the import to that set of LEIs (the curated test subset) —
+    reading stops early once all of them are found, so a handful of companies loads
+    from the real golden copy in seconds instead of the full 3.4M pass.
 
     Returns dict: {records, entities, skipped}.
     """
@@ -190,6 +195,8 @@ def import_lei_cdf_entities(
             if limit and counts["records"] >= limit:
                 break
             counts["records"] += 1
+            if only_leis is not None and _v(rec.get("LEI")) not in only_leis:
+                continue    # curated test subset — skip everything else (cheap LEI check)
             out = _entity_props(rec, source_id, credibility_score)
             if not out:
                 counts["skipped"] += 1
@@ -200,6 +207,8 @@ def import_lei_cdf_entities(
                 continue
             batch.entity(node_id, props)
             counts["entities"] += 1
+            if only_leis is not None and counts["entities"] >= len(only_leis):
+                break        # found them all — no need to scan the rest of the file
         batch.flush()
         bar.finish(f"{counts['records']:,} records, {counts['entities']:,} entities")
     finally:
