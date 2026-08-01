@@ -92,6 +92,21 @@ def _text_lines(raw: IO[bytes], total: int, bar: _ProgressBar) -> Iterator[str]:
             yield line.decode("utf-8", "replace") + "\n"
 
 
+def _prefiltered_lines(lines: Iterator[str], targets: set[str]) -> Iterator[str]:
+    """For a curated subset: yield the header, then only lines that contain a target
+    company number. A cheap substring reject so csv.reader parses just the handful of
+    matching rows (the exact CompanyNumber is confirmed after parsing) instead of all
+    ~5.7M — the same idea as the PSC importer's prefilter."""
+    it = iter(lines)
+    try:
+        yield next(it)                     # header — always
+    except StopIteration:
+        return
+    for line in it:
+        if any(t in line for t in targets):
+            yield line
+
+
 class _UpdateBatch:
     """Buffers UPDATE-only (no UPSERT) statements keyed on id, flushed via a single
     ``sqlscript`` per batch. Rows whose id isn't already in the graph are silent
@@ -145,7 +160,10 @@ def import_basic_company_data(filepath: str, credibility_score: int,
     batch = _UpdateBatch(batch_size=batch_size)
     bar = _ProgressBar("CH BasicData")
     try:
-        reader = csv.reader(_text_lines(raw, total_bytes, bar))
+        lines = _text_lines(raw, total_bytes, bar)
+        if only_companies is not None:
+            lines = _prefiltered_lines(lines, only_companies)
+        reader = csv.reader(lines)
         header = [h.strip() for h in next(reader)]
         for values in reader:
             if limit and counts["rows"] >= limit:

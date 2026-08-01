@@ -86,6 +86,13 @@ class TestOnlyCompanies:
         assert written == ["gb-coh:00000002"]
         assert counts["companies"] == 1
 
+    def test_prefilter_keeps_header_and_matching_lines_only(self):
+        from app.scraper.basic_company_data import _prefiltered_lines
+        lines = ['"CompanyName","CompanyNumber"\n', '"A LTD","00000001"\n',
+                 '"B LTD","00000002"\n', '"C LTD","00000003"\n']
+        out = list(_prefiltered_lines(iter(lines), {"00000002"}))
+        assert out == [lines[0], lines[2]]           # header + only the matching row
+
 
 class TestFieldParsing:
     def test_company_type_default_and_nonprofit(self):
