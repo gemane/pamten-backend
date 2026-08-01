@@ -441,6 +441,12 @@ wrapper scripts `lei-cdf-import-test.sh` / `psc-import-test.sh` do exactly this;
 bundled `data/test_{leis,companies}.txt` are the curated cases (edit to taste). The
 full loads remain `lei-cdf-import.sh` etc.
 
+**After a non-bulk / `--only` import, run `python manage.py rebuild-search`.** The
+FULL_TEXT index isn't maintained incrementally, so freshly imported companies have
+their `search_text` set but aren't findable via `/search` (`CONTAINSTEXT`) until the
+index is rebuilt — instant on a small test-only DB, minutes on the full ~4M graph
+(the wrapper scripts already do this).
+
 ### `--bulk-load`
 
 For a **full load** pass `--bulk-load`, which drops the secondary indexes on

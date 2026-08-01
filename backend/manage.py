@@ -246,6 +246,18 @@ def cmd_backfill_search(args):
     print("Backfill complete. Ensure the FULL_TEXT index exists: python manage.py init-schema")
 
 
+def cmd_rebuild_search(args):
+    """REBUILD the FULL_TEXT search indexes so /search (CONTAINSTEXT) finds every row.
+    Needed after a non-bulk import (e.g. the --only test subset): entities are written
+    with search_text set, but the FULL_TEXT index isn't maintained incrementally, so
+    freshly imported companies aren't findable until this runs. Instant on a small
+    test-only DB; minutes on the full ~4M graph."""
+    _apply_direct_db_url(args)
+    from app.db.schema import rebuild_fulltext_indexes
+    res = rebuild_fulltext_indexes()
+    print(f"FULL_TEXT rebuilt: ok={res.get('ok')} failed={res.get('failed')}")
+
+
 def cmd_wipe_source(args):
     """Delete ONE source's data (edges + the nodes only it created). There is no
     whole-database wipe — a fresh dev start is a database DROP. Guards mirror the
@@ -383,6 +395,12 @@ def _build_parser():
     p_bfs.add_argument('--batch', type=int, default=20000,
                        help='Rows updated per request — keep under the DB proxy timeout (default 20000)')
     p_bfs.set_defaults(func=cmd_backfill_search)
+
+    # rebuild-search command (make freshly non-bulk-imported rows findable via /search)
+    p_rbs = subparsers.add_parser('rebuild-search',
+        help='REBUILD the FULL_TEXT search indexes (run after a non-bulk / --only import)')
+    p_rbs.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_rbs.set_defaults(func=cmd_rebuild_search)
 
     # wipe-source command (replaces the removed whole-DB wipe-data; drop the
     # database for a fresh start instead)
