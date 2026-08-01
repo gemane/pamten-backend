@@ -86,6 +86,24 @@ class TestOnlyCompanies:
         assert written == ["gb-coh:00000002"]
         assert counts["companies"] == 1
 
+    def test_registered_town_becomes_hq_for_the_map(self, tmp_path):
+        from app.scraper import basic_company_data as m
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["CompanyName", "CompanyNumber", "RegAddress.PostTown", "RegAddress.Country"])
+        w.writerow(["ACME LTD", "00000001", "HARROGATE", "ENGLAND"])
+        zpath = tmp_path / "b.zip"
+        with zipfile.ZipFile(zpath, "w") as zf:
+            zf.writestr("BasicCompanyData.csv", buf.getvalue())
+
+        captured = {}
+        with patch.object(m._UpdateBatch, "update",
+                          lambda self, nid, props: captured.update(props)), \
+             patch("app.scraper.basic_company_data._flush_script"):
+            import_basic_company_data(str(zpath), 97)
+        assert captured["hq_city"] == "HARROGATE"      # → geocoder pins it on the map
+        assert captured["hq_country"] == "GB"
+
     def test_prefilter_keeps_header_and_matching_lines_only(self):
         from app.scraper.basic_company_data import _prefiltered_lines
         lines = ['"CompanyName","CompanyNumber"\n', '"A LTD","00000001"\n',
