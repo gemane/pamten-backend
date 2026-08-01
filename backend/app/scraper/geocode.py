@@ -92,6 +92,38 @@ def geocode_address(address: dict) -> Coord | None:
     return result
 
 
+# Nominatim place_rank at/above which a match is a specific address (street/building),
+# not just a locality — used to flag whether a full-address geocode is exact.
+_STREET_LEVEL_RANK = 26
+_full_cache: dict[str, tuple[Coord, str] | None] = {}
+
+
+def geocode_full(query: str) -> tuple[Coord, str] | None:
+    """Free-text geocode a FULL address → ((lat, lng), precision) where precision is
+    'exact' for a street/building-level match or 'approx' for a coarser (town+) one.
+    None when disabled, empty, or no match — the caller then falls back to city geocoding."""
+    if not settings.GEOCODING_ENABLED or not (query or "").strip():
+        return None
+    q = query.strip()
+    if q in _full_cache:
+        return _full_cache[q]
+    _throttle()
+    result: tuple[Coord, str] | None = None
+    try:
+        resp = _get_client().get(settings.NOMINATIM_URL,
+                                 params={"q": q, "format": "json", "limit": "1"})
+        resp.raise_for_status()
+        data = resp.json()
+        if data:
+            coord = (float(data[0]["lat"]), float(data[0]["lon"]))
+            rank = int(data[0].get("place_rank") or 0)
+            result = (coord, "exact" if rank >= _STREET_LEVEL_RANK else "approx")
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        log.warning("Geocoding (full) failed (%s): %s", q, exc)
+    _full_cache[q] = result
+    return result
+
+
 def _query(params: dict) -> Coord | None:
     _throttle()
     try:

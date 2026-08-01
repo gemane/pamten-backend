@@ -163,7 +163,8 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
                 country=((data.get("identification") or {}).get("country_registered") or None),
                 founded=None, lei_id=None, companies_house_id=chid,
                 source_id=source_id, credibility_score=credibility_score,
-                registered_address=reg_addr, hq_city=hq_city, hq_country=hq_country)
+                registered_address=reg_addr, hq_address=reg_addr,
+                hq_city=hq_city, hq_country=hq_country)
         owner_label = "Entity"
         kind_cat = "entity"
 

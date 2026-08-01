@@ -120,11 +120,16 @@ class TestDetailFields:
         rec = _rec("L1c", "MercadoLibre Inc", jurisdiction="US-DE",
                    address={"FirstAddressLine": _w("C/O Agent"), "City": _w("Dover"),
                             "Country": _w("US")},
-                   hq={"City": _w("Montevideo"), "Country": _w("UY")})
+                   hq={"FirstAddressLine": _w("WTC Free Zone"),
+                       "AdditionalAddressLine": [_w("Dr. Luis Bonavita 1294")],
+                       "City": _w("Montevideo"), "PostalCode": _w("11300"), "Country": _w("UY")})
         _, props = _entity_props(rec, "gleif", 92)
         assert props["country"] == "US"          # jurisdiction (domicile) unchanged
         assert props["hq_city"] == "Montevideo"  # top-of-node location = real HQ
         assert props["hq_country"] == "UY"
+        # full HQ address (geocoded to the map pin), distinct from the legal address
+        assert props["hq_address"] == "WTC Free Zone, Dr. Luis Bonavita 1294, Montevideo, 11300, UY"
+        assert props["address"] == "C/O Agent, Dover, US"
 
     def test_no_hq_leaves_location_unset(self):
         _, props = _entity_props(_rec("L1d", "No HQ Co"), "gleif", 92)

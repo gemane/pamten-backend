@@ -199,6 +199,9 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "founded": founded_year,
                     "founded_date": founded_date,
                     "registered_address": _reg_address(row),
+                    # PSC/UK companies have no separate HQ — the registered office is
+                    # the location the map geocodes.
+                    "hq_address": _reg_address(row),
                     "companies_house_id": number,
                     "aliases": aliases,
                     "is_nominee": is_nominee_name(name),

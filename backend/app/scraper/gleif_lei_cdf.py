@@ -89,6 +89,17 @@ def _hq_location(entity: dict) -> tuple[str | None, str | None]:
     return (city or None), (country[:2].upper() if country else None)
 
 
+def _hq_address(entity: dict) -> str | None:
+    """Human-readable full HeadquartersAddress (the operating HQ) — geocoded to the
+    map pin. Distinct from the legal `address`, which can be a registered-agent office."""
+    hq = entity.get("HeadquartersAddress")
+    if not hq:
+        return None
+    parts = _address_lines(hq) + [_v(hq.get("City")), _v(hq.get("PostalCode")), _v(hq.get("Country"))]
+    joined = ", ".join(p.strip() for p in parts if p and p.strip())
+    return joined or None
+
+
 def _legal_form(entity: dict) -> str | None:
     """Legal form name: resolve the ISO 20275 ELF code (e.g. H0PO → 'Private Limited
     Company') via the bundled GLEIF list; fall back to the free-text OtherLegalForm,
@@ -167,6 +178,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         props["hq_city"] = hq_city
     if hq_country:
         props["hq_country"] = hq_country
+    hq_addr = _hq_address(entity)
+    if hq_addr:
+        props["hq_address"] = hq_addr
     # UK company: its GLEIF registration number is the Companies House number, so key it
     # like the PSC import (gb-coh:{number}) → GLEIF and PSC nodes merge on this id.
     if reg_code == _COMPANIES_HOUSE_RA and reg_number:
