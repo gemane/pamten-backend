@@ -354,14 +354,18 @@ def _legal_form_type(details: str | None) -> str | None:
 
 def _entity(batch, node_id, name, entity_type, country, founded,
             lei_id, companies_house_id, source_id, credibility_score,
-            registered_address=None, source_statement_ids=None):
+            registered_address=None, source_statement_ids=None,
+            hq_city=None, hq_country=None):
     """Enqueue an Entity upsert (keyed on the stable node id) and return the id.
 
     ``source_statement_ids`` lists every BODS statement (recordId) that declared
     this entity. For id-less parties collapsed under one name key it holds all
     contributing PSC statement ids, so per-statement provenance survives the
-    collapse (the ownership edges keep their own source_url/date independently)."""
-    batch.entity(node_id, {
+    collapse (the ownership edges keep their own source_url/date independently).
+
+    ``hq_city``/``hq_country`` (when known) put the entity on the map — only added
+    when set, so an existing (e.g. GLEIF) HQ is never clobbered with a null."""
+    props = {
         "name": name,
         "name_normalized": normalize_entity_name(name),
         "search_text": name,   # FULL_TEXT-indexed field powering /search
@@ -376,7 +380,12 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         "registered_address": registered_address,
         "is_nominee": is_nominee_name(name),   # holder-of-record, not a beneficial owner
         "verified": False,
-    })
+    }
+    if hq_city:
+        props["hq_city"] = hq_city
+    if hq_country:
+        props["hq_country"] = hq_country
+    batch.entity(node_id, props)
     return node_id
 
 

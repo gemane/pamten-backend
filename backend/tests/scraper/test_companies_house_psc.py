@@ -5,8 +5,50 @@ import json
 import zipfile
 
 from app.scraper.companies_house_psc import (
-    _band_floor, _birth_date, _control, _entity_psc_id, _psc_name, import_ch_psc,
+    _band_floor, _birth_date, _control, _entity_psc_id, _iso2_country, _psc_address,
+    _psc_name, import_ch_psc,
 )
+
+
+class TestPscAddress:
+    """A corporate PSC's own correspondence address → its address + map location."""
+
+    def test_full_address_city_and_country(self):
+        addr = {"premises": "The Manor", "address_line_1": "Boddington Lane",
+                "address_line_2": "Boddington", "locality": "Cheltenham",
+                "country": "England", "postal_code": "GL51 0TJ"}
+        display, city, country = _psc_address(addr)
+        assert display == "The Manor, Boddington Lane, Boddington, Cheltenham, GL51 0TJ, England"
+        assert city == "Cheltenham"
+        assert country == "GB"
+
+    def test_empty_address(self):
+        assert _psc_address(None) == (None, None, None)
+
+    def test_iso2_maps_uk_subdivisions_and_foreign(self):
+        assert _iso2_country("England & Wales") == "GB"
+        assert _iso2_country("Scotland") == "GB"
+        assert _iso2_country("Jersey") == "JE"
+        assert _iso2_country("Ireland") == "IE"
+        assert _iso2_country(None) is None
+
+    def test_process_stamps_the_corporate_psc_address(self, monkeypatch):
+        from app.scraper import companies_house_psc as m
+        captured = {}
+        monkeypatch.setattr(m, "_entity",
+                            lambda *a, **k: captured.update(k) or "gb-coh:00686734")
+        rec = {"company_number": "07434180", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Robert Hitchins Limited",
+            "address": {"premises": "The Manor", "address_line_1": "Boddington Lane",
+                        "locality": "Cheltenham", "country": "England", "postal_code": "GL51 0TJ"},
+            "identification": {"registration_number": "00686734", "country_registered": "England & Wales"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+        }}
+        assert m._process(rec, m._BatchWriter(), "src", 97) == "entity"
+        assert captured["hq_city"] == "Cheltenham"       # → on the map
+        assert captured["hq_country"] == "GB"
+        assert "The Manor" in captured["registered_address"]
 
 
 def _psc_zip(tmp_path, company_numbers):
