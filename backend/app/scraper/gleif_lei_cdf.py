@@ -121,6 +121,15 @@ def _founded(entity: dict) -> int | None:
     return None
 
 
+def _founded_date(entity: dict) -> str | None:
+    """Full YYYY-MM-DD creation date (EntityCreationDate) for the Details section —
+    `_founded` keeps just the year for the headline, consistent across sources."""
+    d = _v(entity.get("EntityCreationDate"))
+    if d and len(d) >= 10 and d[4] == "-" and d[7] == "-":
+        return d[:10]
+    return None
+
+
 def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[str, dict] | None:
     """(node_id, props) for one LEI-CDF record, or None when it lacks an LEI/name.
     `type` is set only when the legal form refines it (fund/foundation/nonprofit)
@@ -143,6 +152,7 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "registration_authority": reg_authority,
         "registration_number": reg_number,
         "founded": _founded(entity),
+        "founded_date": _founded_date(entity),
         "lei_id": lei,
         "source_id": source_id,
         # Deep-link to this company's GLEIF record, not the source home page — the

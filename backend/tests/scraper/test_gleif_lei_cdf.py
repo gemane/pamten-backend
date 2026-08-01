@@ -63,7 +63,8 @@ class TestEntityProps:
         assert props["name"] == "Acme AG"
         assert props["country"] == "DE"
         assert props["lei_id"] == "LEI123"
-        assert props["founded"] == 1990
+        assert props["founded"] == 1990                 # headline = year
+        assert props["founded_date"] == "1990-01-01"    # full date for the Details section
         assert "main st 1" in props["registered_address"] and props["registered_address"].endswith("de")
         assert props["is_nominee"] is False
         assert props["source_url"] == "https://search.gleif.org/#/record/LEI123"  # deep link, not home page

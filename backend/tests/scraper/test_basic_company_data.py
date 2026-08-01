@@ -90,8 +90,9 @@ class TestOnlyCompanies:
         from app.scraper import basic_company_data as m
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["CompanyName", "CompanyNumber", "RegAddress.PostTown", "RegAddress.Country"])
-        w.writerow(["ACME LTD", "00000001", "HARROGATE", "ENGLAND"])
+        w.writerow(["CompanyName", "CompanyNumber", "RegAddress.PostTown",
+                    "RegAddress.Country", "IncorporationDate"])
+        w.writerow(["ACME LTD", "00000001", "HARROGATE", "ENGLAND", "11/09/2012"])
         zpath = tmp_path / "b.zip"
         with zipfile.ZipFile(zpath, "w") as zf:
             zf.writestr("BasicCompanyData.csv", buf.getvalue())
@@ -103,6 +104,8 @@ class TestOnlyCompanies:
             import_basic_company_data(str(zpath), 97)
         assert captured["hq_city"] == "HARROGATE"      # → geocoder pins it on the map
         assert captured["hq_country"] == "GB"
+        assert captured["founded"] == 2012             # headline = year (was a full date)
+        assert captured["founded_date"] == "2012-09-11"  # full date for the Details section
 
     def test_prefilter_keeps_header_and_matching_lines_only(self):
         from app.scraper.basic_company_data import _prefiltered_lines
