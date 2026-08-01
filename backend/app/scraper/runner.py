@@ -757,6 +757,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None,
                             source_id: str | None = None,
                             former_names: list[str] | None = None,
+                            lei: str | None = None,
                             credibility_score: int = 98) -> str:
     """Find or create an Entity node matched by CIK, exact name, or normalized name.
 
@@ -808,11 +809,12 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                     """
                     MATCH (e:Entity {id: $id})
                     SET e.sec_cik     = COALESCE($cik, e.sec_cik),
+                        e.lei_id      = COALESCE($lei, e.lei_id),
                         e.source_id   = COALESCE(e.source_id, $source_id),
                         e.aliases     = $aliases,
                         e.search_text = $search_text
                     """,
-                    id=entity_id, cik=cik, source_id=source_id, aliases=merged,
+                    id=entity_id, cik=cik, lei=lei, source_id=source_id, aliases=merged,
                     search_text=_search_text(cur_name, rec["descr"] if rec else None, merged),
                 )
             else:
@@ -820,9 +822,10 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                     """
                     MATCH (e:Entity {id: $id})
                     SET e.sec_cik   = COALESCE($cik, e.sec_cik),
+                        e.lei_id    = COALESCE($lei, e.lei_id),
                         e.source_id = COALESCE(e.source_id, $source_id)
                     """,
-                    id=entity_id, cik=cik, source_id=source_id,
+                    id=entity_id, cik=cik, lei=lei, source_id=source_id,
                 )
             return _record_touched_entity(entity_id)
 
@@ -833,14 +836,14 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
                 name_credibility: $cred, search_text: $search_text, aliases: $aliases,
-                type: $type, sec_cik: $cik, verified: false, source_id: $source_id,
+                type: $type, sec_cik: $cik, lei_id: $lei, verified: false, source_id: $source_id,
                 is_nominee: $is_nominee,
                 country: null, founded: null, revenue: null,
                 description: null, wikidata_id: null
             })
             """,
             id=entity_id, name=name, name_norm=name_norm,
-            cred=credibility_score, type=entity_type, cik=cik, source_id=source_id,
+            cred=credibility_score, type=entity_type, cik=cik, lei=lei, source_id=source_id,
             search_text=_search_text(name, None, aliases), aliases=aliases,
             is_nominee=is_nominee_name(name),
         )
@@ -1054,6 +1057,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         cik=data.get("cik"),
         source_id=source_id,
         former_names=data.get("former_names"),
+        lei=data.get("lei"),
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 
