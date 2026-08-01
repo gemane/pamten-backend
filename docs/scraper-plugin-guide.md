@@ -389,6 +389,17 @@ python manage.py gleif-rr      --file /data/rr-cdf/gleif-rr.json.zip            
 python manage.py gleif-succession --file /data/lei-cdf/gleif-lei2.json.zip           # mergers
 ```
 
+The entity import stores, besides name/country/address, the fields gleif.org shows in
+its detail view: **legal form** (ISO 20275 ELF), **Registered At** (registration
+authority + number), and a display **address**. The LEI-CDF file only carries *codes*
+for legal form (e.g. `H0PO`) and authority (e.g. `RA000585`); these are resolved to
+names ("Private Limited Company", "Companies Register") via GLEIF's ELF + RA reference
+code lists, bundled as `app/scraper/data/gleif_{elf,ra}.json` (see
+`app/scraper/gleif_reference.py`). Refresh those two JSONs from
+<https://www.gleif.org/en/about-lei/code-lists> when GLEIF publishes a new list
+version. These fields populate on (re)import — existing rows only gain them after a
+re-run of `gleif-lei-cdf`.
+
 ### UK (Companies House)
 
 Two companion imports — beneficial ownership (PSC) then company names (register):

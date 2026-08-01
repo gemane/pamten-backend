@@ -25,6 +25,7 @@ from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _legal_form_type, _ProgressBar,
     _ProgressStream, _rebuild_indexes,
 )
+from app.scraper.gleif_reference import legal_form_name, registration_authority_name
 from app.scraper.gleif_succession import _iter_lei_records, _legal_name, _v
 from app.scraper.mapper import is_nominee_name, normalize_entity_name
 
@@ -39,7 +40,8 @@ def _country(entity: dict) -> str | None:
 
 
 def _registered_address(entity: dict) -> str | None:
-    """Normalized LegalAddress (line + city + postcode + country), lowercased."""
+    """Normalized LegalAddress (line + city + postcode + country), lowercased —
+    for same-company dedup matching, NOT display (see _display_address)."""
     addr = entity.get("LegalAddress") or {}
     parts = [_v(addr.get("FirstAddressLine")), _v(addr.get("City")),
              _v(addr.get("PostalCode")), _v(addr.get("Country"))]
@@ -47,6 +49,40 @@ def _registered_address(entity: dict) -> str | None:
     norm = re.sub(r"[^\w\s]", " ", raw.lower())
     norm = re.sub(r"\s+", " ", norm).strip()
     return norm or None
+
+
+def _display_address(entity: dict) -> str | None:
+    """Human-readable LegalAddress as GLEIF stores it (original case), comma-joined:
+    line(s), city, postcode, country. For the node Details section. Region is skipped
+    — GLEIF stores it as a raw ISO 3166-2 code (e.g. 'GB-LND'), not a display name."""
+    addr = entity.get("LegalAddress") or {}
+    parts = [
+        _v(addr.get("FirstAddressLine")),
+        _v(addr.get("AdditionalAddressLine")),
+        _v(addr.get("City")),
+        _v(addr.get("PostalCode")),
+        _v(addr.get("Country")),
+    ]
+    joined = ", ".join(p.strip() for p in parts if p and p.strip())
+    return joined or None
+
+
+def _legal_form(entity: dict) -> str | None:
+    """Legal form name: resolve the ISO 20275 ELF code (e.g. H0PO → 'Private Limited
+    Company') via the bundled GLEIF list; fall back to the free-text OtherLegalForm,
+    then the raw code so nothing is silently dropped for an unlisted code."""
+    lf = entity.get("LegalForm") or {}
+    code = _v(lf.get("EntityLegalFormCode"))
+    return legal_form_name(code) or _v(lf.get("OtherLegalForm")) or code
+
+
+def _registration(entity: dict) -> tuple[str | None, str | None]:
+    """(registration authority name, registration number) from RegistrationAuthority —
+    gleif.org's "Registered As / Registered At". Authority code resolved via the RA list."""
+    ra = entity.get("RegistrationAuthority") or {}
+    authority = registration_authority_name(_v(ra.get("RegistrationAuthorityID")))
+    number = _v(ra.get("RegistrationAuthorityEntityID"))
+    return authority, number
 
 
 def _founded(entity: dict) -> int | None:
@@ -65,6 +101,7 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     if not lei or not name:
         return None
     entity = rec.get("Entity") or {}
+    reg_authority, reg_number = _registration(entity)
     props: dict = {
         "name": name,
         "name_normalized": normalize_entity_name(name),
@@ -72,6 +109,10 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "name_credibility": credibility_score,
         "country": _country(entity),
         "registered_address": _registered_address(entity),
+        "address": _display_address(entity),
+        "legal_form": _legal_form(entity),
+        "registration_authority": reg_authority,
+        "registration_number": reg_number,
         "founded": _founded(entity),
         "lei_id": lei,
         "source_id": source_id,
