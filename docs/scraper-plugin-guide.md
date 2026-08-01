@@ -436,16 +436,23 @@ the 504-retry churn.
 > fails with *"database or disk is full"*. Set `SCRAPER_TMP_DIR` to a path on a real
 > disk with tens of GB free: `SCRAPER_TMP_DIR=/data/tmp python manage.py gleif-succession …`.
 
-After a full import, populate the full-text search column so `/search` uses its
-FULL_TEXT index instead of scanning every row (`toLower(name) CONTAINS` on
-millions of entities takes ~12s; `CONTAINSTEXT` on the index is instant). The
-importers set `search_text` inline, so this is only needed for rows loaded
-by other sources or before this field existed:
+`/search` relies on a FULL_TEXT index (`CONTAINSTEXT`, instant) instead of scanning
+every row (`toLower(name) CONTAINS` on millions of entities takes ~12s). The importers
+set `search_text` inline, and a **`--bulk-load` run drops the FULL_TEXT indexes for the
+load and `REBUILD`s them afterwards automatically** — maintaining a Lucene index
+per-insert across millions of rows is slow and, if a load is interrupted, leaves it
+incomplete (`CONTAINSTEXT` then silently returns nothing). So no manual reindex is
+needed after a bulk load.
+
+Only needed for rows loaded by other means, or before `search_text` existed:
 
 ```bash
 python manage.py init-schema        # ensures the FULL_TEXT index exists
 python manage.py backfill-search    # fills search_text for existing rows
 ```
+
+> If `/search` ever comes back empty after a load, the FULL_TEXT index is stale —
+> rebuild it directly (the brackets need backticks): ``REBUILD INDEX `Entity[search_text]` ``.
 
 ### Licence
 

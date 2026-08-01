@@ -492,10 +492,16 @@ def _bulk_load_secondary_indexes() -> list[str]:
     """Type-level secondary indexes the import never reads (endpoint resolution is
     by `id` via the on-disk id-map, not DB queries). Dropping them removes the
     per-write index maintenance on the huge Entity/Person types — the dominant
-    cost of a full load. ensure_indexes() rebuilds them afterwards."""
-    from app.db.schema import _INDEXES
-    return [f"{t}[{p}]" for (t, p, _k) in _INDEXES
-            if t in ("Entity", "Person") and p != "id"]
+    cost of a full load. _rebuild_indexes() rebuilds them afterwards.
+
+    Includes the FULL_TEXT `search_text` indexes: maintaining a Lucene index per
+    insert across millions of rows is slow, and (as a corrupted load showed) leaves
+    it incomplete — so drop it and REBUILD cleanly at the end instead."""
+    from app.db.schema import _FULLTEXT_INDEXES, _INDEXES
+    names = [f"{t}[{p}]" for (t, p, _k) in _INDEXES
+             if t in ("Entity", "Person") and p != "id"]
+    names += [f"{t}[{p}]" for (t, p) in _FULLTEXT_INDEXES if t in ("Entity", "Person")]
+    return names
 
 
 def _drop_secondary_indexes() -> None:
@@ -509,11 +515,16 @@ def _drop_secondary_indexes() -> None:
 
 
 def _rebuild_indexes() -> None:
-    from app.db.schema import ensure_indexes
+    from app.db.schema import ensure_indexes, rebuild_fulltext_indexes
     log.info("bulk-load: rebuilding indexes…")
     res = ensure_indexes()
     log.info("bulk-load: index rebuild — %d applied, %d failed",
              len(res.get("ok", [])), len(res.get("failed", [])))
+    # ensure_indexes() only re-CREATEs the FULL_TEXT indexes (a no-op if they already
+    # exist → never backfills), so REBUILD them explicitly to fully repopulate /search.
+    ft = rebuild_fulltext_indexes()
+    log.info("bulk-load: FULL_TEXT rebuild — %d ok, %d failed",
+             len(ft.get("ok", [])), len(ft.get("failed", [])))
 
 
 # ── Core import engine ────────────────────────────────────────────────────────
