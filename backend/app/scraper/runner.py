@@ -1574,12 +1574,17 @@ def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
             "duplicate_names": _duplicate_name_summary()}
 
 
-def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
+def run_import_gleif_rr(local_file: str, limit: int | None = None,
+                        only_leis: set[str] | None = None,
+                        emit_leis_path: str | None = None) -> dict:
     """
     Import GLEIF RR-CDF (Level 2) direct/ultimate consolidation parents as
     direct/indirect OWNS edges. Reuses the GLEIF source + flags. `local_file` is a
     pre-downloaded RR-CDF golden-copy .json/.zip. Checks SCRAPER_ENABLED and
     SCRAPER_BODS_GLEIF_ENABLED.
+
+    `only_leis` restricts to the corporate family of those seed LEIs (test subset);
+    `emit_leis_path` writes the family's LEIs for a follow-up entity-naming pass.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1601,6 +1606,8 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None) -> dict:
         source_id=source_id,
         credibility_score=BODS_GLEIF_CREDIBILITY,
         limit=limit,
+        only_leis=only_leis,
+        emit_leis_path=emit_leis_path,
     )
     # RR consolidation edges overlap the GLEIF parent edges from the BODS import,
     # so collapse the duplicates automatically (keeps the direct/indirect-flagged
