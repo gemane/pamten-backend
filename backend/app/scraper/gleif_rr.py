@@ -57,9 +57,28 @@ def _node_lei(node: dict | None) -> str | None:
     return _v(node.get("NodeID"))
 
 
-def _rr_edge(rec: dict) -> tuple[str, str, str] | None:
-    """(parent_lei, child_lei, direct_or_indirect) for an active consolidation
-    relationship, else None."""
+def _iso_date(value: str | None) -> str | None:
+    """A GLEIF timestamp (``2023-05-17T00:00:00.000Z``) as a plain date (``2023-05-17``)."""
+    return value[:10] if value and len(value) >= 10 else None
+
+
+def _relationship_dates(rel: dict) -> tuple[str | None, str | None]:
+    """(since, until) — when the ownership relationship began and (if ended) ended —
+    from the ``RELATIONSHIP_PERIOD``. Accounting / document-filing periods are ignored.
+    ``RelationshipPeriod`` is an object *or* a list in the CDF."""
+    periods = (rel.get("RelationshipPeriods") or {}).get("RelationshipPeriod")
+    if isinstance(periods, dict):
+        periods = [periods]
+    for p in periods or []:
+        if _v((p or {}).get("PeriodType")) == "RELATIONSHIP_PERIOD":
+            return _iso_date(_v(p.get("StartDate"))), _iso_date(_v(p.get("EndDate")))
+    return None, None
+
+
+def _rr_edge(rec: dict) -> tuple[str, str, str, str | None, str | None] | None:
+    """(parent_lei, child_lei, direct_or_indirect, since, until) for an active
+    consolidation relationship, else None. ``since``/``until`` come from the
+    RELATIONSHIP_PERIOD (the ownership start/end date), when present."""
     rel = (rec.get("RelationshipRecord") or {}).get("Relationship") or {}
     marker = _CONSOLIDATION.get(_v(rel.get("RelationshipType")))
     if not marker:
@@ -70,7 +89,8 @@ def _rr_edge(rec: dict) -> tuple[str, str, str] | None:
     parent = _node_lei(rel.get("EndNode"))
     if not child or not parent or child == parent:
         return None
-    return parent, child, marker
+    since, until = _relationship_dates(rel)
+    return parent, child, marker, since, until
 
 
 def _family_of(seeds: set[str], children: dict, parents: dict) -> set[str]:
@@ -138,14 +158,15 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             # name/type (GLEIF BODS/LEI-CDF imports own those).
             batch.entity(f"lei:{lei}", {"lei_id": lei, "source_id": source_id})
 
-    def _emit_edge(parent: str, child: str, marker: str) -> None:
+    def _emit_edge(parent: str, child: str, marker: str,
+                   since: str | None = None, until: str | None = None) -> None:
         counts["direct" if marker == "direct" else "indirect"] += 1
         _node(parent)
         _node(child)
         _owns(
             batch, owner_id=f"lei:{parent}", owned_id=f"lei:{child}",
             stake_percent=None, ownership_type="controlling",
-            since=None, until=None, source_id=source_id,
+            since=since, until=until, source_id=source_id,
             credibility_score=credibility_score,
             source_url=f"https://search.gleif.org/#/record/{child}",
             interest_types=["accountingConsolidation"], direct_or_indirect=marker,
@@ -169,14 +190,14 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
                 if not edge:
                     counts["skipped"] += 1
                     continue
-                parent, child, marker = edge
+                parent, child, marker, _since, _until = edge
                 edges.append(edge)
                 children[parent].append(child)
                 parents[child].append(parent)
             family = _family_of(only_leis, children, parents)
-            for parent, child, marker in edges:
+            for parent, child, marker, since, until in edges:
                 if parent in family and child in family:
-                    _emit_edge(parent, child, marker)
+                    _emit_edge(parent, child, marker, since, until)
         else:
             for rec in ijson.items(stream, "relations.item"):
                 if limit and counts["records"] >= limit:
