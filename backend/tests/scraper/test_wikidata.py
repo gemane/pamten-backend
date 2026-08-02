@@ -379,6 +379,17 @@ class TestSearchEntity:
         assert out == [{"id": "Q1", "label": "Apple Inc."}]
         assert get.call_count == 2                       # retried once after the 429
 
+    def test_retries_on_502_gateway_then_succeeds(self):
+        # A transient Bad Gateway (502) from Wikidata's proxy must back off + retry too.
+        gateway = MagicMock(status_code=502, headers={})
+        ok = self._mock_response([{"id": "Q1", "label": "Apple Inc."}])
+        ok.status_code = 200
+        with patch("httpx.get", side_effect=[gateway, ok]) as get, \
+             patch("time.sleep"):
+            out = search_entity("Apple")
+        assert out == [{"id": "Q1", "label": "Apple Inc."}]
+        assert get.call_count == 2                        # retried once after the 502
+
     def test_gives_up_after_max_retries(self):
         import httpx
         throttled = MagicMock(status_code=429, headers={})

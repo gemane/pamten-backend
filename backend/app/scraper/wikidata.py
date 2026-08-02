@@ -62,8 +62,12 @@ SPARQL_URL    = "https://query.wikidata.org/sparql"
 USER_AGENT    = "Owlgraph/1.0 (https://pamten-frontend.onrender.com)"
 HEADERS       = {"User-Agent": USER_AGENT}
 REQUEST_DELAY = 0.4   # polite spacing between Wikidata calls
-_MAX_RETRIES  = 4     # retries on a 429/503 rate-limit
+_MAX_RETRIES  = 4     # retries on a transient rate-limit / gateway error
 _MAX_BACKOFF  = 30.0  # cap on the backoff wait (seconds)
+# Transient statuses worth retrying: 429 rate-limit, plus 502/503/504 — query.wikidata.org
+# sits behind a proxy that intermittently returns Bad Gateway / Service Unavailable /
+# Gateway Timeout under load; a short backoff-and-retry clears them.
+_RETRY_STATUS = frozenset({429, 502, 503, 504})
 
 
 def _retry_after(resp: httpx.Response) -> float | None:
@@ -80,20 +84,22 @@ def _wd_get(url: str, params: dict, timeout: int) -> httpx.Response:
 
     query.wikidata.org rate-limits per IP and answers 429 (or 503) when a burst — e.g. a
     deep scrape's many SPARQL queries, or concurrent on-demand scrapes sharing one egress
-    IP — exceeds its budget. On a 429/503 we wait per the `Retry-After` header (else an
-    exponential backoff with jitter, capped) and retry up to `_MAX_RETRIES`, instead of
-    failing the query. Any other status raises; the final 429/503 raises if retries run out."""
+    IP — exceeds its budget, and its fronting proxy intermittently returns 502/504 under
+    load. On any of these (see `_RETRY_STATUS`) we wait per the `Retry-After` header (else
+    an exponential backoff with jitter, capped) and retry up to `_MAX_RETRIES`, instead of
+    failing the query. Any other status raises; the final transient status raises if
+    retries run out."""
     delay = REQUEST_DELAY
     for attempt in range(_MAX_RETRIES + 1):
         time.sleep(delay)
         r = httpx.get(url, params=params, headers=HEADERS, timeout=timeout)
-        if r.status_code not in (429, 503):
+        if r.status_code not in _RETRY_STATUS:
             r.raise_for_status()
             return r
         if attempt >= _MAX_RETRIES:
-            r.raise_for_status()          # exhausted → surface the rate-limit error
+            r.raise_for_status()          # exhausted → surface the transient error
         delay = _retry_after(r) or min(2.0 ** attempt, _MAX_BACKOFF) + random.uniform(0, 0.5)
-        log.warning("Wikidata rate-limited (HTTP %s); backing off %.1fs (retry %d/%d)",
+        log.warning("Wikidata transient error (HTTP %s); backing off %.1fs (retry %d/%d)",
                     r.status_code, delay, attempt + 1, _MAX_RETRIES)
     raise RuntimeError("unreachable")     # pragma: no cover
 
