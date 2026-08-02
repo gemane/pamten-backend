@@ -22,7 +22,7 @@ from app.scraper.wikidata import search_entity, fetch_company_data
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
-    _record_touched, _record_touched_entity, _with_autodedup,
+    _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.scraper.geocode import geocode_address
@@ -719,10 +719,18 @@ def run_scrape(query: str, depth: int = 2) -> dict:
 
     _scrape_node(qid, depth, visited, scraped, source_id)
 
+    # Mark the TARGET (the searched company) as on-demand scraped at this depth, so the
+    # freshness gate + the depth-2 "deepen" pass can decide correctly next time. Only the
+    # target — not the subsidiaries this pass touched (they stay independently scrapable).
+    target_id = next((s["id"] for s in scraped if s.get("qid") == qid), None)
+    if target_id:
+        set_scrape_target(target_id, depth)
+
     return {
         "status":      "ok",
         "query":       query,
         "wikidata_id": qid,
+        "entity_id":   target_id,
         "total":       len(scraped),
         "scraped":     scraped,
     }
@@ -1179,12 +1187,18 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         "SEC EDGAR runner: finished %r — %d nodes written",
         company_name, len(scraped),
     )
+    # Mark the target company as on-demand scraped. SEC is depth-blind, so stamp depth 0
+    # (the freshness stamp uses max(), so this never lowers a deeper Wikidata pass).
+    if target_id:
+        set_scrape_target(target_id, 0)
+
     return {
-        "status":  "ok",
-        "company": company_name,
-        "cik":     data.get("cik"),
-        "total":   len(scraped),
-        "scraped": scraped,
+        "status":    "ok",
+        "company":   company_name,
+        "cik":       data.get("cik"),
+        "entity_id": target_id,
+        "total":     len(scraped),
+        "scraped":   scraped,
     }
 
 
@@ -1717,10 +1731,13 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
 # iterate them. A new scraper registers its own ScraperSpec — no dispatch edits.
 register(ScraperSpec(
     "wikidata", lambda q, d: run_scrape(q, d),
-    lambda: settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata")))
+    lambda: settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"),
+    kind="instant", depth_aware=True))
 register(ScraperSpec(
     "sec_edgar", lambda q, d: run_scrape_sec_edgar(q),
-    lambda: settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar")))
+    lambda: settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar"),
+    kind="instant", depth_aware=False))
 register(ScraperSpec(
     "open_corporates", lambda q, d: run_scrape_open_corporates(q),
-    lambda: settings.SCRAPER_OPENCORPORATES_ENABLED and get_source_enabled("open_corporates")))
+    lambda: settings.SCRAPER_OPENCORPORATES_ENABLED and get_source_enabled("open_corporates"),
+    kind="instant", depth_aware=False))

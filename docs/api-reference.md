@@ -95,13 +95,14 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 |---|---|---|---|
 | GET | `/scraper/status` | — | Master + per-source flag states (incl. `autodedup_enabled`) |
 | GET | `/scraper/runs` | contributor | Recent scrape run log — status, counts, failures (see [Scrape run log](../README.md#scrape-run-log)) |
+| POST | `/scraper/ensure` | **verified** | On-demand enrichment for any authenticated + email-verified user. Body `{query, depth=1, force=false}`. Ensures a company is present + fresh, scraping the enabled **instant** sources (Wikidata, SEC EDGAR, OpenCorporates — never bulk/GLEIF) only when it's absent, never on-demand-scraped, stale (> `SCRAPER_ONDEMAND_TTL_DAYS`, default 30), forced, or a deeper pass is asked for. Returns `{scraped, reason, entity_id, depth_reached, sources_run, profile}`. Degrades to a DB-only response when `SCRAPER_ENABLED` is off |
 | POST | `/scraper/run` | admin | Run a Wikidata scrape by company name. `?depth=` (0–3, default 2) = how many levels **down the subsidiary tree** to recursively expand — each level fetches up to 15 subsidiaries per node, so it grows ~exponentially (depth 3 ≈ up to 15³ nodes and thousands of Wikidata calls). Owners/executives are recorded but not recursed |
 | POST | `/scraper/sec-edgar/run` | admin | Run an SEC EDGAR scrape by company name |
 | POST | `/scraper/open-corporates/run` | admin | Run an OpenCorporates scrape by company name |
 | POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company (then auto-dedup). `?depth=` passes through to the Wikidata scrape (see `/scraper/run`) |
 | POST | `/scraper/geocode` | contributor | Backfill HQ coordinates via Nominatim (needs `GEOCODING_ENABLED`) |
 | GET | `/scraper/bods/status` | — | Enabled state of the bulk GLEIF / UK datasets (imported from the CLI, not HTTP) |
-| GET | `/scraper/sources` | — | Per-source toggle states |
+| GET | `/scraper/sources` | — | Per-source toggle states + `kind` (`instant` = query-driven, on-demand; `bulk` = scheduled dataset import). On-demand `/scraper/ensure` runs only enabled `instant` sources |
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
 | DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
 

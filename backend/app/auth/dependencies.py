@@ -28,6 +28,22 @@ def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depend
     return _parse(credentials)
 
 
+def require_verified(user: dict = Depends(get_current_user)):
+    """Authenticated + email-verified, **any role** (viewer included) — the gate for
+    user-triggered on-demand scraping. Trusts the `email_verified` token claim when
+    present (added at token issue); for older tokens without it, reads the User node
+    once. 403 if the account isn't verified."""
+    if user.get("email_verified") is True:
+        return user
+    from app.database import db     # local import keeps this module import-light
+    with db.get_session() as session:
+        rec = session.run("MATCH (u:User {id: $id}) RETURN u.email_verified AS v",
+                          id=user["sub"]).single()
+    if not rec or not rec["v"]:
+        raise HTTPException(status_code=403, detail="Email verification required")
+    return user
+
+
 def require_admin(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")

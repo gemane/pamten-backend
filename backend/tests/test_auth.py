@@ -160,7 +160,45 @@ def test_me_returns_identity_for_valid_token(client, make_token):
     tok = make_token(role="contributor", sub="u9", email="me@example.com")
     r = client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
-    assert r.json() == {"id": "u9", "email": "me@example.com", "role": "contributor"}
+    assert r.json() == {"id": "u9", "email": "me@example.com", "role": "contributor",
+                        "email_verified": False}
+
+
+# ── require_verified (any role, must be email-verified) ─────────────────────────
+
+def test_require_verified_accepts_token_claim():
+    from app.auth.dependencies import require_verified
+    u = {"sub": "u1", "email": "a@example.com", "role": "viewer", "email_verified": True}
+    assert require_verified(u) is u   # trusts the claim, no DB read
+
+
+def test_require_verified_db_fallback_accepts_verified(fake_db):
+    from app.auth.dependencies import require_verified
+    fake_db.queue([{"v": True}])      # token lacks the claim → read the User node
+    u = {"sub": "u1", "email": "a@example.com", "role": "viewer"}
+    assert require_verified(u) is u
+
+
+def test_require_verified_rejects_unverified(fake_db):
+    import pytest
+    from fastapi import HTTPException
+    from app.auth.dependencies import require_verified
+    fake_db.queue([{"v": False}])
+    with pytest.raises(HTTPException) as ei:
+        require_verified({"sub": "u1", "email": "a@example.com", "role": "viewer"})
+    assert ei.value.status_code == 403
+
+
+def test_ensure_endpoint_requires_auth(client):
+    assert client.post("/scraper/ensure", json={"query": "Acme"}).status_code == 401
+
+
+def test_ensure_endpoint_rejects_unverified(client, make_token, fake_db):
+    fake_db.queue([{"v": False}])     # DB fallback says unverified
+    tok = make_token(role="viewer")
+    r = client.post("/scraper/ensure", json={"query": "Acme"},
+                    headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 403
 
 
 def test_admin_endpoint_rejects_anonymous(client):

@@ -8,31 +8,36 @@ from app.auth.dependencies import require_admin
 
 router = APIRouter(prefix="/scraper/sources", tags=["Scraper"])
 
+# Each source has a KIND: "instant" (query-driven, per-company — run on demand by the
+# search-triggered scrape) or "bulk" (whole-dataset scheduled import — GLEIF/UK PSC,
+# never triggered by on-demand search). New sources of either kind are added here.
 KNOWN_SOURCES = {
-    "wikidata":         "Wikidata — structured corporate data via SPARQL",
-    "sec_edgar":        "SEC EDGAR — legally required US ownership filings (SC 13D/13G, Form 3/4)",
-    "open_corporates":  "OpenCorporates — official company registers from 200+ jurisdictions",
-    "bods_gleif": (
-        "GLEIF – Global Legal Entity Identifier "
-        "(corporate ownership, worldwide, CC0)"
-    ),
-    "bods_uk_psc": (
-        "UK People with Significant Control Register "
-        "(beneficial ownership, UK companies, CC0)"
-    ),
+    "wikidata":        {"kind": "instant",
+                        "description": "Wikidata — structured corporate data via SPARQL"},
+    "sec_edgar":       {"kind": "instant",
+                        "description": "SEC EDGAR — legally required US ownership filings (SC 13D/13G, Form 3/4)"},
+    "open_corporates": {"kind": "instant",
+                        "description": "OpenCorporates — official company registers from 200+ jurisdictions"},
+    "bods_gleif":      {"kind": "bulk",
+                        "description": "GLEIF – Global Legal Entity Identifier "
+                                       "(corporate ownership, worldwide, CC0)"},
+    "bods_uk_psc":     {"kind": "bulk",
+                        "description": "UK People with Significant Control Register "
+                                       "(beneficial ownership, UK companies, CC0)"},
 }
 
 
 def _ensure_sources():
     """Create default ScraperSource nodes if they don't exist."""
     with db.get_session() as session:
-        for name, description in KNOWN_SOURCES.items():
+        for name, meta in KNOWN_SOURCES.items():
             session.run(
                 """
                 MERGE (s:ScraperSource {name: $name})
                 ON CREATE SET s.enabled = true, s.description = $desc
+                SET s.kind = $kind
                 """,
-                name=name, desc=description,
+                name=name, desc=meta["description"], kind=meta["kind"],
             )
 
 
@@ -51,10 +56,14 @@ def list_sources():
     _ensure_sources()
     with db.get_session() as session:
         records = session.run(
-            "MATCH (s:ScraperSource) RETURN s.name AS name, s.enabled AS enabled, s.description AS description"
+            "MATCH (s:ScraperSource) RETURN s.name AS name, s.enabled AS enabled, "
+            "s.description AS description, s.kind AS kind"
         )
         return [
-            {"name": r["name"], "enabled": bool(r["enabled"]), "description": r["description"]}
+            {"name": r["name"], "enabled": bool(r["enabled"]), "description": r["description"],
+             # `kind` may be null on rows created before this field existed → fall back to
+             # the declared kind (or "instant" for anything unknown).
+             "kind": r["kind"] or KNOWN_SOURCES.get(r["name"], {}).get("kind", "instant")}
             for r in records
         ]
 
