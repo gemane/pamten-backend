@@ -13,9 +13,42 @@ def _ent(**kw):
     return e
 
 
-def test_force_always_scrapes_even_when_fresh():
-    d = decide_scrape(_ent(scrape_depth=3), requested_depth=1, force=True, now=NOW)
+def test_force_scrapes_when_past_cooldown():
+    # Forced refresh scrapes once the company is outside the cooldown window.
+    old = (NOW - timedelta(hours=25)).isoformat()
+    d = decide_scrape(_ent(scrape_depth=3, last_scraped_at=old), requested_depth=1,
+                      force=True, now=NOW)
     assert d.should_scrape and d.reason == "forced" and d.need_depth == 1
+
+
+def test_force_blocked_within_cooldown():
+    # A forced refresh within 24h of the last scrape is denied — served from the DB.
+    recent = (NOW - timedelta(hours=2)).isoformat()
+    d = decide_scrape(_ent(scrape_depth=3, last_scraped_at=recent), requested_depth=1,
+                      force=True, now=NOW)
+    assert not d.should_scrape and d.reason == "cooldown"
+
+
+def test_absent_forced_scrapes_despite_cooldown():
+    # A never-seen company has no last_scraped_at, so the cooldown can't apply.
+    d = decide_scrape(None, requested_depth=1, force=True, now=NOW)
+    assert d.should_scrape and d.reason == "forced"
+
+
+def test_nonforce_deepen_allowed_within_cooldown():
+    # Phase-2 deepen (force=False, deeper depth) still runs right after phase-1.
+    recent = (NOW - timedelta(minutes=5)).isoformat()
+    d = decide_scrape(_ent(scrape_depth=1, last_scraped_at=recent), requested_depth=2,
+                      force=False, now=NOW)
+    assert d.should_scrape and d.reason == "deepen"
+
+
+def test_custom_cooldown_is_honoured():
+    ts = (NOW - timedelta(hours=3)).isoformat()
+    assert decide_scrape(_ent(last_scraped_at=ts), requested_depth=1, force=True,
+                         now=NOW, cooldown_hours=6).reason == "cooldown"
+    assert decide_scrape(_ent(last_scraped_at=ts), requested_depth=1, force=True,
+                         now=NOW, cooldown_hours=1).reason == "forced"
 
 
 def test_absent_scrapes():

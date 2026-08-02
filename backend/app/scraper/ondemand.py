@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ScrapeDecision:
     should_scrape: bool
-    reason: str          # forced | absent | never_on_demand | stale | deepen | fresh
+    reason: str          # forced | absent | never_on_demand | stale | deepen | fresh | cooldown
     need_depth: int
 
 
@@ -42,18 +42,29 @@ def _parse_dt(value) -> datetime | None:
 
 
 def decide_scrape(entity: dict | None, *, requested_depth: int, force: bool,
-                  now: datetime, ttl_days: int | None = None) -> ScrapeDecision:
+                  now: datetime, ttl_days: int | None = None,
+                  cooldown_hours: int | None = None) -> ScrapeDecision:
     """Should we scrape, and to what depth? Pure — `entity` is the resolved DB row (or
-    None). Branch order matters: force → absent → never-on-demand → stale → deepen → fresh."""
+    None). Branch order: cooldown (force only) → force → absent → never-on-demand → stale →
+    deepen → fresh."""
     ttl = settings.SCRAPER_ONDEMAND_TTL_DAYS if ttl_days is None else ttl_days
+    cooldown = settings.SCRAPER_ONDEMAND_COOLDOWN_HOURS if cooldown_hours is None else cooldown_hours
     depth = int(requested_depth)
+    last = _parse_dt(entity.get("last_scraped_at")) if entity else None
+    within_cooldown = (last is not None and cooldown > 0
+                       and (now - last) < timedelta(hours=cooldown))
     if force:
+        # A forced "Refresh from sources" is still gated by the cooldown: a company scraped
+        # within the last `cooldown` hours is served from the DB until the window passes, so
+        # users can't hammer the external sources. (Non-force deepen isn't blocked — it never
+        # reaches here — so the two-phase depth-1-then-depth-2 enrichment still completes.)
+        if within_cooldown:
+            return ScrapeDecision(False, "cooldown", depth)
         return ScrapeDecision(True, "forced", depth)
     if entity is None:
         return ScrapeDecision(True, "absent", depth)
     if not entity.get("on_demand_scraped"):
         return ScrapeDecision(True, "never_on_demand", depth)
-    last = _parse_dt(entity.get("last_scraped_at"))
     if last is None or (now - last) > timedelta(days=ttl):
         return ScrapeDecision(True, "stale", depth)
     if depth > int(entity.get("scrape_depth") or 0):
