@@ -189,17 +189,24 @@ class TestAggregate:
     def test_extracts_founder_chair_board_as_officers(self):
         rows = [
             _row(itemLabel="SpaceX",
-                 founder="http://www.wikidata.org/entity/Q317521", founderLabel="Elon Musk"),
+                 founder="http://www.wikidata.org/entity/Q317521", founderLabel="Elon Musk",
+                 founderStart="2002-03-14"),
             _row(itemLabel="SpaceX",
                  chair="http://www.wikidata.org/entity/Q317521", chairLabel="Elon Musk"),
             _row(itemLabel="SpaceX",
-                 board="http://www.wikidata.org/entity/Q123", boardLabel="Some Director"),
+                 board="http://www.wikidata.org/entity/Q123", boardLabel="Some Director",
+                 boardStart="2015-01-01", boardEnd="2020-06-30"),
         ]
         result = _aggregate("Q1", rows)
-        officers = {(o["label"], o["role"]) for o in result["officers"]}
+        officers = {(o["label"], o["role"]): o for o in result["officers"]}
         assert ("Elon Musk", "Founder") in officers
         assert ("Elon Musk", "Chairman") in officers
         assert ("Some Director", "Board Member") in officers
+        # Position start/end dates (P580/P582) are captured — they feed the timeline.
+        assert officers[("Elon Musk", "Founder")]["since"] == "2002-03-14"
+        assert officers[("Elon Musk", "Chairman")]["since"] is None
+        board = officers[("Some Director", "Board Member")]
+        assert board["since"] == "2015-01-01" and board["until"] == "2020-06-30"
 
     def test_extracts_owned_by_with_instances(self):
         rows = [_row(

@@ -95,7 +95,7 @@ WIKIDATA_SOURCE_URL   = "https://www.wikidata.org"
 WIKIDATA_CREDIBILITY  = 80
 MAX_SUBSIDIARIES      = 15   # per entity, to avoid runaway scrapes
 MAX_CEOS              = 3
-MAX_OFFICERS          = 12   # founders + chairpersons + board members combined
+MAX_OFFICERS          = 30   # founders + chairpersons + board members combined (large boards)
 MAX_OWNERS            = 10   # owned-by (P127) links
 MAX_INSIDER_LOOKUPS   = 15   # known people to look up personal Form-4 holdings for
 
@@ -628,6 +628,7 @@ def _scrape_node(
                                    nationalities=off.get("nationalities"),
                                    source_id=source_id)
         _upsert_role(person_id, entity_id, off["role"], source_id,
+                     since=off.get("since"), until=off.get("until"),
                      source_url=_wikidata_url(qid))
 
     # Owned by (P127) → OWNS edge (owner → this company). The owner may be a
