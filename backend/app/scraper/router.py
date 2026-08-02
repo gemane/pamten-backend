@@ -6,7 +6,7 @@ from app.config import settings
 from app.scraper.runner import (
     run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
 )  # noqa: F401 - importing runner also registers the built-in scrapers in the registry
-from app.auth.dependencies import require_admin, require_contributor
+from app.auth.dependencies import require_admin, require_contributor, require_verified
 from app.scraper import maintenance, proxy_write
 from app.scraper.run_log import record_run, list_runs
 from app.scraper.scraper_registry import get as _get_scraper, registered as _registered_scrapers
@@ -19,6 +19,30 @@ router = APIRouter(prefix="/scraper", tags=["Scraper"])
 class ScrapeRequest(BaseModel):
     query: str = Field(..., min_length=2, description="Company or brand name to search on Wikidata")
     depth: int = Field(2, ge=0, le=3, description="How many subsidiary levels to follow (0–3)")
+
+
+class EnsureRequest(BaseModel):
+    query: str = Field(..., min_length=2, description="Company name to ensure is present + fresh")
+    depth: int = Field(1, ge=0, le=3, description="Ownership depth to reach (phase 1 = 1, idle phase 2 = 2)")
+    force: bool = Field(False, description="Re-scrape even if the company is fresh (< TTL)")
+
+
+# ── On-demand enrichment (any verified user) ──────────────────────────────────
+
+@router.post("/ensure")
+def scraper_ensure(body: EnsureRequest, _: dict = Depends(require_verified)):
+    """Ensure a company is in the graph and fresh, scraping the enabled **instant**
+    sources (Wikidata, SEC EDGAR, OpenCorporates — never bulk/GLEIF) only when it's
+    absent, never on-demand-scraped, stale (> TTL days), the caller forces it, or a
+    deeper pass is requested. Open to any authenticated + email-verified user. Degrades
+    to a DB-only response when the master switch is off. See app/scraper/ondemand.py."""
+    from app.scraper.ondemand import ensure_scrape
+    try:
+        return ensure_scrape(body.query, body.depth, body.force)
+    except Exception:
+        logger.exception("ensure-scrape failed (query=%r, depth=%s, force=%s)",
+                         body.query, body.depth, body.force)
+        raise HTTPException(status_code=500, detail="On-demand scrape failed. Check server logs.")
 
 
 # ── Master status ─────────────────────────────────────────────────────────────

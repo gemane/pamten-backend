@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # different sources spelled differently. Only high-confidence, non-distinct
     # groups are merged; medium/low go to the review panel. Set false to disable.
     SCRAPER_AUTODEDUP_ENABLED:        bool = True
+    # On-demand (instant-source) scraping: a company already scraped within this
+    # many days is served straight from the DB — no re-scrape — unless the user
+    # forces it. "Never on-demand scraped" and "> this many days" both re-scrape.
+    SCRAPER_ONDEMAND_TTL_DAYS:        int  = 30
     # Trusted-peer federation (step 1: one-way pull of a peer's published export,
     # reconciled through the duplicate scan). Off by default; opt in per instance.
     FEDERATION_ENABLED:               bool = False

@@ -142,9 +142,11 @@ def _issue_password_reset_email(background: BackgroundTasks, user_id: str, email
     background.add_task(_safe_send, send_password_reset_email, email, token)
 
 
-def _token_response(user_id: str, email: str, role: str):
-    token = create_access_token({"sub": user_id, "email": email, "role": role})
-    return {"access_token": token, "token_type": "bearer", "email": email, "role": role}
+def _token_response(user_id: str, email: str, role: str, email_verified: bool = False):
+    token = create_access_token(
+        {"sub": user_id, "email": email, "role": role, "email_verified": bool(email_verified)})
+    return {"access_token": token, "token_type": "bearer", "email": email, "role": role,
+            "email_verified": bool(email_verified)}
 
 
 def _login_rate_limit_key(request: Request, email: str) -> str:
@@ -207,7 +209,7 @@ def register(data: RegisterRequest, background: BackgroundTasks):
         )
 
     if verified:
-        return _token_response(user_id, data.email, role)
+        return _token_response(user_id, data.email, role, email_verified=True)
 
     _issue_verification_email(background, user_id, data.email)
     return {"message": "Account created. Check your email to verify your address before logging in.",
@@ -249,12 +251,17 @@ def login(data: LoginRequest, request: Request):
                                        timedelta(minutes=MFA_PENDING_TTL_MINUTES))
         return {"mfa_required": True, "mfa_token": pending}
 
-    return _token_response(user["id"], user["email"], user["role"])
+    return _token_response(user["id"], user["email"], user["role"],
+                           email_verified=bool(user.get("email_verified")))
 
 
 @router.get("/me")
 def me(user: dict = Depends(get_current_user)):
-    return {"id": user["sub"], "email": user["email"], "role": user["role"]}
+    # `email_verified` is read from the token claim (added at token issue). A token
+    # issued before that claim existed reports False until the next login refreshes it
+    # — harmless and short-lived (it only gates the on-demand scrape UI).
+    return {"id": user["sub"], "email": user["email"], "role": user["role"],
+            "email_verified": bool(user.get("email_verified", False))}
 
 
 @router.post("/verify-email")
@@ -436,7 +443,8 @@ def mfa_verify(data: MfaVerifyRequest):
 
         if verify_totp(u.get("totp_secret") or "", data.code):
             _clear_login_attempts(key)
-            return _token_response(u["id"], u["email"], u["role"])
+            return _token_response(u["id"], u["email"], u["role"],
+                                   email_verified=bool(u.get("email_verified")))
 
         # Recovery code — single use, so consume it on success.
         digest = hash_recovery_code(data.code)
@@ -446,7 +454,8 @@ def mfa_verify(data: MfaVerifyRequest):
             session.run("MATCH (u:User {id: $id}) SET u.recovery_code_hashes = $h",
                         id=u["id"], h=remaining)
             _clear_login_attempts(key)
-            return _token_response(u["id"], u["email"], u["role"])
+            return _token_response(u["id"], u["email"], u["role"],
+                                   email_verified=bool(u.get("email_verified")))
 
     _record_login_failure(key)
     raise HTTPException(status_code=401, detail="Invalid code")

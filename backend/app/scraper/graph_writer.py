@@ -14,6 +14,7 @@ they're generalized off their per-scraper hardcoded credibility.
 import contextvars
 import functools
 import logging
+from datetime import datetime, timezone
 
 from app.config import settings
 
@@ -25,6 +26,36 @@ log = logging.getLogger(__name__)
 # is O(all nodes) and crawls once the DB grows to millions of rows.
 _touched_persons: contextvars.ContextVar = contextvars.ContextVar("touched_persons", default=None)
 _touched_entities: contextvars.ContextVar = contextvars.ContextVar("touched_entities", default=None)
+
+# The TARGET entity of the scrape (the searched company), so the outermost scope can
+# stamp its on-demand freshness — distinct from the touched-sets (which hold every node
+# the scrape brushed). Holds {"id", "depth"} or None.
+_scrape_target: contextvars.ContextVar = contextvars.ContextVar("scrape_target", default=None)
+
+
+def set_scrape_target(entity_id: str, depth: int = 0) -> None:
+    """Record the scrape's target entity + the depth reached, so the outermost
+    `_with_autodedup` scope stamps its freshness. No-op if id is falsy. Called by the
+    source runners once they've resolved/created the searched company's node."""
+    if entity_id:
+        _scrape_target.set({"id": entity_id, "depth": int(depth)})
+
+
+def _stamp_scrape_freshness(target: dict) -> None:
+    """Stamp on-demand freshness on the target entity: `last_scraped_at` (now),
+    `on_demand_scraped=true`, and `scrape_depth` bumped to the deepest pass so far
+    (max — so a shallow SEC pass never lowers a deeper Wikidata one). Best-effort."""
+    from app.db.arcadedb import run_command   # local import avoids an import cycle
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        run_command(
+            "MATCH (e:Entity {id: $id}) "
+            "SET e.last_scraped_at = $now, e.on_demand_scraped = true, "
+            "e.scrape_depth = CASE WHEN $d > coalesce(e.scrape_depth, -1) "
+            "THEN $d ELSE e.scrape_depth END",
+            {"id": target["id"], "now": now, "d": int(target.get("depth", 0))})
+    except Exception as exc:  # noqa: BLE001 - never fail a scrape on the freshness stamp
+        log.error("Freshness stamp failed for %s: %s", target.get("id"), exc)
 
 
 def _record_touched(person_id: str) -> str:
@@ -81,13 +112,19 @@ def _with_autodedup(fn):
             return fn(*args, **kwargs)
         ptoken = _touched_persons.set(set())
         etoken = _touched_entities.set(set())
+        ttoken = _scrape_target.set(None)
+        target = None
         try:
             result = fn(*args, **kwargs)
             touched_p = list(_touched_persons.get() or [])
             touched_e = list(_touched_entities.get() or [])
+            target = _scrape_target.get()
         finally:
             _touched_persons.reset(ptoken)
             _touched_entities.reset(etoken)
+            _scrape_target.reset(ttoken)
+        if target:
+            _stamp_scrape_freshness(target)
         if isinstance(result, dict):
             result.update(_run_scoped_autodedup(touched_p, touched_e))
         return result

@@ -11,7 +11,7 @@ Registration is keyed by name, so re-registering replaces (re-imports during tes
 never duplicate entries), and iteration order is registration order.
 """
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Literal
 
 _registry: dict[str, "ScraperSpec"] = {}
 
@@ -21,6 +21,14 @@ class ScraperSpec:
     name: str                            # result key + source identifier, e.g. "wikidata"
     run: Callable[[str, int], dict]      # (query, depth) -> the scraper's result dict
     enabled: Callable[[], bool]          # master flag + per-source toggle check
+    # Source KIND: "instant" = query-driven, per-company, safe to run on demand
+    # (Wikidata, SEC EDGAR, OpenCorporates); "bulk" = whole-dataset scheduled import
+    # (GLEIF). The on-demand search runs ONLY enabled "instant" sources — never "bulk".
+    kind: Literal["instant", "bulk"] = "instant"
+    # Does this source traverse ownership depth? Only depth-aware sources (Wikidata)
+    # are re-run on the idle depth-2 "deepen" pass; depth-blind ones (SEC/OpenCorporates)
+    # ignore depth, so re-running them would be wasted work.
+    depth_aware: bool = False
 
 
 def register(spec: ScraperSpec) -> None:

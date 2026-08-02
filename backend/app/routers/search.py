@@ -49,6 +49,57 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
     return (exact_norm, -matches, tier, notable, name_len, idx)
 
 
+def _entity_candidate_rows(q_lower: str, nn: str | None, country: str | None) -> list[dict]:
+    """The Entity candidate set for a query, in candidate order (exact-name, then
+    notable/wikidata-tagged, then FULL_TEXT relevance) — cleaned rows, not yet ranked or
+    de-duped. Shared by `search()` (its Entity portion) and `resolve_best_entity()` so the
+    ranking has a single source of truth. `_rank` orders whatever this returns."""
+    if country:
+        exact_sql = ("SELECT FROM Entity WHERE name_normalized = :nn "
+                     "AND country = :country LIMIT 10")
+        exact_params: dict = {"nn": nn, "country": country}
+        notable_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
+                       "AND wikidata_id IS NOT NULL AND country = :country LIMIT 15")
+        notable_params: dict = {"q": q_lower, "country": country}
+        entity_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
+                      "AND country = :country LIMIT 30")
+        entity_params: dict = {"q": q_lower, "country": country}
+    else:
+        exact_sql = "SELECT FROM Entity WHERE name_normalized = :nn LIMIT 10"
+        exact_params = {"nn": nn}
+        notable_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
+                       "AND wikidata_id IS NOT NULL LIMIT 15")
+        notable_params = {"q": q_lower}
+        entity_sql = "SELECT FROM Entity WHERE search_text CONTAINSTEXT :q LIMIT 30"
+        entity_params = {"q": q_lower}
+
+    rows: list[dict] = []
+    if nn:
+        rows += [_clean(r) for r in run_sql(exact_sql, exact_params)]
+    rows += [_clean(r) for r in run_sql(notable_sql, notable_params)]
+    rows += [_clean(r) for r in run_sql(entity_sql, entity_params)]
+    return rows
+
+
+def resolve_best_entity(q: str, country: str | None = None) -> dict | None:
+    """The single best-matching (non-suppressed) Entity for a query, using the same
+    candidate set + `_rank` as `/search` — the shared 'which DB node does this query
+    mean' resolver the on-demand scrape uses to decide freshness/target."""
+    q_lower = q.lower()
+    tokens = q_lower.split()
+    nn = normalize_entity_name(q)
+    rows = _entity_candidate_rows(q_lower, nn, country)
+    if not rows:
+        return None
+    with db.get_session() as session:
+        hidden = load_suppressed_nodes(session)
+    rows = [r for r in rows if r.get("id") not in hidden]
+    if not rows:
+        return None
+    ranked = sorted(enumerate(rows), key=lambda ir: _rank(ir[1], q_lower, tokens, ir[0], nn))
+    return ranked[0][1]
+
+
 @router.get("/")
 def search(q: str = Query(..., min_length=2), country: str | None = Query(default=None)):
     """
@@ -81,49 +132,12 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     # returns rows already ranked by relevance; we re-rank by NAME token coverage
     # below. Entity and Person run separately — ArcadeDB UNION + LIMIT is unreliable.
     # (CONTAINSTEXT composes with an extra AND filter on ArcadeDB 26.7.2+.)
-    if country:
-        entity_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
-                      "AND country = :country LIMIT 30")
-        entity_params: dict = {"q": q_lower, "country": country}
-    else:
-        entity_sql = "SELECT FROM Entity WHERE search_text CONTAINSTEXT :q LIMIT 30"
-        entity_params = {"q": q_lower}
+    # Entity candidates (exact-name, notable/wikidata, FULL_TEXT) come from the shared
+    # helper so /search and the on-demand resolver rank the same set.
+    results = [{"node": node, "score": 1.0, "type": "Entity"}
+               for node in _entity_candidate_rows(q_lower, nn, country)]
 
     person_sql = "SELECT FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 15"
-
-    # Exact-name lookup (indexed on name_normalized): CONTAINSTEXT is an OR over
-    # tokens, so for "BlackRock, Inc." a common token ("inc") floods the LIMIT'd
-    # candidate set and the exact company never gets fetched. This guarantees it
-    # is in the candidate set; _rank then floats it to the top.
-    if country:
-        exact_sql = ("SELECT FROM Entity WHERE name_normalized = :nn "
-                     "AND country = :country LIMIT 10")
-        exact_params: dict = {"nn": nn, "country": country}
-    else:
-        exact_sql = "SELECT FROM Entity WHERE name_normalized = :nn LIMIT 10"
-        exact_params = {"nn": nn}
-
-    # Notable-entity lookup: at GLEIF scale the CONTAINSTEXT LIMIT is crowded out
-    # by thousands of registry subsidiaries, so a curated Wikidata company
-    # ("Heineken Holding") may never be fetched. Guarantee wikidata-tagged matches
-    # are in the candidate set; _rank floats them up within their match tier.
-    if country:
-        notable_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
-                       "AND wikidata_id IS NOT NULL AND country = :country LIMIT 15")
-        notable_params: dict = {"q": q_lower, "country": country}
-    else:
-        notable_sql = ("SELECT FROM Entity WHERE search_text CONTAINSTEXT :q "
-                       "AND wikidata_id IS NOT NULL LIMIT 15")
-        notable_params = {"q": q_lower}
-
-    results = []
-    if nn:
-        for row in run_sql(exact_sql, exact_params):
-            results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
-    for row in run_sql(notable_sql, notable_params):
-        results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
-    for row in run_sql(entity_sql, entity_params):
-        results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
     if not country:
         for row in run_sql(person_sql, {"q": q_lower}):
             results.append({"node": _clean(row), "score": 1.0, "type": "Person"})
