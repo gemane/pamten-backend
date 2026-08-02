@@ -84,3 +84,41 @@ def test_sources_endpoint_empty_for_entity_without_sources(it_db):
     it_db.run_command("CREATE (:Entity {id: 'e-lonely', name: 'No Sources Co'})")
 
     assert get_sources_for_entity("e-lonely") == []
+
+
+def test_entity_own_sources_deep_link_from_each_identifier(it_db):
+    """A cross-source entity carrying BOTH a Wikidata QID and an SEC CIK (e.g. after a
+    merge) shows BOTH sources, each deep-linked to the specific record — not the single
+    stamped source_id at the source's home page."""
+    from app.routers.sources import get_sources_for_entity
+
+    it_db.run_command("CREATE (:Source {id: 'sec', name: 'SEC EDGAR', url: 'https://www.sec.gov/edgar', "
+                      "type: 'register', credibility_score: 98})")
+    it_db.run_command("CREATE (:Source {id: 'wd', name: 'Wikidata', url: 'https://www.wikidata.org', "
+                      "type: 'knowledge_base', credibility_score: 80})")
+    # A pure owner (no inbound edges) with both identifiers + a single stamped source_id.
+    it_db.run_command(
+        "CREATE (:Entity {id: 'vg', name: 'The Vanguard Group', "
+        "wikidata_id: 'Q849363', sec_cik: '0000102909', source_id: 'sec'})")
+
+    rows = get_sources_for_entity("vg")
+    by_name = {r["name"]: r for r in rows}
+    assert set(by_name) == {"SEC EDGAR", "Wikidata"}
+    assert by_name["SEC EDGAR"]["url"] == \
+        "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000102909"
+    assert by_name["Wikidata"]["url"] == "https://www.wikidata.org/wiki/Q849363"
+
+
+def test_entity_own_sources_fall_back_to_source_id_without_identifiers(it_db):
+    """An entity with a stamped source_id but no hard identifier keeps the single
+    source-id provenance row (home URL)."""
+    from app.routers.sources import get_sources_for_entity
+
+    it_db.run_command("CREATE (:Source {id: 'oc', name: 'OpenCorporates', "
+                      "url: 'https://opencorporates.com', type: 'register', credibility_score: 70})")
+    it_db.run_command("CREATE (:Entity {id: 'plain', name: 'Plain Co', source_id: 'oc'})")
+
+    rows = get_sources_for_entity("plain")
+    assert len(rows) == 1
+    assert rows[0]["name"] == "OpenCorporates"
+    assert rows[0]["url"] == "https://opencorporates.com"
