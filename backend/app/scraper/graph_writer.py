@@ -36,9 +36,16 @@ _scrape_target: contextvars.ContextVar = contextvars.ContextVar("scrape_target",
 def set_scrape_target(entity_id: str, depth: int = 0) -> None:
     """Record the scrape's target entity + the depth reached, so the outermost
     `_with_autodedup` scope stamps its freshness. No-op if id is falsy. Called by the
-    source runners once they've resolved/created the searched company's node."""
-    if entity_id:
-        _scrape_target.set({"id": entity_id, "depth": int(depth)})
+    source runners once they've resolved/created the searched company's node. When several
+    sources run in ONE scope (Wikidata + SEC under an on-demand ensure), keep the DEEPEST
+    depth for the same target — so a depth-blind source (SEC → 0) can't lower Wikidata's."""
+    if not entity_id:
+        return
+    depth = int(depth)
+    cur = _scrape_target.get()
+    if cur and cur.get("id") == entity_id:
+        depth = max(depth, int(cur.get("depth", 0)))
+    _scrape_target.set({"id": entity_id, "depth": depth})
 
 
 def _stamp_scrape_freshness(target: dict) -> None:

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.config import settings
+from app.scraper.graph_writer import _with_autodedup
 from app.scraper.mapper import normalize_entity_name
 
 log = logging.getLogger(__name__)
@@ -67,12 +68,22 @@ _inflight_lock = threading.Lock()
 _inflight: set[str] = set()
 
 
-def _run_instant_sources(query: str, decision: ScrapeDecision) -> tuple[list[str], str | None]:
-    """Run the enabled **instant** sources for `query` and return (names_run, target_id).
-    Kind-driven: iterate the registry, keep only `kind=="instant" and enabled()` — this
-    structurally excludes bulk sources (GLEIF) and any admin-disabled instant source, and
-    auto-includes future instant sources. On a pure `deepen` pass, only depth-aware
-    sources re-run (the rest ignore depth). One source failing never sinks the others."""
+@_with_autodedup
+def _run_instant_sources(query: str, decision: ScrapeDecision) -> dict:
+    """Run the enabled **instant** sources for `query`; returns
+    {status, names_run, target_id}. Kind-driven: iterate the registry, keep only
+    `kind=="instant" and enabled()` — this structurally excludes bulk sources (GLEIF) and
+    any admin-disabled instant source, and auto-includes future instant sources. On a pure
+    `deepen` pass, only depth-aware sources re-run (the rest ignore depth). One source
+    failing never sinks the others.
+
+    **Wrapped in `@_with_autodedup` so all sources share ONE dedup scope.** The person
+    auto-merge only groups duplicates that were touched *together* in one scope (candidate
+    expansion is exact-name only — persons.py `_candidate_persons`), so running Wikidata +
+    SEC under a single scope is what merges cross-source pairs like Wikidata "Larry Page"
+    ↔ SEC "Page Lawrence". Separate per-source scopes miss them. Mirrors `run_scrape_all`.
+    The nested runners (each `@_with_autodedup`) become no-ops for dedup/freshness and feed
+    the shared collector; the combined merge + the single freshness stamp run here."""
     from app.scraper.scraper_registry import registered
     from app.scraper.run_log import record_run
 
@@ -94,7 +105,7 @@ def _run_instant_sources(query: str, decision: ScrapeDecision) -> tuple[list[str
             names_run.append(spec.name)
         except Exception as exc:  # noqa: BLE001 - one source failing mustn't sink the rest
             log.error("on-demand %s scrape failed for %r: %s", spec.name, query, exc)
-    return names_run, target_id
+    return {"status": "ok", "names_run": names_run, "target_id": target_id}
 
 
 def ensure_scrape(query: str, depth: int = 1, force: bool = False) -> dict:
@@ -134,7 +145,8 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False) -> dict:
             return _served_from_db("in_progress")    # already scraping this target
         _inflight.add(key)
     try:
-        names_run, target_id = _run_instant_sources(query, decision)
+        ran = _run_instant_sources(query, decision)
+        names_run, target_id = ran["names_run"], ran["target_id"]
     finally:
         with _inflight_lock:
             _inflight.discard(key)

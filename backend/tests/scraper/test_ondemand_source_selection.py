@@ -19,6 +19,7 @@ def _fake_record_run(source, target):
 def _setup(monkeypatch, entity, *, enable_oc=False):
     calls: list[tuple[str, int]] = []
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)  # _run_instant_sources now wraps dedup
     monkeypatch.setattr("app.scraper.run_log.record_run", _fake_record_run)
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
 
