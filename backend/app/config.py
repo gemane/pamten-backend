@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # many days is served straight from the DB — no re-scrape — unless the user
     # forces it. "Never on-demand scraped" and "> this many days" both re-scrape.
     SCRAPER_ONDEMAND_TTL_DAYS:        int  = 30
+    # Hard cooldown after any on-demand scrape: for this many hours the company
+    # cannot be scraped again — not even with a forced "Refresh from sources" — so
+    # the external sources aren't hammered. A deepen to a not-yet-reached depth is a
+    # continuation of the same enrichment and is still allowed.
+    SCRAPER_ONDEMAND_COOLDOWN_HOURS:  int  = 24
     # Trusted-peer federation (step 1: one-way pull of a peer's published export,
     # reconciled through the duplicate scan). Off by default; opt in per instance.
     FEDERATION_ENABLED:               bool = False
