@@ -2,7 +2,31 @@
 Tests for mapper.py — pure functions, no mocks needed.
 """
 
-from app.scraper.mapper import normalize_entity_name, is_person_name, is_nominee_name
+from app.scraper.mapper import (
+    normalize_entity_name, is_person_name, is_nominee_name, derive_ownership_type,
+)
+
+
+class TestDeriveOwnershipType:
+    """Ownership type is classified from the stake %; with no % it's 'unknown'
+    (neither minority nor majority) — except a genuine SEC 13D/13G form signal."""
+
+    def test_classifies_by_stake_percent(self):
+        assert derive_ownership_type(99) == "full"
+        assert derive_ownership_type(60) == "majority"
+        assert derive_ownership_type(25) == "controlling"
+        assert derive_ownership_type(6.2) == "minority"    # BlackRock in Alphabet
+        assert derive_ownership_type(1.03) == "minority"   # a ~1% founder holding
+
+    def test_no_stake_no_signal_is_unknown_not_majority(self):
+        # The Alphabet bug: a Wikidata "owner"/founder edge with no % used to default
+        # to 'majority'. With no disclosed stake and no form, it's 'unknown'.
+        assert derive_ownership_type(None) == "unknown"
+        assert derive_ownership_type(None, form_type=None) == "unknown"
+
+    def test_sec_form_type_still_signals_when_no_stake(self):
+        assert derive_ownership_type(None, "SC 13D") == "controlling"
+        assert derive_ownership_type(None, "SC 13G") == "minority"
 
 
 class TestNormalizeEntityName:
