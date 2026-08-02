@@ -141,7 +141,10 @@ def derive_ownership_type(stake_pct: float | None, form_type: str | None = None)
     When stake is unknown, fall back on the SEC form type:
       SC 13D (activist / strategic)  → controlling
       SC 13G (passive institutional) → minority
-      no info (Wikidata subsidiary)  → majority
+      no info at all                 → unknown  (don't guess minority/majority
+                                       without a % — a founder listed as an "owner"
+                                       with no disclosed stake is neither; the UI
+                                       shows it as a neutral "Owned")
     """
     if stake_pct is not None:
         if stake_pct >= 99:
@@ -155,7 +158,7 @@ def derive_ownership_type(stake_pct: float | None, form_type: str | None = None)
         return "controlling"
     if form_type and "13G" in form_type:
         return "minority"
-    return "majority"
+    return "unknown"
 
 
 _LEGAL_SUFFIX_NORM = re.compile(

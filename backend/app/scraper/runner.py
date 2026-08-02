@@ -395,7 +395,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
             f"""
             MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
             CREATE (a)-[:OWNS {{
-                stake_percent: null, ownership_type: 'majority',
+                stake_percent: null, ownership_type: 'unknown',
                 since: null, until: null,
                 source_id: $sid, credibility_score: $score,
                 source_url: $surl, source_date: $sdate, last_scraped_at: $now

@@ -811,98 +811,40 @@ def deduplicate_entities_bulk(batch_size: int = 200) -> dict:
 
 def migrate_ownership_types() -> dict:
     """
-    One-time migration: derive canonical ownership_type values for all OWNS
-    edges using stake_percent and the old 'passive'/'active' markers.
+    Re-derive canonical ownership_type for all OWNS edges, IN PLACE.
 
-    Rules applied in order (first matching rule wins per edge):
-      stake >= 99                          → full
-      stake > 50                           → majority
-      stake >= 20                          → controlling
-      stake > 0                            → minority
-      no stake, old type = 'active'        → controlling
-      no stake, old type = 'passive'       → minority
-      no stake, no type (Wikidata sub)     → majority
+    Classify by `stake_percent` when a stake is disclosed
+      (>=99 full · >50 majority · >=20 controlling · >0 minority);
+    a stakeless 'majority' — the old Wikidata "owner with no %" default — becomes
+    'unknown' (we don't assert minority/majority without a disclosed %); every other
+    stakeless edge keeps its type, because it carries a real signal (a GLEIF consolidation
+    'controlling' edge, or an SEC 13D/13G form-derived type).
+
+    Writes are an UPDATE by @rid (via run_sqlscript) — never a DELETE+CREATE. The old
+    delete-then-recreate both DUPLICATED active edges (its `WHERE r.until = null` never
+    matched on ArcadeDB, so nothing was deleted before the re-create) and dropped every
+    edge property it didn't explicitly copy. A direct-record UPDATE avoids both.
     """
-    edges = run_query(
-        """
-        MATCH (a)-[r:OWNS]->(b)
-        RETURN a.id AS owner_id, b.id AS target_id,
-               r.stake_percent  AS stake,
-               r.ownership_type AS old_type,
-               r.since          AS since,
-               r.until          AS until,
-               r.file_date      AS file_date,
-               r.source_id      AS source_id,
-               r.credibility_score AS cred,
-               r.voting_power_pct  AS voting_pct
-        """
-    )
-
-    updated = 0
-    skipped = 0
-    detail: list[dict] = []
-
+    edges = run_sql("SELECT @rid AS rid, stake_percent AS stake, ownership_type AS ot FROM OWNS")
+    updates: list[tuple[str, str]] = []
     for e in edges:
-        old_type = e.get("old_type")
-        stake    = e.get("stake")
+        d = dict(e)
+        stake, ot = d.get("stake"), d.get("ot")
+        if stake is not None:
+            new = _derive_ownership_type(stake)
+        elif ot == "majority":
+            new = "unknown"
+        else:
+            continue                      # stakeless controlling / form-derived → keep
+        if new != ot:
+            updates.append((d.get("rid"), new))
 
-        # Derive from stake % when available, else fall back on old marker
-        form_hint = None
-        if old_type == "active":
-            form_hint = "SC 13D"
-        elif old_type == "passive":
-            form_hint = "SC 13G"
+    for i in range(0, len(updates), 400):
+        chunk = updates[i:i + 400]
+        # ownership_type is a fixed vocabulary and rid is a #x:y record id → safe to inline.
+        run_sqlscript(";".join(f"UPDATE {rid} SET ownership_type = '{t}'" for rid, t in chunk))
 
-        new_type = _derive_ownership_type(stake, form_hint)
-
-        if new_type == old_type:
-            skipped += 1
-            continue
-
-        oid = e["owner_id"]
-        nid = e["target_id"]
-
-        run_command(
-            "MATCH (a {id: $oid})-[r:OWNS]->(b {id: $nid}) WHERE r.until = $until DELETE r",
-            {"oid": oid, "nid": nid, "until": e.get("until")},
-        )
-        run_command(
-            """
-            MATCH (a {id: $oid}), (b {id: $nid})
-            CREATE (a)-[:OWNS {
-                stake_percent:      $stake,
-                ownership_type:     $otype,
-                since:              $since,
-                until:              $until,
-                file_date:          $file_date,
-                source_id:          $source_id,
-                credibility_score:  $cred,
-                voting_power_pct:   $voting_pct
-            }]->(b)
-            """,
-            {
-                "oid":       oid,
-                "nid":       nid,
-                "stake":     stake,
-                "otype":     new_type,
-                "since":     e.get("since"),
-                "until":     e.get("until"),
-                "file_date": e.get("file_date"),
-                "source_id": e.get("source_id"),
-                "cred":      e.get("cred"),
-                "voting_pct": e.get("voting_pct"),
-            },
-        )
-        updated += 1
-        detail.append({"owner_id": oid, "target_id": nid,
-                        "old": old_type, "new": new_type, "stake": stake})
-
-    return {
-        "status":  "ok",
-        "updated": updated,
-        "skipped": skipped,
-        "detail":  detail,
-    }
+    return {"status": "ok", "updated": len(updates), "skipped": len(edges) - len(updates)}
 
 # Alternate country spellings seen in external data that the canonical
 # _ISO2_COUNTRY map does not carry (matched case-insensitively).
