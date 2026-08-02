@@ -368,6 +368,27 @@ class TestSearchEntity:
             out = search_entity("zzznomatch")
         assert out == []
 
+    def test_retries_on_429_then_succeeds(self):
+        # A rate-limit (429) must back off + retry, not fail the scrape.
+        throttled = MagicMock(status_code=429, headers={})
+        ok = self._mock_response([{"id": "Q1", "label": "Apple Inc."}])
+        ok.status_code = 200
+        with patch("httpx.get", side_effect=[throttled, ok]) as get, \
+             patch("time.sleep"):
+            out = search_entity("Apple")
+        assert out == [{"id": "Q1", "label": "Apple Inc."}]
+        assert get.call_count == 2                       # retried once after the 429
+
+    def test_gives_up_after_max_retries(self):
+        import httpx
+        throttled = MagicMock(status_code=429, headers={})
+        throttled.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "429", request=MagicMock(), response=throttled)
+        with patch("httpx.get", return_value=throttled) as get, patch("time.sleep"):
+            with __import__("pytest").raises(httpx.HTTPStatusError):
+                search_entity("Apple")
+        assert get.call_count == 5                        # initial + _MAX_RETRIES
+
     def test_passes_query_and_language_params(self):
         with patch("httpx.get", return_value=self._mock_response([])) as mock_get, \
              patch("time.sleep"):

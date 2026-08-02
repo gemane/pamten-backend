@@ -32,8 +32,10 @@ Fields returned and Owlgraph mapping:
 
 Rate limits:
   Wikimedia policy: no hard public limit, but requests must include a User-Agent
-  and should be polite. We sleep 0.4 s between calls (~2.5 req/s).
-  SPARQL endpoint may return 429 under heavy load — callers should retry.
+  and should be polite. Every call goes through `_wd_get`, which spaces calls (0.4 s)
+  and, on a 429/503 rate-limit, waits per `Retry-After` (else exponential backoff with
+  jitter) and retries — so a burst (a deep scrape, or concurrent on-demand scrapes on
+  one Render egress IP) recovers instead of failing.
   Docs: https://www.wikidata.org/wiki/Wikidata:Data_access#Rate_limits
 
 Data licence:
@@ -48,6 +50,7 @@ How to verify:
 """
 
 import logging
+import random
 import re
 import time
 import httpx
@@ -58,26 +61,53 @@ WIKIDATA_API  = "https://www.wikidata.org/w/api.php"
 SPARQL_URL    = "https://query.wikidata.org/sparql"
 USER_AGENT    = "Owlgraph/1.0 (https://pamten-frontend.onrender.com)"
 HEADERS       = {"User-Agent": USER_AGENT}
-REQUEST_DELAY = 0.4  # seconds between Wikidata calls
+REQUEST_DELAY = 0.4   # polite spacing between Wikidata calls
+_MAX_RETRIES  = 4     # retries on a 429/503 rate-limit
+_MAX_BACKOFF  = 30.0  # cap on the backoff wait (seconds)
+
+
+def _retry_after(resp: httpx.Response) -> float | None:
+    """Seconds to wait per the `Retry-After` response header, if present + numeric."""
+    try:
+        val = resp.headers.get("Retry-After")
+        return float(val) if val else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _wd_get(url: str, params: dict, timeout: int) -> httpx.Response:
+    """GET a Wikidata endpoint politely (REQUEST_DELAY between calls) and resiliently.
+
+    query.wikidata.org rate-limits per IP and answers 429 (or 503) when a burst — e.g. a
+    deep scrape's many SPARQL queries, or concurrent on-demand scrapes sharing one egress
+    IP — exceeds its budget. On a 429/503 we wait per the `Retry-After` header (else an
+    exponential backoff with jitter, capped) and retry up to `_MAX_RETRIES`, instead of
+    failing the query. Any other status raises; the final 429/503 raises if retries run out."""
+    delay = REQUEST_DELAY
+    for attempt in range(_MAX_RETRIES + 1):
+        time.sleep(delay)
+        r = httpx.get(url, params=params, headers=HEADERS, timeout=timeout)
+        if r.status_code not in (429, 503):
+            r.raise_for_status()
+            return r
+        if attempt >= _MAX_RETRIES:
+            r.raise_for_status()          # exhausted → surface the rate-limit error
+        delay = _retry_after(r) or min(2.0 ** attempt, _MAX_BACKOFF) + random.uniform(0, 0.5)
+        log.warning("Wikidata rate-limited (HTTP %s); backing off %.1fs (retry %d/%d)",
+                    r.status_code, delay, attempt + 1, _MAX_RETRIES)
+    raise RuntimeError("unreachable")     # pragma: no cover
 
 
 def search_entity(query: str, limit: int = 5) -> list:
     """Full-text search on Wikidata. Returns list of {id, label, description}."""
-    r = httpx.get(
-        WIKIDATA_API,
-        params={
-            "action":   "wbsearchentities",
-            "search":   query,
-            "language": "en",
-            "type":     "item",
-            "limit":    limit,
-            "format":   "json",
-        },
-        headers=HEADERS,
-        timeout=10,
-    )
-    r.raise_for_status()
-    time.sleep(REQUEST_DELAY)
+    r = _wd_get(WIKIDATA_API, {
+        "action":   "wbsearchentities",
+        "search":   query,
+        "language": "en",
+        "type":     "item",
+        "limit":    limit,
+        "format":   "json",
+    }, timeout=10)
     return r.json().get("search", [])
 
 
@@ -179,18 +209,12 @@ def _sparql(qid: str) -> list:
     rows: list = []
     # core/people/relations are essential — a failure there fails the scrape.
     for query in (core, people, relations):
-        time.sleep(REQUEST_DELAY)
-        r = httpx.get(SPARQL_URL, params={"query": query, "format": "json"},
-                      headers=HEADERS, timeout=30)
-        r.raise_for_status()
+        r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=30)
         rows.extend(r.json()["results"]["bindings"])
     # Employees is supplementary: a flaky 4th request must NOT abort the whole
     # company scrape — just skip the field on error.
     try:
-        time.sleep(REQUEST_DELAY)
-        r = httpx.get(SPARQL_URL, params={"query": employees, "format": "json"},
-                      headers=HEADERS, timeout=30)
-        r.raise_for_status()
+        r = _wd_get(SPARQL_URL, {"query": employees, "format": "json"}, timeout=30)
         rows.extend(r.json()["results"]["bindings"])
     except (httpx.HTTPError, ValueError, KeyError) as exc:
         log.warning("Wikidata employees query failed for %s (skipping field): %s", qid, exc)
@@ -228,10 +252,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     }}
     GROUP BY ?person ?birth ?death
     """
-    time.sleep(REQUEST_DELAY)
-    r = httpx.get(SPARQL_URL, params={"query": query, "format": "json"},
-                  headers=HEADERS, timeout=30)
-    r.raise_for_status()
+    r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=30)
     details: dict[str, dict] = {}
     for row in r.json()["results"]["bindings"]:
         pqid = _qid(_v(row, "person"))
