@@ -118,7 +118,9 @@ def _sparql(qid: str) -> list:
     # 2. People: CEO / founder / chair / board — UNION so one person per row.
     people = f"""
     SELECT ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode ?ceoStart ?ceoEnd
-           ?founder ?founderLabel ?chair ?chairLabel ?board ?boardLabel
+           ?founder ?founderLabel ?founderStart ?founderEnd
+           ?chair ?chairLabel ?chairStart ?chairEnd
+           ?board ?boardLabel ?boardStart ?boardEnd
     WHERE {{
       BIND(wd:{qid} AS ?item)
       {{
@@ -128,9 +130,15 @@ def _sparql(qid: str) -> list:
         OPTIONAL {{ ?ceo wdt:P27 ?ceoNationality . ?ceoNationality wdt:P297 ?ceoNationalityCode }}
         OPTIONAL {{ ?ceo schema:description ?ceoDescription . FILTER(LANG(?ceoDescription) = "en") }}
       }}
-      UNION {{ ?item wdt:P112 ?founder }}
-      UNION {{ ?item wdt:P488 ?chair }}
-      UNION {{ ?item wdt:P3320 ?board }}
+      UNION {{ ?item p:P112 ?founderStmt . ?founderStmt ps:P112 ?founder .
+               OPTIONAL {{ ?founderStmt pq:P580 ?founderStart }}
+               OPTIONAL {{ ?founderStmt pq:P582 ?founderEnd }} }}
+      UNION {{ ?item p:P488 ?chairStmt . ?chairStmt ps:P488 ?chair .
+               OPTIONAL {{ ?chairStmt pq:P580 ?chairStart }}
+               OPTIONAL {{ ?chairStmt pq:P582 ?chairEnd }} }}
+      UNION {{ ?item p:P3320 ?boardStmt . ?boardStmt ps:P3320 ?board .
+               OPTIONAL {{ ?boardStmt pq:P580 ?boardStart }}
+               OPTIONAL {{ ?boardStmt pq:P582 ?boardEnd }} }}
       {_LABEL_SERVICE}
     }}
     """
@@ -439,17 +447,23 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     "until":       until,
                 }
 
-        # Founder / chairperson / board member → HAS_ROLE (person + role)
+        # Founder / chairperson / board member → HAS_ROLE (person + role).
+        # Keyed by qid+role+since (like CEO) to capture separate tenures and carry the
+        # position's start/end dates (P580/P582) so they show on the timeline.
         for var, role in (("founder", "Founder"), ("chair", "Chairman"),
                           ("board", "Board Member")):
             if uri := _v(row, var):
                 pqid = _qid(uri)
-                okey = f"{pqid}|{role}"
+                since = (_v(row, f"{var}Start") or "")[:10] or None
+                until = (_v(row, f"{var}End") or "")[:10] or None
+                okey = f"{pqid}|{role}|{since}"
                 if pqid and okey not in result["officers"]:
                     result["officers"][okey] = {
                         "qid":   pqid,
                         "label": _v(row, f"{var}Label"),
                         "role":  role,
+                        "since": since,
+                        "until": until,
                     }
 
         # Owned by (P127) → OWNS edge. Owner may be a person or an entity;
