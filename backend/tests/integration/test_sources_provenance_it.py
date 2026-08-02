@@ -122,3 +122,25 @@ def test_entity_own_sources_fall_back_to_source_id_without_identifiers(it_db):
     assert len(rows) == 1
     assert rows[0]["name"] == "OpenCorporates"
     assert rows[0]["url"] == "https://opencorporates.com"
+
+
+def test_sources_dedupes_repeated_same_source_link(it_db):
+    """The same source URL backing many facts (every Wikidata owner edge points at the
+    company's Wikidata page) collapses to a single row."""
+    from app.routers.sources import get_sources_for_entity
+
+    it_db.run_command("CREATE (:Source {id: 'wd', name: 'Wikidata', url: 'https://www.wikidata.org', "
+                      "type: 'knowledge_base', credibility_score: 80})")
+    it_db.run_command("CREATE (:Entity {id: 'target', name: 'T'})")
+    # three different owners, all recorded from the SAME Wikidata page, different dates
+    for i, date in enumerate(("2024-01-01", "2024-02-02", "2024-03-03")):
+        it_db.run_command(f"CREATE (:Person {{id: 'p{i}', full_name: 'Owner {i}'}})")
+        it_db.run_command(
+            f"MATCH (a:Person {{id: 'p{i}'}}),(b:Entity {{id: 'target'}}) "
+            f"CREATE (a)-[:OWNS {{source_id: 'wd', source_url: 'https://www.wikidata.org/wiki/Q1', "
+            f"source_date: '{date}', until: null}}]->(b)")
+
+    rows = get_sources_for_entity("target")
+    wd = [r for r in rows if r["url"] == "https://www.wikidata.org/wiki/Q1"]
+    assert len(wd) == 1                                   # collapsed to a single link
+    assert wd[0]["source_date"] == "2024-03-03"           # kept the most recent instance

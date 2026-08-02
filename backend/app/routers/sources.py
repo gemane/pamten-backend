@@ -138,6 +138,31 @@ def _entity_own_source_rows(session, entity_id: str) -> list[dict]:
     return rows
 
 
+def _dedupe_source_rows(rows: list[dict]) -> list[dict]:
+    """Collapse raw provenance rows to ONE per (source, link). The same source/URL often
+    backs many facts — every Wikidata owner edge links to the company's Wikidata page, or
+    one SEC filing backs several holdings — and should show a single link, not one per
+    fact. Keeps the most recently recorded/scraped instance; sorted by credibility desc."""
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        url = r.get("source_url") or r.get("source_home_url")
+        key = (r.get("id"), url)
+        row = {
+            "id":                r.get("id"),
+            "name":              r.get("name"),
+            "type":              r.get("type"),
+            "credibility_score": r.get("credibility_score"),
+            "url":               url,
+            "source_date":       r.get("source_date"),
+            "last_scraped_at":   r.get("last_scraped_at"),
+        }
+        cur = best.get(key)
+        if cur is None or (row["source_date"] or "", row["last_scraped_at"] or "") \
+                > (cur["source_date"] or "", cur["last_scraped_at"] or ""):
+            best[key] = row
+    return sorted(best.values(), key=lambda x: -(x["credibility_score"] or 0))
+
+
 @router.get("/entity/{entity_id}")
 def get_sources_for_entity(entity_id: str):
     """
@@ -163,28 +188,7 @@ def get_sources_for_entity(entity_id: str):
                 rows.append({c: rec.get(c) for c in _COLS})
         rows.extend(_entity_own_source_rows(session, entity_id))   # the record's own sources
 
-    # Merge + dedupe in Python: the specific record URL wins over the source home
-    # URL; a source can appear once per distinct (url, source_date) pair.
-    seen: set = set()
-    out: list[dict] = []
-    for r in rows:
-        url = r.get("source_url") or r.get("source_home_url")
-        key = (r.get("id"), url, r.get("source_date"))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append({
-            "id":                r.get("id"),
-            "name":              r.get("name"),
-            "type":              r.get("type"),
-            "credibility_score": r.get("credibility_score"),
-            "url":               url,
-            "source_date":       r.get("source_date"),
-            "last_scraped_at":   r.get("last_scraped_at"),
-        })
-
-    out.sort(key=lambda x: -(x["credibility_score"] or 0))
-    return out
+    return _dedupe_source_rows(rows)
 
 
 # Per-entry provenance for a person: where their information came from — the
@@ -238,26 +242,7 @@ def get_sources_for_person(person_id: str):
             for rec in session.run(query, person_id=person_id):
                 rows.append({c: rec.get(c) for c in _COLS})
 
-    seen: set = set()
-    out: list[dict] = []
-    for r in rows:
-        url = r.get("source_url") or r.get("source_home_url")
-        key = (r.get("id"), url, r.get("source_date"))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append({
-            "id":                r.get("id"),
-            "name":              r.get("name"),
-            "type":              r.get("type"),
-            "credibility_score": r.get("credibility_score"),
-            "url":               url,
-            "source_date":       r.get("source_date"),
-            "last_scraped_at":   r.get("last_scraped_at"),
-        })
-
-    out.sort(key=lambda x: -(x["credibility_score"] or 0))
-    return out
+    return _dedupe_source_rows(rows)
 
 
 @router.get("/")
