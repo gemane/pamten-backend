@@ -38,6 +38,7 @@ def test_ensure_freshness_state_machine(it_db, monkeypatch):
 
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)   # skip the DB dedup pass
+    monkeypatch.setattr(settings, "SCRAPER_ONDEMAND_COOLDOWN_HOURS", 0)  # exercise force/deepen w/o the cooldown gate
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
 
     calls: list = []
@@ -72,7 +73,14 @@ def test_ensure_freshness_state_machine(it_db, monkeypatch):
     assert not out2["scraped"] and out2["reason"] == "fresh"
     assert len(calls) == n_faux and len(blind_calls) == n_blind
 
-    # 3) force → re-scrapes despite being fresh
+    # 2b) force within the cooldown window → blocked, served from DB, no source calls
+    monkeypatch.setattr(settings, "SCRAPER_ONDEMAND_COOLDOWN_HOURS", 24)
+    out_cd = ondemand.ensure_scrape("Acme Corp", depth=1, force=True)
+    assert not out_cd["scraped"] and out_cd["reason"] == "cooldown"
+    assert len(calls) == n_faux                        # nothing re-fetched during the cooldown
+    monkeypatch.setattr(settings, "SCRAPER_ONDEMAND_COOLDOWN_HOURS", 0)
+
+    # 3) force past the cooldown → re-scrapes despite being fresh
     out3 = ondemand.ensure_scrape("Acme Corp", depth=1, force=True)
     assert out3["scraped"] and out3["reason"] == "forced"
     assert len(calls) == n_faux + 1
