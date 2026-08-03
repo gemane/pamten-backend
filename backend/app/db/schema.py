@@ -105,8 +105,27 @@ def _statements() -> list[str]:
     return stmts
 
 
-def rebuild_fulltext_indexes(timeout: float = 3600) -> dict:
-    """Fully repopulate the FULL_TEXT search indexes and return {"ok", "failed"}.
+def _fulltext_index_names(vtype: str, prop: str) -> list[str]:
+    """Every index name on `vtype.<prop>` — the logical `Type[prop]` name AND the
+    per-bucket physical names ArcadeDB auto-generates (`Type_<bucket>_<id>`). Used by
+    the hard rebuild to drop a stuck FULL_TEXT index completely. `search_text` carries
+    only the FULL_TEXT index, so matching on the property alone is unambiguous."""
+    names: list[str] = []
+    try:
+        for row in run_sql("SELECT name, properties FROM schema:indexes"):
+            r = dict(row)
+            props = r.get("properties")
+            name = r.get("name") or ""
+            if props == [[prop]] and (name == f"{vtype}[{prop}]"
+                                      or name.startswith(f"{vtype}_")):
+                names.append(name)
+    except Exception as exc:  # noqa: BLE001 - discovery is best-effort
+        log.warning("could not list indexes for %s.%s: %s", vtype, prop, exc)
+    return names
+
+
+def rebuild_fulltext_indexes(timeout: float = 3600, hard: bool = False) -> dict:
+    """Repopulate the FULL_TEXT search indexes and return {"ok", "failed"}.
 
     A `--bulk-load` leaves these incomplete: the load drops them (per-insert FULL_TEXT
     maintenance is slow and, when a load is interrupted, unreliable), and afterwards
@@ -116,18 +135,34 @@ def rebuild_fulltext_indexes(timeout: float = 3600) -> dict:
     Runs with a long timeout (REBUILD is synchronous, minutes on millions of rows);
     a bulk load already talks to ArcadeDB directly (`--db-url`), bypassing any proxy
     read-timeout ceiling.
+
+    `hard=True` first **drops** the FULL_TEXT index entirely (by every physical + logical
+    name) and re-`CREATE`s it before the `REBUILD`. A plain `REBUILD` rebuilds the
+    existing index structure in place; if that structure is itself corrupted/stuck — as
+    happens when a past `CREATE`/`REBUILD` was cut off by a proxy read-timeout mid-flight,
+    leaving a half-built Lucene index that later `REBUILD`s report "ok" on yet never
+    repopulate — only a full drop + fresh `CREATE` (which reindexes all rows) recovers it.
+    Run the hard path directly against ArcadeDB (`--db-url http://localhost:2480`) so it
+    isn't cut off by the same proxy timeout again.
     """
     ok: list[str] = []
     failed: list[dict] = []
     for vtype, prop in _FULLTEXT_INDEXES:
         name = f"{vtype}[{prop}]"
         try:
+            if hard:
+                for idx in _fulltext_index_names(vtype, prop):
+                    run_sql(f"DROP INDEX `{idx}` IF EXISTS", timeout=timeout)
+                    log.info("hard rebuild: dropped %s", idx)
+                # CREATE over existing rows reindexes them; REBUILD below is belt-and-braces.
+                run_sql(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT",
+                        timeout=timeout)
             run_sql(f"REBUILD INDEX `{name}`", timeout=timeout)
             ok.append(name)
         except Exception as exc:  # noqa: BLE001 - best-effort maintenance
             log.warning("FULL_TEXT rebuild failed (%s): %s", name, exc)
             failed.append({"index": name, "error": str(exc)})
-    log.info("FULL_TEXT rebuild: %d ok, %d failed", len(ok), len(failed))
+    log.info("FULL_TEXT rebuild (hard=%s): %d ok, %d failed", hard, len(ok), len(failed))
     return {"ok": ok, "failed": failed}
 
 

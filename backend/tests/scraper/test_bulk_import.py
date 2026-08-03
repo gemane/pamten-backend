@@ -257,3 +257,33 @@ class TestBulkLoad:
         assert res["failed"] == []
         assert "REBUILD INDEX `Entity[search_text]`" in issued
         assert "REBUILD INDEX `Person[search_text]`" in issued
+
+    def test_hard_rebuild_drops_physical_and_logical_then_recreates(self):
+        from app.db import schema
+
+        # schema:indexes discovery returns a physical + logical index per type.
+        catalog = [
+            {"name": "Entity_0_999", "properties": [["search_text"]]},
+            {"name": "Entity[search_text]", "properties": [["search_text"]]},
+            {"name": "Entity_0_111", "properties": [["name"]]},        # different prop → ignored
+            {"name": "Person_0_888", "properties": [["search_text"]]},
+            {"name": "Person[search_text]", "properties": [["search_text"]]},
+        ]
+
+        issued: list[str] = []
+
+        def _fake(cmd, *a, **k):
+            issued.append(cmd)
+            return catalog if cmd.startswith("SELECT name, properties FROM schema:indexes") else []
+
+        with patch("app.db.schema.run_sql", side_effect=_fake):
+            res = schema.rebuild_fulltext_indexes(hard=True)
+
+        assert res["failed"] == []
+        # every FULL_TEXT index (physical + logical) dropped, then re-created, then rebuilt
+        assert "DROP INDEX `Entity_0_999` IF EXISTS" in issued
+        assert "DROP INDEX `Entity[search_text]` IF EXISTS" in issued
+        assert "DROP INDEX `Person_0_888` IF EXISTS" in issued
+        assert "DROP INDEX `Entity_0_111` IF EXISTS" not in issued   # wrong property, untouched
+        assert "CREATE INDEX IF NOT EXISTS ON Entity (search_text) FULL_TEXT" in issued
+        assert "REBUILD INDEX `Entity[search_text]`" in issued

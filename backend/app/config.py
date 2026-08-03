@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # the external sources aren't hammered. A deepen to a not-yet-reached depth is a
     # continuation of the same enrichment and is still allowed.
     SCRAPER_ONDEMAND_COOLDOWN_HOURS:  int  = 24
+    # /search resilience: when the FULL_TEXT index returns nothing, fall back to a
+    # bounded substring scan on the name so a degraded/incomplete FULL_TEXT index
+    # (e.g. after an interrupted bulk-load) can't silently hide companies that ARE
+    # in the DB. Only runs on the no-result path; set false on very large DBs where
+    # the un-indexed scan is too costly (repair the index instead — see
+    # `manage.py rebuild-search --hard`).
+    SEARCH_SUBSTRING_FALLBACK:        bool = True
     # Trusted-peer federation (step 1: one-way pull of a peer's published export,
     # reconciled through the duplicate scan). Off by default; opt in per instance.
     FEDERATION_ENABLED:               bool = False

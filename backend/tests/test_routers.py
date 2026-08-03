@@ -4,6 +4,7 @@ and basic read/write behaviour. ArcadeDB is faked; auth runs for real.
 """
 
 import pytest
+from unittest.mock import patch
 
 
 def auth(make_token, role="contributor"):
@@ -184,14 +185,26 @@ def test_stats_never_500s_on_db_error(client, monkeypatch):
 
 # ── Search endpoint ────────────────────────────────────────────────────────────
 
-def _patch_search(entities, persons=(), exact=(), notable=()):
-    """Patch the search router's SQL layer. run_sql is called four times, in
-    order: the exact name_normalized lookup, the notable (wikidata) lookup, the
-    entity CONTAINSTEXT query, then the person CONTAINSTEXT query (raw node dicts,
-    as the DB returns). fake_db still backs the suppressed-node lookup after."""
-    from unittest.mock import patch
-    return patch("app.routers.search.run_sql",
-                 side_effect=[list(exact), list(notable), list(entities), list(persons)])
+def _patch_search(entities, persons=(), exact=(), notable=(), fallback=()):
+    """Patch the search router's SQL layer, dispatching by query shape (not call
+    order, since the substring fallback only fires when the entity FULL_TEXT query
+    is empty): the exact name_normalized lookup, the notable (wikidata) lookup, the
+    entity CONTAINSTEXT query, the person CONTAINSTEXT query, and the LIKE fallback.
+    fake_db still backs the suppressed-node lookup after."""
+    def _dispatch(sql, params=None):
+        if "CONTAINSTEXT" in sql and "Person" in sql:
+            return list(persons)
+        if "LIKE" in sql:
+            return list(fallback)
+        if "wikidata_id IS NOT NULL" in sql:
+            return list(notable)
+        if "name_normalized = :nn" in sql:
+            return list(exact)
+        if "CONTAINSTEXT" in sql:
+            return list(entities)
+        return []
+
+    return patch("app.routers.search.run_sql", side_effect=_dispatch)
 
 
 def test_search_returns_entity_results(client, fake_db):
@@ -243,6 +256,38 @@ def test_search_strips_arcadedb_metadata_from_results(client, fake_db):
 
 def test_search_rejects_short_query(client):
     assert client.get("/search/", params={"q": "a"}).status_code == 422
+
+
+def test_search_falls_back_to_substring_when_fulltext_empty(client, fake_db):
+    # FULL_TEXT (CONTAINSTEXT) returns nothing — a degraded index — but the company
+    # is in the DB and the LIKE fallback finds it.
+    hit = {"id": "e9", "name": "SoftBank Group", "type": "company"}
+    with _patch_search(entities=[], persons=[], fallback=[hit]):
+        r = client.get("/search/", params={"q": "softbank"})
+    assert r.status_code == 200
+    results = r.json()
+    assert len(results) == 1 and results[0]["node"]["name"] == "SoftBank Group"
+
+
+def test_search_no_fallback_when_fulltext_has_results(client, fake_db):
+    # When the FULL_TEXT query already matches, the fallback must NOT run (its rows
+    # would be ignored anyway) — the FULL_TEXT hit stands alone.
+    ft = {"id": "e1", "name": "Apple Inc.", "type": "company"}
+    never = {"id": "x", "name": "should-not-appear", "type": "company"}
+    with _patch_search(entities=[ft], fallback=[never]):
+        r = client.get("/search/", params={"q": "apple"})
+    assert r.status_code == 200
+    ids = [x["node"]["id"] for x in r.json()]
+    assert ids == ["e1"]
+
+
+def test_search_fallback_disabled_by_setting(client, fake_db):
+    from app.config import settings
+    hit = {"id": "e9", "name": "SoftBank Group", "type": "company"}
+    with patch.object(settings, "SEARCH_SUBSTRING_FALLBACK", False):
+        with _patch_search(entities=[], fallback=[hit]):
+            r = client.get("/search/", params={"q": "softbank"})
+    assert r.status_code == 200 and r.json() == []
 
 
 def test_search_ranks_notable_wikidata_entity_first(client, fake_db):
