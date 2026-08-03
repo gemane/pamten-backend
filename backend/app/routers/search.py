@@ -87,14 +87,16 @@ def _entity_candidate_rows(q_lower: str, nn: str | None, country: str | None) ->
     # FULL_TEXT index normally avoids, so it only runs when nothing was found; cap
     # it with LIMIT and gate it behind SEARCH_SUBSTRING_FALLBACK for very large DBs.
     if not rows and settings.SEARCH_SUBSTRING_FALLBACK and q_lower:
-        like = f"%{q_lower}%"
+        # NB: the param must not be named `like` — ArcadeDB's parser reads `:like` as the
+        # LIKE keyword and rejects the statement.
+        pat = f"%{q_lower}%"
         if country:
-            fb_sql = ("SELECT FROM Entity WHERE name.toLowerCase() LIKE :like "
+            fb_sql = ("SELECT FROM Entity WHERE name.toLowerCase() LIKE :pat "
                       "AND country = :country LIMIT 20")
-            fb_params: dict = {"like": like, "country": country}
+            fb_params: dict = {"pat": pat, "country": country}
         else:
-            fb_sql = "SELECT FROM Entity WHERE name.toLowerCase() LIKE :like LIMIT 20"
-            fb_params = {"like": like}
+            fb_sql = "SELECT FROM Entity WHERE name.toLowerCase() LIKE :pat LIMIT 20"
+            fb_params = {"pat": pat}
         rows += [_clean(r) for r in run_sql(fb_sql, fb_params)]
     return rows
 
