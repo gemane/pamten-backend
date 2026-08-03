@@ -266,8 +266,9 @@ def cmd_rebuild_search(args):
     test-only DB; minutes on the full ~4M graph."""
     _apply_direct_db_url(args)
     from app.db.schema import rebuild_fulltext_indexes
-    res = rebuild_fulltext_indexes()
-    print(f"FULL_TEXT rebuilt: ok={res.get('ok')} failed={res.get('failed')}")
+    res = rebuild_fulltext_indexes(hard=getattr(args, "hard", False))
+    print(f"FULL_TEXT rebuilt (hard={getattr(args, 'hard', False)}): "
+          f"ok={res.get('ok')} failed={res.get('failed')}")
 
 
 def cmd_wipe_source(args):
@@ -412,6 +413,10 @@ def _build_parser():
     p_rbs = subparsers.add_parser('rebuild-search',
         help='REBUILD the FULL_TEXT search indexes (run after a non-bulk / --only import)')
     p_rbs.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_rbs.add_argument('--hard', action='store_true',
+        help='DROP + re-CREATE the FULL_TEXT indexes before rebuilding — recovers a '
+             'stuck/corrupted index a plain REBUILD reports "ok" on but never repopulates. '
+             'Run against --db-url http://localhost:2480 to avoid a proxy read-timeout.')
     p_rbs.set_defaults(func=cmd_rebuild_search)
 
     # dedupe-entities command (cross-source merge by shared external id)

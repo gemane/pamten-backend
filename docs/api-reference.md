@@ -46,7 +46,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 ## Search
 | Method | Path | Description |
 |---|---|---|
-| GET | `/search/?q=` | Full-text search across entities and persons |
+| GET | `/search/?q=` | Full-text search across entities and persons (FULL_TEXT `search_text` index, whole-word `CONTAINSTEXT`). If the index returns nothing, falls back to a bounded substring name scan so a degraded/incomplete FULL_TEXT index can't hide companies that are in the DB (`SEARCH_SUBSTRING_FALLBACK`, default on) |
 | GET | `/search/entity/{id}/full-profile` | Entity with owners (self-loops excluded), subsidiaries, executives, HQ, dual-listed pairs, succession (`succeeded_by` / `replaces`), `cross_holdings` (reciprocal/circular owners), and an `ownership` summary — `free_float_pct` (computed residual = 100 − disclosed, when every owner's stake is known) + `exceeds_100` flag |
 | GET | `/scraper/ownership-quality` | admin | Data-quality report: `self_loops` count (A owns A) + `cross_holdings` pairs (A↔B) |
 | GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |

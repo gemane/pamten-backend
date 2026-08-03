@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
+from app.config import settings
 from app.database import db
 from app.db.arcadedb import run_sql
 from app.scraper.mapper import normalize_entity_name
@@ -78,6 +79,23 @@ def _entity_candidate_rows(q_lower: str, nn: str | None, country: str | None) ->
         rows += [_clean(r) for r in run_sql(exact_sql, exact_params)]
     rows += [_clean(r) for r in run_sql(notable_sql, notable_params)]
     rows += [_clean(r) for r in run_sql(entity_sql, entity_params)]
+    # Resilience fallback: if the FULL_TEXT index yields nothing, do a bounded
+    # substring scan on the name. ArcadeDB doesn't maintain FULL_TEXT indexes
+    # perfectly (an interrupted bulk-load can leave the Lucene index incomplete —
+    # see db/schema.py `rebuild_fulltext_indexes(hard=True)`), which silently hides
+    # companies that ARE in the DB. This un-indexed scan is the slow path the
+    # FULL_TEXT index normally avoids, so it only runs when nothing was found; cap
+    # it with LIMIT and gate it behind SEARCH_SUBSTRING_FALLBACK for very large DBs.
+    if not rows and settings.SEARCH_SUBSTRING_FALLBACK and q_lower:
+        like = f"%{q_lower}%"
+        if country:
+            fb_sql = ("SELECT FROM Entity WHERE name.toLowerCase() LIKE :like "
+                      "AND country = :country LIMIT 20")
+            fb_params: dict = {"like": like, "country": country}
+        else:
+            fb_sql = "SELECT FROM Entity WHERE name.toLowerCase() LIKE :like LIMIT 20"
+            fb_params = {"like": like}
+        rows += [_clean(r) for r in run_sql(fb_sql, fb_params)]
     return rows
 
 
