@@ -10,14 +10,14 @@ from app.auth.security import hash_password
 
 def test_register_first_user_becomes_admin(client, fake_db):
     fake_db.queue([], [{"n": 0}], [])  # no existing user, count=0, create
-    r = client.post("/auth/register", json={"email": "boss@example.com", "password": "password123"})
+    r = client.post("/auth/register", json={"email": "boss@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     assert r.json()["role"] == "admin"
 
 
 def test_register_second_user_is_viewer_and_must_verify(client, fake_db):
     fake_db.queue([], [{"n": 3}], [])  # existing users present
-    r = client.post("/auth/register", json={"email": "new@example.com", "password": "password123"})
+    r = client.post("/auth/register", json={"email": "new@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     # A non-admin registrant gets no token — they must verify their email first.
     body = r.json()
@@ -29,7 +29,7 @@ def test_register_never_admin_when_env_admin_configured(client, fake_db, monkeyp
     from app.config import settings
     monkeypatch.setattr(settings, "ADMIN_EMAIL", "boss@example.com")
     fake_db.queue([], [])  # dup-check empty, then create (no count query on this path)
-    r = client.post("/auth/register", json={"email": "first@example.com", "password": "password123"})
+    r = client.post("/auth/register", json={"email": "first@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     # even as the very first user — no self-promotion, and must verify
     assert r.json()["verification_required"] is True
@@ -40,7 +40,7 @@ class TestBootstrapAdmin:
         from app.config import settings
         from app.auth.router import bootstrap_admin
         monkeypatch.setattr(settings, "ADMIN_EMAIL", "Boss@example.com")
-        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "password123")
+        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "Zt9mQ2vLp4rK")
         fake_db.queue([], [])   # not found, then create
         bootstrap_admin()
         creates = [c for c in fake_db.calls if "CREATE (u:User" in c[0]]
@@ -52,7 +52,7 @@ class TestBootstrapAdmin:
         from app.config import settings
         from app.auth.router import bootstrap_admin
         monkeypatch.setattr(settings, "ADMIN_EMAIL", "boss@example.com")
-        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "password123")
+        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "Zt9mQ2vLp4rK")
         fake_db.queue([{"u": {"id": "1"}}])   # already exists
         bootstrap_admin()
         assert not any("CREATE (u:User" in c[0] for c in fake_db.calls)   # no overwrite
@@ -67,7 +67,7 @@ class TestBootstrapAdmin:
 
 def test_register_duplicate_email_rejected(client, fake_db):
     fake_db.queue([{"u": {"id": "1"}}])  # existing user found
-    r = client.post("/auth/register", json={"email": "dupe@example.com", "password": "password123"})
+    r = client.post("/auth/register", json={"email": "dupe@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 400
     assert "already registered" in r.json()["detail"].lower()
 
@@ -77,14 +77,21 @@ def test_register_short_password_rejected(client, fake_db):
     assert r.status_code == 400
 
 
+def test_register_rejects_common_password(client, fake_db):
+    # A long-enough but very common password is refused by the blocklist.
+    r = client.post("/auth/register", json={"email": "a@example.com", "password": "password123"})
+    assert r.status_code == 400
+    assert "too common" in r.json()["detail"].lower()
+
+
 def test_register_invalid_email_rejected(client, fake_db):
-    r = client.post("/auth/register", json={"email": "not-an-email", "password": "password123"})
+    r = client.post("/auth/register", json={"email": "not-an-email", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 422  # EmailStr validation
 
 
 def test_register_normalizes_email_to_lowercase(client, fake_db):
     fake_db.queue([], [{"n": 0}], [])
-    r = client.post("/auth/register", json={"email": "Test@EXAMPLE.COM", "password": "password123"})
+    r = client.post("/auth/register", json={"email": "Test@EXAMPLE.COM", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     # the existence-check query must have received the normalized email
     assert fake_db.calls[0][1]["e"] == "test@example.com"
@@ -92,7 +99,7 @@ def test_register_normalizes_email_to_lowercase(client, fake_db):
 
 # ── Login ──────────────────────────────────────────────────────────────────────
 
-def _user_row(password="password123", role="viewer", email_verified=True):
+def _user_row(password="Zt9mQ2vLp4rK", role="viewer", email_verified=True):
     return [{"u": {
         "id": "u1", "email": "user@example.com", "role": role,
         "password_hash": hash_password(password), "email_verified": email_verified,
@@ -101,7 +108,7 @@ def _user_row(password="password123", role="viewer", email_verified=True):
 
 def test_login_success_returns_token(client, fake_db):
     fake_db.queue(_user_row())
-    r = client.post("/auth/login", json={"email": "user@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "user@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     assert r.json()["access_token"]
     assert r.json()["role"] == "viewer"
@@ -115,7 +122,7 @@ def test_login_wrong_password_rejected(client, fake_db):
 
 def test_login_blocked_until_email_verified(client, fake_db):
     fake_db.queue(_user_row(email_verified=False))
-    r = client.post("/auth/login", json={"email": "user@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "user@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "email_not_verified"
 
@@ -124,24 +131,24 @@ def test_login_allowed_unverified_when_requirement_disabled(client, fake_db, mon
     from app.config import settings
     monkeypatch.setattr(settings, "REQUIRE_EMAIL_VERIFICATION", False)
     fake_db.queue(_user_row(email_verified=False))
-    r = client.post("/auth/login", json={"email": "user@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "user@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     assert r.json()["access_token"]
 
 
 def test_login_unknown_email_rejected(client, fake_db):
     fake_db.queue([])  # no user
-    r = client.post("/auth/login", json={"email": "ghost@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "ghost@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 401
 
 
 def test_login_rate_limited_after_repeated_failures(client, fake_db):
     for _ in range(5):
         fake_db.queue([])  # user not found each time
-        r = client.post("/auth/login", json={"email": "target@example.com", "password": "password123"})
+        r = client.post("/auth/login", json={"email": "target@example.com", "password": "Zt9mQ2vLp4rK"})
         assert r.status_code == 401
     # 6th attempt within the window is blocked before touching the DB
-    r = client.post("/auth/login", json={"email": "target@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "target@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 429
 
 
@@ -261,7 +268,7 @@ from datetime import timedelta  # noqa: E402
 def test_register_sends_verification_email(client, fake_db):
     fake_db.queue([], [{"n": 3}], [])  # dup empty, count=3 -> viewer, create
     with patch.object(auth_router, "send_verification_email") as send:
-        r = client.post("/auth/register", json={"email": "new@example.com", "password": "password123"})
+        r = client.post("/auth/register", json={"email": "new@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     send.assert_called_once()
     to, token = send.call_args.args[0], send.call_args.args[1]
@@ -331,6 +338,14 @@ def test_reset_password_short_password_rejected(client):
     assert r.status_code == 400
 
 
+def test_reset_password_rejects_common_password(client):
+    token = create_purpose_token("u1", auth_router.RESET_PASSWORD_PURPOSE, timedelta(minutes=30),
+                                 extra={"ph": "x"})
+    r = client.post("/auth/reset-password", json={"token": token, "new_password": "password123"})
+    assert r.status_code == 400
+    assert "too common" in r.json()["detail"].lower()
+
+
 def test_forgot_password_survives_email_send_failure(client, fake_db):
     # A blocked/failing transport (e.g. Render blocks SMTP) must not 500 or hang —
     # the send is best-effort in a background task.
@@ -343,7 +358,7 @@ def test_forgot_password_survives_email_send_failure(client, fake_db):
 def test_register_survives_email_send_failure(client, fake_db):
     fake_db.queue([], [{"n": 3}], [])  # dup empty, count=3 -> viewer, create
     with patch.object(auth_router, "send_verification_email", side_effect=RuntimeError("smtp blocked")):
-        r = client.post("/auth/register", json={"email": "new@example.com", "password": "password123"})
+        r = client.post("/auth/register", json={"email": "new@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200 and r.json()["verification_required"] is True
 
 
@@ -359,7 +374,7 @@ def test_email_send_endpoints_are_rate_limited(client, fake_db):
 
 def _mfa_user_row(**over):
     u = {"id": "u1", "email": "user@example.com", "role": "viewer",
-         "password_hash": hash_password("password123"), "email_verified": True,
+         "password_hash": hash_password("Zt9mQ2vLp4rK"), "email_verified": True,
          "mfa_enabled": True, "totp_secret": "SECRET", "recovery_code_hashes": []}
     u.update(over)
     return [{"u": u}]
@@ -367,7 +382,7 @@ def _mfa_user_row(**over):
 
 def test_login_with_mfa_returns_pending_token_not_access(client, fake_db):
     fake_db.queue(_mfa_user_row())
-    r = client.post("/auth/login", json={"email": "user@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "user@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200
     body = r.json()
     assert body["mfa_required"] is True and body["mfa_token"]

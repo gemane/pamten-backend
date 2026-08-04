@@ -39,9 +39,9 @@ def _register_verified_user(client) -> str:
     captured: dict[str, str] = {}
     with patch("app.auth.router.send_verification_email",
                side_effect=lambda to, token: captured.update(v=token)):
-        client.post("/auth/register", json={"email": "mfa@example.com", "password": "password123"})
+        client.post("/auth/register", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"})
     client.post("/auth/verify-email", json={"token": captured["v"]})
-    r = client.post("/auth/login", json={"email": "mfa@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"})
     return r.json()["access_token"]
 
 
@@ -57,7 +57,7 @@ def test_enable_then_login_requires_totp_and_recovery_code(client):
     assert len(recovery) == 10
 
     # login now returns a pending token, not an access token
-    r = client.post("/auth/login", json={"email": "mfa@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.json().get("mfa_required") is True
     mfa_token = r.json()["mfa_token"]
 
@@ -66,12 +66,12 @@ def test_enable_then_login_requires_totp_and_recovery_code(client):
     assert r.status_code == 200 and r.json()["access_token"]
 
     # a recovery code works once...
-    mfa_token = client.post("/auth/login", json={"email": "mfa@example.com", "password": "password123"}).json()["mfa_token"]
+    mfa_token = client.post("/auth/login", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"}).json()["mfa_token"]
     r = client.post("/auth/mfa/verify", json={"mfa_token": mfa_token, "code": recovery[0]})
     assert r.status_code == 200 and r.json()["access_token"]
 
     # ...and only once (it was consumed)
-    mfa_token = client.post("/auth/login", json={"email": "mfa@example.com", "password": "password123"}).json()["mfa_token"]
+    mfa_token = client.post("/auth/login", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"}).json()["mfa_token"]
     r = client.post("/auth/mfa/verify", json={"mfa_token": mfa_token, "code": recovery[0]})
     assert r.status_code == 401
 
@@ -86,6 +86,6 @@ def test_disable_turns_mfa_off(client):
     assert r.status_code == 200 and r.json()["enabled"] is False
 
     # login is back to a straight access token
-    r = client.post("/auth/login", json={"email": "mfa@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200 and r.json()["access_token"]
     assert "mfa_required" not in r.json()

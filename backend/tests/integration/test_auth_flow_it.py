@@ -31,17 +31,17 @@ def test_register_verify_login_then_reset(client):
     captured: dict[str, str] = {}
     with patch("app.auth.router.send_verification_email",
                side_effect=lambda to, token: captured.update(verify=token)):
-        r = client.post("/auth/register", json={"email": "jane@example.com", "password": "password123"})
+        r = client.post("/auth/register", json={"email": "jane@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200 and r.json()["verification_required"] is True
 
     # login blocked until verified
-    r = client.post("/auth/login", json={"email": "jane@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "jane@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "email_not_verified"
 
     # verify via the emailed token, then login works
     r = client.post("/auth/verify-email", json={"token": captured["verify"]})
     assert r.status_code == 200
-    r = client.post("/auth/login", json={"email": "jane@example.com", "password": "password123"})
+    r = client.post("/auth/login", json={"email": "jane@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200 and r.json()["access_token"]
 
     # forgot -> reset with the emailed token
@@ -55,7 +55,7 @@ def test_register_verify_login_then_reset(client):
 
     # old password no longer works, new one does
     assert client.post("/auth/login",
-                       json={"email": "jane@example.com", "password": "password123"}).status_code == 401
+                       json={"email": "jane@example.com", "password": "Zt9mQ2vLp4rK"}).status_code == 401
     assert client.post("/auth/login",
                        json={"email": "jane@example.com", "password": "brandnewpass"}).status_code == 200
 
