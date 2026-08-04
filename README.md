@@ -118,7 +118,7 @@ version is served at `/docs` (Swagger) and `/redoc` on a running instance.
 
 ## Authentication
 
-JWTs are signed with `SECRET_KEY` (HS256, 7-day expiry). Set a strong random key in production:
+JWTs are signed with `SECRET_KEY` (HS256, 7-day expiry). It must be **at least 32 characters** — the app refuses to start with a shorter one, in any mode, since short HS256 keys are brute-forceable. Set a strong random key in production:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
@@ -304,7 +304,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `ARCADEDB_USERNAME` | required | Database username |
 | `ARCADEDB_PASSWORD` | required | Database password |
 | `ARCADEDB_DATABASE` | `owlgraph` | Database name |
-| `SECRET_KEY` | insecure default | JWT signing key — **must be overridden when `DEBUG=false`, or the app refuses to start** |
+| `SECRET_KEY` | insecure default | JWT signing key — **min 32 chars, always enforced; must also be overridden when `DEBUG=false`, or the app refuses to start** |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | none | Provision this account as admin on startup (created if missing). When set, self-registration never grants admin — avoids the "first person to `/register` becomes admin" race on a fresh DB |
