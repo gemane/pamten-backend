@@ -320,7 +320,7 @@ def test_update_role_accepts_moderator(client, fake_db, make_token):
 
 from unittest.mock import patch  # noqa: E402
 from app.auth.security import (  # noqa: E402
-    create_purpose_token, password_hash_fingerprint,
+    create_purpose_token, password_hash_fingerprint, verify_password,
 )
 from app.auth import router as auth_router  # noqa: E402
 from datetime import timedelta  # noqa: E402
@@ -413,6 +413,71 @@ def test_reset_password_rejects_common_password(client):
     r = client.post("/auth/reset-password", json={"token": token, "new_password": "password123"})
     assert r.status_code == 400
     assert "too common" in r.json()["detail"].lower()
+
+
+# ── /auth/change-password ─────────────────────────────────────────────────────
+#
+# The only self-service rotation route for a signed-in user: the reset flow needs
+# email, which is dead wherever outbound SMTP is blocked (Render).
+
+def _auth(make_token):
+    return {"Authorization": f"Bearer {make_token(role='admin', sub='u1')}"}
+
+
+def test_change_password_updates_the_stored_hash(client, fake_db, make_token):
+    fake_db.queue([{"hash": hash_password("oldpassword")}], [])
+    r = client.post("/auth/change-password", headers=_auth(make_token),
+                    json={"current_password": "oldpassword", "new_password": "brandnewpass"})
+    assert r.status_code == 200
+
+    # The UPDATE must persist a hash of the NEW password, not the old one.
+    update_cypher, params = fake_db.calls[-1]
+    assert "SET u.password_hash" in update_cypher
+    assert verify_password("brandnewpass", params["hash"])
+    assert not verify_password("oldpassword", params["hash"])
+
+
+def test_change_password_rejects_wrong_current_password(client, fake_db, make_token):
+    fake_db.queue([{"hash": hash_password("oldpassword")}])
+    r = client.post("/auth/change-password", headers=_auth(make_token),
+                    json={"current_password": "not-the-password", "new_password": "brandnewpass"})
+    assert r.status_code == 400
+    assert "current password" in r.json()["detail"].lower()
+    # Nothing was written.
+    assert all("SET u.password_hash" not in c for c, _ in fake_db.calls)
+
+
+def test_change_password_requires_authentication(client):
+    r = client.post("/auth/change-password",
+                    json={"current_password": "oldpassword", "new_password": "brandnewpass"})
+    assert r.status_code in (401, 403)
+
+
+def test_change_password_applies_the_password_policy(client, fake_db, make_token):
+    for bad, expected in [("short", "at least"), ("a" * 73, "72"), ("password123", "too common")]:
+        fake_db.queue([{"hash": hash_password("oldpassword")}])
+        r = client.post("/auth/change-password", headers=_auth(make_token),
+                        json={"current_password": "oldpassword", "new_password": bad})
+        assert r.status_code == 400, bad
+        assert expected in r.json()["detail"].lower()
+
+
+def test_change_password_rejects_reusing_the_current_password(client, fake_db, make_token):
+    fake_db.queue([{"hash": hash_password("oldpassword")}])
+    r = client.post("/auth/change-password", headers=_auth(make_token),
+                    json={"current_password": "oldpassword", "new_password": "oldpassword"})
+    assert r.status_code == 400
+    assert "different" in r.json()["detail"].lower()
+
+
+def test_change_password_wrong_current_reveals_nothing_about_the_policy(client, fake_db, make_token):
+    # A caller who doesn't know the current password must get the same generic
+    # error whether or not the new one would have passed the policy.
+    fake_db.queue([{"hash": hash_password("oldpassword")}])
+    r = client.post("/auth/change-password", headers=_auth(make_token),
+                    json={"current_password": "wrong", "new_password": "x"})
+    assert r.status_code == 400
+    assert "current password" in r.json()["detail"].lower()
 
 
 def test_forgot_password_survives_email_send_failure(client, fake_db):

@@ -11,6 +11,7 @@ Usage:
   python3 manage.py ch-psc [options]          # Companies House PSC snapshot (UK ownership)
   python3 manage.py ch-company-data [options] # Companies House register (UK company names)
   python3 manage.py seed [options]
+  python3 manage.py set-password EMAIL         # prompt for a new password for one account
 
 Run inside a tmux session to keep running after SSH disconnect:
   tmux new -s import
@@ -188,6 +189,45 @@ def cmd_verify_users(args):
         rows = run_sql("UPDATE User SET email_verified = true WHERE email_verified IS NULL OR email_verified = false")
     n = int(rows[0].get("count", 0)) if rows and isinstance(rows[0], dict) else 0
     print(f"Marked {n} user(s) email-verified.")
+
+def cmd_set_password(args):
+    """Set a user's password directly against the database.
+
+    The operator escape hatch for when the in-app flows can't be used: the reset
+    flow needs email (blocked on Render) and /auth/change-password needs the
+    current password. ADMIN_PASSWORD deliberately does NOT help here — it only
+    seeds a *missing* account and never overwrites an existing one.
+
+    The password is read from a hidden prompt, never an argv (which would land in
+    shell history and `ps` output). Same policy as the API — both call
+    password_policy_error.
+    """
+    import getpass
+    from app.auth.password_policy import password_policy_error
+    from app.auth.security import hash_password
+    from app.db.arcadedb import run_sql
+
+    email = args.email.strip().lower()
+    rows = run_sql("SELECT email FROM User WHERE email = :e", {"e": email})
+    if not rows:
+        print(f"No user with email {email!r}.")
+        raise SystemExit(1)
+
+    password = args.password or getpass.getpass(f"New password for {email}: ")
+    if not args.password:
+        if password != getpass.getpass("Repeat new password: "):
+            print("Passwords don't match.")
+            raise SystemExit(1)
+
+    problem = password_policy_error(password)
+    if problem:
+        print(problem)
+        raise SystemExit(1)
+
+    run_sql("UPDATE User SET password_hash = :h WHERE email = :e",
+            {"h": hash_password(password), "e": email})
+    print(f"Password updated for {email}.")
+
 
 def cmd_seed(args):
     from app.config import settings
@@ -554,6 +594,15 @@ def _build_parser():
                                  help='Mark existing user accounts email-verified (login now requires it)')
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     p_vu.set_defaults(func=cmd_verify_users)
+
+    # set-password: operator reset when neither in-app route is usable (the email
+    # reset flow needs SMTP; /auth/change-password needs the current password).
+    p_sp = subparsers.add_parser('set-password',
+                                 help="Set a user's password (prompts; ADMIN_PASSWORD only seeds new accounts)")
+    p_sp.add_argument('email', help='Email address of the account to update')
+    p_sp.add_argument('--password',
+                      help='Non-interactive password (avoid — lands in shell history and ps)')
+    p_sp.set_defaults(func=cmd_set_password)
     return parser
 
 
