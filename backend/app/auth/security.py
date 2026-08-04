@@ -23,9 +23,11 @@ _MFA_ISSUER = "Owlgraph"
 _RECOVERY_CODE_COUNT = 10
 
 # bcrypt only considers the first 72 bytes of a password; bcrypt >= 4.1 raises
-# if given more, so truncate to match (passlib truncated internally too). This
-# keeps the $2b$ hash format, so hashes created by the previous passlib+bcrypt
-# stack still verify.
+# if given more, so we cap the input here. The password policy (_validate_password
+# in router.py) rejects inputs exceeding this limit before they reach these
+# functions, so the slice is a safety net rather than load-bearing behaviour.
+# Keeps the $2b$ hash format, so hashes from the previous passlib+bcrypt stack
+# still verify.
 _BCRYPT_MAX_BYTES = 72
 
 

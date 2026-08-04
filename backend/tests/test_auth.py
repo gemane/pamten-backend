@@ -84,6 +84,30 @@ def test_register_short_password_rejected(client, fake_db):
     assert r.status_code == 400
 
 
+def test_register_rejects_password_exceeding_bcrypt_byte_limit(client, fake_db):
+    # 73 ASCII chars = 73 UTF-8 bytes — one over the 72-byte bcrypt limit.
+    # Previously this was silently truncated; now it is explicitly rejected.
+    r = client.post("/auth/register", json={"email": "a@example.com",
+                                            "password": "a" * 73})
+    assert r.status_code == 400
+    assert "72" in r.json()["detail"]
+
+
+def test_register_rejects_password_long_in_bytes_not_chars(client, fake_db):
+    # 25 × '€' = 25 chars but 75 UTF-8 bytes (€ is 3 bytes) — over the limit.
+    r = client.post("/auth/register", json={"email": "a@example.com",
+                                            "password": "€" * 25})
+    assert r.status_code == 400
+
+
+def test_register_accepts_password_at_byte_limit(client, fake_db):
+    # Exactly 72 ASCII chars = 72 bytes — should be accepted.
+    fake_db.queue([], [{"n": 0}], [])
+    r = client.post("/auth/register", json={"email": "a@example.com",
+                                            "password": "a" * 72})
+    assert r.status_code == 200
+
+
 def test_register_rejects_common_password(client, fake_db):
     # A long-enough but very common password is refused by the blocklist.
     r = client.post("/auth/register", json={"email": "a@example.com", "password": "password123"})
@@ -343,6 +367,14 @@ def test_reset_password_short_password_rejected(client):
                                  extra={"ph": "x"})
     r = client.post("/auth/reset-password", json={"token": token, "new_password": "short"})
     assert r.status_code == 400
+
+
+def test_reset_password_rejects_too_long_password(client):
+    token = create_purpose_token("u1", auth_router.RESET_PASSWORD_PURPOSE, timedelta(minutes=30),
+                                 extra={"ph": "x"})
+    r = client.post("/auth/reset-password", json={"token": token, "new_password": "a" * 73})
+    assert r.status_code == 400
+    assert "72" in r.json()["detail"]
 
 
 def test_reset_password_rejects_common_password(client):

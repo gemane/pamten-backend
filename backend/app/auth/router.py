@@ -19,16 +19,31 @@ from app.notifications.email import (
 )
 
 MIN_PASSWORD_LENGTH = 8
+# bcrypt silently truncates input at 72 UTF-8 bytes, making the tail of a longer
+# password meaningless for authentication. We reject at the boundary rather than
+# truncate silently, so users are never misled about what their password is.
+MAX_PASSWORD_BYTES = 72
 VERIFY_EMAIL_PURPOSE = "verify_email"
 RESET_PASSWORD_PURPOSE = "pwd_reset"
 
 
 def _validate_password(password: str) -> None:
-    """Enforce the password policy (length + common-password blocklist) for user-chosen
-    passwords on register/reset. Raises HTTPException(400) with a user-facing message."""
+    """Enforce the password policy for user-chosen passwords on register/reset.
+
+    Checks (in order):
+    1. Minimum length (8 chars) — NIST 800-63B floor.
+    2. Maximum byte length (72 UTF-8 bytes) — bcrypt truncates silently beyond this;
+       we reject instead so the user always knows what their password actually is.
+    3. Common-password blocklist — rejects the top-10k most common passwords.
+
+    Raises HTTPException(400) with a user-facing detail string on any violation.
+    """
     if len(password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(status_code=400,
                             detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise HTTPException(status_code=400,
+                            detail=f"Password must be at most {MAX_PASSWORD_BYTES} characters")
     if is_common_password(password):
         raise HTTPException(status_code=400,
                             detail="This password is too common — please choose a less common one.")
