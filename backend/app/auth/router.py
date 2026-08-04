@@ -14,7 +14,9 @@ from app.auth.security import (
 from app.auth.dependencies import get_current_user, require_admin
 from app.auth.password_policy import is_common_password
 from app.auth.rate_limit import check_rate_limit, record_attempt, clear_attempts
-from app.notifications.email import send_verification_email, send_password_reset_email
+from app.notifications.email import (
+    send_verification_email, send_password_reset_email, send_account_exists_email,
+)
 
 MIN_PASSWORD_LENGTH = 8
 VERIFY_EMAIL_PURPOSE = "verify_email"
@@ -171,9 +173,19 @@ def _clear_login_attempts(key: str) -> None:
 def register(data: RegisterRequest, background: BackgroundTasks):
     _validate_password(data.password)
 
+    # Generic response used for both new and duplicate registrations — never
+    # reveals whether the address already has an account (email enumeration).
+    _REGISTER_OK = {
+        "message": "If this email is new, a verification link has been sent. Check your inbox.",
+        "verification_required": True,
+    }
+
     with db.get_session() as session:
         if session.run("MATCH (u:User {email: $e}) RETURN u", e=data.email).single():
-            raise HTTPException(status_code=400, detail="Email already registered")
+            # Address already registered — notify the owner silently and return
+            # the same generic response so the caller learns nothing.
+            background.add_task(_safe_send, send_account_exists_email, data.email)
+            return {**_REGISTER_OK, "email": data.email}
 
         # When an admin is provisioned from env (ADMIN_EMAIL), self-registration
         # NEVER grants admin — closing the "first registrant becomes admin" hole.
@@ -204,8 +216,7 @@ def register(data: RegisterRequest, background: BackgroundTasks):
         return _token_response(user_id, data.email, role, email_verified=True)
 
     _issue_verification_email(background, user_id, data.email)
-    return {"message": "Account created. Check your email to verify your address before logging in.",
-            "email": data.email, "verification_required": True}
+    return {**_REGISTER_OK, "email": data.email}
 
 
 @router.post("/login")

@@ -130,6 +130,34 @@ def send_verification_email(to: str, token: str) -> None:
     get_email_sender().send(to, subject, text, html)
 
 
+def send_account_exists_email(to: str) -> None:
+    """Tell an existing user that someone tried to register with their address.
+
+    Sent in place of a verification email when a registration attempt uses an
+    email that is already in the database — so the response to the caller stays
+    generic (no enumeration) while the real account owner is notified and can act.
+    """
+    login_url = settings.APP_BASE_URL.rstrip("/")
+    subject = "Someone tried to create an Owlgraph account with your email"
+    text = (
+        "Hi,\n\n"
+        "Someone just tried to register a new Owlgraph account using your email address. "
+        "You already have an account, so no new account was created.\n\n"
+        f"If that was you, you can log in here: {login_url}\n\n"
+        "If you've forgotten your password, use the 'Forgot password' link on the login page.\n\n"
+        "If it wasn't you, no action is needed — your account is unchanged.\n"
+    )
+    html = (
+        "<p>Hi,</p>"
+        "<p>Someone just tried to register a new Owlgraph account using your email address. "
+        "You already have an account, so no new account was created.</p>"
+        f'<p>If that was you, <a href="{login_url}">log in here</a>. '
+        "If you've forgotten your password, use the <em>Forgot password</em> link on the login page.</p>"
+        "<p>If it wasn't you, no action is needed — your account is unchanged.</p>"
+    )
+    get_email_sender().send(to, subject, text, html)
+
+
 def send_password_reset_email(to: str, token: str) -> None:
     url = _link("reset-password", token)
     subject = "Reset your Owlgraph password"

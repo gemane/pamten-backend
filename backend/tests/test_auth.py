@@ -65,11 +65,18 @@ class TestBootstrapAdmin:
         assert fake_db.calls == []
 
 
-def test_register_duplicate_email_rejected(client, fake_db):
+def test_register_duplicate_email_returns_generic_response(client, fake_db):
+    # Duplicate registration must NOT reveal that the address exists (no 400 / "already
+    # registered") — the response is indistinguishable from a successful new registration.
     fake_db.queue([{"u": {"id": "1"}}])  # existing user found
-    r = client.post("/auth/register", json={"email": "dupe@example.com", "password": "Zt9mQ2vLp4rK"})
-    assert r.status_code == 400
-    assert "already registered" in r.json()["detail"].lower()
+    with patch.object(auth_router, "send_account_exists_email") as send:
+        r = client.post("/auth/register", json={"email": "dupe@example.com", "password": "Zt9mQ2vLp4rK"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["verification_required"] is True
+    assert "access_token" not in body
+    # The account-exists notification is sent to the owner silently.
+    send.assert_called_once_with("dupe@example.com")
 
 
 def test_register_short_password_rejected(client, fake_db):
