@@ -1,9 +1,6 @@
 import logging
-import time
 import uuid
-import threading
 from datetime import timedelta
-from collections import defaultdict
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from pydantic import BaseModel, EmailStr, field_validator
 from app.config import settings
@@ -16,6 +13,7 @@ from app.auth.security import (
 )
 from app.auth.dependencies import get_current_user, require_admin
 from app.auth.password_policy import is_common_password
+from app.auth.rate_limit import check_rate_limit, record_attempt, clear_attempts
 from app.notifications.email import send_verification_email, send_password_reset_email
 
 MIN_PASSWORD_LENGTH = 8
@@ -70,26 +68,17 @@ def bootstrap_admin() -> None:
 LOGIN_RATE_LIMIT = 5           # attempts
 LOGIN_RATE_WINDOW = 15 * 60    # seconds
 
-_login_attempts: dict[str, list[float]] = defaultdict(list)
-_login_attempts_lock = threading.Lock()
-
 # Throttle outbound email (verification resend / password reset) per address, so
 # the endpoints can't be used to spam an inbox. Applied before any user lookup so
 # it never reveals whether an address exists.
 EMAIL_SEND_LIMIT = 3
 EMAIL_SEND_WINDOW = 15 * 60
-_email_send_attempts: dict[str, list[float]] = defaultdict(list)
-_email_send_lock = threading.Lock()
 
 
 def _rate_limit_email(email: str) -> None:
-    now = time.time()
-    with _email_send_lock:
-        attempts = [t for t in _email_send_attempts[email] if now - t < EMAIL_SEND_WINDOW]
-        _email_send_attempts[email] = attempts
-        if len(attempts) >= EMAIL_SEND_LIMIT:
-            raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
-        _email_send_attempts[email].append(now)
+    key = f"email:{email}"
+    check_rate_limit(key, EMAIL_SEND_LIMIT, EMAIL_SEND_WINDOW)
+    record_attempt(key, EMAIL_SEND_WINDOW)
 
 
 class _EmailPasswordRequest(BaseModel):
@@ -163,26 +152,19 @@ def _token_response(user_id: str, email: str, role: str, email_verified: bool = 
 
 def _login_rate_limit_key(request: Request, email: str) -> str:
     client_ip = request.client.host if request.client else "unknown"
-    return f"{client_ip}:{email}"
+    return f"login:{client_ip}:{email}"
 
 
 def _check_login_rate_limit(key: str) -> None:
-    now = time.time()
-    with _login_attempts_lock:
-        attempts = [t for t in _login_attempts[key] if now - t < LOGIN_RATE_WINDOW]
-        _login_attempts[key] = attempts
-        if len(attempts) >= LOGIN_RATE_LIMIT:
-            raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
+    check_rate_limit(key, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW)
 
 
 def _record_login_failure(key: str) -> None:
-    with _login_attempts_lock:
-        _login_attempts[key].append(time.time())
+    record_attempt(key, LOGIN_RATE_WINDOW)
 
 
 def _clear_login_attempts(key: str) -> None:
-    with _login_attempts_lock:
-        _login_attempts.pop(key, None)
+    clear_attempts(key)
 
 
 @router.post("/register")

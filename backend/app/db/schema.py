@@ -65,6 +65,9 @@ _INDEXES: list[tuple[str, str, str]] = [
     # Import checkpoints — e.g. the last GLEIF publish a delta update applied, so
     # the daily refresh can pick a catch-up interval that covers any missed runs.
     ("ImportState", "key",          "UNIQUE"),
+    # Rate-limit buckets: sliding-window attempt timestamps keyed by bucket id
+    # (e.g. "login:<ip>:<email>", "email:<email>", "mfa:<user_id>").
+    ("RateLimit",   "key",          "UNIQUE"),
 ]
 
 # Edge types the app creates via Cypher and needs to exist up front (init-schema

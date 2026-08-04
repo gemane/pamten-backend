@@ -122,16 +122,29 @@ def make_token():
 
 
 @pytest.fixture(autouse=True)
-def _reset_login_rate_limit():
-    """Clear the in-memory login + email-send rate-limit state between tests."""
-    from app.auth import router as auth_router
+def _mock_rate_limit_store(monkeypatch):
+    """Route rate-limit DB calls through an in-memory store.
 
-    def _clear():
-        with auth_router._login_attempts_lock:
-            auth_router._login_attempts.clear()
-        with auth_router._email_send_lock:
-            auth_router._email_send_attempts.clear()
+    Prevents real httpx connections to ArcadeDB during unit tests and makes
+    the sliding-window state accumulate correctly within each test (reset
+    between tests) so the rate-limit tests keep passing.
+    """
+    import app.auth.rate_limit as rl_module
 
-    _clear()
-    yield
-    _clear()
+    _store: dict[str, list] = {}
+
+    def _fake_run_sql(sql: str, params: dict | None = None, **_kw):
+        params = params or {}
+        k = params.get("k", "")
+        sql_upper = sql.strip().upper()
+        if sql_upper.startswith("SELECT"):
+            return [{"timestamps": list(_store[k])}] if k in _store else []
+        if "UPSERT" in sql_upper or sql_upper.startswith("UPDATE"):
+            _store[k] = list(params.get("ts", []))
+            return []
+        if sql_upper.startswith("DELETE"):
+            _store.pop(k, None)
+            return []
+        return []
+
+    monkeypatch.setattr(rl_module, "run_sql", _fake_run_sql)
