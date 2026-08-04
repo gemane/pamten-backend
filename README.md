@@ -23,6 +23,8 @@ Two long-lived branches:
 
 The flow is: **feature branch → PR into `develop` → verify on the dev deploy → PR `develop` → `main`**. The promotion PR can batch several features; there is no need for one per change.
 
+`develop` is the repository's **default branch**, so a new PR targets it automatically and promoting to `main` is the deliberate exception (`gh pr create --base main`). Promotion PRs are merged with a **merge commit**, not a squash — squashing would give `main` commits that `develop` has never seen, and the two histories would drift apart a little further with every release. Feature PRs into `develop` can squash freely.
+
 Both branches are protected by a repository **ruleset** (Settings → Rules → Rulesets — *not* the older Settings → Branches protection, which is unused here):
 
 - direct pushes are rejected on both — changes arrive via pull request
