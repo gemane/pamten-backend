@@ -15,8 +15,10 @@ Gated behind FEDERATION_ENABLED.
 """
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone
+import ipaddress
 import logging
 import uuid
+from urllib.parse import urlparse
 
 import httpx
 
@@ -42,6 +44,64 @@ def _require_enabled():
             detail="Federation is disabled. Set FEDERATION_ENABLED=true to enable.")
 
 
+# Internal address ranges that must never be reachable via a peer pull.
+_BLOCKED_SUFFIXES = (".local", ".internal", ".localhost", ".localdomain")
+_BLOCKED_HOSTNAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+
+
+def _validate_peer_url(url: str) -> None:
+    """Reject URLs that could be used to probe internal infrastructure (SSRF).
+
+    Rules:
+    - Scheme must be ``https`` (no plain HTTP, no ``file://``, ``gopher://``, etc.)
+    - Hostname must be present and contain at least one dot (bare labels are
+      internal DNS names, e.g. ``arcadedb``, ``postgres``).
+    - Known internal hostnames are rejected (``localhost`` and its IPv6 aliases).
+    - Hostnames ending with ``.local``, ``.internal``, ``.localhost``, or
+      ``.localdomain`` are rejected (mDNS / split-horizon DNS / Docker networks).
+    - If the hostname is an IP address, it must be a globally-routable unicast
+      address — loopback (127.x, ::1), link-local (169.254.x — AWS/GCP/Azure
+      metadata endpoint), private RFC-1918, and reserved ranges are all blocked.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid peer URL: {exc}") from exc
+
+    if parsed.scheme != "https":
+        raise HTTPException(
+            status_code=400,
+            detail="Peer base_url must use HTTPS — plain HTTP and other schemes are not allowed.",
+        )
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise HTTPException(status_code=400, detail="Peer base_url must include a hostname.")
+
+    if host in _BLOCKED_HOSTNAMES:
+        raise HTTPException(status_code=400,
+                            detail="Peer base_url must be a public address.")
+
+    for suffix in _BLOCKED_SUFFIXES:
+        if host.endswith(suffix):
+            raise HTTPException(status_code=400,
+                                detail="Peer base_url must be a public address.")
+
+    # Bare hostnames (no dot) are internal DNS labels (e.g. Docker service names).
+    if "." not in host:
+        raise HTTPException(status_code=400,
+                            detail="Peer base_url must be a public address.")
+
+    # Numeric IP addresses — block all non-globally-routable addresses.
+    try:
+        addr = ipaddress.ip_address(host)
+        if not addr.is_global:
+            raise HTTPException(status_code=400,
+                                detail="Peer base_url must be a public address.")
+    except ValueError:
+        pass  # hostname (not a bare IP) — the checks above are sufficient
+
+
 @router.get("/status")
 def federation_status(_: dict = Depends(require_contributor)):
     """Whether federation is on, plus what this instance would publish. Not gated
@@ -61,6 +121,7 @@ def federation_status(_: dict = Depends(require_contributor)):
 def add_peer(data: PeerCreate, _: dict = Depends(require_admin)):
     """Register a trusted peer to pull from."""
     _require_enabled()
+    _validate_peer_url(data.base_url)
     peer_id = str(uuid.uuid4())
     with db.get_session() as session:
         session.run(
@@ -292,6 +353,9 @@ def pull_peer(peer_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Peer is disabled")
 
     url = f"{rec['url'].rstrip('/')}/federation/export"
+    # Re-validate at pull time: guards against URLs stored before this check
+    # was introduced and against any future path that bypasses add_peer.
+    _validate_peer_url(rec["url"])
     headers = {"Authorization": f"Bearer {rec['tok']}"} if rec.get("tok") else {}
     try:
         resp = httpx.get(url, headers=headers, timeout=120, follow_redirects=True)
