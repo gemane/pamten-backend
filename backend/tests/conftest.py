@@ -21,7 +21,7 @@ _TEST_ENV = {
     "SCRAPER_BODS_GLEIF_ENABLED":    "true",
     "SCRAPER_BODS_UK_PSC_ENABLED":   "true",
     "OPENCORPORATES_API_KEY":        "",
-    "SECRET_KEY":                    "test-secret",
+    "SECRET_KEY":                    "test-secret-key-not-for-production-use-only-tests",
 }
 for k, v in _TEST_ENV.items():
     os.environ.setdefault(k, v)

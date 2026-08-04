@@ -101,6 +101,13 @@ class Settings(BaseSettings):
                 "SECRET_KEY is still set to the insecure default. "
                 "Set a long random SECRET_KEY env var before running with DEBUG=False."
             )
+        # 32 bytes of entropy minimum — HS256 tokens are trivially brute-forceable
+        # with shorter keys. Generate with: openssl rand -hex 32
+        if len(self.SECRET_KEY) < 32:
+            raise ValueError(
+                f"SECRET_KEY is too short ({len(self.SECRET_KEY)} chars). "
+                "Use at least 32 characters — generate with: openssl rand -hex 32"
+            )
         return self
 
     @property
