@@ -64,6 +64,36 @@ class TestBootstrapAdmin:
         bootstrap_admin()
         assert fake_db.calls == []
 
+    def test_warns_when_admin_password_is_short(self, fake_db, monkeypatch, caplog):
+        import logging
+        from app.config import settings
+        from app.auth.router import bootstrap_admin
+        monkeypatch.setattr(settings, "ADMIN_EMAIL", "boss@example.com")
+        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "tooshort")  # 8 chars, < 12
+        fake_db.queue([{"u": {"id": "1"}}])  # admin already exists — skip create
+        with caplog.at_level(logging.WARNING, logger="app.auth.router"):
+            bootstrap_admin()
+        assert any(
+            "ADMIN_PASSWORD" in r.message and "characters" in r.message
+            for r in caplog.records
+        ), "Expected a short-password warning in the log"
+
+    def test_warns_when_admin_password_is_common(self, fake_db, monkeypatch, caplog):
+        import logging
+        from app.config import settings
+        from app.auth import router as auth_r
+        monkeypatch.setattr(settings, "ADMIN_EMAIL", "boss@example.com")
+        # Password is long enough (≥12) but force is_common_password to return True.
+        monkeypatch.setattr(settings, "ADMIN_PASSWORD", "NotShortButCommon!")
+        monkeypatch.setattr(auth_r, "is_common_password", lambda _: True)
+        fake_db.queue([{"u": {"id": "1"}}])  # already exists — skip create
+        with caplog.at_level(logging.WARNING, logger="app.auth.router"):
+            auth_r.bootstrap_admin()
+        assert any(
+            "common" in r.message.lower()
+            for r in caplog.records
+        ), "Expected a common-password warning in the log"
+
 
 def test_register_duplicate_email_returns_generic_response(client, fake_db):
     # Duplicate registration must NOT reveal that the address exists (no 400 / "already

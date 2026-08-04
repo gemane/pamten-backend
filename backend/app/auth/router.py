@@ -23,6 +23,10 @@ MIN_PASSWORD_LENGTH = 8
 # password meaningless for authentication. We reject at the boundary rather than
 # truncate silently, so users are never misled about what their password is.
 MAX_PASSWORD_BYTES = 72
+# Admin accounts warrant a higher floor than regular users because they can do
+# anything in the system. Applied as a startup warning rather than a hard error
+# so a dev environment with a simple ADMIN_PASSWORD can still boot.
+MIN_ADMIN_PASSWORD_LEN = 12
 VERIFY_EMAIL_PURPOSE = "verify_email"
 RESET_PASSWORD_PURPOSE = "pwd_reset"
 
@@ -64,6 +68,23 @@ def bootstrap_admin() -> None:
     password = settings.ADMIN_PASSWORD
     if not email or not password:
         return
+
+    # Warn if ADMIN_PASSWORD is weak — we can't return a 400 here, but the
+    # warning shows up in the Render log and CI output so operators notice early.
+    # The length check is checked first; if it fires the common-password check
+    # is redundant (any password < 12 chars should be changed anyway).
+    if len(password) < MIN_ADMIN_PASSWORD_LEN:
+        log.warning(
+            "ADMIN_PASSWORD is only %d characters — use at least %d to protect "
+            "the admin account (generate with: openssl rand -base64 16).",
+            len(password), MIN_ADMIN_PASSWORD_LEN,
+        )
+    elif is_common_password(password):
+        log.warning(
+            "ADMIN_PASSWORD appears to be a very common password. "
+            "Use a strong, unique password to protect the admin account.",
+        )
+
     try:
         with db.get_session() as session:
             if session.run("MATCH (u:User {email: $e}) RETURN u", e=email).single():
