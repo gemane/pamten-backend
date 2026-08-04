@@ -15,11 +15,23 @@ from app.auth.security import (
     generate_recovery_codes, hash_recovery_code,
 )
 from app.auth.dependencies import get_current_user, require_admin
+from app.auth.password_policy import is_common_password
 from app.notifications.email import send_verification_email, send_password_reset_email
 
 MIN_PASSWORD_LENGTH = 8
 VERIFY_EMAIL_PURPOSE = "verify_email"
 RESET_PASSWORD_PURPOSE = "pwd_reset"
+
+
+def _validate_password(password: str) -> None:
+    """Enforce the password policy (length + common-password blocklist) for user-chosen
+    passwords on register/reset. Raises HTTPException(400) with a user-facing message."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400,
+                            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    if is_common_password(password):
+        raise HTTPException(status_code=400,
+                            detail="This password is too common — please choose a less common one.")
 MFA_PENDING_PURPOSE = "mfa_pending"
 MFA_PENDING_TTL_MINUTES = 5
 
@@ -175,9 +187,7 @@ def _clear_login_attempts(key: str) -> None:
 
 @router.post("/register")
 def register(data: RegisterRequest, background: BackgroundTasks):
-    if len(data.password) < MIN_PASSWORD_LENGTH:
-        raise HTTPException(status_code=400,
-                            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    _validate_password(data.password)
 
     with db.get_session() as session:
         if session.run("MATCH (u:User {email: $e}) RETURN u", e=data.email).single():
@@ -311,9 +321,7 @@ def forgot_password(data: _EmailOnlyRequest, background: BackgroundTasks):
 
 @router.post("/reset-password")
 def reset_password(data: ResetPasswordRequest):
-    if len(data.new_password) < MIN_PASSWORD_LENGTH:
-        raise HTTPException(status_code=400,
-                            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+    _validate_password(data.new_password)
     try:
         claims = verify_purpose_token(data.token, RESET_PASSWORD_PURPOSE)
     except TokenError as exc:
