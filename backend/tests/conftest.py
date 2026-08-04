@@ -122,29 +122,48 @@ def make_token():
 
 
 @pytest.fixture(autouse=True)
-def _mock_rate_limit_store(monkeypatch):
-    """Route rate-limit DB calls through an in-memory store.
+def _mock_rate_limit(monkeypatch):
+    """Replace the DB-backed rate-limit functions with a pure in-memory implementation.
 
-    Prevents real httpx connections to ArcadeDB during unit tests and makes
-    the sliding-window state accumulate correctly within each test (reset
-    between tests) so the rate-limit tests keep passing.
+    Patches ``check_rate_limit``, ``record_attempt``, and ``clear_attempts`` at
+    the call site (``app.auth.router``) so unit tests never touch ArcadeDB.
+    Each test gets a fresh store that resets automatically between tests.
+
+    The ``test_rate_limit.py`` tests bypass this fixture — they import and test
+    ``app.auth.rate_limit`` functions directly, using their own ``run_sql`` mock.
     """
-    import app.auth.rate_limit as rl_module
+    import time as _time
+    from fastapi import HTTPException
+    from app.auth import router as _auth_router
+    from app.auth.rate_limit import _LOCKOUT_DURATIONS
 
-    _store: dict[str, list] = {}
+    # timestamps: key → list[float]
+    # lockouts:   key → (lockout_until: float, lockout_count: int)
+    _timestamps: dict[str, list] = {}
+    _lockouts:   dict[str, tuple] = {}
 
-    def _fake_run_sql(sql: str, params: dict | None = None, **_kw):
-        params = params or {}
-        k = params.get("k", "")
-        sql_upper = sql.strip().upper()
-        if sql_upper.startswith("SELECT"):
-            return [{"timestamps": list(_store[k])}] if k in _store else []
-        if "UPSERT" in sql_upper or sql_upper.startswith("UPDATE"):
-            _store[k] = list(params.get("ts", []))
-            return []
-        if sql_upper.startswith("DELETE"):
-            _store.pop(k, None)
-            return []
-        return []
+    def _check(key: str, limit: int, window: int) -> None:
+        now = _time.time()
+        lu, lc = _lockouts.get(key, (0.0, 0))
+        if lu > now:
+            raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
+        ts = [t for t in _timestamps.get(key, []) if t > now - window]
+        if len(ts) >= limit:
+            dur = _LOCKOUT_DURATIONS[min(lc, len(_LOCKOUT_DURATIONS) - 1)]
+            _lockouts[key] = (now + dur, lc + 1)
+            _timestamps[key] = ts
+            raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
 
-    monkeypatch.setattr(rl_module, "run_sql", _fake_run_sql)
+    def _record(key: str, window: int) -> None:
+        now = _time.time()
+        ts = [t for t in _timestamps.get(key, []) if t > now - window]
+        ts.append(now)
+        _timestamps[key] = ts
+
+    def _clear(key: str) -> None:
+        _timestamps.pop(key, None)
+        _lockouts.pop(key, None)
+
+    monkeypatch.setattr(_auth_router, "check_rate_limit", _check)
+    monkeypatch.setattr(_auth_router, "record_attempt",   _record)
+    monkeypatch.setattr(_auth_router, "clear_attempts",   _clear)
