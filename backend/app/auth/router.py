@@ -12,17 +12,14 @@ from app.auth.security import (
     generate_recovery_codes, hash_recovery_code,
 )
 from app.auth.dependencies import get_current_user, require_admin
-from app.auth.password_policy import is_common_password
+from app.auth.password_policy import is_common_password, password_policy_error
 from app.auth.rate_limit import check_rate_limit, record_attempt, clear_attempts
 from app.notifications.email import (
     send_verification_email, send_password_reset_email, send_account_exists_email,
 )
 
-MIN_PASSWORD_LENGTH = 8
-# bcrypt silently truncates input at 72 UTF-8 bytes, making the tail of a longer
-# password meaningless for authentication. We reject at the boundary rather than
-# truncate silently, so users are never misled about what their password is.
-MAX_PASSWORD_BYTES = 72
+# The user-password rules (min length, bcrypt byte cap, blocklist) live in
+# app.auth.password_policy — one definition, shared with manage.py set-password.
 # Admin accounts warrant a higher floor than regular users because they can do
 # anything in the system. Applied as a startup warning rather than a hard error
 # so a dev environment with a simple ADMIN_PASSWORD can still boot.
@@ -32,25 +29,16 @@ RESET_PASSWORD_PURPOSE = "pwd_reset"
 
 
 def _validate_password(password: str) -> None:
-    """Enforce the password policy for user-chosen passwords on register/reset.
+    """Enforce the password policy on register / reset / change.
 
-    Checks (in order):
-    1. Minimum length (8 chars) — NIST 800-63B floor.
-    2. Maximum byte length (72 UTF-8 bytes) — bcrypt truncates silently beyond this;
-       we reject instead so the user always knows what their password actually is.
-    3. Common-password blocklist — rejects the top-10k most common passwords.
-
-    Raises HTTPException(400) with a user-facing detail string on any violation.
+    The rules themselves live in ``app.auth.password_policy`` so the CLI applies
+    exactly the same ones; this only turns a violation into an HTTP 400.
     """
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise HTTPException(status_code=400,
-                            detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
-    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
-        raise HTTPException(status_code=400,
-                            detail=f"Password must be at most {MAX_PASSWORD_BYTES} characters")
-    if is_common_password(password):
-        raise HTTPException(status_code=400,
-                            detail="This password is too common — please choose a less common one.")
+    message = password_policy_error(password)
+    if message:
+        raise HTTPException(status_code=400, detail=message)
+
+
 MFA_PENDING_PURPOSE = "mfa_pending"
 MFA_PENDING_TTL_MINUTES = 5
 
@@ -152,6 +140,11 @@ class VerifyEmailRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
     new_password: str
 
 
@@ -373,6 +366,39 @@ def reset_password(data: ResetPasswordRequest):
             id=claims["sub"], hash=hash_password(data.new_password),
         )
     return {"message": "Password updated. You can now log in."}
+
+
+@router.post("/change-password")
+def change_password(data: ChangePasswordRequest, user: dict = Depends(get_current_user)):
+    """Change your own password, proving ownership with the current one.
+
+    This is the only self-service route for a signed-in user: /forgot-password
+    depends on email delivery, which is unavailable wherever outbound SMTP is
+    blocked (Render), so without this an account whose password is known but
+    unwanted could never be rotated from the UI.
+
+    Note that existing access tokens stay valid — they are stateless and carry no
+    password fingerprint, so a change here does not sign other sessions out.
+    """
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (u:User {id: $id}) RETURN u.password_hash AS hash", id=user["sub"],
+        ).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail="User not found")
+        # Check the current password before the policy check on the new one, so a
+        # caller without the current password learns nothing about the policy.
+        if not verify_password(data.current_password, rec["hash"]):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        _validate_password(data.new_password)
+        if verify_password(data.new_password, rec["hash"]):
+            raise HTTPException(status_code=400,
+                                detail="New password must be different from the current one")
+        session.run(
+            "MATCH (u:User {id: $id}) SET u.password_hash = $hash",
+            id=user["sub"], hash=hash_password(data.new_password),
+        )
+    return {"message": "Password updated."}
 
 
 # ── Two-factor auth (TOTP) ────────────────────────────────────────────────────

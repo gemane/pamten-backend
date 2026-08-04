@@ -88,3 +88,95 @@ def test_wipe_source_refuses_on_database_name_mismatch(monkeypatch):
     with pytest.raises(SystemExit):
         manage.cmd_wipe_source(_args(yes=True, confirm_database="owlgraph"))  # != "test"
     assert calls == []
+
+
+# ── set-password ──────────────────────────────────────────────────────────────
+#
+# The operator escape hatch: ADMIN_PASSWORD only seeds a *missing* account, the
+# email reset flow needs SMTP (blocked on Render), and /auth/change-password needs
+# the current password — so without this there is no way to rotate a known-but-
+# unwanted password.
+
+def _stub_sql(monkeypatch, select_rows):
+    """Record run_sql calls; the first (the SELECT) returns select_rows."""
+    calls: list[tuple] = []
+
+    def _run_sql(query, params=None, *a, **k):
+        calls.append((query, params or {}))
+        return select_rows if query.strip().upper().startswith("SELECT") else []
+
+    monkeypatch.setattr("app.db.arcadedb.run_sql", _run_sql)
+    return calls
+
+
+def test_set_password_hashes_and_updates(monkeypatch):
+    from app.auth.security import verify_password
+    calls = _stub_sql(monkeypatch, [{"email": "boss@example.com"}])
+
+    import manage
+    manage.cmd_set_password(_args(email="boss@example.com", password="Zt9mQ2vLp4rK"))
+
+    update = [(q, p) for q, p in calls if q.strip().upper().startswith("UPDATE")]
+    assert len(update) == 1
+    query, params = update[0]
+    assert "SET password_hash" in query
+    assert params["e"] == "boss@example.com"
+    # Stores a bcrypt hash of the password, never the password itself.
+    assert params["h"] != "Zt9mQ2vLp4rK"
+    assert verify_password("Zt9mQ2vLp4rK", params["h"])
+
+
+def test_set_password_normalises_the_email(monkeypatch):
+    calls = _stub_sql(monkeypatch, [{"email": "boss@example.com"}])
+
+    import manage
+    manage.cmd_set_password(_args(email="  BOSS@Example.COM  ", password="Zt9mQ2vLp4rK"))
+
+    assert all(p.get("e") == "boss@example.com" for _, p in calls)
+
+
+def test_set_password_exits_when_the_user_does_not_exist(monkeypatch):
+    calls = _stub_sql(monkeypatch, [])  # SELECT finds nothing
+
+    import manage
+    with pytest.raises(SystemExit):
+        manage.cmd_set_password(_args(email="ghost@example.com", password="Zt9mQ2vLp4rK"))
+
+    assert all(not q.strip().upper().startswith("UPDATE") for q, _ in calls)
+
+
+def test_set_password_enforces_the_same_policy_as_the_api(monkeypatch):
+    # Each of these is rejected by /auth/register and /auth/reset-password too —
+    # both sides call password_policy_error.
+    for bad in ("short", "a" * 73, "password123"):
+        calls = _stub_sql(monkeypatch, [{"email": "boss@example.com"}])
+        import manage
+        with pytest.raises(SystemExit):
+            manage.cmd_set_password(_args(email="boss@example.com", password=bad))
+        assert all(not q.strip().upper().startswith("UPDATE") for q, _ in calls), bad
+
+
+def test_set_password_prompts_twice_and_rejects_a_mismatch(monkeypatch):
+    calls = _stub_sql(monkeypatch, [{"email": "boss@example.com"}])
+    prompts = iter(["Zt9mQ2vLp4rK", "typo-on-the-repeat"])
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: next(prompts))
+
+    import manage
+    with pytest.raises(SystemExit):
+        manage.cmd_set_password(_args(email="boss@example.com", password=None))
+
+    assert all(not q.strip().upper().startswith("UPDATE") for q, _ in calls)
+
+
+def test_set_password_reads_from_a_hidden_prompt_when_not_given(monkeypatch):
+    # The password must never have to appear in argv (shell history, ps output).
+    from app.auth.security import verify_password
+    calls = _stub_sql(monkeypatch, [{"email": "boss@example.com"}])
+    monkeypatch.setattr("getpass.getpass", lambda *a, **k: "Zt9mQ2vLp4rK")
+
+    import manage
+    manage.cmd_set_password(_args(email="boss@example.com", password=None))
+
+    update = [(q, p) for q, p in calls if q.strip().upper().startswith("UPDATE")]
+    assert len(update) == 1
+    assert verify_password("Zt9mQ2vLp4rK", update[0][1]["h"])

@@ -13,6 +13,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/auth/resend-verification` | — | Re-send the verification link `{email}` (rate-limited; always `200`) |
 | POST | `/auth/forgot-password` | — | Email a password-reset link `{email}` (always `200` — no user enumeration) |
 | POST | `/auth/reset-password` | — | Set a new password from the emailed token `{token, new_password}` (link is single-use) |
+| POST | `/auth/change-password` | bearer | Change your own password `{current_password, new_password}` — the self-service route that needs no email. `400` on a wrong current password, a policy violation, or reusing the current password |
 | GET | `/auth/me` | bearer | Current user info |
 | GET | `/auth/mfa/status` | bearer | Whether TOTP two-factor is enabled |
 | POST | `/auth/mfa/setup` | bearer | Begin TOTP enrolment → `{secret, otpauth_uri}` for a QR |

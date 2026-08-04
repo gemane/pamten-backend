@@ -141,7 +141,17 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 **Email verification & password reset.** Registration creates the account with `email_verified=false`, emails a verification link, and — with `REQUIRE_EMAIL_VERIFICATION=true` (default) — **blocks login until the email is verified** (`403 email_not_verified`, which the UI turns into a *resend* prompt). `POST /auth/forgot-password` emails a reset link and always returns `200` (no account-existence leak); `POST /auth/reset-password` sets the new password. The verify/reset links are **self-contained signed JWTs** (purpose-scoped, TTL-bounded) — no server-side token table; a reset link embeds a fingerprint of the current password hash so it **self-invalidates** once used. The env/bootstrap admin and the legacy first-user admin are stamped verified so they're never locked out; run `python manage.py verify-users` once to mark pre-existing accounts verified.
 
-**Password policy.** User-chosen passwords (register + reset) must be **at least 8 characters** and are checked against a **common-password blocklist** — the top ~10k most common passwords (`app/auth/common_passwords.txt`, from [SecLists](https://github.com/danielmiessler/SecLists), MIT licence), so weak-but-long-enough choices like `password123` are rejected. There are deliberately **no character-composition rules** (per NIST SP 800-63B). Online guessing is further limited by login rate-limiting (5 attempts / 15 min) and optional TOTP MFA. The env `ADMIN_PASSWORD` bootstrap is exempt (operator-set, not user input).
+**Changing a password.** A signed-in user rotates their own with `POST /auth/change-password` (`{current_password, new_password}`) — proving ownership with the current password rather than an email round-trip, so it works even where outbound SMTP is blocked. Reusing the current password is rejected. Access tokens are stateless and carry no password fingerprint, so a change does **not** sign other sessions out.
+
+For the operator case — a password that must be rotated but nobody knows it, or an inbox that can't receive the reset mail — use the CLI:
+
+```bash
+python manage.py set-password someone@example.com   # prompts twice, hidden input
+```
+
+Note that `ADMIN_PASSWORD` is **not** a way to change a password: `bootstrap_admin()` only creates a *missing* account and never overwrites an existing one, so editing that env var on an account that already exists has no effect at all.
+
+**Password policy.** The rules live in one place, `app/auth/password_policy.py` (`password_policy_error`), shared by register, reset, change, and `manage.py set-password`, so the API and CLI can't drift apart. User-chosen passwords must be **at least 8 characters** and are checked against a **common-password blocklist** — the top ~10k most common passwords (`app/auth/common_passwords.txt`, from [SecLists](https://github.com/danielmiessler/SecLists), MIT licence), so weak-but-long-enough choices like `password123` are rejected. There are deliberately **no character-composition rules** (per NIST SP 800-63B). Online guessing is further limited by login rate-limiting (5 attempts / 15 min) and optional TOTP MFA. The env `ADMIN_PASSWORD` bootstrap is exempt (operator-set, not user input).
 
 **Email transport** is provider-agnostic (`app/notifications/email.py`) — `EMAIL_BACKEND` picks the backend: `resend` (Resend HTTPS API via `RESEND_API_KEY` — recommended for a real deploy, since **Render blocks outbound SMTP**), `smtp` (stdlib `smtplib`; works with Gmail locally), or the default `console` (logs the message + link, so local dev and tests need no credentials). Adding another provider is a ~15-line `EmailSender` subclass. `EMAIL_FROM` must be a sender the backend accepts (a Resend-verified domain, or your SMTP account); `APP_BASE_URL` sets the origin used in the emailed links.
 
@@ -378,6 +388,7 @@ python3 manage.py init-schema
 | `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
 | `rebuild-search` | REBUILD the FULL_TEXT `search_text` indexes so `/search` (`CONTAINSTEXT`) finds every row — needed after a non-bulk / `--only` import (the FULL_TEXT index isn't maintained incrementally). `--hard` first DROPs + re-CREATEs the indexes: use it to recover a **stuck/corrupted** index that a plain REBUILD reports "ok" on but never repopulates (e.g. after a bulk-load's REBUILD was cut off mid-flight by the nginx 60s proxy timeout). Run `--hard` against `--db-url http://localhost:2480` so it isn't cut off by that same proxy again. |
 | `verify-users` | Mark existing accounts email-verified (login now requires it). Run once after enabling verification so pre-existing users aren't locked out; `--email <addr>` targets one account. |
+| `set-password` | Set one account's password directly: `python manage.py set-password someone@example.com`. Prompts twice with hidden input (`--password` exists for scripting but puts the secret in shell history and `ps`). Applies the same policy as the API. The operator escape hatch for when neither in-app route works — the reset flow needs email, `/auth/change-password` needs the current password, and `ADMIN_PASSWORD` only ever seeds a *missing* account. |
 
 ---
 
