@@ -12,15 +12,26 @@ FastAPI backend for the Owlgraph ownership mapping platform. Stores corporate ow
 
 ---
 
-## Branch protection
+## Branch model
 
-To require CI to pass before any merge into `main`:
+Two long-lived branches:
 
-1. Go to **Settings → Branches → Add rule**
-2. Branch name pattern: `main`
-3. Enable: **Require status checks to pass before merging**
-4. Select the **test** job as required
-5. Enable: **Require branches to be up to date before merging**
+| Branch | Deploys to | Purpose |
+|---|---|---|
+| `develop` | Render (dev) — auto-deploy on push | Integration branch. Everything lands here first and runs against the dev database. |
+| `main` | nothing yet (production, once it exists) | Only ever contains code that has been verified running on the dev deploy. |
+
+The flow is: **feature branch → PR into `develop` → verify on the dev deploy → PR `develop` → `main`**. The promotion PR can batch several features; there is no need for one per change.
+
+Both branches are protected by a repository **ruleset** (Settings → Rules → Rulesets — *not* the older Settings → Branches protection, which is unused here):
+
+- direct pushes are rejected on both — changes arrive via pull request
+- `Tests`, `Lint`, and `Integration (real ArcadeDB)` must pass before merge (context names must match the job `name:` in `.github/workflows/ci.yml` exactly, or the check is silently never required)
+- no approving review is required, so a solo maintainer can self-merge a green PR
+- `main` has **no bypass actors** — admins included. A red build cannot reach `main` without deliberately editing the ruleset.
+- `develop` allows an admin to force-merge a red PR when a dev-only experiment warrants it
+
+CI runs on pushes and PRs to both branches.
 
 ---
 
@@ -336,9 +347,9 @@ log), not as in-place edits that the next scrape would clobber.
 
 ## Deployment
 
-Deployed on Render as a web service. Any push to `main` triggers an automatic redeploy. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`. Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` too so the admin is provisioned automatically on boot (see [Authentication](#authentication)).
+Deployed on Render as a web service. Any push to **`develop`** triggers an automatic redeploy — Render tracks the integration branch, so what runs there is the dev environment (pointed at the dev database). `main` is the verified branch and currently deploys nowhere; production is planned on a separate, non-Render host. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`. Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` too so the admin is provisioned automatically on boot (see [Authentication](#authentication)).
 
-> **Env var changes apply on a *deploy*, not a restart.** Editing env vars in the dashboard triggers a deploy that applies them. But an env var set via the Render **API** does not auto-deploy, and a plain **"Restart Service"** restarts with the *already-deployed* config — so a value changed via the API only takes effect after a real deploy (**Manual Deploy → "Clear build cache & deploy"**, or a new push to `main`).
+> **Env var changes apply on a *deploy*, not a restart.** Editing env vars in the dashboard triggers a deploy that applies them. But an env var set via the Render **API** does not auto-deploy, and a plain **"Restart Service"** restarts with the *already-deployed* config — so a value changed via the API only takes effect after a real deploy (**Manual Deploy → "Clear build cache & deploy"**, or a new push to `develop`).
 
 ### Schema & indexes
 
