@@ -16,7 +16,7 @@ jobs:
       ARCADEDB_USERNAME: test
       ARCADEDB_PASSWORD: test
       ARCADEDB_DATABASE: test
-      SECRET_KEY: test-secret-key-for-ci
+      SECRET_KEY: test-secret-key-for-ci-not-for-production-use-32-plus-chars
 
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +76,7 @@ jobs:
       ARCADEDB_USERNAME: root
       ARCADEDB_PASSWORD: "RootPass123!"
       ARCADEDB_DATABASE: test
-      SECRET_KEY: test-secret-key-for-ci
+      SECRET_KEY: test-secret-key-for-ci-not-for-production-use-32-plus-chars
 
     steps:
       - uses: actions/checkout@v4
