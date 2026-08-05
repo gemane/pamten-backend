@@ -27,6 +27,25 @@ log = logging.getLogger(__name__)
 _MAX_HOPS = 5
 
 
+# One definition of the write, used by both entry points below. The person merge
+# runs inside a session; the entity merges in scraper/maintenance.py run through
+# the module-level run_command helper instead.
+_REPOINT_CHAIN = "MATCH (m:MergedId {new_id: $old}) SET m.new_id = $new, m.at = $now"
+_UPSERT_REDIRECT = """
+    MERGE (m:MergedId {old_id: $old})
+    SET m.new_id = $new, m.kind = $kind, m.at = $now,
+        m.id = COALESCE(m.id, $row_id)
+"""
+
+
+def _params(old_id: str, new_id: str, kind: str) -> dict:
+    return {
+        "old": old_id, "new": new_id, "kind": kind,
+        "now": datetime.now(timezone.utc).isoformat(),
+        "row_id": str(uuid.uuid4()),
+    }
+
+
 def record_merge(session, old_id: str, new_id: str, kind: str = "Entity") -> None:
     """Leave a forwarding address from ``old_id`` to ``new_id``.
 
@@ -35,21 +54,29 @@ def record_merge(session, old_id: str, new_id: str, kind: str = "Entity") -> Non
     """
     if not old_id or not new_id or old_id == new_id:
         return
-
-    now = datetime.now(timezone.utc).isoformat()
+    p = _params(old_id, new_id, kind)
     # Anything that pointed at the node we just merged away now points onward.
-    session.run(
-        "MATCH (m:MergedId {new_id: $old}) SET m.new_id = $new, m.at = $now",
-        old=old_id, new=new_id, now=now,
-    )
-    session.run(
-        """
-        MERGE (m:MergedId {old_id: $old})
-        SET m.new_id = $new, m.kind = $kind, m.at = $now,
-            m.id = COALESCE(m.id, $row_id)
-        """,
-        old=old_id, new=new_id, kind=kind, now=now, row_id=str(uuid.uuid4()),
-    )
+    session.run(_REPOINT_CHAIN, old=p["old"], new=p["new"], now=p["now"])
+    session.run(_UPSERT_REDIRECT, **p)
+
+
+def record_merge_sql(old_id: str, new_id: str, kind: str = "Entity") -> None:
+    """``record_merge`` for callers outside a session (scraper/maintenance).
+
+    Best-effort: the nodes are already merged by the time this runs, so a failure
+    to write the forwarding address must not fail the merge itself — it degrades
+    to the old behaviour (a dead id) rather than leaving the graph half-merged.
+    """
+    if not old_id or not new_id or old_id == new_id:
+        return
+    from app.db.arcadedb import run_command
+
+    p = _params(old_id, new_id, kind)
+    try:
+        run_command(_REPOINT_CHAIN, {"old": p["old"], "new": p["new"], "now": p["now"]})
+        run_command(_UPSERT_REDIRECT, p)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not record merge redirect %s -> %s: %s", old_id, new_id, exc)
 
 
 def resolve_current_id(session, old_id: str) -> str | None:
