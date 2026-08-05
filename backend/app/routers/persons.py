@@ -3,6 +3,7 @@ from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest, 
 from app.auth.dependencies import require_contributor
 from app.database import db
 from app.db.arcadedb import run_sql
+from app.merged_ids import record_merge, resolve_current_id
 from collections import defaultdict
 from datetime import datetime, timezone
 from itertools import combinations
@@ -537,9 +538,14 @@ def merge_person_records(keep: str, dup: str) -> None:
         session.run(
             "MERGE (ml:MergeLog {keep_id:$keep, dup_name:$dup_name}) "
             "SET ml.id = COALESCE(ml.id, $id), ml.keep_name = $keep_name, "
+            "    ml.dup_id = $dup_id, "
             "    ml.at = $at, ml.count = COALESCE(ml.count, 0) + 1",
-            keep=keep, dup_name=dup_full, keep_name=keep_full,
+            keep=keep, dup_name=dup_full, keep_name=keep_full, dup_id=dup,
             id=str(uuid.uuid4()), at=datetime.now(timezone.utc).isoformat())
+
+        # Forwarding address BEFORE the delete: the dup's id may be in a shared
+        # link, a client cache, or a federation peer's copy of our data.
+        record_merge(session, old_id=dup, new_id=keep, kind="Person")
 
         session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
 
@@ -587,8 +593,13 @@ def get_person(person_id: str):
         RETURN p
     """
     with db.get_session() as session:
-        result = session.run(query, id=person_id)
-        record = result.single()
+        record = session.run(query, id=person_id).single()
+        if not record:
+            # Follow a merge forwarding address rather than 404 a link that
+            # used to work. Only on a miss — a live id is never redirected.
+            merged_into = resolve_current_id(session, person_id)
+            if merged_into:
+                record = session.run(query, id=merged_into).single()
         if not record:
             raise HTTPException(status_code=404, detail="Person not found")
         return dict(record["p"])

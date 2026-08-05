@@ -7,6 +7,7 @@ from app.db.arcadedb import run_sql
 from app.scraper.mapper import normalize_entity_name
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
+from app.merged_ids import resolve_current_id
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
@@ -336,13 +337,22 @@ def get_full_profile(
     limit: Annotated[int, Query(ge=1, le=PROFILE_SECTION_MAX,
                                 description="Max rows per section (owners, subsidiaries, …).")] = PROFILE_SECTION_LIMIT,
 ):
+    head_query = (
+        "MATCH (e:Entity {id: $id}) "
+        "OPTIONAL MATCH (e)-[:HEADQUARTERED_IN]->(hq:Location) "
+        "RETURN e, hq LIMIT 1"
+    )
     with db.get_session() as session:
-        head = session.run(
-            "MATCH (e:Entity {id: $id}) "
-            "OPTIONAL MATCH (e)-[:HEADQUARTERED_IN]->(hq:Location) "
-            "RETURN e, hq LIMIT 1",
-            id=entity_id,
-        ).single()
+        head = session.run(head_query, id=entity_id).single()
+        if not head:
+            # A merge may have folded this id away — follow the forwarding
+            # address so a shared link to the old node still opens the company.
+            # Only on a miss; the section queries below then use the survivor's id.
+            merged_into = resolve_current_id(session, entity_id)
+            if merged_into:
+                head = session.run(head_query, id=merged_into).single()
+                if head:
+                    entity_id = merged_into
         if not head:
             raise HTTPException(status_code=404, detail="Entity not found")
 
@@ -495,6 +505,14 @@ def get_person_profile(person_id: str):
 
     with db.get_session() as session:
         record = session.run(query, id=person_id).single()
+        if not record:
+            # Person dedup merges aggressively (auto-merge on scrape), so a
+            # person id folded away is the common case, not a rare one.
+            merged_into = resolve_current_id(session, person_id)
+            if merged_into:
+                record = session.run(query, id=merged_into).single()
+                if record:
+                    person_id = merged_into
         if not record:
             raise HTTPException(status_code=404, detail="Person not found")
 

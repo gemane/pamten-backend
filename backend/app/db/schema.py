@@ -42,6 +42,12 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("User",     "email",           "UNIQUE"),
     ("MergeLog", "id",              "UNIQUE"),
     ("MergeLog", "keep_id",         "NOTUNIQUE"),
+    # Forwarding addresses for ids a merge folded away, so shared links, cached
+    # client ids and federation peers don't dangle. old_id is UNIQUE — an id can
+    # only have been merged into one survivor — and the lookup must be indexed,
+    # since it runs on every by-id miss.
+    ("MergedId", "old_id",          "UNIQUE"),
+    ("MergedId", "new_id",          "NOTUNIQUE"),
     ("Peer",     "id",              "UNIQUE"),
     ("Peer",     "base_url",        "NOTUNIQUE"),
     ("ScrapeRun", "id",             "UNIQUE"),
