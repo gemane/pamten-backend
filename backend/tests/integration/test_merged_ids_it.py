@@ -163,3 +163,67 @@ def test_profile_of_a_merged_away_entity_opens_the_survivor(it_db):
 
     profile = search.get_full_profile("ent-b")
     assert profile["entity"]["id"] == "ent-a"
+
+
+# ── A merge must not lose the loser's data ────────────────────────────────────
+#
+# Rehearsed against the real Microsoft pair before this was fixed: the merge kept
+# the ownership graph and executives but deleted wikidata_id, sec_cik, the
+# description, the revenue and the 228,000 headcount.
+
+def _gleif_and_wikidata_twins(it_db):
+    """The Microsoft shape: a high-credibility register node and a richer twin."""
+    it_db.run_command(
+        "CREATE (e:Entity {id:'lei:ABC', name:'MICROSOFT CORPORATION', "
+        "name_normalized:'microsoft', type:'company', country:'US', "
+        "lei_id:'INR2EJN1ERAN0W5ZP974', name_credibility:92, search_text:'MICROSOFT CORPORATION'})")
+    it_db.run_command(
+        "CREATE (e:Entity {id:'wd-1', name:'Microsoft', name_normalized:'microsoft', "
+        "type:'company', country:'US', lei_id:'INR2EJN1ERAN0W5ZP974', wikidata_id:'Q2283', "
+        "sec_cik:'0000789019', description:'American technology company', "
+        "employees:228000, name_credibility:80, aliases:['MSFT'], search_text:'Microsoft'})")
+
+
+def _merged(it_db):
+    from app.scraper.maintenance import deduplicate_entities_for
+    deduplicate_entities_for(["lei:ABC", "wd-1"], apply=True)
+    rows = it_db.run_sql("SELECT FROM Entity WHERE name_normalized = 'microsoft'")
+    assert len(rows) == 1, f"expected one survivor, got {len(rows)}"
+    return {k: v for k, v in rows[0].items() if not k.startswith("@")}
+
+
+def test_merge_keeps_the_register_id_as_the_survivor(it_db):
+    _gleif_and_wikidata_twins(it_db)
+    assert _merged(it_db)["id"] == "lei:ABC"
+
+
+def test_merge_carries_the_identifiers_across(it_db):
+    # Losing wikidata_id would also un-mark the company as notable for search
+    # ranking and drop the key a later Wikidata scrape resolves on.
+    _gleif_and_wikidata_twins(it_db)
+    survivor = _merged(it_db)
+    assert survivor["wikidata_id"] == "Q2283"
+    assert survivor["sec_cik"] == "0000789019"
+    assert survivor["lei_id"] == "INR2EJN1ERAN0W5ZP974"
+
+
+def test_merge_carries_the_descriptive_data_across(it_db):
+    _gleif_and_wikidata_twins(it_db)
+    survivor = _merged(it_db)
+    assert survivor["description"] == "American technology company"
+    assert survivor["employees"] == 228000
+
+
+def test_merge_keeps_the_absorbed_name_searchable(it_db):
+    _gleif_and_wikidata_twins(it_db)
+    survivor = _merged(it_db)
+    assert "Microsoft" in (survivor.get("aliases") or [])
+    assert "MSFT" in (survivor.get("aliases") or [])
+    assert "Microsoft" in survivor["search_text"]
+
+
+def test_merge_does_not_rename_the_survivor(it_db):
+    _gleif_and_wikidata_twins(it_db)
+    survivor = _merged(it_db)
+    assert survivor["name"] == "MICROSOFT CORPORATION"
+    assert survivor["name_credibility"] == 92
