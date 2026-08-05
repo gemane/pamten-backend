@@ -257,35 +257,117 @@ def _ownership_summary(owners: list[dict]) -> dict:
     }
 
 
-@router.get("/entity/{entity_id}/full-profile")
-def get_full_profile(entity_id: str):
-    # Everything about an entity in one call
-    query = """
-        MATCH (e:Entity {id: $id})
-        OPTIONAL MATCH (e)-[:HEADQUARTERED_IN]->(hq:Location)
-        OPTIONAL MATCH (e)-[:OPERATES_IN]->(ops:Location)
-        OPTIONAL MATCH (owner)-[owns_r:OWNS]->(e) WHERE owns_r.until IS NULL
-        OPTIONAL MATCH (e)-[sub_r:OWNS]->(subsidiary) WHERE sub_r.until IS NULL
-        OPTIONAL MATCH (p:Person)-[role_r:HAS_ROLE]->(e) WHERE role_r.until IS NULL
-        OPTIONAL MATCH (e)-[:DUAL_LISTED_WITH]->(dlc:Entity)
-        OPTIONAL MATCH (e)-[succ_r:SUCCEEDED_BY]->(succ:Entity)
-        OPTIONAL MATCH (pred:Entity)-[pred_r:SUCCEEDED_BY]->(e)
-        RETURN e,
-               hq,
-               collect(DISTINCT ops) as operations,
-               collect(DISTINCT {owner: owner, rel: owns_r}) as owners,
-               collect(DISTINCT {entity: subsidiary, rel: sub_r}) as subsidiaries,
-               collect(DISTINCT {person: p, role: role_r}) as executives,
-               collect(DISTINCT dlc) as dual_listed,
-               collect(DISTINCT {entity: succ, rel: succ_r}) as succeeded_by,
-               collect(DISTINCT {entity: pred, rel: pred_r}) as replaces
-    """
+# Per-section caps for the profile. Each section is its own query, so these bound
+# the payload additively; before the split one entity's page could inline every
+# subsidiary it had (236 of them, ~197 KB, measured on the dev database).
+PROFILE_SECTION_LIMIT = 200
+PROFILE_SECTION_MAX = 1_000
 
+# One query per section, each anchored on the indexed Entity id.
+#
+# This replaced a single MATCH with seven OPTIONAL MATCHes. That form is a
+# cartesian product: the engine materialises owners x subsidiaries x executives x
+# … rows and collect(DISTINCT) then discards all but one. Measured on the dev
+# database, Microsoft (24 x 15 x 33) produced 11,880 intermediate rows for a
+# single page view. It is multiplicative, so it degrades non-linearly as scraper
+# coverage fills more than one dimension on the same company — 100 owners x 236
+# subsidiaries x 50 executives would be 1.18M rows. Separate queries make the
+# cost additive instead, and give each section its own LIMIT.
+# Every section anchors on the indexed Entity id and follows the edge outward or
+# inward. Writing an inbound section the natural-reading way — (owner)-[:OWNS]->(e
+# {id}) — makes ArcadeDB scan instead of using the index: measured standalone on
+# the dev database, that form took 589 ms against 15 ms for the anchored one. It
+# was harmless inside the old OPTIONAL MATCH chain because `e` was already bound;
+# as separate queries it is not. Same trap documented in routers/relationships.py.
+#
+# `WITH <node>, collect(<edge>)` groups first, so LIMIT counts DISTINCT nodes
+# rather than raw edges. That distinction is not cosmetic: a re-imported dump
+# leaves duplicate OWNS edges (Johnson & Johnson has 236 edges to 160 distinct
+# subsidiaries on the dev database), and limiting the edges let duplicates eat the
+# budget — LIMIT 200 returned just 124 of the 160 companies. Grouping first makes
+# the cap mean what a caller assumes it means.
+_NODE_EDGE_SECTIONS = {
+    "owners": (
+        "MATCH (e:Entity {{id: $id}})<-[owns_r:OWNS]-(owner) WHERE owns_r.until IS NULL "
+        "WITH owner, collect(owns_r) AS rels RETURN owner AS node, rels LIMIT {limit}"),
+    "subsidiaries": (
+        "MATCH (e:Entity {{id: $id}})-[sub_r:OWNS]->(subsidiary) WHERE sub_r.until IS NULL "
+        "WITH subsidiary, collect(sub_r) AS rels RETURN subsidiary AS node, rels LIMIT {limit}"),
+    "executives": (
+        "MATCH (e:Entity {{id: $id}})<-[role_r:HAS_ROLE]-(p:Person) WHERE role_r.until IS NULL "
+        "WITH p, collect(role_r) AS rels RETURN p AS node, rels LIMIT {limit}"),
+    "succeeded_by": (
+        "MATCH (e:Entity {{id: $id}})-[succ_r:SUCCEEDED_BY]->(succ:Entity) "
+        "WITH succ, collect(succ_r) AS rels RETURN succ AS node, rels LIMIT {limit}"),
+    "replaces": (
+        "MATCH (e:Entity {{id: $id}})<-[pred_r:SUCCEEDED_BY]-(pred:Entity) "
+        "WITH pred, collect(pred_r) AS rels RETURN pred AS node, rels LIMIT {limit}"),
+}
+
+# Sections that are bare nodes with no edge properties to carry.
+_NODE_ONLY_SECTIONS = {
+    "operations": (
+        "MATCH (e:Entity {{id: $id}})-[:OPERATES_IN]->(ops:Location) "
+        "WITH DISTINCT ops RETURN ops AS node LIMIT {limit}"),
+    "dual_listed": (
+        "MATCH (e:Entity {{id: $id}})-[:DUAL_LISTED_WITH]->(dlc:Entity) "
+        "WITH DISTINCT dlc RETURN dlc AS node LIMIT {limit}"),
+}
+
+
+def _pairs(rows, node_key: str, rel_key: str) -> list[dict]:
+    """Expand grouped (node, [edges]) rows back into one dict per edge.
+
+    The post-processing downstream already collapses duplicates — picking the
+    largest stake, the most recent tenure — so it is handed the same shape it
+    always got, and that logic stays untouched by the split.
+    """
+    out = []
+    for row in rows:
+        node = row["node"]
+        for rel in (row["rels"] or []):
+            out.append({node_key: node, rel_key: rel})
+    return out
+
+
+@router.get("/entity/{entity_id}/full-profile")
+def get_full_profile(
+    entity_id: str,
+    limit: Annotated[int, Query(ge=1, le=PROFILE_SECTION_MAX,
+                                description="Max rows per section (owners, subsidiaries, …).")] = PROFILE_SECTION_LIMIT,
+):
     with db.get_session() as session:
-        result = session.run(query, id=entity_id)
-        record = result.single()
-        if not record:
+        head = session.run(
+            "MATCH (e:Entity {id: $id}) "
+            "OPTIONAL MATCH (e)-[:HEADQUARTERED_IN]->(hq:Location) "
+            "RETURN e, hq LIMIT 1",
+            id=entity_id,
+        ).single()
+        if not head:
             raise HTTPException(status_code=404, detail="Entity not found")
+
+        grouped = {
+            name: list(session.run(sql.format(limit=limit), id=entity_id))
+            for name, sql in _NODE_EDGE_SECTIONS.items()
+        }
+        plain = {
+            name: [r["node"] for r in session.run(sql.format(limit=limit), id=entity_id)]
+            for name, sql in _NODE_ONLY_SECTIONS.items()
+        }
+
+        # Same keys the single-query version produced, so the post-processing
+        # below is unchanged.
+        record = {
+            "e": head["e"],
+            "hq": head["hq"],
+            "operations": plain["operations"],
+            "dual_listed": plain["dual_listed"],
+            "owners": _pairs(grouped["owners"], "owner", "rel"),
+            "subsidiaries": _pairs(grouped["subsidiaries"], "entity", "rel"),
+            "executives": _pairs(grouped["executives"], "person", "role"),
+            "succeeded_by": _pairs(grouped["succeeded_by"], "entity", "rel"),
+            "replaces": _pairs(grouped["replaces"], "entity", "rel"),
+        }
 
         # Read-time overlays: suppressed edges/nodes dropped, pinned values applied.
         sup = load_keys(session)
