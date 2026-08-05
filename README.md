@@ -134,12 +134,16 @@ Sources, Relationships, Scraper, Federation, and maintenance/advanced endpoints 
 lives in **[`docs/api-reference.md`](docs/api-reference.md)**. An interactive
 version is served at `/docs` (Swagger) and `/redoc` on a running instance.
 
+**Everything is served under `/v1`** — `/v1/search/?q=…`, `/v1/auth/login`, and so on. The same routes are *also* still served unversioned (`/search/?q=…`), hidden from the schema and deprecated: released clients pin the path they shipped with, and federation peers call a hardcoded `{base_url}/federation/export`, so the old mount stays until every known caller has moved. New clients should use `/v1`; new endpoints get both mounts automatically.
+
+`/` and `/health` are deliberately **not** versioned — uptime monitoring and Render's health check need a URL that never moves.
+
 ---
 
 
 ## Authentication
 
-JWTs are signed with `SECRET_KEY` (HS256, 7-day expiry). It must be **at least 32 characters** — the app refuses to start with a shorter one, in any mode, since short HS256 keys are brute-forceable. Set a strong random key in production:
+JWTs are signed with `SECRET_KEY` (HS256, 12-hour expiry — `ACCESS_TOKEN_EXPIRE_MINUTES`). There is no refresh token: when it expires the user logs in again, and there is no server-side revocation, so a token stays valid for its full lifetime even after a password change. It must be **at least 32 characters** — the app refuses to start with a shorter one, in any mode, since short HS256 keys are brute-forceable. Set a strong random key in production:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
@@ -336,7 +340,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `ARCADEDB_PASSWORD` | required | Database password |
 | `ARCADEDB_DATABASE` | `owlgraph` | Database name |
 | `SECRET_KEY` | insecure default | JWT signing key — **min 32 chars, always enforced; must also be overridden when `DEBUG=false`, or the app refuses to start** |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | Token lifetime |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `720` (12 hours) | Token lifetime |
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | none | Provision this account as admin on startup (created if missing). When set, self-registration never grants admin — avoids the "first person to `/register` becomes admin" race on a fresh DB |
 | `REQUIRE_EMAIL_VERIFICATION` | `true` | Block login until the account's email is verified |

@@ -4,6 +4,8 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 `contributor` = admin or contributor role. An interactive version is served at
 `/docs` (Swagger) and `/redoc` on a running instance.
 
+> **Base path: `/v1`.** Paths below are written without the prefix for brevity — the real URL for `/auth/login` is `/v1/auth/login`. The unversioned paths still work but are deprecated and hidden from the schema; use `/v1` in anything new. `/` and `/health` are unversioned by design.
+
 ## Auth
 | Method | Path | Auth | Description |
 |---|---|---|---|
