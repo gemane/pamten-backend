@@ -21,15 +21,18 @@ from app.routers.relationships import (
 from app.routers.search import SEARCH_MAX_LIMIT
 
 
-class _FakePath:
-    """Minimal stand-in for a Cypher path record."""
-    def __init__(self, i: int):
-        self.nodes = [{"id": f"n{i}"}]
-        self.relationships = [{"stake_percent": 1}]
-
-
 def _paths(n: int) -> list[dict]:
-    return [{"path": _FakePath(i)} for i in range(n)]
+    """Rows shaped like the real query returns them.
+
+    The handler asks for `nodes(path)`/`relationships(path)` and gets two plain
+    lists — NOT a path object. `RETURN path` gives ArcadeDB's *string* form
+    ("(#1:3)-[#37:20725]->(#1:120)"), which is why the old code raised
+    AttributeError on every entity that actually had a subsidiary. The fake used
+    to hand back an object with .nodes/.relationships, so the mocked suite proved
+    nothing about the real shape; these rows mirror the database.
+    """
+    return [{"path_nodes": [{"id": f"n{i}"}, {"id": f"s{i}"}],
+             "path_rels": [{"stake_percent": 1}]} for i in range(n)]
 
 
 def _owner_rows(n: int) -> list[dict]:
@@ -202,3 +205,28 @@ def test_core_functions_take_no_response_argument(fn):
 
 def test_search_limit_default_matches_the_route(client, fake_db):
     assert inspect.signature(search).parameters["limit"].default == SEARCH_DEFAULT_LIMIT
+
+
+def test_tree_returns_nodes_and_relationships_from_the_query(client, fake_db):
+    # Shape check on the way out: whatever the driver hands back, the endpoint
+    # must emit {"nodes": [...], "relationships": [...]} per path.
+    fake_db.queue(_paths(1))
+    body = client.get("/relationships/ownership-tree/e1").json()
+    assert body == [{"nodes": [{"id": "n0"}, {"id": "s0"}],
+                     "relationships": [{"stake_percent": 1}]}]
+
+
+def test_tree_asks_for_nodes_and_relationships_not_the_path_object(client, fake_db):
+    # `RETURN path` returns ArcadeDB's string form, which has no .nodes — the bug
+    # that made this endpoint 500 for every entity with a subsidiary.
+    fake_db.queue(_paths(1))
+    client.get("/relationships/ownership-tree/e1")
+    cypher = fake_db.calls[0][0]
+    assert "nodes(path)" in cypher and "relationships(path)" in cypher
+    assert "RETURN path\n" not in cypher
+
+
+def test_tree_tolerates_a_path_with_no_relationships(client, fake_db):
+    fake_db.queue([{"path_nodes": [{"id": "solo"}], "path_rels": None}])
+    body = client.get("/relationships/ownership-tree/e1").json()
+    assert body == [{"nodes": [{"id": "solo"}], "relationships": []}]

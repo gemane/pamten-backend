@@ -37,6 +37,13 @@ def _mark_truncated(response: Response, truncated: bool) -> None:
     response.headers[TRUNCATED_HEADER] = "true" if truncated else "false"
 
 
+def _strip_meta(doc) -> dict:
+    """Drop ArcadeDB's @rid/@type/@cat metadata keys from a returned document."""
+    if not isinstance(doc, dict):
+        return doc
+    return {k: v for k, v in doc.items() if not k.startswith("@")}
+
+
 def _now_iso() -> str:
     """UTC timestamp for last_scraped_at / last-recorded provenance."""
     return datetime.now(timezone.utc).isoformat()
@@ -197,10 +204,14 @@ def ownership_tree_of(
     # for variable-length path bounds. limit is an int from a validated Query, so
     # it is safe to interpolate the same way.
     safe_depth = max(1, min(int(depth), 10))
+    # `RETURN path` is NOT usable here: ArcadeDB hands a path back as its string
+    # form — "(#1:3)-[#37:20725]->(#1:120)" — not an object with .nodes/.relationships,
+    # so unpacking it raised AttributeError for every entity that actually had a
+    # subsidiary. nodes()/relationships() return the real documents instead.
     # Fetch one extra row: if it comes back, there was more than `limit`.
     query = f"""
         MATCH path = (:Entity {{id: $entity_id}})-[:OWNS*1..{safe_depth}]->(subsidiary)
-        RETURN path
+        RETURN nodes(path) AS path_nodes, relationships(path) AS path_rels
         LIMIT {limit + 1}
     """
 
@@ -208,10 +219,9 @@ def ownership_tree_of(
         result = session.run(query, entity_id=entity_id, depth=depth)
         paths = []
         for record in result:
-            path = record["path"]
             paths.append({
-                "nodes": [dict(node) for node in path.nodes],
-                "relationships": [dict(rel) for rel in path.relationships]
+                "nodes": [_strip_meta(n) for n in (record["path_nodes"] or [])],
+                "relationships": [_strip_meta(r) for r in (record["path_rels"] or [])],
             })
 
     return paths[:limit], len(paths) > limit

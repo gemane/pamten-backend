@@ -52,13 +52,17 @@ def _wrap(value):
         # Plain map (e.g. collect({owner: o, rel: r})) — wrap nested nodes
         return {k: _wrap(v) for k, v in value.items()}
     if isinstance(value, list):
-        # A path is serialised as an alternating [vertex, edge, vertex, …] list.
-        # A list of ONLY vertices — e.g. collect(DISTINCT node) — is not a path;
-        # it must contain at least one edge. (Otherwise a single-node collect,
-        # ["v"], was misread as a one-vertex path and became non-iterable.)
+        # A path is serialised as an alternating [vertex, edge, vertex, …] list,
+        # so it holds BOTH kinds. A list of one kind only is an ordinary
+        # collection and must stay iterable:
+        #   • vertices only — collect(DISTINCT node), or nodes(path)
+        #   • edges only    — relationships(path)
+        # Each was previously misread as a path and came back as a
+        # _PathWrapper, which has no __iter__.
         if value and all(isinstance(x, dict) and x.get("@cat") in ("v", "e")
                          for x in value):
-            if any(x.get("@cat") == "e" for x in value):
+            kinds = {x.get("@cat") for x in value}
+            if kinds == {"v", "e"}:
                 return _PathWrapper(value)
         return [_wrap(v) for v in value]
     return value
