@@ -49,6 +49,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Response headers are invisible to browser JS unless named here. The graph
+    # endpoints report truncation this way (see routers/relationships.py) rather
+    # than in the body, which would break already-released clients.
+    expose_headers=["X-Result-Truncated"],
 )
 
 # ── API versioning ────────────────────────────────────────────────────────────

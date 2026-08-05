@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from app.auth.dependencies import require_contributor
 from app.models.relationship import (
     OwnsRelationshipCreate,
@@ -12,6 +12,27 @@ from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 
 router = APIRouter(prefix="/relationships", tags=["Relationships"])
+
+# These three read endpoints walk the graph and previously returned every row the
+# query produced. On a hub node — a nominee custodian, a large holding — that is
+# tens of thousands of rows, which is a slow query, a multi-megabyte response and
+# an unusable payload on a phone. Each now has a bounded default that a caller can
+# raise to a hard ceiling.
+#
+# Truncation is reported in the `X-Result-Truncated` response header rather than by
+# changing the response body: these endpoints return bare JSON arrays, and wrapping
+# them in an envelope would break every already-released client (the unversioned
+# mount is still serving them — see main.py). The header is listed in the CORS
+# expose_headers, or browsers wouldn't be allowed to read it.
+TRUNCATED_HEADER = "X-Result-Truncated"
+
+TREE_DEFAULT_LIMIT, TREE_MAX_LIMIT = 500, 5_000
+OWNERS_DEFAULT_LIMIT, OWNERS_MAX_LIMIT = 200, 1_000
+HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT = 500, 2_000
+
+
+def _mark_truncated(response: Response, truncated: bool) -> None:
+    response.headers[TRUNCATED_HEADER] = "true" if truncated else "false"
 
 
 def _now_iso() -> str:
@@ -157,14 +178,29 @@ def create_dual_listed(data: DualListedCreate, _: dict = Depends(require_contrib
 
 
 @router.get("/ownership-tree/{entity_id}")
-def get_ownership_tree(entity_id: str, depth: int = 3):
-    # Get everything an entity owns, up to N levels deep.
+def get_ownership_tree(
+    entity_id: str,
+    response: Response,
+    depth: int = 3,
+    limit: int = Query(TREE_DEFAULT_LIMIT, ge=1, le=TREE_MAX_LIMIT,
+                       description="Max paths to return. X-Result-Truncated says whether more exist."),
+):
+    """Everything an entity owns, up to `depth` levels deep.
+
+    Path count grows exponentially with depth, so `limit` bounds it. Which paths
+    survive the cut is the database's order, not a ranking — a truncated tree is a
+    sample of the ownership graph, not its most important part. Callers that need
+    completeness should narrow the depth rather than raise the limit.
+    """
     # depth must be interpolated as a literal — Cypher doesn't accept a parameter
-    # for variable-length path bounds.
+    # for variable-length path bounds. limit is an int from a validated Query, so
+    # it is safe to interpolate the same way.
     safe_depth = max(1, min(int(depth), 10))
+    # Fetch one extra row: if it comes back, there was more than `limit`.
     query = f"""
         MATCH path = (:Entity {{id: $entity_id}})-[:OWNS*1..{safe_depth}]->(subsidiary)
         RETURN path
+        LIMIT {limit + 1}
     """
 
     with db.get_session() as session:
@@ -176,22 +212,40 @@ def get_ownership_tree(entity_id: str, depth: int = 3):
                 "nodes": [dict(node) for node in path.nodes],
                 "relationships": [dict(rel) for rel in path.relationships]
             })
-        return paths
+
+    truncated = len(paths) > limit
+    _mark_truncated(response, truncated)
+    return paths[:limit]
 
 
 @router.get("/owners/{entity_id}")
-def get_owners(entity_id: str):
-    # Who owns this entity right now?
+def get_owners(
+    entity_id: str,
+    response: Response,
+    limit: int = Query(OWNERS_DEFAULT_LIMIT, ge=1, le=OWNERS_MAX_LIMIT,
+                       description="Max owner rows to read. X-Result-Truncated says whether more exist."),
+):
+    """Who owns this entity right now.
+
+    `limit` bounds the rows read from the database. Suppressed owners and nodes
+    are filtered out afterwards, in Python, so a truncated response can contain
+    *fewer* than `limit` entries — the header, not the length, tells you whether
+    anything was cut.
+    """
     # Anchor on the indexed Entity and follow the edge inward — the unanchored
     # (owner)-[:OWNS]->(e {id}) form makes ArcadeDB scan every node at scale.
-    query = """
-        MATCH (e:Entity {id: $entity_id})<-[r:OWNS]-(owner)
+    query = f"""
+        MATCH (e:Entity {{id: $entity_id}})<-[r:OWNS]-(owner)
         WHERE r.until IS NULL
         RETURN owner, r
+        LIMIT {limit + 1}
     """
 
     with db.get_session() as session:
         rows = list(session.run(query, entity_id=entity_id))
+        truncated = len(rows) > limit
+        _mark_truncated(response, truncated)
+        rows = rows[:limit]
         sup = load_keys(session)                  # suppressed owner edges
         hidden = load_suppressed_nodes(session)   # suppressed owner nodes
         pins = load_pins(session)                 # pinned corrections
@@ -206,18 +260,34 @@ def get_owners(entity_id: str):
 
 
 @router.get("/history/{entity_id}")
-def get_ownership_history(entity_id: str):
+def get_ownership_history(
+    entity_id: str,
+    response: Response,
+    limit: int = Query(HISTORY_DEFAULT_LIMIT, ge=1, le=HISTORY_MAX_LIMIT,
+                       description="Max events per category (owners in, owned out, roles)."),
+):
+    """The full ownership + role timeline for an entity.
+
+    Unlike the other two, `limit` applies **per category** — inbound ownership,
+    outbound ownership and roles are three separate queries — so the response can
+    hold up to 3 × `limit` events. Limiting the merged total would mean one noisy
+    category could crowd the others out of the timeline entirely.
+    """
     events = []
+    truncated = False
 
     with db.get_session() as session:
         # Who owns / owned this entity
-        for rec in session.run(
-            """
-            MATCH (e:Entity {id: $id})<-[r:OWNS]-(owner)
+        rows = list(session.run(
+            f"""
+            MATCH (e:Entity {{id: $id}})<-[r:OWNS]-(owner)
             RETURN owner, r, 'ownership_in' AS kind
+            LIMIT {limit + 1}
             """,
             id=entity_id,
-        ):
+        ))
+        truncated = truncated or len(rows) > limit
+        for rec in rows[:limit]:
             events.append({
                 "kind":          "ownership_in",
                 "party":         dict(rec["owner"]),
@@ -229,13 +299,16 @@ def get_ownership_history(entity_id: str):
             })
 
         # What this entity owns / owned
-        for rec in session.run(
-            """
-            MATCH (e:Entity {id: $id})-[r:OWNS]->(owned)
+        rows = list(session.run(
+            f"""
+            MATCH (e:Entity {{id: $id}})-[r:OWNS]->(owned)
             RETURN owned, r, 'ownership_out' AS kind
+            LIMIT {limit + 1}
             """,
             id=entity_id,
-        ):
+        ))
+        truncated = truncated or len(rows) > limit
+        for rec in rows[:limit]:
             events.append({
                 "kind":          "ownership_out",
                 "party":         dict(rec["owned"]),
@@ -247,13 +320,16 @@ def get_ownership_history(entity_id: str):
             })
 
         # Executive roles at this entity
-        for rec in session.run(
-            """
-            MATCH (e:Entity {id: $id})<-[r:HAS_ROLE]-(p:Person)
+        rows = list(session.run(
+            f"""
+            MATCH (e:Entity {{id: $id}})<-[r:HAS_ROLE]-(p:Person)
             RETURN p, r, 'role' AS kind
+            LIMIT {limit + 1}
             """,
             id=entity_id,
-        ):
+        ))
+        truncated = truncated or len(rows) > limit
+        for rec in rows[:limit]:
             events.append({
                 "kind":   "role",
                 "party":  dict(rec["p"]),
@@ -267,4 +343,5 @@ def get_ownership_history(entity_id: str):
     def sort_key(e):
         return e["since"] or ""
 
+    _mark_truncated(response, truncated)
     return sorted(events, key=sort_key, reverse=True)

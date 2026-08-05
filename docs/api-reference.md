@@ -50,7 +50,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 ## Search
 | Method | Path | Description |
 |---|---|---|
-| GET | `/search/?q=` | Full-text search across entities and persons (FULL_TEXT `search_text` index, whole-word `CONTAINSTEXT`). If the index returns nothing, falls back to a bounded substring name scan so a degraded/incomplete FULL_TEXT index can't hide companies that are in the DB (`SEARCH_SUBSTRING_FALLBACK`, default on) |
+| GET | `/search/?q=` (`limit` 1-50, default 20) | Full-text search across entities and persons (FULL_TEXT `search_text` index, whole-word `CONTAINSTEXT`). If the index returns nothing, falls back to a bounded substring name scan so a degraded/incomplete FULL_TEXT index can't hide companies that are in the DB (`SEARCH_SUBSTRING_FALLBACK`, default on) |
 | GET | `/search/entity/{id}/full-profile` | Entity with owners (self-loops excluded), subsidiaries, executives, HQ, dual-listed pairs, succession (`succeeded_by` / `replaces`), `cross_holdings` (reciprocal/circular owners), and an `ownership` summary — `free_float_pct` (computed residual = 100 − disclosed, when every owner's stake is known) + `exceeds_100` flag |
 | GET | `/scraper/ownership-quality` | admin | Data-quality report: `self_loops` count (A owns A) + `cross_holdings` pairs (A↔B) |
 | GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
@@ -90,9 +90,11 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/relationships/roles` | Create HAS_ROLE edge |
 | POST | `/relationships/roles/close` | End a role |
 | POST | `/relationships/related-to` | Create RELATED_TO edge between persons |
-| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (depth param, max 10) |
-| GET | `/relationships/owners/{id}` | Current active owners of an entity |
-| GET | `/relationships/history/{id}` | Full history: ownership in/out + executive roles |
+| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (`depth` max 10; `limit` paths, default 500, max 5000) |
+| GET | `/relationships/owners/{id}` | Current active owners of an entity (`limit`, default 200, max 1000) |
+| GET | `/relationships/history/{id}` | Full history: ownership in/out + executive roles (`limit` **per category**, default 500, max 2000) |
+
+> These three walk the graph and are bounded so a hub node can't return tens of thousands of rows. When a cap is hit the response carries **`X-Result-Truncated: true`** — the array length alone can't tell you, since suppressed rows are filtered out after the limit is applied. The header is in the CORS `expose_headers` list, so browser clients can read it.
 
 ## Scraper
 | Method | Path | Auth | Description |
