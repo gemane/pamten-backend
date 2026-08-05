@@ -51,19 +51,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include all routers
-app.include_router(entities.router)
-app.include_router(persons.router)
-app.include_router(locations.router)
-app.include_router(relationships.router)
-app.include_router(search.router)
-app.include_router(stats.router)
-app.include_router(sources.router)
-app.include_router(federation.router)
-app.include_router(flags.router)
-app.include_router(scraper_router.router)
-app.include_router(scraper_sources.router)
-app.include_router(auth_router.router)
+# ── API versioning ────────────────────────────────────────────────────────────
+#
+# Every router is mounted twice:
+#
+#   /v1/…   the canonical, documented API. New clients use this.
+#   /…      the original unversioned paths, still served but hidden from the
+#           OpenAPI schema and deprecated.
+#
+# The duplication exists because clients we don't deploy can pin a path. A mobile
+# app runs whatever version the user last installed, and federation peers call
+# `{base_url}/federation/export` (see routers/federation.py) — a hardcoded,
+# unversioned path baked into every instance already running. Removing the legacy
+# mounts would break those silently, so they stay until every known caller has
+# moved. Add new endpoints to the routers as usual; both mounts pick them up.
+#
+# Health endpoints are deliberately NOT versioned — uptime monitoring and
+# Render's health check target a stable URL that must never move.
+API_V1_PREFIX = "/v1"
+
+_ROUTERS = [
+    entities.router,
+    persons.router,
+    locations.router,
+    relationships.router,
+    search.router,
+    stats.router,
+    sources.router,
+    federation.router,
+    flags.router,
+    scraper_router.router,
+    scraper_sources.router,
+    auth_router.router,
+]
+
+for _router in _ROUTERS:
+    app.include_router(_router, prefix=API_V1_PREFIX)
+    app.include_router(_router, include_in_schema=False)
 
 
 @app.get("/", tags=["Health"])
