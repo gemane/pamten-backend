@@ -21,17 +21,25 @@ Two long-lived branches:
 | `develop` | Render (dev) — auto-deploy on push | Integration branch. Everything lands here first and runs against the dev database. |
 | `main` | nothing yet (production, once it exists) | Only ever contains code that has been verified running on the dev deploy. |
 
-The flow is: **feature branch → PR into `develop` → verify on the dev deploy → PR `develop` → `main`**. The promotion PR can batch several features; there is no need for one per change.
+The flow is: **feature branch → PR into `develop` → verify on the dev deploy → fast-forward `main` to `develop`**. `develop` is the repository's **default branch**, so a new PR targets it automatically.
 
-`develop` is the repository's **default branch**, so a new PR targets it automatically and promoting to `main` is the deliberate exception (`gh pr create --base main`). Promotion PRs are merged with a **merge commit**, not a squash — squashing would give `main` commits that `develop` has never seen, and the two histories would drift apart a little further with every release. Feature PRs into `develop` can squash freely.
+Promotion is a fast-forward, never a merge or squash, so `main` is always literally a commit that already exists on `develop` — the two histories can't drift:
+
+```bash
+git checkout main && git pull
+git merge --ff-only origin/develop
+git push origin main
+```
+
+If `--ff-only` refuses, `main` has picked up a commit `develop` doesn't have (a merge commit from a promotion done the old way, say). Fix the ancestry once by merging `main` into `develop` — don't force-push `main`.
 
 Both branches are protected by a repository **ruleset** (Settings → Rules → Rulesets — *not* the older Settings → Branches protection, which is unused here):
 
-- direct pushes are rejected on both — changes arrive via pull request
-- `Tests`, `Lint`, and `Integration (real ArcadeDB)` must pass before merge (context names must match the job `name:` in `.github/workflows/ci.yml` exactly, or the check is silently never required)
-- no approving review is required, so a solo maintainer can self-merge a green PR
-- `main` has **no bypass actors** — admins included. A red build cannot reach `main` without deliberately editing the ruleset.
-- `develop` allows an admin to force-merge a red PR when a dev-only experiment warrants it
+- `Tests`, `Lint`, and `Integration (real ArcadeDB)` are required on both. Context names must match the job `name:` in `.github/workflows/ci.yml` **exactly**, or the check is silently never required.
+- `develop` requires a pull request; direct pushes to it are rejected. No approving review is needed, so a solo maintainer can self-merge a green PR.
+- `main` takes **no pull request** — that's what makes the fast-forward push possible, since GitHub's merge button has no fast-forward option. It is not a hole: a push is accepted only if that exact commit already passed all required checks, which only happens after it ran on `develop`. Pushing anything unverified is rejected with *"3 of 3 required status checks are expected"*.
+- `main` has **no bypass actors** — admins included. Force-pushes and deletion are blocked on both branches.
+- `develop` allows an admin to force-merge a red PR when a dev-only experiment warrants it.
 
 CI runs on pushes and PRs to both branches.
 
