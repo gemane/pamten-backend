@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Query, HTTPException
 from app.config import settings
 from app.database import db
@@ -120,8 +122,21 @@ def resolve_best_entity(q: str, country: str | None = None) -> dict | None:
     return ranked[0][1]
 
 
+SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT = 20, 50
+
+
 @router.get("/")
-def search(q: str = Query(..., min_length=2), country: str | None = Query(default=None)):
+def search(
+    q: Annotated[str, Query(min_length=2)],
+    country: Annotated[str | None, Query()] = None,
+    # Annotated form, so the default is a real int rather than a Query object.
+    # This function is also called directly (integration tests, and any future
+    # in-process caller), where FastAPI never resolves the default — with
+    # `limit: int = Query(20)` that path got a Query instance and blew up on the
+    # first comparison.
+    limit: Annotated[int, Query(ge=1, le=SEARCH_MAX_LIMIT,
+                                description="Max results after ranking (default 20).")] = SEARCH_DEFAULT_LIMIT,
+):
     """
     Full-text search for entities and persons.
 
@@ -139,7 +154,10 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
     2. **Starts-with** — name begins with the query; shorter names rank higher within this tier
     3. **Contains** — query appears anywhere in the name
 
-    Up to 20 entities and 10 persons are returned (30 total, trimmed to 20 after ranking).
+    Candidates are gathered per type and then trimmed to `limit` after ranking, so
+    a smaller limit still returns the *best* matches rather than the first ones the
+    database happened to emit. There is no paging beyond the limit: this is a
+    type-ahead, and anything past the top results is noise.
     """
     q_lower = q.lower()
     tokens = q_lower.split()
@@ -183,7 +201,7 @@ def search(q: str = Query(..., min_length=2), country: str | None = Query(defaul
             continue
         seen.add(nid)
         out.append({k: v for k, v in r.items() if k != "_i"})
-        if len(out) >= 20:
+        if len(out) >= limit:
             break
     return out
 
