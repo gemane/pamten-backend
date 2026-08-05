@@ -163,6 +163,17 @@ python manage.py set-password someone@example.com   # prompts twice, hidden inpu
 
 Note that `ADMIN_PASSWORD` is **not** a way to change a password: `bootstrap_admin()` only creates a *missing* account and never overwrites an existing one, so editing that env var on an account that already exists has no effect at all.
 
+**Deleting an account.** `DELETE /auth/me` with `{password}` permanently deletes the caller's own account — required by both app stores for any app that allows account creation, and the mechanism behind a GDPR erasure request. It re-authenticates with the password, so a stolen access token alone isn't enough.
+
+It removes the `User` node (and with it the password hash, TOTP secret and recovery codes) plus the account's rate-limit counters. Flags the user filed are **anonymised, not deleted** (`reporter_kind='deleted'`, reporter id and fingerprint cleared): the reports are about companies rather than about the reporter, so deleting them would silently rewrite moderation history — only the link back to the person is severed.
+
+Two cases are refused rather than half-honoured:
+
+- the **`ADMIN_EMAIL` bootstrap account**, because `bootstrap_admin()` recreates it on the next startup — the deletion would quietly undo itself. Unset `ADMIN_EMAIL` first.
+- the **last remaining admin**, which would leave the instance with nobody able to administer it. Promote someone else first.
+
+Admins can still delete *other* users with `DELETE /auth/users/{id}`; that path does not anonymise flags.
+
 **Password policy.** The rules live in one place, `app/auth/password_policy.py` (`password_policy_error`), shared by register, reset, change, and `manage.py set-password`, so the API and CLI can't drift apart. User-chosen passwords must be **at least 8 characters** and are checked against a **common-password blocklist** — the top ~10k most common passwords (`app/auth/common_passwords.txt`, from [SecLists](https://github.com/danielmiessler/SecLists), MIT licence), so weak-but-long-enough choices like `password123` are rejected. There are deliberately **no character-composition rules** (per NIST SP 800-63B). Online guessing is further limited by login rate-limiting (5 attempts / 15 min) and optional TOTP MFA. The env `ADMIN_PASSWORD` bootstrap is exempt (operator-set, not user input).
 
 **Email transport** is provider-agnostic (`app/notifications/email.py`) — `EMAIL_BACKEND` picks the backend: `resend` (Resend HTTPS API via `RESEND_API_KEY` — recommended for a real deploy, since **Render blocks outbound SMTP**), `smtp` (stdlib `smtplib`; works with Gmail locally), or the default `console` (logs the message + link, so local dev and tests need no credentials). Adding another provider is a ~15-line `EmailSender` subclass. `EMAIL_FROM` must be a sender the backend accepts (a Resend-verified domain, or your SMTP account); `APP_BASE_URL` sets the origin used in the emailed links.

@@ -148,6 +148,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+
 def _safe_send(send_fn, *args) -> None:
     """Run an email send best-effort — the transport can be slow or blocked (e.g.
     Render blocks outbound SMTP), and that must never fail the user's request or
@@ -399,6 +403,90 @@ def change_password(data: ChangePasswordRequest, user: dict = Depends(get_curren
             id=user["sub"], hash=hash_password(data.new_password),
         )
     return {"message": "Password updated."}
+
+
+def _purge_user_rate_limits(email: str, user_id: str) -> None:
+    """Drop the RateLimit rows keyed to a deleted account.
+
+    Keys are built in a few shapes (see the helpers above): ``user:<id>``,
+    ``mfa:<id>``, ``email:<addr>`` and ``login:<ip>:<addr>``. The login key
+    embeds the client IP, so that one has to be matched by suffix. Best-effort —
+    a leftover counter must never keep the deletion itself from completing.
+    """
+    from app.db.arcadedb import run_sql
+
+    for query, params in (
+        ("DELETE FROM RateLimit WHERE key = :k", {"k": f"user:{user_id}"}),
+        ("DELETE FROM RateLimit WHERE key = :k", {"k": f"mfa:{user_id}"}),
+        ("DELETE FROM RateLimit WHERE key = :k", {"k": f"email:{email}"}),
+        ("DELETE FROM RateLimit WHERE key LIKE :k", {"k": f"login:%:{email}"}),
+    ):
+        try:
+            run_sql(query, params)
+        except Exception as exc:  # noqa: BLE001 - never block the deletion
+            log.warning("rate-limit purge failed on account deletion: %s", exc)
+
+
+@router.delete("/me")
+def delete_own_account(data: DeleteAccountRequest, user: dict = Depends(get_current_user)):
+    """Delete your own account, permanently.
+
+    Required by both app stores for any app that lets users create an account,
+    and the mechanism behind a GDPR erasure request. Re-authenticates with the
+    password so a stolen access token alone can't destroy an account.
+
+    What goes: the User node (with it the password hash, TOTP secret and recovery
+    codes) and the account's rate-limit counters. Flags the user filed are
+    *anonymised*, not deleted — the reports are about companies, not about the
+    reporter, and dropping them would silently rewrite moderation history; only
+    the link back to the person is severed.
+    """
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (u:User {id: $id}) RETURN u.password_hash AS hash, u.email AS email, "
+            "u.role AS role",
+            id=user["sub"],
+        ).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail="User not found")
+        if not verify_password(data.password, rec["hash"]):
+            raise HTTPException(status_code=400, detail="Password is incorrect")
+
+        email = (rec["email"] or "").strip().lower()
+
+        # The env-provisioned admin is recreated by bootstrap_admin() on the next
+        # startup, so "deleting" it would quietly undo itself — refuse rather than
+        # promise an erasure that won't hold.
+        if settings.ADMIN_EMAIL and email == settings.ADMIN_EMAIL.strip().lower():
+            raise HTTPException(
+                status_code=400,
+                detail="This account is provisioned from ADMIN_EMAIL and would be recreated on "
+                       "the next restart. Unset ADMIN_EMAIL first, then delete it.",
+            )
+
+        # Don't let the instance end up with nobody who can administer it.
+        if rec["role"] == "admin":
+            others = session.run(
+                "MATCH (u:User) WHERE u.role = 'admin' AND u.id <> $id RETURN count(u) AS n",
+                id=user["sub"],
+            ).single()
+            if not others or (others["n"] or 0) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="You are the only admin. Promote another user to admin before "
+                           "deleting this account.",
+                )
+
+        session.run(
+            "MATCH (f:Flag {reporter_id: $id}) "
+            "SET f.reporter_kind = 'deleted', f.reporter_id = '', f.reporter_fp = ''",
+            id=user["sub"],
+        )
+        session.run("MATCH (u:User {id: $id}) DELETE u", id=user["sub"])
+
+    _purge_user_rate_limits(email, user["sub"])
+    log.info("Account deleted (self-service): %s", email)
+    return {"message": "Your account has been deleted."}
 
 
 # ── Two-factor auth (TOTP) ────────────────────────────────────────────────────
