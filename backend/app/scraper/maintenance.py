@@ -4,10 +4,14 @@ Pure orchestration over the DB layer, extracted from the scraper router so
 the endpoints stay thin. Behaviour is unchanged from the previous inline
 implementations.
 """
+import logging
+
 from app.database import db
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 from app.merged_ids import record_merge_sql
+
+log = logging.getLogger(__name__)
 
 
 class CompanyNotFound(Exception):
@@ -389,6 +393,110 @@ def deduplicate_person_nodes() -> dict:
     return {"pairs_merged": len(merged), "detail": merged}
 
 
+# Properties that must NOT move from the loser to the survivor on a merge.
+# Everything else is carried across when the survivor has no value of its own, so
+# a field added by a future scraper survives merges without anyone remembering to
+# update this module.
+_MERGE_SKIP_PROPS = frozenset({
+    "id",                # the survivor's identity — the whole point of choosing it
+    "name",              # survivor won on name_credibility; its name stands
+    "name_normalized",   # derived from name
+    "search_text",       # rebuilt below from the merged name + description + aliases
+    "name_credibility",  # handled explicitly (max)
+    "verified",          # handled explicitly (either)
+    "aliases", "countries", "hq_locations",   # lists — unioned, not replaced
+})
+
+
+def _merge_entity_props(keep: dict, dead: dict) -> dict:
+    """The properties to write onto ``keep`` when folding ``dead`` into it.
+
+    Fill a gap, never clobber: the survivor was chosen deliberately, so its own
+    values win. Without this the merge kept only edges, and the loser's
+    identifiers and descriptive fields were simply deleted — merging a GLEIF node
+    with its Wikidata twin lost `wikidata_id`, `sec_cik`, the description, the
+    revenue and the employee count. Losing `wikidata_id` also un-marked the
+    company as notable for search ranking and removed the key a later Wikidata
+    scrape resolves on.
+    """
+    out: dict = {}
+
+    for key, value in dead.items():
+        if key.startswith("@") or key in _MERGE_SKIP_PROPS:
+            continue
+        if value in (None, "", []):
+            continue
+        current = keep.get(key)
+        if current in (None, "", []):
+            out[key] = value
+
+    # Lists: union, keeping the survivor's order first. The loser's NAME becomes
+    # an alias so the company stays findable under it (SEC's "Page Lawrence" ->
+    # "Larry Page" does the same for persons).
+    for key, extra in (
+        ("aliases", [dead.get("name")]),
+        ("countries", []),
+        ("hq_locations", []),
+    ):
+        merged: list = []
+        seen: set = set()
+        for value in list(keep.get(key) or []) + list(dead.get(key) or []) + extra:
+            value = (value or "").strip() if isinstance(value, str) else value
+            if not value:
+                continue
+            marker = value.lower() if isinstance(value, str) else value
+            if marker in seen:
+                continue
+            seen.add(marker)
+            merged.append(value)
+        # Don't list the survivor's own name as an alias of itself.
+        if key == "aliases":
+            own = (keep.get("name") or "").strip().lower()
+            merged = [a for a in merged if a.lower() != own]
+        if merged != list(keep.get(key) or []):
+            out[key] = merged
+
+    out["name_credibility"] = max(keep.get("name_credibility") or 0,
+                                  dead.get("name_credibility") or 0)
+    if keep.get("verified") or dead.get("verified"):
+        out["verified"] = True
+
+    # Keep the FULL_TEXT column consistent with the merged aliases, or the company
+    # stops being findable under a name it just absorbed.
+    name = keep.get("name") or ""
+    description = out.get("description", keep.get("description")) or ""
+    aliases = out.get("aliases", keep.get("aliases")) or []
+    out["search_text"] = " ".join(p for p in (name, description, " ".join(aliases)) if p).strip()
+    return out
+
+
+def _coalesce_entity_props(dead_id: str, keep_id: str) -> int:
+    """Copy the loser's data onto the survivor before it is deleted.
+
+    Returns the number of properties written. Best-effort: the edges are already
+    migrated by the time this runs, so a failure must not abort the merge and
+    leave the graph half-joined.
+    """
+    def _load(eid):
+        rows = run_sql("SELECT FROM Entity WHERE id = :id", {"id": eid})
+        return {k: v for k, v in rows[0].items() if not k.startswith("@")} if rows else {}
+
+    try:
+        keep, dead = _load(keep_id), _load(dead_id)
+        if not keep or not dead:
+            return 0
+        updates = _merge_entity_props(keep, dead)
+        if not updates:
+            return 0
+        assignments = ", ".join(f"e.{k} = ${k}" for k in updates)
+        run_command(f"MATCH (e:Entity {{id: $keep_id}}) SET {assignments}",
+                    {"keep_id": keep_id, **updates})
+        return len(updates)
+    except Exception as exc:  # noqa: BLE001 - never abort a merge on this
+        log.warning("could not coalesce props %s -> %s: %s", dead_id, keep_id, exc)
+        return 0
+
+
 def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     """Move every OWNS / HAS_ROLE / location edge off ``dead_id`` onto ``keep_id``.
 
@@ -672,6 +780,9 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
         for dead in members[1:]:
             if apply:
                 _migrate_entity_edges(dead["id"], keep["id"])
+                # Carry the loser's data across before it is deleted — edges alone
+                # would drop its identifiers, description, revenue and headcount.
+                _coalesce_entity_props(dead["id"], keep["id"])
                 # Forwarding address before the delete — the losing id may be in a
                 # shared link, a client cache, or a federation peer's copy.
                 record_merge_sql(dead["id"], keep["id"], kind="Entity")
@@ -727,6 +838,7 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
         keep = members[0]
         for dead in members[1:]:
             migrated = _migrate_entity_edges(dead["id"], keep["id"])
+            _coalesce_entity_props(dead["id"], keep["id"])
             record_merge_sql(dead["id"], keep["id"], kind="Entity")
             run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
             merged.append({
