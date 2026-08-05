@@ -230,3 +230,18 @@ def test_tree_tolerates_a_path_with_no_relationships(client, fake_db):
     fake_db.queue([{"path_nodes": [{"id": "solo"}], "path_rels": None}])
     body = client.get("/relationships/ownership-tree/e1").json()
     assert body == [{"nodes": [{"id": "solo"}], "relationships": []}]
+
+
+# ── full-profile section limit ────────────────────────────────────────────────
+
+from app.routers.search import PROFILE_SECTION_MAX, PROFILE_SECTION_LIMIT  # noqa: E402
+
+
+@pytest.mark.parametrize("bad", [0, PROFILE_SECTION_MAX + 1])
+def test_full_profile_rejects_out_of_range_limits(client, bad):
+    assert client.get("/search/entity/e1/full-profile",
+                      params={"limit": bad}).status_code == 422
+
+
+def test_full_profile_default_limit_is_within_the_ceiling():
+    assert 0 < PROFILE_SECTION_LIMIT <= PROFILE_SECTION_MAX
