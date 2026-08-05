@@ -590,3 +590,98 @@ class TestFetchCompanyDataEnrichesPeople:
         assert result["ceos"] == []
         if fp.called:
             assert fp.call_args.args[0] == set()
+
+
+# ── External-identifier bridge (P1278 LEI / P5531 CIK) ────────────────────────
+#
+# A GLEIF entity and its Wikidata counterpart share nothing a merge can key on:
+# GLEIF supplies lei_id, Wikidata supplies wikidata_id, and the dedup only calls a
+# group "definitive" when two members carry the SAME identifier. That is why
+# Microsoft existed twice — one node with the ownership graph, one with the
+# executives. SEC's own LEI field is null for most operating companies, so
+# Wikidata's P1278 is the bridge that actually exists.
+#
+# SPARQL can't run in CI, so the mapping and the normalisation are what get
+# covered here; the query itself is verified by a live re-scrape.
+
+from app.scraper.wikidata import normalize_lei, normalize_cik  # noqa: E402
+
+
+class TestNormalizeLei:
+    def test_accepts_a_valid_lei(self):
+        assert normalize_lei("INR2EJN1ERAN0W5ZP974") == "INR2EJN1ERAN0W5ZP974"
+
+    def test_upper_cases_and_strips(self):
+        assert normalize_lei("  inr2ejn1eran0w5zp974 ") == "INR2EJN1ERAN0W5ZP974"
+
+    def test_rejects_wrong_length(self):
+        # Wikidata is crowd-edited; a truncated code must not become a merge key.
+        assert normalize_lei("INR2EJN1ERAN0W5ZP97") is None      # 19
+        assert normalize_lei("INR2EJN1ERAN0W5ZP9744") is None    # 21
+
+    def test_rejects_non_alphanumeric(self):
+        assert normalize_lei("INR2EJN1ERAN-W5ZP974") is None
+        assert normalize_lei("see LEI register") is None
+
+    def test_rejects_empty(self):
+        assert normalize_lei(None) is None
+        assert normalize_lei("") is None
+        assert normalize_lei("   ") is None
+
+
+class TestNormalizeCik:
+    def test_pads_to_ten_digits(self):
+        # EDGAR always stores the padded form; an unpadded value would silently
+        # fail to match a SEC-sourced node.
+        assert normalize_cik("789019") == "0000789019"
+
+    def test_leaves_an_already_padded_value_alone(self):
+        assert normalize_cik("0000789019") == "0000789019"
+
+    def test_rejects_non_numeric(self):
+        assert normalize_cik("CIK789019") is None
+        assert normalize_cik("n/a") is None
+
+    def test_rejects_overlong(self):
+        assert normalize_cik("12345678901") is None
+
+    def test_rejects_empty(self):
+        assert normalize_cik(None) is None
+        assert normalize_cik("") is None
+
+
+class TestIdentifierAggregation:
+    def test_extracts_lei_and_cik(self):
+        row = _row(itemLabel="Microsoft", lei="INR2EJN1ERAN0W5ZP974", cik="0000789019")
+        result = _aggregate("Q2283", [row])
+        assert result["lei"] == "INR2EJN1ERAN0W5ZP974"
+        assert result["sec_cik"] == "0000789019"
+
+    def test_identifiers_default_to_none(self):
+        result = _aggregate("Q1", [APPLE_ROW])
+        assert result["lei"] is None
+        assert result["sec_cik"] is None
+
+    def test_reads_identifiers_from_a_later_row(self):
+        # They are OPTIONAL joins, so the first row can carry the label while a
+        # later one carries the identifier. Reading them only in the set-once
+        # name block would drop them.
+        rows = [_row(itemLabel="Microsoft"),
+                _row(lei="INR2EJN1ERAN0W5ZP974", cik="789019")]
+        result = _aggregate("Q2283", rows)
+        assert result["lei"] == "INR2EJN1ERAN0W5ZP974"
+        assert result["sec_cik"] == "0000789019"
+
+    def test_a_malformed_identifier_is_dropped_not_stored(self):
+        rows = [_row(itemLabel="Dodgy Co", lei="NOT-A-LEI", cik="abc")]
+        result = _aggregate("Q9", rows)
+        assert result["lei"] is None
+        assert result["sec_cik"] is None
+
+    def test_the_core_query_requests_both_properties(self):
+        # Guards the SPARQL itself, which no test can execute.
+        from app.scraper.wikidata import _sparql
+        import inspect
+        src = inspect.getsource(_sparql)
+        assert "wdt:P1278" in src, "LEI property missing from the core query"
+        assert "wdt:P5531" in src, "CIK property missing from the core query"

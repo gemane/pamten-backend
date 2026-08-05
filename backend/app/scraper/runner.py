@@ -165,6 +165,8 @@ def _upsert_entity(
     hq_locations: list[str] | None = None,   # all HQs as "City|CC" strings
     source_id: str | None = None,
     credibility_score: int = 80,
+    lei: str | None = None,                  # P1278 — bridge to a GLEIF node
+    sec_cik: str | None = None,              # P5531 — bridge to a SEC EDGAR node
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
@@ -185,8 +187,14 @@ def _upsert_entity(
     with db.get_session() as session:
         # Sequential indexed lookups — an OR across these fields full-scans the
         # Entity type on ArcadeDB (see app.entity_resolution).
+        # lei_id / sec_cik are checked ahead of the name (see _RESOLVE_FIELDS), so
+        # a company Wikidata knows the LEI for attaches to its existing GLEIF node
+        # instead of becoming a second copy of it. That is the duplicate this
+        # bridge is meant to stop being created in the first place; already-split
+        # pairs still need the dedup pass to merge them.
         entity_id = resolve_entity_id(
-            session, wikidata_id=wikidata_id, name=name, name_normalized=name_norm,
+            session, wikidata_id=wikidata_id, sec_cik=sec_cik, lei_id=lei,
+            name=name, name_normalized=name_norm,
         )
 
         if entity_id:
@@ -194,6 +202,12 @@ def _upsert_entity(
                 """
                 MATCH (e:Entity {id: $id})
                 SET e.wikidata_id     = $wid,
+                    -- Existing value wins: a register (GLEIF/SEC) is authoritative
+                    -- for its own identifier, and Wikidata is crowd-edited. Only
+                    -- fill a gap, never overwrite — a clobbered lei_id would
+                    -- re-point a merge key at the wrong company.
+                    e.lei_id          = COALESCE(e.lei_id, $lei),
+                    e.sec_cik         = COALESCE(e.sec_cik, $sec_cik),
                     e.type            = COALESCE($type, e.type),
                     e.country         = COALESCE($country, e.country),
                     e.founded         = COALESCE($founded, e.founded),
@@ -217,6 +231,7 @@ def _upsert_entity(
                 id=entity_id,
                 name=name,
                 wid=wikidata_id,
+                lei=lei, sec_cik=sec_cik,
                 source_id=source_id,
                 type=entity_type,
                 country=country,
@@ -243,7 +258,8 @@ def _upsert_entity(
                 type: $type, country: $country, founded: $founded,
                 revenue: $revenue, employees: $employees, employees_as_of: $employees_as_of,
                 description: $desc,
-                wikidata_id: $wid, verified: false, source_id: $source_id,
+                wikidata_id: $wid, lei_id: $lei, sec_cik: $sec_cik,
+                verified: false, source_id: $source_id,
                 is_nominee: $is_nominee,
                 aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
@@ -262,6 +278,7 @@ def _upsert_entity(
             employees=employees, employees_as_of=employees_as_of,
             desc=description,
             wid=wikidata_id,
+            lei=lei, sec_cik=sec_cik,
             source_id=source_id,
             is_nominee=is_nominee_name(name),
             aliases=aliases or [],
@@ -545,6 +562,8 @@ def _scrape_node(
         aliases=data.get("aliases", []),
         countries=data.get("countries", []),
         hq_locations=data.get("hq_locations", []),
+        lei=data.get("lei"),
+        sec_cik=data.get("sec_cik"),
         source_id=source_id,
     )
     scraped.append({

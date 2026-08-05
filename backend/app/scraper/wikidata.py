@@ -135,10 +135,19 @@ def _sparql(qid: str) -> list:
     core = f"""
     SELECT ?itemLabel ?itemDescription ?altLabel ?instance ?countryCode
            ?founded ?revenue ?itemCoord ?hqLabel ?hqCoord ?hqCountryCode
+           ?lei ?cik
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item skos:altLabel ?altLabel . FILTER(LANG(?altLabel) = "en") }}
       OPTIONAL {{ ?item wdt:P31 ?instance }}
+      # Hard external identifiers — the bridge to the register-sourced nodes.
+      # A GLEIF entity and its Wikidata counterpart otherwise share nothing a
+      # merge can key on: GLEIF supplies lei_id, Wikidata supplies wikidata_id,
+      # and the dedup only calls a group definitive when two members carry the
+      # SAME id. SEC's own LEI field is null for most operating companies
+      # (Microsoft included), so Wikidata's P1278 is the bridge that exists.
+      OPTIONAL {{ ?item wdt:P1278 ?lei }}
+      OPTIONAL {{ ?item wdt:P5531 ?cik }}
       OPTIONAL {{ ?item wdt:P17 ?country . ?country wdt:P297 ?countryCode }}
       OPTIONAL {{ ?item wdt:P625 ?itemCoord }}
       OPTIONAL {{
@@ -338,6 +347,32 @@ def _parse_point(wkt: str | None) -> tuple[float, float] | None:
     return (lat, lng)
 
 
+def normalize_lei(raw: str | None) -> str | None:
+    """An ISO 17442 LEI (20 alphanumerics, upper case), or None if it isn't one.
+
+    Wikidata is crowd-edited, so P1278 occasionally holds a truncated code or a
+    stray note. A malformed value is worse than no value here: `lei_id` is a
+    merge key, and a wrong one would fold two unrelated companies together.
+    """
+    if not raw:
+        return None
+    lei = raw.strip().upper()
+    return lei if len(lei) == 20 and lei.isalnum() else None
+
+
+def normalize_cik(raw: str | None) -> str | None:
+    """A CIK zero-padded to 10 digits, matching how SEC EDGAR reports it.
+
+    Wikidata's P5531 is sometimes padded ("0000789019") and sometimes not
+    ("789019"). Storing the unpadded form would silently break the match against
+    an EDGAR-sourced node, which always stores the padded one.
+    """
+    if not raw:
+        return None
+    digits = raw.strip().lstrip("#").strip()
+    return digits.zfill(10) if digits.isdigit() and len(digits) <= 10 else None
+
+
 def _aggregate(qid: str, rows: list) -> dict | None:
     if not rows:
         return None
@@ -352,6 +387,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "countries":   set(),  # all P17 domiciles (dual-listed companies have >1)
         "founded":     None,
         "revenue":     None,
+        "lei":         None,   # P1278 — bridges to a GLEIF node's lei_id
+        "sec_cik":     None,   # P5531 — bridges to a SEC EDGAR node's sec_cik
         "employees":   None,   # latest P1128 value
         "employees_as_of": None,  # year of that value (P585 qualifier)
         "subsidiaries": {},
@@ -388,6 +425,14 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     result["revenue"] = float(raw_rev)
                 except (ValueError, TypeError):
                     pass
+
+        # Identifiers can arrive on any row (they are OPTIONAL joins in the core
+        # query, so an early row may have them null while a later one carries the
+        # value) — read them outside the set-once block above, first non-null wins.
+        if result["lei"] is None:
+            result["lei"] = normalize_lei(_v(row, "lei"))
+        if result["sec_cik"] is None:
+            result["sec_cik"] = normalize_cik(_v(row, "cik"))
 
         # Employees — from the dedicated employees query (its own rows, so read
         # independently of the name block above). Latest value + its as-of year.
