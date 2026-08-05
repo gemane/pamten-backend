@@ -43,9 +43,11 @@ def test_suppress_hides_edge_and_survives_rescrape(it_db):
     # A re-scrape recreates the edge — still hidden (read-time filter).
     _owns(it_db)
     assert search.get_full_profile("T")["owners"] == []
-    # ...and from /relationships/owners too.
-    from app.routers.relationships import get_owners
-    assert get_owners("T") == []
+    # ...and from /relationships/owners too. Call the plain core, not the route:
+    # the route takes a Response (for the truncation header) that only FastAPI
+    # supplies. It returns (owners, truncated).
+    from app.routers.relationships import owners_of
+    assert owners_of("T")[0] == []
 
     # Un-suppress → the owner reappears.
     flags.remove_suppression(sup_id, _=None)

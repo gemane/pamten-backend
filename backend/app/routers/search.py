@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Query, HTTPException
 from app.config import settings
 from app.database import db
@@ -125,10 +127,15 @@ SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT = 20, 50
 
 @router.get("/")
 def search(
-    q: str = Query(..., min_length=2),
-    country: str | None = Query(default=None),
-    limit: int = Query(SEARCH_DEFAULT_LIMIT, ge=1, le=SEARCH_MAX_LIMIT,
-                       description="Max results after ranking (default 20)."),
+    q: Annotated[str, Query(min_length=2)],
+    country: Annotated[str | None, Query()] = None,
+    # Annotated form, so the default is a real int rather than a Query object.
+    # This function is also called directly (integration tests, and any future
+    # in-process caller), where FastAPI never resolves the default — with
+    # `limit: int = Query(20)` that path got a Query instance and blew up on the
+    # first comparison.
+    limit: Annotated[int, Query(ge=1, le=SEARCH_MAX_LIMIT,
+                                description="Max results after ranking (default 20).")] = SEARCH_DEFAULT_LIMIT,
 ):
     """
     Full-text search for entities and persons.

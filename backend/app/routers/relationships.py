@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from app.auth.dependencies import require_contributor
 from app.models.relationship import (
@@ -177,20 +179,19 @@ def create_dual_listed(data: DualListedCreate, _: dict = Depends(require_contrib
         return {"message": "Dual-listed relationship created"}
 
 
-@router.get("/ownership-tree/{entity_id}")
-def get_ownership_tree(
-    entity_id: str,
-    response: Response,
-    depth: int = 3,
-    limit: int = Query(TREE_DEFAULT_LIMIT, ge=1, le=TREE_MAX_LIMIT,
-                       description="Max paths to return. X-Result-Truncated says whether more exist."),
-):
-    """Everything an entity owns, up to `depth` levels deep.
+def ownership_tree_of(
+    entity_id: str, depth: int = 3, limit: int = TREE_DEFAULT_LIMIT,
+) -> tuple[list[dict], bool]:
+    """Everything an entity owns, up to `depth` levels deep. Returns (paths, truncated).
 
     Path count grows exponentially with depth, so `limit` bounds it. Which paths
     survive the cut is the database's order, not a ranking — a truncated tree is a
     sample of the ownership graph, not its most important part. Callers that need
     completeness should narrow the depth rather than raise the limit.
+
+    Kept separate from the route because the route takes a `Response` to set the
+    truncation header, and FastAPI only injects that over HTTP — an in-process
+    caller would have to invent one.
     """
     # depth must be interpolated as a literal — Cypher doesn't accept a parameter
     # for variable-length path bounds. limit is an int from a validated Query, so
@@ -213,23 +214,28 @@ def get_ownership_tree(
                 "relationships": [dict(rel) for rel in path.relationships]
             })
 
-    truncated = len(paths) > limit
-    _mark_truncated(response, truncated)
-    return paths[:limit]
+    return paths[:limit], len(paths) > limit
 
 
-@router.get("/owners/{entity_id}")
-def get_owners(
+@router.get("/ownership-tree/{entity_id}")
+def get_ownership_tree(
     entity_id: str,
     response: Response,
-    limit: int = Query(OWNERS_DEFAULT_LIMIT, ge=1, le=OWNERS_MAX_LIMIT,
-                       description="Max owner rows to read. X-Result-Truncated says whether more exist."),
+    depth: int = 3,
+    limit: Annotated[int, Query(ge=1, le=TREE_MAX_LIMIT,
+                                description="Max paths. X-Result-Truncated says whether more exist.")] = TREE_DEFAULT_LIMIT,
 ):
-    """Who owns this entity right now.
+    paths, truncated = ownership_tree_of(entity_id, depth, limit)
+    _mark_truncated(response, truncated)
+    return paths
+
+
+def owners_of(entity_id: str, limit: int = OWNERS_DEFAULT_LIMIT) -> tuple[list[dict], bool]:
+    """Who owns this entity right now. Returns (owners, truncated).
 
     `limit` bounds the rows read from the database. Suppressed owners and nodes
-    are filtered out afterwards, in Python, so a truncated response can contain
-    *fewer* than `limit` entries — the header, not the length, tells you whether
+    are filtered out afterwards, in Python, so a truncated result can contain
+    *fewer* than `limit` entries — the flag, not the length, tells you whether
     anything was cut.
     """
     # Anchor on the indexed Entity and follow the edge inward — the unanchored
@@ -244,7 +250,6 @@ def get_owners(
     with db.get_session() as session:
         rows = list(session.run(query, entity_id=entity_id))
         truncated = len(rows) > limit
-        _mark_truncated(response, truncated)
         rows = rows[:limit]
         sup = load_keys(session)                  # suppressed owner edges
         hidden = load_suppressed_nodes(session)   # suppressed owner nodes
@@ -256,20 +261,28 @@ def get_owners(
                 continue
             rel = apply_pin(pins, owner.get("id"), entity_id, dict(record["r"]))
             out.append({"owner": owner, "relationship": rel})
-        return out
+        return out, truncated
 
 
-@router.get("/history/{entity_id}")
-def get_ownership_history(
+@router.get("/owners/{entity_id}")
+def get_owners(
     entity_id: str,
     response: Response,
-    limit: int = Query(HISTORY_DEFAULT_LIMIT, ge=1, le=HISTORY_MAX_LIMIT,
-                       description="Max events per category (owners in, owned out, roles)."),
+    limit: Annotated[int, Query(ge=1, le=OWNERS_MAX_LIMIT,
+                                description="Max owner rows read. X-Result-Truncated says whether more exist.")] = OWNERS_DEFAULT_LIMIT,
 ):
-    """The full ownership + role timeline for an entity.
+    owners, truncated = owners_of(entity_id, limit)
+    _mark_truncated(response, truncated)
+    return owners
+
+
+def ownership_history_of(
+    entity_id: str, limit: int = HISTORY_DEFAULT_LIMIT,
+) -> tuple[list[dict], bool]:
+    """The full ownership + role timeline for an entity. Returns (events, truncated).
 
     Unlike the other two, `limit` applies **per category** — inbound ownership,
-    outbound ownership and roles are three separate queries — so the response can
+    outbound ownership and roles are three separate queries — so the result can
     hold up to 3 × `limit` events. Limiting the merged total would mean one noisy
     category could crowd the others out of the timeline entirely.
     """
@@ -343,5 +356,16 @@ def get_ownership_history(
     def sort_key(e):
         return e["since"] or ""
 
+    return sorted(events, key=sort_key, reverse=True), truncated
+
+
+@router.get("/history/{entity_id}")
+def get_ownership_history(
+    entity_id: str,
+    response: Response,
+    limit: Annotated[int, Query(ge=1, le=HISTORY_MAX_LIMIT,
+                                description="Max events per category (owners in, owned out, roles).")] = HISTORY_DEFAULT_LIMIT,
+):
+    events, truncated = ownership_history_of(entity_id, limit)
     _mark_truncated(response, truncated)
-    return sorted(events, key=sort_key, reverse=True)
+    return events
