@@ -111,3 +111,55 @@ def test_missing_and_unredirected_id_still_404s(it_db):
     with pytest.raises(HTTPException) as exc:
         search.get_full_profile("no-such-entity")
     assert exc.value.status_code == 404
+
+
+# ── Entity merges leave one too ───────────────────────────────────────────────
+#
+# The first version of this feature wired the forwarding address into the PERSON
+# merge only, while the entity merges in scraper/maintenance.py kept deleting
+# nodes outright. That was the more damaging gap: entity auto-merge runs after
+# every scrape, so with the Wikidata LEI bridge live a single "Refresh from
+# Sources" would have merged a pair and destroyed the losing id with no redirect.
+
+def _dup_pair_sharing_a_lei(it_db):
+    """Two same-name entities sharing an LEI — a "definitive" group."""
+    it_db.run_command(
+        "CREATE (e:Entity {id:'ent-a', name:'Acme Corporation', name_normalized:'acme', "
+        "type:'company', lei_id:'AAAA1111BBBB2222CCCC', name_credibility:92})")
+    it_db.run_command(
+        "CREATE (e:Entity {id:'ent-b', name:'Acme', name_normalized:'acme', "
+        "type:'company', lei_id:'AAAA1111BBBB2222CCCC', name_credibility:80})")
+
+
+def test_scoped_entity_automerge_leaves_a_forwarding_address(it_db):
+    from app.scraper.maintenance import deduplicate_entities_for
+
+    _dup_pair_sharing_a_lei(it_db)
+    result = deduplicate_entities_for(["ent-a", "ent-b"], apply=True)
+    assert result["entities_merged"] == 1
+
+    with db.get_session() as session:
+        # Higher credibility survives; the loser redirects to it.
+        assert resolve_current_id(session, "ent-b") == "ent-a"
+
+
+def test_identifier_entity_merge_leaves_a_forwarding_address(it_db):
+    from app.scraper.maintenance import deduplicate_entities
+
+    _dup_pair_sharing_a_lei(it_db)
+    result = deduplicate_entities(limit=10)
+    assert result["entities_merged"] >= 1
+
+    with db.get_session() as session:
+        assert resolve_current_id(session, "ent-b") == "ent-a"
+
+
+def test_profile_of_a_merged_away_entity_opens_the_survivor(it_db):
+    # End to end: the case the Microsoft merge will create.
+    from app.scraper.maintenance import deduplicate_entities_for
+
+    _dup_pair_sharing_a_lei(it_db)
+    deduplicate_entities_for(["ent-a", "ent-b"], apply=True)
+
+    profile = search.get_full_profile("ent-b")
+    assert profile["entity"]["id"] == "ent-a"

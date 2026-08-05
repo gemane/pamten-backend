@@ -7,6 +7,7 @@ implementations.
 from app.database import db
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
+from app.merged_ids import record_merge_sql
 
 
 class CompanyNotFound(Exception):
@@ -671,6 +672,9 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
         for dead in members[1:]:
             if apply:
                 _migrate_entity_edges(dead["id"], keep["id"])
+                # Forwarding address before the delete — the losing id may be in a
+                # shared link, a client cache, or a federation peer's copy.
+                record_merge_sql(dead["id"], keep["id"], kind="Entity")
                 run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
             merged.append({"kept": keep["name"], "kept_id": keep["id"],
                            "deleted": dead["name"], "deleted_id": dead["id"]})
@@ -723,6 +727,7 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
         keep = members[0]
         for dead in members[1:]:
             migrated = _migrate_entity_edges(dead["id"], keep["id"])
+            record_merge_sql(dead["id"], keep["id"], kind="Entity")
             run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
             merged.append({
                 "key": f"{key_prop}={key}",
