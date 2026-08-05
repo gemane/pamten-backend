@@ -882,3 +882,62 @@ class TestFormerNamesAliases:
              patch("app.scraper.runner.resolve_entity_id", return_value="eid-1"):
             _upsert_entity_by_name("Acme Corp", cik="999", source_id="sec")
         assert not any("aliases" in c.kwargs for c in session.run.call_args_list)
+
+
+# ── Wikidata → GLEIF identifier bridge ────────────────────────────────────────
+#
+# Wikidata's P1278 carries the LEI for many large companies, which is the only
+# identifier a Wikidata scrape and a GLEIF node have in common. Without it the two
+# stay separate nodes — the Microsoft split, where the ownership graph sat on one
+# and the executives on the other.
+
+class TestIdentifierBridge:
+    def test_resolves_on_the_lei_so_a_gleif_node_is_reused(self):
+        # First two lookups (wikidata_id, sec_cik) miss, the lei_id lookup hits the
+        # existing GLEIF node — so no second copy of the company is created.
+        ctx, session = _make_session_mock(
+            single_returns=[None, None, {"id": "lei:INR2EJN1ERAN0W5ZP974"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            eid = _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+                                 lei="INR2EJN1ERAN0W5ZP974")
+        assert eid == "lei:INR2EJN1ERAN0W5ZP974"
+
+    def test_lei_lookup_is_attempted_when_a_lei_is_known(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+                           lei="INR2EJN1ERAN0W5ZP974")
+        assert any("lei_id" in call.args[0] for call in session.run.call_args_list), \
+            "no lookup keyed on lei_id — the bridge would never find the GLEIF node"
+
+    def test_no_extra_lookup_when_no_identifiers_are_known(self):
+        # resolve_entity_id skips falsy ids, so the common case keeps its 3 lookups.
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
+        assert session.run.call_count == 4          # 3 lookups + CREATE
+
+    def test_update_never_overwrites_an_existing_identifier(self):
+        # A register is authoritative for its own id and Wikidata is crowd-edited;
+        # clobbering lei_id would re-point a merge key at the wrong company.
+        ctx, session = _make_session_mock(single_returns=[{"id": "existing"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+                           lei="INR2EJN1ERAN0W5ZP974", sec_cik="0000789019")
+        update = [c for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0]]
+        assert len(update) == 1
+        cypher, params = update[0].args[0], update[0].kwargs
+        assert "e.lei_id          = COALESCE(e.lei_id, $lei)" in cypher
+        assert "e.sec_cik         = COALESCE(e.sec_cik, $sec_cik)" in cypher
+        assert params["lei"] == "INR2EJN1ERAN0W5ZP974"
+        assert params["sec_cik"] == "0000789019"
+
+    def test_created_node_carries_the_identifiers(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+                           lei="INR2EJN1ERAN0W5ZP974", sec_cik="0000789019")
+        create = [c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0]]
+        assert len(create) == 1
+        assert "lei_id: $lei" in create[0].args[0]
+        assert create[0].kwargs["lei"] == "INR2EJN1ERAN0W5ZP974"
