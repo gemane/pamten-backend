@@ -5,6 +5,8 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 `/docs` (Swagger) and `/redoc` on a running instance.
 
 > **Base path: `/v1`.** Paths below are written without the prefix for brevity — the real URL for `/auth/login` is `/v1/auth/login`. The unversioned paths still work but are deprecated and hidden from the schema; use `/v1` in anything new. `/` and `/health` are unversioned by design.
+>
+> **Merged ids keep working.** When a duplicate is merged away its id is not dropped: a by-id read that misses falls back to a `MergedId` forwarding row and returns the surviving node, whose own `id` is the canonical one. Applies to `/entities/{id}`, `/persons/{id}` and both `full-profile` endpoints. A live id is never redirected, and an id that was never merged still 404s.
 
 ## Auth
 | Method | Path | Auth | Description |

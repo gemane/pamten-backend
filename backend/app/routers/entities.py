@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.entity import EntityCreate, EntityResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
+from app.merged_ids import resolve_current_id
 import uuid
 
 router = APIRouter(prefix="/entities", tags=["Entities"])
@@ -86,10 +87,18 @@ def get_entity(entity_id: str):
         RETURN e
     """
     with db.get_session() as session:
-        result = session.run(query, id=entity_id)
-        record = result.single()
+        record = session.run(query, id=entity_id).single()
+        if not record:
+            # The id may belong to a node a merge folded away — follow the
+            # forwarding address rather than 404 on a link that used to work.
+            # Only ever on a miss: a live id must not be redirected.
+            merged_into = resolve_current_id(session, entity_id)
+            if merged_into:
+                record = session.run(query, id=merged_into).single()
         if not record:
             raise HTTPException(status_code=404, detail="Entity not found")
+        # The response carries the survivor's own id, so a caller can see the
+        # canonical one and update what it stored.
         return dict(record["e"])
 
 

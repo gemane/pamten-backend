@@ -275,6 +275,16 @@ its incremental refresh is a later, separate design.
 
 ---
 
+## Merged ids
+
+A merge deletes one of the two nodes, but its id is **not** discarded: it lives on in shared links, client caches and — the case that actually bites — **federation peers' copies of our data**, where a peer that pulled the losing id and pulls again would find nothing and recreate the duplicate we just merged.
+
+Every merge therefore writes a `MergedId` forwarding row (`old_id` → `new_id`). A by-id read that misses falls back to it and returns the survivor, whose own `id` is the canonical one, so a caller can see it and update what it stored. A **live** id is never redirected, and an id that was never merged still 404s.
+
+It's a separate indexed vertex rather than an `also_known_ids` list on the survivor because the lookup has to be an indexed equality: `CONTAINS` over a list can't use an index and would scan the whole `Entity` type (millions of rows) on every miss. Chains are collapsed when written — merging A→B and later B→C rewrites A→C — so resolution is one hop and can never land on a node that was itself merged away.
+
+---
+
 ## Duplicate persons
 
 Different sources spell the same person differently (SEC's "Page Lawrence" vs
