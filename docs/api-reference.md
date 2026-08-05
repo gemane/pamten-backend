@@ -16,6 +16,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/auth/forgot-password` | — | Email a password-reset link `{email}` (always `200` — no user enumeration) |
 | POST | `/auth/reset-password` | — | Set a new password from the emailed token `{token, new_password}` (link is single-use) |
 | POST | `/auth/change-password` | bearer | Change your own password `{current_password, new_password}` — the self-service route that needs no email. `400` on a wrong current password, a policy violation, or reusing the current password |
+| DELETE | `/auth/me` | bearer | **Permanently delete your own account** `{password}`. Re-authenticates with the password. Removes the User node (password hash, TOTP secret, recovery codes) and the account's rate-limit counters; flags the user filed are anonymised, not deleted. `400` for a wrong password, for the `ADMIN_EMAIL` bootstrap account, or when you are the last admin |
 | GET | `/auth/me` | bearer | Current user info |
 | GET | `/auth/mfa/status` | bearer | Whether TOTP two-factor is enabled |
 | POST | `/auth/mfa/setup` | bearer | Begin TOTP enrolment → `{secret, otpauth_uri}` for a QR |

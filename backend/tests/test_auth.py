@@ -616,3 +616,115 @@ def test_require_moderator_rejects_lower_roles(role):
     with pytest.raises(HTTPException) as exc:
         require_moderator({"role": role})
     assert exc.value.status_code == 403
+
+
+# ── DELETE /auth/me (self-service account deletion) ───────────────────────────
+#
+# Required by both app stores for any app with account creation, and the
+# mechanism behind a GDPR erasure request.
+
+def _del(client, make_token, password="oldpassword", role="viewer", email="me@example.com"):
+    return client.request(
+        "DELETE", "/auth/me",
+        headers={"Authorization": f"Bearer {make_token(role=role, sub='u1', email=email)}"},
+        json={"password": password},
+    )
+
+
+def _deletion_row(role="viewer", email="me@example.com", password="oldpassword"):
+    return [{"hash": hash_password(password), "email": email, "role": role}]
+
+
+def test_delete_own_account_removes_the_user(client, fake_db, make_token):
+    fake_db.queue(_deletion_row(), [], [])
+    r = _del(client, make_token)
+    assert r.status_code == 200
+
+    cyphers = [c for c, _ in fake_db.calls]
+    assert any("MATCH (u:User {id: $id}) DELETE u" in c for c in cyphers)
+
+
+def test_delete_own_account_requires_the_password(client, fake_db, make_token):
+    fake_db.queue(_deletion_row())
+    r = _del(client, make_token, password="wrong-password")
+    assert r.status_code == 400
+    assert "password" in r.json()["detail"].lower()
+    # A stolen access token alone must not be enough to destroy the account.
+    assert all("DELETE u" not in c for c, _ in fake_db.calls)
+
+
+def test_delete_own_account_requires_authentication(client):
+    r = client.request("DELETE", "/auth/me", json={"password": "oldpassword"})
+    assert r.status_code in (401, 403)
+
+
+def test_delete_own_account_anonymises_flags_instead_of_deleting_them(client, fake_db, make_token):
+    # The reports are about companies, not about the reporter — deleting them
+    # would rewrite moderation history. Only the link to the person is severed.
+    fake_db.queue(_deletion_row(), [], [])
+    assert _del(client, make_token).status_code == 200
+
+    flag_calls = [(c, p) for c, p in fake_db.calls if "Flag" in c]
+    assert len(flag_calls) == 1
+    cypher, params = flag_calls[0]
+    assert "SET f.reporter_kind = 'deleted'" in cypher
+    assert "f.reporter_id = ''" in cypher
+    assert "DELETE" not in cypher
+    assert params["id"] == "u1"
+
+
+def test_delete_own_account_refuses_for_the_env_bootstrap_admin(client, fake_db, make_token, monkeypatch):
+    # bootstrap_admin() recreates this account on the next startup, so deleting it
+    # would quietly undo itself — better to refuse than promise a false erasure.
+    monkeypatch.setattr(auth_router.settings, "ADMIN_EMAIL", "boss@example.com")
+    fake_db.queue(_deletion_row(role="admin", email="boss@example.com"))
+
+    r = _del(client, make_token, role="admin", email="boss@example.com")
+    assert r.status_code == 400
+    assert "ADMIN_EMAIL" in r.json()["detail"]
+    assert all("DELETE u" not in c for c, _ in fake_db.calls)
+
+
+def test_delete_own_account_refuses_when_it_would_leave_no_admin(client, fake_db, make_token, monkeypatch):
+    monkeypatch.setattr(auth_router.settings, "ADMIN_EMAIL", None)
+    fake_db.queue(_deletion_row(role="admin"), [{"n": 0}])  # no other admins
+
+    r = _del(client, make_token, role="admin")
+    assert r.status_code == 400
+    assert "only admin" in r.json()["detail"].lower()
+    assert all("DELETE u" not in c for c, _ in fake_db.calls)
+
+
+def test_admin_can_delete_own_account_when_another_admin_remains(client, fake_db, make_token, monkeypatch):
+    monkeypatch.setattr(auth_router.settings, "ADMIN_EMAIL", None)
+    fake_db.queue(_deletion_row(role="admin"), [{"n": 2}], [], [])
+
+    r = _del(client, make_token, role="admin")
+    assert r.status_code == 200
+    assert any("DELETE u" in c for c, _ in fake_db.calls)
+
+
+def test_delete_own_account_purges_rate_limit_counters(client, fake_db, make_token):
+    # Leftover counters keyed to the address would otherwise outlive the account.
+    fake_db.queue(_deletion_row(), [], [])
+    sql_calls: list[tuple] = []
+    with patch("app.db.arcadedb.run_sql", lambda q, p=None, *a, **k: sql_calls.append((q, p or {}))):
+        assert _del(client, make_token).status_code == 200
+
+    keys = [p.get("k") for _, p in sql_calls]
+    assert "user:u1" in keys
+    assert "mfa:u1" in keys
+    assert "email:me@example.com" in keys
+    assert "login:%:me@example.com" in keys  # login keys embed the client IP
+
+
+def test_delete_own_account_survives_a_rate_limit_purge_failure(client, fake_db, make_token):
+    # The account is already gone at that point; a bookkeeping error must not
+    # surface as a 500 that suggests the deletion failed.
+    fake_db.queue(_deletion_row(), [], [])
+
+    def _boom(*a, **k):
+        raise RuntimeError("db hiccup")
+
+    with patch("app.db.arcadedb.run_sql", _boom):
+        assert _del(client, make_token).status_code == 200
