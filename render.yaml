@@ -15,9 +15,13 @@ services:
       - key: SECRET_KEY
         sync: false
       - key: CORS_ORIGINS
-        # The owlgraph.org domains are canonical. Keep the frontend and API on one
-        # registrable domain: dev.owlgraph.org / api-dev.owlgraph.org are same-site,
-        # which is what lets an httpOnly SameSite=Lax auth cookie work between them
-        # (the *.onrender.com pair are separate sites — onrender.com is on the
-        # Public Suffix List — so a cookie between them would be third-party).
-        value: https://dev.owlgraph.org
+        # Set in the Render dashboard, not here, so the deployed value can be
+        # changed without a redeploy of this file (and so dev and any future
+        # production service can differ). Currently https://dev.owlgraph.org.
+        #
+        # Whatever it is set to, keep the frontend and API on one registrable
+        # domain: dev.owlgraph.org / api-dev.owlgraph.org are same-site, which is
+        # what lets an httpOnly SameSite=Lax auth cookie work between them (the
+        # *.onrender.com pair are separate sites — onrender.com is on the Public
+        # Suffix List — so a cookie between them would be third-party).
+        sync: false
