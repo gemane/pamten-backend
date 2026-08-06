@@ -15,4 +15,9 @@ services:
       - key: SECRET_KEY
         sync: false
       - key: CORS_ORIGINS
-        value: https://pamten-frontend.onrender.com
+        # The owlgraph.org domains are canonical. Keep the frontend and API on one
+        # registrable domain: dev.owlgraph.org / api-dev.owlgraph.org are same-site,
+        # which is what lets an httpOnly SameSite=Lax auth cookie work between them
+        # (the *.onrender.com pair are separate sites — onrender.com is on the
+        # Public Suffix List — so a cookie between them would be third-party).
+        value: https://dev.owlgraph.org
