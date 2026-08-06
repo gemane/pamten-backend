@@ -198,14 +198,15 @@ def _upsert_entity(
         )
 
         if entity_id:
+            # lei_id / sec_cik use COALESCE(existing, new): a register (GLEIF/SEC)
+            # is authoritative for its own identifier and Wikidata is crowd-edited,
+            # so only fill a gap — a clobbered lei_id would re-point a merge key at
+            # the wrong company. NB: comments must stay OUT of the query string;
+            # ArcadeDB's Cypher parser rejects `--` and fails the whole statement.
             session.run(
                 """
                 MATCH (e:Entity {id: $id})
                 SET e.wikidata_id     = $wid,
-                    -- Existing value wins: a register (GLEIF/SEC) is authoritative
-                    -- for its own identifier, and Wikidata is crowd-edited. Only
-                    -- fill a gap, never overwrite — a clobbered lei_id would
-                    -- re-point a merge key at the wrong company.
                     e.lei_id          = COALESCE(e.lei_id, $lei),
                     e.sec_cik         = COALESCE(e.sec_cik, $sec_cik),
                     e.type            = COALESCE($type, e.type),
@@ -808,15 +809,26 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         # the *parameter*), so only run it as a last resort when a CIK is known
         # and the indexed lookups missed.
         if not entity_id and cik:
+            # The prefix must end on a WORD boundary, and the candidate must not
+            # already belong to a different filer.
+            #
+            # Without the boundary this matched any company whose name merely
+            # starts with the same letters: scraping "Alphabet" resolved onto a
+            # French company called "ALPHA" ("alphabet" STARTS WITH "alpha") and
+            # stamped Alphabet Inc's CIK and its 13G holders — BlackRock, Vanguard,
+            # Fidelity — onto it. The CIK guard is the second line of defence: a
+            # node that already carries another filer's CIK is definitively not
+            # this filer.
             rec = session.run(
                 """
                 MATCH (e:Entity)
                 WHERE e.name_normalized IS NOT NULL
                   AND size(e.name_normalized) >= 4
-                  AND $name_norm STARTS WITH e.name_normalized
+                  AND $name_norm STARTS WITH (e.name_normalized + ' ')
+                  AND (e.sec_cik IS NULL OR e.sec_cik = $cik)
                 RETURN e.id AS id LIMIT 1
                 """,
-                name_norm=name_norm,
+                name_norm=name_norm, cik=cik,
             ).single()
             entity_id = rec["id"] if rec else None
 
