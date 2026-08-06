@@ -69,6 +69,10 @@ HOLDINGS_DEFAULT_LIMIT = 100    # subjects for an explicit holdings run (CLI)
 # requests. The look-back cap only bites on a filer that has exited positions.
 HOLDINGS_SCRAPE_LIMIT  = 25
 HOLDINGS_MAX_LOOKBACK  = 3      # earlier filings to check when the latest is an exit
+# EDGAR splits a prolific filer's index into pages: `filings.recent` plus an
+# archive list. Vanguard's old CIK has 13 pages covering back to 1999, so they are
+# read lazily, newest page first, and only while the fetch budget lasts.
+HOLDINGS_MAX_ARCHIVE_PAGES = 4
 
 _HOLDING_FORMS = ("SCHEDULE 13G", "SCHEDULE 13D", "SC 13G", "SC 13D")
 
@@ -1066,6 +1070,47 @@ def fetch_filer_name(cik: str) -> str | None:
     return (subs.get("name") or "").strip() or None
 
 
+def _holding_filings_in(block: dict) -> list[dict]:
+    """The 13D/13G rows of one EDGAR filing-index page, newest first."""
+    return sorted(
+        (
+            {"form": f, "accession": a, "date": d}
+            for f, a, d in zip(block.get("form", []),
+                               block.get("accessionNumber", []),
+                               block.get("filingDate", []))
+            if any(f.startswith(p) for p in _HOLDING_FORMS)
+        ),
+        key=lambda r: r["date"], reverse=True,
+    )
+
+
+def _iter_filing_pages(cik: str):
+    """Yield a filer's 13D/13G filings page by page, newest first.
+
+    `filings.recent` comes first, then EDGAR's archive pages. A page is only
+    fetched when the caller asks for it, so a scrape that finds what it needs in
+    recent never pays for the archive — and one that needs to reach back for a
+    stake disclosed years ago can.
+    """
+    try:
+        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
+    except Exception as exc:  # noqa: BLE001 - a filer with no submissions file isn't an error
+        log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
+        return
+
+    yield _holding_filings_in(subs.get("filings", {}).get("recent", {}))
+
+    for page in (subs.get("filings", {}).get("files") or [])[:HOLDINGS_MAX_ARCHIVE_PAGES]:
+        name = page.get("name")
+        if not name:
+            continue
+        try:
+            yield _holding_filings_in(_get(f"{SUBMISSIONS_URL}/{name}"))
+        except Exception as exc:  # noqa: BLE001 - a missing archive page isn't fatal
+            log.warning("SEC EDGAR: archive page %s failed: %s", name, exc)
+            return
+
+
 def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
                          max_filings: int | None = None) -> list[dict]:
     """Companies this filer discloses a >5% stake in, newest disclosure per company.
@@ -1094,23 +1139,8 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
     if max_filings is None:
         max_filings = limit * 5 + 50
 
-    try:
-        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
-    except Exception as exc:  # noqa: BLE001 - a filer with no submissions file isn't an error
-        log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
-        return []
-
-    recent = subs.get("filings", {}).get("recent", {})
-    filings = sorted(
-        (
-            {"form": f, "accession": a, "date": d}
-            for f, a, d in zip(recent.get("form", []),
-                               recent.get("accessionNumber", []),
-                               recent.get("filingDate", []))
-            if any(f.startswith(p) for p in _HOLDING_FORMS)
-        ),
-        key=lambda r: r["date"], reverse=True,
-    )
+    pages = _iter_filing_pages(cik)
+    filings = next(pages, [])
     if not filings:
         return []       # not an institutional filer — the common case, one JSON read
 
@@ -1121,9 +1151,17 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
 
     # Newest first, so the first non-zero filing seen for a subject is its most
     # recent real stake, and any 0% already seen for it is the exit that followed.
-    for filing in filings:
+    # When a page runs out, pull the next archive page — a stake closed years ago
+    # is only reachable there.
+    while True:
+        # Budget first, so a satisfied scrape never pays for an archive page.
         if len(holdings) >= limit or fetched >= max_filings:
             break
+        if not filings:
+            filings = next(pages, [])
+            if not filings:
+                break
+        filing = filings.pop(0)
         parsed = _parse_holding_filing(cik, filing["accession"])
         fetched += 1
         if not parsed:

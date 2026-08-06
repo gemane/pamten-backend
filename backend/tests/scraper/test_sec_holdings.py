@@ -193,3 +193,108 @@ def test_all_13dg_form_spellings_are_recognised(form):
          patch("app.scraper.sec_edgar._get_text",
                return_value=XML.format(cik="0000859737", name="Hologic Inc", pct="7.49")):
         assert len(fetch_filer_holdings("0002100119")) == 1
+
+
+# ── Archived filing pages ─────────────────────────────────────────────────────
+#
+# EDGAR splits a prolific filer's index into `filings.recent` plus archive pages.
+# Vanguard's old CIK has 13, back to 1999. The stake that matters is often only
+# reachable there: its Microsoft holding was disclosed on 2024-02-13 and closed by
+# a 0% amendment in March 2026, so the exit is in `recent` and the percentage it
+# ends is not. Without the archive the holding can never be closed — the scraper
+# sees an exit for a stake it has no record of.
+
+def _subs_with_archive(recent, pages):
+    return {"filings": {
+        "recent": {"form": [f[0] for f in recent],
+                   "accessionNumber": [f[1] for f in recent],
+                   "filingDate": [f[2] for f in recent]},
+        "files": [{"name": f"page-{i}.json"} for i in range(len(pages))],
+    }}
+
+
+def _page(filings):
+    return {"form": [f[0] for f in filings],
+            "accessionNumber": [f[1] for f in filings],
+            "filingDate": [f[2] for f in filings]}
+
+
+class TestArchivePages:
+    def test_a_stake_disclosed_in_an_archive_is_closed_by_a_recent_exit(self):
+        # The Microsoft case exactly.
+        recent = [("SCHEDULE 13G/A", "a-exit", "2026-03-27")]
+        archive = [("SCHEDULE 13G", "a-old", "2024-02-13")]
+        subs = _subs_with_archive(recent, [archive])
+        docs = {"a-exit": XML.format(cik="0000789019", name="Microsoft Corp", pct="0"),
+                "a-old":  XML.format(cik="0000789019", name="Microsoft Corp", pct="8.95")}
+
+        def _get(url):
+            return _page(archive) if "page-0" in url else subs
+
+        with patch("app.scraper.sec_edgar._get", side_effect=_get), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for(docs)):
+            rows = fetch_filer_holdings("0000102909")
+
+        assert len(rows) == 1
+        assert rows[0]["stake_percent"] == 8.95
+        assert rows[0]["until"] == "2026-03-27"
+
+    def test_the_archive_is_not_read_when_recent_already_satisfies_the_limit(self):
+        recent = [("SCHEDULE 13G", f"a-{i}", f"2026-04-{i + 1:02d}") for i in range(3)]
+        subs = _subs_with_archive(recent, [[("SCHEDULE 13G", "old-1", "2020-01-01")]])
+        fetched_pages = []
+
+        def _get(url):
+            if "page-" in url:
+                fetched_pages.append(url)
+                return _page([])
+            return subs
+
+        counter = {"n": 0}
+
+        def _doc(_url):
+            counter["n"] += 1
+            return XML.format(cik=f"000000{counter['n']:04d}", name=f"Co {counter['n']}", pct="6")
+
+        with patch("app.scraper.sec_edgar._get", side_effect=_get), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc):
+            rows = fetch_filer_holdings("0000102909", limit=2)
+
+        assert len(rows) == 2
+        assert fetched_pages == [], "an archive page was fetched despite the limit being met"
+
+    def test_a_failed_archive_page_stops_cleanly(self):
+        recent = [("SCHEDULE 13G/A", "a-exit", "2026-03-27")]
+        subs = _subs_with_archive(recent, [[("SCHEDULE 13G", "old", "2024-01-01")]])
+
+        def _get(url):
+            if "page-" in url:
+                raise RuntimeError("archive 500")
+            return subs
+
+        with patch("app.scraper.sec_edgar._get", side_effect=_get), \
+             patch("app.scraper.sec_edgar._get_text",
+                   return_value=XML.format(cik="0000789019", name="Microsoft Corp", pct="0")):
+            assert fetch_filer_holdings("0000102909") == []
+
+    def test_archive_pages_are_capped(self):
+        from app.scraper.sec_edgar import HOLDINGS_MAX_ARCHIVE_PAGES
+        recent = [("SCHEDULE 13G/A", "a-0", "2026-03-27")]
+        subs = {"filings": {
+            "recent": _page(recent),
+            "files": [{"name": f"page-{i}.json"} for i in range(20)],
+        }}
+        pages_read = []
+
+        def _get(url):
+            if "page-" in url:
+                pages_read.append(url)
+                return _page([("SCHEDULE 13G/A", f"z-{len(pages_read)}", "2020-01-01")])
+            return subs
+
+        with patch("app.scraper.sec_edgar._get", side_effect=_get), \
+             patch("app.scraper.sec_edgar._get_text",
+                   return_value=XML.format(cik="0000789019", name="Never", pct="0")):
+            fetch_filer_holdings("0000102909", limit=5)
+
+        assert len(pages_read) <= HOLDINGS_MAX_ARCHIVE_PAGES
