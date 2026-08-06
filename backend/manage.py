@@ -247,7 +247,7 @@ def cmd_sec_holdings(args):
         print(f"No EDGAR filer found for CIK {args.cik}.")
         raise SystemExit(1)
     print(f"{result['filer']}: {result['total']} holdings written "
-          f"({result['ended']} already ended).")
+          f"({result['ended']} already ended, {result.get('affiliates', 0)} affiliated managers linked).")
     if result.get("succession"):
         print(f"  succession: {result['succession']['predecessor']} → "
               f"{result['succession']['successor']}")

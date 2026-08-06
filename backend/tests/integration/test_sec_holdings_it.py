@@ -35,6 +35,7 @@ def _run(it_db, holdings=None, cik="0002100119", name="VANGUARD CAPITAL MANAGEME
     with patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda c: names.get(c)), \
          patch("app.scraper.sec_edgar.fetch_filer_holdings",
                return_value=HOLDINGS if holdings is None else holdings), \
+         patch("app.scraper.sec_edgar.fetch_affiliated_managers", return_value=[]), \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
         return runner.run_sec_holdings(cik, succeeds_cik=succeeds)
@@ -127,3 +128,75 @@ def test_an_unknown_filer_writes_nothing(it_db):
         result = runner.run_sec_holdings("0009999999")
     assert result["status"] == "no_results"
     assert result_count(it_db) == 0
+
+
+# ── Affiliated managers ───────────────────────────────────────────────────────
+#
+# Modelled as RELATED_TO{relation:'affiliate'}, deliberately not OWNS: a 13F cover
+# page naming another manager establishes group membership, not ownership. Writing
+# it as ownership would invent a fact the filing doesn't support.
+
+AFFILIATES = [
+    {"cik": "0002100119", "name": "VANGUARD CAPITAL MANAGEMENT LLC",
+     "source_url": "https://sec.gov/13fnt", "source_date": "2026-05-08", "form_type": "13F-NT"},
+    {"cik": "0000933478", "name": "VANGUARD FIDUCIARY TRUST CO",
+     "source_url": "https://sec.gov/13fnt", "source_date": "2026-05-08", "form_type": "13F-NT"},
+]
+
+
+def _run_with_affiliates(affiliates=None, holdings=None):
+    with patch("app.scraper.sec_edgar.fetch_filer_name", return_value="VANGUARD GROUP INC"), \
+         patch("app.scraper.sec_edgar.fetch_filer_holdings", return_value=holdings or []), \
+         patch("app.scraper.sec_edgar.fetch_affiliated_managers",
+               return_value=AFFILIATES if affiliates is None else affiliates), \
+         patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+         patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+        return runner.run_sec_holdings("0000102909")
+
+
+def test_affiliates_are_linked_with_a_named_relation(it_db):
+    result = _run_with_affiliates()
+    assert result["affiliates"] == 2
+
+    rows = it_db.run_sql(
+        "SELECT name FROM (SELECT expand(out('RELATED_TO')) FROM Entity WHERE sec_cik='0000102909')")
+    assert {r["name"] for r in rows} == {"VANGUARD CAPITAL MANAGEMENT LLC",
+                                         "VANGUARD FIDUCIARY TRUST CO"}
+
+
+def test_the_relation_is_labelled_and_sourced(it_db):
+    _run_with_affiliates()
+    edges = [{k: v for k, v in r.items() if not k.startswith("@")}
+             for r in it_db.run_sql("SELECT FROM RELATED_TO")]
+    assert edges and all(e["relation"] == "affiliate" for e in edges)
+    assert all(e.get("source_url") == "https://sec.gov/13fnt" for e in edges)
+
+
+def test_affiliation_is_not_written_as_ownership(it_db):
+    # The whole point of the modelling choice.
+    _run_with_affiliates()
+    assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 0
+
+
+def test_rerunning_does_not_duplicate_affiliate_edges(it_db):
+    _run_with_affiliates()
+    first = it_db.run_sql("SELECT count(*) AS n FROM RELATED_TO")[0]["n"]
+    _run_with_affiliates()
+    assert it_db.run_sql("SELECT count(*) AS n FROM RELATED_TO")[0]["n"] == first
+
+
+def test_an_affiliate_already_in_the_graph_is_matched_on_cik(it_db):
+    it_db.run_command(
+        "CREATE (e:Entity {id:'vcm', name:'Vanguard Capital Management', "
+        "name_normalized:'vanguard capital management', type:'company', sec_cik:'0002100119'})")
+    _run_with_affiliates()
+    rows = it_db.run_sql("SELECT id FROM Entity WHERE sec_cik = '0002100119'")
+    assert len(rows) == 1 and rows[0]["id"] == "vcm"
+
+
+def test_a_filer_listing_itself_is_skipped(it_db):
+    self_ref = [{"cik": "0000102909", "name": "VANGUARD GROUP INC",
+                 "source_url": "u", "source_date": "2026-05-08", "form_type": "13F-NT"}]
+    result = _run_with_affiliates(affiliates=self_ref)
+    assert result["affiliates"] == 0
+    assert it_db.run_sql("SELECT count(*) AS n FROM RELATED_TO")[0]["n"] == 0

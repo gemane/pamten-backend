@@ -1111,6 +1111,76 @@ def _iter_filing_pages(cik: str):
             return
 
 
+_AFFILIATE_FORMS = ("13F-NT", "13F-HR")
+
+
+def fetch_affiliated_managers(cik: str) -> list[dict]:
+    """The affiliated managers a filer names on its latest 13F cover page.
+
+    A fund group files one 13F per manager, and the cover page lists the group's
+    OTHER managers with their CIKs — ten of them for Vanguard, including the
+    entity that took over its 13G reporting. That is an authoritative statement of
+    group membership from the filer itself, far better evidence than matching on a
+    shared name prefix, and it costs a single document fetch.
+
+    What it does NOT establish is ownership or control: "reports 13F holdings
+    alongside" is exactly as much as the form says. Callers should record it as an
+    affiliation, not as an OWNS edge.
+    """
+    try:
+        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
+        return []
+
+    recent = subs.get("filings", {}).get("recent", {})
+    filings = sorted(
+        (
+            {"form": f, "accession": a, "date": d}
+            for f, a, d in zip(recent.get("form", []),
+                               recent.get("accessionNumber", []),
+                               recent.get("filingDate", []))
+            if any(f.startswith(p) for p in _AFFILIATE_FORMS)
+        ),
+        key=lambda r: r["date"], reverse=True,
+    )
+    if not filings:
+        return []           # not a 13F filer — most companies
+
+    latest = filings[0]
+    url = f"{ARCHIVES_URL}/{_cik_int(cik)}/{latest['accession'].replace('-', '')}/primary_doc.xml"
+    try:
+        root = ET.fromstring(_get_text(url))
+    except Exception as exc:  # noqa: BLE001 - pre-XML or malformed cover page
+        log.debug("SEC EDGAR: no parseable 13F cover page for %s: %s", cik, exc)
+        return []
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for el in root.findall(".//{*}otherManager"):
+        raw_cik = _xml_field(el, "cik")
+        name = _xml_field(el, "name")
+        if not name:
+            continue
+        # Some entries carry a short/unpadded CIK (the Vanguard notice has one at
+        # 9 digits); normalise so it matches an EDGAR-sourced node.
+        manager_cik = _cik_int(raw_cik).zfill(10) if raw_cik and raw_cik.strip().isdigit() else None
+        key = manager_cik or name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "cik":         manager_cik,
+            "name":        name.strip(),
+            "source_url":  _filing_index_url(cik, latest["accession"]),
+            "source_date": latest["date"],
+            "form_type":   latest["form"],
+        })
+    log.info("SEC EDGAR: %d affiliated managers for CIK=%s (from %s)",
+             len(out), cik, latest["form"])
+    return out
+
+
 def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
                          max_filings: int | None = None) -> list[dict]:
     """Companies this filer discloses a >5% stake in, newest disclosure per company.

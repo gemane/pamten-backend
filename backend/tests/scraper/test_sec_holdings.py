@@ -298,3 +298,79 @@ class TestArchivePages:
             fetch_filer_holdings("0000102909", limit=5)
 
         assert len(pages_read) <= HOLDINGS_MAX_ARCHIVE_PAGES
+
+
+# ── Affiliated managers (13F cover page) ──────────────────────────────────────
+#
+# A fund group files one 13F per manager and the cover page names the group's
+# OTHER managers with their CIKs — ten for Vanguard, including the entity that
+# took over its 13G reporting. Authoritative group membership from the filer
+# itself, for one document fetch.
+#
+# It says nothing about ownership: "reports 13F holdings alongside" is the whole
+# claim, which is why it becomes RELATED_TO{relation:'affiliate'} and not OWNS.
+
+from app.scraper.sec_edgar import fetch_affiliated_managers  # noqa: E402
+
+NT_XML = """<?xml version="1.0"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/thirteenffiler">
+<formData><coverPage>
+<filingManager><name>VANGUARD GROUP INC</name></filingManager>
+<reportType>13F NOTICE</reportType>
+<otherManagersInfo>
+  <otherManager><cik>0002100119</cik><name>VANGUARD CAPITAL MANAGEMENT LLC</name></otherManager>
+  <otherManager><cik>000217448</cik><name>VANGUARD MARKETING CORPORATION</name></otherManager>
+  <otherManager><name>NO CIK PARTNER</name></otherManager>
+</otherManagersInfo>
+</coverPage></formData></edgarSubmission>"""
+
+
+class TestAffiliatedManagers:
+    def _run(self, forms, xml=NT_XML):
+        subs = _subs(forms)
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", return_value=xml):
+            return fetch_affiliated_managers("0000102909")
+
+    def test_reads_the_other_managers(self):
+        rows = self._run([("13F-NT", "a-1", "2026-05-08")])
+        assert [r["name"] for r in rows] == [
+            "VANGUARD CAPITAL MANAGEMENT LLC", "VANGUARD MARKETING CORPORATION", "NO CIK PARTNER"]
+
+    def test_pads_a_short_cik(self):
+        # The real Vanguard notice carries one at 9 digits; unpadded it would not
+        # match an EDGAR-sourced node, which always stores 10.
+        rows = self._run([("13F-NT", "a-1", "2026-05-08")])
+        assert rows[1]["cik"] == "0000217448"
+
+    def test_a_manager_without_a_cik_is_kept_by_name(self):
+        assert self._run([("13F-NT", "a-1", "2026-05-08")])[2]["cik"] is None
+
+    def test_uses_the_newest_13f(self):
+        forms = [("13F-HR", "old", "2025-01-01"), ("13F-NT", "new", "2026-05-08")]
+        subs = _subs(forms)
+        seen = {}
+
+        def _doc(url):
+            seen["url"] = url
+            return NT_XML
+
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc):
+            fetch_affiliated_managers("0000102909")
+        assert "new" in seen["url"].replace("-", "")
+
+    def test_a_non_13f_filer_costs_no_document_fetch(self):
+        subs = _subs([("10-K", "a-1", "2026-01-01")])
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text") as t:
+            assert fetch_affiliated_managers("0000320193") == []
+        assert not t.called
+
+    def test_provenance_points_at_the_filing(self):
+        rows = self._run([("13F-NT", "a-1", "2026-05-08")])
+        assert rows[0]["source_date"] == "2026-05-08"
+        assert rows[0]["source_url"], "no link back to the filing"
+
+    def test_an_unparseable_cover_page_yields_nothing(self):
+        assert self._run([("13F-NT", "a-1", "2026-05-08")], xml="<not-xml") == []
