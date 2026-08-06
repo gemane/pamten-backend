@@ -45,6 +45,7 @@ How to verify:
 
 import re
 import time
+import threading
 import html as html_lib
 import logging
 import xml.etree.ElementTree as ET
@@ -61,6 +62,16 @@ HEADERS = {
 }
 REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s
 MAX_FORM4_FETCH  = 25     # max unique insiders to fetch Form 3/4 for
+
+HOLDINGS_DEFAULT_LIMIT = 100    # subjects for an explicit holdings run (CLI)
+# Default for a normal company scrape. Cheap where it matters: a filer whose
+# recent filings are live stakes needs one fetch each, so 25 subjects is ~25
+# requests. The look-back cap only bites on a filer that has exited positions.
+HOLDINGS_SCRAPE_LIMIT  = 25
+HOLDINGS_MAX_LOOKBACK  = 3      # earlier filings to check when the latest is an exit
+
+_HOLDING_FORMS = ("SCHEDULE 13G", "SCHEDULE 13D", "SC 13G", "SC 13D")
+
 MAX_PERCENT_FETCH = 5     # max investors to fetch actual stake % for
 
 SEARCH_URL      = "https://efts.sec.gov/LATEST/search-index"
@@ -76,15 +87,50 @@ _tickers_cache: dict | None = None
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+# One pooled client for every SEC request, rather than httpx.get() per call.
+# Establishing a connection to sec.gov costs ~60 s on this host; reusing it drops
+# each subsequent request to ~10 ms. Every SEC scrape paid that per request —
+# measured at 315 s to read 5 filings, ~0.01 s each once the connection is shared.
+# Same pattern as scraper/geocode.py and db/arcadedb.py.
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def _get_client() -> httpx.Client:
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = httpx.Client(
+                    headers=HEADERS,
+                    # Short connect timeout on purpose: DNS returns IPv6 first and
+                    # a host whose IPv6 route to sec.gov is blackholed waits out this
+                    # timeout per address before falling back to IPv4. httpx has no
+                    # Happy Eyeballs, so this bounds the stall (measured on the dev
+                    # box: 30 s x 2 IPv6 addresses = 60 s per new connection).
+                    timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=10.0),
+                )
+    return _client
+
+
+def close_client() -> None:
+    """Release the pooled connection (called on app shutdown)."""
+    global _client
+    with _client_lock:
+        if _client is not None:
+            _client.close()
+            _client = None
+
+
 def _get(url: str, params: dict | None = None) -> dict:
-    r = httpx.get(url, params=params, headers=HEADERS, timeout=20)
+    r = _get_client().get(url, params=params)
     r.raise_for_status()
     time.sleep(REQUEST_DELAY)
     return r.json()
 
 
 def _get_text(url: str, params: dict | None = None) -> str:
-    r = httpx.get(url, params=params, headers=HEADERS, timeout=30)
+    r = _get_client().get(url, params=params)
     r.raise_for_status()
     time.sleep(REQUEST_DELAY)
     return r.text
@@ -182,7 +228,7 @@ def _get_tickers() -> dict:
     global _tickers_cache
     if _tickers_cache is None:
         log.info("SEC EDGAR: loading company_tickers.json")
-        r = httpx.get(TICKERS_URL, headers=HEADERS, timeout=30)
+        r = _get_client().get(TICKERS_URL)
         r.raise_for_status()
         time.sleep(REQUEST_DELAY)
         _tickers_cache = r.json()
@@ -278,7 +324,7 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
     """
     for form_type in ("10-K", "20-F"):
         try:
-            resp = httpx.get(BROWSE_URL, params={
+            resp = _get_client().get(BROWSE_URL, params={
                 "company":     name,
                 "action":      "getcompany",
                 "type":        form_type,
@@ -778,10 +824,10 @@ def fetch_executives(cik: str) -> list:
 def _lookup_person_cik(name: str) -> str | None:
     """Resolve an individual's name to their EDGAR filer CIK (they file Form 4s)."""
     try:
-        resp = httpx.get(BROWSE_URL, params={
+        resp = _get_client().get(BROWSE_URL, params={
             "company": name, "action": "getcompany", "type": "4",
             "dateb": "", "owner": "include", "count": "5", "output": "atom",
-        }, headers=HEADERS, timeout=15)
+        })
         resp.raise_for_status()
         time.sleep(REQUEST_DELAY)
     except httpx.HTTPError:
@@ -909,7 +955,7 @@ def fetch_company_lei(cik: str) -> str | None:
     return (sub.get("lei") or "").strip() or None
 
 
-def scrape_company(company_name: str) -> dict | None:
+def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMIT) -> dict | None:
     """
     Full SEC EDGAR scrape for one company.
     Returns structured dict with ownership_filings and executives, or None
@@ -924,6 +970,10 @@ def scrape_company(company_name: str) -> dict | None:
     lei          = fetch_company_lei(cik) if cik else None
     ownership    = fetch_ownership_filings(company_name, company_cik=cik)
     executives   = fetch_executives(cik) if cik else []
+    # What this company owns of others. Costs one submissions read for a company
+    # that files no 13D/13G — almost all of them — and only fetches documents for
+    # an actual institutional filer.
+    holdings     = fetch_filer_holdings(cik, limit=holdings_limit) if (cik and holdings_limit) else []
 
     # Turn each insider's Form-4 share holding into a stake %, when we can read
     # the issuer's shares outstanding.
@@ -940,6 +990,163 @@ def scrape_company(company_name: str) -> dict | None:
         "lei":                lei,
         "former_names":       former_names,
         "ownership_filings":  ownership,
+        "holdings":           holdings,
         "executives":         executives,
         "shares_outstanding": shares_out,
     }
+
+
+# ── Filer-side holdings: what THIS company owns of others ─────────────────────
+#
+# Everything above reads filings where the company is the SUBJECT — who owns it
+# (SC 13D/13G) and its insiders (Form 3/4). An asset manager has none of that:
+# Vanguard is privately held and isn't a listed issuer, so its node stayed empty
+# while its ~3,400 filings — 13D/13G disclosures it makes ABOUT other companies —
+# went unread. This reads the filer side, which for an institutional holder is
+# the whole point of it being in the graph at all.
+#
+# Modern 13D/13G filings are structured XML (`primary_doc.xml`, schema X0202)
+# carrying the subject's CIK, its name and the percentage as fields, so there is
+# no HTML to scrape and one fetch per filing. Older filings predate the schema
+# and are skipped rather than guessed at.
+
+
+def _xml_field(root, tag: str) -> str | None:
+    """First value of `tag` at any depth, ignoring the XML namespace."""
+    el = root.find(f".//{{*}}{tag}")
+    return el.text.strip() if el is not None and el.text else None
+
+
+def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
+    """Subject company + stake from one 13D/13G, or None if it isn't parseable.
+
+    Returns `percent` as a float — **0.0 is meaningful**, not missing: an
+    amendment reporting 0% is the filer declaring it has dropped below the 5%
+    threshold, i.e. the end of a holding rather than the absence of one.
+    """
+    nodash = accession.replace("-", "")
+    url = f"{ARCHIVES_URL}/{_cik_int(filer_cik)}/{nodash}/primary_doc.xml"
+    try:
+        raw = _get_text(url)
+    except Exception as exc:  # noqa: BLE001 - pre-XML filings 404 here; skip them
+        log.debug("SEC EDGAR: no XML for %s (%s)", accession, exc)
+        return None
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        log.debug("SEC EDGAR: unparseable XML for %s: %s", accession, exc)
+        return None
+
+    subject_cik = _xml_field(root, "issuerCik")
+    subject_name = _xml_field(root, "issuerName")
+    if not subject_cik or not subject_name:
+        return None
+
+    raw_pct = _xml_field(root, "classPercent")
+    try:
+        percent = float(raw_pct) if raw_pct is not None else None
+    except ValueError:
+        percent = None
+
+    return {
+        "subject_cik":  _cik_int(subject_cik).zfill(10),
+        "subject_name": subject_name,
+        "percent":      percent,
+        "accession":    accession,
+    }
+
+
+def fetch_filer_name(cik: str) -> str | None:
+    """The filer's own name from its EDGAR submissions index, or None."""
+    try:
+        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SEC EDGAR: name fetch failed for CIK=%s: %s", cik, exc)
+        return None
+    return (subs.get("name") or "").strip() or None
+
+
+def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
+                         max_filings: int | None = None) -> list[dict]:
+    """Companies this filer discloses a >5% stake in, newest disclosure per company.
+
+    One row per subject company:
+      stake_percent — the last disclosed non-zero percentage
+      until         — set when a *newer* amendment reported 0%, i.e. the filer has
+                      since dropped below the threshold; the holding is history,
+                      not a current position
+
+    That distinction is load-bearing. Vanguard moved its 13G reporting from
+    VANGUARD GROUP INC (CIK 0000102909) to VANGUARD CAPITAL MANAGEMENT LLC
+    (0002100119) in spring 2026, closing ~1,800 positions with 0% amendments on
+    the way out. Keeping only the newest filing per subject would report that the
+    old entity owns nothing — true, but useless; recording the last real stake
+    with its end date preserves the history the filings actually describe.
+
+    ``max_filings`` bounds the work. The subject company is only knowable by
+    fetching the filing — the submissions index doesn't carry it — so filings
+    cannot be de-duplicated by subject in advance, and a filer with thousands of
+    amendments would otherwise be thousands of requests. Defaults to a multiple of
+    ``limit``; raise both to walk further back (the ~1,800 zero amendments at the
+    front of the old Vanguard CIK need roughly that many fetches before the last
+    real stakes appear).
+    """
+    if max_filings is None:
+        max_filings = limit * 5 + 50
+
+    try:
+        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
+    except Exception as exc:  # noqa: BLE001 - a filer with no submissions file isn't an error
+        log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
+        return []
+
+    recent = subs.get("filings", {}).get("recent", {})
+    filings = sorted(
+        (
+            {"form": f, "accession": a, "date": d}
+            for f, a, d in zip(recent.get("form", []),
+                               recent.get("accessionNumber", []),
+                               recent.get("filingDate", []))
+            if any(f.startswith(p) for p in _HOLDING_FORMS)
+        ),
+        key=lambda r: r["date"], reverse=True,
+    )
+    if not filings:
+        return []       # not an institutional filer — the common case, one JSON read
+
+    holdings: list[dict] = []
+    closed_since: dict[str, str] = {}   # subject -> date of the newest 0% amendment
+    done: set[str] = set()
+    fetched = 0
+
+    # Newest first, so the first non-zero filing seen for a subject is its most
+    # recent real stake, and any 0% already seen for it is the exit that followed.
+    for filing in filings:
+        if len(holdings) >= limit or fetched >= max_filings:
+            break
+        parsed = _parse_holding_filing(cik, filing["accession"])
+        fetched += 1
+        if not parsed:
+            continue
+        sid = parsed["subject_cik"]
+        if sid in done:
+            continue
+
+        if not parsed["percent"]:
+            closed_since.setdefault(sid, filing["date"])   # newest zero wins
+            continue
+
+        done.add(sid)
+        holdings.append({
+            "subject_cik":   sid,
+            "subject_name":  parsed["subject_name"],
+            "stake_percent": parsed["percent"],
+            "file_date":     filing["date"],
+            "form_type":     filing["form"],
+            "until":         closed_since.get(sid),
+            "source_url":    _filing_index_url(cik, filing["accession"]),
+        })
+
+    log.info("SEC EDGAR: %d holdings for CIK=%s (%d of %d filings fetched)",
+             len(holdings), cik, fetched, len(filings))
+    return holdings

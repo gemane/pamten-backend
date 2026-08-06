@@ -12,6 +12,7 @@ Usage:
   python3 manage.py ch-company-data [options] # Companies House register (UK company names)
   python3 manage.py seed [options]
   python3 manage.py set-password EMAIL         # prompt for a new password for one account
+  python3 manage.py sec-holdings CIK [--limit N] [--succeeds CIK]  # what a filer owns
 
 Run inside a tmux session to keep running after SSH disconnect:
   tmux new -s import
@@ -227,6 +228,29 @@ def cmd_set_password(args):
     run_sql("UPDATE User SET password_hash = :h WHERE email = :e",
             {"h": hash_password(password), "e": email})
     print(f"Password updated for {email}.")
+
+
+def cmd_sec_holdings(args):
+    """Ingest the >5% stakes one SEC filer discloses in other companies.
+
+    The mirror of a normal SEC scrape, which reads filings ABOUT a company. An
+    asset manager has none of those — it is privately held and not a listed
+    issuer — so its node stays empty until its own 13D/13G filings are read.
+
+    Keyed on CIK: Vanguard's live book is filed by VANGUARD CAPITAL MANAGEMENT
+    LLC (0002100119), not the VANGUARD GROUP INC (0000102909) you would search
+    for. Pass --succeeds to record that handover as a SUCCEEDED_BY edge.
+    """
+    from app.scraper.runner import run_sec_holdings
+    result = run_sec_holdings(args.cik, limit=args.limit, succeeds_cik=args.succeeds)
+    if result["status"] != "ok":
+        print(f"No EDGAR filer found for CIK {args.cik}.")
+        raise SystemExit(1)
+    print(f"{result['filer']}: {result['total']} holdings written "
+          f"({result['ended']} already ended).")
+    if result.get("succession"):
+        print(f"  succession: {result['succession']['predecessor']} → "
+              f"{result['succession']['successor']}")
 
 
 def cmd_seed(args):
@@ -593,6 +617,15 @@ def _build_parser():
     p_vu = subparsers.add_parser('verify-users',
                                  help='Mark existing user accounts email-verified (login now requires it)')
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
+    # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
+    # filings), as opposed to a normal scrape which reads filings about a company.
+    p_sh = subparsers.add_parser('sec-holdings',
+                                 help="Ingest the >5%% stakes a SEC filer discloses in others")
+    p_sh.add_argument('cik', help='CIK of the filer (e.g. 0002100119 for Vanguard Capital Management)')
+    p_sh.add_argument('--limit', type=int, default=100, help='Max subject companies (default 100)')
+    p_sh.add_argument('--succeeds', help='CIK this filer took over from → SUCCEEDED_BY edge')
+    p_sh.set_defaults(func=cmd_sec_holdings)
+
     p_vu.set_defaults(func=cmd_verify_users)
 
     # set-password: operator reset when neither in-app route is usable (the email
