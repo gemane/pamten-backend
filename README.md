@@ -221,6 +221,10 @@ A normal company scrape does this too, capped at `HOLDINGS_SCRAPE_LIMIT` subject
 
 **A 0% amendment is an exit, not a gap.** When a filer drops below the 5% threshold it amends to 0%, so the last real percentage is written with `until` set to the amendment date — history rather than a current position. This is not hypothetical: Vanguard moved its reporting from `VANGUARD GROUP INC` (CIK 0000102909) to `VANGUARD CAPITAL MANAGEMENT LLC` (0002100119) in spring 2026, closing ~1,800 positions with 0% amendments on the way out. Keeping only the newest filing per company would report that the old entity owns nothing — true, and useless. `--succeeds` records that handover as a `SUCCEEDED_BY` edge; it is given explicitly because inferring a corporate relationship from filing patterns would be a guess written into the graph as fact.
 
+**Group structure from the 13F cover page.** A fund group files one 13F per manager, and the cover page names the group's *other* managers with their CIKs — ten for Vanguard, including the entity that took over its 13G reporting. That is an authoritative statement of group membership from the filer itself, and it costs one document fetch, so a SEC scrape records it as `(:Entity)-[:RELATED_TO {relation:'affiliate'}]->(:Entity)` with a link back to the filing.
+
+Deliberately **not** an `OWNS` edge: "reports 13F holdings alongside" is the whole of what the form establishes, and writing it as ownership would invent a fact. It is also not `SUCCEEDED_BY` — a filer that hands its reporting to an affiliate has not been replaced, and Vanguard Group Inc went on filing after the change.
+
 Note that the CIK a user searches for may be the retired one — which is exactly why holdings are keyed on CIK rather than name.
 
 Company lookup uses a three-vector strategy to avoid false matches:

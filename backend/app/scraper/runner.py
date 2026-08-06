@@ -1068,6 +1068,51 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
 # ── SEC EDGAR public entry point ──────────────────────────────────────────────
 
 @_with_autodedup
+def _upsert_affiliate(filer_id: str, affiliate_id: str, source_id: str,
+                      source_url: str | None = None, source_date: str | None = None):
+    """Record that two entities belong to the same fund group.
+
+    RELATED_TO carries a free-text `relation`, which is why it fits: the edge says
+    exactly what the filing says and nothing more. Deliberately NOT an OWNS edge —
+    a 13F cover page naming another manager establishes group membership, not
+    ownership or control, and writing it as ownership would invent a fact.
+
+    MERGE on (relation) so re-scraping refreshes provenance instead of stacking
+    duplicate edges.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with db.get_session() as session:
+        session.run(
+            """
+            MATCH (a:Entity {id: $aid}), (b:Entity {id: $bid})
+            MERGE (a)-[r:RELATED_TO {relation: 'affiliate'}]->(b)
+            SET r.source_id       = COALESCE(r.source_id, $sid),
+                r.source_url      = COALESCE($surl, r.source_url),
+                r.source_date     = COALESCE($sdate, r.source_date),
+                r.last_scraped_at = $now
+            """,
+            aid=filer_id, bid=affiliate_id, sid=source_id,
+            surl=source_url, sdate=source_date, now=now,
+        )
+
+
+def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> int:
+    """Create the entity nodes for a filer's affiliated managers and link them."""
+    written = 0
+    for aff in affiliates or []:
+        name = (aff.get("name") or "").strip()
+        if not name:
+            continue
+        affiliate_id = _upsert_entity_by_name(name=name, entity_type="company",
+                                              cik=aff.get("cik"), source_id=source_id)
+        if affiliate_id == filer_id:
+            continue                      # a filer listing itself
+        _upsert_affiliate(filer_id, affiliate_id, source_id,
+                          source_url=aff.get("source_url"), source_date=aff.get("source_date"))
+        written += 1
+    return written
+
+
 def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None) -> dict:
     """Ingest what one SEC filer owns — the 13D/13G stakes it discloses in others.
 
@@ -1115,6 +1160,11 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
         if h.get("until"):
             closed += 1
 
+    # Group structure from the 13F cover page — one extra request, and a far
+    # better signal than name matching.
+    from app.scraper.sec_edgar import fetch_affiliated_managers
+    affiliates = _write_affiliates(filer_id, fetch_affiliated_managers(cik), source_id)
+
     succession = None
     if succeeds_cik:
         pred_name = fetch_filer_name(succeeds_cik)
@@ -1129,7 +1179,8 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
              filer_name, written, closed)
     return {
         "status": "ok", "cik": cik, "filer": filer_name,
-        "total": written, "ended": closed, "succession": succession,
+        "total": written, "ended": closed, "affiliates": affiliates,
+        "succession": succession,
         "scraped": [{"type": "entity", "name": h["subject_name"], "role": "holding"}
                     for h in holdings],
     }
