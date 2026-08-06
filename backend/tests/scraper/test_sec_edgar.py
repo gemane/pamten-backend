@@ -305,7 +305,8 @@ class TestSearchCompany:
         mock_response.raise_for_status = MagicMock()
 
         with patch("app.scraper.sec_edgar._tickers_cache", empty_tickers), \
-             patch("httpx.get", return_value=mock_response):
+             patch("app.scraper.sec_edgar._get_client",
+                   return_value=MagicMock(get=MagicMock(return_value=mock_response))):
             result = search_company("PrivateCo")
 
         assert result is not None
@@ -318,7 +319,8 @@ class TestSearchCompany:
         mock_response.raise_for_status = MagicMock()
 
         with patch("app.scraper.sec_edgar._tickers_cache", empty_tickers), \
-             patch("httpx.get", return_value=mock_response):
+             patch("app.scraper.sec_edgar._get_client",
+                   return_value=MagicMock(get=MagicMock(return_value=mock_response))):
             result = search_company("NonExistentXYZ123")
 
         assert result is None

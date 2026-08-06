@@ -6,6 +6,7 @@ from app.config import settings
 from app.db.arcadedb import close_client
 from app.db.schema import ensure_indexes
 from app.scraper.geocode import close_client as close_geocode_client
+from app.scraper.sec_edgar import close_client as close_sec_client
 from app.routers import entities, persons, locations, relationships, search, sources, federation, flags, stats
 from app.scraper import router as scraper_router
 from app.scraper import sources as scraper_sources
@@ -30,6 +31,7 @@ async def lifespan(app: FastAPI):
     # Close pooled HTTP clients on shutdown.
     close_client()
     close_geocode_client()
+    close_sec_client()
 
 
 app = FastAPI(

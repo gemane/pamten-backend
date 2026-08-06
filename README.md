@@ -210,6 +210,19 @@ Imports corporate ownership data via SPARQL. For a company it fetches subsidiari
 ### SEC EDGAR
 Imports investor data from SC 13D/13G ownership filings and executive data from Form 3/4 XML. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`.
 
+**Two directions.** Those filings name the company as the *subject* — who owns it, who its insiders are. An institutional investor has none: Vanguard is privately held and isn't a listed issuer, so scraping it by name finds nothing however often you try. What it has is ~3,400 filings it makes **about others**, so the scraper also reads the filer side and writes `OWNS` edges pointing *out* of the company:
+
+```bash
+python manage.py sec-holdings 0002100119 --limit 200
+python manage.py sec-holdings 0002100119 --succeeds 0000102909   # record a handover
+```
+
+A normal company scrape does this too, capped at `HOLDINGS_SCRAPE_LIMIT` subjects; a company that files no 13D/13G costs one extra JSON read and nothing more. Modern filings are structured XML (`primary_doc.xml`), so the subject's CIK, its name and the percentage are read as fields rather than scraped out of HTML; pre-XML filings are skipped rather than guessed at.
+
+**A 0% amendment is an exit, not a gap.** When a filer drops below the 5% threshold it amends to 0%, so the last real percentage is written with `until` set to the amendment date — history rather than a current position. This is not hypothetical: Vanguard moved its reporting from `VANGUARD GROUP INC` (CIK 0000102909) to `VANGUARD CAPITAL MANAGEMENT LLC` (0002100119) in spring 2026, closing ~1,800 positions with 0% amendments on the way out. Keeping only the newest filing per company would report that the old entity owns nothing — true, and useless. `--succeeds` records that handover as a `SUCCEEDED_BY` edge; it is given explicitly because inferring a corporate relationship from filing patterns would be a guess written into the graph as fact.
+
+Note that the CIK a user searches for may be the retired one — which is exactly why holdings are keyed on CIK rather than name.
+
 Company lookup uses a three-vector strategy to avoid false matches:
 
 1. **`company_tickers.json`** — instant lookup for all US-listed companies
@@ -436,6 +449,7 @@ python3 manage.py init-schema
 | `rebuild-search` | REBUILD the FULL_TEXT `search_text` indexes so `/search` (`CONTAINSTEXT`) finds every row — needed after a non-bulk / `--only` import (the FULL_TEXT index isn't maintained incrementally). `--hard` first DROPs + re-CREATEs the indexes: use it to recover a **stuck/corrupted** index that a plain REBUILD reports "ok" on but never repopulates (e.g. after a bulk-load's REBUILD was cut off mid-flight by the nginx 60s proxy timeout). Run `--hard` against `--db-url http://localhost:2480` so it isn't cut off by that same proxy again. |
 | `verify-users` | Mark existing accounts email-verified (login now requires it). Run once after enabling verification so pre-existing users aren't locked out; `--email <addr>` targets one account. |
 | `set-password` | Set one account's password directly: `python manage.py set-password someone@example.com`. Prompts twice with hidden input (`--password` exists for scripting but puts the secret in shell history and `ps`). Applies the same policy as the API. The operator escape hatch for when neither in-app route works — the reset flow needs email, `/auth/change-password` needs the current password, and `ADMIN_PASSWORD` only ever seeds a *missing* account. |
+| `sec-holdings` | Ingest the >5% stakes one SEC filer discloses in others: `python manage.py sec-holdings 0002100119 [--limit N] [--succeeds OLD_CIK]`. The mirror of a normal scrape, which reads filings *about* a company — an asset manager has none of those. Keyed on CIK because the live filer often isn't the one you'd search by name. `--succeeds` records a handover between filer entities as a `SUCCEEDED_BY` edge. |
 
 ---
 

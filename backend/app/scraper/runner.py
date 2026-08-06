@@ -942,7 +942,8 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
 def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
                      stake_percent: float | None, source_url: str | None = None,
-                     owner_label: str = "Entity", credibility_score: int = 98):
+                     owner_label: str = "Entity", credibility_score: int = 98,
+                     until: str | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
@@ -953,14 +954,24 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     Endpoints are labelled (owner is Entity or Person, owned always Entity) so
     the id lookups use the index — a label-less two-node match full-scans every
     node (~14s on 3M) per edge.
+
+    ``until`` records a holding that has already ended — a 13D/13G filer that
+    later amended to 0% has dropped below the 5% threshold, so the stake is
+    history rather than a current position. An active edge for the same pair is
+    closed rather than duplicated; with no active edge the closed one is written
+    directly, so re-reading old filings still builds the timeline.
     """
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = datetime.now(timezone.utc).isoformat()
+    # Closing an edge has to match one that is ALREADY closed too, or re-reading
+    # the same filings creates a second historical edge every run — the active-only
+    # match never finds the one written last time.
+    active_only = "AND r.until IS NULL" if until is None else ""
     with db.get_session() as session:
         existing = session.run(
             f"""
             MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
-            WHERE r.source_id = $sid AND r.until IS NULL
+            WHERE r.source_id = $sid {active_only}
             RETURN r LIMIT 1
             """,
             oid=owner_id, nid=owned_id, sid=source_id,
@@ -968,17 +979,20 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         if existing:
             # Refresh last_scraped_at and backfill the specific record URL/date
             # onto edges created before provenance (COALESCE keeps existing
-            # values when this scrape didn't yield a URL).
+            # values when this scrape didn't yield a URL). When `until` is given
+            # the same statement closes the edge, so a holding that has since
+            # been exited stops showing as current.
             session.run(
                 f"""
                 MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
-                WHERE r.source_id = $sid AND r.until IS NULL
+                WHERE r.source_id = $sid {active_only}
                 SET r.last_scraped_at = $now,
+                    r.until       = $until,
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
-                surl=source_url, sdate=file_date,
+                surl=source_url, sdate=file_date, until=until,
             )
             return
         session.run(
@@ -988,7 +1002,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 stake_percent:    $stake,
                 ownership_type:   $otype,
                 since:            $since,
-                until:            null,
+                until:            $until,
                 source_id:        $sid,
                 credibility_score: $score,
                 source_url:       $surl,
@@ -999,7 +1013,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             oid=owner_id, nid=owned_id,
             stake=stake_percent, otype=ownership_type,
             since=file_date, sid=source_id, score=credibility_score,
-            surl=source_url, sdate=file_date, now=now,
+            surl=source_url, sdate=file_date, now=now, until=until,
         )
 
 
@@ -1054,6 +1068,73 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
 # ── SEC EDGAR public entry point ──────────────────────────────────────────────
 
 @_with_autodedup
+def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None) -> dict:
+    """Ingest what one SEC filer owns — the 13D/13G stakes it discloses in others.
+
+    Keyed on CIK rather than a name because that is what identifies a filer, and
+    because the company this matters for is often not findable by name: Vanguard's
+    live book sits under VANGUARD CAPITAL MANAGEMENT LLC (0002100119), not the
+    VANGUARD GROUP INC (0000102909) most people would search for.
+
+    ``succeeds_cik`` records that this filer took over from another — a
+    SUCCEEDED_BY edge, predecessor → successor. Given explicitly rather than
+    inferred: filing patterns can suggest a handover, but asserting a corporate
+    relationship from them would be a guess written into the graph as fact.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise PermissionError("SEC EDGAR scraper is disabled. "
+                              "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
+
+    from app.scraper.sec_edgar import fetch_filer_holdings, fetch_filer_name
+
+    filer_name = fetch_filer_name(cik)
+    if not filer_name:
+        return {"status": "no_results", "cik": cik, "total": 0, "scraped": []}
+
+    source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
+    filer_id = _upsert_entity_by_name(name=filer_name, entity_type="company",
+                                      cik=cik, source_id=source_id)
+
+    holdings = fetch_filer_holdings(cik, limit=limit)
+    written = closed = 0
+    for h in holdings:
+        subject_name = (h.get("subject_name") or "").strip()
+        if not subject_name:
+            continue
+        subject_id = _upsert_entity_by_name(name=subject_name, entity_type="company",
+                                            cik=h.get("subject_cik"), source_id=source_id)
+        _upsert_owns_sec(
+            owner_id=filer_id, owned_id=subject_id, source_id=source_id,
+            ownership_type="minority", file_date=h.get("file_date"),
+            stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
+            until=h.get("until"),
+        )
+        written += 1
+        if h.get("until"):
+            closed += 1
+
+    succession = None
+    if succeeds_cik:
+        pred_name = fetch_filer_name(succeeds_cik)
+        if pred_name:
+            pred_id = _upsert_entity_by_name(name=pred_name, entity_type="company",
+                                             cik=succeeds_cik, source_id=source_id)
+            _upsert_succession(pred_id, filer_id, source_id,
+                               credibility_score=SEC_EDGAR_CREDIBILITY)
+            succession = {"predecessor": pred_name, "successor": filer_name}
+
+    log.info("SEC EDGAR: %s — %d holdings written (%d already ended)",
+             filer_name, written, closed)
+    return {
+        "status": "ok", "cik": cik, "filer": filer_name,
+        "total": written, "ended": closed, "succession": succession,
+        "scraped": [{"type": "entity", "name": h["subject_name"], "role": "holding"}
+                    for h in holdings],
+    }
+
+
 def run_scrape_sec_edgar(company_name: str) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.
@@ -1140,6 +1221,40 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             "SEC EDGAR: wrote OWNS %r → %r (%s)",
             investor_name, data["name"], filing.get("form_type"),
         )
+
+    # Holdings → OWNS edges pointing OUT of this company.
+    #
+    # The mirror of the ownership_filings loop above. That one reads 13D/13G
+    # filings naming this company as the subject (who owns it); this reads the
+    # ones it FILES about others (what it owns). An asset manager has no filings
+    # about itself — Vanguard is privately held and isn't a listed issuer — so
+    # without this its node stays empty no matter how often it is scraped.
+    for holding in data.get("holdings", []):
+        subject_name = (holding.get("subject_name") or "").strip()
+        if not subject_name:
+            continue
+        subject_id = _upsert_entity_by_name(
+            name=subject_name,
+            entity_type="company",
+            cik=holding.get("subject_cik"),
+            source_id=source_id,
+        )
+        scraped.append({"type": "entity", "name": subject_name, "role": "holding"})
+        _upsert_owns_sec(
+            owner_id=target_id,
+            owned_id=subject_id,
+            source_id=source_id,
+            ownership_type=holding.get("ownership_type", "minority"),
+            file_date=holding.get("file_date"),
+            stake_percent=holding.get("stake_percent"),
+            source_url=holding.get("source_url"),
+            # Set when a later amendment reported 0% — the filer has dropped
+            # below the 5% threshold, so this is history, not a live position.
+            until=holding.get("until"),
+        )
+        log.info("SEC EDGAR: wrote OWNS %r → %r (%s%%%s)",
+                 data["name"], subject_name, holding.get("stake_percent"),
+                 f", ended {holding['until']}" if holding.get("until") else "")
 
     # Executives → Person nodes + HAS_ROLE edges
     for exec_rec in data.get("executives", []):

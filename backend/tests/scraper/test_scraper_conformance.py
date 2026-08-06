@@ -24,28 +24,49 @@ def _fake_response(json_val=None, text=""):
     return r
 
 
-def _call_wikidata():
+def _ua_from_per_request_get(invoke, json_val=None) -> str:
+    """User-Agent for a scraper that passes headers on each httpx.get call."""
+    with patch("httpx.get", return_value=_fake_response(json_val)) as g, patch("time.sleep"):
+        invoke()
+    assert g.called, "expected an HTTP request"
+    return ((g.call_args.kwargs.get("headers") or {}).get("User-Agent", ""))
+
+
+def _call_wikidata() -> str:
     from app.scraper import wikidata
-    with patch("httpx.get", return_value=_fake_response({"search": []})) as g, patch("time.sleep"):
-        wikidata.search_entity("acme")
-    return g
+    return _ua_from_per_request_get(lambda: wikidata.search_entity("acme"), {"search": []})
 
 
-def _call_sec_edgar():
+def _call_sec_edgar() -> str:
+    """SEC sets the User-Agent once on a pooled client, not per request.
+
+    The requirement is unchanged — SEC rejects anonymous traffic — but the header
+    is now applied at client construction (see sec_edgar._get_client), so capture
+    it there. Reading only per-request kwargs would report no User-Agent for a
+    scraper that is in fact sending one.
+    """
     from app.scraper import sec_edgar
-    with patch("httpx.get", return_value=_fake_response({})) as g, patch("time.sleep"):
-        sec_edgar._get("https://data.sec.gov/x")
-    return g
+    captured: dict = {}
+
+    def _fake_client(*_args, **kwargs):
+        captured.update(kwargs.get("headers") or {})
+        return MagicMock(get=MagicMock(return_value=_fake_response({})))
+
+    sec_edgar.close_client()                       # force a fresh build under the patch
+    try:
+        with patch("httpx.Client", _fake_client), patch("time.sleep"):
+            sec_edgar._get("https://data.sec.gov/x")
+    finally:
+        sec_edgar.close_client()                   # don't leak the fake into other tests
+    return captured.get("User-Agent", "")
 
 
-def _call_open_corporates():
+def _call_open_corporates() -> str:
     from app.scraper import open_corporates
-    with patch("httpx.get", return_value=_fake_response({})) as g, patch("time.sleep"):
-        open_corporates._get("/companies/search")
-    return g
+    return _ua_from_per_request_get(lambda: open_corporates._get("/companies/search"))
 
 
-# name → a callable that triggers exactly one outbound GET and returns the mock
+# name → a callable returning the User-Agent that scraper actually sends
 API_SCRAPERS = {
     "wikidata":         _call_wikidata,
     "sec_edgar":        _call_sec_edgar,
@@ -56,10 +77,7 @@ API_SCRAPERS = {
 @pytest.mark.parametrize("name", list(API_SCRAPERS))
 class TestScraperSendsIdentifyingUserAgent:
     def _sent_user_agent(self, name: str) -> str:
-        mock_get = API_SCRAPERS[name]()
-        assert mock_get.called, f"{name}: expected an HTTP request"
-        headers = mock_get.call_args.kwargs.get("headers") or {}
-        return headers.get("User-Agent", "")
+        return API_SCRAPERS[name]()
 
     def test_user_agent_is_sent(self, name):
         assert self._sent_user_agent(name), f"{name}: request sent with no User-Agent header"
