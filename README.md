@@ -143,17 +143,27 @@ version is served at `/docs` (Swagger) and `/redoc` on a running instance.
 
 ## Authentication
 
-JWTs are signed with `SECRET_KEY` (HS256, 12-hour expiry — `ACCESS_TOKEN_EXPIRE_MINUTES`). There is no refresh token: when it expires the user logs in again, and there is no server-side revocation, so a token stays valid for its full lifetime even after a password change. It must be **at least 32 characters** — the app refuses to start with a shorter one, in any mode, since short HS256 keys are brute-forceable. Set a strong random key in production:
+Access tokens are JWTs signed with `SECRET_KEY` (HS256, **15-minute** expiry — `ACCESS_TOKEN_EXPIRE_MINUTES`). Nothing is consulted when one is presented, so the TTL *is* the blast radius of a stolen token — hence a short one. `SECRET_KEY` must be **at least 32 characters**; the app refuses to start with a shorter one, in any mode, since short HS256 keys are brute-forceable. Set a strong random key in production:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
+**Sessions (refresh tokens).** A 15-minute access token would mean logging in four times an hour, so sessions are carried by a separate refresh token — the opposite shape to a JWT: opaque, stored server-side (hashed, in `RefreshToken`), and therefore **revocable**. It is delivered as an `httpOnly` cookie, so JavaScript cannot read it and an XSS bug cannot steal the long-lived credential.
+
+`POST /auth/refresh` trades the cookie for a new access token and **rotates** the cookie; `POST /auth/logout` revokes it. Both are unauthenticated by design — they are called exactly when the access token has expired. Refreshing re-reads the account, so a role change or a deletion takes effect within one access-token lifetime rather than lingering for the life of the session.
+
+Rotation makes theft detectable. A stolen token works only until the real client refreshes; whoever refreshes second presents an already-consumed token, which cannot happen normally. That burns the whole **family** (the chain of successors from one login), logging out thief and victim alike — other sessions, being separate families, are untouched. Session lifetime is **absolute** (`REFRESH_TOKEN_EXPIRE_DAYS`, default 30): rotation renews the secret, not the clock.
+
+Sessions end on password change (other sessions only — the caller stays signed in), password reset (all), and account deletion (rows erased, not just revoked). Already-issued access tokens are the exception in every case: they are checked against nothing, so another session stays usable until its token expires. Bounding that window is what the short TTL is for.
+
+> **Same-site requirement.** The cookie is `SameSite=Lax`, so the frontend and API must share one registrable domain — `dev.owlgraph.org` + `api-dev.owlgraph.org`. It is *not* sent from a differently-registered origin, so a frontend dev server on `localhost` talking to a deployed API gets no session refresh and falls back to re-login every 15 minutes; run the backend locally (with `REFRESH_COOKIE_SECURE=false` for plain http) to avoid that. The old `*.onrender.com` pair could never have worked: `onrender.com` is on the Public Suffix List, making those two hosts separate sites.
+
 **The admin account.** Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` and that account is provisioned as admin on every startup (created if it doesn't exist, from the hashed `ADMIN_PASSWORD`; never overwritten if it already exists). With `ADMIN_EMAIL` set, self-registration only ever creates `viewer`s. This is the recommended way to get an admin on a fresh database — it avoids the race where, on an empty DB, whoever hits the public `/auth/register` first would become admin. If `ADMIN_EMAIL` is **not** set, the legacy fallback applies: the first account to register becomes admin.
 
 **Email verification & password reset.** Registration creates the account with `email_verified=false`, emails a verification link, and — with `REQUIRE_EMAIL_VERIFICATION=true` (default) — **blocks login until the email is verified** (`403 email_not_verified`, which the UI turns into a *resend* prompt). `POST /auth/forgot-password` emails a reset link and always returns `200` (no account-existence leak); `POST /auth/reset-password` sets the new password. The verify/reset links are **self-contained signed JWTs** (purpose-scoped, TTL-bounded) — no server-side token table; a reset link embeds a fingerprint of the current password hash so it **self-invalidates** once used. The env/bootstrap admin and the legacy first-user admin are stamped verified so they're never locked out; run `python manage.py verify-users` once to mark pre-existing accounts verified.
 
-**Changing a password.** A signed-in user rotates their own with `POST /auth/change-password` (`{current_password, new_password}`) — proving ownership with the current password rather than an email round-trip, so it works even where outbound SMTP is blocked. Reusing the current password is rejected. Access tokens are stateless and carry no password fingerprint, so a change does **not** sign other sessions out.
+**Changing a password.** A signed-in user rotates their own with `POST /auth/change-password` (`{current_password, new_password}`) — proving ownership with the current password rather than an email round-trip, so it works even where outbound SMTP is blocked. Reusing the current password is rejected. Other sessions are revoked and the caller's is re-issued, so a change evicts anyone else holding the old password without logging you out of the browser you are using.
 
 For the operator case — a password that must be rotated but nobody knows it, or an inbox that can't receive the reset mail — use the CLI:
 
@@ -392,7 +402,11 @@ log), not as in-place edits that the next scrape would clobber.
 | `ARCADEDB_PASSWORD` | required | Database password |
 | `ARCADEDB_DATABASE` | `owlgraph` | Database name |
 | `SECRET_KEY` | insecure default | JWT signing key — **min 32 chars, always enforced; must also be overridden when `DEBUG=false`, or the app refuses to start** |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `720` (12 hours) | Token lifetime |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access-token lifetime. Not revocable, so this is the exposure window for a stolen one |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Absolute session lifetime. Rotation does not extend it |
+| `REFRESH_COOKIE_NAME` | `owlgraph_refresh` | Name of the httpOnly session cookie |
+| `REFRESH_COOKIE_DOMAIN` | `` (host-only) | Leave empty unless a host other than the API must receive the cookie |
+| `REFRESH_COOKIE_SECURE` | `true` | HTTPS-only cookie. Set `false` only for a plain-http local backend |
 | `CORS_ORIGINS` | `` (none) | Comma-separated list of allowed frontend origins |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | none | Provision this account as admin on startup (created if missing). When set, self-registration never grants admin — avoids the "first person to `/register` becomes admin" race on a fresh DB |
 | `REQUIRE_EMAIL_VERIFICATION` | `true` | Block login until the account's email is verified |

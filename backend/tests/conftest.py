@@ -122,6 +122,78 @@ def make_token():
 
 
 @pytest.fixture(autouse=True)
+def refresh_rows(request, monkeypatch):
+    """Back the refresh-token store with an in-memory table instead of ArcadeDB.
+
+    Patches ``run_sql`` rather than the store's functions, so the real
+    ``app/auth/refresh.py`` logic — rotation, replay detection, revocation —
+    runs in every test that logs in. Yields the row dict (token_hash → row) for
+    assertions.
+
+    Autouse because ``/auth/login`` now issues a refresh token: without this,
+    every login test would attempt a real HTTP call to a database that isn't
+    there. That call is caught and logged (issuing is best-effort), so the tests
+    would still pass — while silently never setting a cookie. The fixture is
+    what keeps that failure visible.
+
+    The fake dispatches on which parameters a statement carries rather than
+    parsing SQL, so it cannot catch a genuine SQL error. That is
+    ``tests/integration/test_refresh_tokens_it.py``'s job, against a real
+    ArcadeDB — which is why this fixture stands down for integration tests
+    rather than quietly substituting itself for the thing they exist to check.
+    """
+    store: dict[str, dict] = {}
+    if request.node.get_closest_marker("integration"):
+        return store
+
+    def fake_run_sql(sql: str, params: dict | None = None, **_kw):
+        params = params or {}
+        verb = sql.strip().split()[0].upper()
+
+        if verb == "INSERT":
+            store[params["h"]] = {
+                "id": params["id"], "token_hash": params["h"],
+                "user_id": params["u"], "family_id": params["f"],
+                "issued_at": params["now"], "expires_at": params["exp"],
+                "revoked_at": 0.0, "replaced_by": "",
+            }
+            return []
+
+        if verb == "SELECT":
+            row = store.get(params.get("h", ""))
+            return [dict(row)] if row else []
+
+        if "h" in params:
+            rows = [r for r in store.values() if r["token_hash"] == params["h"]]
+        elif "f" in params:
+            rows = [r for r in store.values() if r["family_id"] == params["f"]]
+        elif "u" in params:
+            rows = [r for r in store.values() if r["user_id"] == params["u"]]
+        else:
+            rows = []
+
+        if "revoked_at = 0.0" in sql:            # only-if-active guard
+            rows = [r for r in rows if not r["revoked_at"]]
+        if "expires_at <= :now" in sql:          # purge predicate
+            rows = [r for r in rows if r["expires_at"] <= params["now"]]
+
+        if verb == "DELETE":
+            for r in rows:
+                store.pop(r["token_hash"], None)
+            return []
+
+        for r in rows:                            # UPDATE
+            r["revoked_at"] = params["now"]
+            if "new" in params:
+                r["replaced_by"] = params["new"]
+        return []
+
+    import app.auth.refresh as _refresh
+    monkeypatch.setattr(_refresh, "run_sql", fake_run_sql)
+    return store
+
+
+@pytest.fixture(autouse=True)
 def _mock_rate_limit(monkeypatch):
     """Replace the DB-backed rate-limit functions with a pure in-memory implementation.
 
