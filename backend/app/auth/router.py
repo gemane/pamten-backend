@@ -293,11 +293,25 @@ def login(data: LoginRequest, request: Request):
 
 @router.get("/me")
 def me(user: dict = Depends(get_current_user)):
-    # `email_verified` is read from the token claim (added at token issue). A token
-    # issued before that claim existed reports False until the next login refreshes it
-    # — harmless and short-lived (it only gates the on-demand scrape UI).
+    """The signed-in user.
+
+    `email_verified` normally comes from the token claim added at issue time. When
+    the claim is absent — a token minted before it existed — fall back to the User
+    node instead of reporting False. Reporting False was described as harmless
+    because it "only gates the on-demand scrape UI", but the effect is that the
+    scrape option silently disappears for a verified user with no explanation,
+    which is indistinguishable from the feature being broken. Same fallback
+    require_verified already does; costs one indexed read on legacy tokens only.
+    """
+    verified = user.get("email_verified")
+    if verified is None:
+        with db.get_session() as session:
+            rec = session.run(
+                "MATCH (u:User {id: $id}) RETURN u.email_verified AS v", id=user["sub"],
+            ).single()
+        verified = bool(rec["v"]) if rec else False
     return {"id": user["sub"], "email": user["email"], "role": user["role"],
-            "email_verified": bool(user.get("email_verified", False))}
+            "email_verified": bool(verified)}
 
 
 @router.post("/verify-email")

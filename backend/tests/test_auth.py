@@ -224,7 +224,10 @@ def test_me_rejects_garbage_token(client):
     assert r.status_code == 401
 
 
-def test_me_returns_identity_for_valid_token(client, make_token):
+def test_me_returns_identity_for_valid_token(client, fake_db, make_token):
+    # make_token mints a legacy token (no email_verified claim), so /auth/me falls
+    # back to the User node — here an unverified one.
+    fake_db.queue([{"v": False}])
     tok = make_token(role="contributor", sub="u9", email="me@example.com")
     r = client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 200
@@ -728,3 +731,39 @@ def test_delete_own_account_survives_a_rate_limit_purge_failure(client, fake_db,
 
     with patch("app.db.arcadedb.run_sql", _boom):
         assert _del(client, make_token).status_code == 200
+
+
+# ── /auth/me email_verified fallback ──────────────────────────────────────────
+#
+# The claim is added at token issue. A token minted before it existed used to
+# report False, which silently removed the on-demand scrape option from the UI for
+# a verified user — indistinguishable from the feature being broken.
+
+def test_me_reads_the_claim_when_present(client, fake_db, make_token):
+    from app.auth.security import create_access_token
+    tok = create_access_token({"sub": "u1", "email": "a@example.com", "role": "admin",
+                               "email_verified": True})
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {tok}"})
+    assert r.status_code == 200
+    assert r.json()["email_verified"] is True
+    # No DB read needed when the token already says so.
+    assert fake_db.calls == []
+
+
+def test_me_falls_back_to_the_user_node_for_a_legacy_token(client, fake_db, make_token):
+    fake_db.queue([{"v": True}])
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {make_token(role='admin')}"})
+    assert r.status_code == 200
+    assert r.json()["email_verified"] is True
+
+
+def test_me_reports_unverified_when_the_node_says_so(client, fake_db, make_token):
+    fake_db.queue([{"v": False}])
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {make_token(role='viewer')}"})
+    assert r.json()["email_verified"] is False
+
+
+def test_me_reports_unverified_when_the_user_is_gone(client, fake_db, make_token):
+    fake_db.queue([])
+    r = client.get("/auth/me", headers={"Authorization": f"Bearer {make_token()}"})
+    assert r.json()["email_verified"] is False
