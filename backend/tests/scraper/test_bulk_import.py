@@ -138,6 +138,59 @@ class TestBatchWriter:
             mock_sql.assert_not_called()
 
 
+class TestBatchWriterClaims:
+    """Every bulk edge write also records what that source asserted.
+
+    Emitted by the writer rather than by its callers, so an importer cannot add
+    an edge and forget the evidence — which is how provenance was lost before.
+    """
+
+    @staticmethod
+    def _scripts(fn) -> str:
+        from app.scraper.bulk_import import _BatchWriter
+
+        scripts: list = []
+        with patch("app.scraper.bulk_import.run_sqlscript",
+                   side_effect=lambda script, params=None: scripts.append(script)):
+            b = _BatchWriter(batch_size=100)
+            fn(b)
+            b.flush()
+        return "\n---\n".join(scripts)
+
+    def test_an_owns_edge_also_writes_a_claim(self):
+        joined = self._scripts(lambda b: b.owns(
+            "e1", "Entity", "e2", {"stake_percent": 50.0, "source_id": "gleif"}))
+        assert "CREATE EDGE OWNS" in joined
+        assert "UPDATE Claim" in joined
+        assert "UPSERT WHERE claim_key" in joined
+
+    def test_a_role_edge_also_writes_a_claim(self):
+        joined = self._scripts(lambda b: b.role(
+            "p1", "e1", {"role": "CEO", "source_id": "sec"}))
+        assert "CREATE EDGE HAS_ROLE" in joined
+        assert "UPDATE Claim" in joined
+
+    def test_a_succession_edge_also_writes_a_claim(self):
+        joined = self._scripts(lambda b: b.succeeded_by(
+            "old", "new", {"source_id": "gleif"}))
+        assert "CREATE EDGE SUCCEEDED_BY" in joined
+        assert "UPDATE Claim" in joined
+
+    def test_first_seen_at_is_preserved_across_re_imports(self):
+        """Set with COALESCE against the stored value, so a re-import records
+        when we first saw the claim rather than resetting it."""
+        joined = self._scripts(lambda b: b.owns(
+            "e1", "Entity", "e2", {"source_id": "gleif"}))
+        assert "first_seen_at = COALESCE(first_seen_at," in joined
+
+    def test_no_source_means_no_claim(self):
+        # claim_key is (kind, from, to, source): an unsourced claim would collide
+        # with every other unsourced claim about the same pair.
+        joined = self._scripts(lambda b: b.owns("e1", "Entity", "e2", {"stake_percent": 50.0}))
+        assert "CREATE EDGE OWNS" in joined
+        assert "UPDATE Claim" not in joined
+
+
 # ── Runner permission checks ──────────────────────────────────────────────────
 
 class TestRunnerPermissions:

@@ -14,7 +14,13 @@ pytestmark = pytest.mark.integration
 
 
 def _seed_provenance(arcadedb):
-    """Insert a Source, two Entities, and one OWNS edge carrying provenance."""
+    """Insert a Source, two Entities, an OWNS edge, and the Claim behind it.
+
+    Relationship provenance is read from Claim rows, not from the edge — the
+    edge holds one winning value while the claims hold what each source said.
+    The writers always produce both, so seeding both is what the real graph
+    looks like.
+    """
     arcadedb.run_command(
         "CREATE (:Source {id: 's1', name: 'SEC EDGAR', url: 'https://www.sec.gov', "
         "type: 'register', credibility_score: 95})"
@@ -33,6 +39,22 @@ def _seed_provenance(arcadedb):
             until: null
         }]->(b)
         """
+    )
+    _seed_claim(arcadedb, from_id="e-owner", to_id="e-target", source_id="s1",
+                source_url="https://www.sec.gov/Archives/edgar/data/1/primary.htm",
+                source_date="2025-02-14", last_seen="2026-07-12T09:00:00+00:00")
+
+
+def _seed_claim(arcadedb, *, from_id, to_id, source_id,
+                source_url=None, source_date=None, last_seen="2026-07-12T09:00:00+00:00"):
+    from app.claims import KIND_OWNS, claim_key
+
+    arcadedb.run_command(
+        "CREATE (:Claim {claim_key: $k, kind: $kind, from_id: $f, to_id: $t, "
+        "source_id: $s, source_url: $u, source_date: $d, last_seen_at: $seen})",
+        {"k": claim_key(KIND_OWNS, from_id, to_id, source_id), "kind": KIND_OWNS,
+         "f": from_id, "t": to_id, "s": source_id, "u": source_url,
+         "d": source_date, "seen": last_seen},
     )
 
 
@@ -57,7 +79,7 @@ def test_sources_endpoint_returns_provenance(it_db):
 def test_sources_endpoint_falls_back_to_home_url(it_db):
     from app.routers.sources import get_sources_for_entity
 
-    # A source referenced by an edge with no per-edge source_url → home URL.
+    # A claim with no specific record URL → fall back to the source home page.
     it_db.run_command(
         "CREATE (:Source {id: 's2', name: 'Wikidata', url: 'https://www.wikidata.org', "
         "type: 'knowledge_base', credibility_score: 80})"
@@ -70,6 +92,7 @@ def test_sources_endpoint_falls_back_to_home_url(it_db):
         CREATE (a)-[:OWNS {source_id: 's2', ownership_type: 'minority', until: null}]->(b)
         """
     )
+    _seed_claim(it_db, from_id="e2-owner", to_id="e2-target", source_id="s2")
 
     rows = get_sources_for_entity("e2-target")
 
@@ -139,6 +162,8 @@ def test_sources_dedupes_repeated_same_source_link(it_db):
             f"MATCH (a:Person {{id: 'p{i}'}}),(b:Entity {{id: 'target'}}) "
             f"CREATE (a)-[:OWNS {{source_id: 'wd', source_url: 'https://www.wikidata.org/wiki/Q1', "
             f"source_date: '{date}', until: null}}]->(b)")
+        _seed_claim(it_db, from_id=f"p{i}", to_id="target", source_id="wd",
+                    source_url="https://www.wikidata.org/wiki/Q1", source_date=date)
 
     rows = get_sources_for_entity("target")
     wd = [r for r in rows if r["url"] == "https://www.wikidata.org/wiki/Q1"]

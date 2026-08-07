@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
+from app.claims import record_claim, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
 from app.scraper.wikidata import search_entity, fetch_company_data
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
 from app.scraper.sources import get_source_enabled
@@ -374,11 +375,21 @@ def _upsert_person(
 def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
                  source_url: str | None = None, source_date: str | None = None,
                  owner_label: str = "Entity", credibility_score: int = 80):
-    """Create an active OWNS edge if one doesn't already exist.
+    """Create an active OWNS edge if one doesn't already exist, and record this
+    source's claim behind it.
 
     Stamps per-entry provenance (source_url/source_date/last_scraped_at). On a
     re-scrape of an existing edge, refresh last_scraped_at so the UI shows when
     the fact was last confirmed against the source.
+
+    The edge holds one answer; the claim holds *this* source's answer. That
+    matters on the existing-edge path below, which is reached whenever a second
+    source confirms a relationship a first source already recorded: it refreshes
+    source_url and source_date but deliberately leaves source_id alone, since
+    the edge is still attributed to whoever created it. Before claims existed
+    that was simply wrong — the edge ended up citing one source with another
+    source's link — and the second source's assertion vanished. Now it is
+    recorded as its own claim.
 
     Both endpoints are labelled (owner is Entity or Person, owned is always
     Entity) so the id lookups use the per-type index — a label-less
@@ -386,6 +397,11 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
     """
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = _now_iso()
+    record_claim(
+        kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
+        source_url=source_url, source_date=source_date,
+        credibility_score=credibility_score,
+    )
     with db.get_session() as session:
         exists = session.run(
             f"""
@@ -438,6 +454,9 @@ def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
     re-scrape refreshes provenance instead of duplicating the edge. Both
     endpoints are Entity, labelled so the id lookups use the per-type index.
     """
+    record_claim(kind=KIND_SUCCESSION, from_id=predecessor_id, to_id=successor_id,
+                 source_id=source_id, since=since, source_url=source_url,
+                 source_date=source_date, credibility_score=credibility_score)
     if predecessor_id == successor_id:
         return  # guard against a self-loop from bad data
     now = _now_iso()
@@ -479,6 +498,9 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                  since: str | None = None, until: str | None = None,
                  source_url: str | None = None, credibility_score: int = 80):
     """Create a HAS_ROLE edge if one doesn't already exist (matched on role+since)."""
+    record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
+                 role=role, since=since, until=until, source_url=source_url,
+                 credibility_score=credibility_score)
     now = _now_iso()
     with db.get_session() as session:
         exists = session.run(
@@ -960,6 +982,10 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     closed rather than duplicated; with no active edge the closed one is written
     directly, so re-reading old filings still builds the timeline.
     """
+    record_claim(kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
+                 stake_percent=stake_percent, ownership_type=ownership_type,
+                 since=file_date, until=until, source_url=source_url,
+                 source_date=file_date, credibility_score=credibility_score)
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = datetime.now(timezone.utc).isoformat()
     # Closing an edge has to match one that is ALREADY closed too, or re-reading
@@ -1026,6 +1052,9 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     last_scraped_at and backfill the URL/date (COALESCE keeps existing values
     when this scrape didn't yield them).
     """
+    record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
+                 role=role, source_url=source_url, source_date=source_date,
+                 credibility_score=credibility_score)
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
         existing = session.run(
@@ -1442,6 +1471,9 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
     source_date = the officer's start date, last_scraped_at = now (refreshed on
     re-scrape).
     """
+    record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
+                 role=role, since=start_date, until=end_date, source_url=source_url,
+                 credibility_score=credibility_score)
     now = _now_iso()
     with db.get_session() as session:
         existing = session.run(

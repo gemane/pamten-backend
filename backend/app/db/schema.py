@@ -77,6 +77,14 @@ _INDEXES: list[tuple[str, str, str]] = [
     # Rate-limit buckets: sliding-window attempt timestamps keyed by bucket id
     # (e.g. "login:<ip>:<email>", "email:<email>", "mfa:<user_id>").
     ("RateLimit",   "key",          "UNIQUE"),
+    # Per-source assertions behind an edge (see app/claims.py). claim_key is
+    # UNIQUE — one row per (kind, from, to, source) — which is what makes a
+    # re-import update a source's claim instead of stacking another copy.
+    # from_id/to_id are the lookup path when rendering an entity's provenance.
+    ("Claim",       "claim_key",    "UNIQUE"),
+    ("Claim",       "from_id",      "NOTUNIQUE"),
+    ("Claim",       "to_id",        "NOTUNIQUE"),
+    ("Claim",       "source_id",    "NOTUNIQUE"),
     # Refresh tokens (see app/auth/refresh.py). token_hash is UNIQUE because it
     # identifies the row on every refresh and two tokens must never collide;
     # user_id and family_id are the revoke-all and replay-response paths.

@@ -16,6 +16,7 @@ its registered address, so the map reads one record instead of traversing.
 | `ScraperSource` | `name`, `enabled`, `description` |
 | `MergeLog` | `id`, `keep_id`, `keep_name`, `dup_name`, `at`, `count` — history of person merges (deduped by keep+dup name) |
 | `Peer` | `id`, `name`, `base_url`, `credibility_score`, `auth_token`, `public_key`, `enabled` — a trusted federation peer |
+| `Claim` | `claim_key` (UNIQUE), `kind` (owns/role/succession), `from_id`, `to_id`, `source_id`, `stake_percent`, `voting_power_pct`, `ownership_type`, `role`, `since`, `until`, `source_url`, `source_date`, `credibility_score`, `first_seen_at`, `last_seen_at` — **what one source asserts about one relationship**; see below |
 | `ScrapeRun` | `id`, `source`, `target`, `status` (running/ok/failed), `started_at`, `finished_at`, `total`, `error` — the scrape run log (capped) |
 
 ## Relationships
@@ -49,6 +50,42 @@ and a moderator pin is validated against it at the API boundary. `free_float` is
 
 Vertex/edge types and lookup indexes are created idempotently on startup and via
 `python manage.py init-schema` (see the README's *Deployment → Schema & indexes*).
+
+## Claims: per-source provenance
+
+An `OWNS` edge holds **one** answer — the value traversals read. Several sources
+routinely assert the same relationship with different numbers (GLEIF and
+Companies House will disagree about a stake, and both are right about their own
+register). Those used to be lost: the second writer overwrote the first, and the
+Sources panel reconstructed attribution by guessing from which identifier fields
+happened to be populated.
+
+A `Claim` records what **one source** said. The edge is unchanged — still the
+single, fast, current-best answer — and the claims sit beside it as the evidence:
+
+```
+(:Entity)-[:OWNS {stake_percent: 60}]->(:Entity)      <- traversals read this
+(:Claim {kind:'owns', from_id, to_id, stake_percent: 60, source_id:'gleif'})
+(:Claim {kind:'owns', from_id, to_id, stake_percent: 75, source_id:'ch-psc'})
+```
+
+- **Keyed** on `claim_key` = digest of (kind, from_id, to_id, source_id), UNIQUE.
+  A source re-asserting the same relationship updates its own row, so re-imports
+  are idempotent here even though the edges still need a dedup pass. The parts
+  are length-prefixed before hashing, so an id containing the separator cannot
+  make two different claims collide.
+- **Written by the edge writers themselves** — `_BatchWriter.owns/role/succeeded_by`
+  for bulk imports and `record_claim` in the incremental scrapers — so an importer
+  cannot record an edge and forget the evidence.
+- **Which claim wins**: highest `credibility_score`, ties broken by the most
+  recent `source_date` (`best_claim` in [`app/claims.py`](../backend/app/claims.py)).
+  A credible "owns, amount undisclosed" deliberately beats a weak source's number.
+- **Read** by the Sources panel via `to_id` — everything asserted *about* an
+  entity. Claims about the subsidiaries it owns carry `from_id` = that entity and
+  are never selected, so the panel cannot flood with one row per subsidiary.
+
+An entity's own record provenance is a different question, answered from its hard
+identifiers (`_entity_own_source_rows`) — claims describe relationships, not nodes.
 
 ## GLEIF sourcing
 

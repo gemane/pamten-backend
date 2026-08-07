@@ -123,7 +123,7 @@ backend/
 
 ## Data model
 
-Nodes (`Entity`, `Person`, `Source`, `MergeLog`, `Peer`, `ScrapeRun`,
+Nodes (`Entity`, `Person`, `Source`, `Claim`, `MergeLog`, `Peer`, `ScrapeRun`,
 `ScraperSource`, `User`) and their edges (`OWNS`, `HAS_ROLE`, `RELATED_TO`,
 `NOT_DUPLICATE`, `DUAL_LISTED_WITH`, location edges) with all properties:
 **[`docs/data-model.md`](docs/data-model.md)**.

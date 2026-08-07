@@ -428,19 +428,30 @@ def test_sources_for_entity_falls_back_to_home_url(client, fake_db):
 
 
 def test_sources_for_entity_excludes_subsidiaries(client, fake_db):
-    # An entity's Sources panel must not list a row per subsidiary — the
-    # outbound-ownership query is intentionally absent (it flooded the panel;
-    # a subsidiary's own source shows when you select it).
+    # An entity's Sources panel must not list a row per subsidiary — that
+    # flooded the panel, and a subsidiary's own source shows when you select it.
+    #
+    # This used to depend on deliberately *not* writing an outbound-ownership
+    # query. Relationship provenance now comes from Claim rows selected on
+    # `to_id`, so only things asserted *about* this entity match: a claim about
+    # a subsidiary carries from_id = this entity and is never selected. The
+    # exclusion is structural rather than an omission someone could undo.
     r = client.get("/sources/entity/e1")
     assert r.status_code == 200
     cyphers = [c for c, _ in fake_db.calls]
-    assert len(cyphers) == 3  # owners-in, roles, entity-self — no owns-out
-    # No query walks OUT from this entity along OWNS (i.e. to its subsidiaries)
-    assert not any("{id: $entity_id})-[r:OWNS]->" in c for c in cyphers)
-    # Sanity: the inbound-owners query IS present. Anchored on the indexed Entity
-    # with the edge followed inward (…{id})<-[:OWNS]-…) so ArcadeDB uses the index
-    # instead of scanning every node at scale.
-    assert any("{id: $entity_id})<-[r:OWNS]-" in c for c in cyphers)
+    assert len(cyphers) == 2  # relationship claims + entity-self
+    assert any("MATCH (c:Claim {to_id: $entity_id})" in c for c in cyphers)
+    assert not any("from_id: $entity_id" in c for c in cyphers)
+
+
+def test_sources_for_entity_reads_relationship_provenance_from_claims(client, fake_db):
+    # The edges carry one source_id each, so reading provenance from them
+    # reported a single source per relationship — when a second source confirmed
+    # an ownership it overwrote the first's link and the earlier source vanished.
+    r = client.get("/sources/entity/e1")
+    assert r.status_code == 200
+    cyphers = [c for c, _ in fake_db.calls]
+    assert not any("[r:OWNS]" in c or "[r:HAS_ROLE]" in c for c in cyphers)
 
 
 def test_create_dual_listed_links_two_entities(client, fake_db, make_token):

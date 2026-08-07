@@ -57,32 +57,28 @@ def get_source(source_id: str):
 # — and merge in Python, rather than one big Cypher with list literals / UNWIND
 # / COALESCE, which ArcadeDB's Cypher engine does not support.
 _PROVENANCE_QUERIES = (
-    # Owners of this entity. Anchor on the indexed Entity and follow the edge
-    # *inward* — writing it as (a)-[:OWNS]->(e {id}) makes ArcadeDB scan every
-    # node for `a` instead of resolving `e` by index (36s on a full-GLEIF DB).
+    # Everything asserted *about* this entity by a relationship — who owns it and
+    # who holds a role in it — read from the Claim rows rather than from the edges.
+    #
+    # The edges carry a single source_id each, so this used to report one source
+    # per relationship: when GLEIF and Companies House both asserted an ownership,
+    # whichever wrote second overwrote the first's link and the earlier source
+    # simply disappeared from the provenance list. A claim is recorded per source,
+    # so both now show, each deep-linked to its own record.
+    #
+    # One query covers owners and roles because a claim knows its `kind`, and
+    # to_id is indexed — no traversal, and no per-edge-type anchoring trick.
     """
-    MATCH (e:Entity {id: $entity_id})<-[r:OWNS]-(a)
-    WHERE r.source_id IS NOT NULL
-    MATCH (s:Source {id: r.source_id})
+    MATCH (c:Claim {to_id: $entity_id})
+    MATCH (s:Source {id: c.source_id})
     RETURN s.id AS id, s.name AS name, s.type AS type,
            s.credibility_score AS credibility_score, s.url AS source_home_url,
-           r.source_url AS source_url, r.source_date AS source_date,
-           r.last_scraped_at AS last_scraped_at
+           c.source_url AS source_url, c.source_date AS source_date,
+           c.last_seen_at AS last_scraped_at
     """,
-    # Roles at this entity (same anchoring fix)
-    """
-    MATCH (e:Entity {id: $entity_id})<-[r:HAS_ROLE]-(p)
-    WHERE r.source_id IS NOT NULL
-    MATCH (s:Source {id: r.source_id})
-    RETURN s.id AS id, s.name AS name, s.type AS type,
-           s.credibility_score AS credibility_score, s.url AS source_home_url,
-           r.source_url AS source_url, r.source_date AS source_date,
-           r.last_scraped_at AS last_scraped_at
-    """,
-    # NOTE: the entity's OWN record provenance is derived from its hard identifiers
-    # (_entity_own_source_rows), not the single `source_id` field — so a node carrying
-    # several ids (e.g. a Wikidata QID *and* an SEC CIK after a cross-source merge) shows
-    # ALL its sources, each deep-linked to the specific record page.
+    # NOTE: the entity's OWN record provenance is a different question, answered by
+    # _entity_own_source_rows from its hard identifiers — claims describe relationships,
+    # not the node itself, so that path stays.
 )
 
 # Each hard identifier an entity carries → the source that assigns it + a deep link to the

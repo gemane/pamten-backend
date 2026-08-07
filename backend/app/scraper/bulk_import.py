@@ -32,6 +32,8 @@ from typing import IO
 
 from datetime import datetime, timezone
 
+from app.claims import claim_props, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
+
 from app.config import settings
 from app.db.arcadedb import run_sqlscript
 from app.scraper.mapper import (
@@ -159,7 +161,31 @@ class _BatchWriter:
         self._entities: list[tuple[str, dict]] = []
         self._persons:  list[tuple[str, dict]] = []
         self._edges:    list[tuple] = []   # (etype, from_label, from_id, to_label, to_id, props)
+        self._claims:   list[dict] = []    # per-source assertions behind those edges
         self._pending = 0
+
+    def _claim(self, kind: str, from_id: str, to_id: str, props: dict) -> None:
+        """Record what this source asserts, alongside the edge itself.
+
+        Emitted from the edge writers rather than by their callers, so an
+        importer cannot write an edge and forget the evidence for it. Skipped
+        when there is no source_id: the claim key is (kind, from, to, source),
+        so a claim without a source would collide with every other unsourced
+        claim about the same pair.
+        """
+        source_id = props.get("source_id")
+        if not source_id:
+            return
+        self._claims.append(claim_props(
+            kind=kind, from_id=from_id, to_id=to_id, source_id=source_id,
+            stake_percent=props.get("stake_percent"),
+            voting_power_pct=props.get("voting_power_pct"),
+            ownership_type=props.get("ownership_type"),
+            role=props.get("role"),
+            since=props.get("since"), until=props.get("until"),
+            source_url=props.get("source_url"), source_date=props.get("source_date"),
+            credibility_score=props.get("credibility_score") or 80,
+        ))
 
     def entity(self, node_id: str, props: dict) -> None:
         self._entities.append((node_id, props))
@@ -171,14 +197,17 @@ class _BatchWriter:
 
     def owns(self, owner_id: str, owner_label: str, owned_id: str, props: dict) -> None:
         self._edges.append(("OWNS", owner_label, owner_id, "Entity", owned_id, props))
+        self._claim(KIND_OWNS, owner_id, owned_id, props)
         self._bump()
 
     def role(self, person_id: str, entity_id: str, props: dict) -> None:
         self._edges.append(("HAS_ROLE", "Person", person_id, "Entity", entity_id, props))
+        self._claim(KIND_ROLE, person_id, entity_id, props)
         self._bump()
 
     def succeeded_by(self, predecessor_id: str, successor_id: str, props: dict) -> None:
         self._edges.append(("SUCCEEDED_BY", "Entity", predecessor_id, "Entity", successor_id, props))
+        self._claim(KIND_SUCCESSION, predecessor_id, successor_id, props)
         self._bump()
 
     def _bump(self) -> None:
@@ -190,9 +219,11 @@ class _BatchWriter:
         self._flush_nodes("Entity", self._entities)
         self._flush_nodes("Person", self._persons)
         self._flush_edges()
+        self._flush_claims()
         self._entities.clear()
         self._persons.clear()
         self._edges.clear()
+        self._claims.clear()
         self._pending = 0
 
     @staticmethod
@@ -208,6 +239,34 @@ class _BatchWriter:
                 sets.append(f"{name} = :{pk}")
             params[f"id__{k}"] = node_id
             stmts.append(f"UPDATE {label} SET {', '.join(sets)} UPSERT WHERE id = :id__{k};")
+        _flush_script("\n".join(stmts), params)
+
+    def _flush_claims(self) -> None:
+        """UPSERT the buffered claims on their UNIQUE claim_key.
+
+        Unlike the edges above — which ArcadeDB can only CREATE, so a re-import
+        duplicates them and needs a later dedup pass — a claim is keyed on
+        (kind, from, to, source), so a source re-asserting the same relationship
+        overwrites its own row. Re-imports are idempotent here by construction.
+
+        first_seen_at uses COALESCE against the stored value so it survives
+        those updates and records when we first saw the claim, while
+        last_seen_at moves. (Verified against a real ArcadeDB: COALESCE works
+        inside a SQL UPDATE, which is not something the Cypher dialect's
+        limitations let you assume.)
+        """
+        if not self._claims:
+            return
+        stmts, params = [], {}
+        for k, claim in enumerate(self._claims):
+            sets = []
+            for name, val in claim.items():
+                pk = f"c_{name}__{k}"
+                params[pk] = val
+                sets.append(f"{name} = :{pk}")
+            sets.append(f"first_seen_at = COALESCE(first_seen_at, :c_last_seen_at__{k})")
+            stmts.append(
+                f"UPDATE Claim SET {', '.join(sets)} UPSERT WHERE claim_key = :c_claim_key__{k};")
         _flush_script("\n".join(stmts), params)
 
     def _flush_edges(self) -> None:
