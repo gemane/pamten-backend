@@ -5,6 +5,11 @@ Covers both Wikidata (QID-based) and SEC EDGAR (name-based) sources.
 
 import re
 
+# The stored vocabulary lives with the model, not here — this module derives a
+# value, it does not get to define the set. (models imports nothing from scraper,
+# so this direction is safe.)
+from app.models.relationship import OwnershipType
+
 # Wikidata P31 ("instance of") QIDs → Owlgraph entity type, in PRIORITY order: the
 # most specific category wins when an entity is an instance of several classes
 # (e.g. a foundation that is also an "organization" → foundation, not company).
@@ -148,17 +153,17 @@ def derive_ownership_type(stake_pct: float | None, form_type: str | None = None)
     """
     if stake_pct is not None:
         if stake_pct >= 99:
-            return "full"
+            return OwnershipType.full.value
         if stake_pct > 50:
-            return "majority"
+            return OwnershipType.majority.value
         if stake_pct >= 20:
-            return "controlling"
-        return "minority"
+            return OwnershipType.controlling.value
+        return OwnershipType.minority.value
     if form_type and "13D" in form_type:
-        return "controlling"
+        return OwnershipType.controlling.value
     if form_type and "13G" in form_type:
-        return "minority"
-    return "unknown"
+        return OwnershipType.minority.value
+    return OwnershipType.unknown.value
 
 
 _LEGAL_SUFFIX_NORM = re.compile(

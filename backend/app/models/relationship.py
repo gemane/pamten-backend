@@ -4,12 +4,42 @@ from enum import Enum
 
 
 class OwnershipType(str, Enum):
-    full = "full"
-    majority = "majority"
-    minority = "minority"
-    controlling = "controlling"
-    partnership = "partnership"
-    free_float = "free_float"   # widely-held public shareholders (Streubesitz); computed residual
+    """The complete vocabulary for a stored OWNS edge.
+
+    This is the single source of truth: `scraper/mapper.derive_ownership_type`
+    returns these values, and anything arriving from outside is coerced through
+    `coerce_ownership_type` below. The thresholds that map a stake percentage
+    onto these are documented on the derivation function.
+
+    Previously this enum and the scrapers disagreed. `unknown` — by far the most
+    common value written, since most sources name an owner without disclosing a
+    percentage — was missing, so the manual create endpoint rejected the very
+    thing the importers produce. Meanwhile `partnership` was accepted but never
+    written by anything, and `free_float` is not an edge at all: the widely-held
+    remainder is derived on read as `free_float_pct` (see routers/search.py),
+    because nobody *holds* the free float. Both are gone.
+    """
+    full = "full"                # >= 99% — essentially wholly owned
+    majority = "majority"        # > 50%  — outright control
+    controlling = "controlling"  # >= 20% — significant blocking minority
+    minority = "minority"        # > 0%   — passive stake
+    unknown = "unknown"          # owner known, stake undisclosed — do not guess
+
+
+def coerce_ownership_type(value: str | None) -> str:
+    """Map an externally-supplied ownership type onto the vocabulary.
+
+    Anything unrecognised becomes `unknown` rather than being stored verbatim:
+    a typo'd or novel value would otherwise flow into the graph, where the UI
+    renders edges by exact string match and would silently fall back to the
+    neutral style while the data quietly diverged.
+    """
+    if value in _OWNERSHIP_TYPE_VALUES:
+        return value
+    return OwnershipType.unknown.value
+
+
+_OWNERSHIP_TYPE_VALUES: frozenset[str] = frozenset(t.value for t in OwnershipType)
 
 
 class RoleType(str, Enum):

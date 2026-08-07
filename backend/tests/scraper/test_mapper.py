@@ -28,6 +28,19 @@ class TestDeriveOwnershipType:
         assert derive_ownership_type(None, "SC 13D") == "controlling"
         assert derive_ownership_type(None, "SC 13G") == "minority"
 
+    def test_every_derived_value_is_in_the_stored_vocabulary(self):
+        """The derivation and the enum used to disagree: `unknown` — the most
+        common value the importers write — was missing from OwnershipType, so
+        the manual create endpoint rejected what the scrapers produce. This
+        pins them together."""
+        from app.models.relationship import OwnershipType
+
+        allowed = {t.value for t in OwnershipType}
+        derived = {
+            derive_ownership_type(pct) for pct in (100, 99, 60, 50, 25, 20, 1, 0, None)
+        } | {derive_ownership_type(None, f) for f in ("SC 13D", "SC 13G", "10-K", None)}
+        assert derived <= allowed, f"derived values outside the vocabulary: {derived - allowed}"
+
 
 class TestNormalizeEntityName:
     """normalize_entity_name strips legal suffixes and lowercases for deduplication."""

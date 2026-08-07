@@ -21,7 +21,7 @@ roles, and locations are edges.
 
 | Pattern | Properties |
 |---|---|
-| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent` (economic holding), `voting_power_pct` (voting rights — kept separate from the stake; from BODS `votingRights` interests and DEF 14A proxies), `interest_types[]` (BODS interest kinds behind the edge: shareholding/votingRights/appointmentOfBoard/…), `direct_or_indirect` (from GLEIF RR-CDF: `direct` = directly-consolidated parent, `indirect` = ultimate parent), `ownership_type` (full/majority/minority/controlling/partnership/free_float), `since`, `until`, `source_id`, `source_url`, `source_date`. Free float / >100% conflicts aren't stored — the full-profile endpoint derives them from the disclosed stakes on read (`ownership` summary) |
+| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent` (economic holding), `voting_power_pct` (voting rights — kept separate from the stake; from BODS `votingRights` interests and DEF 14A proxies), `interest_types[]` (BODS interest kinds behind the edge: shareholding/votingRights/appointmentOfBoard/…), `direct_or_indirect` (from GLEIF RR-CDF: `direct` = directly-consolidated parent, `indirect` = ultimate parent), `ownership_type` (see the vocabulary below), `since`, `until`, `source_id`, `source_url`, `source_date`. Free float / >100% conflicts aren't stored — the full-profile endpoint derives them from the disclosed stakes on read (`ownership` summary) |
 | `(Person)-[:HAS_ROLE]->(Entity)` | `role`, `since`, `until`, `source_id`, `source_url`, `source_date` |
 | `(Person)-[:RELATED_TO]->(Person)` | `relation`, `source_id` |
 | `(Person)-[:NOT_DUPLICATE]->(Person)` | `at` — marks two people confirmed to be *different* (keep-separate) |
@@ -30,7 +30,22 @@ roles, and locations are edges.
 | `(Entity)-[:HEADQUARTERED_IN\|REGISTERED_IN\|OPERATES_IN]->(Location)` | — |
 
 `until = null` means the relationship is currently active.  
-`ownership_type`: `full`, `majority`, `minority`, `controlling`, `passive`, `active`, `partnership`
+`ownership_type` is a closed vocabulary, defined once as `OwnershipType` in
+[`app/models/relationship.py`](../backend/app/models/relationship.py) and derived by
+`derive_ownership_type` in [`app/scraper/mapper.py`](../backend/app/scraper/mapper.py):
+
+| Value | Meaning |
+|---|---|
+| `full` | >= 99% — essentially wholly owned |
+| `majority` | > 50% — outright control |
+| `controlling` | >= 20% — significant blocking minority |
+| `minority` | > 0% — passive stake |
+| `unknown` | owner known, stake undisclosed — the most common case, and deliberately not guessed |
+
+Values arriving from outside are coerced onto this set (`coerce_ownership_type`),
+and a moderator pin is validated against it at the API boundary. `free_float` is
+**not** a stored value: the widely-held remainder is derived on read as
+`free_float_pct`, because nobody holds the free float.
 
 Vertex/edge types and lookup indexes are created idempotently on startup and via
 `python manage.py init-schema` (see the README's *Deployment → Schema & indexes*).
