@@ -6,9 +6,13 @@
 
 FastAPI backend for the Owlgraph ownership mapping platform. Stores corporate ownership hierarchies in an ArcadeDB graph database and exposes a REST API consumed by the frontend.
 
-**Live API:** https://pamten-backend-yrbh.onrender.com  
-**Docs (Swagger):** https://pamten-backend-yrbh.onrender.com/docs  
-**Frontend:** https://pamten-frontend.onrender.com
+**Live API (dev):** https://api-dev.owlgraph.org  
+**Docs (Swagger):** https://api-dev.owlgraph.org/docs  
+**Frontend (dev):** https://dev.owlgraph.org
+
+The `*.onrender.com` URLs still serve the same deployments, but the owlgraph.org
+domains are canonical and are the only origins in `CORS_ORIGINS` — reaching the
+frontend on its onrender URL loads the page but every API call fails CORS.
 
 ---
 
@@ -424,6 +428,8 @@ log), not as in-place edits that the next scrape would clobber.
 ## Deployment
 
 Deployed on Render as a web service. Any push to **`develop`** triggers an automatic redeploy — Render tracks the integration branch, so what runs there is the dev environment (pointed at the dev database). `main` is the verified branch and currently deploys nowhere; production is planned on a separate, non-Render host. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`. Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` too so the admin is provisioned automatically on boot (see [Authentication](#authentication)).
+
+**Domains.** The dev environment is reached at `dev.owlgraph.org` (frontend) and `api-dev.owlgraph.org` (API), both CNAMEd to the Render services. Keeping the two on one registrable domain is deliberate: they are **same-site**, which is what allows an `httpOnly; SameSite=Lax` auth cookie to pass between them. The `*.onrender.com` pair cannot do that — `onrender.com` is on the Public Suffix List, so each subdomain is a separate site and a cookie between them would be third-party, blocked by Safari and Chrome. Any future production pair should keep the same shape (`owlgraph.org` / `api.owlgraph.org`).
 
 > **Env var changes apply on a *deploy*, not a restart.** Editing env vars in the dashboard triggers a deploy that applies them. But an env var set via the Render **API** does not auto-deploy, and a plain **"Restart Service"** restarts with the *already-deployed* config — so a value changed via the API only takes effect after a real deploy (**Manual Deploy → "Clear build cache & deploy"**, or a new push to `develop`).
 
