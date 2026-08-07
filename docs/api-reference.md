@@ -12,12 +12,14 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/auth/register` | — | Create account (first → admin, rest → viewer). Non-admins are created unverified and emailed a link; response has `verification_required:true` and **no token** |
-| POST | `/auth/login` | — | Returns a JWT access token. `403 {code:"email_not_verified"}` when the email isn't verified yet |
+| POST | `/auth/login` | — | Returns a short-lived JWT access token (`{access_token, expires_in, …}`) and sets the httpOnly refresh cookie. `403 {code:"email_not_verified"}` when the email isn't verified yet |
+| POST | `/auth/refresh` | cookie | Trade the refresh cookie for a new access token, rotating the cookie. `401` (and the cookie is cleared) if it is missing, expired, revoked, or replayed |
+| POST | `/auth/logout` | cookie | Revoke this session and clear the cookie. Idempotent — `200` even with no session |
 | POST | `/auth/verify-email` | — | Confirm an email from the emailed token `{token}` |
 | POST | `/auth/resend-verification` | — | Re-send the verification link `{email}` (rate-limited; always `200`) |
 | POST | `/auth/forgot-password` | — | Email a password-reset link `{email}` (always `200` — no user enumeration) |
 | POST | `/auth/reset-password` | — | Set a new password from the emailed token `{token, new_password}` (link is single-use) |
-| POST | `/auth/change-password` | bearer | Change your own password `{current_password, new_password}` — the self-service route that needs no email. `400` on a wrong current password, a policy violation, or reusing the current password |
+| POST | `/auth/change-password` | bearer | Change your own password `{current_password, new_password}` — the self-service route that needs no email. Revokes other sessions and re-issues the caller's. `400` on a wrong current password, a policy violation, or reusing the current password |
 | DELETE | `/auth/me` | bearer | **Permanently delete your own account** `{password}`. Re-authenticates with the password. Removes the User node (password hash, TOTP secret, recovery codes) and the account's rate-limit counters; flags the user filed are anonymised, not deleted. `400` for a wrong password, for the `ADMIN_EMAIL` bootstrap account, or when you are the last admin |
 | GET | `/auth/me` | bearer | Current user info |
 | GET | `/auth/mfa/status` | bearer | Whether TOTP two-factor is enabled |

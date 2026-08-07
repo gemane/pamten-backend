@@ -74,6 +74,12 @@ _INDEXES: list[tuple[str, str, str]] = [
     # Rate-limit buckets: sliding-window attempt timestamps keyed by bucket id
     # (e.g. "login:<ip>:<email>", "email:<email>", "mfa:<user_id>").
     ("RateLimit",   "key",          "UNIQUE"),
+    # Refresh tokens (see app/auth/refresh.py). token_hash is UNIQUE because it
+    # identifies the row on every refresh and two tokens must never collide;
+    # user_id and family_id are the revoke-all and replay-response paths.
+    ("RefreshToken", "token_hash",  "UNIQUE"),
+    ("RefreshToken", "user_id",     "NOTUNIQUE"),
+    ("RefreshToken", "family_id",   "NOTUNIQUE"),
 ]
 
 # Edge types the app creates via Cypher and needs to exist up front (init-schema

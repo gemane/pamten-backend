@@ -52,7 +52,24 @@ class Settings(BaseSettings):
     FEDERATION_SIGNING_KEY:           str  = ""
     OPENCORPORATES_API_KEY:           str  = ""
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
-    ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 60 * 12  # 12 hours
+    # Access tokens are bearer JWTs with no revocation check on the hot path, so
+    # the TTL *is* the blast radius of a stolen one — keep it short. Sessions
+    # survive via the refresh cookie below, which is revocable.
+    ACCESS_TOKEN_EXPIRE_MINUTES:      int  = 15
+    # Refresh tokens: opaque, server-stored (revocable), rotated on every use.
+    # The lifetime is absolute — rotation does not extend it — so a session ends
+    # this long after login no matter how active it is.
+    REFRESH_TOKEN_EXPIRE_DAYS:        int  = 30
+    REFRESH_COOKIE_NAME:              str  = "owlgraph_refresh"
+    # Leave empty for a host-only cookie (sent only to the API host, which is the
+    # tighter default). Set to a parent domain (".owlgraph.org") only if some other
+    # host must also receive it.
+    REFRESH_COOKIE_DOMAIN:            str  = ""
+    # Secure means the browser only sends the cookie over HTTPS. Set false in a
+    # local .env when running the backend on plain http (the cookie is otherwise
+    # dropped and sessions silently end at the access-token TTL); never for a
+    # deployed service.
+    REFRESH_COOKIE_SECURE:            bool = True
     CORS_ORIGINS:                     str  = ""
     # Admin bootstrap: when ADMIN_EMAIL is set, that account is provisioned as
     # admin on startup (created if missing, from ADMIN_PASSWORD) — so a fresh DB

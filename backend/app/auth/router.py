@@ -1,10 +1,11 @@
 import logging
 import uuid
 from datetime import timedelta
-from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, BackgroundTasks
 from pydantic import BaseModel, EmailStr, field_validator
 from app.config import settings
 from app.database import db
+from app.auth import refresh as refresh_store
 from app.auth.security import (
     hash_password, verify_password, create_access_token,
     create_purpose_token, verify_purpose_token, password_hash_fingerprint, TokenError,
@@ -178,11 +179,80 @@ def _issue_password_reset_email(background: BackgroundTasks, user_id: str, email
     background.add_task(_safe_send, send_password_reset_email, email, token)
 
 
-def _token_response(user_id: str, email: str, role: str, email_verified: bool = False):
+def _set_refresh_cookie(response: Response, raw: str) -> None:
+    """Hand the refresh token to the browser as an httpOnly cookie.
+
+    httpOnly keeps it out of reach of JavaScript, so an XSS bug cannot steal the
+    long-lived credential — the short-lived access token in memory is all that is
+    exposed. SameSite=Lax is sufficient because the frontend and API sit on one
+    registrable domain (dev.owlgraph.org / api-dev.owlgraph.org), making their
+    requests same-site even though they are cross-origin; see render.yaml.
+    """
+    response.set_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        value=raw,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite="lax",
+        # Empty setting → host-only cookie (omit the attribute entirely).
+        domain=settings.REFRESH_COOKIE_DOMAIN or None,
+        path="/",
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    """Expire the cookie. The attributes must match those it was set with, or the
+    browser treats it as a different cookie and leaves the original in place."""
+    response.delete_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite="lax",
+        domain=settings.REFRESH_COOKIE_DOMAIN or None,
+        path="/",
+    )
+
+
+def _session_expired() -> HTTPException:
+    """A 401 that also clears the refresh cookie.
+
+    The Set-Cookie has to travel on the exception itself: headers written to the
+    injected ``Response`` are discarded when an HTTPException is raised, because
+    the error response is constructed fresh by the exception handler. Without
+    this the browser keeps replaying a token that can never work again.
+    """
+    scratch = Response()
+    _clear_refresh_cookie(scratch)
+    return HTTPException(
+        status_code=401,
+        detail="Session expired. Please log in again.",
+        headers={"set-cookie": scratch.headers["set-cookie"]},
+    )
+
+
+def _access_token_payload(user_id: str, email: str, role: str, email_verified: bool) -> dict:
     token = create_access_token(
         {"sub": user_id, "email": email, "role": role, "email_verified": bool(email_verified)})
     return {"access_token": token, "token_type": "bearer", "email": email, "role": role,
-            "email_verified": bool(email_verified)}
+            "email_verified": bool(email_verified),
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60}
+
+
+def _token_response(response: Response, user_id: str, email: str, role: str,
+                    email_verified: bool = False):
+    """Start a session: a short-lived access token in the body, a refresh token
+    in an httpOnly cookie.
+
+    Issuing the refresh token is best-effort — if the store is unreachable the
+    caller still gets a usable access token rather than being unable to log in
+    at all. The consequence is a session that ends when that token expires.
+    """
+    try:
+        _set_refresh_cookie(response, refresh_store.issue(user_id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not issue refresh token for %s: %s", user_id, exc)
+    return _access_token_payload(user_id, email, role, email_verified)
 
 
 def _login_rate_limit_key(request: Request, email: str) -> str:
@@ -203,7 +273,7 @@ def _clear_login_attempts(key: str) -> None:
 
 
 @router.post("/register")
-def register(data: RegisterRequest, background: BackgroundTasks):
+def register(data: RegisterRequest, background: BackgroundTasks, response: Response):
     _validate_password(data.password)
 
     # Generic response used for both new and duplicate registrations — never
@@ -246,14 +316,14 @@ def register(data: RegisterRequest, background: BackgroundTasks):
         )
 
     if verified:
-        return _token_response(user_id, data.email, role, email_verified=True)
+        return _token_response(response, user_id, data.email, role, email_verified=True)
 
     _issue_verification_email(background, user_id, data.email)
     return {**_REGISTER_OK, "email": data.email}
 
 
 @router.post("/login")
-def login(data: LoginRequest, request: Request):
+def login(data: LoginRequest, request: Request, response: Response):
     rate_limit_key = _login_rate_limit_key(request, data.email)
     _check_login_rate_limit(rate_limit_key)
 
@@ -287,8 +357,57 @@ def login(data: LoginRequest, request: Request):
                                        timedelta(minutes=MFA_PENDING_TTL_MINUTES))
         return {"mfa_required": True, "mfa_token": pending}
 
-    return _token_response(user["id"], user["email"], user["role"],
+    return _token_response(response, user["id"], user["email"], user["role"],
                            email_verified=bool(user.get("email_verified")))
+
+
+@router.post("/refresh")
+def refresh_session(request: Request, response: Response):
+    """Trade the refresh cookie for a new access token, rotating the cookie.
+
+    Unauthenticated by design: it is called precisely when the access token has
+    expired, so requiring one would make it useless. The cookie is the credential.
+
+    Every refresh re-reads the account rather than trusting the old token's
+    claims, so a role change, a revoked verification, or a deleted account takes
+    effect within one access-token lifetime instead of lingering for the life of
+    the session.
+    """
+    raw = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if not raw:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        user_id, new_raw = refresh_store.rotate(raw)
+    except refresh_store.RefreshError:
+        raise _session_expired()
+
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (u:User {id: $id}) RETURN u.email AS email, u.role AS role, "
+            "u.email_verified AS verified", id=user_id,
+        ).single()
+    if not rec:
+        # Account deleted while the session was alive — retire the successor we
+        # just minted rather than leaving a valid token for a missing user.
+        refresh_store.revoke(new_raw)
+        raise _session_expired()
+
+    _set_refresh_cookie(response, new_raw)
+    return _access_token_payload(user_id, rec["email"], rec["role"],
+                                 bool(rec["verified"]))
+
+
+@router.post("/logout")
+def logout(request: Request, response: Response):
+    """End this session. Unauthenticated for the same reason as /refresh — an
+    expired access token must not prevent logging out — and idempotent, so a
+    stale or absent cookie still reports success."""
+    raw = request.cookies.get(settings.REFRESH_COOKIE_NAME)
+    if raw:
+        refresh_store.revoke(raw)
+    _clear_refresh_cookie(response)
+    return {"message": "Logged out."}
 
 
 @router.get("/me")
@@ -383,11 +502,15 @@ def reset_password(data: ResetPasswordRequest):
             "MATCH (u:User {id: $id}) SET u.password_hash = $hash, u.email_verified = true",
             id=claims["sub"], hash=hash_password(data.new_password),
         )
+    # A reset is the "I lost control of this account" path, so every existing
+    # session ends here — including one an attacker may be holding.
+    refresh_store.revoke_all_for_user(claims["sub"])
     return {"message": "Password updated. You can now log in."}
 
 
 @router.post("/change-password")
-def change_password(data: ChangePasswordRequest, user: dict = Depends(get_current_user)):
+def change_password(data: ChangePasswordRequest, response: Response,
+                    user: dict = Depends(get_current_user)):
     """Change your own password, proving ownership with the current one.
 
     This is the only self-service route for a signed-in user: /forgot-password
@@ -395,8 +518,14 @@ def change_password(data: ChangePasswordRequest, user: dict = Depends(get_curren
     blocked (Render), so without this an account whose password is known but
     unwanted could never be rotated from the UI.
 
-    Note that existing access tokens stay valid — they are stateless and carry no
-    password fingerprint, so a change here does not sign other sessions out.
+    Other sessions are signed out, then *this* one is re-established — a password
+    change should evict anyone else holding the old one without logging the user
+    out of the browser they just used.
+
+    Already-issued access tokens are the exception: they are stateless and
+    checked against nothing, so another session stays usable until its token
+    expires (ACCESS_TOKEN_EXPIRE_MINUTES). Bounding that window is the reason
+    the access-token TTL is short.
     """
     with db.get_session() as session:
         rec = session.run(
@@ -416,6 +545,11 @@ def change_password(data: ChangePasswordRequest, user: dict = Depends(get_curren
             "MATCH (u:User {id: $id}) SET u.password_hash = $hash",
             id=user["sub"], hash=hash_password(data.new_password),
         )
+    refresh_store.revoke_all_for_user(user["sub"])
+    try:
+        _set_refresh_cookie(response, refresh_store.issue(user["sub"]))
+    except Exception as exc:  # noqa: BLE001 — the password change itself succeeded
+        log.warning("could not re-issue session after password change: %s", exc)
     return {"message": "Password updated."}
 
 
@@ -442,7 +576,8 @@ def _purge_user_rate_limits(email: str, user_id: str) -> None:
 
 
 @router.delete("/me")
-def delete_own_account(data: DeleteAccountRequest, user: dict = Depends(get_current_user)):
+def delete_own_account(data: DeleteAccountRequest, response: Response,
+                       user: dict = Depends(get_current_user)):
     """Delete your own account, permanently.
 
     Required by both app stores for any app that lets users create an account,
@@ -450,10 +585,10 @@ def delete_own_account(data: DeleteAccountRequest, user: dict = Depends(get_curr
     password so a stolen access token alone can't destroy an account.
 
     What goes: the User node (with it the password hash, TOTP secret and recovery
-    codes) and the account's rate-limit counters. Flags the user filed are
-    *anonymised*, not deleted — the reports are about companies, not about the
-    reporter, and dropping them would silently rewrite moderation history; only
-    the link back to the person is severed.
+    codes), the account's refresh tokens, and its rate-limit counters. Flags the
+    user filed are *anonymised*, not deleted — the reports are about companies,
+    not about the reporter, and dropping them would silently rewrite moderation
+    history; only the link back to the person is severed.
     """
     with db.get_session() as session:
         rec = session.run(
@@ -498,6 +633,8 @@ def delete_own_account(data: DeleteAccountRequest, user: dict = Depends(get_curr
         )
         session.run("MATCH (u:User {id: $id}) DELETE u", id=user["sub"])
 
+    refresh_store.delete_all_for_user(user["sub"])
+    _clear_refresh_cookie(response)
     _purge_user_rate_limits(email, user["sub"])
     log.info("Account deleted (self-service): %s", email)
     return {"message": "Your account has been deleted."}
@@ -591,7 +728,7 @@ def mfa_disable(data: MfaCodeRequest, user: dict = Depends(get_current_user)):
 
 
 @router.post("/mfa/verify")
-def mfa_verify(data: MfaVerifyRequest):
+def mfa_verify(data: MfaVerifyRequest, response: Response):
     """Exchange the login-issued pending token + a TOTP (or recovery) code for the
     real access token. Rate-limited per account against code brute-force."""
     try:
@@ -608,7 +745,7 @@ def mfa_verify(data: MfaVerifyRequest):
 
         if verify_totp(u.get("totp_secret") or "", data.code):
             _clear_login_attempts(key)
-            return _token_response(u["id"], u["email"], u["role"],
+            return _token_response(response, u["id"], u["email"], u["role"],
                                    email_verified=bool(u.get("email_verified")))
 
         # Recovery code — single use, so consume it on success.
@@ -619,7 +756,7 @@ def mfa_verify(data: MfaVerifyRequest):
             session.run("MATCH (u:User {id: $id}) SET u.recovery_code_hashes = $h",
                         id=u["id"], h=remaining)
             _clear_login_attempts(key)
-            return _token_response(u["id"], u["email"], u["role"],
+            return _token_response(response, u["id"], u["email"], u["role"],
                                    email_verified=bool(u.get("email_verified")))
 
     _record_login_failure(key)
