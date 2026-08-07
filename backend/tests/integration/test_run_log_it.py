@@ -47,3 +47,26 @@ def test_stale_running_flagged(it_db):
         "started_at:'2020-01-01T00:00:00+00:00', finished_at:'', total:0, error:''})")
     stuck = next(r for r in run_log.list_runs(100) if r["id"] == "old")
     assert stuck["stale"] is True
+
+
+def test_public_reader_gets_the_run_but_not_the_reason(it_db):
+    """The /scraper/runs redaction, over a real read rather than a stubbed one.
+
+    The unit tests stub `list_runs`, so they cannot catch the redaction being
+    applied to a shape the database doesn't actually return.
+    """
+    from app.scraper import run_log
+    from app.scraper.router import scraper_runs
+
+    with pytest.raises(RuntimeError):
+        with run_log.record_run("sec_edgar", "Broken Ltd"):
+            raise RuntimeError("credential=hunter2 leaked in here")
+
+    anon = scraper_runs(limit=50, user=None)["runs"][0]
+    assert anon["target"] == "Broken Ltd"
+    assert anon["status"] == "failed"        # the failure still shows
+    assert "error" not in anon
+    assert "hunter2" not in str(anon)
+
+    priv = scraper_runs(limit=50, user={"role": "contributor"})["runs"][0]
+    assert "hunter2" in priv["error"]

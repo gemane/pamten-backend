@@ -6,7 +6,9 @@ from app.config import settings
 from app.scraper.runner import (
     run_scrape, run_scrape_sec_edgar, run_scrape_all, run_scrape_open_corporates,
 )  # noqa: F401 - importing runner also registers the built-in scrapers in the registry
-from app.auth.dependencies import require_admin, require_contributor, require_verified
+from app.auth.dependencies import (
+    require_admin, require_contributor, require_verified, get_current_user_optional,
+)
 from app.scraper import maintenance, proxy_write
 from app.scraper.run_log import record_run, list_runs
 from app.scraper.scraper_registry import get as _get_scraper, registered as _registered_scrapers
@@ -62,13 +64,32 @@ def scraper_status():
     }
 
 
+# Roles allowed to see *why* a run failed. Everyone else still sees that it did.
+_RUN_DETAIL_ROLES = ("admin", "contributor")
+
+
 @router.get("/runs")
 def scraper_runs(
     limit: int = Query(50, ge=1, le=500, description="Max run records to return"),
-    _: dict = Depends(require_contributor),
+    user: dict | None = Depends(get_current_user_optional),
 ):
-    """Recent scrape runs (newest first) — what ran, when, node counts, and failures."""
+    """Recent scrape runs (newest first) — what ran, when, node counts, and failures.
+
+    Public, because what the platform ingests is exactly the kind of thing an
+    ownership-transparency project should be transparent about. What ran, against
+    which company, when, and how many nodes came of it are all publishable.
+
+    The ``error`` field is not. It carries raw exception text, which can include
+    internal URLs, database errors, or a credential embedded in a failing request
+    URL — so it is stripped for anyone outside _RUN_DETAIL_ROLES. They still get
+    ``status: "failed"``; they just don't get the stack's opinion about why.
+
+    Redaction lives here rather than in ``list_runs()`` so the run log stays a
+    plain data accessor with no notion of who is asking.
+    """
     runs = list_runs(limit)
+    if (user or {}).get("role") not in _RUN_DETAIL_ROLES:
+        runs = [{k: v for k, v in run.items() if k != "error"} for run in runs]
     return {"count": len(runs), "runs": runs}
 
 
