@@ -358,6 +358,14 @@ updated to `ok` (with node count) or `failed` (with the error) on finish. `GET
 what's scraping now and which runs failed — across the panel *and* the bundled
 `scrape_companies.sh` script.
 
+The endpoint is **public**: what the platform ingests, against which company and
+when, is the kind of thing an ownership-transparency project should be open
+about, and the frontend shows the feed to every visitor. The `error` field is the
+exception: it holds raw exception text, which can include internal URLs, database
+errors, or a credential embedded in a failing request URL, so it is stripped for
+anyone who isn't a `contributor` or `admin`. Everyone still sees that a run
+failed — just not the stack's opinion about why.
+
 The log is **bounded**: capped at 500 records, with the oldest pruned on every
 write, so it can never grow the database unbounded. A `running` row older than 30
 minutes is flagged `stale` (an interrupted run). Surfaced in the web app's
