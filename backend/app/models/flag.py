@@ -11,6 +11,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.models.relationship import OwnershipType
+
 
 class FlagTargetKind(str, Enum):
     owns = "owns"        # an OWNS edge  (from_id -> to_id)
@@ -74,7 +76,12 @@ class FlagStatusUpdate(BaseModel):
 class PinRequest(BaseModel):
     """A moderator-corrected value for an OWNS edge — at least one field required."""
     stake_percent: Optional[float] = Field(default=None, ge=0, le=100)
-    ownership_type: Optional[str] = None
+    # Typed rather than a bare string: a pin overrides the edge's value on read
+    # (see app/pins.py), so an unrecognised type here would propagate into the
+    # graph's output, where the UI matches on the exact string and would fall
+    # back to neutral styling without anything reporting a problem. Rejecting at
+    # the boundary also documents the valid values in the OpenAPI schema.
+    ownership_type: Optional[OwnershipType] = None
 
     @model_validator(mode="after")
     def _at_least_one(self):
