@@ -498,13 +498,16 @@ def _coalesce_entity_props(dead_id: str, keep_id: str) -> int:
 
 
 def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
-    """Move every OWNS / HAS_ROLE / location edge off ``dead_id`` onto ``keep_id``.
+    """Move every OWNS / HAS_ROLE edge off ``dead_id`` onto ``keep_id``.
 
-    Covers all four ways an Entity is wired: OWNS it makes (outgoing), OWNS made
-    *to* it (incoming, from a Person or Entity), HAS_ROLE held *in* it, and its
-    HEADQUARTERED_IN / REGISTERED_IN / OPERATES_IN location links. An edge that
-    ``keep`` already has (active, same target/role/location) is dropped rather
-    than duplicated. Returns the number of edges migrated.
+    Covers the three ways an Entity is wired: OWNS it makes (outgoing), OWNS
+    made *to* it (incoming, from a Person or Entity), and HAS_ROLE held *in* it.
+    An edge that ``keep`` already has (active, same target/role) is dropped
+    rather than duplicated. Returns the number of edges migrated.
+
+    Location is not among them any more — HQ lives on the Entity's own
+    properties, so the surviving node keeps its own and there is nothing to
+    move.
     """
     migrated = 0
 
@@ -607,23 +610,6 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         )
         migrated += 1
 
-    # 4. Outgoing location links  (dead)-[:HEADQUARTERED_IN|REGISTERED_IN|OPERATES_IN]->(loc)
-    for rel in ("HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN"):
-        for e in run_query(
-            f"MATCH (a:Entity {{id: $id}})-[:{rel}]->(l:Location) RETURN l.id AS lid",
-            {"id": dead_id},
-        ):
-            if run_query(
-                f"MATCH (a:Entity {{id: $k}})-[:{rel}]->(l:Location {{id: $lid}}) RETURN 1 LIMIT 1",
-                {"k": keep_id, "lid": e["lid"]},
-            ):
-                continue
-            run_command(
-                f"MATCH (a:Entity {{id: $k}}), (l:Location {{id: $lid}}) CREATE (a)-[:{rel}]->(l)",
-                {"k": keep_id, "lid": e["lid"]},
-            )
-            migrated += 1
-
     return migrated
 
 
@@ -642,12 +628,11 @@ def _duplicate_keys(key_prop: str) -> list[str]:
 
 
 # Edges are single-source (one fact, one source) → deleting by source_id is exact.
-_WIPE_EDGE_TYPES = ["OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY",
-                    "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN"]
+_WIPE_EDGE_TYPES = ["OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY"]
 # Nodes carry a single origin source_id; only delete the ones this source created
 # that are left with no edges (degree 0) after its edges go — a node another source
 # still references is kept.
-_WIPE_NODE_TYPES = ["Entity", "Person", "Location"]
+_WIPE_NODE_TYPES = ["Entity", "Person"]
 
 
 def _batched_delete(where_sql: str, params: dict, batch: int) -> int:

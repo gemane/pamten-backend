@@ -400,8 +400,8 @@ def geocode_backfill_run(
     _: dict = Depends(require_contributor),
 ):
     """
-    Backfill HQ coordinates via Nominatim for Location nodes and Entities that
-    have a city/country but no coordinates. Gated by GEOCODING_ENABLED (env), so
+    Backfill HQ coordinates via Nominatim for entities that have an address or
+    a city/country but no coordinates. Gated by GEOCODING_ENABLED (env), so
     it never hits Nominatim unless deliberately turned on.
     """
     if not settings.GEOCODING_ENABLED:

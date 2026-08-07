@@ -102,7 +102,6 @@ backend/
     ├── routers/             # REST endpoints
     │   ├── entities.py
     │   ├── persons.py
-    │   ├── locations.py
     │   ├── relationships.py
     │   ├── search.py
     │   └── sources.py
@@ -124,7 +123,7 @@ backend/
 
 ## Data model
 
-Nodes (`Entity`, `Person`, `Location`, `Source`, `MergeLog`, `Peer`, `ScrapeRun`,
+Nodes (`Entity`, `Person`, `Source`, `MergeLog`, `Peer`, `ScrapeRun`,
 `ScraperSource`, `User`) and their edges (`OWNS`, `HAS_ROLE`, `RELATED_TO`,
 `NOT_DUPLICATE`, `DUAL_LISTED_WITH`, location edges) with all properties:
 **[`docs/data-model.md`](docs/data-model.md)**.
@@ -312,7 +311,7 @@ Duplicate companies are folded together by `deduplicate_entities` (shared LEI / 
 
 The survivor is the highest-`name_credibility` node (then verified, then the lexically smallest id), so a register-sourced node with its stable `lei:` id normally wins over a scraped UUID. A merge carries three things across before deleting the loser:
 
-- **its edges** — owners, subsidiaries, roles and locations, skipping any the survivor already has;
+- **its edges** — owners, subsidiaries and roles, skipping any the survivor already has;
 - **its data** — identifiers (`wikidata_id`, `sec_cik`, …) and descriptive fields, filling gaps only; the survivor's own values always win, its name never changes, and the loser's name is added as an alias so the company stays findable under it;
 - **a forwarding address** for its id (see below).
 

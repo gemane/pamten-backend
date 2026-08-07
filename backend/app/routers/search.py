@@ -307,9 +307,6 @@ _NODE_EDGE_SECTIONS = {
 
 # Sections that are bare nodes with no edge properties to carry.
 _NODE_ONLY_SECTIONS = {
-    "operations": (
-        "MATCH (e:Entity {{id: $id}})-[:OPERATES_IN]->(ops:Location) "
-        "WITH DISTINCT ops RETURN ops AS node LIMIT {limit}"),
     "dual_listed": (
         "MATCH (e:Entity {{id: $id}})-[:DUAL_LISTED_WITH]->(dlc:Entity) "
         "WITH DISTINCT dlc RETURN dlc AS node LIMIT {limit}"),
@@ -337,11 +334,10 @@ def get_full_profile(
     limit: Annotated[int, Query(ge=1, le=PROFILE_SECTION_MAX,
                                 description="Max rows per section (owners, subsidiaries, …).")] = PROFILE_SECTION_LIMIT,
 ):
-    head_query = (
-        "MATCH (e:Entity {id: $id}) "
-        "OPTIONAL MATCH (e)-[:HEADQUARTERED_IN]->(hq:Location) "
-        "RETURN e, hq LIMIT 1"
-    )
+    # HQ lives on the Entity itself (hq_locations / hq_city / hq_country /
+    # hq_lat / hq_lng). The Location vertex it used to be read from was a
+    # parallel representation of the same fact, and the client never used it.
+    head_query = "MATCH (e:Entity {id: $id}) RETURN e LIMIT 1"
     with db.get_session() as session:
         head = session.run(head_query, id=entity_id).single()
         if not head:
@@ -369,8 +365,6 @@ def get_full_profile(
         # below is unchanged.
         record = {
             "e": head["e"],
-            "hq": head["hq"],
-            "operations": plain["operations"],
             "dual_listed": plain["dual_listed"],
             "owners": _pairs(grouped["owners"], "owner", "rel"),
             "subsidiaries": _pairs(grouped["subsidiaries"], "entity", "rel"),
@@ -438,8 +432,6 @@ def get_full_profile(
 
         return {
             "entity": dict(record["e"]),
-            "headquarters": dict(record["hq"]) if record["hq"] else None,
-            "operations": [dict(loc) for loc in record["operations"] if loc],
             "owners": owners,
             "ownership": _ownership_summary(owners),
             "cross_holdings": cross_holdings,
@@ -546,9 +538,9 @@ def get_person_profile(person_id: str):
 def search_by_country(country: str, region: str = None):
     # Find all entities in a country or region
     query = """
-        MATCH (e:Entity)-[:HEADQUARTERED_IN]->(l:Location)
-        WHERE l.country = $country
-        RETURN e, l
+        MATCH (e:Entity)
+        WHERE e.country = $country
+        RETURN e
         ORDER BY e.name
     """
 

@@ -14,7 +14,7 @@ def test_creates_every_vertex_type_once():
     with _run() as m:
         schema.ensure_indexes()
     issued = [c.args[0] for c in m.call_args_list]
-    for vtype in ("Entity", "Person", "Location", "Source", "User"):
+    for vtype in ("Entity", "Person", "Source", "User"):
         assert f"CREATE VERTEX TYPE {vtype} IF NOT EXISTS" in issued
 
 

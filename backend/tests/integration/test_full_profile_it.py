@@ -23,12 +23,9 @@ pytestmark = pytest.mark.integration
 def _rich_entity(it_db):
     """One entity wired to every section the profile returns."""
     it_db.run_command("CREATE (e:Entity {id:'ME', name:'Middle Co', type:'company'})")
-    it_db.run_command("CREATE (l:Location {id:'HQ', name:'Vienna', country:'AT'})")
-    it_db.run_command("CREATE (l:Location {id:'OP1', name:'Berlin', country:'DE'})")
-    it_db.run_command("MATCH (e:Entity {id:'ME'}), (l:Location {id:'HQ'}) "
-                      "CREATE (e)-[:HEADQUARTERED_IN]->(l)")
-    it_db.run_command("MATCH (e:Entity {id:'ME'}), (l:Location {id:'OP1'}) "
-                      "CREATE (e)-[:OPERATES_IN]->(l)")
+    # HQ lives on the entity itself now, not on a linked Location node.
+    it_db.run_command("MATCH (e:Entity {id:'ME'}) SET e.hq_city = 'Vienna', "
+                      "e.hq_country = 'AT', e.hq_address = '1 Ringstrasse, Vienna'")
 
     for i in range(3):
         it_db.run_command(f"CREATE (o:Entity {{id:'OWN{i}', name:'Owner {i}', type:'company'}})")
@@ -54,8 +51,8 @@ def test_every_section_is_populated(it_db):
     profile = get_full_profile("ME")
 
     assert profile["entity"]["id"] == "ME"
-    assert profile["headquarters"]["id"] == "HQ"
-    assert [o["id"] for o in profile["operations"]] == ["OP1"]
+    assert profile["entity"]["hq_city"] == "Vienna"
+    assert profile["entity"]["hq_country"] == "AT"
     assert {o["owner"]["id"] for o in profile["owners"]} == {"OWN0", "OWN1", "OWN2"}
     assert {s["entity"]["id"] for s in profile["subsidiaries"]} == {"SUB0", "SUB1", "SUB2", "SUB3"}
     assert {e["person"]["id"] for e in profile["executives"]} == {"P0", "P1"}
@@ -131,8 +128,7 @@ def test_entity_with_no_relationships_returns_empty_sections(it_db):
     profile = get_full_profile("BARE")
 
     assert profile["entity"]["id"] == "BARE"
-    assert profile["headquarters"] is None
-    for section in ("operations", "owners", "subsidiaries", "executives",
+    for section in ("owners", "subsidiaries", "executives",
                     "dual_listed", "cross_holdings", "succeeded_by", "replaces"):
         assert profile[section] == [], f"{section} should be empty"
 
