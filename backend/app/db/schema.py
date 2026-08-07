@@ -40,7 +40,6 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Person",   "id",              "UNIQUE"),
     ("Person",   "full_name",       "NOTUNIQUE"),
     ("Person",   "wikidata_id",     "NOTUNIQUE"),
-    ("Location", "id",              "UNIQUE"),
     ("Source",   "id",              "UNIQUE"),
     ("User",     "id",              "UNIQUE"),
     ("User",     "email",           "UNIQUE"),
@@ -90,7 +89,7 @@ _INDEXES: list[tuple[str, str, str]] = [
 # and the startup bootstrap create them).
 _EDGE_TYPES: list[str] = [
     "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY",
-    "HEADQUARTERED_IN", "REGISTERED_IN", "OPERATES_IN", "NOT_DUPLICATE",
+    "NOT_DUPLICATE",
 ]
 
 # Full-text indexes powering /search. A FULL_TEXT index (tokenized, queried with

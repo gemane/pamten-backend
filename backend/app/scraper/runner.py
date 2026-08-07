@@ -61,21 +61,20 @@ def _opencorporates_url(jurisdiction_code: str | None, company_number: str | Non
 log = logging.getLogger(__name__)
 
 
-def _geocode_and_attach(entity_id: str, location_id: str, address: dict) -> None:
+def _geocode_and_attach(entity_id: str, address: dict) -> None:
     """
-    Best-effort: geocode an address, persist lat/lng on the Location node, and
-    denormalize a primary location (coords + city/country) onto the Entity so
-    the map can place a pin without traversing edges. Keeps any values already
-    present (COALESCE(existing, new)) so richer data is never clobbered.
+    Best-effort: geocode an address and write the coordinates plus city/country
+    onto the Entity, so the map can place a pin without traversing edges. Keeps
+    any values already present (COALESCE(existing, new)) so richer data is never
+    clobbered.
+
+    This used to also write lat/lng to a parallel Location node. The Entity is
+    now the only home for a location, so there is one place to read and one
+    place to keep correct.
     """
     coord = geocode_address(address)
     lat, lng = coord if coord else (None, None)
     with db.get_session() as session:
-        if coord:
-            session.run(
-                "MATCH (l:Location {id: $id}) SET l.latitude = $lat, l.longitude = $lng",
-                id=location_id, lat=lat, lng=lng,
-            )
         session.run(
             """
             MATCH (e:Entity {id: $id})
@@ -1434,46 +1433,6 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
 
 # ── OpenCorporates helpers ────────────────────────────────────────────────────
 
-def _upsert_location_oc(address: dict) -> str | None:
-    """
-    Find or create a Location node from a registered address dict.
-    Returns the Location's id, or None if the address is empty.
-    """
-    city    = (address.get("city")    or "").strip()
-    country = (address.get("country") or "").strip()
-    street  = (address.get("street")  or "").strip()
-    zip_    = (address.get("zip")     or "").strip()
-
-    if not (city or country):
-        return None
-
-    with db.get_session() as session:
-        rec = session.run(
-            """
-            MATCH (l:Location)
-            WHERE l.city = $city AND l.country = $country
-              AND COALESCE(l.street, '') = $street
-            RETURN l.id AS id LIMIT 1
-            """,
-            city=city, country=country, street=street,
-        ).single()
-        if rec:
-            return rec["id"]
-
-        location_id = str(uuid.uuid4())
-        session.run(
-            """
-            CREATE (l:Location {
-                id: $id, street: $street, city: $city,
-                country: $country, zip: $zip
-            })
-            """,
-            id=location_id, street=street, city=city,
-            country=country, zip=zip_,
-        )
-        return location_id
-
-
 def _upsert_role_oc(person_id: str, entity_id: str, role: str,
                     start_date: str | None, end_date: str | None,
                     source_id: str, source_url: str | None = None, credibility_score: int = 85):
@@ -1572,19 +1531,10 @@ def run_scrape_open_corporates(company_name: str) -> dict:
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 
-    # Registered address → Location node linked with REGISTERED_IN
+    # Registered address → geocoded onto the entity itself.
     address = data.get("registered_address") or {}
-    location_id = _upsert_location_oc(address)
-    if location_id:
-        with db.get_session() as session:
-            session.run(
-                """
-                MATCH (e:Entity {id: $eid}), (l:Location {id: $lid})
-                MERGE (e)-[:REGISTERED_IN {source_id: $sid}]->(l)
-                """,
-                eid=target_id, lid=location_id, sid=source_id,
-            )
-        _geocode_and_attach(target_id, location_id, address)
+    if address.get("city") or address.get("country"):
+        _geocode_and_attach(target_id, address)
         city    = address.get("city", "")
         country = address.get("country", "")
         scraped.append({"type": "location", "city": city, "country": country,

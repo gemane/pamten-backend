@@ -143,6 +143,3 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 | POST | `/scraper/deduplicate-persons` | admin | Legacy: merge reversed-name Person duplicates (use `/persons/deduplicate`) |
 | POST | `/scraper/migrate-ownership-types` | admin | One-time migration deriving canonical `ownership_type` values |
 | POST | `/relationships/dual-listed` | contributor | Link two share classes of a dual-listed company (`DUAL_LISTED_WITH`) |
-| POST | `/locations/{entity_id}/headquartered-in/{location_id}` | contributor | Attach an HQ location |
-| POST | `/locations/{entity_id}/registered-in/{location_id}` | contributor | Attach a registration location |
-| POST | `/locations/{entity_id}/operates-in/{location_id}` | contributor | Attach an operating location |

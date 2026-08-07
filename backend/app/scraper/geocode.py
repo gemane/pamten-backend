@@ -8,7 +8,7 @@ caller never has to guard it.
 Nominatim usage policy (https://operations.osmfoundation.org/policies/nominatim/)
 is respected: a descriptive User-Agent with a contact, at most one request per
 second (GEOCODING_MIN_INTERVAL), and results are cached so the same address is
-never requested twice in a process. Persisted coordinates on Location nodes act
+never requested twice in a process. The coordinates persisted on each Entity act
 as the durable cache, so backfills only ever geocode what is still missing.
 """
 import logging

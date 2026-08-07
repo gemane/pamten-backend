@@ -19,7 +19,6 @@ WRITE_CASES = [
     ("post", "/sources/", {"name": "SEC", "credibility_score": 90, "type": "register"}),
     ("post", "/relationships/owns", {"owner_id": "a", "owned_id": "b"}),
     ("post", "/relationships/dual-listed", {"entity_a_id": "a", "entity_b_id": "b"}),
-    ("post", "/locations/", {"country": "US"}),
 ]
 
 
