@@ -98,7 +98,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/relationships/roles` | Create HAS_ROLE edge |
 | POST | `/relationships/roles/close` | End a role |
 | POST | `/relationships/related-to` | Create RELATED_TO edge between persons |
-| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (`depth` max 10; `limit` paths, default 500, max 5000) |
+| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (`depth` max 10; `limit` paths, default 500, max 5000). `include_indirect=false` by default: GLEIF ultimate-parent shortcut edges are excluded (they duplicate paths the tree already contains and render as direct holdings) |
 | GET | `/relationships/owners/{id}` | Current active owners of an entity (`limit`, default 200, max 1000) |
 | GET | `/relationships/history/{id}` | Full history: ownership in/out + executive roles (`limit` **per category**, default 500, max 2000) |
 
