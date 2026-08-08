@@ -30,7 +30,7 @@ def client(it_db, monkeypatch):
 def test_register_verify_login_then_reset(client):
     captured: dict[str, str] = {}
     with patch("app.auth.router.send_verification_email",
-               side_effect=lambda to, token: captured.update(verify=token)):
+               side_effect=lambda to, token, language=None: captured.update(verify=token)):
         r = client.post("/auth/register", json={"email": "jane@example.com", "password": "Zt9mQ2vLp4rK"})
     assert r.status_code == 200 and r.json()["verification_required"] is True
 
@@ -46,7 +46,7 @@ def test_register_verify_login_then_reset(client):
 
     # forgot -> reset with the emailed token
     with patch("app.auth.router.send_password_reset_email",
-               side_effect=lambda to, token: captured.update(reset=token)):
+               side_effect=lambda to, token, language=None: captured.update(reset=token)):
         r = client.post("/auth/forgot-password", json={"email": "jane@example.com"})
     assert r.status_code == 200
     r = client.post("/auth/reset-password",

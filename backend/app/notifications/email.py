@@ -21,6 +21,7 @@ from email.message import EmailMessage
 import httpx
 
 from app.config import settings
+from app.notifications.i18n import t
 
 log = logging.getLogger(__name__)
 
@@ -110,70 +111,65 @@ def _link(action: str, token: str) -> str:
     return f"{base}/?action={action}&token={token}"
 
 
-def send_verification_email(to: str, token: str) -> None:
+def send_verification_email(to: str, token: str, language: str | None = None) -> None:
     url = _link("verify-email", token)
-    subject = "Verify your Owlgraph email"
+    hours = settings.EMAIL_VERIFY_TTL_HOURS
     text = (
-        "Welcome to Owlgraph.\n\n"
-        "Please confirm your email address by opening this link:\n\n"
+        f"{t('verify.intro', language)}\n\n"
+        f"{t('verify.instruction', language)}\n\n"
         f"{url}\n\n"
-        f"The link expires in {settings.EMAIL_VERIFY_TTL_HOURS} hours. "
-        "If you didn't create an account, you can ignore this message.\n"
+        f"{t('verify.expiry', language, hours=hours)} {t('verify.ignore', language)}\n"
     )
     html = (
-        f"<p>Welcome to Owlgraph.</p>"
-        f"<p>Please confirm your email address:</p>"
-        f'<p><a href="{url}">Verify my email</a></p>'
-        f"<p>The link expires in {settings.EMAIL_VERIFY_TTL_HOURS} hours. "
-        f"If you didn't create an account, you can ignore this message.</p>"
+        f"<p>{t('verify.intro', language)}</p>"
+        f"<p>{t('verify.instruction', language)}</p>"
+        f'<p><a href="{url}">{t("verify.cta", language)}</a></p>'
+        f"<p>{t('verify.expiry', language, hours=hours)} {t('verify.ignore', language)}</p>"
     )
-    get_email_sender().send(to, subject, text, html)
+    get_email_sender().send(to, t("verify.subject", language), text, html)
 
 
-def send_account_exists_email(to: str) -> None:
+def send_account_exists_email(to: str, language: str | None = None) -> None:
     """Tell an existing user that someone tried to register with their address.
 
     Sent in place of a verification email when a registration attempt uses an
     email that is already in the database — so the response to the caller stays
     generic (no enumeration) while the real account owner is notified and can act.
+
+    Written in the *account owner's* language, not the requester's: the person
+    triggering this may be a stranger probing for accounts, and their UI language
+    says nothing about what the recipient reads.
     """
     login_url = settings.APP_BASE_URL.rstrip("/")
-    subject = "Someone tried to create an Owlgraph account with your email"
     text = (
-        "Hi,\n\n"
-        "Someone just tried to register a new Owlgraph account using your email address. "
-        "You already have an account, so no new account was created.\n\n"
-        f"If that was you, you can log in here: {login_url}\n\n"
-        "If you've forgotten your password, use the 'Forgot password' link on the login page.\n\n"
-        "If it wasn't you, no action is needed — your account is unchanged.\n"
+        f"{t('exists.greeting', language)}\n\n"
+        f"{t('exists.body', language)}\n\n"
+        f"{t('exists.login', language)} {login_url}\n\n"
+        f"{t('exists.forgot', language)}\n\n"
+        f"{t('exists.noaction', language)}\n"
     )
     html = (
-        "<p>Hi,</p>"
-        "<p>Someone just tried to register a new Owlgraph account using your email address. "
-        "You already have an account, so no new account was created.</p>"
-        f'<p>If that was you, <a href="{login_url}">log in here</a>. '
-        "If you've forgotten your password, use the <em>Forgot password</em> link on the login page.</p>"
-        "<p>If it wasn't you, no action is needed — your account is unchanged.</p>"
+        f"<p>{t('exists.greeting', language)}</p>"
+        f"<p>{t('exists.body', language)}</p>"
+        f'<p>{t("exists.login", language)} <a href="{login_url}">'
+        f'{t("exists.login_cta", language)}</a>. {t("exists.forgot", language)}</p>'
+        f"<p>{t('exists.noaction', language)}</p>"
     )
-    get_email_sender().send(to, subject, text, html)
+    get_email_sender().send(to, t("exists.subject", language), text, html)
 
 
-def send_password_reset_email(to: str, token: str) -> None:
+def send_password_reset_email(to: str, token: str, language: str | None = None) -> None:
     url = _link("reset-password", token)
-    subject = "Reset your Owlgraph password"
+    minutes = settings.PASSWORD_RESET_TTL_MINUTES
     text = (
-        "We received a request to reset your Owlgraph password.\n\n"
-        "Open this link to choose a new password:\n\n"
+        f"{t('reset.intro', language)}\n\n"
+        f"{t('reset.instruction', language)}\n\n"
         f"{url}\n\n"
-        f"The link expires in {settings.PASSWORD_RESET_TTL_MINUTES} minutes. "
-        "If you didn't request this, you can ignore this message — your password "
-        "stays unchanged.\n"
+        f"{t('reset.expiry', language, minutes=minutes)} {t('reset.ignore', language)}\n"
     )
     html = (
-        f"<p>We received a request to reset your Owlgraph password.</p>"
-        f'<p><a href="{url}">Choose a new password</a></p>'
-        f"<p>The link expires in {settings.PASSWORD_RESET_TTL_MINUTES} minutes. "
-        f"If you didn't request this, you can ignore this message — your password "
-        f"stays unchanged.</p>"
+        f"<p>{t('reset.intro', language)}</p>"
+        f'<p><a href="{url}">{t("reset.cta", language)}</a></p>'
+        f"<p>{t('reset.expiry', language, minutes=minutes)} {t('reset.ignore', language)}</p>"
     )
-    get_email_sender().send(to, subject, text, html)
+    get_email_sender().send(to, t("reset.subject", language), text, html)
