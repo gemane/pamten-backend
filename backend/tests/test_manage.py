@@ -180,3 +180,41 @@ def test_set_password_reads_from_a_hidden_prompt_when_not_given(monkeypatch):
     update = [(q, p) for q, p in calls if q.strip().upper().startswith("UPDATE")]
     assert len(update) == 1
     assert verify_password("Zt9mQ2vLp4rK", update[0][1]["h"])
+
+
+# ── geocode ───────────────────────────────────────────────────────────────────
+#
+# The summary line reads keys straight off backfill()'s return dict, and nothing
+# checked that the two agreed. When Location was retired the dict lost
+# `locations_total`/`locations_geocoded` and the command started dying with a
+# KeyError *after* doing all its work — the tests for backfill() itself were
+# updated, its one caller was not. These pin the contract from both ends.
+
+class TestGeocodeCommand:
+    def _run(self, monkeypatch, result):
+        import manage
+        from app.scraper import geocode_backfill
+
+        printed: list[str] = []
+        monkeypatch.setattr(geocode_backfill, "backfill", lambda limit=None: result)
+        monkeypatch.setattr("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a))))
+        manage.cmd_geocode(types.SimpleNamespace(limit=None))
+        return "\n".join(printed)
+
+    def test_prints_a_summary_without_raising(self, monkeypatch):
+        out = self._run(monkeypatch, {"entities_total": 7, "entities_geocoded": 3, "geocoded": 3})
+        assert "3" in out and "7" in out
+
+    def test_only_reads_keys_backfill_actually_returns(self, monkeypatch):
+        """The regression itself: the summary must not reach for a key that is
+        no longer in the dict."""
+        from app.scraper import geocode_backfill
+
+        # Call the real function with the DB stubbed out, so the keys under test
+        # are the ones the implementation genuinely produces.
+        monkeypatch.setattr(geocode_backfill, "run_query", lambda *a, **k: [])
+        monkeypatch.setattr(geocode_backfill, "run_command", lambda *a, **k: None)
+        real_keys = set(geocode_backfill.backfill())
+
+        out = self._run(monkeypatch, {k: 0 for k in real_keys})
+        assert out  # no KeyError
