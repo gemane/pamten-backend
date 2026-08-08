@@ -14,6 +14,7 @@ from app.auth.security import (
 )
 from app.auth.dependencies import get_current_user, require_admin
 from app.auth.password_policy import is_common_password, password_policy_error
+from app.notifications.i18n import DEFAULT_LANGUAGE, normalize as normalize_language
 from app.auth.rate_limit import check_rate_limit, record_attempt, clear_attempts
 from app.notifications.email import (
     send_verification_email, send_password_reset_email, send_account_exists_email,
@@ -163,20 +164,49 @@ def _safe_send(send_fn, *args) -> None:
         log.warning("email send failed (%s): %s", getattr(send_fn, "__name__", send_fn), exc)
 
 
-def _issue_verification_email(background: BackgroundTasks, user_id: str, email: str) -> None:
+# The UI's current language, sent by the frontend on every request. Not
+# Accept-Language: that reflects the browser's configured languages, which say
+# nothing about the in-app language switcher — a German site in an English
+# browser would otherwise email in English.
+LANGUAGE_HEADER = "X-Owlgraph-Language"
+
+
+def _request_language(request: Request) -> str:
+    return normalize_language(request.headers.get(LANGUAGE_HEADER))
+
+
+def _user_language(session, user_id: str, fallback: str) -> str:
+    """The account owner's own language, for mail addressed to them.
+
+    A password reset or an account-exists notice goes to the account holder,
+    who may not be the person who triggered it — the requester could be a
+    stranger probing for accounts. Their stored preference wins; the requester's
+    language is only the fallback for accounts predating this field.
+    """
+    try:
+        rec = session.run("MATCH (u:User {id: $id}) RETURN u.language AS lang",
+                          id=user_id).single()
+    except Exception:  # noqa: BLE001 — never block an email on this lookup
+        return fallback
+    return normalize_language(rec["lang"]) if rec and rec["lang"] else fallback
+
+
+def _issue_verification_email(background: BackgroundTasks, user_id: str, email: str,
+                              language: str = DEFAULT_LANGUAGE) -> None:
     # Token minted synchronously (cheap); the actual send runs after the response
     # so a slow/blocked transport can't hang or 500 the endpoint.
     token = create_purpose_token(
         user_id, VERIFY_EMAIL_PURPOSE, timedelta(hours=settings.EMAIL_VERIFY_TTL_HOURS))
-    background.add_task(_safe_send, send_verification_email, email, token)
+    background.add_task(_safe_send, send_verification_email, email, token, language)
 
 
 def _issue_password_reset_email(background: BackgroundTasks, user_id: str, email: str,
-                                password_hash: str) -> None:
+                                password_hash: str,
+                                language: str = DEFAULT_LANGUAGE) -> None:
     token = create_purpose_token(
         user_id, RESET_PASSWORD_PURPOSE, timedelta(minutes=settings.PASSWORD_RESET_TTL_MINUTES),
         extra={"ph": password_hash_fingerprint(password_hash)})
-    background.add_task(_safe_send, send_password_reset_email, email, token)
+    background.add_task(_safe_send, send_password_reset_email, email, token, language)
 
 
 def _set_refresh_cookie(response: Response, raw: str) -> None:
@@ -273,8 +303,10 @@ def _clear_login_attempts(key: str) -> None:
 
 
 @router.post("/register")
-def register(data: RegisterRequest, background: BackgroundTasks, response: Response):
+def register(data: RegisterRequest, background: BackgroundTasks, response: Response,
+             request: Request):
     _validate_password(data.password)
+    language = _request_language(request)
 
     # Generic response used for both new and duplicate registrations — never
     # reveals whether the address already has an account (email enumeration).
@@ -284,10 +316,14 @@ def register(data: RegisterRequest, background: BackgroundTasks, response: Respo
     }
 
     with db.get_session() as session:
-        if session.run("MATCH (u:User {email: $e}) RETURN u", e=data.email).single():
+        rec_existing = session.run(
+                "MATCH (u:User {email: $e}) RETURN u.id AS id", e=data.email).single()
+        if rec_existing:
             # Address already registered — notify the owner silently and return
             # the same generic response so the caller learns nothing.
-            background.add_task(_safe_send, send_account_exists_email, data.email)
+            owner_language = _user_language(session, rec_existing["id"], language)
+            background.add_task(_safe_send, send_account_exists_email, data.email,
+                                owner_language)
             return {**_REGISTER_OK, "email": data.email}
 
         # When an admin is provisioned from env (ADMIN_EMAIL), self-registration
@@ -308,17 +344,19 @@ def register(data: RegisterRequest, background: BackgroundTasks, response: Respo
             CREATE (u:User {
                 id: $id, email: $email, password_hash: $hash,
                 role: $role, email_verified: $verified,
+                language: $language,
                 created_at: toString(datetime())
             })
             """,
             id=user_id, email=data.email,
             hash=hash_password(data.password), role=role, verified=verified,
+            language=language,
         )
 
     if verified:
         return _token_response(response, user_id, data.email, role, email_verified=True)
 
-    _issue_verification_email(background, user_id, data.email)
+    _issue_verification_email(background, user_id, data.email, language)
     return {**_REGISTER_OK, "email": data.email}
 
 
@@ -450,7 +488,8 @@ def verify_email(data: VerifyEmailRequest):
 
 
 @router.post("/resend-verification")
-def resend_verification(data: _EmailOnlyRequest, background: BackgroundTasks):
+def resend_verification(data: _EmailOnlyRequest, background: BackgroundTasks,
+                        request: Request):
     """Re-send the verification link. Always returns 200 (never reveals whether
     the address exists or is already verified)."""
     _rate_limit_email(data.email)
@@ -459,13 +498,16 @@ def resend_verification(data: _EmailOnlyRequest, background: BackgroundTasks):
             "MATCH (u:User {email: $e}) RETURN u.id AS id, u.email_verified AS verified",
             e=data.email,
         ).single()
+        language = (_user_language(session, rec["id"], _request_language(request))
+                    if rec else DEFAULT_LANGUAGE)
     if rec and not rec["verified"]:
-        _issue_verification_email(background, rec["id"], data.email)
+        _issue_verification_email(background, rec["id"], data.email, language)
     return {"message": "If that account exists and is unverified, a verification email was sent."}
 
 
 @router.post("/forgot-password")
-def forgot_password(data: _EmailOnlyRequest, background: BackgroundTasks):
+def forgot_password(data: _EmailOnlyRequest, background: BackgroundTasks,
+                    request: Request):
     """Send a password-reset link. Always returns 200 — no user enumeration."""
     _rate_limit_email(data.email)
     with db.get_session() as session:
@@ -473,8 +515,10 @@ def forgot_password(data: _EmailOnlyRequest, background: BackgroundTasks):
             "MATCH (u:User {email: $e}) RETURN u.id AS id, u.password_hash AS hash",
             e=data.email,
         ).single()
+        language = (_user_language(session, rec["id"], _request_language(request))
+                    if rec else DEFAULT_LANGUAGE)
     if rec:
-        _issue_password_reset_email(background, rec["id"], data.email, rec["hash"])
+        _issue_password_reset_email(background, rec["id"], data.email, rec["hash"], language)
     return {"message": "If that account exists, a password-reset email was sent."}
 
 

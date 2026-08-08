@@ -38,7 +38,7 @@ def _register_verified_user(client) -> str:
     """Register + verify a user, return a bearer access token."""
     captured: dict[str, str] = {}
     with patch("app.auth.router.send_verification_email",
-               side_effect=lambda to, token: captured.update(v=token)):
+               side_effect=lambda to, token, language=None: captured.update(v=token)):
         client.post("/auth/register", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"})
     client.post("/auth/verify-email", json={"token": captured["v"]})
     r = client.post("/auth/login", json={"email": "mfa@example.com", "password": "Zt9mQ2vLp4rK"})
