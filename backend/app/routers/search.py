@@ -305,6 +305,50 @@ _NODE_EDGE_SECTIONS = {
         "WITH pred, collect(pred_r) AS rels RETURN pred AS node, rels LIMIT {limit}"),
 }
 
+# Real totals per section, independent of the row limit.
+#
+# The client cannot derive these: each section is capped at PROFILE_SECTION_LIMIT,
+# so the length of a returned array is a lower bound, not a count. Barclays has 118
+# subsidiaries and Unilever 112 in the *test subset* alone; a full import is larger
+# still, and "Subsidiaries" with no number next to a truncated list tells the reader
+# nothing.
+#
+# count(DISTINCT node), never count(edge): the section queries group with
+# `WITH <node>, collect(<edge>)` precisely because duplicate edges exist — Johnson &
+# Johnson has 236 edges to 160 distinct subsidiaries — so counting edges would print
+# a number that disagrees with the list it labels.
+#
+# Same anchoring discipline as the sections: start from the indexed Entity id and
+# follow the edge outward or inward. The unanchored inbound form measured 589 ms
+# against 15 ms.
+_SECTION_COUNTS = {
+    "owners": ("MATCH (e:Entity {id: $id})<-[r:OWNS]-(owner) WHERE r.until IS NULL "
+               "RETURN count(DISTINCT owner) AS n"),
+    "subsidiaries": ("MATCH (e:Entity {id: $id})-[r:OWNS]->(sub) WHERE r.until IS NULL "
+                     "RETURN count(DISTINCT sub) AS n"),
+    "executives": ("MATCH (e:Entity {id: $id})<-[r:HAS_ROLE]-(p:Person) WHERE r.until IS NULL "
+                   "RETURN count(DISTINCT p) AS n"),
+    "dual_listed": ("MATCH (e:Entity {id: $id})-[:DUAL_LISTED_WITH]->(d:Entity) "
+                    "RETURN count(DISTINCT d) AS n"),
+    "succeeded_by": ("MATCH (e:Entity {id: $id})-[:SUCCEEDED_BY]->(s:Entity) "
+                     "RETURN count(DISTINCT s) AS n"),
+    "replaces": ("MATCH (e:Entity {id: $id})<-[:SUCCEEDED_BY]-(pr:Entity) "
+                 "RETURN count(DISTINCT pr) AS n"),
+}
+
+
+def _section_counts(session, entity_id: str) -> dict:
+    """True size of each section, whatever the row limit returned."""
+    out = {}
+    for name, cypher in _SECTION_COUNTS.items():
+        try:
+            rec = session.run(cypher, id=entity_id).single()
+            out[name] = int(rec["n"]) if rec and rec["n"] is not None else 0
+        except Exception:  # noqa: BLE001 — a missing count must not lose the profile
+            out[name] = None
+    return out
+
+
 # Sections that are bare nodes with no edge properties to carry.
 _NODE_ONLY_SECTIONS = {
     "dual_listed": (
@@ -360,6 +404,8 @@ def get_full_profile(
             name: [r["node"] for r in session.run(sql.format(limit=limit), id=entity_id)]
             for name, sql in _NODE_ONLY_SECTIONS.items()
         }
+
+        counts = _section_counts(session, entity_id)
 
         # Same keys the single-query version produced, so the post-processing
         # below is unchanged.
@@ -432,6 +478,8 @@ def get_full_profile(
 
         return {
             "entity": dict(record["e"]),
+            # True totals, independent of the per-section row limit above.
+            "counts": counts,
             "owners": owners,
             "ownership": _ownership_summary(owners),
             "cross_holdings": cross_holdings,
