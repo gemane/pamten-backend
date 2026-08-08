@@ -5,6 +5,8 @@ the endpoints stay thin. Behaviour is unchanged from the previous inline
 implementations.
 """
 import logging
+import uuid
+from datetime import datetime, timezone
 
 from app.database import db
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
@@ -723,6 +725,79 @@ def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = Tr
     return out
 
 
+def _not_duplicate_pairs(ids: list[str] | None = None) -> set:
+    """Entity pairs a human has confirmed are DIFFERENT companies.
+
+    Rare — they only come from keep-separate — so short-circuit on a SQL count
+    over the edge type first. A vertex-anchored
+    `MATCH (a:Entity)-[:NOT_DUPLICATE]->` full-scans every entity even when there
+    are none, which is minutes on a full-GLEIF database. Same trick as
+    `_dismissed_pairs` on the person side.
+    """
+    try:
+        if run_sql("SELECT count(*) AS n FROM NOT_DUPLICATE")[0]["n"] == 0:
+            return set()
+    except Exception as exc:  # noqa: BLE001 — never block a merge on this read
+        log.warning("keep-separate lookup failed, treating as none: %s", exc)
+        return set()
+
+    pairs: set = set()
+    if ids is None:
+        for r in run_query("MATCH (a:Entity)-[:NOT_DUPLICATE]->(b:Entity) "
+                           "RETURN a.id AS a, b.id AS b"):
+            pairs.add(frozenset((r.get("a"), r.get("b"))))
+    else:
+        for eid in dict.fromkeys(ids):
+            for r in run_query("MATCH (e:Entity {id:$id})-[:NOT_DUPLICATE]-(o:Entity) "
+                               "RETURN o.id AS o", {"id": eid}):
+                pairs.add(frozenset((eid, r.get("o"))))
+    return pairs
+
+
+def _record_entity_merge_log(dead: dict, keep: dict) -> None:
+    """Audit trail for an entity merge.
+
+    Person merges have had one since they existed; entity merges — the riskier
+    of the two, since they run automatically during scraping and destroyed the
+    loser's data until #205 — had none at all. Deduped on (keep, dup_name) like
+    the person log, so a re-scraped duplicate bumps `count` instead of piling up
+    rows. `kind` separates the two so neither log shows the other's entries.
+    """
+    try:
+        run_command(
+            "MERGE (ml:MergeLog {keep_id:$keep, dup_name:$dup_name}) "
+            "SET ml.id = COALESCE(ml.id, $id), ml.kind = 'entity', "
+            "    ml.keep_name = $keep_name, ml.dup_id = $dup_id, ml.at = $at, "
+            "    ml.count = COALESCE(ml.count, 0) + 1",
+            {"keep": keep["id"], "dup_name": (dead.get("name") or "").strip(),
+             "keep_name": (keep.get("name") or "").strip(), "dup_id": dead["id"],
+             "id": str(uuid.uuid4()), "at": datetime.now(timezone.utc).isoformat()},
+        )
+    except Exception as exc:  # noqa: BLE001 — the merge itself already happened
+        log.warning("could not write entity merge log (%s -> %s): %s",
+                    dead.get("id"), keep.get("id"), exc)
+
+
+def _apply_entity_merge(dead: dict, keep: dict) -> int:
+    """Fold `dead` into `keep`, in the one order that keeps everything.
+
+    Extracted because this sequence was duplicated across the scoped and full
+    dedup paths, and steps kept getting added to one and not the other — the
+    forwarding address was missing from half of them until #204, and the
+    property carry-over until #205. One definition, both callers.
+
+    Order matters: edges and properties must move while the loser still exists,
+    and the forwarding address must be written before the delete because the
+    losing id may live in a shared link, a client cache, or a peer's copy.
+    """
+    migrated = _migrate_entity_edges(dead["id"], keep["id"])
+    _coalesce_entity_props(dead["id"], keep["id"])
+    record_merge_sql(dead["id"], keep["id"], kind="Entity")
+    _record_entity_merge_log(dead, keep)
+    run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+    return migrated
+
+
 def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     """Scoped, high-confidence-only entity auto-merge — the entity twin of the
     post-scrape person dedup. For the entities a scrape just touched, merge any
@@ -746,6 +821,10 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
         if n:
             names.add(n)
 
+    # Scoped to the touched entities — the whole point of this path is to avoid
+    # full-DB work, and the same applies to reading their keep-separate marks.
+    kept_separate = _not_duplicate_pairs(list(dict.fromkeys(entity_ids)))
+
     merged: list[dict] = []
     review = 0
     for nn in names:
@@ -763,15 +842,14 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
         members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
         keep = members[0]
         for dead in members[1:]:
+            # Never merge a pair a human has confirmed is two different companies.
+            # Checked per pair rather than per group: a third member should not
+            # drag a node someone explicitly separated into a destructive merge.
+            if frozenset((dead["id"], keep["id"])) in kept_separate:
+                review += 1
+                continue
             if apply:
-                _migrate_entity_edges(dead["id"], keep["id"])
-                # Carry the loser's data across before it is deleted — edges alone
-                # would drop its identifiers, description, revenue and headcount.
-                _coalesce_entity_props(dead["id"], keep["id"])
-                # Forwarding address before the delete — the losing id may be in a
-                # shared link, a client cache, or a federation peer's copy.
-                record_merge_sql(dead["id"], keep["id"], kind="Entity")
-                run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+                _apply_entity_merge(dead, keep)
             merged.append({"kept": keep["name"], "kept_id": keep["id"],
                            "deleted": dead["name"], "deleted_id": dead["id"]})
 
@@ -809,6 +887,10 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     total = len(dup_keys)
     batch = dup_keys if limit is None else dup_keys[:limit]
 
+    # Read once for the whole run rather than per group: this path is unscoped,
+    # and the count short-circuit makes it free when nobody has kept anything apart.
+    kept_separate = _not_duplicate_pairs()
+
     merged: list[dict] = []
     for key_prop, key in batch:
         members = run_query(
@@ -822,10 +904,9 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
         members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
         keep = members[0]
         for dead in members[1:]:
-            migrated = _migrate_entity_edges(dead["id"], keep["id"])
-            _coalesce_entity_props(dead["id"], keep["id"])
-            record_merge_sql(dead["id"], keep["id"], kind="Entity")
-            run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+            if frozenset((dead["id"], keep["id"])) in kept_separate:
+                continue
+            migrated = _apply_entity_merge(dead, keep)
             merged.append({
                 "key": f"{key_prop}={key}",
                 "kept": keep["name"], "kept_id": keep["id"],
