@@ -20,6 +20,7 @@ from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.claims import record_claim, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
 from app.scraper.wikidata import search_entity, fetch_company_data
+from app.scraper.sources import KNOWN_SOURCES
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
@@ -90,33 +91,41 @@ def _geocode_and_attach(entity_id: str, address: dict) -> None:
             lat=lat, lng=lng,
         )
 
-WIKIDATA_SOURCE_NAME  = "Wikidata"
-WIKIDATA_SOURCE_URL   = "https://www.wikidata.org"
-WIKIDATA_CREDIBILITY  = 80
+# Source metadata comes from the catalogue in app/scraper/sources.py — one
+# definition, so the provenance stamped onto scraped data and the public source
+# list cannot drift apart. These aliases keep the call sites below readable.
+_WD, _SEC = KNOWN_SOURCES["wikidata"], KNOWN_SOURCES["sec_edgar"]
+_OC, _GLEIF, _PSC = (KNOWN_SOURCES["open_corporates"], KNOWN_SOURCES["bods_gleif"],
+                     KNOWN_SOURCES["bods_uk_psc"])
+
+WIKIDATA_SOURCE_NAME  = _WD["label"]
+WIKIDATA_SOURCE_URL   = _WD["url"]
+WIKIDATA_CREDIBILITY  = _WD["credibility"]
 MAX_SUBSIDIARIES      = 15   # per entity, to avoid runaway scrapes
 MAX_CEOS              = 3
 MAX_OFFICERS          = 30   # founders + chairpersons + board members combined (large boards)
 MAX_OWNERS            = 10   # owned-by (P127) links
 MAX_INSIDER_LOOKUPS   = 15   # known people to look up personal Form-4 holdings for
 
-SEC_EDGAR_SOURCE_NAME = "SEC EDGAR"
-SEC_EDGAR_SOURCE_URL  = "https://www.sec.gov/edgar"
-SEC_EDGAR_CREDIBILITY = 98   # legally mandated filings
+SEC_EDGAR_SOURCE_NAME = _SEC["label"]
+SEC_EDGAR_SOURCE_URL  = _SEC["url"]
+SEC_EDGAR_CREDIBILITY = _SEC["credibility"]        # legally mandated filings
 
-OPENCORPORATES_SOURCE_NAME = "OpenCorporates"
-OPENCORPORATES_SOURCE_URL  = "https://opencorporates.com"
-OPENCORPORATES_CREDIBILITY = 85
+OPENCORPORATES_SOURCE_NAME = _OC["label"]
+OPENCORPORATES_SOURCE_URL  = _OC["url"]
+OPENCORPORATES_CREDIBILITY = _OC["credibility"]
 
-GLEIF_SOURCE_NAME        = "GLEIF"
-GLEIF_SOURCE_URL         = "https://www.gleif.org"
-BODS_GLEIF_CREDIBILITY   = 92   # authoritative LEI data, CC0 — corporate not beneficial ownership
+GLEIF_SOURCE_NAME        = _GLEIF["label"]
+GLEIF_SOURCE_URL         = _GLEIF["url"]
+BODS_GLEIF_CREDIBILITY   = _GLEIF["credibility"]   # authoritative LEI data, CC0
 
-UK_PSC_SOURCE_NAME       = "UK PSC"
-UK_PSC_SOURCE_URL        = "https://www.gov.uk/government/publications/persons-with-significant-control-register"
-BODS_UK_PSC_CREDIBILITY  = 97   # statutory UK legal register, CC0
+UK_PSC_SOURCE_NAME       = _PSC["label"]
+UK_PSC_SOURCE_URL        = _PSC["url"]
+BODS_UK_PSC_CREDIBILITY  = _PSC["credibility"]     # statutory UK legal register, CC0
 
 # Companies House BasicCompanyData (the UK company register) — names/addresses for
-# the number-keyed companies the PSC import creates. Enrichment only, no edges.
+# the number-keyed companies the PSC import creates. Enrichment only, no edges, and
+# no toggle of its own, so it is not in the catalogue.
 CH_REGISTER_CREDIBILITY  = 97   # statutory UK register, authoritative for the name
 
 
