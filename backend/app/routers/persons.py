@@ -407,7 +407,10 @@ def merge_log(limit: int = Query(200, ge=1, le=1000), _: dict = Depends(require_
             {"id": r.get("id"), "keep_id": r.get("keep_id"), "keep_name": r.get("keep_name"),
              "dup_name": r.get("dup_name"), "at": r.get("at"), "count": r.get("count")}
             for r in session.run(
-                "MATCH (ml:MergeLog) "
+                # Entity merges share this type now, so filter. A row written
+                # before `kind` existed has none and is a person merge — the
+                # only kind there was.
+                "MATCH (ml:MergeLog) WHERE ml.kind IS NULL OR ml.kind = 'person' "
                 "RETURN ml.id AS id, ml.keep_id AS keep_id, ml.keep_name AS keep_name, "
                 "       ml.dup_name AS dup_name, ml.at AS at, ml.count AS count")
         ]
@@ -537,8 +540,8 @@ def merge_person_records(keep: str, dup: str) -> None:
         dup_full = (dup_node.get("full_name") or "").strip()
         session.run(
             "MERGE (ml:MergeLog {keep_id:$keep, dup_name:$dup_name}) "
-            "SET ml.id = COALESCE(ml.id, $id), ml.keep_name = $keep_name, "
-            "    ml.dup_id = $dup_id, "
+            "SET ml.id = COALESCE(ml.id, $id), ml.kind = 'person', "
+            "    ml.keep_name = $keep_name, ml.dup_id = $dup_id, "
             "    ml.at = $at, ml.count = COALESCE(ml.count, 0) + 1",
             keep=keep, dup_name=dup_full, keep_name=keep_full, dup_id=dup,
             id=str(uuid.uuid4()), at=datetime.now(timezone.utc).isoformat())

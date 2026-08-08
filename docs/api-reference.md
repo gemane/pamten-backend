@@ -37,6 +37,10 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/entities/` | Create entity |
 | PUT | `/entities/{id}` | Update entity |
 | DELETE | `/entities/{id}` | Delete entity |
+| POST | `/entities/keep-separate` | **contributor** — mark entities as confirmed DIFFERENT companies `{ids}`; excluded from auto-merge, checked per pair |
+| DELETE | `/entities/keep-separate` | **contributor** — undo a keep-separate `{ids}` |
+| GET | `/entities/kept-separate` | **contributor** — pairs confirmed to be different companies |
+| GET | `/entities/merge-log` | **contributor** — recent entity merges, most recent first |
 
 ## Persons
 | Method | Path | Auth | Description |

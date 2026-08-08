@@ -3,6 +3,9 @@ from app.models.entity import EntityCreate, EntityResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
 from app.merged_ids import resolve_current_id
+from app.models.person import KeepSeparateRequest
+from datetime import datetime, timezone
+from itertools import combinations
 import uuid
 
 router = APIRouter(prefix="/entities", tags=["Entities"])
@@ -145,3 +148,82 @@ def delete_entity(entity_id: str, _: dict = Depends(require_contributor)):
     with db.get_session() as session:
         session.run(query, id=entity_id)
         return {"message": "Entity deleted"}
+
+
+# ── Keep-separate and the merge log ───────────────────────────────────────────
+#
+# The entity twin of the person endpoints in routers/persons.py. Entities had
+# neither, which was backwards: entity merges are the riskier of the two — they
+# run automatically during scraping and destroyed the loser's data until #205 —
+# yet a moderator could not say "these two are different companies", so a
+# rejected candidate came back on every scan, and nothing recorded what merged.
+
+@router.post("/keep-separate")
+def keep_separate(data: KeepSeparateRequest, _: dict = Depends(require_contributor)):
+    """Mark a group of entities as confirmed DIFFERENT companies.
+
+    A NOT_DUPLICATE edge is stored between every pair, and the dedup scan checks
+    them **per pair** rather than per group: a third same-named company must not
+    drag a node someone explicitly separated into a destructive auto-merge.
+    Reversible via DELETE /entities/keep-separate.
+    """
+    ids = sorted(set(data.ids))
+    if len(ids) < 2:
+        raise HTTPException(status_code=400, detail="Need at least two distinct ids")
+    at = datetime.now(timezone.utc).isoformat()
+    with db.get_session() as session:
+        for a, b in combinations(ids, 2):
+            session.run(
+                "MATCH (a:Entity {id:$a}), (b:Entity {id:$b}) "
+                "MERGE (a)-[r:NOT_DUPLICATE]->(b) SET r.at = $at",
+                a=a, b=b, at=at)
+    return {"message": "Marked as separate", "ids": ids}
+
+
+@router.delete("/keep-separate")
+def undo_keep_separate(data: KeepSeparateRequest, _: dict = Depends(require_contributor)):
+    """Undo a keep-separate: the pair(s) can be suggested as duplicates again."""
+    ids = sorted(set(data.ids))
+    with db.get_session() as session:
+        for a, b in combinations(ids, 2):
+            session.run(
+                "MATCH (a:Entity {id:$a})-[r:NOT_DUPLICATE]-(b:Entity {id:$b}) DELETE r",
+                a=a, b=b)
+    return {"message": "Keep-separate removed", "ids": ids}
+
+
+@router.get("/kept-separate")
+def list_kept_separate(_: dict = Depends(require_contributor)):
+    """The pairs a human has confirmed are different companies."""
+    with db.get_session() as session:
+        pairs = [
+            {"a_id": r.get("a_id"), "a_name": r.get("a_name"),
+             "b_id": r.get("b_id"), "b_name": r.get("b_name"), "at": r.get("at")}
+            for r in session.run(
+                "MATCH (a:Entity)-[r:NOT_DUPLICATE]->(b:Entity) "
+                "RETURN a.id AS a_id, a.name AS a_name, "
+                "       b.id AS b_id, b.name AS b_name, r.at AS at")
+        ]
+    pairs.sort(key=lambda p: p["at"] or "", reverse=True)
+    return {"count": len(pairs), "pairs": pairs}
+
+
+@router.get("/merge-log")
+def merge_log(limit: int = Query(200, ge=1, le=1000), _: dict = Depends(require_contributor)):
+    """Recent entity merges, most recent first.
+
+    Filtered on kind so this and the person log never show each other's entries.
+    """
+    with db.get_session() as session:
+        entries = [
+            {"id": r.get("id"), "keep_id": r.get("keep_id"), "keep_name": r.get("keep_name"),
+             "dup_id": r.get("dup_id"), "dup_name": r.get("dup_name"),
+             "at": r.get("at"), "count": r.get("count")}
+            for r in session.run(
+                "MATCH (ml:MergeLog) WHERE ml.kind = 'entity' "
+                "RETURN ml.id AS id, ml.keep_id AS keep_id, ml.keep_name AS keep_name, "
+                "       ml.dup_id AS dup_id, ml.dup_name AS dup_name, "
+                "       ml.at AS at, ml.count AS count")
+        ]
+    entries.sort(key=lambda e: e["at"] or "", reverse=True)
+    return {"count": len(entries), "entries": entries[:limit]}
