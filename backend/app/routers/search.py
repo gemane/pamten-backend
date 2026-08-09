@@ -287,12 +287,25 @@ PROFILE_SECTION_MAX = 1_000
 # subsidiaries on the dev database), and limiting the edges let duplicates eat the
 # budget — LIMIT 200 returned just 124 of the 160 companies. Grouping first makes
 # the cap mean what a caller assumes it means.
+# Redundant ultimate-parent edges are excluded from BOTH the lists and the counts,
+# so the panel and the graph describe the same company the same way. Two views
+# disagreeing about who owns what is worse than either answer alone.
+#
+# GLEIF often states a pair twice — "X is the direct parent of Y" AND "X is the
+# ultimate parent of Y" — which showed the same owner twice in the owners list and
+# repeated a company at every level of a group's tree. `shortcut` is set by
+# maintenance.mark_ownership_shortcuts on edges proven to duplicate a path of
+# direct edges; NULL means unproven and is always kept.
+_NOT_A_SHORTCUT = "({rel}.shortcut IS NULL OR {rel}.shortcut <> true)"
+
 _NODE_EDGE_SECTIONS = {
     "owners": (
         "MATCH (e:Entity {{id: $id}})<-[owns_r:OWNS]-(owner) WHERE owns_r.until IS NULL "
+        "AND " + _NOT_A_SHORTCUT.format(rel="owns_r") + " "
         "WITH owner, collect(owns_r) AS rels RETURN owner AS node, rels LIMIT {limit}"),
     "subsidiaries": (
         "MATCH (e:Entity {{id: $id}})-[sub_r:OWNS]->(subsidiary) WHERE sub_r.until IS NULL "
+        "AND " + _NOT_A_SHORTCUT.format(rel="sub_r") + " "
         "WITH subsidiary, collect(sub_r) AS rels RETURN subsidiary AS node, rels LIMIT {limit}"),
     "executives": (
         "MATCH (e:Entity {{id: $id}})<-[role_r:HAS_ROLE]-(p:Person) WHERE role_r.until IS NULL "
@@ -323,8 +336,10 @@ _NODE_EDGE_SECTIONS = {
 # against 15 ms.
 _SECTION_COUNTS = {
     "owners": ("MATCH (e:Entity {id: $id})<-[r:OWNS]-(owner) WHERE r.until IS NULL "
+               "AND " + _NOT_A_SHORTCUT.format(rel="r") + " "
                "RETURN count(DISTINCT owner) AS n"),
     "subsidiaries": ("MATCH (e:Entity {id: $id})-[r:OWNS]->(sub) WHERE r.until IS NULL "
+                     "AND " + _NOT_A_SHORTCUT.format(rel="r") + " "
                      "RETURN count(DISTINCT sub) AS n"),
     "executives": ("MATCH (e:Entity {id: $id})<-[r:HAS_ROLE]-(p:Person) WHERE r.until IS NULL "
                    "RETURN count(DISTINCT p) AS n"),
