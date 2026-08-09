@@ -58,7 +58,9 @@ def test_import_reconciles_on_external_id_no_duplicate(it_db):
 def test_status_counts(it_db, monkeypatch):
     from app.config import settings
     from app.routers.federation import federation_status
+    from app.routers import federation
     monkeypatch.setattr(settings, "FEDERATION_ENABLED", True)
+    monkeypatch.setattr(federation, "FEDERATION_ON_HOLD", False)   # parked, not deleted
     it_db.run_command("CREATE (:Entity {id:'e1', name:'A', name_normalized:'a', type:'company'})")
     it_db.run_command("CREATE (:Entity {id:'e2', name:'B', name_normalized:'b', type:'company'})")
     it_db.run_command("CREATE (:Person {id:'p1', full_name:'P'})")
@@ -72,9 +74,11 @@ def test_signed_export_verifies_and_attributes(it_db, monkeypatch):
     from app.config import settings
     from app import federation_keys
     from app.routers.federation import export_snapshot, import_snapshot
+    from app.routers import federation
 
     priv, pub = federation_keys.generate_keypair()
     monkeypatch.setattr(settings, "FEDERATION_ENABLED", True)
+    monkeypatch.setattr(federation, "FEDERATION_ON_HOLD", False)   # parked, not deleted
     monkeypatch.setattr(settings, "FEDERATION_SIGNING_KEY", priv)
 
     it_db.run_command("CREATE (:Entity {id:'e1', name:'Signed Co', name_normalized:'signed co', type:'company', wikidata_id:'Q77'})")
@@ -95,8 +99,10 @@ def test_signed_export_verifies_and_attributes(it_db, monkeypatch):
 def test_peer_registry(it_db, monkeypatch):
     from app.config import settings
     from app.routers.federation import add_peer, list_peers, remove_peer
+    from app.routers import federation
     from app.models.federation import PeerCreate
     monkeypatch.setattr(settings, "FEDERATION_ENABLED", True)
+    monkeypatch.setattr(federation, "FEDERATION_ON_HOLD", False)   # parked, not deleted
     admin = {"role": "admin"}
 
     out = add_peer(PeerCreate(name="Peer One", base_url="https://peer.example.com/", auth_token="secret"), _=admin)

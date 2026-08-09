@@ -90,6 +90,13 @@ _ROUTERS = [
     auth_router.router,
 ]
 
+# Federation is on hold (see routers/federation.py). Leaving it unmounted rather
+# than merely disabled means the routes 404 and never appear in the OpenAPI
+# schema, so nothing advertises a capability that is switched off — and no
+# environment variable can bring it back on its own.
+if federation.FEDERATION_ON_HOLD:
+    _ROUTERS = [r for r in _ROUTERS if r is not federation.router]
+
 for _router in _ROUTERS:
     app.include_router(_router, prefix=API_V1_PREFIX)
     app.include_router(_router, include_in_schema=False)
