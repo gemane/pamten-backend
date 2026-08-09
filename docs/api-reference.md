@@ -98,7 +98,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | POST | `/relationships/roles` | Create HAS_ROLE edge |
 | POST | `/relationships/roles/close` | End a role |
 | POST | `/relationships/related-to` | Create RELATED_TO edge between persons |
-| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (`depth` max 10; `limit` paths, default 500, max 5000). `include_indirect=false` by default: GLEIF ultimate-parent shortcut edges are excluded (they duplicate paths the tree already contains and render as direct holdings) |
+| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (`depth` max 10; `limit` paths, default 500, max 5000). `include_indirect=true` by default — most ultimate-parent edges duplicate a path the tree already contains, but some are the only link to a company, so excluding them by kind loses entities. Redundancy is decided by `POST /scraper/mark-shortcuts`, which stamps `shortcut` on the edge |
 | GET | `/relationships/owners/{id}` | Current active owners of an entity (`limit`, default 200, max 1000) |
 | GET | `/relationships/history/{id}` | Full history: ownership in/out + executive roles (`limit` **per category**, default 500, max 2000) |
 
@@ -142,6 +142,7 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 | POST | `/scraper/proxy-statement/write` | contributor | Fetch the latest DEF 14A and write `voting_power_pct` onto OWNS edges (`entity_id` overrides name lookup) |
 | GET | `/scraper/duplicate-edges/count` | admin | Count duplicate active OWNS edges (read-only): `{active_edges, distinct_pairs, duplicate_pairs, redundant_edges}` |
 | POST | `/scraper/deduplicate-edges` | admin | Collapse duplicate active OWNS edges, keeping the largest stake (by @rid, provenance-preserving) |
+| POST | `/scraper/mark-shortcuts` | admin | Flag GLEIF ultimate-parent OWNS edges that duplicate a path already in the graph, so the renderer can omit them without losing companies whose only link is a shortcut. `limit` bounds parents processed. **Re-run after every import** |
 | GET | `/scraper/duplicate-entities/name-count` | admin | Count same-name entity duplicate groups — the same company under different identifiers (e.g. two GLEIF LEIs) the id-based dedup can't see. Also reported in the BODS import result as `duplicate_names` |
 | GET | `/scraper/duplicate-entities/name-candidates` | admin | The biggest same-name duplicate groups, each tagged with a `confidence` they're the same company — **definitive** (shared wikidata_id/sec_cik/companies_house_id), **high** (same registered address), **medium** (same country+founded), **low** (name only) — with members (id/country/lei/address) for review. `?limit=`, `?min_confidence=` |
 | POST | `/scraper/deduplicate-entities` | admin | Collapse Entity duplicates sharing an LEI / Companies House number (heals the recordId-keyed BODS doubling). Background by default (returns `started`; poll `GET /scraper/runs`). `strategy=bulk` (default) keeps one node per id and deletes the rest (fast; drops losers' edges); `strategy=merge` migrates edges first (only finishes on small data). `background=false` runs the sync bounded-batch merge (`?limit=`, returns `remaining`) |

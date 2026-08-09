@@ -94,26 +94,27 @@ def _chain(it_db):
     _owns(it_db, "parent", "leaf", "indirect")     # GLEIF's ultimate-parent shortcut
 
 
-def test_shortcut_edges_are_excluded_by_default(it_db):
+def test_shortcut_edges_are_included_by_default(it_db):
+    """The default is inclusive on purpose. Excluding by KIND removed companies
+    whose only link is an ultimate-parent edge; whether a given shortcut is
+    redundant is decided by maintenance.mark_ownership_shortcuts, not here."""
     _chain(it_db)
     paths, _ = ownership_tree_of("parent", depth=3)
-    # parent->mid and parent->mid->leaf; the direct-looking parent->leaf is gone.
-    assert len(paths) == 2
-
-
-def test_nothing_becomes_unreachable(it_db):
-    """The measured justification for hiding them: the shortcut's target is still
-    reached through the chain."""
-    _chain(it_db)
-    paths, _ = ownership_tree_of("parent", depth=3)
-    reached = {n["id"] for p in paths for n in p["nodes"]}
-    assert "leaf" in reached
-
-
-def test_shortcuts_come_back_when_asked(it_db):
-    _chain(it_db)
-    paths, _ = ownership_tree_of("parent", depth=3, include_indirect=True)
     assert len(paths) == 3
+
+
+def test_nothing_is_unreachable_either_way(it_db):
+    _chain(it_db)
+    for include in (True, False):
+        paths, _ = ownership_tree_of("parent", depth=3, include_indirect=include)
+        reached = {n["id"] for p in paths for n in p["nodes"]}
+        assert "leaf" in reached, f"lost the leaf with include_indirect={include}"
+
+
+def test_the_opt_out_still_filters(it_db):
+    _chain(it_db)
+    paths, _ = ownership_tree_of("parent", depth=3, include_indirect=False)
+    assert len(paths) == 2
 
 
 def test_the_filter_applies_to_every_hop_not_just_the_last(it_db):
@@ -124,7 +125,7 @@ def test_the_filter_applies_to_every_hop_not_just_the_last(it_db):
     _owns(it_db, "a", "b", "indirect")   # shortcut on the FIRST hop
     _owns(it_db, "b", "c", "direct")     # legitimate on the last
 
-    paths, _ = ownership_tree_of("a", depth=3)
+    paths, _ = ownership_tree_of("a", depth=3, include_indirect=False)
     assert paths == []
 
 
