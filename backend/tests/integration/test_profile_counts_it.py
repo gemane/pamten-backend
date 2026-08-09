@@ -138,3 +138,70 @@ def test_edges_without_the_field_are_kept(it_db):
 
     paths, _ = ownership_tree_of("p", depth=2)
     assert len(paths) == 1
+
+
+# ── Redundant shortcuts are excluded from the profile ─────────────────────────
+#
+# The panel and the graph must describe the same company the same way; two views
+# disagreeing about who owns what is worse than either answer alone. Both read
+# this payload, so the exclusion happens once, here.
+
+def _dup_pair(it_db):
+    """GLEIF often states a pair twice: X is the DIRECT parent of Y, and X is its
+    ULTIMATE parent. The second is marked redundant by the shortcut pass."""
+    _company(it_db, "p", "Parent")
+    _company(it_db, "s", "Sub")
+    it_db.run_command(
+        "MATCH (a:Entity {id:'p'}), (b:Entity {id:'s'}) "
+        "CREATE (a)-[:OWNS {until: null, source_id: 'g', direct_or_indirect: 'direct'}]->(b)")
+    it_db.run_command(
+        "MATCH (a:Entity {id:'p'}), (b:Entity {id:'s'}) "
+        "CREATE (a)-[:OWNS {until: null, source_id: 'g', "
+        "direct_or_indirect: 'indirect', shortcut: true}]->(b)")
+
+
+def test_a_redundant_shortcut_is_left_out_of_subsidiaries(it_db):
+    _dup_pair(it_db)
+    profile = get_full_profile("p")
+    assert profile["counts"]["subsidiaries"] == 1
+    rels = [s["relationship"] for s in profile["subsidiaries"]]
+    assert all(r.get("shortcut") is not True for r in rels)
+
+
+def test_the_surviving_row_is_the_direct_one(it_db):
+    """Downstream post-processing collapses duplicate edges to one row per
+    subsidiary, and it was keeping the indirect one — so a company with both edges
+    was labelled 'held indirectly' and then hidden by the graph's filter."""
+    _dup_pair(it_db)
+    rels = [s["relationship"] for s in get_full_profile("p")["subsidiaries"]]
+    assert [r.get("direct_or_indirect") for r in rels] == ["direct"]
+
+
+def test_an_owner_is_not_listed_twice(it_db):
+    _dup_pair(it_db)
+    profile = get_full_profile("s")
+    assert profile["counts"]["owners"] == 1
+    assert len(profile["owners"]) == 1
+
+
+def test_a_load_bearing_shortcut_is_kept(it_db):
+    """shortcut = false means the pass checked and found nothing else reaches it."""
+    _company(it_db, "p", "Parent")
+    _company(it_db, "only", "Only Link Co")
+    it_db.run_command(
+        "MATCH (a:Entity {id:'p'}), (b:Entity {id:'only'}) "
+        "CREATE (a)-[:OWNS {until: null, source_id: 'g', "
+        "direct_or_indirect: 'indirect', shortcut: false}]->(b)")
+
+    profile = get_full_profile("p")
+    assert profile["counts"]["subsidiaries"] == 1
+    assert profile["subsidiaries"][0]["entity"]["id"] == "only"
+
+
+def test_an_unchecked_edge_is_kept(it_db):
+    """No flag means the pass has not reached it — never hide what was not checked."""
+    _company(it_db, "p", "Parent")
+    _company(it_db, "u", "Unchecked Co")
+    _owns(it_db, "p", "u", "indirect")      # no shortcut property at all
+
+    assert get_full_profile("p")["counts"]["subsidiaries"] == 1
