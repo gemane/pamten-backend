@@ -12,6 +12,23 @@ credibility), and the duplicate scan then merges any high-confidence overlaps.
 Deliberately minimal: Entity + Person nodes and OWNS edges only, so the shape
 is easy to reason about. Roles/locations and signed provenance are step 2.
 Gated behind FEDERATION_ENABLED.
+
+⚠️ ON HOLD — FEDERATION_ENABLED is false, and the published privacy pages say
+nothing about federation because of it. That silence is only truthful while this
+stays off, so **re-enabling it means updating /legal/privacy.html in the same
+change**. A published policy that omits a live disclosure of personal data is
+worse than no policy.
+
+What has to be decided before it goes back on: the export below ships every
+`Person` in the database — full_name, birth_date, birth_place, nationality — plus
+every (Person)-[:OWNS]->(Entity) edge, to any trusted peer. Those people never
+gave us their data and have no relationship with this instance, so sharing it
+makes each peer an independent controller and brings a controller-to-controller
+arrangement, third-country transfer tools, and an Art. 17(2) duty to propagate
+erasure to peers. Restricting the snapshot to Entity nodes and entity→entity
+edges removes personal data from federation altogether and avoids all of that;
+half-measures (e.g. names only) keep every obligation. No peer has ever been
+registered, so nothing has been disclosed to date.
 """
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone
