@@ -256,12 +256,46 @@ def _open_json(filepath: str) -> tuple[IO[bytes], int]:
     return open(filepath, "rb"), os.path.getsize(filepath)  # noqa: WPS515
 
 
+_LEI_ID_PAGE = 20000
+
+
+def existing_lei_ids() -> set[str]:
+    """Every ``lei:`` Entity id currently in the graph — the guest list for
+    ``only_existing``.
+
+    Loaded once per delta run and held in memory, because the alternative is an
+    existence query per record and a delta carries hundreds of thousands. Paged by
+    @rid for the usual reason: an unpaged select over a full database's millions of
+    entities blows the query heap.
+    """
+    ids: set[str] = set()
+    last: str | None = None
+    while True:
+        where = "WHERE id LIKE 'lei:%'" + (f" AND @rid > {last}" if last else "")
+        rows = run_sql(f"SELECT @rid AS rid, id FROM Entity {where} "
+                       f"ORDER BY @rid LIMIT {_LEI_ID_PAGE}")
+        if not rows:
+            break
+        ids.update(r["id"] for r in rows)
+        last = rows[-1]["rid"]
+        if len(rows) < _LEI_ID_PAGE:
+            break
+    return ids
+
+
 def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
-                         limit: int | None = None) -> dict:
+                         limit: int | None = None, only_existing: bool = False) -> dict:
     """Apply an LEI-CDF delta: upsert entity props (batched), mark dissolved
-    (INACTIVE) entities, and add succession (merge) edges. Idempotent."""
+    (INACTIVE) entities, and add succession (merge) edges. Idempotent.
+
+    ``only_existing`` refreshes the companies this database already holds and
+    ignores the rest. A delta describes every change GLEIF made worldwide, so
+    without it a curated subset does not get refreshed — it gets buried.
+    """
     raw, total = _open_json(filepath)
-    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "succession": 0, "errors": 0}
+    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "succession": 0,
+              "not_here": 0, "errors": 0}
+    known = existing_lei_ids() if only_existing else None
     batch = _BatchWriter()
     succession: list[tuple[str, str]] = []
     bar = _ProgressBar("LEI-CDF delta")
@@ -272,6 +306,9 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
             counts["records"] += 1
             try:
                 built = _entity_props(rec, source_id, credibility_score)
+                if built and known is not None and built[0] not in known:
+                    counts["not_here"] += 1
+                    continue          # a company this database does not carry
                 if built:
                     node_id, props = built
                     props["gleif_registration_status"] = _registration_status(rec) or ""
@@ -288,10 +325,18 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
                     log.warning("LEI-CDF delta record error: %s", exc)
         batch.flush()                      # entities upserted before succession edges
         for pred, succ in succession:
+            # A succession edge needs both ends; in only_existing mode the successor
+            # is often a company this database does not carry, and creating it would
+            # be the same leak by another route. `known` holds node ids, these are
+            # bare LEIs.
+            if known is not None and not (f"lei:{pred}" in known and f"lei:{succ}" in known):
+                counts["not_here"] += 1
+                continue
             if _upsert_succeeded_by(pred, succ, source_id) == "created":
                 counts["succession"] += 1
         bar.finish(f"{counts['records']:,} records, {counts['updated']:,} upserted, "
-                   f"{counts['succession']:,} successions")
+                   f"{counts['succession']:,} successions"
+                   + (f", {counts['not_here']:,} not in this database" if known is not None else ""))
     finally:
         raw.close()
     log.info("LEI-CDF delta done: %s", counts)
@@ -299,12 +344,19 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
 
 
 def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
-                    limit: int | None = None) -> dict:
+                    limit: int | None = None, only_existing: bool = False) -> dict:
     """Apply an RR-CDF delta: upsert ACTIVE consolidation edges, close ones that
-    went non-ACTIVE. Endpoint nodes are batch-upserted first. Idempotent."""
+    went non-ACTIVE. Endpoint nodes are batch-upserted first. Idempotent.
+
+    ``only_existing`` keeps a relationship only when **both** endpoints are already
+    in the graph. This importer creates its endpoint nodes, so it is the bigger of
+    the two leaks: a relationship between two companies the database has never
+    heard of would otherwise drag both of them in.
+    """
     raw, total = _open_json(filepath)
     counts = {"records": 0, "created": 0, "updated": 0, "folded": 0,
-              "closed": 0, "skipped": 0, "errors": 0}
+              "closed": 0, "skipped": 0, "not_here": 0, "errors": 0}
+    known = existing_lei_ids() if only_existing else None
     batch = _BatchWriter()
     active: list[tuple[str, str, str, str | None]] = []
     closures: list[tuple[str, str, str, str]] = []
@@ -320,6 +372,10 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                     counts["skipped"] += 1
                     continue
                 parent, child, marker, status, rel = parsed
+                if known is not None and not (
+                        f"lei:{parent}" in known and f"lei:{child}" in known):
+                    counts["not_here"] += 1
+                    continue
                 batch.entity(f"lei:{parent}", {"lei_id": parent, "source_id": source_id})
                 batch.entity(f"lei:{child}", {"lei_id": child, "source_id": source_id})
                 if status == "ACTIVE":
@@ -340,7 +396,8 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
         for parent, child, marker, until in closures:
             counts["closed"] += _close_owns(parent, child, marker, until)
         bar.finish(f"{counts['records']:,} records, +{counts['created']:,} edges, "
-                   f"{counts['folded']:,} folded, {counts['closed']:,} closed")
+                   f"{counts['folded']:,} folded, {counts['closed']:,} closed"
+                   + (f", {counts['not_here']:,} not in this database" if known is not None else ""))
     finally:
         raw.close()
     log.info("RR delta done: %s", counts)
@@ -386,19 +443,46 @@ def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -
 # changed records, no foundation). The full LEI-CDF importer stamps this marker on
 # success; the update refuses to run without it, and `wipe-source --source GLEIF`
 # (or dropping the database) clears it so a fresh full load is required before deltas resume.
+#
+# A **subset** load must not stamp it. A delta carries every record GLEIF changed
+# anywhere in the world, so applying one to a curated test database does not
+# refresh it — it imports the rest of the world into it. One night's delta added
+# 226,902 entity records and 18,720 edges to a 488-entity test subset, because the
+# subset import had stamped this marker exactly as a full load does.
 
-def mark_full_load_done() -> None:
-    """Record that a full GLEIF LEI-CDF load has established the entity baseline."""
+def mark_full_load_done(scope: str = "full") -> None:
+    """Record that a GLEIF LEI-CDF load has established the entity baseline.
+
+    `scope` is "full" for a complete golden-copy pass and "subset" for anything
+    narrowed by --only-file / --limit / --jurisdiction. Only "full" satisfies the
+    delta update; a subset is recorded so the refusal can say *why* rather than
+    claim GLEIF was never loaded.
+    """
     run_sql(
-        "UPDATE ImportState SET key = :k, last_run_at = :now UPSERT WHERE key = :k",
-        {"k": _FULL_LOAD_KEY, "now": _now_iso()})
+        "UPDATE ImportState SET key = :k, last_run_at = :now, scope = :scope "
+        "UPSERT WHERE key = :k",
+        {"k": _FULL_LOAD_KEY, "now": _now_iso(), "scope": scope})
+
+
+def load_scope() -> str | None:
+    """"full", "subset", or None when no GLEIF entity load has run at all.
+
+    Rows written before `scope` existed have none; they came from the importer
+    when it stamped unconditionally, so they cannot be trusted to be full and are
+    reported as "subset" — the conservative direction, since guessing "full" is
+    what lets a delta flood a curated database.
+    """
+    rows = run_command(
+        "MATCH (s:ImportState {key:$k}) RETURN s.last_run_at AS t, s.scope AS scope",
+        {"k": _FULL_LOAD_KEY})
+    if not (rows and rows[0].get("t")):
+        return None
+    return rows[0].get("scope") or "subset"
 
 
 def full_load_present() -> bool:
-    """True once a full LEI-CDF load has run (the delta update's precondition)."""
-    rows = run_command(
-        "MATCH (s:ImportState {key:$k}) RETURN s.last_run_at AS t", {"k": _FULL_LOAD_KEY})
-    return bool(rows and rows[0].get("t"))
+    """True once a *full* LEI-CDF load has run (the delta update's precondition)."""
+    return load_scope() == "full"
 
 
 # ── gap-aware catch-up (pick a window that covers any missed runs) ────────────

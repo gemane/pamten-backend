@@ -288,6 +288,26 @@ full load has baselined the graph (the full LEI-CDF import stamps a marker;
 load before deltas resume) — it never builds a partial
 graph from deltas alone.
 
+**A subset load does not count as that baseline.** A delta carries every record
+GLEIF changed *worldwide*, so applying one whole to a curated test database
+(`test-import.sh`, or any `--only-file` / `--limit` / `--jurisdiction` import) does
+not refresh it — it imports the rest of the world into it: one night added 226,902
+entity records and 18,720 edges to a 488-entity subset. The marker therefore
+records a **scope**, and only `full` means "apply everything".
+
+A subset still gets its delta, in **`--only-existing`** mode: records for companies
+already in the database are applied, records for everything else are counted as
+`not_here` and ignored. So a curated database stays current *and* keeps exercising
+the delta path nightly, without growing. It is selected automatically from the
+baseline scope; `--only-existing` / `--no-only-existing` forces either mode.
+
+Both endpoints must be present for a relationship, and both ends for a succession
+edge — the RR importer creates its endpoint nodes, so one relationship between two
+unknown companies would otherwise drag both of them in. The trade-off is that a
+genuinely new subsidiary of a tracked company is skipped too, so a subset drifts
+slightly from GLEIF's truth; re-run `test-import.sh` against fresh golden copies to
+resync.
+
 The default `--interval auto` is **gap-aware**: it checkpoints the last GLEIF publish
 it applied (an `ImportState` node) and, on each run, picks the smallest delta window
 that still covers the gap since then — `LastDay` normally, escalating to `LastWeek` /
