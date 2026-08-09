@@ -615,6 +615,128 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     return migrated
 
 
+# Depth to search for a direct chain before calling a shortcut load-bearing.
+# Corporate structures are deep but not unbounded; erring short is the safe
+# direction, since an unfound chain leaves the edge drawn.
+_SHORTCUT_MAX_DEPTH = 6
+
+# Edge updates per sqlscript round-trip, matching the dedup pass's batching.
+_SHORTCUT_WRITE_BATCH = 500
+
+
+def mark_ownership_shortcuts(limit: int | None = None) -> dict:
+    """Flag the GLEIF ultimate-parent edges that duplicate a path already in the graph.
+
+    GLEIF records "X is the ultimate parent of Y" alongside the chain that links
+    them, so most ``indirect`` OWNS edges are shortcuts for a route the graph
+    already draws — and drawn, they are indistinguishable from a direct holding.
+    But not all: where GLEIF gave the top of a chain and not its steps, the
+    shortcut is the only ownership there is. Filtering by *kind* rather than by
+    proof removed those companies from the graph entirely; this computes the
+    proof.
+
+    Per edge: is the target reachable from the same parent over ``direct`` edges
+    only? Then ``shortcut = true`` and the renderer may omit it. Otherwise
+    ``shortcut = false`` and it must be drawn.
+
+    Reachability is deliberately restricted to direct edges. Allowing a route
+    through another *indirect* edge would be circular — that edge may itself be
+    hidden — and is exactly the mistake that produced the regression.
+
+    Whether an edge is redundant is a property of the whole graph, not of the
+    record, so this is a batch pass rather than an import-time decision, and it
+    must be **re-run after every import**: a delta that retires a direct edge
+    turns a redundant shortcut into the only link to a company. It clears flags
+    as well as setting them for that reason, and is idempotent.
+
+    Cost: the closure is built in memory from two bulk reads rather than one
+    traversal per parent. Measured on the dev database (233k companies, 19k OWNS
+    edges): 1.4 s, against 562 s for the per-parent form. If the edge set ever
+    outgrows memory, the ``_DiskMap`` in ``bulk_import`` is the established answer.
+
+    ``limit`` bounds the number of PARENTS processed; ``remaining`` reports the rest.
+    """
+    direct_edges = run_query(
+        "MATCH (a)-[r:OWNS]->(b) WHERE r.direct_or_indirect = 'direct' "
+        "RETURN a.id AS a, b.id AS b")
+    indirect_edges = run_query(
+        "MATCH (a)-[r:OWNS]->(b) WHERE r.direct_or_indirect = 'indirect' "
+        "RETURN a.id AS a, b.id AS b, r.shortcut AS flag")
+
+    adjacency: dict[str, list[str]] = {}
+    for e in direct_edges:
+        a, b = e.get("a"), e.get("b")
+        if a and b:
+            adjacency.setdefault(a, []).append(b)
+
+    by_parent: dict[str, list[dict]] = {}
+    for e in indirect_edges:
+        if e.get("a") and e.get("b"):
+            by_parent.setdefault(e["a"], []).append(e)
+
+    parents = sorted(by_parent)
+    batch = parents if limit is None else parents[:limit]
+
+    pending: list[tuple[str, str, bool]] = []
+    unchanged = 0
+    for pid in batch:
+        reachable = _reachable_by_direct(pid, adjacency)
+        for edge in by_parent[pid]:
+            target, was = edge["b"], edge.get("flag")
+            now = target in reachable
+            if was is not None and bool(was) == now:
+                unchanged += 1
+                continue
+            pending.append((pid, target, now))
+
+    _write_shortcut_flags(pending)
+    result = {
+        "parents_total": len(parents),
+        "parents_processed": len(batch),
+        "remaining": max(0, len(parents) - len(batch)),
+        "marked_redundant": sum(1 for _, _, v in pending if v),
+        "marked_load_bearing": sum(1 for _, _, v in pending if not v),
+        "unchanged": unchanged,
+    }
+    log.info("Ownership shortcut pass: %s", result)
+    return result
+
+
+def _reachable_by_direct(start: str, adjacency: dict[str, list[str]]) -> set[str]:
+    """Everything reachable from `start` over direct edges, to _SHORTCUT_MAX_DEPTH."""
+    seen: set[str] = set()
+    frontier = [start]
+    for _ in range(_SHORTCUT_MAX_DEPTH):
+        nxt = [child for node in frontier for child in adjacency.get(node, ())
+               if child not in seen]
+        if not nxt:
+            break
+        seen.update(nxt)
+        frontier = nxt
+    return seen
+
+
+def _write_shortcut_flags(pending: list[tuple[str, str, bool]]) -> None:
+    """Persist the decided flags, batched — one round-trip per edge would make the
+    pass slower than the traversal it replaced."""
+    for i in range(0, len(pending), _SHORTCUT_WRITE_BATCH):
+        chunk = pending[i:i + _SHORTCUT_WRITE_BATCH]
+        stmts, params = [], {}
+        for k, (parent, target, value) in enumerate(chunk):
+            params[f"p{k}"], params[f"b{k}"], params[f"v{k}"] = parent, target, value
+            # `@out.id` / `@in.id`, NOT `out.id`. On an edge, the unprefixed form
+            # matches zero rows and reports success — verified against a real
+            # ArcadeDB, along with `out IN (SELECT ...)`, which fails the same
+            # silent way. Same trap as the Vanguard succession delete.
+            stmts.append(
+                f"UPDATE OWNS SET shortcut = :v{k} WHERE direct_or_indirect = 'indirect' "
+                f"AND @out.id = :p{k} AND @in.id = :b{k};")
+        try:
+            run_sqlscript("\n".join(stmts), params)
+        except Exception as exc:  # noqa: BLE001 — a failed chunk must not lose the rest
+            log.warning("shortcut flag batch failed (%d edges): %s", len(chunk), exc)
+
+
 def _duplicate_keys(key_prop: str) -> list[str]:
     """Return only the identifier values that appear on more than one Entity.
 

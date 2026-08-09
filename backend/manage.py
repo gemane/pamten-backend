@@ -142,6 +142,19 @@ def cmd_dedupe_entities(args):
     print(f"Merged {res['entities_merged']} entities across "
           f"{res.get('total', '?')} shared-id groups; {res.get('remaining', 0)} groups remaining")
 
+def cmd_mark_shortcuts(args):
+    """Flag GLEIF ultimate-parent OWNS edges that duplicate a path the graph already
+    draws, so the renderer can omit them. Run after every import: a delta that retires
+    a direct edge turns a redundant shortcut into the only link to a company, and only
+    a re-run notices."""
+    _apply_direct_db_url(args)
+    from app.scraper.maintenance import mark_ownership_shortcuts
+    res = mark_ownership_shortcuts(limit=getattr(args, "limit", None))
+    print(f"Processed {res['parents_processed']}/{res['parents_total']} parents; "
+          f"{res['marked_redundant']} marked redundant, "
+          f"{res['marked_load_bearing']} load-bearing, "
+          f"{res['unchanged']} unchanged; {res['remaining']} parents remaining")
+
 def cmd_gleif_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -487,6 +500,13 @@ def _build_parser():
     p_de.add_argument('--limit', type=int, help='Max shared-id groups to process (default: all)')
     p_de.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_de.set_defaults(func=cmd_dedupe_entities)
+
+    # mark-shortcuts command (flag redundant ultimate-parent edges for the renderer)
+    p_ms = subparsers.add_parser('mark-shortcuts',
+        help='Flag GLEIF ultimate-parent OWNS edges that duplicate an existing path')
+    p_ms.add_argument('--limit', type=int, help='Max parents to process (default: all)')
+    p_ms.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_ms.set_defaults(func=cmd_mark_shortcuts)
 
     # wipe-source command (replaces the removed whole-DB wipe-data; drop the
     # database for a fresh start instead)

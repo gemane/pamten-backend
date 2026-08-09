@@ -333,6 +333,18 @@ def deduplicate_owns_edges(_: dict = Depends(require_admin)):
     return maintenance.deduplicate_owns_edges()
 
 
+@router.post("/mark-shortcuts")
+def mark_ownership_shortcuts(
+    limit: int | None = Query(None, ge=1, description="Max parents to process; omit for all"),
+    _: dict = Depends(require_admin),
+):
+    """Flag GLEIF ultimate-parent edges that duplicate a path already in the graph,
+    so the renderer can omit them without losing companies whose only link is a
+    shortcut. Re-run after every import — a delta can turn a redundant edge into a
+    load-bearing one. Admin only."""
+    return maintenance.mark_ownership_shortcuts(limit=limit)
+
+
 # ── Person deduplication endpoint ──────────────────────────────────────────────
 
 @router.post("/deduplicate-persons")
