@@ -188,6 +188,7 @@ def create_dual_listed(data: DualListedCreate, _: dict = Depends(require_contrib
 
 def ownership_tree_of(
     entity_id: str, depth: int = 3, limit: int = TREE_DEFAULT_LIMIT,
+    include_indirect: bool = True,
 ) -> tuple[list[dict], bool]:
     """Everything an entity owns, up to `depth` levels deep. Returns (paths, truncated).
 
@@ -195,6 +196,24 @@ def ownership_tree_of(
     survive the cut is the database's order, not a ranking — a truncated tree is a
     sample of the ownership graph, not its most important part. Callers that need
     completeness should narrow the depth rather than raise the limit.
+
+    ``include_indirect`` defaults to **True**. It briefly defaulted to False, to
+    drop GLEIF's "ultimate parent" shortcut edges on the grounds that they
+    duplicate a path the tree already contains. That is true of most of them but
+    not all: where GLEIF recorded the top of a chain and not its steps, the
+    shortcut is the only ownership there is, and excluding it made 58 of 484
+    owned entities unreachable. Whether a given shortcut is redundant is a global
+    property, computed by ``maintenance.mark_ownership_shortcuts`` and stamped on
+    the edge as ``shortcut`` — filter on that, not on the kind.
+
+    Passing False still filters by kind. Useful for a caller that genuinely wants
+    only directly-held subsidiaries, but it will omit companies whose sole link is
+    an ultimate-parent edge.
+
+    Edges with no ``direct_or_indirect`` at all (Wikidata, SEC — sources that
+    never state the distinction) are always kept: absent is not the same as
+    indirect, and dropping them would silently lose the only ownership those
+    sources record.
 
     Kept separate from the route because the route takes a `Response` to set the
     truncation header, and FastAPI only injects that over HTTP — an in-process
@@ -209,8 +228,17 @@ def ownership_tree_of(
     # so unpacking it raised AttributeError for every entity that actually had a
     # subsidiary. nodes()/relationships() return the real documents instead.
     # Fetch one extra row: if it comes back, there was more than `limit`.
+    # When filtering is asked for, it must hold for EVERY hop — hence ALL() over
+    # the bound edge list rather than a plain WHERE, which would test only the
+    # last edge and let a shortcut back in halfway down a chain. Verified against
+    # a real ArcadeDB: ALL() over a variable-length binding is supported.
+    edge_filter = "" if include_indirect else (
+        "WHERE ALL(e IN r WHERE e.direct_or_indirect IS NULL "
+        "OR e.direct_or_indirect <> 'indirect')"
+    )
     query = f"""
-        MATCH path = (:Entity {{id: $entity_id}})-[:OWNS*1..{safe_depth}]->(subsidiary)
+        MATCH path = (:Entity {{id: $entity_id}})-[r:OWNS*1..{safe_depth}]->(subsidiary)
+        {edge_filter}
         RETURN nodes(path) AS path_nodes, relationships(path) AS path_rels
         LIMIT {limit + 1}
     """
@@ -234,8 +262,12 @@ def get_ownership_tree(
     depth: int = 3,
     limit: Annotated[int, Query(ge=1, le=TREE_MAX_LIMIT,
                                 description="Max paths. X-Result-Truncated says whether more exist.")] = TREE_DEFAULT_LIMIT,
+    include_indirect: Annotated[bool, Query(
+        description="Include GLEIF 'ultimate parent' edges. On by default — most duplicate a "
+                    "path the tree already contains, but some are the only link to a company, "
+                    "so excluding them by kind loses entities.")] = True,
 ):
-    paths, truncated = ownership_tree_of(entity_id, depth, limit)
+    paths, truncated = ownership_tree_of(entity_id, depth, limit, include_indirect)
     _mark_truncated(response, truncated)
     return paths
 

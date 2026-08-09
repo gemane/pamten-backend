@@ -23,7 +23,7 @@ its registered address, so the map reads one record instead of traversing.
 
 | Pattern | Properties |
 |---|---|
-| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent` (economic holding), `voting_power_pct` (voting rights — kept separate from the stake; from BODS `votingRights` interests and DEF 14A proxies), `interest_types[]` (BODS interest kinds behind the edge: shareholding/votingRights/appointmentOfBoard/…), `direct_or_indirect` (from GLEIF RR-CDF: `direct` = directly-consolidated parent, `indirect` = ultimate parent), `ownership_type` (see the vocabulary below), `since`, `until`, `source_id`, `source_url`, `source_date`. Free float / >100% conflicts aren't stored — the full-profile endpoint derives them from the disclosed stakes on read (`ownership` summary) |
+| `(Entity\|Person)-[:OWNS]->(Entity)` | `stake_percent` (economic holding), `voting_power_pct` (voting rights — kept separate from the stake; from BODS `votingRights` interests and DEF 14A proxies), `interest_types[]` (BODS interest kinds behind the edge: shareholding/votingRights/appointmentOfBoard/…), `direct_or_indirect` (from GLEIF RR-CDF: `direct` = directly-consolidated parent, `indirect` = ultimate parent), `also_ultimate` / `ultimate_since` / `ultimate_until` (see *One edge per pair* below), `shortcut` (set by `manage.py mark-shortcuts`: this indirect edge duplicates a path of direct edges. Edges marked `true` are excluded from the full-profile owners/subsidiaries lists **and their counts**, so the panel and the graph agree; absent means unproven and it is kept), `ownership_type` (see the vocabulary below), `since`, `until`, `source_id`, `source_url`, `source_date`. Free float / >100% conflicts aren't stored — the full-profile endpoint derives them from the disclosed stakes on read (`ownership` summary) |
 | `(Person)-[:HAS_ROLE]->(Entity)` | `role`, `since`, `until`, `source_id`, `source_url`, `source_date` |
 | `(Person)-[:RELATED_TO]->(Person)` | `relation`, `source_id` |
 | `(Person)-[:NOT_DUPLICATE]->(Person)`<br>`(Entity)-[:NOT_DUPLICATE]->(Entity)` | `at` — marks two nodes confirmed to be *different* (keep-separate). The entity dedup checks these **per pair**, not per group: a third same-named company must not drag a node someone explicitly separated into a destructive auto-merge |
@@ -95,6 +95,41 @@ legal-form type) from LEI-CDF; `gleif-rr` imports the **relationships** (direct/
 ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF.
 This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
 at 2025‑03.
+
+### One edge per pair
+
+Whenever a company's direct parent is also the top of its tree, GLEIF states the
+pair **twice** — once `IS_DIRECTLY_CONSOLIDATED_BY` and once
+`IS_ULTIMATELY_CONSOLIDATED_BY`. On the full golden copy that is **88,839 of
+257,651** consolidation relationships (35%).
+
+Those are two statements about one holding, so `gleif-rr` folds them into a single
+OWNS edge rather than writing one each. Two parallel edges between the same nodes
+used to mean the graph drew one and hid the other, the profile listed the owner
+twice, and `mark-shortcuts` had to *prove* the second redundant before anything
+could filter it.
+
+Nothing is discarded:
+
+| Property | Meaning |
+|---|---|
+| `direct_or_indirect` | `direct` when GLEIF stated the direct relationship — the more specific claim wins |
+| `also_ultimate` | `true` when the ultimate relationship was stated for the same pair, i.e. this direct parent is also the top of the tree |
+| `ultimate_since` / `ultimate_until` | the ultimate relationship's period, kept only when it **differs** from the direct one (6.9% of folded pairs — a parent can become the direct consolidator years before an intermediate holding dissolves and makes it the ultimate one) |
+
+An ultimate record whose pair has no direct record keeps `direct_or_indirect =
+indirect` and is *not* rewritten as direct: GLEIF never stated a direct holding
+there, and that edge is often the only route to the company.
+
+`mark-shortcuts` still runs, but only the genuinely multi-hop shortcuts are left
+for it to prove.
+
+The daily `gleif-update` delta maintains the same invariant: it looks its edges up
+by **pair**, not by marker, so an ultimate-parent record for a folded pair updates
+that edge instead of creating a parallel one. Retiring one of a folded edge's two
+relationships does not close the edge — the other still stands, so the edge either
+drops `also_ultimate` (the ultimate link ended) or reverts to `indirect` with its
+own period (the direct holding ended).
 
 Once the full copy is loaded, `manage.py gleif-update` applies GLEIF's published
 **delta files** (only records changed since the last publish) as a fast daily

@@ -70,3 +70,52 @@ def test_imports_direct_and_indirect_parent_edges(it_db, tmp_path):
     since_by_parent = {e["parent"]: e["since"] for e in edges}
     assert since_by_parent["DIRECTPLEI0000000002"] == "2015-03-04"
     assert since_by_parent["ULTPLEI00000000000003"] is None   # no period → no since
+
+
+def _same_parent_both_ways_zip(tmp_path, ultimate_start=None):
+    """One parent stated as BOTH the direct and the ultimate consolidator of one
+    child — 88,839 of the full golden copy's 257,651 consolidation edges."""
+    payload = {"relations": [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY",   "CHILDLEI000000000001", "PARENTLEI0000000002",
+             start="2015-03-04T00:00:00.000Z"),
+        _rec("IS_ULTIMATELY_CONSOLIDATED_BY", "CHILDLEI000000000001", "PARENTLEI0000000002",
+             start=ultimate_start),
+    ]}
+    zpath = tmp_path / "rr-both.json.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("rr-golden-copy.json", json.dumps(payload))
+    return str(zpath)
+
+
+def test_a_pair_stated_both_ways_becomes_one_edge(it_db, tmp_path):
+    """The duplicate edge is never created, so nothing downstream has to prove it
+    redundant: no second owner row in the profile, nothing for the graph to hide."""
+    from app.scraper.gleif_rr import import_rr_cdf
+
+    result = import_rr_cdf(_same_parent_both_ways_zip(tmp_path), "gleif-src", 92)
+    assert result["records"] == 2
+    assert result["edges"] == 1 and result["collapsed"] == 1
+
+    edges = it_db.run_command(
+        "MATCH (a:Entity)-[o:OWNS]->(b:Entity) RETURN o.direct_or_indirect AS doi, "
+        "o.since AS since, o.also_ultimate AS also")
+    assert len(edges) == 1
+    assert edges[0]["doi"] == "direct"          # the more specific claim survives
+    assert edges[0]["since"] == "2015-03-04"
+    assert edges[0]["also"] is True             # but the ultimate assertion is recorded
+
+
+def test_a_differing_ultimate_period_survives_on_the_edge(it_db, tmp_path):
+    """6.9% of folded pairs on the real file state two different relationship
+    starts. Deleting the twin instead of folding it would lose 6,138 dates."""
+    from app.scraper.gleif_rr import import_rr_cdf
+
+    import_rr_cdf(_same_parent_both_ways_zip(tmp_path, ultimate_start="2018-06-01T00:00:00.000Z"),
+                  "gleif-src", 92)
+
+    edges = it_db.run_command(
+        "MATCH (a:Entity)-[o:OWNS]->(b:Entity) "
+        "RETURN o.since AS since, o.ultimate_since AS ult")
+    assert len(edges) == 1
+    assert edges[0]["since"] == "2015-03-04"    # the direct relationship period
+    assert edges[0]["ult"] == "2018-06-01"      # the ultimate one, not lost

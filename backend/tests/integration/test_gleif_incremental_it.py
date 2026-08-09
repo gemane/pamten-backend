@@ -37,17 +37,25 @@ def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None):
     return rec
 
 
-def _rel(child, parent, status="ACTIVE", end_date=None):
+def _rel(child, parent, status="ACTIVE", end_date=None,
+         rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
-        "RelationshipType":   _w("IS_DIRECTLY_CONSOLIDATED_BY"),
+        "RelationshipType":   _w(rtype),
         "RelationshipStatus": _w(status),
     }
-    if end_date:
-        rel["RelationshipPeriods"] = {"RelationshipPeriod":
-            {"PeriodType": _w("RELATIONSHIP_PERIOD"), "EndDate": _w(end_date)}}
+    if end_date or start_date:
+        period = {"PeriodType": _w("RELATIONSHIP_PERIOD")}
+        if start_date:
+            period["StartDate"] = _w(start_date)
+        if end_date:
+            period["EndDate"] = _w(end_date)
+        rel["RelationshipPeriods"] = {"RelationshipPeriod": period}
     return {"RelationshipRecord": {"Relationship": rel}}
+
+
+ULTIMATE = "IS_ULTIMATELY_CONSOLIDATED_BY"
 
 
 def _zip(tmp_path, name, key, items):
@@ -118,6 +126,110 @@ def test_delta_apply_idempotent_and_retirement(it_db, tmp_path):
         {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})[0]["until"]
     assert until == "2024-05-01"
     assert owns_count() == 1                                # closed, not removed
+
+
+# ── The delta must preserve the full import's one-edge-per-pair fold ──────────
+#
+# The full importer folds a pair GLEIF states both ways into a single edge. The
+# delta used to look its edges up **by marker**, so an ultimate-parent record for
+# a folded pair matched nothing and created a second, parallel edge — quietly
+# undoing the fold a few thousand pairs per night, which is worse than never
+# having folded at all.
+
+def _edges(it_db):
+    return it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "RETURN r.direct_or_indirect AS marker, r.also_ultimate AS also, "
+        "r.since AS since, r.ultimate_since AS ult, r.until AS until",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+
+
+def _apply(tmp_path, name, rels):
+    from app.scraper.gleif_incremental import import_rr_delta
+    return import_rr_delta(_zip(tmp_path, name, "relations", rels), "gleif-src", 92)
+
+
+def test_an_ultimate_record_folds_into_an_existing_direct_edge(it_db, tmp_path):
+    first = _apply(tmp_path, "a.json.zip", [_rel(CHILD, PARENT, start_date="2015-01-01")])
+    assert first["created"] == 1
+
+    second = _apply(tmp_path, "b.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE)])
+    assert second["folded"] == 1 and second["created"] == 0
+
+    rows = _edges(it_db)
+    assert len(rows) == 1, "a second parallel edge would undo the import-side fold"
+    assert rows[0]["marker"] == "direct" and rows[0]["also"] is True
+
+
+def test_a_direct_record_takes_over_an_existing_ultimate_edge(it_db, tmp_path):
+    """Arriving in the other order must reach the same state — the direct claim is
+    the more specific one, so it owns the edge."""
+    _apply(tmp_path, "a.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE, start_date="2018-06-01")])
+    res = _apply(tmp_path, "b.json.zip", [_rel(CHILD, PARENT, start_date="2015-01-01")])
+    assert res["folded"] == 1
+
+    rows = _edges(it_db)
+    assert len(rows) == 1
+    assert rows[0]["marker"] == "direct" and rows[0]["also"] is True
+    assert rows[0]["since"] == "2015-01-01"     # the direct period
+    assert rows[0]["ult"] == "2018-06-01"       # the ultimate one, preserved
+
+
+def test_both_records_in_one_delta_produce_one_edge(it_db, tmp_path):
+    res = _apply(tmp_path, "a.json.zip", [
+        _rel(CHILD, PARENT, start_date="2015-01-01"),
+        _rel(CHILD, PARENT, rtype=ULTIMATE),
+    ])
+    assert res["created"] == 1 and res["folded"] == 1
+    assert len(_edges(it_db)) == 1
+
+
+def test_folding_is_idempotent(it_db, tmp_path):
+    rels = [_rel(CHILD, PARENT, start_date="2015-01-01"), _rel(CHILD, PARENT, rtype=ULTIMATE)]
+    _apply(tmp_path, "a.json.zip", rels)
+    _apply(tmp_path, "b.json.zip", rels)
+    assert len(_edges(it_db)) == 1
+
+
+def test_retiring_the_ultimate_relationship_keeps_the_direct_holding(it_db, tmp_path):
+    """Stamping `until` here would delete a holding GLEIF still asserts."""
+    _apply(tmp_path, "a.json.zip", [
+        _rel(CHILD, PARENT, start_date="2015-01-01"), _rel(CHILD, PARENT, rtype=ULTIMATE)])
+
+    res = _apply(tmp_path, "b.json.zip",
+                 [_rel(CHILD, PARENT, rtype=ULTIMATE, status="INACTIVE", end_date="2024-05-01")])
+    assert res["closed"] == 1
+
+    rows = _edges(it_db)
+    assert len(rows) == 1
+    assert rows[0]["until"] is None, "the direct holding is still live"
+    assert rows[0]["marker"] == "direct"
+    assert rows[0]["also"] is None, "but the parent is no longer claimed as the top"
+
+
+def test_retiring_the_direct_relationship_leaves_the_ultimate_one(it_db, tmp_path):
+    _apply(tmp_path, "a.json.zip", [
+        _rel(CHILD, PARENT, start_date="2015-01-01"),
+        _rel(CHILD, PARENT, rtype=ULTIMATE, start_date="2018-06-01")])
+
+    res = _apply(tmp_path, "b.json.zip",
+                 [_rel(CHILD, PARENT, status="INACTIVE", end_date="2024-05-01")])
+    assert res["closed"] == 1
+
+    rows = _edges(it_db)
+    assert len(rows) == 1
+    assert rows[0]["until"] is None
+    assert rows[0]["marker"] == "indirect"          # what is left is the ultimate link
+    assert rows[0]["since"] == "2018-06-01"         # with its own period restored
+
+
+def test_an_unfolded_edge_still_closes_normally(it_db, tmp_path):
+    """The ordinary single-relationship case must be untouched by all of the above."""
+    _apply(tmp_path, "a.json.zip", [_rel(CHILD, PARENT)])
+    res = _apply(tmp_path, "b.json.zip",
+                 [_rel(CHILD, PARENT, status="INACTIVE", end_date="2024-05-01")])
+    assert res["closed"] == 1
+    assert _edges(it_db)[0]["until"] == "2024-05-01"
 
 
 def test_publish_checkpoint_roundtrip(it_db):

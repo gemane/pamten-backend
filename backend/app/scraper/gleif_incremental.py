@@ -99,18 +99,53 @@ def _ensure_lei_node(lei: str, source_id: str) -> None:
             {"lei": lei, "src": source_id, "id": f"lei:{lei}"})
 
 
+def _existing_consolidation_edge(parent_id: str, child_id: str) -> dict | None:
+    """The RR-authored OWNS edge for this pair, whatever marker it carries.
+
+    Matched on the **pair**, not on the marker. The full importer folds a pair
+    stated both ways into a single edge (see ``gleif_rr._collapse``), so the edge
+    holding an ultimate relationship is usually marked ``direct``. Looking it up by
+    marker would miss it and create a second, parallel edge — re-introducing the
+    duplicates the fold removed, a few thousand per delta.
+
+    Scoped to edges that carry a ``direct_or_indirect`` marker at all, which is how
+    this module has always identified its own edges (only RR sets one), so a BODS
+    or SEC edge for the same pair is never touched.
+    """
+    rows = run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "WHERE r.direct_or_indirect IS NOT NULL "
+        "RETURN r.direct_or_indirect AS marker, r.since AS since LIMIT 1",
+        {"p": parent_id, "c": child_id})
+    return rows[0] if rows else None
+
+
 def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str,
                       source_id: str, credibility_score: int, since: str | None = None) -> str:
     """Create the (parent)-[:OWNS {marker}]->(child) edge if absent, else refresh it
-    and clear any stale `until`. Assumes both nodes already exist. 'created'|'updated'.
-    `since` (relationship start date) is set on create and backfilled on update without
-    clobbering an existing value."""
+    and clear any stale `until`. Assumes both nodes already exist.
+    'created'|'updated'|'folded'. `since` (relationship start date) is set on create
+    and backfilled on update without clobbering an existing value.
+
+    'folded' means the delta stated the *other* relationship type for a pair we
+    already hold: one edge per pair is the invariant the full import establishes, so
+    the second assertion is recorded **on** the existing edge rather than beside it.
+    """
     now = _now_iso()
-    exists = run_command(
-        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
-        "WHERE r.direct_or_indirect = $m RETURN r LIMIT 1",
-        {"p": parent_id, "c": child_id, "m": marker})
-    if exists:
+    existing = _existing_consolidation_edge(parent_id, child_id)
+
+    if existing is None:
+        run_command(
+            "MATCH (a:Entity {id:$p}) MATCH (b:Entity {id:$c}) "
+            "CREATE (a)-[:OWNS {direct_or_indirect:$m, ownership_type:'controlling', "
+            "interest_types:$it, source_id:$src, credibility_score:$cred, "
+            "source_url:$url, since:$since, last_scraped_at:$now}]->(b)",
+            {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
+             "src": source_id, "cred": credibility_score, "since": since,
+             "url": f"https://search.gleif.org/#/record/{child_lei}", "now": now})
+        return "created"
+
+    if existing["marker"] == marker:
         run_command(
             "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
             "WHERE r.direct_or_indirect = $m "
@@ -119,15 +154,24 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
             {"p": parent_id, "c": child_id, "m": marker, "now": now,
              "cred": credibility_score, "since": since})
         return "updated"
+
+    # Stated both ways. The direct claim is the more specific one and owns the
+    # edge; the ultimate one is recorded alongside, with its own period whenever
+    # that differs — the same shape the full importer's fold produces.
+    if marker == "indirect":
+        kept_since, other_since = existing["since"], since
+    else:
+        kept_since, other_since = since or existing["since"], existing["since"]
     run_command(
-        "MATCH (a:Entity {id:$p}) MATCH (b:Entity {id:$c}) "
-        "CREATE (a)-[:OWNS {direct_or_indirect:$m, ownership_type:'controlling', "
-        "interest_types:$it, source_id:$src, credibility_score:$cred, "
-        "source_url:$url, since:$since, last_scraped_at:$now}]->(b)",
-        {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
-         "src": source_id, "cred": credibility_score, "since": since,
-         "url": f"https://search.gleif.org/#/record/{child_lei}", "now": now})
-    return "created"
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "WHERE r.direct_or_indirect IS NOT NULL "
+        "SET r.direct_or_indirect = 'direct', r.also_ultimate = true, r.until = null, "
+        "r.since = $since, r.ultimate_since = $ult, "
+        "r.last_scraped_at = $now, r.credibility_score = $cred",
+        {"p": parent_id, "c": child_id, "since": kept_since, "now": now,
+         "cred": credibility_score,
+         "ult": other_since if other_since and other_since != kept_since else None})
+    return "folded"
 
 
 def _upsert_owns(parent_lei: str, child_lei: str, marker: str,
@@ -141,11 +185,43 @@ def _upsert_owns(parent_lei: str, child_lei: str, marker: str,
 
 def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str) -> int:
     """Close a retired relationship's OWNS edge by stamping `until`. Returns the
-    number of edges closed (0 if the edge isn't in our graph)."""
+    number of edges closed (0 if the edge isn't in our graph).
+
+    A **folded** edge carries two relationships, so retiring one of them must not
+    close the edge — the other still stands:
+
+    * the ultimate relationship ends → the edge stays a live direct holding, and
+      just stops claiming the parent is the top of the tree;
+    * the direct relationship ends → the edge stays live as the ultimate one, with
+      that relationship's own period restored as its `since`.
+
+    Stamping `until` in either case would delete a holding GLEIF still asserts.
+    """
+    pid, cid = f"lei:{parent_lei}", f"lei:{child_lei}"
+    rows = run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "WHERE r.also_ultimate = true AND r.until IS NULL "
+        "RETURN r.ultimate_since AS ult LIMIT 1", {"p": pid, "c": cid})
+    if rows:
+        if marker == "indirect":
+            run_command(
+                "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+                "WHERE r.also_ultimate = true "
+                "SET r.also_ultimate = null, r.ultimate_since = null, r.ultimate_until = null",
+                {"p": pid, "c": cid})
+        else:
+            run_command(
+                "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+                "WHERE r.also_ultimate = true "
+                "SET r.direct_or_indirect = 'indirect', r.also_ultimate = null, "
+                "r.since = coalesce($ult, r.since), r.ultimate_since = null",
+                {"p": pid, "c": cid, "ult": rows[0].get("ult")})
+        return 1
+
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
         "WHERE r.direct_or_indirect = $m SET r.until = $until RETURN count(r) AS n",
-        {"p": f"lei:{parent_lei}", "c": f"lei:{child_lei}", "m": marker, "until": until})
+        {"p": pid, "c": cid, "m": marker, "until": until})
     return int(rows[0]["n"]) if rows else 0
 
 
@@ -227,9 +303,10 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
     """Apply an RR-CDF delta: upsert ACTIVE consolidation edges, close ones that
     went non-ACTIVE. Endpoint nodes are batch-upserted first. Idempotent."""
     raw, total = _open_json(filepath)
-    counts = {"records": 0, "created": 0, "updated": 0, "closed": 0, "skipped": 0, "errors": 0}
+    counts = {"records": 0, "created": 0, "updated": 0, "folded": 0,
+              "closed": 0, "skipped": 0, "errors": 0}
     batch = _BatchWriter()
-    active: list[tuple[str, str, str]] = []
+    active: list[tuple[str, str, str, str | None]] = []
     closures: list[tuple[str, str, str, str]] = []
     bar = _ProgressBar("RR delta")
     try:
@@ -259,11 +336,11 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
         for parent, child, marker, since in active:
             outcome = _owns_edge_upsert(f"lei:{parent}", f"lei:{child}", child, marker,
                                         source_id, credibility_score, since)
-            counts["created" if outcome == "created" else "updated"] += 1
+            counts[outcome if outcome in counts else "updated"] += 1
         for parent, child, marker, until in closures:
             counts["closed"] += _close_owns(parent, child, marker, until)
         bar.finish(f"{counts['records']:,} records, +{counts['created']:,} edges, "
-                   f"{counts['closed']:,} closed")
+                   f"{counts['folded']:,} folded, {counts['closed']:,} closed")
     finally:
         raw.close()
     log.info("RR delta done: %s", counts)

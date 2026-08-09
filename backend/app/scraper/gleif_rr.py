@@ -18,6 +18,15 @@ same key the LEI-CDF importer uses — carrying ``direct_or_indirect`` so the
 direct holding can be told apart from the ultimate/indirect control summary
 (which is what lets downstream stop double-counting toward >100%).
 
+**One edge per pair.** Whenever a company's direct parent is also the top of its
+tree, GLEIF states the pair twice — once ``IS_DIRECTLY_CONSOLIDATED_BY`` and once
+``IS_ULTIMATELY_CONSOLIDATED_BY``. Those are two statements about a single
+holding, and emitting one edge each used to produce two parallel OWNS edges
+between the same two nodes: the graph drew one and hid the other, the profile
+listed the owner twice, and a later maintenance pass had to *prove* the second
+redundant before anything could filter it. They are folded together here instead
+— see ``_collapse``.
+
 JSON quirks (verified): top-level array key ``relations``; each item is
 ``{"RelationshipRecord": {"Relationship": {...}, "Registration": {...}}}``; every
 scalar is wrapped ``{"$": value}``.
@@ -93,6 +102,63 @@ def _rr_edge(rec: dict) -> tuple[str, str, str, str | None, str | None] | None:
     return parent, child, marker, since, until
 
 
+#: One pair's two possible assertions: (since, until) for the direct record and
+#: for the ultimate one, either of which may be absent. A plain tuple rather than
+#: a dict because there is one of these per relationship pair (~700k on the full
+#: golden copy) and a dict per pair costs several times more.
+_Dates = tuple[str | None, str | None]
+_Slot = tuple[_Dates | None, _Dates | None]
+
+
+def _fold(pairs: dict[tuple[str, str], _Slot], parent: str, child: str,
+          marker: str, since: str | None, until: str | None) -> None:
+    """Record one RR assertion against its (parent, child) pair.
+
+    A repeat of the same relationship type for the same pair overwrites — GLEIF
+    should not emit one, and if it does the later record is the newer statement.
+    """
+    direct, ultimate = pairs.get((parent, child), (None, None))
+    if marker == "direct":
+        direct = (since, until)
+    else:
+        ultimate = (since, until)
+    pairs[(parent, child)] = (direct, ultimate)
+
+
+def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
+    """One pair's assertions as a single edge: (marker, since, until, extra props).
+
+    The surviving edge is the **direct** one whenever GLEIF stated it — it is the
+    more specific claim, and it is what the graph and the profile should show.
+
+    Nothing is thrown away. An ultimate record that was also stated is recorded on
+    the edge (``also_ultimate``), because "this direct parent is also the top of the
+    tree" is real information that used to be carried by the second edge's mere
+    existence. The two records can also carry *different* relationship periods —
+    a parent can become the direct consolidator years before an intermediate
+    holding dissolves and makes it the ultimate one — so a differing period is kept
+    as ``ultimate_since`` / ``ultimate_until`` rather than silently dropped, and an
+    ultimate date fills a gap where the direct record is silent.
+    """
+    direct, ultimate = slot
+    if direct is None:                      # only the ultimate parent was stated
+        since, until = ultimate            # type: ignore[misc]  (never both None)
+        return "indirect", since, until, {}
+    since, until = direct
+    if ultimate is None:
+        return "direct", since, until, {}
+
+    u_since, u_until = ultimate
+    since = since or u_since                # the ultimate record can fill a gap
+    until = until or u_until
+    extra: dict = {"also_ultimate": True}
+    if u_since and u_since != since:
+        extra["ultimate_since"] = u_since
+    if u_until and u_until != until:
+        extra["ultimate_until"] = u_until
+    return "direct", since, until, extra
+
+
 def _family_of(seeds: set[str], children: dict, parents: dict) -> set[str]:
     """The corporate family of `seeds`: the seeds plus everything reachable DOWN
     (all descendants via child edges) and UP (all ancestors via parent edges). This
@@ -126,13 +192,20 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         limit:             Max records to scan (None = all).
         only_leis:         Restrict to the corporate FAMILY of these seed LEIs — every
                            edge among the seeds, their ancestors and their descendants —
-                           for a connected test subset. The RR file is small (~34MB), so
-                           this loads all edges once and walks the tree in memory.
+                           for a connected test subset. Walks the tree over the pairs
+                           already held in memory, so it costs nothing extra.
         emit_leis_path:    When set (with only_leis), write the family's LEIs (one per
                            line) here, so a follow-up ``gleif-lei-cdf --only-file`` can
                            name them (RR edges alone leave the counterparties unnamed).
 
-    Returns dict: {records, direct, indirect, skipped, nodes, edges[, family]}.
+    Returns dict: {records, direct, indirect, skipped, collapsed, nodes, edges[, family]}
+    — `records` counts RR records read, the rest count *edges written*, which is
+    fewer: `collapsed` is how many pairs were stated both ways and folded into one.
+
+    Every consolidation pair is held in memory until the file has been read, because
+    a pair's direct and ultimate records sit anywhere in it. Measured on the full
+    1.1GB golden copy (481,903 records → 168,812 pairs): **0.12 GB peak RSS**, so
+    this is comfortable on a small server.
     """
     if filepath.lower().endswith(".zip"):
         zf = zipfile.ZipFile(filepath)
@@ -149,7 +222,7 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
 
     batch = _BatchWriter()
     seen_nodes: set[str] = set()
-    counts = {"records": 0, "direct": 0, "indirect": 0, "skipped": 0}
+    counts = {"records": 0, "direct": 0, "indirect": 0, "skipped": 0, "collapsed": 0}
 
     def _node(lei: str) -> None:
         if lei not in seen_nodes:
@@ -158,9 +231,11 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             # name/type (GLEIF BODS/LEI-CDF imports own those).
             batch.entity(f"lei:{lei}", {"lei_id": lei, "source_id": source_id})
 
-    def _emit_edge(parent: str, child: str, marker: str,
-                   since: str | None = None, until: str | None = None) -> None:
+    def _emit_pair(parent: str, child: str, slot: _Slot) -> None:
+        marker, since, until, extra = _collapse(slot)
         counts["direct" if marker == "direct" else "indirect"] += 1
+        if extra.get("also_ultimate"):
+            counts["collapsed"] += 1
         _node(parent)
         _node(child)
         _owns(
@@ -170,47 +245,54 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             credibility_score=credibility_score,
             source_url=f"https://search.gleif.org/#/record/{child}",
             interest_types=["accountingConsolidation"], direct_or_indirect=marker,
+            extra=extra,
         )
 
     family: set[str] | None = None
     try:
         bar = _ProgressBar("RR-CDF")
         stream = _ProgressStream(raw, total_bytes, bar)
+
+        # Collect every assertion against its pair before writing anything: the
+        # direct and ultimate records for one pair sit anywhere in the file, so
+        # they can only be folded together once the file has been read. This also
+        # gives `only_leis` the parent/child adjacency it needs for free.
+        pairs: dict[tuple[str, str], _Slot] = {}
+        for rec in ijson.items(stream, "relations.item"):
+            if limit and counts["records"] >= limit:
+                break
+            counts["records"] += 1
+            edge = _rr_edge(rec)
+            if not edge:
+                counts["skipped"] += 1
+                continue
+            _fold(pairs, *edge)
+
         if only_leis is not None:
-            # Load all edges once, keep only the seeds' family (ancestors + descendants).
+            # Keep only the seeds' family (ancestors + descendants).
             from collections import defaultdict
-            edges: list[tuple[str, str, str]] = []
             children: dict[str, list[str]] = defaultdict(list)
             parents: dict[str, list[str]] = defaultdict(list)
-            for rec in ijson.items(stream, "relations.item"):
-                if limit and counts["records"] >= limit:
-                    break
-                counts["records"] += 1
-                edge = _rr_edge(rec)
-                if not edge:
-                    counts["skipped"] += 1
-                    continue
-                parent, child, marker, _since, _until = edge
-                edges.append(edge)
+            for parent, child in pairs:
                 children[parent].append(child)
                 parents[child].append(parent)
             family = _family_of(only_leis, children, parents)
-            for parent, child, marker, since, until in edges:
-                if parent in family and child in family:
-                    _emit_edge(parent, child, marker, since, until)
-        else:
-            for rec in ijson.items(stream, "relations.item"):
-                if limit and counts["records"] >= limit:
-                    break
-                counts["records"] += 1
-                edge = _rr_edge(rec)
-                if not edge:
-                    counts["skipped"] += 1
-                    continue
-                _emit_edge(*edge)
+            pairs = {(p, c): slot for (p, c), slot in pairs.items()
+                     if p in family and c in family}
+
+        bar.finish(f"{counts['records']:,} records read")
+
+        # Writing is its own phase now that the fold has to see the whole file, and
+        # on the full copy it is the slow half (~170k edges) — so it gets its own
+        # bar rather than leaving the read bar parked at 100% in silence.
+        write_bar = _ProgressBar("RR-CDF write")
+        for done, ((parent, child), slot) in enumerate(pairs.items(), start=1):
+            _emit_pair(parent, child, slot)
+            write_bar.render(done, len(pairs))
         batch.flush()
-        bar.finish(f"{counts['records']:,} records, "
-                   f"{counts['direct']:,} direct + {counts['indirect']:,} indirect edges")
+        write_bar.finish(
+            f"{counts['direct']:,} direct + {counts['indirect']:,} indirect edges "
+            f"({counts['collapsed']:,} pairs stated both ways, folded into one)")
     finally:
         raw.close()
 
