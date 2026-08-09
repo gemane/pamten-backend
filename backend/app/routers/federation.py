@@ -12,6 +12,23 @@ credibility), and the duplicate scan then merges any high-confidence overlaps.
 Deliberately minimal: Entity + Person nodes and OWNS edges only, so the shape
 is easy to reason about. Roles/locations and signed provenance are step 2.
 Gated behind FEDERATION_ENABLED.
+
+⚠️ ON HOLD — FEDERATION_ENABLED is false, and the published privacy pages say
+nothing about federation because of it. That silence is only truthful while this
+stays off, so **re-enabling it means updating /legal/privacy.html in the same
+change**. A published policy that omits a live disclosure of personal data is
+worse than no policy.
+
+What has to be decided before it goes back on: the export below ships every
+`Person` in the database — full_name, birth_date, birth_place, nationality — plus
+every (Person)-[:OWNS]->(Entity) edge, to any trusted peer. Those people never
+gave us their data and have no relationship with this instance, so sharing it
+makes each peer an independent controller and brings a controller-to-controller
+arrangement, third-country transfer tools, and an Art. 17(2) duty to propagate
+erasure to peers. Restricting the snapshot to Entity nodes and entity→entity
+edges removes personal data from federation altogether and avoids all of that;
+half-measures (e.g. names only) keep every obligation. No peer has ever been
+registered, so nothing has been disclosed to date.
 """
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone
@@ -38,7 +55,27 @@ EXPORT_FORMAT = "owlgraph-federation"
 EXPORT_VERSION = 1
 
 
+#: Hard hold, independent of configuration. While this is True, federation is off
+#: no matter what FEDERATION_ENABLED says, and `main.py` does not even mount the
+#: router — the endpoints 404 and do not appear in the OpenAPI schema.
+#:
+#: The env var alone is too thin a guard for what is behind it: the export ships
+#: every Person in the database to any registered peer, and the published privacy
+#: pages say nothing about federation *because* it is off. An accidental flip in a
+#: dashboard would not just disclose personal data, it would make a published
+#: policy untrue.
+#:
+#: Lifting this is therefore deliberately awkward: edit the source, open a PR, get
+#: it reviewed, and update /legal/privacy.html in the same change. Read the module
+#: docstring above first — it records what has to be decided before federation
+#: comes back.
+FEDERATION_ON_HOLD = True
+
+
 def _require_enabled():
+    if FEDERATION_ON_HOLD:
+        raise HTTPException(status_code=403,
+            detail="Federation is on hold in this build and cannot be enabled by configuration.")
     if not settings.FEDERATION_ENABLED:
         raise HTTPException(status_code=403,
             detail="Federation is disabled. Set FEDERATION_ENABLED=true to enable.")
@@ -105,8 +142,14 @@ def _validate_peer_url(url: str) -> None:
 @router.get("/status")
 def federation_status(_: dict = Depends(require_contributor)):
     """Whether federation is on, plus what this instance would publish. Not gated
-    by the flag (returns enabled:false) so the UI can decide what to show."""
-    if not settings.FEDERATION_ENABLED:
+    by the flag (returns enabled:false) so the UI can decide what to show.
+
+    The hold is checked first and reported as simply off. This endpoint is the one
+    place that answers rather than refusing, so it must not say "on" while every
+    other route 404s — and it must not count what would be published when nothing
+    can be.
+    """
+    if FEDERATION_ON_HOLD or not settings.FEDERATION_ENABLED:
         return {"enabled": False, "entities": 0, "persons": 0, "ownerships": 0}
     with db.get_session() as session:
         entities   = session.run("MATCH (e:Entity) RETURN count(e) AS c").single().get("c") or 0

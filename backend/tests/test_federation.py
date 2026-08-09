@@ -3,6 +3,58 @@ import pytest
 from fastapi import HTTPException
 
 
+# ── The hold ──────────────────────────────────────────────────────────────────
+#
+# Federation is parked behind two independent locks: FEDERATION_ENABLED in the
+# environment, and FEDERATION_ON_HOLD in the source. The env var alone protects
+# something serious — the export ships every Person in the database to any peer,
+# and the published privacy pages omit federation *because* it is off — so a
+# dashboard misclick must not be able to turn it back on.
+#
+# These tests are what make the second lock real rather than decorative.
+
+def test_the_hold_is_engaged_by_default():
+    """Lifting it should turn a test red, not slip through as a one-word diff."""
+    from app.routers import federation
+    assert federation.FEDERATION_ON_HOLD is True
+
+
+def test_the_env_var_alone_cannot_turn_federation_on(monkeypatch):
+    """The whole point. Someone sets FEDERATION_ENABLED=true in Render, not knowing
+    the history — every route must still refuse."""
+    from app.config import settings
+    from app.routers import federation
+
+    monkeypatch.setattr(settings, "FEDERATION_ENABLED", True)   # the accident
+    for call in (lambda: federation.export_snapshot(_={"role": "admin"}),
+                 lambda: federation.list_peers(_={"role": "admin"}),
+                 lambda: federation.public_key(_={"role": "admin"})):
+        with pytest.raises(HTTPException) as exc:
+            call()
+        assert exc.value.status_code == 403
+        assert "on hold" in exc.value.detail
+
+
+def test_status_reports_off_even_with_the_env_var_on(monkeypatch):
+    """The one endpoint that answers instead of refusing must not claim to be on
+    while every other route 404s — nor count what it would publish."""
+    from app.config import settings
+    from app.routers.federation import federation_status
+
+    monkeypatch.setattr(settings, "FEDERATION_ENABLED", True)
+    assert federation_status(_={"role": "contributor"}) == {
+        "enabled": False, "entities": 0, "persons": 0, "ownerships": 0}
+
+
+def test_the_routes_are_not_mounted_at_all(client):
+    """Unmounted, not merely disabled: nothing should advertise a capability that
+    is switched off, and there is no route left for a misconfiguration to open."""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert not [p for p in paths if "federation" in p]
+    assert client.get("/v1/federation/export").status_code == 404
+    assert client.get("/federation/export").status_code == 404
+
+
 def test_import_snapshot_rejects_unknown_format():
     from app.routers.federation import import_snapshot
     with pytest.raises(ValueError):
