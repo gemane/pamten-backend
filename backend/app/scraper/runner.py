@@ -1829,7 +1829,8 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None,
 
 
 def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
-                     rr_file: str | None = None, limit: int | None = None) -> dict:
+                     rr_file: str | None = None, limit: int | None = None,
+                     only_existing: bool | None = None) -> dict:
     """
     Apply a GLEIF **delta** update on top of the full golden-copy load — the
     retirement-aware daily refresh (see `app/scraper/gleif_incremental.py`). It
@@ -1884,16 +1885,15 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
                 "No GLEIF load found — the incremental update rides on top of the "
                 "full golden copy. Run the full load first (full-import.sh / "
                 "`manage.py gleif-lei-cdf`), then re-run.")
-        if scope != "full":
-            # Not an error: a curated subset is a legitimate state to sit in for
-            # weeks, and a nightly red run would train everyone to ignore the log.
-            note = ("GLEIF here is a curated subset, not the full golden copy — a delta "
-                    "would import every company changed worldwide into it rather than "
-                    "refresh it. Run full-import.sh to switch this database to deltas.")
-            log.info("GLEIF update skipped: %s", note)
-            run["status"] = "skipped"
-            run["note"] = note
-            return {"status": "skipped", "source": GLEIF_SOURCE_NAME, "reason": note}
+        # A subset baseline still gets its delta — that is how a curated database
+        # stays current, and how the delta path itself gets exercised — but in
+        # only-existing mode: refresh the companies that are here, ignore the rest
+        # of the world. Applying a delta whole to a subset does not refresh it.
+        only_existing = scope != "full" if only_existing is None else only_existing
+        if only_existing:
+            run["note"] = ("only-existing mode: refreshing the companies this database "
+                           "already holds, ignoring records for the rest of the world")
+            log.info("GLEIF update: %s", run["note"])
         current_publish = None
         if lei_file and rr_file:
             resolved = "local"
@@ -1918,9 +1918,11 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
             lei_file, rr_file = paths["lei2"], paths["rr"]
 
         log.info("GLEIF update: applying LEI-CDF delta %s", lei_file)
-        lei = import_lei_cdf_delta(lei_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit)
+        lei = import_lei_cdf_delta(lei_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit,
+                                   only_existing=only_existing)
         log.info("GLEIF update: applying RR delta %s", rr_file)
-        rr = import_rr_delta(rr_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit)
+        rr = import_rr_delta(rr_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit,
+                             only_existing=only_existing)
         run["total"] = lei["updated"] + rr["created"] + rr["closed"]
         # Advance the checkpoint only after a clean apply, and only when we fetched a
         # published delta in full (not local files, not a --limit spot check).

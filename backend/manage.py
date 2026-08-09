@@ -163,7 +163,8 @@ def cmd_gleif_update(args):
     from app.scraper.runner import run_gleif_update
     result = _run_guarded_import("gleif-update",
         lambda: run_gleif_update(interval=args.interval, lei_file=args.lei_file,
-                                 rr_file=args.rr_file, limit=args.limit),
+                                 rr_file=args.rr_file, limit=args.limit,
+                                 only_existing=args.only_existing),
         skip_ok=True)   # the cron rides on top of full-import → skip, don't error
     if result is not None:
         print(result)
@@ -621,6 +622,12 @@ def _build_parser():
     p_gu.add_argument('--lei-file', help='Use a local LEI-CDF delta .json/.zip instead of fetching')
     p_gu.add_argument('--rr-file', help='Use a local RR-CDF delta .json/.zip instead of fetching')
     p_gu.add_argument('--limit', type=int, help='Max records to scan (per file)')
+    p_gu.add_argument('--only-existing', dest='only_existing', default=None,
+                      action=argparse.BooleanOptionalAction,
+                      help='Refresh only companies already in this database, ignoring '
+                           'records for the rest of the world. Defaults to ON when the '
+                           'GLEIF baseline here is a curated subset (a whole delta would '
+                           'bury it rather than refresh it) and OFF after a full load')
     p_gu.add_argument('--db-url',
                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_gu.set_defaults(func=cmd_gleif_update)

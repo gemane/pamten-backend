@@ -256,12 +256,46 @@ def _open_json(filepath: str) -> tuple[IO[bytes], int]:
     return open(filepath, "rb"), os.path.getsize(filepath)  # noqa: WPS515
 
 
+_LEI_ID_PAGE = 20000
+
+
+def existing_lei_ids() -> set[str]:
+    """Every ``lei:`` Entity id currently in the graph — the guest list for
+    ``only_existing``.
+
+    Loaded once per delta run and held in memory, because the alternative is an
+    existence query per record and a delta carries hundreds of thousands. Paged by
+    @rid for the usual reason: an unpaged select over a full database's millions of
+    entities blows the query heap.
+    """
+    ids: set[str] = set()
+    last: str | None = None
+    while True:
+        where = "WHERE id LIKE 'lei:%'" + (f" AND @rid > {last}" if last else "")
+        rows = run_sql(f"SELECT @rid AS rid, id FROM Entity {where} "
+                       f"ORDER BY @rid LIMIT {_LEI_ID_PAGE}")
+        if not rows:
+            break
+        ids.update(r["id"] for r in rows)
+        last = rows[-1]["rid"]
+        if len(rows) < _LEI_ID_PAGE:
+            break
+    return ids
+
+
 def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
-                         limit: int | None = None) -> dict:
+                         limit: int | None = None, only_existing: bool = False) -> dict:
     """Apply an LEI-CDF delta: upsert entity props (batched), mark dissolved
-    (INACTIVE) entities, and add succession (merge) edges. Idempotent."""
+    (INACTIVE) entities, and add succession (merge) edges. Idempotent.
+
+    ``only_existing`` refreshes the companies this database already holds and
+    ignores the rest. A delta describes every change GLEIF made worldwide, so
+    without it a curated subset does not get refreshed — it gets buried.
+    """
     raw, total = _open_json(filepath)
-    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "succession": 0, "errors": 0}
+    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "succession": 0,
+              "not_here": 0, "errors": 0}
+    known = existing_lei_ids() if only_existing else None
     batch = _BatchWriter()
     succession: list[tuple[str, str]] = []
     bar = _ProgressBar("LEI-CDF delta")
@@ -272,6 +306,9 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
             counts["records"] += 1
             try:
                 built = _entity_props(rec, source_id, credibility_score)
+                if built and known is not None and built[0] not in known:
+                    counts["not_here"] += 1
+                    continue          # a company this database does not carry
                 if built:
                     node_id, props = built
                     props["gleif_registration_status"] = _registration_status(rec) or ""
@@ -288,10 +325,18 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
                     log.warning("LEI-CDF delta record error: %s", exc)
         batch.flush()                      # entities upserted before succession edges
         for pred, succ in succession:
+            # A succession edge needs both ends; in only_existing mode the successor
+            # is often a company this database does not carry, and creating it would
+            # be the same leak by another route. `known` holds node ids, these are
+            # bare LEIs.
+            if known is not None and not (f"lei:{pred}" in known and f"lei:{succ}" in known):
+                counts["not_here"] += 1
+                continue
             if _upsert_succeeded_by(pred, succ, source_id) == "created":
                 counts["succession"] += 1
         bar.finish(f"{counts['records']:,} records, {counts['updated']:,} upserted, "
-                   f"{counts['succession']:,} successions")
+                   f"{counts['succession']:,} successions"
+                   + (f", {counts['not_here']:,} not in this database" if known is not None else ""))
     finally:
         raw.close()
     log.info("LEI-CDF delta done: %s", counts)
@@ -299,12 +344,19 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
 
 
 def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
-                    limit: int | None = None) -> dict:
+                    limit: int | None = None, only_existing: bool = False) -> dict:
     """Apply an RR-CDF delta: upsert ACTIVE consolidation edges, close ones that
-    went non-ACTIVE. Endpoint nodes are batch-upserted first. Idempotent."""
+    went non-ACTIVE. Endpoint nodes are batch-upserted first. Idempotent.
+
+    ``only_existing`` keeps a relationship only when **both** endpoints are already
+    in the graph. This importer creates its endpoint nodes, so it is the bigger of
+    the two leaks: a relationship between two companies the database has never
+    heard of would otherwise drag both of them in.
+    """
     raw, total = _open_json(filepath)
     counts = {"records": 0, "created": 0, "updated": 0, "folded": 0,
-              "closed": 0, "skipped": 0, "errors": 0}
+              "closed": 0, "skipped": 0, "not_here": 0, "errors": 0}
+    known = existing_lei_ids() if only_existing else None
     batch = _BatchWriter()
     active: list[tuple[str, str, str, str | None]] = []
     closures: list[tuple[str, str, str, str]] = []
@@ -320,6 +372,10 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                     counts["skipped"] += 1
                     continue
                 parent, child, marker, status, rel = parsed
+                if known is not None and not (
+                        f"lei:{parent}" in known and f"lei:{child}" in known):
+                    counts["not_here"] += 1
+                    continue
                 batch.entity(f"lei:{parent}", {"lei_id": parent, "source_id": source_id})
                 batch.entity(f"lei:{child}", {"lei_id": child, "source_id": source_id})
                 if status == "ACTIVE":
@@ -340,7 +396,8 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
         for parent, child, marker, until in closures:
             counts["closed"] += _close_owns(parent, child, marker, until)
         bar.finish(f"{counts['records']:,} records, +{counts['created']:,} edges, "
-                   f"{counts['folded']:,} folded, {counts['closed']:,} closed")
+                   f"{counts['folded']:,} folded, {counts['closed']:,} closed"
+                   + (f", {counts['not_here']:,} not in this database" if known is not None else ""))
     finally:
         raw.close()
     log.info("RR delta done: %s", counts)

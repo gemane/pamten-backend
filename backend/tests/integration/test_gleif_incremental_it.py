@@ -330,19 +330,162 @@ def test_only_a_complete_pass_stamps_a_full_baseline(it_db, _gleif_enabled, monk
     assert load_scope() == expected
 
 
-def test_a_subset_baseline_skips_rather_than_fails(it_db, _gleif_enabled):
-    """Sitting on a curated subset for weeks is legitimate, so the nightly run must
-    not go red every night — that trains everyone to ignore the log."""
+# ── only-existing: refresh what is here, ignore the rest of the world ─────────
+#
+# A curated database still wants its delta — that is how it stays current, and how
+# the delta path itself gets exercised. What it must not do is import every company
+# GLEIF changed worldwide.
+
+IN_DB   = "INDBLEI0000000000001"
+OUTSIDE = "OUTSIDELEI0000000002"
+
+
+def _delta_zips(tmp_path, entities, relations):
+    return (_zip(tmp_path, "lei-d.json.zip", "records", entities),
+            _zip(tmp_path, "rr-d.json.zip", "relations", relations))
+
+
+def test_only_existing_refreshes_a_company_that_is_here(it_db, tmp_path):
+    from app.scraper.gleif_incremental import import_lei_cdf_delta
+
+    it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Old Name'}})")
+    lei_zip = _zip(tmp_path, "lei.json.zip", "records", [_entity(IN_DB, "New Name")])
+
+    res = import_lei_cdf_delta(lei_zip, "gleif-src", 92, only_existing=True)
+
+    assert res["updated"] == 1 and res["not_here"] == 0
+    name = it_db.run_command(
+        f"MATCH (e:Entity {{id:'lei:{IN_DB}'}}) RETURN e.name AS n")[0]["n"]
+    assert name == "New Name", "the companies we DO hold must still be refreshed"
+
+
+def test_only_existing_does_not_import_the_rest_of_the_world(it_db, tmp_path):
+    """The 226,902 records. Every one of them was a company not in this database."""
+    from app.scraper.gleif_incremental import import_lei_cdf_delta
+
+    it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Here'}})")
+    lei_zip = _zip(tmp_path, "lei.json.zip", "records",
+                   [_entity(IN_DB, "Here"), _entity(OUTSIDE, "Somewhere Else")])
+
+    res = import_lei_cdf_delta(lei_zip, "gleif-src", 92, only_existing=True)
+
+    assert res["updated"] == 1 and res["not_here"] == 1
+    assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 1
+
+
+def test_without_the_flag_the_whole_delta_still_applies(it_db, tmp_path):
+    """A full baseline must keep growing with GLEIF — the mode is opt-in."""
+    from app.scraper.gleif_incremental import import_lei_cdf_delta
+
+    lei_zip = _zip(tmp_path, "lei.json.zip", "records",
+                   [_entity(IN_DB, "A"), _entity(OUTSIDE, "B")])
+    import_lei_cdf_delta(lei_zip, "gleif-src", 92)
+    assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 2
+
+
+def test_only_existing_still_records_a_merger_between_two_known_companies(it_db, tmp_path):
+    """Succession pairs are bare LEIs while the guest list holds node ids, so a
+    missing `lei:` prefix here silently drops every merger instead of leaking."""
+    from app.scraper.gleif_incremental import import_lei_cdf_delta
+
+    for lei in (OLD, NEW):
+        it_db.run_command(f"CREATE (:Entity {{id:'lei:{lei}', lei_id:'{lei}'}})")
+    lei_zip = _zip(tmp_path, "lei.json.zip", "records",
+                   [_entity(OLD, "Old Co", reg="MERGED", successor=NEW), _entity(NEW, "Survivor")])
+
+    res = import_lei_cdf_delta(lei_zip, "gleif-src", 92, only_existing=True)
+
+    assert res["succession"] == 1
+    assert it_db.run_command(
+        "MATCH (:Entity)-[r:SUCCEEDED_BY]->(:Entity) RETURN count(r) AS c")[0]["c"] == 1
+
+
+def test_only_existing_skips_a_merger_into_a_company_we_do_not_hold(it_db, tmp_path):
+    """Creating the successor would be the same leak by another route."""
+    from app.scraper.gleif_incremental import import_lei_cdf_delta
+
+    it_db.run_command(f"CREATE (:Entity {{id:'lei:{OLD}', lei_id:'{OLD}'}})")
+    lei_zip = _zip(tmp_path, "lei.json.zip", "records",
+                   [_entity(OLD, "Old Co", reg="MERGED", successor=OUTSIDE)])
+
+    res = import_lei_cdf_delta(lei_zip, "gleif-src", 92, only_existing=True)
+
+    assert res["succession"] == 0
+    assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 1
+
+
+def test_only_existing_keeps_a_relationship_between_two_known_companies(it_db, tmp_path):
+    from app.scraper.gleif_incremental import import_rr_delta
+
+    for lei in (PARENT, CHILD):
+        it_db.run_command(f"CREATE (:Entity {{id:'lei:{lei}', lei_id:'{lei}'}})")
+    rr_zip = _zip(tmp_path, "rr.json.zip", "relations", [_rel(CHILD, PARENT)])
+
+    res = import_rr_delta(rr_zip, "gleif-src", 92, only_existing=True)
+
+    assert res["created"] == 1 and res["not_here"] == 0
+
+
+def test_only_existing_drags_in_neither_endpoint_of_an_unknown_relationship(it_db, tmp_path):
+    """The RR importer creates its endpoint nodes, so this is the bigger leak: one
+    relationship between two unknown companies would import both of them."""
+    from app.scraper.gleif_incremental import import_rr_delta
+
+    it_db.run_command(f"CREATE (:Entity {{id:'lei:{PARENT}', lei_id:'{PARENT}'}})")
+    rr_zip = _zip(tmp_path, "rr.json.zip", "relations", [
+        _rel(CHILD, PARENT),          # child is NOT here -> skip, don't create it
+        _rel(OUTSIDE, IN_DB),         # neither end is here
+    ])
+
+    res = import_rr_delta(rr_zip, "gleif-src", 92, only_existing=True)
+
+    assert res["created"] == 0 and res["not_here"] == 2
+    assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 1
+    assert it_db.run_command("MATCH ()-[r:OWNS]->() RETURN count(r) AS c")[0]["c"] == 0
+
+
+def test_a_subset_baseline_selects_only_existing_by_itself(it_db, _gleif_enabled,
+                                                           tmp_path, monkeypatch):
+    """The whole point: the nightly cron keeps running against a curated database
+    and exercising the delta path, without burying it."""
+    from app.scraper import runner
     from app.scraper.gleif_incremental import mark_full_load_done
-    from app.scraper.runner import run_gleif_update
 
+    it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Old'}})")
     mark_full_load_done("subset")
-    result = run_gleif_update(interval="LastDay")     # no fetch, no raise
+    lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(IN_DB, "Fresh"),
+                                             _entity(OUTSIDE, "Not Ours")], [])
 
-    assert result["status"] == "skipped"
-    assert "curated subset" in result["reason"]
+    result = runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
 
-    runs = it_db.run_command(
-        "MATCH (r:ScrapeRun {source:'gleif-update'}) RETURN r.status AS status, r.error AS note")
-    assert [r["status"] for r in runs] == ["skipped"]
-    assert "curated subset" in runs[0]["note"]
+    assert result["status"] == "ok"                     # it RAN, it did not skip
+    assert result["lei_cdf"]["updated"] == 1            # ours refreshed
+    assert result["lei_cdf"]["not_here"] == 1           # the world ignored
+    assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 1
+    assert it_db.run_command(
+        f"MATCH (e:Entity {{id:'lei:{IN_DB}'}}) RETURN e.name AS n")[0]["n"] == "Fresh"
+
+
+def test_a_full_baseline_applies_the_whole_delta(it_db, _gleif_enabled, tmp_path):
+    from app.scraper import runner
+    from app.scraper.gleif_incremental import mark_full_load_done
+
+    mark_full_load_done("full")
+    lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(IN_DB, "A"), _entity(OUTSIDE, "B")], [])
+
+    runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
+
+    assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 2
+
+
+def test_the_flag_overrides_the_baseline_either_way(it_db, _gleif_enabled, tmp_path):
+    from app.scraper import runner
+    from app.scraper.gleif_incremental import mark_full_load_done
+
+    mark_full_load_done("full")                      # baseline says "apply everything"
+    lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(OUTSIDE, "B")], [])
+
+    runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip,
+                            only_existing=True)      # ...but the caller says otherwise
+
+    assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 0
