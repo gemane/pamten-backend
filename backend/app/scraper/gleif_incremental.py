@@ -386,19 +386,46 @@ def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -
 # changed records, no foundation). The full LEI-CDF importer stamps this marker on
 # success; the update refuses to run without it, and `wipe-source --source GLEIF`
 # (or dropping the database) clears it so a fresh full load is required before deltas resume.
+#
+# A **subset** load must not stamp it. A delta carries every record GLEIF changed
+# anywhere in the world, so applying one to a curated test database does not
+# refresh it — it imports the rest of the world into it. One night's delta added
+# 226,902 entity records and 18,720 edges to a 488-entity test subset, because the
+# subset import had stamped this marker exactly as a full load does.
 
-def mark_full_load_done() -> None:
-    """Record that a full GLEIF LEI-CDF load has established the entity baseline."""
+def mark_full_load_done(scope: str = "full") -> None:
+    """Record that a GLEIF LEI-CDF load has established the entity baseline.
+
+    `scope` is "full" for a complete golden-copy pass and "subset" for anything
+    narrowed by --only-file / --limit / --jurisdiction. Only "full" satisfies the
+    delta update; a subset is recorded so the refusal can say *why* rather than
+    claim GLEIF was never loaded.
+    """
     run_sql(
-        "UPDATE ImportState SET key = :k, last_run_at = :now UPSERT WHERE key = :k",
-        {"k": _FULL_LOAD_KEY, "now": _now_iso()})
+        "UPDATE ImportState SET key = :k, last_run_at = :now, scope = :scope "
+        "UPSERT WHERE key = :k",
+        {"k": _FULL_LOAD_KEY, "now": _now_iso(), "scope": scope})
+
+
+def load_scope() -> str | None:
+    """"full", "subset", or None when no GLEIF entity load has run at all.
+
+    Rows written before `scope` existed have none; they came from the importer
+    when it stamped unconditionally, so they cannot be trusted to be full and are
+    reported as "subset" — the conservative direction, since guessing "full" is
+    what lets a delta flood a curated database.
+    """
+    rows = run_command(
+        "MATCH (s:ImportState {key:$k}) RETURN s.last_run_at AS t, s.scope AS scope",
+        {"k": _FULL_LOAD_KEY})
+    if not (rows and rows[0].get("t")):
+        return None
+    return rows[0].get("scope") or "subset"
 
 
 def full_load_present() -> bool:
-    """True once a full LEI-CDF load has run (the delta update's precondition)."""
-    rows = run_command(
-        "MATCH (s:ImportState {key:$k}) RETURN s.last_run_at AS t", {"k": _FULL_LOAD_KEY})
-    return bool(rows and rows[0].get("t"))
+    """True once a *full* LEI-CDF load has run (the delta update's precondition)."""
+    return load_scope() == "full"
 
 
 # ── gap-aware catch-up (pick a window that covers any missed runs) ────────────

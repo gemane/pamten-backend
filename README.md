@@ -288,6 +288,15 @@ full load has baselined the graph (the full LEI-CDF import stamps a marker;
 load before deltas resume) — it never builds a partial
 graph from deltas alone.
 
+**A subset load does not count.** A delta carries every record GLEIF changed
+*worldwide*, so applying one to a curated test database (`test-import.sh`, or any
+`--only-file` / `--limit` / `--jurisdiction` import) does not refresh it — it imports
+the rest of the world into it: one night added 226,902 entity records and 18,720
+edges to a 488-entity subset. The marker therefore records a **scope**, and only
+`full` satisfies the precondition. On a subset the nightly run records a `skipped`
+ScrapeRun explaining why, rather than failing every night; run `full-import.sh` to
+switch that database over to deltas.
+
 The default `--interval auto` is **gap-aware**: it checkpoints the last GLEIF publish
 it applied (an `ImportState` node) and, on each run, picks the smallest delta window
 that still covers the gap since then — `LastDay` normally, escalating to `LastWeek` /

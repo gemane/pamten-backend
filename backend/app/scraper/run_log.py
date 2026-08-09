@@ -31,6 +31,10 @@ def record_run(source: str, target: str):
     entry and, on exit, marks it `ok` (with the node count set via the yielded
     dict's `total`) or `failed` (with the exception message). Logging never
     interferes with the scrape — a failure to write the log is swallowed.
+
+    The block may set `status` (and `note`) on the yielded dict to finish as
+    something other than `ok` — `skipped` for a run that correctly did nothing, so
+    a nightly cron that has no work to do doesn't read as a nightly failure.
     """
     run_id = str(uuid.uuid4())
     out: dict = {"total": 0}
@@ -41,7 +45,8 @@ def record_run(source: str, target: str):
         _safe_finish(run_id, "failed", 0, str(exc)[:500])
         raise
     else:
-        _safe_finish(run_id, "ok", int(out.get("total") or 0), "")
+        _safe_finish(run_id, str(out.get("status") or "ok"),
+                     int(out.get("total") or 0), str(out.get("note") or ""))
 
 
 def _safe_create(run_id: str, source: str, target: str) -> None:

@@ -1773,10 +1773,14 @@ def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
         bulk_load=bulk_load,
         only_leis=only_leis,
     )
-    # Stamp the baseline marker so the incremental `gleif-update` knows the full
-    # load has run (it refuses to apply deltas onto an un-baselined graph).
+    # Stamp the baseline marker so the incremental `gleif-update` knows whether the
+    # full load has run (it refuses to apply deltas onto an un-baselined graph).
+    # Narrowing the import by ANY of these means the entity baseline is partial, and
+    # a delta — which carries every record changed worldwide — would not refresh that
+    # subset but bury it. This used to stamp "full" unconditionally, so the curated
+    # test import re-enabled the nightly delta against a 488-entity database.
     from app.scraper.gleif_incremental import mark_full_load_done
-    mark_full_load_done()
+    mark_full_load_done("subset" if (only_leis or limit or filter_jurisdiction) else "full")
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts,
             "duplicate_names": _duplicate_name_summary()}
 
@@ -1855,7 +1859,7 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
         choose_catchup_interval,
         download_deltas,
         fetch_publish_metadata,
-        full_load_present,
+        load_scope,
         import_lei_cdf_delta,
         import_rr_delta,
         read_last_publish,
@@ -1871,13 +1875,25 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
 
     source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
     with record_run("gleif-update", interval) as run:
-        # The delta rides on top of the full golden copy — refuse to apply it onto a
-        # graph that was never baselined (it would build a partial, wrong dataset).
-        if not full_load_present():
+        # The delta rides on top of the full golden copy. A delta carries every
+        # record GLEIF changed worldwide, so applying it to anything less than that
+        # baseline does not refresh the graph — it floods it.
+        scope = load_scope()
+        if scope is None:
             raise RuntimeError(
-                "No GLEIF full load found — the incremental update rides on top of the "
+                "No GLEIF load found — the incremental update rides on top of the "
                 "full golden copy. Run the full load first (full-import.sh / "
                 "`manage.py gleif-lei-cdf`), then re-run.")
+        if scope != "full":
+            # Not an error: a curated subset is a legitimate state to sit in for
+            # weeks, and a nightly red run would train everyone to ignore the log.
+            note = ("GLEIF here is a curated subset, not the full golden copy — a delta "
+                    "would import every company changed worldwide into it rather than "
+                    "refresh it. Run full-import.sh to switch this database to deltas.")
+            log.info("GLEIF update skipped: %s", note)
+            run["status"] = "skipped"
+            run["note"] = note
+            return {"status": "skipped", "source": GLEIF_SOURCE_NAME, "reason": note}
         current_publish = None
         if lei_file and rr_file:
             resolved = "local"

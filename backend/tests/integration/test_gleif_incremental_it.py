@@ -254,20 +254,95 @@ def test_publish_checkpoint_roundtrip(it_db):
     assert choose_catchup_interval(read_last_publish(), "2026-07-23 16:00:00") == "LastWeek"
 
 
-def test_update_refused_without_full_load(it_db, monkeypatch):
-    """The incremental refuses to run until a full load has baselined the graph."""
+@pytest.fixture
+def _gleif_enabled(monkeypatch):
     from app.config import settings
-    from app.scraper.gleif_incremental import full_load_present, mark_full_load_done
-    from app.scraper.runner import run_gleif_update
-
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
     monkeypatch.setattr(settings, "SCRAPER_BODS_GLEIF_ENABLED", True)
 
+
+def test_update_refused_without_any_load(it_db, _gleif_enabled):
+    """The incremental refuses to run until a load has baselined the graph."""
+    from app.scraper.gleif_incremental import full_load_present, mark_full_load_done
+    from app.scraper.runner import run_gleif_update
+
     assert full_load_present() is False
     # refuses before fetching anything — no baseline
-    with pytest.raises(RuntimeError, match="No GLEIF full load"):
+    with pytest.raises(RuntimeError, match="No GLEIF load found"):
         run_gleif_update(interval="LastDay")
 
-    # once the full load stamps its marker, the precondition is satisfied
     mark_full_load_done()
     assert full_load_present() is True
+
+
+# ── A subset load must not enable the nightly delta ───────────────────────────
+#
+# A delta carries every record GLEIF changed worldwide. Applied to a curated test
+# database it does not refresh it — it imports the rest of the world into it. One
+# night added 226,902 entity records and 18,720 edges to a 488-entity subset,
+# because the subset import stamped the baseline marker exactly as a full load does.
+
+def test_a_subset_load_does_not_satisfy_the_precondition(it_db):
+    from app.scraper.gleif_incremental import full_load_present, load_scope, mark_full_load_done
+
+    mark_full_load_done("subset")
+    assert load_scope() == "subset"
+    assert full_load_present() is False
+
+
+def test_a_full_load_does(it_db):
+    from app.scraper.gleif_incremental import full_load_present, mark_full_load_done
+
+    mark_full_load_done("full")
+    assert full_load_present() is True
+
+
+def test_a_marker_predating_the_scope_field_is_treated_as_a_subset(it_db):
+    """Rows the importer wrote when it stamped unconditionally carry no scope, so
+    they cannot be trusted to be full. Guessing 'full' is what caused the flood."""
+    from app.db.arcadedb import run_sql
+    from app.scraper.gleif_incremental import full_load_present, load_scope
+
+    run_sql("UPDATE ImportState SET key = 'gleif-full-load', last_run_at = '2026-01-01T00:00:00' "
+            "UPSERT WHERE key = 'gleif-full-load'")
+    assert load_scope() == "subset"
+    assert full_load_present() is False
+
+
+@pytest.mark.parametrize("kwargs,expected", [
+    ({},                            "full"),
+    ({"only_leis": {"SOMELEI"}},    "subset"),   # test-import.sh --only-file
+    ({"limit": 1000},               "subset"),
+    ({"filter_jurisdiction": "GB"}, "subset"),
+])
+def test_only_a_complete_pass_stamps_a_full_baseline(it_db, _gleif_enabled, monkeypatch,
+                                                     kwargs, expected):
+    """The bug itself, at its source. Narrowing the import by ANY of these leaves a
+    partial entity baseline, but the importer stamped 'full' regardless — which is
+    what re-enabled the nightly delta against a 488-entity curated database."""
+    from app.scraper import gleif_lei_cdf, runner
+    from app.scraper.gleif_incremental import load_scope
+
+    monkeypatch.setattr(gleif_lei_cdf, "import_lei_cdf_entities",
+                        lambda **k: {"entities": 0, "edges": 0})
+    runner.run_import_gleif_lei_cdf("/nonexistent.zip", **kwargs)
+
+    assert load_scope() == expected
+
+
+def test_a_subset_baseline_skips_rather_than_fails(it_db, _gleif_enabled):
+    """Sitting on a curated subset for weeks is legitimate, so the nightly run must
+    not go red every night — that trains everyone to ignore the log."""
+    from app.scraper.gleif_incremental import mark_full_load_done
+    from app.scraper.runner import run_gleif_update
+
+    mark_full_load_done("subset")
+    result = run_gleif_update(interval="LastDay")     # no fetch, no raise
+
+    assert result["status"] == "skipped"
+    assert "curated subset" in result["reason"]
+
+    runs = it_db.run_command(
+        "MATCH (r:ScrapeRun {source:'gleif-update'}) RETURN r.status AS status, r.error AS note")
+    assert [r["status"] for r in runs] == ["skipped"]
+    assert "curated subset" in runs[0]["note"]
