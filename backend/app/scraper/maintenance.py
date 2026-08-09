@@ -113,10 +113,17 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     and delete the rest by @rid. Admin only.
 
     Survivor priority: largest stake first, then — among edges with an equal/absent
-    stake — the one carrying a `direct_or_indirect` marker. That keeps the GLEIF
-    RR-CDF direct/ultimate edge (stakeless but flagged) over a flagless duplicate
-    from the BODS import, so auto-running dedup after an RR import can't silently
-    drop the direct/indirect signal.
+    stake — the one carrying a `direct_or_indirect` marker, and finally a `direct`
+    marker over an `indirect` one. The first keeps the GLEIF RR-CDF direct/ultimate
+    edge (stakeless but flagged) over a flagless duplicate from the BODS import, so
+    auto-running dedup after an RR import can't silently drop the direct/indirect
+    signal.
+
+    The last tie-break matters because the two are not interchangeable: keeping the
+    `indirect` twin of a pair that also has a `direct` edge labels a direct holding
+    as indirect, and the graph then hides it as an ownership shortcut — the company
+    disappears despite a perfectly good direct edge. Without this the winner was
+    whichever came first in @rid order.
 
     Deleting by @rid preserves the kept edge's full provenance (unlike a
     delete-all-then-recreate, which drops properties), and the delete is batched
@@ -131,10 +138,12 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
             continue
         dup_pairs += 1
         # keep the largest stake (None treated as -1); tie-break on having a
-        # direct_or_indirect marker; delete the rest
+        # direct_or_indirect marker, then on that marker being 'direct'; delete the rest
         edges_sorted = sorted(
             edges,
-            key=lambda e: (e[1] if e[1] is not None else -1, 1 if e[2] else 0),
+            key=lambda e: (e[1] if e[1] is not None else -1,
+                           1 if e[2] else 0,
+                           1 if e[2] == "direct" else 0),
             reverse=True,
         )
         to_delete.extend(rid for rid, _, _ in edges_sorted[1:])

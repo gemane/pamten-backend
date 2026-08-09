@@ -69,3 +69,28 @@ def test_dedup_keeps_direct_indirect_flagged_edge(it_db):
     rows = it_db.run_query(
         "MATCH (p:Entity{id:'p'})-[r:OWNS]->(c:Entity{id:'c'}) RETURN r.direct_or_indirect AS d")
     assert [r["d"] for r in rows] == ["direct"]      # flagged edge survived
+
+
+@pytest.mark.parametrize("order", [("direct", "indirect"), ("indirect", "direct")])
+def test_dedup_keeps_direct_over_indirect_whichever_came_first(it_db, order):
+    """Both twins carry a marker, so 'has a marker' cannot separate them and the
+    winner used to be whichever @rid came first.
+
+    Keeping the indirect one labels a direct holding as indirect, and the graph
+    then hides it as an ownership shortcut — the company vanishes despite a
+    perfectly good direct edge. The RR importer no longer creates this pair, but
+    a BODS/RR overlap still can.
+    """
+    from app.scraper import maintenance
+    for x in ("p", "c"):
+        it_db.run_command(f"CREATE (:Entity {{id:'{x}'}})")
+    for marker in order:
+        it_db.run_command(
+            f"MATCH (p:Entity{{id:'p'}}),(c:Entity{{id:'c'}}) "
+            f"CREATE (p)-[:OWNS{{until:null, direct_or_indirect:'{marker}'}}]->(c)")
+
+    maintenance.deduplicate_owns_edges()
+
+    rows = it_db.run_query(
+        "MATCH (p:Entity{id:'p'})-[r:OWNS]->(c:Entity{id:'c'}) RETURN r.direct_or_indirect AS d")
+    assert [r["d"] for r in rows] == ["direct"]

@@ -452,7 +452,7 @@ def _entity(batch, node_id, name, entity_type, country, founded,
 
 def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until,
           source_id, credibility_score, source_url=None, source_date=None, owner_label="Entity",
-          voting_power_pct=None, interest_types=None, direct_or_indirect=None):
+          voting_power_pct=None, interest_types=None, direct_or_indirect=None, extra=None):
     """Enqueue an OWNS edge (owner is an Entity or a Person; owned is an Entity).
 
     `stake_percent` is the *economic* holding (shareholding interest);
@@ -461,7 +461,12 @@ def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until
     is the set of BODS interest types behind the edge (shareholding/votingRights/
     appointmentOfBoard/…) for transparency. `direct_or_indirect` (from GLEIF RR-CDF:
     'direct' = directly-consolidated parent, 'indirect' = ultimate parent) marks
-    whether the edge is a direct holding or an indirect/ultimate control summary."""
+    whether the edge is a direct holding or an indirect/ultimate control summary.
+
+    `extra` carries source-specific properties that only some importers have (the
+    RR-CDF fold's `also_ultimate` / `ultimate_since` / `ultimate_until`). It is
+    merged in only when non-empty, so every other importer keeps writing exactly
+    the property set it wrote before rather than gaining nulls on every edge."""
     if owner_label not in ("Entity", "Person"):
         owner_label = "Entity"
     batch.owns(owner_id, owner_label, owned_id, {
@@ -477,6 +482,7 @@ def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until
         "source_url": source_url,
         "source_date": source_date,
         "last_scraped_at": _now_iso(),
+        **(extra or {}),
     })
 
 
