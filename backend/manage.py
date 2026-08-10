@@ -6,6 +6,7 @@ Usage:
   python3 manage.py init-schema
   python3 manage.py geocode [--limit N]
   python3 manage.py normalize-countries
+  python3 manage.py normalize-nationalities
   python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
   python3 manage.py ch-psc [options]          # Companies House PSC snapshot (UK ownership)
@@ -426,6 +427,20 @@ def cmd_normalize_countries(args):
     print(f"Converted {len(result['converted'])} country values "
           f"({result['skipped']} already canonical or unrecognized)")
 
+def cmd_normalize_nationalities(args):
+    from app.scraper.maintenance import normalize_person_nationalities
+    result = normalize_person_nationalities()
+    for c in result["converted"]:
+        print(f"  {c['from']} -> {c['to']}")
+    print(f"Converted {len(result['converted'])} of {result['distinct_values']} distinct values "
+          f"({result['unchanged']} already ISO-2)")
+    if result["unmapped"]:
+        # Printed, not hidden: these are kept verbatim, and the list is how the
+        # demonym table gets extended instead of the data quietly staying mixed.
+        print(f"Left unchanged, not recognised ({len(result['unmapped'])}): "
+              f"{', '.join(result['unmapped'])}")
+
+
 def cmd_backfill_entity_sources(args):
     from app.scraper.maintenance import backfill_entity_sources
     result = backfill_entity_sources()
@@ -539,6 +554,11 @@ def _build_parser():
     p_norm = subparsers.add_parser('normalize-countries',
                                    help='Convert full-name Entity.country values to ISO-2 codes')
     p_norm.set_defaults(func=cmd_normalize_countries)
+
+    # normalize-nationalities command
+    p_nat = subparsers.add_parser('normalize-nationalities',
+                                  help='Convert Person.nationality demonyms ("British") to ISO-2 codes')
+    p_nat.set_defaults(func=cmd_normalize_nationalities)
 
     # backfill-entity-sources command
     p_bes = subparsers.add_parser('backfill-entity-sources',

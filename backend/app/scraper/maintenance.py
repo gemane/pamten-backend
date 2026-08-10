@@ -1231,6 +1231,114 @@ def normalize_entity_countries() -> dict:
     return {"converted": converted, "skipped": skipped}
 
 
+# ── Nationality ───────────────────────────────────────────────────────────────
+#
+# Two sources write Person.nationality in two different shapes. Wikidata gives an
+# ISO-2 code (P297), while Companies House PSC gives a **demonym** typed by the
+# filer — "British", not "United Kingdom" and not "GB". So the field held a mix of
+# `GB` and `British` meaning the same thing, which is unusable for grouping and
+# looks like two nationalities wherever both appear.
+#
+# ISO-2 wins as the canonical form: it is what Wikidata already writes, what
+# Entity.country already uses, and a demonym is recoverable from a code for display
+# while the reverse needs this table.
+#
+# Demonyms only — country names are handled by _COUNTRY_NAME_VARIANTS above and are
+# also accepted here, since PSC filers sometimes type "Ireland" instead of "Irish".
+_DEMONYM_ISO2: dict[str, str] = {
+    # The UK, where most PSC filings come from. Companies House sees all of these.
+    "british": "GB", "briton": "GB", "english": "GB", "scottish": "GB",
+    "welsh": "GB", "northern irish": "GB", "uk": "GB", "u.k.": "GB",
+    "united kingdom": "GB", "great britain": "GB", "gb": "GB", "gbr": "GB",
+    # Ireland — distinct from Northern Irish above, and frequently confused
+    "irish": "IE", "ireland": "IE",
+    # Europe
+    "german": "DE", "austrian": "AT", "french": "FR", "italian": "IT",
+    "spanish": "ES", "portuguese": "PT", "dutch": "NL", "netherlands": "NL",
+    "belgian": "BE", "luxembourgish": "LU", "luxembourger": "LU", "swiss": "CH",
+    "danish": "DK", "swedish": "SE", "norwegian": "NO", "finnish": "FI",
+    "icelandic": "IS", "polish": "PL", "czech": "CZ", "slovak": "SK",
+    "hungarian": "HU", "romanian": "RO", "bulgarian": "BG", "greek": "GR",
+    "cypriot": "CY", "maltese": "MT", "croatian": "HR", "slovenian": "SI",
+    "serbian": "RS", "bosnian": "BA", "albanian": "AL", "estonian": "EE",
+    "latvian": "LV", "lithuanian": "LT", "ukrainian": "UA", "russian": "RU",
+    "belarusian": "BY", "moldovan": "MD", "turkish": "TR", "georgian": "GE",
+    "armenian": "AM", "azerbaijani": "AZ",
+    # Americas
+    "american": "US", "united states": "US", "usa": "US", "canadian": "CA",
+    "mexican": "MX", "brazilian": "BR", "argentine": "AR", "argentinian": "AR",
+    "chilean": "CL", "colombian": "CO", "peruvian": "PE", "venezuelan": "VE",
+    "uruguayan": "UY", "cuban": "CU", "jamaican": "JM", "bahamian": "BS",
+    "barbadian": "BB", "panamanian": "PA", "costa rican": "CR",
+    # Asia-Pacific
+    "chinese": "CN", "hong kong": "HK", "hongkonger": "HK", "taiwanese": "TW",
+    "japanese": "JP", "korean": "KR", "south korean": "KR", "indian": "IN",
+    "pakistani": "PK", "bangladeshi": "BD", "sri lankan": "LK", "nepalese": "NP",
+    "singaporean": "SG", "malaysian": "MY", "indonesian": "ID", "thai": "TH",
+    "vietnamese": "VN", "filipino": "PH", "philippine": "PH", "australian": "AU",
+    "new zealander": "NZ", "new zealand": "NZ", "kiwi": "NZ",
+    # Middle East and Africa
+    "israeli": "IL", "emirati": "AE", "uae": "AE", "saudi": "SA",
+    "saudi arabian": "SA", "qatari": "QA", "kuwaiti": "KW", "bahraini": "BH",
+    "omani": "OM", "jordanian": "JO", "lebanese": "LB", "iranian": "IR",
+    "iraqi": "IQ", "egyptian": "EG", "moroccan": "MA", "tunisian": "TN",
+    "algerian": "DZ", "south african": "ZA", "nigerian": "NG", "kenyan": "KE",
+    "ghanaian": "GH", "ethiopian": "ET", "tanzanian": "TZ", "ugandan": "UG",
+    "zimbabwean": "ZW", "mauritian": "MU", "seychellois": "SC",
+}
+
+
+def nationality_to_iso2(raw: str | None) -> str | None:
+    """A nationality as an ISO-2 code, or None if it cannot be recognised.
+
+    None means "leave it alone", not "discard it". A nationality we cannot map is
+    still what the register said, and overwriting or blanking it would lose data
+    the source published — so callers keep the original text.
+    """
+    from app.scraper.bulk_import import _ISO2_COUNTRY
+    cleaned = (raw or "").strip()
+    if not cleaned:
+        return None
+    if len(cleaned) == 2 and cleaned.upper() in _ISO2_COUNTRY:
+        return cleaned.upper()          # already a code, possibly lowercase
+    key = cleaned.lower().rstrip(".")
+    if code := _DEMONYM_ISO2.get(key):
+        return code
+    # A full country name ("Brazil"), which PSC filers do sometimes type.
+    name_to_code = {name.lower(): code for code, name in _ISO2_COUNTRY.items()}
+    name_to_code.update({n.lower(): c for n, c in _COUNTRY_NAME_VARIANTS.items()})
+    return name_to_code.get(key)
+
+
+def normalize_person_nationalities() -> dict:
+    """Convert Person.nationality to ISO-2 codes where the value can be recognised.
+
+    Idempotent — codes pass through unchanged. Values that cannot be mapped are
+    **left exactly as they are** and returned in `unmapped`, so the residue is
+    visible and the table can be extended rather than the data quietly lost. A
+    long tail is expected: PSC nationality is free text typed by the filer.
+    """
+    rows = run_query(
+        "MATCH (p:Person) WHERE p.nationality IS NOT NULL AND p.nationality <> '' "
+        "RETURN DISTINCT p.nationality AS nat")
+    converted: list[dict] = []
+    unmapped: list[str] = []
+    unchanged = 0
+    for r in rows:
+        raw = r["nat"]
+        code = nationality_to_iso2(raw)
+        if code is None:
+            unmapped.append(raw)
+        elif code == raw:
+            unchanged += 1
+        else:
+            run_command("MATCH (p:Person) WHERE p.nationality = $old SET p.nationality = $new",
+                        {"old": raw, "new": code})
+            converted.append({"from": raw, "to": code})
+    return {"converted": converted, "unchanged": unchanged,
+            "unmapped": sorted(unmapped), "distinct_values": len(rows)}
+
+
 def backfill_entity_sources() -> dict:
     """
     One-time backfill: stamp ``Entity.source_id`` on nodes the Wikidata / SEC
