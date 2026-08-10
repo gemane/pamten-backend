@@ -117,7 +117,25 @@ def search_entity(query: str, limit: int = 5) -> list:
     return r.json().get("search", [])
 
 
-_LABEL_SERVICE = 'SERVICE wikibase:label { bd:serviceParam wikibase:language "en" }'
+#: Languages the label service may fall back through, in order of preference.
+#:
+#: `mul` is the one that matters and the one that is easy to miss. Wikidata added
+#: it in 2024 for labels that are identical in every language — which is exactly
+#: what a personal name is — so newer person items increasingly carry their label
+#: ONLY in `mul` and have no `en` label at all. HashiCorp's CEO is one: labelled
+#: in de and mul, not en.
+#:
+#: That matters because of how the label service fails. Asked for a language the
+#: item does not have, it does not return nothing — it returns **the QID as the
+#: label**. So `?ceoLabel` came back as the string "Q132983199" and was stored as
+#: a person's name, which then also poisons search_text and name_normalized, so
+#: the record cannot be found by the name it should have had.
+#:
+#: The rest of the chain covers registers we actually import from. It is not
+#: exhaustive and cannot be — see `_label()` for the backstop.
+_LABEL_LANGUAGES = "en,mul,de,fr,es,it,nl,pt,sv,da,fi,pl,[AUTO_LANGUAGE]"
+_LABEL_SERVICE = (
+    f'SERVICE wikibase:label {{ bd:serviceParam wikibase:language "{_LABEL_LANGUAGES}" }}')
 
 
 def _sparql(qid: str) -> list:
@@ -321,6 +339,27 @@ def _v(row: dict, key: str) -> str | None:
     return row.get(key, {}).get("value")
 
 
+#: A bare Q-number, which is what the label service returns when it has no label
+#: in any requested language.
+_BARE_QID = re.compile(r"^Q\d+$")
+
+
+def _label(row: dict, key: str) -> str | None:
+    """A label from a SPARQL row, or None if Wikidata had none to give.
+
+    The backstop behind `_LABEL_LANGUAGES`. No fallback chain can be complete —
+    LINKEDIN FRANCE SAS is labelled only in French, and something will always be
+    labelled only in Czech — so rather than widening the list forever, refuse the
+    QID itself as a name.
+
+    Callers already skip records with no label, which is the right outcome: an
+    officer we cannot name is better left out than recorded as "Q132983199". A
+    fake name is worse than a gap, because it looks like data.
+    """
+    value = _v(row, key)
+    return None if value and _BARE_QID.match(value) else value
+
+
 def _qid(uri: str | None) -> str | None:
     """Extract Q-id from a Wikidata entity URI."""
     if not uri:
@@ -410,7 +449,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
     for row in rows:
         # Basic fields (set once)
         if result["name"] is None:
-            result["name"]        = _v(row, "itemLabel")
+            result["name"]        = _label(row, "itemLabel")
             result["description"] = _v(row, "itemDescription")
             result["country"]     = _v(row, "countryCode")
 
@@ -456,7 +495,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
 
         # Headquarters (P159) — collect each with its OWN city/country/coord so
         # they can never disagree (dual-listed firms have several).
-        if hq_city := _v(row, "hqLabel"):
+        if hq_city := _label(row, "hqLabel"):
             hq = result["headquarters"].setdefault(
                 hq_city, {"city": hq_city, "country": None, "coord": None})
             if hq["country"] is None:
@@ -478,7 +517,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if sub_qid and sub_qid not in result["subsidiaries"]:
                 result["subsidiaries"][sub_qid] = {
                     "qid":       sub_qid,
-                    "name":      _v(row, "subsidiaryLabel"),
+                    "name":      _label(row, "subsidiaryLabel"),
                     "instances": set(),
                 }
             if sub_inst := _v(row, "subsidiaryInstance"):
@@ -494,13 +533,13 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             succ_qid = _qid(succ_uri)
             if succ_qid and succ_qid not in result["successors"]:
                 result["successors"][succ_qid] = {
-                    "qid": succ_qid, "name": _v(row, "successorLabel"),
+                    "qid": succ_qid, "name": _label(row, "successorLabel"),
                     "date": (_v(row, "successorDate") or "")[:10] or None}
         if pred_uri := _v(row, "predecessor"):
             pred_qid = _qid(pred_uri)
             if pred_qid and pred_qid not in result["predecessors"]:
                 result["predecessors"][pred_qid] = {
-                    "qid": pred_qid, "name": _v(row, "predecessorLabel"),
+                    "qid": pred_qid, "name": _label(row, "predecessorLabel"),
                     "date": (_v(row, "predecessorDate") or "")[:10] or None}
 
         # CEO (keyed by qid+since to capture multiple tenures)
@@ -512,7 +551,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if ceo_qid and key not in result["ceos"]:
                 result["ceos"][key] = {
                     "qid":         ceo_qid,
-                    "label":       _v(row, "ceoLabel"),
+                    "label":       _label(row, "ceoLabel"),
                     "description": _v(row, "ceoDescription"),
                     "nationality": _v(row, "ceoNationalityCode"),
                     "since":       since,
@@ -532,7 +571,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                 if pqid and okey not in result["officers"]:
                     result["officers"][okey] = {
                         "qid":   pqid,
-                        "label": _v(row, f"{var}Label"),
+                        "label": _label(row, f"{var}Label"),
                         "role":  role,
                         "since": since,
                         "until": until,
@@ -545,7 +584,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if owner_qid and owner_qid not in result["owners"]:
                 result["owners"][owner_qid] = {
                     "qid":       owner_qid,
-                    "label":     _v(row, "ownerLabel"),
+                    "label":     _label(row, "ownerLabel"),
                     "instances": set(),
                 }
             if owner_inst := _v(row, "ownerInstance"):
