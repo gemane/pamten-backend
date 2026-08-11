@@ -74,6 +74,10 @@ _INDEXES: list[tuple[str, str, str]] = [
     # Import checkpoints — e.g. the last GLEIF publish a delta update applied, so
     # the daily refresh can pick a catch-up interval that covers any missed runs.
     ("ImportState", "key",          "UNIQUE"),
+    # Runtime settings a deploy should not be needed to change — currently the
+    # mobile minimum-supported-version policy (see routers/app_version.py). Keyed
+    # so a lookup is indexed; the value is JSON so a policy updates atomically.
+    ("AppSetting",  "key",          "UNIQUE"),
     # Rate-limit buckets: sliding-window attempt timestamps keyed by bucket id
     # (e.g. "login:<ip>:<email>", "email:<email>", "mfa:<user_id>").
     ("RateLimit",   "key",          "UNIQUE"),
