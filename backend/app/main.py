@@ -7,7 +7,8 @@ from app.db.arcadedb import close_client
 from app.db.schema import ensure_indexes
 from app.scraper.geocode import close_client as close_geocode_client
 from app.scraper.sec_edgar import close_client as close_sec_client
-from app.routers import entities, persons, relationships, search, sources, federation, flags, stats
+from app.routers import (entities, persons, relationships, search, sources, federation,
+                         flags, stats, app_version)
 from app.scraper import router as scraper_router
 from app.scraper import sources as scraper_sources
 from app.auth import router as auth_router
@@ -88,6 +89,7 @@ _ROUTERS = [
     scraper_router.router,
     scraper_sources.router,
     auth_router.router,
+    app_version.router,
 ]
 
 # Federation is on hold (see routers/federation.py). Leaving it unmounted rather

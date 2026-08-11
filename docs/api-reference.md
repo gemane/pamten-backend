@@ -121,6 +121,52 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
 | DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
 
+## App
+
+### `GET /app-version`
+
+Whether a released client may keep running. **Unauthenticated** — a client too old
+to authenticate still has to learn it must upgrade — and safe to call on every app
+start.
+
+```
+GET /app-version?platform=ios&version=1.2.3
+```
+
+```json
+{
+  "platform": "ios",
+  "min_supported": "1.2.0",
+  "latest": "1.4.0",
+  "update_required": false,
+  "update_available": true,
+  "store_url": "https://apps.apple.com/...",
+  "message": null
+}
+```
+
+The **server** compares the versions, not the client: the clients that most need
+correcting are the ones running whatever comparison bug shipped with them, and
+`"1.10.0"` sorts before `"1.9.0"` as a string.
+
+It **fails open**. No policy, an unknown platform, an unparseable version or a
+database error all answer `update_required: false`. A bug that locked every user
+out would arrive on devices that cannot be reached.
+
+Clients should call the **unversioned** `/app-version`. It is served under `/v1`
+too, but a version check that a version bump can move is not a check.
+
+### `PUT /app-version` — admin
+
+Replaces the policy for all platforms at once. A full replace rather than a merge,
+so a partial update cannot raise the iOS minimum while leaving Android pointing at
+last year's store URL. Stored in the database, so locking out a broken client does
+not need a deploy.
+
+```json
+{ "ios": { "min_supported": "1.2.0", "latest": "1.4.0", "store_url": "https://..." } }
+```
+
 ## Federation
 | Method | Path | Auth | Description |
 |---|---|---|---|
