@@ -54,26 +54,102 @@ def list_countries():
         return [{"country": r["country"], "count": r["cnt"]} for r in result]
 
 
+#: Which country a company is counted under on the map.
+#:
+#: `jurisdiction` is where it is registered, `hq` where it is actually run. They
+#: differ exactly where it is interesting — BARCLAYS CAPITAL (CAYMAN) LIMITED is
+#: registered in KY and run from GB — which is why this is a choice rather than a
+#: single "country" the map picks for you.
+#:
+#: The property cannot be parameterised: ArcadeDB's Cypher will not accept
+#: `e[$prop]`, so each basis is a literal query string. See the `@out.id` lesson in
+#: app/scraper/maintenance.py for what that assumption costs — the query matches
+#: nothing and reports success.
+_BASIS_PROPERTY = {"jurisdiction": "e.country", "hq": "e.hq_country"}
+
+
+def _basis_property(basis: str) -> str:
+    """The property for a basis, rejecting anything else.
+
+    A typo must not quietly fall back to jurisdiction and render the wrong map
+    with nothing to indicate it is wrong.
+    """
+    try:
+        return _BASIS_PROPERTY[basis]
+    except KeyError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"basis must be one of {', '.join(sorted(_BASIS_PROPERTY))}",
+        ) from None
+
+
 @router.get("/by-country")
-def get_entities_by_country():
-    """Return entity counts per country. Entity lists are fetched per-country on demand."""
-    query = """
+def get_entities_by_country(basis: str = Query("jurisdiction", description="jurisdiction | hq")):
+    """Entity counts per country. Entity lists are fetched per-country on demand.
+
+    Companies with no country for this basis come back as one group with
+    `country: null` rather than being dropped. A tenth of the graph has no country
+    at all — BlackRock and The Vanguard Group among them — and silently
+    subtracting them leaves the map quietly wrong about how much it is showing.
+    """
+    prop = _basis_property(basis)
+    # Secondary sort so equal counts return in a stable order. The frontend
+    # re-sorts anyway, but an endpoint whose row order varies between identical
+    # calls is a trap for anything else that reads it.
+    placed = f"""
         MATCH (e:Entity)
-        WHERE e.country IS NOT NULL AND e.country <> ''
-        RETURN e.country AS country, count(e) AS cnt
-        ORDER BY cnt DESC
+        WHERE {prop} IS NOT NULL AND {prop} <> ''
+        RETURN {prop} AS country, count(e) AS cnt
+        ORDER BY cnt DESC, country ASC
+    """
+    unplaced = f"""
+        MATCH (e:Entity)
+        WHERE {prop} IS NULL OR {prop} = ''
+        RETURN count(e) AS cnt
     """
     with db.get_session() as session:
-        result = session.run(query)
-        return [{"country": rec["country"], "count": rec["cnt"]} for rec in result]
+        groups = [{"country": rec["country"], "count": rec["cnt"]} for rec in session.run(placed)]
+        rec = session.run(unplaced).single()
+        missing = (rec["cnt"] if rec else 0) or 0
+        if missing:
+            groups.append({"country": None, "count": missing})
+    return groups
+
+
+@router.get("/without-country")
+def get_entities_without_country(
+    basis: str = Query("jurisdiction", description="jurisdiction | hq"),
+    limit: int = Query(200, ge=1, le=500),
+):
+    """The companies behind the `country: null` group — the ones the map cannot place.
+
+    A query endpoint rather than `/by-country/none`, which would be a magic path
+    segment that a real country code could one day collide with.
+    """
+    prop = _basis_property(basis)
+    query = f"""
+        MATCH (e:Entity)
+        WHERE {prop} IS NULL OR {prop} = ''
+        RETURN e.id AS id, e.name AS name, e.type AS type
+        ORDER BY e.name
+        LIMIT $limit
+    """
+    with db.get_session() as session:
+        result = session.run(query, limit=limit)
+        return [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in result]
 
 
 @router.get("/by-country/{country}")
-def get_entities_for_country(country: str, limit: int = Query(200, ge=1, le=500)):
+def get_entities_for_country(
+    country: str,
+    basis: str = Query("jurisdiction", description="jurisdiction | hq"),
+    limit: int = Query(200, ge=1, le=500),
+):
     """Return up to `limit` entities for a specific country, ordered by name."""
-    query = """
+    prop = _basis_property(basis)
+    query = f"""
         MATCH (e:Entity)
-        WHERE e.country = $country
+        WHERE {prop} = $country
         RETURN e.id AS id, e.name AS name, e.type AS type
         ORDER BY e.name
         LIMIT $limit
