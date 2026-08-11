@@ -77,6 +77,22 @@ def _psc_name(data: dict) -> str | None:
     return " ".join(p for p in parts if p).strip() or None
 
 
+def _nationality(raw: str | None) -> str:
+    """PSC nationality as an ISO-2 code where it can be recognised.
+
+    Companies House records a **demonym** typed by the filer — "British", not "GB"
+    — while Wikidata writes an ISO-2 code, so the field used to hold `GB` and
+    `British` side by side, meaning the same thing and grouping as two.
+
+    An unrecognised value is kept **verbatim**: it is free text and the tail is
+    long, and what the register said is worth more than a tidy blank. See
+    ``maintenance.normalize_person_nationalities`` for the pass that reports the
+    residue so the table can be extended.
+    """
+    from app.scraper.maintenance import nationality_to_iso2
+    return nationality_to_iso2(raw) or (raw or "").strip()
+
+
 def _birth_date(data: dict) -> str:
     dob = data.get("date_of_birth") or {}
     y, m = dob.get("year"), dob.get("month")
@@ -148,7 +164,7 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
         first, last = parse_full_name(name)
         batch.person(f"chpsc:{self_link}", {
             "first_name": first, "last_name": last, "full_name": name,
-            "search_text": name, "nationality": data.get("nationality") or "",
+            "search_text": name, "nationality": _nationality(data.get("nationality")),
             "birth_date": _birth_date(data), "description": "",
             "verified": False, "alias": [], "nationalities": [],
         })
