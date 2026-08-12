@@ -5,6 +5,10 @@ take `e[$prop]` — so each basis is a literal query string. That is exactly the
 of thing a mocked session accepts happily while the real database returns nothing,
 which is why these run against ArcadeDB.
 
+A third basis, `subdivision`, groups on the ISO 3166-2 jurisdiction GLEIF states
+(`US-DE`). It shares every code path with the other two, so what its tests are
+really pinning is that a finer grouping did not disturb the coarser one.
+
 The case that matters is a company registered in one place and run from another:
 BARCLAYS CAPITAL (CAYMAN) LIMITED is KY by jurisdiction and GB by headquarters. If
 the two bases ever return the same thing, the feature is doing nothing.
@@ -21,12 +25,15 @@ from app.routers.entities import (
 pytestmark = pytest.mark.integration
 
 
-def _entity(it_db, eid: str, name: str, country: str | None, hq: str | None) -> None:
+def _entity(it_db, eid: str, name: str, country: str | None, hq: str | None,
+            subdivision: str | None = None) -> None:
     props = [f"id:'{eid}'", f"name:'{name}'", "type:'company'"]
     if country is not None:
         props.append(f"country:'{country}'")
     if hq is not None:
         props.append(f"hq_country:'{hq}'")
+    if subdivision is not None:
+        props.append(f"jurisdiction_code:'{subdivision}'")
     it_db.run_command(f"CREATE (:Entity {{{', '.join(props)}}})")
 
 
@@ -107,8 +114,55 @@ class TestListing:
             == ["No HQ Recorded", "Nowhere Ltd"]
 
 
+class TestSubdivision:
+    """The third basis: where a company is registered, one level finer than the
+    country. GLEIF states an ISO 3166-2 jurisdiction for about 1% of records, and
+    on the real data 35 of 47 US companies are US-DE — the Delaware concentration
+    the country-level map cannot show."""
+
+    def _seed_us(self, it_db):
+        _entity(it_db, "u1", "Delaware One", "US", "US", "US-DE")
+        _entity(it_db, "u2", "Delaware Two", "US", "US", "US-DE")
+        _entity(it_db, "u3", "Nevada Inc", "US", "US", "US-NV")
+        _entity(it_db, "u4", "Plain American", "US", "US", None)   # US, no subdivision stated
+        _entity(it_db, "u5", "Toronto Co", "CA", "CA", "CA-ON")
+        _entity(it_db, "u6", "Berlin Werke", "DE", "DE", None)     # a country that uses none
+
+    def test_counts_group_by_subdivision(self, it_db):
+        self._seed_us(it_db)
+        assert counts(get_entities_by_country(basis="subdivision")) == {
+            "US-DE": 2, "CA-ON": 1, "US-NV": 1, None: 2,
+        }
+
+    def test_a_country_that_states_none_falls_into_the_null_group(self, it_db):
+        """Absent means "not stated", never "none" — so the American company with
+        no subdivision must be countable, not silently dropped."""
+        self._seed_us(it_db)
+        assert [e["name"] for e in get_entities_without_country(basis="subdivision", limit=200)] \
+            == ["Berlin Werke", "Plain American"]
+
+    def test_a_subdivision_lists_its_companies(self, it_db):
+        self._seed_us(it_db)
+        assert [e["name"] for e in get_entities_for_country("US-DE", basis="subdivision", limit=200)] \
+            == ["Delaware One", "Delaware Two"]
+
+    def test_the_country_basis_still_counts_countries(self, it_db):
+        """The regression that matters: adding a finer basis must not change what
+        the existing map shows. All four American companies stay US."""
+        self._seed_us(it_db)
+        assert counts(get_entities_by_country(basis="jurisdiction")) == {"US": 4, "CA": 1, "DE": 1}
+
+    def test_a_subdivision_code_is_not_a_country_code(self, it_db):
+        """'US-DE' must not leak into the country basis, and 'US' must not collect
+        subdivision rows — they are separate properties, not a prefix match."""
+        self._seed_us(it_db)
+        assert get_entities_for_country("US-DE", basis="jurisdiction", limit=200) == []
+        assert get_entities_for_country("US", basis="subdivision", limit=200) == []
+
+
 class TestRejectingNonsense:
-    @pytest.mark.parametrize("basis", ["", "HQ ", "country", "hq_country", "Jurisdiction"])
+    @pytest.mark.parametrize("basis", ["", "HQ ", "country", "hq_country", "Jurisdiction",
+                                       "subdivisions", "jurisdiction_code"])
     def test_an_unknown_basis_is_refused(self, it_db, basis):
         """Not silently defaulted: a typo in a client would otherwise render the
         wrong map with nothing to say it is wrong."""

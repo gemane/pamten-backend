@@ -61,11 +61,21 @@ def list_countries():
 #: registered in KY and run from GB — which is why this is a choice rather than a
 #: single "country" the map picks for you.
 #:
+#: `subdivision` is that same registration fact one level finer: the ISO 3166-2
+#: legal jurisdiction GLEIF states, e.g. 'US-DE'. Only ~1% of records carry one and
+#: only six countries use them at all, so these groups are sparse by nature and the
+#: null group is most of the graph — a caller narrows to one country's rows ('US-')
+#: rather than mapping the world by it.
+#:
 #: The property cannot be parameterised: ArcadeDB's Cypher will not accept
 #: `e[$prop]`, so each basis is a literal query string. See the `@out.id` lesson in
 #: app/scraper/maintenance.py for what that assumption costs — the query matches
 #: nothing and reports success.
-_BASIS_PROPERTY = {"jurisdiction": "e.country", "hq": "e.hq_country"}
+_BASIS_PROPERTY = {
+    "jurisdiction": "e.country",
+    "hq": "e.hq_country",
+    "subdivision": "e.jurisdiction_code",
+}
 
 
 def _basis_property(basis: str) -> str:
@@ -84,7 +94,7 @@ def _basis_property(basis: str) -> str:
 
 
 @router.get("/by-country")
-def get_entities_by_country(basis: str = Query("jurisdiction", description="jurisdiction | hq")):
+def get_entities_by_country(basis: str = Query("jurisdiction", description="jurisdiction | hq | subdivision")):
     """Entity counts per country. Entity lists are fetched per-country on demand.
 
     Companies with no country for this basis come back as one group with
@@ -118,7 +128,7 @@ def get_entities_by_country(basis: str = Query("jurisdiction", description="juri
 
 @router.get("/without-country")
 def get_entities_without_country(
-    basis: str = Query("jurisdiction", description="jurisdiction | hq"),
+    basis: str = Query("jurisdiction", description="jurisdiction | hq | subdivision"),
     limit: int = Query(200, ge=1, le=500),
 ):
     """The companies behind the `country: null` group — the ones the map cannot place.
@@ -142,7 +152,7 @@ def get_entities_without_country(
 @router.get("/by-country/{country}")
 def get_entities_for_country(
     country: str,
-    basis: str = Query("jurisdiction", description="jurisdiction | hq"),
+    basis: str = Query("jurisdiction", description="jurisdiction | hq | subdivision"),
     limit: int = Query(200, ge=1, le=500),
 ):
     """Return up to `limit` entities for a specific country, ordered by name."""
