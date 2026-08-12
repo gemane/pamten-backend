@@ -195,3 +195,28 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 | POST | `/scraper/deduplicate-persons` | admin | Legacy: merge reversed-name Person duplicates (use `/persons/deduplicate`) |
 | POST | `/scraper/migrate-ownership-types` | admin | One-time migration deriving canonical `ownership_type` values |
 | POST | `/relationships/dual-listed` | contributor | Link two share classes of a dual-listed company (`DUAL_LISTED_WITH`) |
+
+### Counting companies by country
+
+`GET /entities/by-country?basis=jurisdiction|hq` returns `[{country, count}]`.
+
+**`basis`** chooses what "country" means, and it changes the answer where it matters —
+BARCLAYS CAPITAL (CAYMAN) LIMITED is `KY` by jurisdiction and `GB` by headquarters:
+
+| basis | property | means |
+|---|---|---|
+| `jurisdiction` (default) | `country` | where the company is registered |
+| `hq` | `hq_country` | where it is actually run |
+
+There is **no fallback between them.** A company with no recorded headquarters is not shown
+under its registration country in `hq` mode — that would present a guess as a fact and erase the
+distinction the parameter exists to draw.
+
+Instead, companies with no country for the chosen basis come back as a single group with
+**`country: null`**, so the counts still add up to the whole graph. A tenth of it has no country
+at all. `GET /entities/without-country?basis=…` lists them.
+
+`GET /entities/by-country/{country}?basis=…` takes the same parameter. An unrecognised `basis`
+is a **422**, not a silent fallback: a typo should not render the wrong map with nothing to say
+so.
+
