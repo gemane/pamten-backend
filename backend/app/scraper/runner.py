@@ -616,7 +616,10 @@ def _scrape_node(
         sub_id = _upsert_entity(
             name=sub_name,
             entity_type=sub_type,
-            country=None,
+            # Fetched in one batched query alongside the scrape. Passing None here
+            # is what left owner-only companies — BlackRock among them — with no
+            # country at all, and so absent from the map.
+            country=sub.get("country"),
             founded=None,
             revenue=None,
             description=None,
@@ -701,7 +704,7 @@ def _scrape_node(
             owner_id = _upsert_entity(
                 name=owner["label"],
                 entity_type=infer_entity_type(instances),
-                country=None, founded=None, revenue=None, description=None,
+                country=owner.get("country"), founded=None, revenue=None, description=None,
                 wikidata_id=owner["qid"],
                 source_id=source_id,
             )

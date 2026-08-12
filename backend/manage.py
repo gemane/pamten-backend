@@ -441,6 +441,15 @@ def cmd_normalize_nationalities(args):
               f"{', '.join(result['unmapped'])}")
 
 
+def cmd_backfill_countries(args):
+    from app.scraper.maintenance import backfill_entity_countries
+    result = backfill_entity_countries(limit=args.limit)
+    for c in result["changes"]:
+        print(f"  {c['name'][:44]:44} -> {c['country']}  ({c['from']})")
+    print(f"Filled {result['filled']} of {result['candidates']} entities with no country "
+          f"({result['still_unknown']} still unknown — the source has none either)")
+
+
 def cmd_backfill_entity_sources(args):
     from app.scraper.maintenance import backfill_entity_sources
     result = backfill_entity_sources()
@@ -559,6 +568,12 @@ def _build_parser():
     p_nat = subparsers.add_parser('normalize-nationalities',
                                   help='Convert Person.nationality demonyms ("British") to ISO-2 codes')
     p_nat.set_defaults(func=cmd_normalize_nationalities)
+
+    # backfill-countries command
+    p_bc = subparsers.add_parser('backfill-countries',
+                                 help="Fill missing Entity.country from Wikidata and SEC EDGAR")
+    p_bc.add_argument('--limit', type=int, help='Only consider the first N candidates')
+    p_bc.set_defaults(func=cmd_backfill_countries)
 
     # backfill-entity-sources command
     p_bes = subparsers.add_parser('backfill-entity-sources',

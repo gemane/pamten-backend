@@ -9,7 +9,7 @@ its registered address, so the map reads one record instead of traversing.
 
 | Label | Key properties |
 |---|---|
-| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding/government/foundation/fund/nonprofit — inferred from Wikidata P31 instance-of and GLEIF legal form), `country`, `countries`, `founded`, `revenue`, `employees` (+ `employees_as_of` year, from Wikidata P1128), `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `registered_address` (normalized GLEIF registered office — corroborates same-company dedup), `address` (human-readable GLEIF legal address for display), `legal_form` (ISO 20275 ELF name, e.g. "Private Limited Company" — resolved from the LEI-CDF ELF code via the bundled GLEIF ELF list), `registration_authority` + `registration_number` (gleif.org's "Registered At" — register name resolved from the RA code via the bundled GLEIF RA list, plus the entity's id there), `hq_lat`/`hq_lng`/`hq_city`/`hq_country`, `source_id`, `source_statement_ids[]` (BODS statement ids that declared the entity — accumulated for id-less parties collapsed under one name key, so per-statement provenance survives the collapse), `aliases[]` (other names — Wikidata skos:altLabel and SEC EDGAR `formerNames`), `search_text` (FULL_TEXT-indexed: name + description + aliases), `is_nominee` (name-detected nominee/custodian — holder of record, not a beneficial owner; `manage.py flag-nominees` backfills existing) |
+| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding/government/foundation/fund/nonprofit — inferred from Wikidata P31 instance-of and GLEIF legal form), `country`, `countries`, `founded`, `revenue`, `employees` (+ `employees_as_of` year, from Wikidata P1128), `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `registered_address` (normalized GLEIF registered office — corroborates same-company dedup), `address` (human-readable GLEIF legal address for display), `legal_form` (ISO 20275 ELF name, e.g. "Private Limited Company" — resolved from the LEI-CDF ELF code via the bundled GLEIF ELF list), `registration_authority` + `registration_number` (gleif.org's "Registered At" — register name resolved from the RA code via the bundled GLEIF RA list, plus the entity's id there), `jurisdiction_code` (ISO 3166-2 legal jurisdiction where a source gives one, e.g. `US-DE` — see *How countries are represented* below; sparse, ~1% of GLEIF records), `hq_lat`/`hq_lng`/`hq_city`/`hq_country`, `source_id`, `source_statement_ids[]` (BODS statement ids that declared the entity — accumulated for id-less parties collapsed under one name key, so per-statement provenance survives the collapse), `aliases[]` (other names — Wikidata skos:altLabel and SEC EDGAR `formerNames`), `search_text` (FULL_TEXT-indexed: name + description + aliases), `is_nominee` (name-detected nominee/custodian — holder of record, not a beneficial owner; `manage.py flag-nominees` backfills existing) |
 | `Person` | `id`, `full_name`, `first_name`, `last_name`, `alias[]`, `nationality` (**ISO-3166-1 alpha-2**, e.g. `GB` — Companies House records a demonym like "British", normalised on import; a value that cannot be recognised is kept verbatim rather than blanked, and `manage.py normalize-nationalities` reports the residue), `birth_date` (**month and year only** where the source publishes no more, which is the case for UK PSC), `birth_place`, `wikidata_id`, `sec_cik`, `wikipedia_url` |
 | `Source` | `id`, `name`, `url`, `type`, `credibility_score`; for peers also `verified`, `key_id` |
 | `User` | `id`, `email`, `password_hash`, `role` (admin/contributor/viewer), `language` (UI language at registration — emails to this person are written in it) |
@@ -95,6 +95,62 @@ legal-form type) from LEI-CDF; `gleif-rr` imports the **relationships** (direct/
 ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF.
 This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
 at 2025‑03.
+
+### How countries are represented, and one grouping we deliberately do not apply
+
+Countries are ISO 3166-1 alpha-2. Where a source records a sub-national legal
+jurisdiction, GLEIF gives it as ISO 3166-2 (`US-DE`). ISO's distinction happens to
+be exactly the one that matters here:
+
+| | code | why |
+|---|---|---|
+| Delaware | `US-DE` | a **subdivision** — Delaware genuinely is part of the US |
+| Cayman Islands | `KY` | its **own country** — a British Overseas Territory, *not* part of the UK |
+
+Cayman, and likewise Jersey `JE`, Guernsey `GG`, Isle of Man `IM`, BVI `VG`,
+Bermuda `BM` and Gibraltar `GI`, are under UK sovereignty but are separate
+jurisdictions with their own legislatures, company law and tax regimes. **Do not
+fold them into `GB`.** It is legally wrong, and it would erase the very fact that
+makes them worth showing: a company registers in the Caymans precisely *because*
+it is not the UK. Barclays Capital (Cayman) is `KY` by jurisdiction and `GB` by
+headquarters, and collapsing the two would turn an offshore structure into "a
+British company".
+
+**A future lens, not a data change.** "The UK and its dependencies" is a genuinely
+useful analytical grouping — the UK has repeatedly been pressed to make its
+Overseas Territories adopt public beneficial-ownership registers, so *how much of
+this structure sits in the British orbit* is a real question. If that is ever
+offered, it must be a **curated list layered over the ISO codes** and labelled as
+such, never a remapping of the underlying data. ISO will not supply it, because
+legally it is not true.
+
+Which countries actually carry subdivisions is narrow, and measured rather than
+assumed — from 250,000 LEI records: **US 90%** (Delaware dominant), **CA 74%**,
+**KN 40%** (Nevis), **AE 27%** (Dubai, Abu Dhabi), **MY 19%** (Labuan), **GB 0.3%**.
+China, India, Switzerland, Germany and Australia record none: their registers are
+regionally administered, but the region is not a choice of legal domicile, so
+there is nothing analogous to Delaware to capture.
+
+### Filling a missing country
+
+`manage.py backfill-countries` fills `country` where it is blank, from Wikidata
+(batched P17, falling back to the headquarters' country) and SEC EDGAR. It only
+ever fills a blank — an existing country is never overwritten.
+
+Worth knowing why it was needed: subsidiaries and owners are written as *stubs*
+when some other company is scraped, with no country of their own, so a company
+that only ever appeared as an owner had none at all. BlackRock and The Vanguard
+Group were both missing from the map for that reason. The Wikidata scraper now
+fetches those countries during the scrape, so new stubs arrive with one.
+
+For SEC filers the order is deliberate: **state of incorporation first, business
+address only as a fallback.** EDGAR's business address is where the *filing* comes
+from — DEUTSCHE BANK AKTIENGESELLSCHAFT lists New York — so trusting it would move
+German banks to the United States. A filer with only a US address and no stated
+incorporation is left blank, because a wrong country is worse than none.
+
+Still outstanding: the live SEC scraper does not yet set a country on the entities
+it creates, so newly scraped SEC filers still need this pass.
 
 ### One edge per pair
 
