@@ -35,9 +35,37 @@ log = logging.getLogger(__name__)
 
 def _country(entity: dict) -> str | None:
     """ISO-2 country from LegalJurisdiction (e.g. 'US', or 'US-DE' → 'US'),
-    falling back to the headquarters country."""
+    falling back to the headquarters country.
+
+    Stays coarse on purpose: `country` is what the map groups by, what the search
+    filter offers and what cross-source dedup compares. The subdivision is kept
+    separately by `_jurisdiction_code`, so nothing that reads `country` has to
+    learn that 'US-DE' is also the United States."""
     j = _v(entity.get("LegalJurisdiction")) or _v((entity.get("HeadquartersAddress") or {}).get("Country"))
     return j.split("-")[0][:2].upper() if j else None
+
+
+def _jurisdiction_code(entity: dict) -> str | None:
+    """The full ISO 3166-2 legal jurisdiction where GLEIF gives one, e.g. 'US-DE'.
+
+    This is where a company chose to be domiciled at a finer grain than the
+    country, and it is the same signal as an offshore registration one level down:
+    across 250,000 LEI records the commonest subdivision by a wide margin is
+    US-DE — Delaware — followed by Ontario, Scotland, Dubai and Nevis. It arrived
+    in every import and was truncated away.
+
+    Only ~1% of records carry one, and only six countries use them at all (US 90%,
+    CA 74%, KN 40%, AE 27%, MY 19%, GB 0.3%). Elsewhere the register is regionally
+    administered but the region is not a choice of domicile, so there is nothing
+    to record. Sparse by nature — absent means "not stated", never "none".
+
+    Note this is *not* how the offshore territories are represented: the Caymans
+    are `KY`, their own country, not a subdivision of GB. See docs/data-model.md.
+    """
+    j = _v(entity.get("LegalJurisdiction"))
+    if not j or "-" not in j:
+        return None
+    return j.strip().upper()
 
 
 def _registered_address(entity: dict) -> str | None:
@@ -157,6 +185,7 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "search_text": name,
         "name_credibility": credibility_score,
         "country": _country(entity),
+        "jurisdiction_code": _jurisdiction_code(entity),
         "registered_address": _registered_address(entity),
         "address": _display_address(entity),
         "legal_form": _legal_form(entity),

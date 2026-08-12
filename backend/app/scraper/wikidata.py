@@ -310,6 +310,42 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     return details
 
 
+def _fetch_related_countries(qids: set[str]) -> dict[str, str]:
+    """Country (ISO-2) for a set of related-company QIDs, in ONE query.
+
+    Subsidiaries and owners are written as stubs when some *other* company is
+    scraped, with no country of their own — so a company that only ever appears as
+    an owner never gets one. That is why BlackRock and The Vanguard Group, two of
+    the most significant owners in the graph, were absent from the map entirely.
+
+    Falls back to the country of the headquarters (P159 → P17) when the company
+    itself has no P17, which is common for holding companies.
+
+    Batched and pre-aggregated for the same reason as _fetch_person_details: one
+    row per company, no combinatorial blow-up.
+    """
+    if not qids:
+        return {}
+    values = " ".join(f"wd:{q}" for q in sorted(qids))
+    query = f"""
+    SELECT ?item (SAMPLE(?cc) AS ?code) WHERE {{
+      VALUES ?item {{ {values} }}
+      OPTIONAL {{ ?item wdt:P17 ?c . ?c wdt:P297 ?directCode }}
+      OPTIONAL {{ ?item wdt:P159 ?hq . ?hq wdt:P17 ?hc . ?hc wdt:P297 ?hqCode }}
+      BIND(COALESCE(?directCode, ?hqCode) AS ?cc)
+      FILTER(BOUND(?cc))
+    }} GROUP BY ?item
+    """
+    r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=30)
+    out: dict[str, str] = {}
+    for row in r.json()["results"]["bindings"]:
+        qid = _qid(_v(row, "item"))
+        code = (_v(row, "code") or "").strip().upper()
+        if qid and len(code) == 2:
+            out[qid] = code
+    return out
+
+
 def fetch_company_data(qid: str) -> dict | None:
     """
     Fetch a company's data from Wikidata: identity, all domicile countries and
@@ -326,6 +362,17 @@ def fetch_company_data(qid: str) -> dict | None:
     person_qids |= {p["qid"] for p in data["officers"] if p.get("qid")}
     person_qids |= {o["qid"] for o in data["owners"]
                     if o.get("qid") and "Q5" in o.get("instances", [])}
+    # Countries for the companies we are about to create as stubs, so an owner or
+    # subsidiary is not written with country=None and then never revisited.
+    company_qids = {c["qid"] for c in data.get("subsidiaries", []) if c.get("qid")}
+    company_qids |= {o["qid"] for o in data.get("owners", [])
+                     if o.get("qid") and "Q5" not in o.get("instances", [])}
+    countries = _fetch_related_countries(company_qids)
+    for group in ("subsidiaries", "owners"):
+        for item in data.get(group, []) or []:
+            if item.get("qid") in countries:
+                item["country"] = countries[item["qid"]]
+
     details = _fetch_person_details(person_qids)
     if details:
         for group in (data["ceos"], data["officers"], data["owners"]):
