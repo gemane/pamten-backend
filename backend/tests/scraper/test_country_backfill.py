@@ -10,7 +10,7 @@ filer stays blank rather than being guessed at.
 """
 import pytest
 
-from app.scraper.maintenance import sec_country
+from app.scraper.sec_edgar import sec_country
 
 
 def subs(*, inc_code=None, inc_name=None, business_country=None, state=None):
@@ -59,3 +59,21 @@ class TestAddressOnlyAsFallback:
 
     def test_an_unrecognised_country_name_is_not_invented(self):
         assert sec_country(subs(inc_name="Freedonia")) is None
+
+
+class TestCikNormalisation:
+    """The submissions endpoint wants a 10-digit CIK; callers had drifted."""
+
+    def test_pads_a_bare_cik(self):
+        from app.scraper.sec_edgar import _cik10
+        assert _cik10("320193") == "0000320193"
+
+    def test_leaves_an_already_padded_one_alone(self):
+        from app.scraper.sec_edgar import _cik10
+        assert _cik10("0000320193") == "0000320193"
+
+    def test_passes_a_non_numeric_value_through(self):
+        # Padding is a convenience, not a validator. Raising here would surface as
+        # a silent None two frames up, where the callers swallow errors.
+        from app.scraper.sec_edgar import _cik10
+        assert _cik10("x") == "x"

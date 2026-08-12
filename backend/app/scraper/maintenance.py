@@ -1341,37 +1341,6 @@ def normalize_person_nationalities() -> dict:
 
 # ── Country backfill ──────────────────────────────────────────────────────────
 
-#: SEC uses two-letter codes for both US states and foreign countries in the same
-#: field, so a state code has to be recognised rather than assumed to be a country.
-_US_STATES = frozenset(
-    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
-    "MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR".split())
-
-
-def sec_country(submissions: dict) -> str | None:
-    """ISO-2 country for a SEC filer, or None when EDGAR cannot say.
-
-    Incorporation first, address second, and that order matters. A foreign filer's
-    business address in EDGAR is often its US filing office — DEUTSCHE BANK
-    AKTIENGESELLSCHAFT lists New York — so trusting the address would move German
-    banks to the United States. Wrong data is worse than the blank it replaces.
-
-    Returns None rather than guessing when only a US address is on file for a
-    company with no stated incorporation.
-    """
-    inc_code = (submissions.get("stateOfIncorporation") or "").strip().upper()
-    inc_name = (submissions.get("stateOfIncorporationDescription") or "").strip()
-    if inc_code in _US_STATES:
-        return "US"
-    if inc_name:
-        if code := nationality_to_iso2(inc_name):
-            return code
-    business = (submissions.get("addresses") or {}).get("business") or {}
-    if name := (business.get("country") or "").strip():
-        return nationality_to_iso2(name)
-    return None
-
-
 def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
     """Fill in `country` for entities that have none, from Wikidata and SEC EDGAR.
 
@@ -1382,6 +1351,7 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
     Only ever fills a blank. An existing country is never overwritten: this is a
     repair for missing data, not a re-import.
     """
+    from app.scraper.sec_edgar import sec_country
     from app.scraper.wikidata import _fetch_related_countries
 
     rows = run_query(
@@ -1391,12 +1361,17 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
         rows = rows[:limit]
 
     filled: list[dict] = []
-    # Wikidata in one batched query rather than one request per entity.
+    # Wikidata in one batched query rather than one request per entity. Jurisdiction
+    # (P17) and headquarters (P159) are written to their own fields — coalescing
+    # them would defeat the map's Registered/Headquarters switch.
     wd = {r["wd"]: r for r in rows if r.get("wd")}
     if wd:
-        for qid, code in _fetch_related_countries(set(wd)).items():
+        for qid, found in _fetch_related_countries(set(wd)).items():
+            if not found["country"] and not found["hq_country"]:
+                continue
             filled.append({"id": wd[qid]["id"], "name": wd[qid]["name"],
-                           "country": code, "from": "wikidata"})
+                           "country": found["country"], "hq_country": found["hq_country"],
+                           "from": "wikidata"})
 
     done = {f["id"] for f in filled}
     for r in rows:
@@ -1408,10 +1383,16 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
             log.warning("country backfill: SEC fetch failed for %s: %s", r["name"], exc)
             continue
         if code := sec_country(subs or {}):
-            filled.append({"id": r["id"], "name": r["name"], "country": code, "from": "sec"})
+            filled.append({"id": r["id"], "name": r["name"], "country": code,
+                           "hq_country": None, "from": "sec"})
 
     for f in filled:
-        run_command("MATCH (e:Entity {id:$id}) SET e.country = $c", {"id": f["id"], "c": f["country"]})
+        # COALESCE, not assignment: a value already known must not be replaced by
+        # this repair, which only exists to fill blanks.
+        run_command(
+            "MATCH (e:Entity {id:$id}) SET e.country = COALESCE(e.country, $c), "
+            "e.hq_country = COALESCE(e.hq_country, $h)",
+            {"id": f["id"], "c": f["country"], "h": f["hq_country"]})
 
     return {"candidates": len(rows), "filled": len(filled),
             "still_unknown": len(rows) - len(filled), "changes": filled}

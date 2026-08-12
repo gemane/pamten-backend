@@ -149,8 +149,16 @@ from — DEUTSCHE BANK AKTIENGESELLSCHAFT lists New York — so trusting it woul
 German banks to the United States. A filer with only a US address and no stated
 incorporation is left blank, because a wrong country is worse than none.
 
-Still outstanding: the live SEC scraper does not yet set a country on the entities
-it creates, so newly scraped SEC filers still need this pass.
+The live scrapers now set a country themselves, so the pass is a repair for older
+records rather than a routine step: the Wikidata scraper fetches related companies'
+countries during a scrape, and the SEC scraper reads the filer's from EDGAR.
+
+Jurisdiction and headquarters are kept in **separate fields throughout**. Wikidata's
+P17 is a legal domicile and goes to `country`; the country of its P159 headquarters
+goes to `hq_country`. Coalescing them is tempting when one is missing, and it is
+what the Registered/Headquarters switch on the map exists to avoid — an early
+version of the backfill did coalesce, and wrote Morgan, Grenfell & Co.'s London
+headquarters into its jurisdiction field, which the source never claimed.
 
 ### One edge per pair
 

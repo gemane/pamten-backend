@@ -153,6 +153,79 @@ def _cik_int(cik: str) -> str:
     return str(int(cik))
 
 
+def _cik10(cik: str) -> str:
+    """CIK zero-padded to 10 digits, which is what the submissions endpoint wants.
+
+    Callers had drifted: some padded, some passed the raw value, and an unpadded
+    CIK simply 404s. Normalising in one place removes the difference.
+
+    A non-numeric value is passed through untouched rather than raising. Padding is
+    a convenience, not a validator, and turning an odd input into an exception here
+    would surface as a silent None two frames up, where the callers swallow errors.
+    """
+    try:
+        return str(int(cik)).zfill(10)
+    except (TypeError, ValueError):
+        return str(cik)
+
+
+def _submissions(cik: str) -> dict:
+    """The EDGAR submissions document for a CIK.
+
+    Deliberately NOT cached. Several helpers read this same document — the filer's
+    name, former names, LEI and country — so caching looks like an easy saving of
+    two or three requests per scrape. It is not worth it: the document also carries
+    `filings.recent`, and a process-lifetime cache would serve a later scrape an
+    earlier one's filings, silently missing new ones until a restart. Metadata
+    tolerates staleness; filings do not, and they share a URL.
+
+    (Tried it. The SEC holdings tests failed immediately with one test seeing
+    another's filings — the same bug in miniature.)
+    """
+    return _get(f"{SUBMISSIONS_URL}/CIK{_cik10(cik)}.json")
+
+
+#: SEC puts US states and foreign countries in the *same* two-letter field, so a
+#: state has to be recognised rather than assumed to be a country.
+_US_STATES = frozenset(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
+    "MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR".split())
+
+
+def sec_country(submissions: dict) -> str | None:
+    """ISO-2 country for a filer, or None when EDGAR cannot say.
+
+    Incorporation first, business address second, and the order is the whole
+    point. A foreign filer's EDGAR business address is often its US filing office
+    — DEUTSCHE BANK AKTIENGESELLSCHAFT lists New York — so trusting the address
+    would move German banks to the United States. Wrong data is worse than the
+    blank it replaces, so a filer with only a US address and no stated
+    incorporation returns None rather than a guess.
+    """
+    from app.scraper.maintenance import nationality_to_iso2
+
+    inc_code = (submissions.get("stateOfIncorporation") or "").strip().upper()
+    inc_name = (submissions.get("stateOfIncorporationDescription") or "").strip()
+    if inc_code in _US_STATES:
+        return "US"
+    if inc_name:
+        if code := nationality_to_iso2(inc_name):
+            return code
+    business = (submissions.get("addresses") or {}).get("business") or {}
+    if name := (business.get("country") or "").strip():
+        return nationality_to_iso2(name)
+    return None
+
+
+def fetch_filer_country(cik: str) -> str | None:
+    """The filer's country from EDGAR, or None if it cannot be determined."""
+    try:
+        return sec_country(_submissions(cik))
+    except Exception as exc:  # noqa: BLE001 - a country is a nicety, not worth aborting a scrape
+        log.warning("SEC EDGAR: country lookup failed for CIK=%s: %s", cik, exc)
+        return None
+
+
 def _filing_index_url(cik: str, accession: str) -> str | None:
     """
     Canonical, human-readable EDGAR filing index page for a filing, e.g.
@@ -855,7 +928,7 @@ def fetch_insider_holding(name: str, issuer_cik: str,
     if not cik:
         return None
     try:
-        subs = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+        subs = _submissions(cik)
     except httpx.HTTPError:
         return None
     rec   = subs.get("filings", {}).get("recent", {})
@@ -930,7 +1003,7 @@ def fetch_former_names(cik: str) -> list[str]:
     link. Returns the distinct former names (order preserved), or [] on any error.
     """
     try:
-        sub = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+        sub = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - a missing/failed submissions file mustn't abort the scrape
         log.warning("SEC EDGAR: formerNames fetch failed for CIK=%s: %s", cik, exc)
         return []
@@ -952,7 +1025,7 @@ def fetch_company_lei(cik: str) -> str | None:
     many operating companies don't — which lets a SEC entity merge with its GLEIF
     node by ``lei_id`` (no OpenCorporates/Wikidata bridge needed)."""
     try:
-        sub = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+        sub = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - a missing/failed submissions file mustn't abort the scrape
         log.warning("SEC EDGAR: LEI fetch failed for CIK=%s: %s", cik, exc)
         return None
@@ -1063,7 +1136,7 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
 def fetch_filer_name(cik: str) -> str | None:
     """The filer's own name from its EDGAR submissions index, or None."""
     try:
-        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
+        subs = _submissions(cik)
     except Exception as exc:  # noqa: BLE001
         log.warning("SEC EDGAR: name fetch failed for CIK=%s: %s", cik, exc)
         return None
@@ -1093,7 +1166,7 @@ def _iter_filing_pages(cik: str):
     stake disclosed years ago can.
     """
     try:
-        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
+        subs = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - a filer with no submissions file isn't an error
         log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
         return
@@ -1128,7 +1201,7 @@ def fetch_affiliated_managers(cik: str) -> list[dict]:
     affiliation, not as an OWNS edge.
     """
     try:
-        subs = _get(f"{SUBMISSIONS_URL}/CIK{_cik_int(cik).zfill(10)}.json")
+        subs = _submissions(cik)
     except Exception as exc:  # noqa: BLE001
         log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
         return []

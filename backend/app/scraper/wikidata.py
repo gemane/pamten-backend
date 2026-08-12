@@ -310,16 +310,22 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     return details
 
 
-def _fetch_related_countries(qids: set[str]) -> dict[str, str]:
-    """Country (ISO-2) for a set of related-company QIDs, in ONE query.
+def _fetch_related_countries(qids: set[str]) -> dict[str, dict]:
+    """Jurisdiction and headquarters country for related-company QIDs, in ONE query.
 
     Subsidiaries and owners are written as stubs when some *other* company is
     scraped, with no country of their own — so a company that only ever appears as
     an owner never gets one. That is why BlackRock and The Vanguard Group, two of
     the most significant owners in the graph, were absent from the map entirely.
 
-    Falls back to the country of the headquarters (P159 → P17) when the company
-    itself has no P17, which is common for holding companies.
+    Returns ``{qid: {"country": ISO2 | None, "hq_country": ISO2 | None}}``.
+
+    The two are kept apart rather than coalesced. P17 is where the company belongs
+    legally and belongs in `country`; P159's country is where it is *run* and
+    belongs in `hq_country`. Collapsing them into one value is precisely the blur
+    the map's Registered/Headquarters switch exists to avoid — an earlier version
+    of this function did coalesce, and wrote one company's headquarters country
+    into its jurisdiction field.
 
     Batched and pre-aggregated for the same reason as _fetch_person_details: one
     row per company, no combinatorial blow-up.
@@ -328,21 +334,24 @@ def _fetch_related_countries(qids: set[str]) -> dict[str, str]:
         return {}
     values = " ".join(f"wd:{q}" for q in sorted(qids))
     query = f"""
-    SELECT ?item (SAMPLE(?cc) AS ?code) WHERE {{
+    SELECT ?item (SAMPLE(?directCode) AS ?country) (SAMPLE(?hqCode) AS ?hq) WHERE {{
       VALUES ?item {{ {values} }}
       OPTIONAL {{ ?item wdt:P17 ?c . ?c wdt:P297 ?directCode }}
-      OPTIONAL {{ ?item wdt:P159 ?hq . ?hq wdt:P17 ?hc . ?hc wdt:P297 ?hqCode }}
-      BIND(COALESCE(?directCode, ?hqCode) AS ?cc)
-      FILTER(BOUND(?cc))
+      OPTIONAL {{ ?item wdt:P159 ?h . ?h wdt:P17 ?hc . ?hc wdt:P297 ?hqCode }}
     }} GROUP BY ?item
     """
     r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=30)
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     for row in r.json()["results"]["bindings"]:
         qid = _qid(_v(row, "item"))
-        code = (_v(row, "code") or "").strip().upper()
-        if qid and len(code) == 2:
-            out[qid] = code
+        if not qid:
+            continue
+        def code(key: str) -> str | None:
+            v = (_v(row, key) or "").strip().upper()
+            return v if len(v) == 2 else None
+        country, hq = code("country"), code("hq")
+        if country or hq:
+            out[qid] = {"country": country, "hq_country": hq}
     return out
 
 
@@ -370,8 +379,9 @@ def fetch_company_data(qid: str) -> dict | None:
     countries = _fetch_related_countries(company_qids)
     for group in ("subsidiaries", "owners"):
         for item in data.get(group, []) or []:
-            if item.get("qid") in countries:
-                item["country"] = countries[item["qid"]]
+            if found := countries.get(item.get("qid")):
+                item["country"] = found["country"]
+                item["hq_country"] = found["hq_country"]
 
     details = _fetch_person_details(person_qids)
     if details:
