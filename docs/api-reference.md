@@ -198,7 +198,7 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 
 ### Counting companies by country
 
-`GET /entities/by-country?basis=jurisdiction|hq` returns `[{country, count}]`.
+`GET /entities/by-country?basis=jurisdiction|hq|subdivision` returns `[{country, count}]`.
 
 **`basis`** chooses what "country" means, and it changes the answer where it matters —
 BARCLAYS CAPITAL (CAYMAN) LIMITED is `KY` by jurisdiction and `GB` by headquarters:
@@ -207,10 +207,17 @@ BARCLAYS CAPITAL (CAYMAN) LIMITED is `KY` by jurisdiction and `GB` by headquarte
 |---|---|---|
 | `jurisdiction` (default) | `country` | where the company is registered |
 | `hq` | `hq_country` | where it is actually run |
+| `subdivision` | `jurisdiction_code` | registered, one level finer: `US-DE` |
 
 There is **no fallback between them.** A company with no recorded headquarters is not shown
 under its registration country in `hq` mode — that would present a guess as a fact and erase the
 distinction the parameter exists to draw.
+
+`subdivision` keys the groups by ISO 3166-2 (`US-DE`, `CA-ON`), never by country, so a caller
+narrows to one country by prefix rather than mapping the world by it: only ~1% of records state a
+subdivision and only six countries use them at all, which makes the null group most of the graph.
+"United States, no subdivision stated" is the country total minus its `US-` rows — absent means
+*not stated*, never *none*.
 
 Instead, companies with no country for the chosen basis come back as a single group with
 **`country: null`**, so the counts still add up to the whole graph. A tenth of it has no country
