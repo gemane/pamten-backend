@@ -416,7 +416,9 @@ def cmd_geocode(args):
     from app.config import settings
     settings.GEOCODING_ENABLED = True
     from app.scraper.geocode_backfill import backfill
-    result = backfill(limit=args.limit)
+    result = backfill(limit=args.limit, target=args.target)
+    for name, p in result["passes"].items():
+        print(f"  {name:10} geocoded {p['geocoded']} of {p['total']} candidates")
     print(f"Geocoded {result['geocoded']} of {result['entities_total']} candidates")
 
 def cmd_normalize_countries(args):
@@ -555,8 +557,11 @@ def _build_parser():
     p_wipe.set_defaults(func=cmd_wipe_source)
 
     # geocode command
-    p_geo = subparsers.add_parser('geocode', help='Backfill entity HQ lat/lng via Nominatim')
+    p_geo = subparsers.add_parser('geocode',
+        help='Backfill entity coordinates via Nominatim (headquarters AND registered office)')
     p_geo.add_argument('--limit', type=int, help='Max entities to geocode this run')
+    p_geo.add_argument('--target', default='both', choices=['both', 'hq', 'registered'],
+                       help="Which address to geocode (default both — a company has two places)")
     p_geo.set_defaults(func=cmd_geocode)
 
     # normalize-countries command
