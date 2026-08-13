@@ -489,6 +489,26 @@ def cmd_gen_federation_key(args):
     print(f"  public_key={pub}")
     print(f"  key_id={fingerprint(pub)}")
 
+def cmd_backup_database(args):
+    """Take a consistent online backup of the connected database.
+
+    The file is written by the SERVER, into its own backup directory — the
+    command cannot choose a path — so all this prints is the filename. On a
+    production box, where the database is local, ~/scripts/backup-database.sh
+    wraps this to verify, rotate and copy the archive off the machine.
+    """
+    _apply_direct_db_url(args)
+    from app.db.backup import backup_database, BackupError
+    try:
+        res = backup_database()
+    except BackupError as exc:
+        print(f"BACKUP FAILED: {exc}")
+        raise SystemExit(1)
+    print(f"Backed up '{res['database']}' on the server.")
+    # Machine-readable last line: the wrapper script reads the filename from it.
+    print(f"backup_file={res['file']}")
+
+
 def _build_parser():
     parser = argparse.ArgumentParser(description='Owlgraph management')
     subparsers = parser.add_subparsers()
@@ -722,6 +742,13 @@ def _build_parser():
     p_sp.add_argument('--password',
                       help='Non-interactive password (avoid — lands in shell history and ps)')
     p_sp.set_defaults(func=cmd_set_password)
+    # backup-database: server-side online backup (app/db/backup.py explains why a
+    # disk snapshot is not a substitute).
+    p_bk = subparsers.add_parser('backup-database',
+        help="Take a consistent online backup (written to the SERVER's backup directory)")
+    p_bk.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_bk.set_defaults(func=cmd_backup_database)
+
     return parser
 
 
