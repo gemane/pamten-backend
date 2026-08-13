@@ -36,6 +36,19 @@ class TestWhatItRemoves:
             "1521 CONCORD PIKE, WILMINGTON, 19803, US"
 
 
+    def test_the_tail_of_an_agent_name_that_contained_a_comma(self):
+        """"C/O UNITED CORPORATE SERVICES, INC., 800 North State Street" — the
+        care-of strip stops at the first comma, leaving a bare "INC." that
+        Nominatim cannot place. Measured: the street alone resolves exactly, the
+        street with "INC.," in front of it returns nothing at all."""
+        assert clean("C/O UNITED CORPORATE SERVICES, INC., 800 NORTH STATE STREET, "
+                     "DOVER, 19901, US") == "800 NORTH STATE STREET, DOVER, 19901, US"
+
+    @pytest.mark.parametrize("suffix", ["Inc.", "LLC", "Ltd", "GmbH", "S.A.", "N.V.", "PLC"])
+    def test_the_common_suffixes(self, suffix):
+        assert clean(f"C/O Some Agent, {suffix}, 1 High St, London, GB") == "1 High St, London, GB"
+
+
 class TestWhatItLeavesAlone:
     def test_an_ordinary_address_is_unchanged(self):
         addr = "1 CHURCHILL PLACE, LONDON, E14 5HP, GB"
@@ -57,6 +70,17 @@ class TestWhatItLeavesAlone:
         # Returning "" would mean not geocoding at all, which is strictly worse
         # than letting Nominatim have a go.
         assert clean("C/O Someone") == "C/O Someone"
+
+    def test_a_suffix_further_along_is_kept(self):
+        # Only a LEADING fragment is an agent's tail. "Barclays Bank PLC" as the
+        # building's name is the best clue the address has.
+        addr = "1 Churchill Place, Barclays Bank PLC, London, GB"
+        assert clean(addr) == addr
+
+    def test_a_street_that_merely_begins_with_a_suffix_word_survives(self):
+        # "Corporation Trust Center" is a building, not a dangling "Corp".
+        addr = "Corporation Trust Center, 1209 Orange St, Wilmington, 19801, US"
+        assert clean(addr) == addr
 
     def test_empty_stays_empty(self):
         assert clean("") == ""

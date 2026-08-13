@@ -107,6 +107,13 @@ _PO_BOX     = re.compile(r"\bp\.?\s?o\.?\s?box\s+[^,]*,?\s*", re.I)
 _UNIT_PART  = re.compile(
     r"^\s*(?:suite|ste|unit|apt|apartment|floor|fl|of\.?|office|room|rm|"
     r"[0-9]+(?:st|nd|rd|th)\s+floor|mc-[a-z0-9]+)\b[^,]*$", re.I)
+#: What is left of an agent's name when the care-of strip stops at the first
+#: comma and the name itself contained one: "C/O UNITED CORPORATE SERVICES, INC.,
+#: 800 North State Street, …" leaves a bare "INC.". Nominatim finds nothing for
+#: "INC., 800 North State Street, Dover" and the street alone on its own line.
+_SUFFIX_ONLY = re.compile(
+    r"^(?:inc|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|plc|s\.?a|"
+    r"n\.?v|b\.?v|gmbh|ag|lp|llp|sarl|s\.?r\.?l|pty|oy|ab)\.?$", re.I)
 
 
 def clean_for_geocoding(address: str) -> str:
@@ -125,6 +132,10 @@ def clean_for_geocoding(address: str) -> str:
     q = _PO_BOX.sub("", q)
     parts = [p.strip() for p in q.split(",")]
     parts = [p for p in parts if p and not _UNIT_PART.match(p)]
+    # Only at the front, and only once: a stray "Inc." there is the tail of an
+    # agent's name, while "Ltd" further along may be part of the building's.
+    if parts and _SUFFIX_ONLY.match(parts[0]):
+        parts = parts[1:]
     cleaned = ", ".join(parts).strip(" ,")
     # Never hand back nothing: an address made entirely of care-of and suite
     # lines is better tried as-is than not tried at all.
