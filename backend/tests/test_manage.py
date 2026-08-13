@@ -196,14 +196,26 @@ class TestGeocodeCommand:
         from app.scraper import geocode_backfill
 
         printed: list[str] = []
-        monkeypatch.setattr(geocode_backfill, "backfill", lambda limit=None: result)
+        monkeypatch.setattr(geocode_backfill, "backfill",
+                            lambda limit=None, target="both": result)
         monkeypatch.setattr("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a))))
-        manage.cmd_geocode(types.SimpleNamespace(limit=None))
+        manage.cmd_geocode(types.SimpleNamespace(limit=None, target="both"))
         return "\n".join(printed)
 
     def test_prints_a_summary_without_raising(self, monkeypatch):
-        out = self._run(monkeypatch, {"entities_total": 7, "entities_geocoded": 3, "geocoded": 3})
+        out = self._run(monkeypatch, {"entities_total": 7, "entities_geocoded": 3, "geocoded": 3,
+                                      "passes": {"hq": {"total": 7, "geocoded": 3}}})
         assert "3" in out and "7" in out
+
+    def test_reports_each_pass_separately(self, monkeypatch):
+        """A single total hides the case that matters: the HQ pass working while
+        the registered one geocodes nothing, which is what "the switch does
+        nothing" looked like from the import log."""
+        out = self._run(monkeypatch, {"entities_total": 10, "entities_geocoded": 6, "geocoded": 6,
+                                      "passes": {"hq": {"total": 5, "geocoded": 5},
+                                                 "registered": {"total": 5, "geocoded": 1}}})
+        assert "hq" in out and "registered" in out
+        assert "1" in out
 
     def test_only_reads_keys_backfill_actually_returns(self, monkeypatch):
         """The regression itself: the summary must not reach for a key that is
@@ -214,7 +226,10 @@ class TestGeocodeCommand:
         # are the ones the implementation genuinely produces.
         monkeypatch.setattr(geocode_backfill, "run_query", lambda *a, **k: [])
         monkeypatch.setattr(geocode_backfill, "run_command", lambda *a, **k: None)
-        real_keys = set(geocode_backfill.backfill())
+        # The real return value, not a dict of its keys zeroed: the summary now
+        # walks a nested `passes` map, and a flattened stand-in would pass while
+        # the command crashed on the genuine shape.
+        real = geocode_backfill.backfill()
 
-        out = self._run(monkeypatch, {k: 0 for k in real_keys})
-        assert out  # no KeyError
+        out = self._run(monkeypatch, real)
+        assert out  # no KeyError, no AttributeError

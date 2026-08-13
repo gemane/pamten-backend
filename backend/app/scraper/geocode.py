@@ -12,6 +12,7 @@ never requested twice in a process. The coordinates persisted on each Entity act
 as the durable cache, so backfills only ever geocode what is still missing.
 """
 import logging
+import re
 import threading
 import time
 
@@ -98,13 +99,45 @@ _STREET_LEVEL_RANK = 26
 _full_cache: dict[str, tuple[Coord, str] | None] = {}
 
 
+#: Parts of a company address that mean something to a postal service and
+#: nothing to a gazetteer. Nominatim matches places, so a care-of company name or
+#: a suite number in front of the street stops it finding the street at all.
+_CO_PREFIX  = re.compile(r"^\s*c[/.\s]?o[.\s]+[^,]+,\s*", re.I)
+_PO_BOX     = re.compile(r"\bp\.?\s?o\.?\s?box\s+[^,]*,?\s*", re.I)
+_UNIT_PART  = re.compile(
+    r"^\s*(?:suite|ste|unit|apt|apartment|floor|fl|of\.?|office|room|rm|"
+    r"[0-9]+(?:st|nd|rd|th)\s+floor|mc-[a-z0-9]+)\b[^,]*$", re.I)
+
+
+def clean_for_geocoding(address: str) -> str:
+    """Strip the parts of an address a gazetteer cannot use.
+
+    Registered offices are mostly agents' addresses: "C/O The Corporation Trust
+    Company, Corporation Trust Center, 1209 Orange St, Wilmington, 19801, US".
+    Nominatim reads that leading company name as a place and finds nothing, so
+    265 of 480 registered addresses resolved to nothing at all.
+
+    **The stored value is not touched.** Owlgraph keeps addresses exactly as the
+    source gave them — a `C/O` line is a real part of a real address, and the
+    right place to work around a tool's limits is at the tool, not in the record.
+    """
+    q = _CO_PREFIX.sub("", address or "")
+    q = _PO_BOX.sub("", q)
+    parts = [p.strip() for p in q.split(",")]
+    parts = [p for p in parts if p and not _UNIT_PART.match(p)]
+    cleaned = ", ".join(parts).strip(" ,")
+    # Never hand back nothing: an address made entirely of care-of and suite
+    # lines is better tried as-is than not tried at all.
+    return cleaned or (address or "").strip()
+
+
 def geocode_full(query: str) -> tuple[Coord, str] | None:
     """Free-text geocode a FULL address → ((lat, lng), precision) where precision is
     'exact' for a street/building-level match or 'approx' for a coarser (town+) one.
     None when disabled, empty, or no match — the caller then falls back to city geocoding."""
     if not settings.GEOCODING_ENABLED or not (query or "").strip():
         return None
-    q = query.strip()
+    q = clean_for_geocoding(query)
     if q in _full_cache:
         return _full_cache[q]
     _throttle()
