@@ -127,3 +127,74 @@ class TestItReachesTheGeocoder:
         geocode.geocode_full("C/O Agent Ltd, 1 High St, London, GB")
 
         assert seen["q"] == "1 High St, London, GB"
+
+
+class TestRetryWithoutTheLeadingSegment:
+    """A company address often begins with something that is not a place.
+
+    GLEIF's record for Microsoft India Corporation is "CSC Services of Nevada,
+    2215-B, Renaissance Drive, Las Vegas,, Renaissance Drive, 89119, US" — the
+    agent's name in front, and a `city` field containing a street name, which is
+    wrong at the source and stored faithfully anyway. Measured against Nominatim:
+    the whole thing finds nothing; without the first segment it resolves to the
+    street, rank 26.
+    """
+
+    def _geocoder(self, monkeypatch, answers):
+        """Nominatim that answers per query, recording what it was asked."""
+        from app.config import settings
+        from app.scraper import geocode
+
+        asked: list[str] = []
+        monkeypatch.setattr(settings, "GEOCODING_ENABLED", True)
+        monkeypatch.setattr(geocode, "_throttle", lambda: None)
+        geocode._full_cache.clear()
+
+        class Resp:
+            def __init__(self, payload): self._p = payload
+            def raise_for_status(self): pass
+            def json(self): return self._p
+
+        class Client:
+            def get(self, url, params=None):
+                q = (params or {})["q"]
+                asked.append(q)
+                return Resp(answers.get(q, []))
+
+        monkeypatch.setattr(geocode, "_get_client", lambda: Client())
+        monkeypatch.setattr(geocode.geo_cache if hasattr(geocode, "geo_cache") else geocode,
+                            "__name__", "geocode", raising=False)
+        from app.scraper import geo_cache
+        monkeypatch.setattr(geo_cache, "lookup", lambda q: None)
+        monkeypatch.setattr(geo_cache, "store", lambda *a, **k: None)
+        return geocode, asked
+
+    def test_retries_without_the_agent_name(self, monkeypatch):
+        hit = [{"lat": "36.10", "lon": "-115.12", "place_rank": 26}]
+        geocode, asked = self._geocoder(monkeypatch, {
+            "2215-B, Renaissance Drive, Las Vegas, 89119, US": hit,
+        })
+        got = geocode.geocode_full(
+            "CSC Services of Nevada, 2215-B, Renaissance Drive, Las Vegas, 89119, US")
+        assert got == ((36.10, -115.12), "exact")
+        assert len(asked) == 2                      # full first, then shortened
+
+    def test_does_not_retry_when_the_first_try_works(self, monkeypatch):
+        # The retry costs a request from a one-per-second budget; it is for
+        # addresses that would otherwise have no coordinates at all.
+        hit = [{"lat": "51.5", "lon": "-0.1", "place_rank": 30}]
+        geocode, asked = self._geocoder(monkeypatch, {"1 High St, London, GB": hit})
+        assert geocode.geocode_full("1 High St, London, GB") is not None
+        assert asked == ["1 High St, London, GB"]
+
+    def test_never_reduces_an_address_to_a_country(self, monkeypatch):
+        """"London, GB" must not become "GB": a bare country returns its
+        centroid, the one answer worse than none."""
+        geocode, asked = self._geocoder(monkeypatch, {})
+        assert geocode.geocode_full("London, GB") is None
+        assert asked == ["London, GB"]              # no retry attempted
+
+    def test_still_returns_nothing_when_neither_form_resolves(self, monkeypatch):
+        geocode, asked = self._geocoder(monkeypatch, {})
+        assert geocode.geocode_full("A, B, C, D") is None
+        assert asked == ["A, B, C, D", "B, C, D"]

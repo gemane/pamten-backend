@@ -164,25 +164,53 @@ def geocode_full(query: str) -> tuple[Coord, str] | None:
         _full_cache[q] = result
         return result
 
-    _throttle()
     result: tuple[Coord, str] | None = None
     try:
-        resp = _get_client().get(settings.NOMINATIM_URL,
-                                 params={"q": q, "format": "json", "limit": "1"})
-        resp.raise_for_status()
-        data = resp.json()
-        if data:
-            coord = (float(data[0]["lat"]), float(data[0]["lon"]))
-            rank = int(data[0].get("place_rank") or 0)
-            result = (coord, "exact" if rank >= _STREET_LEVEL_RANK else "approx")
-        # Only a clean answer is worth remembering. A transport error below is
-        # not evidence about the address, and caching it as a miss would hide the
-        # address for a month over one flaky request.
+        result = _ask(q)
+        # A company's address often begins with something that is not a place:
+        # its registered agent. "CSC Services of Nevada, 2215-B, Renaissance
+        # Drive, Las Vegas, 89119" finds nothing; drop that first segment and the
+        # street resolves exactly. The care-of strip only catches the ones written
+        # "c/o", and most are not.
+        #
+        # Only on a miss, so the cost is one extra request for an address that
+        # would otherwise have had no coordinates at all — and only once ever,
+        # because the answer is cached against the original query.
+        if result is None:
+            shortened = _without_leading_segment(q)
+            if shortened:
+                result = _ask(shortened)
         geo_cache.store(q, result[0] if result else None, result[1] if result else None)
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
         log.warning("Geocoding (full) failed (%s): %s", q, exc)
     _full_cache[q] = result
     return result
+
+
+def _ask(q: str) -> tuple[Coord, str] | None:
+    """One Nominatim free-text lookup, throttled. Raises on transport trouble —
+    a network error is not evidence about the address."""
+    _throttle()
+    resp = _get_client().get(settings.NOMINATIM_URL,
+                             params={"q": q, "format": "json", "limit": "1"})
+    resp.raise_for_status()
+    data = resp.json()
+    if not data:
+        return None
+    coord = (float(data[0]["lat"]), float(data[0]["lon"]))
+    rank = int(data[0].get("place_rank") or 0)
+    return coord, "exact" if rank >= _STREET_LEVEL_RANK else "approx"
+
+
+def _without_leading_segment(q: str) -> str | None:
+    """The address minus its first comma-separated part, or None if that would
+    leave too little to be worth asking about.
+
+    Three parts minimum, so "London, GB" is never reduced to "GB" — a country on
+    its own returns a centroid, which is the one answer worse than none.
+    """
+    parts = [p.strip() for p in q.split(",") if p.strip()]
+    return ", ".join(parts[1:]) if len(parts) >= 3 else None
 
 
 def _query(params: dict) -> Coord | None:
