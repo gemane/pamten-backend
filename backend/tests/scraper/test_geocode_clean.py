@@ -44,6 +44,18 @@ class TestWhatItRemoves:
                      "SOUTH CHURCH STREET, GRAND CAYMAN, KY1-1104, KY") == \
             "UGLAND HOUSE, SOUTH CHURCH STREET, GRAND CAYMAN, KY1-1104, KY"
 
+    def test_a_segment_that_has_already_appeared(self):
+        """GLEIF's record for Microsoft India Corporation puts a street name in the
+        `city` field, so the address says "Renaissance Drive" twice. Measured:
+        Nominatim finds nothing until the repeat is gone, and the street exactly
+        once it is. A gazetteer learns nothing from being told a thing twice."""
+        assert clean("CSC Services of Nevada, 2215-B, Renaissance Drive, Las Vegas,, "
+                     "Renaissance Drive, 89119, US") == \
+            "CSC Services of Nevada, 2215-B, Renaissance Drive, Las Vegas, 89119, US"
+
+    def test_the_repeat_check_ignores_case(self):
+        assert clean("1 High St, LONDON, London, GB") == "1 High St, LONDON, GB"
+
     @pytest.mark.parametrize("unit", ["SUITE 201", "Ste 700", "Floor 3", "3rd Floor",
                                       "Unit 12", "Of. 1733", "Room 4"])
     def test_a_unit_designator_between_street_and_city(self, unit):
@@ -178,6 +190,19 @@ class TestRetryWithoutTheLeadingSegment:
             "CSC Services of Nevada, 2215-B, Renaissance Drive, Las Vegas, 89119, US")
         assert got == ((36.10, -115.12), "exact")
         assert len(asked) == 2                      # full first, then shortened
+
+    def test_the_reported_company_ends_up_placed(self, monkeypatch):
+        """Dedupe and retry are both needed for it, which is why it is asserted
+        end to end: the agent's name has to go AND the duplicated city, and each
+        alone still returns nothing."""
+        hit = [{"lat": "36.1033815", "lon": "-115.1221859", "place_rank": 26}]
+        geocode, asked = self._geocoder(monkeypatch, {
+            "2215-B, Renaissance Drive, Las Vegas, 89119, US": hit,
+        })
+        got = geocode.geocode_full(
+            "CSC Services of Nevada, 2215-B, Renaissance Drive, Las Vegas,, "
+            "Renaissance Drive, 89119, US")
+        assert got == ((36.1033815, -115.1221859), "exact")
 
     def test_does_not_retry_when_the_first_try_works(self, monkeypatch):
         # The retry costs a request from a one-per-second budget; it is for

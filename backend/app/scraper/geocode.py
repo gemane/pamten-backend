@@ -132,6 +132,13 @@ def clean_for_geocoding(address: str) -> str:
     q = _PO_BOX.sub("", q)
     parts = [p.strip() for p in q.split(",")]
     parts = [p for p in parts if p and not _UNIT_PART.match(p)]
+    # Drop a segment that has already appeared. GLEIF's record for Microsoft
+    # India Corporation puts a street name in the `city` field, so the address
+    # reads "… Renaissance Drive, Las Vegas, Renaissance Drive, 89119" — and
+    # Nominatim finds nothing until the repeat is gone. A gazetteer learns
+    # nothing from being told the same thing twice.
+    seen: set[str] = set()
+    parts = [p for p in parts if not (p.casefold() in seen or seen.add(p.casefold()))]
     # Only at the front, and only once: a stray "Inc." there is the tail of an
     # agent's name, while "Ltd" further along may be part of the building's.
     if parts and _SUFFIX_ONLY.match(parts[0]):
