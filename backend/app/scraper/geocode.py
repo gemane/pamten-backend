@@ -151,6 +151,19 @@ def geocode_full(query: str) -> tuple[Coord, str] | None:
     q = clean_for_geocoding(query)
     if q in _full_cache:
         return _full_cache[q]
+
+    # The durable cache, before spending a request. Company addresses repeat
+    # heavily — one registered agent's building serves 24 companies in the dev
+    # graph — and misses are cached too, since re-asking about an address
+    # OpenStreetMap does not have is the most wasteful thing this could do.
+    from app.scraper import geo_cache          # local: avoids an import cycle
+    cached = geo_cache.lookup(q)
+    if cached is not None:
+        coord, precision = cached
+        result = (coord, precision or "approx") if coord else None
+        _full_cache[q] = result
+        return result
+
     _throttle()
     result: tuple[Coord, str] | None = None
     try:
@@ -162,6 +175,10 @@ def geocode_full(query: str) -> tuple[Coord, str] | None:
             coord = (float(data[0]["lat"]), float(data[0]["lon"]))
             rank = int(data[0].get("place_rank") or 0)
             result = (coord, "exact" if rank >= _STREET_LEVEL_RANK else "approx")
+        # Only a clean answer is worth remembering. A transport error below is
+        # not evidence about the address, and caching it as a miss would hide the
+        # address for a month over one flaky request.
+        geo_cache.store(q, result[0] if result else None, result[1] if result else None)
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
         log.warning("Geocoding (full) failed (%s): %s", q, exc)
     _full_cache[q] = result

@@ -74,6 +74,11 @@ _INDEXES: list[tuple[str, str, str]] = [
     # Import checkpoints — e.g. the last GLEIF publish a delta update applied, so
     # the daily refresh can pick a catch-up interval that covers any missed runs.
     ("ImportState", "key",          "UNIQUE"),
+    # Address -> coordinate cache, so a shared registered-agent building is
+    # geocoded once rather than once per company registered there (24 companies
+    # share one Wilmington address in the dev graph alone). UNIQUE on the cleaned
+    # query string, which is also the only way it is ever looked up.
+    ("GeoCache",    "query",        "UNIQUE"),
     # Runtime settings a deploy should not be needed to change — currently the
     # mobile minimum-supported-version policy (see routers/app_version.py). Keyed
     # so a lookup is indexed; the value is JSON so a policy updates atomically.

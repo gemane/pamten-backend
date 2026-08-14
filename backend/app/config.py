@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # different sources spelled differently. Only high-confidence, non-distinct
     # groups are merged; medium/low go to the review panel. Set false to disable.
     SCRAPER_AUTODEDUP_ENABLED:        bool = True
+    # Geocode the scraped company right after a scrape, so its pin exists when the
+    # user looks at the map. Only the TARGET company (at most two Nominatim calls,
+    # one per place) — everything else the scrape touched is left to the batch
+    # pass, because a depth-2 scrape can touch hundreds of entities and Nominatim
+    # allows one request a second. Also requires GEOCODING_ENABLED.
+    SCRAPER_GEOCODE_ENABLED:          bool = True
     # On-demand (instant-source) scraping: a company already scraped within this
     # many days is served straight from the DB — no re-scrape — unless the user
     # forces it. "Never on-demand scraped" and "> this many days" both re-scrape.

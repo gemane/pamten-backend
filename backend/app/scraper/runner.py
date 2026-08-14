@@ -63,16 +63,18 @@ def _opencorporates_url(jurisdiction_code: str | None, company_number: str | Non
 log = logging.getLogger(__name__)
 
 
-def _geocode_and_attach(entity_id: str, address: dict) -> None:
+def _geocode_registered_and_attach(entity_id: str, address: dict) -> None:
     """
-    Best-effort: geocode an address and write the coordinates plus city/country
-    onto the Entity, so the map can place a pin without traversing edges. Keeps
-    any values already present (COALESCE(existing, new)) so richer data is never
-    clobbered.
+    Best-effort: geocode a REGISTERED address and write it to the registered
+    fields, so the map can place a pin without traversing edges. Keeps any values
+    already present (COALESCE(existing, new)) so richer data is never clobbered.
 
-    This used to also write lat/lng to a parallel Location node. The Entity is
-    now the only home for a location, so there is one place to read and one
-    place to keep correct.
+    It used to write these coordinates into `hq_*`. That conflated two different
+    places: a registered office is frequently an agent's door — 24 companies in
+    the dev graph share one building in Wilmington — and calling it a headquarters
+    put the company somewhere it has never traded. The map now draws one or the
+    other from the Registered/Headquarters switch, so the distinction has to hold
+    at the point of writing.
     """
     coord = geocode_address(address)
     lat, lng = coord if coord else (None, None)
@@ -80,15 +82,16 @@ def _geocode_and_attach(entity_id: str, address: dict) -> None:
         session.run(
             """
             MATCH (e:Entity {id: $id})
-            SET e.hq_city    = COALESCE(e.hq_city, $city),
-                e.hq_country = COALESCE(e.hq_country, $country),
-                e.hq_lat     = COALESCE(e.hq_lat, $lat),
-                e.hq_lng     = COALESCE(e.hq_lng, $lng)
+            SET e.country    = COALESCE(e.country, $country),
+                e.reg_lat    = COALESCE(e.reg_lat, $lat),
+                e.reg_lng    = COALESCE(e.reg_lng, $lng),
+                e.reg_geo_precision = COALESCE(e.reg_geo_precision, $prec)
             """,
             id=entity_id,
-            city=address.get("city") or None,
             country=address.get("country") or None,
             lat=lat, lng=lng,
+            # geocode_address works from city/country, so town level at best.
+            prec="approx" if coord else None,
         )
 
 # Source metadata comes from the catalogue in app/scraper/sources.py — one
@@ -1594,7 +1597,7 @@ def run_scrape_open_corporates(company_name: str) -> dict:
     # Registered address → geocoded onto the entity itself.
     address = data.get("registered_address") or {}
     if address.get("city") or address.get("country"):
-        _geocode_and_attach(target_id, address)
+        _geocode_registered_and_attach(target_id, address)
         city    = address.get("city", "")
         country = address.get("country", "")
         scraped.append({"type": "location", "city": city, "country": country,

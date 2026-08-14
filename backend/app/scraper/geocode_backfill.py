@@ -52,14 +52,21 @@ _PASSES = {
 }
 
 
-def _run_pass(name: str, limit: int | None) -> dict:
+def _run_pass(name: str, limit: int | None, ids: list[str] | None = None) -> dict:
     f = _PASSES[name]
     sources = [f["full"], f["city"], f["country"]]
     have_any = " OR ".join(f"e.{c} IS NOT NULL" for c in sources if c)
+    # Scoped to the ids a scrape just touched, when given. Inlined rather than
+    # parameterised: ArcadeDB's Cypher will not take a list parameter (see the
+    # gotchas in maintenance.py), and the ids are internally generated.
+    scope = ""
+    if ids is not None:
+        quoted = ", ".join("'" + i.replace("'", "") + "'" for i in ids)
+        scope = f" AND e.id IN [{quoted}]"
 
     query = f"""
         MATCH (e:Entity)
-        WHERE e.{f['lat']} IS NULL AND ({have_any})
+        WHERE e.{f['lat']} IS NULL AND ({have_any}){scope}
         RETURN e.id AS id, e.{f['full']} AS full,
                {f"e.{f['city']} AS city," if f['city'] else "null AS city,"}
                {f"e.{f['country']} AS country" if f['country'] else "null AS country"}
@@ -95,6 +102,26 @@ def _run_pass(name: str, limit: int | None) -> dict:
         geocoded += 1
 
     return {"total": len(rows), "geocoded": geocoded}
+
+
+def geocode_entities(ids: list[str], target: str = "both") -> dict:
+    """Geocode a specific set of entities — the ones a scrape just touched.
+
+    Same two passes as the batch backfill, so there is one definition of what a
+    company's two places are and how they are filled. Bounded by the caller:
+    Nominatim allows one request a second, and a scrape a user is waiting on can
+    afford a couple, not a couple of hundred.
+    """
+    if not ids:
+        return {"passes": {}, "entities_total": 0, "entities_geocoded": 0, "geocoded": 0}
+    names = [HQ, REGISTERED] if target == "both" else [target]
+    passes = {n: _run_pass(n, None, ids) for n in names}
+    return {
+        "passes": passes,
+        "entities_total":    sum(p["total"] for p in passes.values()),
+        "entities_geocoded": sum(p["geocoded"] for p in passes.values()),
+        "geocoded":          sum(p["geocoded"] for p in passes.values()),
+    }
 
 
 def backfill(limit: int | None = None, target: str = "both") -> dict:
