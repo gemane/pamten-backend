@@ -9,6 +9,21 @@ from app.config import settings
 
 
 @pytest.fixture(autouse=True)
+def _no_geocache(monkeypatch):
+    """Take the durable cache out of these tests.
+
+    They exercise the HTTP path with no database behind them, and `lookup` now
+    lets a ConnectionError through on purpose — if the database is unreachable
+    the answer has nowhere to go, so spending a Nominatim request would be
+    waste. Stubbing it here keeps that production behaviour intact while these
+    tests stay about the request and the parsing.
+    """
+    from app.scraper import geo_cache
+    monkeypatch.setattr(geo_cache, "lookup", lambda q: None)
+    monkeypatch.setattr(geo_cache, "store", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
 def _enabled(monkeypatch):
     monkeypatch.setattr(settings, "GEOCODING_ENABLED", True)
     monkeypatch.setattr(settings, "GEOCODING_MIN_INTERVAL", 0.0)  # no real sleeping

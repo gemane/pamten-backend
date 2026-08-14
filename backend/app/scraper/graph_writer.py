@@ -107,6 +107,52 @@ def _run_scoped_autodedup(touched_persons: list, touched_entities: list) -> dict
     return out
 
 
+def _scrape_target_after(target: dict | None) -> dict | None:
+    """The target's id after the scoped dedup, which may have merged it away.
+
+    MergedId keeps a forwarding address for exactly this; following it means the
+    coordinates land on the surviving company rather than on a node the graph no
+    longer serves.
+    """
+    if not target or not target.get("id"):
+        return target
+    try:
+        from app.database import db
+        from app.merged_ids import resolve_current_id
+        with db.get_session() as session:
+            survivor = resolve_current_id(session, target["id"])
+        return {**target, "id": survivor} if survivor else target
+    except Exception:  # noqa: BLE001 - a lookup failure just means "unchanged"
+        return target
+
+
+def _geocode_after_scrape(target: dict | None) -> dict:
+    """Place the company the user just scraped, so its pin exists when they look.
+
+    **The target only, not everything the scrape touched.** A depth-2 scrape can
+    touch hundreds of entities, and Nominatim allows one request a second — the
+    user would be waiting minutes. The target costs at most two requests (its
+    headquarters and its registered office), usually fewer once the shared
+    address cache has seen the address before.
+
+    Everything else is left to the batch pass, which is not on a user's clock.
+
+    Best-effort, like the dedup beside it: a company without a pin is a smaller
+    problem than a scrape that failed.
+    """
+    if not (settings.SCRAPER_GEOCODE_ENABLED and settings.GEOCODING_ENABLED):
+        return {}
+    if not target or not target.get("id"):
+        return {}
+    try:
+        from app.scraper.geocode_backfill import geocode_entities
+        res = geocode_entities([target["id"]])
+        return {"geocoding": {"geocoded": res["geocoded"]}}
+    except Exception as exc:  # noqa: BLE001 - never fail a scrape on geocoding
+        log.error("Geocoding after scrape failed for %s: %s", target.get("id"), exc)
+        return {"geocoding": {"status": "error", "detail": str(exc)}}
+
+
 def _with_autodedup(fn):
     """Wrap a scrape entry point so it collects the persons/entities it touches and,
     when it finishes, runs the scoped auto-dedup and stitches the summary into the
@@ -134,5 +180,9 @@ def _with_autodedup(fn):
             _stamp_scrape_freshness(target)
         if isinstance(result, dict):
             result.update(_run_scoped_autodedup(touched_p, touched_e))
+            # After the dedup, not before: a merge can fold the target into a
+            # survivor, and geocoding the id that no longer exists would write
+            # coordinates nobody reads.
+            result.update(_geocode_after_scrape(_scrape_target_after(target)))
         return result
     return wrapper
