@@ -47,12 +47,17 @@ def lookup(query: str) -> tuple[Coord | None, str | None] | None:
             "g.precision AS precision, g.checked_at AS checked_at LIMIT 1",
             {"q": query},
         )
-    except Exception as exc:  # noqa: BLE001
-        # The cache is an optimisation, never a dependency. An unreachable
-        # database means "not cached" and the geocoder carries on; treating it as
-        # a failure would take geocoding down with the cache.
-        log.warning("Geocode cache read failed for %r: %s", query[:60], exc)
-        return None
+    except ConnectionError:
+        # Deliberately NOT swallowed. If the database is unreachable the caller
+        # cannot store the answer either — on the entity or here — so geocoding
+        # anyway would spend a request from a rate-limited free service to
+        # produce a coordinate that goes nowhere, and would hide the outage
+        # behind a slow, silently useless run. Fail here, before the request.
+        #
+        # Nothing else needs catching: a MATCH on a type that does not exist
+        # returns an empty result, so a database predating GeoCache reads as
+        # "not cached" without any special handling.
+        raise
     if not rows:
         return None
     row = rows[0]
@@ -95,7 +100,15 @@ def store(query: str, coord: Coord | None, precision: str | None) -> None:
                 "precision: $prec, checked_at: $now})",
                 {"q": query, "lat": lat, "lng": lng, "prec": precision, "now": now},
             )
-    except Exception as exc:  # noqa: BLE001 — never fail a geocode on the cache
+    except ConnectionError:
+        # Same reasoning as `lookup`: an unreachable database is the caller's
+        # problem to hear about, not something to paper over.
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Anything else is cache-specific and survivable — most plausibly two
+        # workers racing to CREATE the same address and one losing to the UNIQUE
+        # index. The coordinate is already paid for and still gets written to the
+        # entity; only the cache entry is lost.
         log.warning("Geocode cache write failed for %r: %s", query[:60], exc)
 
 

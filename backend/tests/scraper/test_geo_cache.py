@@ -85,17 +85,60 @@ class TestMisses:
         assert geo_cache.lookup("Odd Row") is None
 
 
-class TestItCannotBreakGeocoding:
-    def test_a_read_failure_means_not_cached(self):
-        # An unreachable database must not take geocoding down with it — the
-        # caller carries on and asks Nominatim, which is exactly what it did
-        # before this cache existed.
-        with patch.object(geo_cache, "run_query", side_effect=RuntimeError("db down")):
+class TestAnUnreachableDatabase:
+    """It is NOT treated as "not cached", which was the first design and was wrong.
+
+    If the database is unreachable the caller cannot store the answer either — not
+    on the entity, not in the cache — so carrying on would spend a request from a
+    rate-limited free service to produce a coordinate that goes nowhere, and would
+    hide the outage behind a slow, silently useless run.
+    """
+
+    def test_a_read_propagates(self):
+        with patch.object(geo_cache, "run_query",
+                          side_effect=ConnectionError("ArcadeDB unreachable")):
+            with pytest.raises(ConnectionError):
+                geo_cache.lookup("1 High St")
+
+    def test_a_write_propagates(self):
+        with patch.object(geo_cache, "run_command",
+                          side_effect=ConnectionError("ArcadeDB unreachable")):
+            with pytest.raises(ConnectionError):
+                geo_cache.store("1 High St", (51.5, -0.1), "exact")
+
+    def test_no_request_is_spent_when_the_database_is_down(self, monkeypatch):
+        """The point, stated where it can regress: Nominatim must not be called
+        at all if the answer has nowhere to go."""
+        from app.config import settings
+        from app.scraper import geocode
+
+        monkeypatch.setattr(settings, "GEOCODING_ENABLED", True)
+        geocode._full_cache.clear()
+        monkeypatch.setattr(geo_cache, "run_query",
+                            lambda *a, **k: (_ for _ in ()).throw(ConnectionError("down")))
+
+        def explode():
+            raise AssertionError("Nominatim was called with a dead database")
+        monkeypatch.setattr(geocode, "_get_client", lambda: explode())
+
+        with pytest.raises(ConnectionError):
+            geocode.geocode_full("1 High St, London")
+
+
+class TestSurvivableCacheProblems:
+    def test_a_type_that_does_not_exist_reads_as_not_cached(self):
+        # Verified against ArcadeDB 26.7.3: MATCH on an unknown type returns an
+        # empty result rather than an error, so a database predating GeoCache
+        # needs no special handling — and none is written.
+        with patch.object(geo_cache, "run_query", return_value=[]):
             assert geo_cache.lookup("1 High St") is None
 
-    def test_a_write_failure_is_swallowed(self):
+    def test_a_losing_race_to_create_is_swallowed(self):
+        # Two workers geocoding the same address: one loses to the UNIQUE index.
+        # The coordinate is already paid for and still reaches the entity; only
+        # the cache entry is lost.
         with patch.object(geo_cache, "run_query", return_value=[]), \
-             patch.object(geo_cache, "run_command", side_effect=RuntimeError("db down")):
+             patch.object(geo_cache, "run_command", side_effect=RuntimeError("duplicate key")):
             geo_cache.store("1 High St", (51.5, -0.1), "exact")   # must not raise
 
     def test_an_empty_query_is_ignored(self):

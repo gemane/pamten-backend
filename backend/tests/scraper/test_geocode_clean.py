@@ -13,6 +13,21 @@ import pytest
 from app.scraper.geocode import clean_for_geocoding as clean
 
 
+
+@pytest.fixture(autouse=True)
+def _no_geocache(monkeypatch):
+    """Take the durable cache out of these tests.
+
+    They exercise the HTTP path with no database behind them, and `lookup` now
+    lets a ConnectionError through on purpose — if the database is unreachable
+    the answer has nowhere to go, so spending a Nominatim request would be
+    waste. Stubbing it here keeps that production behaviour intact while these
+    tests stay about the request and the parsing.
+    """
+    from app.scraper import geo_cache
+    monkeypatch.setattr(geo_cache, "lookup", lambda q: None)
+    monkeypatch.setattr(geo_cache, "store", lambda *a, **k: None)
+
 class TestWhatItRemoves:
     def test_a_care_of_agent_prefix(self):
         assert clean("C/O The Corporation Trust Company, Corporation Trust Center, "
