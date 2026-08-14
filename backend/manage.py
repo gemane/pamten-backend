@@ -452,6 +452,21 @@ def cmd_backfill_countries(args):
           f"({result['still_unknown']} still unknown — the source has none either)")
 
 
+def cmd_backfill_sec_headquarters(args):
+    """Fill in SEC filers' headquarters from EDGAR's business address.
+
+    Separate from backfill-countries on purpose: that fills where a company is
+    REGISTERED, this fills where it is RUN, and EDGAR's business address is only
+    good evidence of the second.
+    """
+    from app.scraper.maintenance import backfill_sec_headquarters
+    res = backfill_sec_headquarters(limit=args.limit)
+    for c in res["changes"][:20]:
+        print(f"  {c['name'][:40]:42} {c['country']}  {c['address'][:48]}")
+    print(f"Filled {res['filled']} of {res['candidates']} SEC filers "
+          f"({res['still_unknown']} EDGAR could not place)")
+
+
 def cmd_backfill_entity_sources(args):
     from app.scraper.maintenance import backfill_entity_sources
     result = backfill_entity_sources()
@@ -573,6 +588,12 @@ def _build_parser():
     p_nat = subparsers.add_parser('normalize-nationalities',
                                   help='Convert Person.nationality demonyms ("British") to ISO-2 codes')
     p_nat.set_defaults(func=cmd_normalize_nationalities)
+
+    # backfill-sec-headquarters: EDGAR's business address -> hq_* (where it is RUN)
+    p_hq = subparsers.add_parser('backfill-sec-headquarters',
+        help="Fill SEC filers' hq_address/hq_city/hq_country from EDGAR's business address")
+    p_hq.add_argument('--limit', type=int, help='Max entities to process this run')
+    p_hq.set_defaults(func=cmd_backfill_sec_headquarters)
 
     # backfill-countries command
     p_bc = subparsers.add_parser('backfill-countries',

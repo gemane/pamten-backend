@@ -822,12 +822,22 @@ def _merge_aliases(existing: list[str] | None, new: list[str] | None,
     return out
 
 
+def _hq_params(headquarters: dict | None) -> dict:
+    """Query parameters for a headquarters, or three Nones. Every write is a
+    COALESCE, so a missing address leaves whatever is already there."""
+    hq = headquarters or {}
+    return {"hq_address": hq.get("address") or None,
+            "hq_city":    hq.get("city") or None,
+            "hq_country": hq.get("country") or None}
+
+
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None,
                             source_id: str | None = None,
                             former_names: list[str] | None = None,
                             lei: str | None = None,
                             country: str | None = None,
+                            headquarters: dict | None = None,
                             credibility_score: int = 98) -> str:
     """Find or create an Entity node matched by CIK, exact name, or normalized name.
 
@@ -838,7 +848,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
 
     ``former_names`` (SEC EDGAR ``formerNames`` — prior names of the *same* CIK)
     are folded into the entity's ``aliases`` + ``search_text`` so the old name is
-    searchable (e.g. "Facebook" → Meta Platforms). Merged, never clobbered."""
+    searchable (e.g. "Facebook" → Meta Platforms). Merged, never clobbered.
+
+    ``headquarters`` (``{address, city, country}``) is where the company is
+    **run** — EDGAR's business address. Kept strictly apart from ``country``,
+    which is where it is *registered*: a foreign filer's EDGAR address is often
+    its US filing office, so the two answer different questions and the map draws
+    one or the other. Only ever fills a blank."""
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
         # Indexed lookups first (an OR full-scans the Entity type on ArcadeDB).
@@ -893,10 +909,14 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                         e.lei_id      = COALESCE($lei, e.lei_id),
                         e.source_id   = COALESCE(e.source_id, $source_id),
                         e.country     = COALESCE(e.country, $country),
+                        e.hq_address  = COALESCE(e.hq_address, $hq_address),
+                        e.hq_city     = COALESCE(e.hq_city, $hq_city),
+                        e.hq_country  = COALESCE(e.hq_country, $hq_country),
                         e.aliases     = $aliases,
                         e.search_text = $search_text
                     """,
                     id=entity_id, cik=cik, lei=lei, source_id=source_id, country=country,
+                    **_hq_params(headquarters),
                     aliases=merged,
                     search_text=_search_text(cur_name, rec["descr"] if rec else None, merged),
                 )
@@ -907,9 +927,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                     SET e.sec_cik   = COALESCE($cik, e.sec_cik),
                         e.lei_id    = COALESCE($lei, e.lei_id),
                         e.source_id = COALESCE(e.source_id, $source_id),
-                        e.country   = COALESCE(e.country, $country)
+                        e.country   = COALESCE(e.country, $country),
+                        e.hq_address = COALESCE(e.hq_address, $hq_address),
+                        e.hq_city    = COALESCE(e.hq_city, $hq_city),
+                        e.hq_country = COALESCE(e.hq_country, $hq_country)
                     """,
                     id=entity_id, cik=cik, lei=lei, source_id=source_id, country=country,
+                    **_hq_params(headquarters),
                 )
             return _record_touched_entity(entity_id)
 
@@ -923,12 +947,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 type: $type, sec_cik: $cik, lei_id: $lei, verified: false, source_id: $source_id,
                 is_nominee: $is_nominee,
                 country: $country, founded: null, revenue: null,
-                description: null, wikidata_id: null
+                description: null, wikidata_id: null,
+                hq_address: $hq_address, hq_city: $hq_city, hq_country: $hq_country
             })
             """,
             id=entity_id, name=name, name_norm=name_norm,
             cred=credibility_score, type=entity_type, cik=cik, lei=lei, source_id=source_id,
-            country=country,
+            country=country, **_hq_params(headquarters),
             search_text=_search_text(name, None, aliases), aliases=aliases,
             is_nominee=is_nominee_name(name),
         )
@@ -1184,7 +1209,8 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
         raise PermissionError("SEC EDGAR scraper is disabled. "
                               "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
 
-    from app.scraper.sec_edgar import fetch_filer_country, fetch_filer_holdings, fetch_filer_name
+    from app.scraper.sec_edgar import (fetch_filer_country, fetch_filer_headquarters,
+                                       fetch_filer_holdings, fetch_filer_name)
 
     filer_name = fetch_filer_name(cik)
     if not filer_name:
@@ -1194,7 +1220,8 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
     # Free: the submissions document was already fetched for the name and is cached.
     filer_id = _upsert_entity_by_name(name=filer_name, entity_type="company",
                                       cik=cik, source_id=source_id,
-                                      country=fetch_filer_country(cik))
+                                      country=fetch_filer_country(cik),
+                                      headquarters=fetch_filer_headquarters(cik))
 
     holdings = fetch_filer_holdings(cik, limit=limit)
     written = closed = 0
@@ -1205,7 +1232,8 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
         subject_id = _upsert_entity_by_name(
             name=subject_name, entity_type="company", cik=h.get("subject_cik"),
             source_id=source_id,
-            country=fetch_filer_country(h["subject_cik"]) if h.get("subject_cik") else None)
+            country=fetch_filer_country(h["subject_cik"]) if h.get("subject_cik") else None,
+            headquarters=fetch_filer_headquarters(h["subject_cik"]) if h.get("subject_cik") else None)
         _upsert_owns_sec(
             owner_id=filer_id, owned_id=subject_id, source_id=source_id,
             ownership_type="minority", file_date=h.get("file_date"),
@@ -1262,7 +1290,8 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         )
 
     # Import here to avoid circular imports and to keep the cold-start fast
-    from app.scraper.sec_edgar import fetch_filer_country, scrape_company
+    from app.scraper.sec_edgar import (fetch_filer_country, fetch_filer_headquarters,
+                                       scrape_company)
 
     log.info("SEC EDGAR runner: starting scrape for %r", company_name)
     data = scrape_company(company_name)
@@ -1289,6 +1318,9 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         # The submissions document was already fetched for former names and the
         # LEI, and is cached, so this costs nothing.
         country=fetch_filer_country(data["cik"]) if data.get("cik") else None,
+        # Where it is RUN, from the same cached document — kept apart from
+        # `country`, which is where it is registered.
+        headquarters=fetch_filer_headquarters(data["cik"]) if data.get("cik") else None,
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 
