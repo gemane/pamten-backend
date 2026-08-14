@@ -74,3 +74,30 @@ def test_it_skips_what_is_already_placed(it_db, geocoder):
     assert row["hq"] == 55.0        # untouched
     assert row["reg"] == 1.0        # filled
     assert res["passes"]["hq"]["total"] == 0
+
+
+def test_the_structured_pass_runs_against_a_real_database(it_db):
+    """The parts are new columns, referenced in both the WHERE and the RETURN.
+
+    ArcadeDB is schemaless, so rows written before they existed simply have no
+    such property — a mocked session cannot tell you whether the query still
+    matches those rows, or errors, or silently returns nothing.
+    """
+    _entity(it_db, "with_parts", "Has Parts", reg_street="251 Little Falls Drive",
+            reg_city="Wilmington", reg_postcode="19808")
+    _entity(it_db, "string_only", "String Only", address="1 High St, London, GB")
+
+    calls: list[dict] = []
+    with patch.object(geocode_backfill, "geocode_address",
+                      side_effect=lambda a: calls.append(a) or (1.0, 2.0)), \
+         patch.object(geocode_backfill, "geocode_full", return_value=((3.0, 4.0), "exact")):
+        res = geocode_backfill.backfill(target="registered")
+
+    # Both rows are found — the one with parts and the one without.
+    assert res["passes"]["registered"]["geocoded"] == 2
+    assert calls == [{"street": "251 Little Falls Drive", "city": "Wilmington",
+                      "zip": "19808", "country": None}]
+
+    rows = it_db.run_query("MATCH (e:Entity) WHERE e.reg_lat IS NOT NULL "
+                           "RETURN e.id AS id, e.reg_lat AS lat ORDER BY e.id")
+    assert {r["id"]: r["lat"] for r in rows} == {"string_only": 3.0, "with_parts": 1.0}

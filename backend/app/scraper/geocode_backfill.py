@@ -17,6 +17,14 @@ all along, and only the geocoder was ever pointed at the HQ fields.
 Idempotent and resumable: each pass selects on its own NULL coordinate, so a
 re-run picks up what is still missing (or what failed last time). Rate limiting
 and caching are handled by the geocoding service.
+
+**Structured, not free text.** Nominatim takes street/city/postcode/country as
+separate fields, and the sources hand them over that way — GLEIF has
+AddressLines/City/PostalCode/Country, SEC EDGAR has street1/city/zipCode. Asking
+a gazetteer to work out which comma-separated piece was the city is a problem we
+were creating for ourselves, and the hand-written rules that did it encoded one
+country's conventions. The parts are used when we have them; a row that only ever
+stored the assembled string still gets asked plainly, unmodified.
 """
 import logging
 
@@ -33,29 +41,30 @@ REGISTERED = "registered"
 _PASSES = {
     HQ: {
         "lat": "hq_lat", "lng": "hq_lng", "precision": "hq_geo_precision",
-        # The full HQ address first (street-level), then city/country (approximate).
+        # The parts first; the assembled string only for rows that have no parts.
+        "street": "hq_street", "postcode": "hq_postcode",
         "full": "hq_address", "city": "hq_city", "country": "hq_country",
     },
     REGISTERED: {
         "lat": "reg_lat", "lng": "reg_lng", "precision": "reg_geo_precision",
+        "street": "reg_street", "postcode": "reg_postcode",
         # `address` is the human-readable legal address; `registered_address` is
         # the normalised lowercase form kept for dedup, which geocodes worse.
         #
-        # NO fallback: the address resolves or there is no pin. There is no
-        # registered *city* column, so the only coarser thing available is the
-        # country — and geocoding a bare country returns its centroid. The first
-        # run of this pass put 51 American companies in a field in Kansas and 39
-        # British ones in the Irish Sea, all claiming to be registered offices.
-        # An absent pin says "we do not know"; a centroid says something false.
-        "full": "address", "city": None, "country": None,
+        # NO country fallback: the address resolves or there is no pin. Geocoding
+        # a bare country returns its centroid, and the first run of this pass put
+        # 51 American companies in a field in Kansas and 39 British ones in the
+        # Irish Sea, all captioned as registered offices. An absent pin says "we
+        # do not know"; a centroid says something false.
+        "full": "address", "city": "reg_city", "country": None,
     },
 }
 
 
 def _run_pass(name: str, limit: int | None, ids: list[str] | None = None) -> dict:
     f = _PASSES[name]
-    sources = [f["full"], f["city"], f["country"]]
-    have_any = " OR ".join(f"e.{c} IS NOT NULL" for c in sources if c)
+    cols = {k: f.get(k) for k in ("street", "city", "postcode", "country", "full")}
+    have_any = " OR ".join(f"e.{c} IS NOT NULL" for c in cols.values() if c)
     # Scoped to the ids a scrape just touched, when given. Inlined rather than
     # parameterised: ArcadeDB's Cypher will not take a list parameter (see the
     # gotchas in maintenance.py), and the ids are internally generated.
@@ -64,12 +73,12 @@ def _run_pass(name: str, limit: int | None, ids: list[str] | None = None) -> dic
         quoted = ", ".join("'" + i.replace("'", "") + "'" for i in ids)
         scope = f" AND e.id IN [{quoted}]"
 
+    selected = ", ".join(f"e.{col} AS {alias}" if col else f"null AS {alias}"
+                         for alias, col in cols.items())
     query = f"""
         MATCH (e:Entity)
         WHERE e.{f['lat']} IS NULL AND ({have_any}){scope}
-        RETURN e.id AS id, e.{f['full']} AS full,
-               {f"e.{f['city']} AS city," if f['city'] else "null AS city,"}
-               {f"e.{f['country']} AS country" if f['country'] else "null AS country"}
+        RETURN e.id AS id, {selected}
     """
     if limit is not None:
         query += f"\n        LIMIT {int(limit)}"
@@ -77,20 +86,7 @@ def _run_pass(name: str, limit: int | None, ids: list[str] | None = None) -> dic
     rows = run_query(query)
     geocoded = 0
     for r in rows:
-        # Prefer the full address for a street-level pin; fall back to
-        # city/country (approximate). Store which precision we got so the map can
-        # show a pin rather than implying a building it does not know.
-        coord = precision = None
-        hit = geocode_full(r.get("full")) if r.get("full") else None
-        if hit:
-            coord, precision = hit
-        # Only a pass that declares a coarse source may fall back to one. Gating
-        # on the row instead would quietly reinstate the fallback the moment a
-        # caller (or a test) passed a country along with the address.
-        coarse_ok = bool(f["city"] or f["country"])
-        if not coord and coarse_ok and (r.get("city") or r.get("country")):
-            coord = geocode_address({"city": r.get("city"), "country": r.get("country")})
-            precision = "approx"
+        coord, precision = _locate(r, coarse_country=bool(f["country"]))
         if not coord:
             continue
         lat, lng = coord
@@ -102,6 +98,39 @@ def _run_pass(name: str, limit: int | None, ids: list[str] | None = None) -> dic
         geocoded += 1
 
     return {"total": len(rows), "geocoded": geocoded}
+
+
+def _locate(row: dict, *, coarse_country: bool) -> tuple[tuple[float, float] | None, str | None]:
+    """Coordinates for one row, best available first.
+
+    1. **The parts**, structured — street, city, postcode, country as separate
+       fields, which is how the sources gave them and how Nominatim wants them.
+    2. **The assembled string**, unmodified, for rows that predate the parts or
+       come from a source that only ever had one. Asked plainly: the rules that
+       used to rewrite it encoded one country's conventions and guessed at the
+       rest.
+    3. **City and country**, coarse, and only for a pass that allows it — the
+       registered pass does not, because a bare country is a centroid.
+    """
+    if row.get("street") or row.get("postcode"):
+        coord = geocode_address({"street": row.get("street"), "city": row.get("city"),
+                                 "zip": row.get("postcode"), "country": row.get("country")})
+        if coord:
+            # Structured queries carry no place_rank in the same way; a street
+            # given in full is a street-level answer.
+            return coord, ("exact" if row.get("street") else "approx")
+
+    if row.get("full"):
+        hit = geocode_full(row["full"])
+        if hit:
+            return hit
+
+    if coarse_country and (row.get("city") or row.get("country")):
+        coord = geocode_address({"city": row.get("city"), "country": row.get("country")})
+        if coord:
+            return coord, "approx"
+
+    return None, None
 
 
 def geocode_entities(ids: list[str], target: str = "both") -> dict:

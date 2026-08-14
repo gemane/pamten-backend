@@ -128,6 +128,33 @@ def _hq_address(entity: dict) -> str | None:
     return joined or None
 
 
+def _address_parts(addr: dict | None) -> dict:
+    """A GLEIF address as its parts, for a structured geocode.
+
+    Nominatim takes street/city/postcode/country separately, and GLEIF hands them
+    to us that way — so the parts are kept, not just the string we assemble for
+    display. Flattening them and asking a gazetteer to work out which piece was
+    the city is a problem we were creating for ourselves, and one that does not
+    generalise: every country writes an address differently.
+
+    The street is the address lines joined, since GLEIF puts a care-of line, a
+    building and a street across 0..n of them and only their order says which is
+    which. Nominatim reads that as one street field happily enough.
+    """
+    if not addr:
+        return {}
+    street = ", ".join(_address_lines(addr))
+    city = _v(addr.get("City"))
+    postcode = _v(addr.get("PostalCode"))
+    country = _v(addr.get("Country"))
+    return {k: v for k, v in {
+        "street": street or None,
+        "city": city or None,
+        "postcode": postcode or None,
+        "country": (country[:2].upper() if country else None),
+    }.items() if v}
+
+
 def _legal_form(entity: dict) -> str | None:
     """Legal form name: resolve the ISO 20275 ELF code (e.g. H0PO → 'Private Limited
     Company') via the bundled GLEIF list; fall back to the free-text OtherLegalForm,
@@ -210,6 +237,18 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     hq_addr = _hq_address(entity)
     if hq_addr:
         props["hq_address"] = hq_addr
+    # The same addresses in parts, for a structured geocode. Only set when
+    # present, so a re-import never blanks what another source supplied.
+    for prefix, source in (("reg", entity.get("LegalAddress")),
+                           ("hq", entity.get("HeadquartersAddress"))):
+        for key, value in _address_parts(source).items():
+            if key == "country" and prefix == "reg":
+                continue            # already stored as `country`
+            if key == "city" and prefix == "hq":
+                continue            # already stored as `hq_city`
+            if key == "country" and prefix == "hq":
+                continue            # already stored as `hq_country`
+            props[f"{prefix}_{key}"] = value
     # UK company: its GLEIF registration number is the Companies House number, so key it
     # like the PSC import (gb-coh:{number}) → GLEIF and PSC nodes merge on this id.
     if reg_code == _COMPANIES_HOUSE_RA and reg_number:

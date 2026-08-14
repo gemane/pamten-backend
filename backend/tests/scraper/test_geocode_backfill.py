@@ -158,3 +158,68 @@ class TestBothPasses:
              patch.object(geocode_backfill, "run_command"):
             geocode_backfill.backfill(limit=25)
         assert all("LIMIT 25" in c.args[0] for c in q.call_args_list)
+
+
+class TestStructuredFirst:
+    """The parts, not a re-parsed string.
+
+    Sources give addresses in parts and Nominatim takes them in parts. The
+    hand-written rules that used to pick apart the assembled string encoded one
+    country's conventions and guessed at the rest, which is why they are gone.
+    """
+
+    def _run(self, rows, **kw):
+        structured, free = [], []
+        with patch.object(geocode_backfill, "run_query", return_value=rows), \
+             patch.object(geocode_backfill, "run_command"), \
+             patch.object(geocode_backfill, "geocode_address",
+                          side_effect=lambda a: structured.append(a) or kw.get("structured")), \
+             patch.object(geocode_backfill, "geocode_full",
+                          side_effect=lambda q: free.append(q) or kw.get("free")):
+            result = geocode_backfill.backfill(target="registered")
+        return result, structured, free
+
+    def test_asks_with_the_parts_when_it_has_them(self):
+        row = {"id": "e1", "street": "251 Little Falls Drive", "city": "Wilmington",
+               "postcode": "19808", "country": None, "full": "the whole string"}
+        _, structured, free = self._run([row], structured=(39.7, -75.5))
+        assert structured == [{"street": "251 Little Falls Drive", "city": "Wilmington",
+                               "zip": "19808", "country": None}]
+        assert free == []                      # the string was not needed
+
+    def test_a_street_is_a_street_level_answer(self):
+        row = {"id": "e1", "street": "1 High St", "city": "London", "postcode": None,
+               "country": None, "full": None}
+        commands = []
+        with patch.object(geocode_backfill, "run_query", return_value=[row]), \
+             patch.object(geocode_backfill, "run_command",
+                          side_effect=lambda s, p=None: commands.append(p)), \
+             patch.object(geocode_backfill, "geocode_address", return_value=(51.5, -0.1)):
+            geocode_backfill.backfill(target="registered")
+        assert commands[0]["prec"] == "exact"
+
+    def test_falls_back_to_the_string_for_a_row_with_no_parts(self):
+        # Rows imported before the parts were kept, and sources that only ever
+        # had one string. Asked plainly — unmodified.
+        row = {"id": "e1", "street": None, "city": None, "postcode": None,
+               "country": None, "full": "C/O Someone, 1 High St, London, GB"}
+        _, structured, free = self._run([row], free=((51.5, -0.1), "exact"))
+        assert structured == []
+        assert free == ["C/O Someone, 1 High St, London, GB"]
+
+    def test_the_string_is_not_rewritten_on_the_way_out(self):
+        """The whole point of dropping the cleaner: whatever the source said is
+        what gets asked."""
+        messy = "CSC Services of Nevada, 2215-B, Renaissance Drive, Las Vegas,, 89119, US"
+        row = {"id": "e1", "street": None, "city": None, "postcode": None,
+               "country": None, "full": messy}
+        _, _, free = self._run([row], free=None)
+        assert free == [messy]
+
+    def test_a_registered_row_still_refuses_a_bare_country(self):
+        row = {"id": "e1", "street": None, "city": None, "postcode": None,
+               "country": "KY", "full": None}
+        result, structured, _ = self._run([row], structured=(19.3, -81.4))
+        # No street, no postcode, and the registered pass allows no coarse
+        # country — so nothing is asked and nothing is written.
+        assert structured == [] and result["geocoded"] == 0
