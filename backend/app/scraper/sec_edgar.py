@@ -217,6 +217,61 @@ def sec_country(submissions: dict) -> str | None:
     return None
 
 
+def sec_headquarters(submissions: dict) -> dict | None:
+    """The filer's business address as a HEADQUARTERS — where it is run.
+
+    EDGAR's `addresses.business` is the office the company gives the SEC: a real
+    street address, "790 N Water Street, Milwaukee, WI 53202". `sec_country`
+    deliberately refuses to read a *domicile* out of it, because a foreign filer
+    often files through a US office and Deutsche Bank would become American. That
+    refusal is about the wrong question. As the place a company is **run** the
+    same address is exactly right, and we were fetching it on every scrape and
+    throwing it away — 40 of 43 SEC companies in the graph had no headquarters at
+    all while EDGAR held their street address.
+
+    Returns ``{"address", "city", "country"}`` — country from the same two-letter
+    field `sec_country` reads, where a US state code means the United States and
+    anything else is one of SEC's own foreign codes. None when there is no
+    address, or when it is too sparse to place.
+    """
+    from app.scraper.maintenance import nationality_to_iso2
+
+    business = (submissions.get("addresses") or {}).get("business") or {}
+    street = " ".join(p for p in (
+        (business.get("street1") or "").strip(),
+        (business.get("street2") or "").strip(),
+    ) if p).strip()
+    city = (business.get("city") or "").strip()
+    state = (business.get("stateOrCountry") or "").strip().upper()
+
+    country = None
+    if named := (business.get("country") or "").strip():
+        country = nationality_to_iso2(named)
+    if not country and state:
+        # A US state code means the office is in the United States. Any other code
+        # is one of SEC's foreign codes, whose descriptions we resolve by name.
+        country = "US" if state in _US_STATES else nationality_to_iso2(
+            (business.get("stateOrCountryDescription") or "").strip())
+
+    if not (city or street):
+        return None
+
+    parts = [p for p in (street, city,
+                         state if state in _US_STATES else "",
+                         (business.get("zipCode") or "").strip(),
+                         country or "") if p]
+    return {"address": ", ".join(parts), "city": city or None, "country": country}
+
+
+def fetch_filer_headquarters(cik: str) -> dict | None:
+    """The filer's headquarters from EDGAR, or None if it cannot be determined."""
+    try:
+        return sec_headquarters(_submissions(cik))
+    except Exception as exc:  # noqa: BLE001 - an address is a nicety, not worth aborting a scrape
+        log.warning("SEC EDGAR: address lookup failed for CIK=%s: %s", cik, exc)
+        return None
+
+
 def fetch_filer_country(cik: str) -> str | None:
     """The filer's country from EDGAR, or None if it cannot be determined."""
     try:

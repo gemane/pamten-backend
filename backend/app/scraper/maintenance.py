@@ -1398,6 +1398,53 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
             "still_unknown": len(rows) - len(filled), "changes": filled}
 
 
+def backfill_sec_headquarters(limit: int | None = None, fetch=None) -> dict:
+    """Fill in the headquarters of SEC filers from EDGAR's business address.
+
+    EDGAR gives every filer a street address — "790 N Water Street, Milwaukee, WI
+    53202" — and the scraper read only the state out of it, to guess a country,
+    and discarded the rest. 40 of the 43 SEC companies in the dev graph ended up
+    with no headquarters at all while EDGAR held their address the whole time.
+
+    This is deliberately NOT the same thing as `backfill_entity_countries`.
+    `country` is where a company is registered, and EDGAR's business address is
+    poor evidence of that — a foreign filer often files through a US office. As
+    the place a company is **run** the same address is exactly right, which is
+    why it lands in `hq_*` and never touches `country`.
+
+    Only ever fills a blank; an address already known is never replaced.
+    """
+    from app.scraper.sec_edgar import sec_headquarters
+
+    rows = run_query(
+        "MATCH (e:Entity) WHERE e.sec_cik IS NOT NULL "
+        "AND (e.hq_address IS NULL OR e.hq_country IS NULL) "
+        "RETURN e.id AS id, e.name AS name, e.sec_cik AS cik")
+    if limit:
+        rows = rows[:limit]
+
+    filled: list[dict] = []
+    for r in rows:
+        try:
+            subs = (fetch or _sec_submissions)(r["cik"])
+        except Exception as exc:                                     # noqa: BLE001
+            log.warning("HQ backfill: SEC fetch failed for %s: %s", r["name"], exc)
+            continue
+        hq = sec_headquarters(subs or {})
+        if not hq:
+            continue
+        run_command(
+            "MATCH (e:Entity {id:$id}) "
+            "SET e.hq_address = COALESCE(e.hq_address, $a), "
+            "    e.hq_city    = COALESCE(e.hq_city, $c), "
+            "    e.hq_country = COALESCE(e.hq_country, $k)",
+            {"id": r["id"], "a": hq["address"], "c": hq["city"], "k": hq["country"]})
+        filled.append({"id": r["id"], "name": r["name"], **hq})
+
+    return {"candidates": len(rows), "filled": len(filled),
+            "still_unknown": len(rows) - len(filled), "changes": filled}
+
+
 def _sec_submissions(cik: str) -> dict:
     """EDGAR submissions for a CIK. Uses the scraper's pooled client, which is what
     keeps sec.gov's dead IPv6 from costing six seconds on every new connection."""
