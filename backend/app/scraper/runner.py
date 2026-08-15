@@ -826,9 +826,12 @@ def _hq_params(headquarters: dict | None) -> dict:
     """Query parameters for a headquarters, or three Nones. Every write is a
     COALESCE, so a missing address leaves whatever is already there."""
     hq = headquarters or {}
-    return {"hq_address": hq.get("address") or None,
-            "hq_city":    hq.get("city") or None,
-            "hq_country": hq.get("country") or None}
+    return {"hq_address":  hq.get("address") or None,
+            "hq_city":     hq.get("city") or None,
+            "hq_country":  hq.get("country") or None,
+            # The parts, so the geocoder never has to re-parse the string.
+            "hq_street":   hq.get("street") or None,
+            "hq_postcode": hq.get("postcode") or None}
 
 
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
@@ -912,6 +915,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                         e.hq_address  = COALESCE(e.hq_address, $hq_address),
                         e.hq_city     = COALESCE(e.hq_city, $hq_city),
                         e.hq_country  = COALESCE(e.hq_country, $hq_country),
+                        e.hq_street   = COALESCE(e.hq_street, $hq_street),
+                        e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode),
                         e.aliases     = $aliases,
                         e.search_text = $search_text
                     """,
@@ -930,7 +935,9 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                         e.country   = COALESCE(e.country, $country),
                         e.hq_address = COALESCE(e.hq_address, $hq_address),
                         e.hq_city    = COALESCE(e.hq_city, $hq_city),
-                        e.hq_country = COALESCE(e.hq_country, $hq_country)
+                        e.hq_country = COALESCE(e.hq_country, $hq_country),
+                        e.hq_street   = COALESCE(e.hq_street, $hq_street),
+                        e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode)
                     """,
                     id=entity_id, cik=cik, lei=lei, source_id=source_id, country=country,
                     **_hq_params(headquarters),
@@ -948,7 +955,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 is_nominee: $is_nominee,
                 country: $country, founded: null, revenue: null,
                 description: null, wikidata_id: null,
-                hq_address: $hq_address, hq_city: $hq_city, hq_country: $hq_country
+                hq_address: $hq_address, hq_city: $hq_city, hq_country: $hq_country,
+                hq_street: $hq_street, hq_postcode: $hq_postcode
             })
             """,
             id=entity_id, name=name, name_norm=name_norm,

@@ -25,7 +25,20 @@ class TestReadingTheAddress:
         hq = sec_headquarters(subs(street1="790 N WATER STREET", city="MILWAUKEE",
                                    stateOrCountry="WI", zipCode="53202"))
         assert hq == {"address": "790 N WATER STREET, MILWAUKEE, WI, 53202, US",
-                      "city": "MILWAUKEE", "country": "US"}
+                      "city": "MILWAUKEE", "country": "US",
+                      # The parts as well as the string: EDGAR gives them
+                      # separately and Nominatim takes them separately, so
+                      # flattening and re-parsing is work nobody needs.
+                      "street": "790 N WATER STREET", "postcode": "53202", "state": "WI"}
+
+    def test_the_parts_come_back_for_a_structured_geocode(self):
+        hq = sec_headquarters(subs(street1="1 Great Winchester St", city="LONDON",
+                                   stateOrCountry="X0",
+                                   stateOrCountryDescription="United Kingdom",
+                                   zipCode="EC2N 2DB"))
+        assert hq["street"] == "1 Great Winchester St"
+        assert hq["postcode"] == "EC2N 2DB"
+        assert hq["state"] is None          # a SEC foreign code is not a state
 
     def test_a_foreign_filer_by_sec_code(self):
         """SEC puts foreign countries in the same two-letter field as US states,

@@ -256,11 +256,16 @@ def sec_headquarters(submissions: dict) -> dict | None:
     if not (city or street):
         return None
 
+    postcode = (business.get("zipCode") or "").strip()
     parts = [p for p in (street, city,
                          state if state in _US_STATES else "",
-                         (business.get("zipCode") or "").strip(),
-                         country or "") if p]
-    return {"address": ", ".join(parts), "city": city or None, "country": country}
+                         postcode, country or "") if p]
+    # The assembled string for display, AND the parts for a structured geocode —
+    # EDGAR gives them separately and Nominatim takes them separately, so there is
+    # no reason to flatten and re-parse.
+    return {"address": ", ".join(parts), "city": city or None, "country": country,
+            "street": street or None, "postcode": postcode or None,
+            "state": state if state in _US_STATES else None}
 
 
 def fetch_filer_headquarters(cik: str) -> dict | None:
