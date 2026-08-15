@@ -310,7 +310,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     return details
 
 
-def _fetch_related_countries(qids: set[str]) -> dict[str, dict]:
+def countries_for(qids: set[str]) -> dict[str, dict]:
     """Jurisdiction and headquarters country for related-company QIDs, in ONE query.
 
     Subsidiaries and owners are written as stubs when some *other* company is
@@ -376,7 +376,7 @@ def fetch_company_data(qid: str) -> dict | None:
     company_qids = {c["qid"] for c in data.get("subsidiaries", []) if c.get("qid")}
     company_qids |= {o["qid"] for o in data.get("owners", [])
                      if o.get("qid") and "Q5" not in o.get("instances", [])}
-    countries = _fetch_related_countries(company_qids)
+    countries = countries_for(company_qids)
     for group in ("subsidiaries", "owners"):
         for item in data.get(group, []) or []:
             if found := countries.get(item.get("qid")):

@@ -243,7 +243,7 @@ def _ensure_mysource_source() -> str:
 **`run_scrape_<source>(company_name: str) -> dict`**
 
 ```python
-def run_scrape_mysource(company_name: str) -> dict:
+def run_scrape_mysource(company_name: str, country: str | None = None) -> dict:
     if not settings.SCRAPER_ENABLED:
         raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true.")
     if not settings.SCRAPER_MYSOURCE_ENABLED:
@@ -288,10 +288,39 @@ from app.scraper.scraper_registry import ScraperSpec, register
 
 register(ScraperSpec(
     "my_source",
-    lambda q, d: run_scrape_mysource(q),   # (query, depth); ignore depth if unused
+    # (query, depth, country) — ignore depth if your source doesn't traverse.
+    lambda q, d, c=None: run_scrape_mysource(q, c),
     lambda: settings.SCRAPER_MYSOURCE_ENABLED and get_source_enabled("my_source"),
 ))
 ```
+
+### The country argument
+
+`country` is an ISO-2 the user picked in the search box, or `None`. If your source
+can tell **where** its match is, it must reject a match in another country —
+before writing anything:
+
+```python
+from app.scraper.country_match import matches_requested, country_mismatch
+
+found = match.get("jurisdiction")          # whatever your source calls it
+if not matches_requested(found, country):
+    return country_mismatch(company_name, found, country)
+```
+
+Why it is not optional: asked for "Alphabet", every source left to itself answers
+with Alphabet Inc of Mountain View, because it is the most famous company by that
+name. The country is the only thing standing between a German query and an
+American import.
+
+`matches_requested` also settles the awkward case: a match whose country is
+**unknown** is accepted. It is not claiming to be somewhere else, and plenty of
+records legitimately state no country.
+
+`register()` rejects a `run` that cannot take all three arguments. That check
+exists because the dispatchers catch every exception per source — a two-argument
+`run` would otherwise raise, be logged, and leave the scrape reporting success
+having run nothing.
 
 `run_scrape_all` applies the enabled/disabled/error wrapping uniformly to every
 registered scraper, so a registered spec is all the wiring `run-all` needs.
@@ -303,7 +332,7 @@ registered scraper, so a registered spec is all the wiring `run-all` needs.
 Once your scraper is registered (Step 4), it's **automatically** reachable through
 the generic registry-driven endpoints — no per-scraper route code:
 
-- `POST /scraper/source/{name}/run?company=…&depth=…` — run it
+- `POST /scraper/source/{name}/run?company=…&depth=…&country=…` — run it (`country` is the ISO-2 filter above, so a source can be exercised per-country straight from the API)
 - `GET  /scraper/source/{name}/status` — its enabled state
 - `GET  /scraper/registry` — lists every registered scraper + enabled state
 

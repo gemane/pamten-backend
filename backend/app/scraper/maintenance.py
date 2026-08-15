@@ -1352,7 +1352,7 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
     repair for missing data, not a re-import.
     """
     from app.scraper.sec_edgar import sec_country
-    from app.scraper.wikidata import _fetch_related_countries
+    from app.scraper.wikidata import countries_for
 
     rows = run_query(
         "MATCH (e:Entity) WHERE (e.country IS NULL OR e.country = '') "
@@ -1366,7 +1366,7 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
     # them would defeat the map's Registered/Headquarters switch.
     wd = {r["wd"]: r for r in rows if r.get("wd")}
     if wd:
-        for qid, found in _fetch_related_countries(set(wd)).items():
+        for qid, found in countries_for(set(wd)).items():
             if not found["country"] and not found["hq_country"]:
                 continue
             filled.append({"id": wd[qid]["id"], "name": wd[qid]["name"],

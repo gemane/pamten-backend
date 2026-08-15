@@ -18,7 +18,7 @@ def _instant_source(calls):
 
     eid = "ent-acme"
 
-    def _run(q, d):
+    def _run(q, d, c=None):
         calls.append((q, d))
         run_sql("UPDATE Entity SET name = :n, name_normalized = :nn, search_text = :st, "
                 "type = 'company' UPSERT WHERE id = :id",
@@ -47,12 +47,12 @@ def test_ensure_freshness_state_machine(it_db, monkeypatch):
 
     blind_calls: list = []
     register(ScraperSpec(
-        "blind", _with_autodedup(lambda q, d: (blind_calls.append((q, d)),
-                                               {"status": "ok", "total": 0})[1]),
+        "blind", _with_autodedup(lambda q, d, c=None: (blind_calls.append((q, d)),
+                                                      {"status": "ok", "total": 0})[1]),
         lambda: True, kind="instant", depth_aware=False))
 
     bulk_calls: list = []
-    register(ScraperSpec("bulkz", lambda q, d: bulk_calls.append((q, d)) or {"total": 0},
+    register(ScraperSpec("bulkz", lambda q, d, c=None: bulk_calls.append((q, d)) or {"total": 0},
                          lambda: True, kind="bulk"))
 
     def _row():

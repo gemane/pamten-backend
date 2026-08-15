@@ -27,6 +27,7 @@ from app.scraper.graph_writer import (
     _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
+from app.scraper.country_match import matches_requested, country_mismatch
 from app.scraper.geocode import geocode_address
 
 
@@ -747,10 +748,46 @@ def _scrape_node(
 # ── Wikidata public entry point ───────────────────────────────────────────────
 
 @_with_autodedup
-def run_scrape(query: str, depth: int = 2) -> dict:
+def _candidate_countries(results: list) -> str | None:
+    """The countries the candidates claim, for the rejection message. Joined
+    rather than picked, because "we found DE, US" explains a rejection that a
+    single country would not."""
+    from app.scraper.wikidata import countries_for
+    found = countries_for({r["id"] for r in results})
+    seen = [v.get("country") for v in found.values() if v.get("country")]
+    return ", ".join(sorted(set(seen))) or None
+
+
+def _pick_candidate(results: list, country: str | None) -> str | None:
+    """The QID to scrape: the first candidate in the requested country, or the
+    top hit when no country was asked for.
+
+    Returns None when a country was asked for and every candidate is known to be
+    elsewhere. A candidate with no country of its own is accepted — see
+    `country_match` on why unknown is not a mismatch — but only after the ones
+    that positively match, so a stated match always wins.
+    """
+    if not country:
+        return results[0]["id"]
+    from app.scraper.wikidata import countries_for
+    found = countries_for({r["id"] for r in results})
+    for r in results:                       # a stated match first
+        if (found.get(r["id"], {}).get("country") or "").upper() == country.upper():
+            return r["id"]
+    for r in results:                       # then one that claims nothing
+        if not found.get(r["id"], {}).get("country"):
+            return r["id"]
+    return None
+
+
+def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
     """
     Trigger a Wikidata scrape for a company name.
     Raises PermissionError if SCRAPER_ENABLED is not true.
+
+    With `country` (ISO-2, from the search box) the candidate list is filtered
+    rather than blindly taking the top hit: "Alphabet" asked of Wikidata returns
+    the Mountain View one first whatever country the user picked.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -771,8 +808,11 @@ def run_scrape(query: str, depth: int = 2) -> dict:
     if not results:
         return {"status": "no_results", "query": query, "total": 0, "scraped": []}
 
-    top = results[0]
-    qid = top["id"]
+    qid = _pick_candidate(results, country)
+    if qid is None:
+        # Every candidate is somewhere else. Nothing has been written yet, so
+        # there is nothing to undo.
+        return country_mismatch(query, _candidate_countries(results), country)
 
     source_id = _ensure_source(WIKIDATA_SOURCE_NAME, WIKIDATA_SOURCE_URL, WIKIDATA_CREDIBILITY, "knowledge_base")
     scraped: list = []
@@ -1278,10 +1318,14 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
     }
 
 
-def run_scrape_sec_edgar(company_name: str) -> dict:
+def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.
     Requires SCRAPER_ENABLED=true AND SCRAPER_SEC_EDGAR_ENABLED=true.
+
+    With `country`, a filer registered elsewhere is rejected before anything is
+    written. EDGAR holds foreign filers as well as American ones, so the country
+    is checked per match rather than the whole source being skipped.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1312,6 +1356,15 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
             "scraped": [],
         }
 
+    # The submissions document was already fetched for former names and the LEI,
+    # and is cached, so this costs nothing — and it settles the country question
+    # before the first write.
+    filer_country = fetch_filer_country(data["cik"]) if data.get("cik") else None
+    if not matches_requested(filer_country, country):
+        log.info("SEC EDGAR: %r is registered in %s, not %s — skipping",
+                 data["name"], filer_country, country)
+        return country_mismatch(company_name, filer_country, country)
+
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     scraped: list[dict] = []
 
@@ -1323,9 +1376,7 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
         source_id=source_id,
         former_names=data.get("former_names"),
         lei=data.get("lei"),
-        # The submissions document was already fetched for former names and the
-        # LEI, and is cached, so this costs nothing.
-        country=fetch_filer_country(data["cik"]) if data.get("cik") else None,
+        country=filer_country,
         # Where it is RUN, from the same cached document — kept apart from
         # `country`, which is where it is registered.
         headquarters=fetch_filer_headquarters(data["cik"]) if data.get("cik") else None,
@@ -1502,11 +1553,12 @@ def run_scrape_sec_edgar(company_name: str) -> dict:
 # ── Run-all entry point ───────────────────────────────────────────────────────
 
 @_with_autodedup
-def run_scrape_all(query: str, depth: int = 2) -> dict:
+def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> dict:
     """
     Run all enabled scrapers for a given company name.
     Each scraper that is disabled is skipped silently; its key in the result
-    will have status 'disabled'.
+    will have status 'disabled'. `country` (ISO-2 or None) is handed to every
+    source, which rejects a match that is demonstrably somewhere else.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1521,7 +1573,7 @@ def run_scrape_all(query: str, depth: int = 2) -> dict:
             results[spec.name] = {"status": "disabled"}
             continue
         try:
-            results[spec.name] = spec.run(query, depth)
+            results[spec.name] = spec.run(query, depth, country)
         except PermissionError as exc:
             results[spec.name] = {"status": "disabled", "detail": str(exc)}
         except Exception as exc:  # noqa: BLE001 - one scraper failing mustn't sink the rest
@@ -1586,10 +1638,14 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
 # ── OpenCorporates public entry point ─────────────────────────────────────────
 
 @_with_autodedup
-def run_scrape_open_corporates(company_name: str) -> dict:
+def run_scrape_open_corporates(company_name: str, country: str | None = None) -> dict:
     """
     Scrape OpenCorporates for registration details and officers for one company.
     Requires SCRAPER_ENABLED=true AND SCRAPER_OPENCORPORATES_ENABLED=true.
+
+    With `country`, a match in another jurisdiction is rejected: the first two
+    characters of an OpenCorporates `jurisdiction_code` ("gb", "us_de") are the
+    ISO-2 country.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1617,6 +1673,12 @@ def run_scrape_open_corporates(company_name: str) -> dict:
             "total":   0,
             "scraped": [],
         }
+
+    oc_country = (data.get("jurisdiction_code") or "")[:2].upper() or None
+    if not matches_requested(oc_country, country):
+        log.info("OpenCorporates: %r is registered in %s, not %s — skipping",
+                 data.get("name"), oc_country, country)
+        return country_mismatch(company_name, oc_country, country)
 
     source_id = _ensure_source(OPENCORPORATES_SOURCE_NAME, OPENCORPORATES_SOURCE_URL, OPENCORPORATES_CREDIBILITY)
     scraped: list[dict] = []
@@ -1999,14 +2061,14 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
 # Register the built-in scrapers so run_scrape_all (and, later, the router) can
 # iterate them. A new scraper registers its own ScraperSpec — no dispatch edits.
 register(ScraperSpec(
-    "wikidata", lambda q, d: run_scrape(q, d),
+    "wikidata", lambda q, d, c=None: run_scrape(q, d, c),
     lambda: settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"),
     kind="instant", depth_aware=True))
 register(ScraperSpec(
-    "sec_edgar", lambda q, d: run_scrape_sec_edgar(q),
+    "sec_edgar", lambda q, d, c=None: run_scrape_sec_edgar(q, c),
     lambda: settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar"),
     kind="instant", depth_aware=False))
 register(ScraperSpec(
-    "open_corporates", lambda q, d: run_scrape_open_corporates(q),
+    "open_corporates", lambda q, d, c=None: run_scrape_open_corporates(q, c),
     lambda: settings.SCRAPER_OPENCORPORATES_ENABLED and get_source_enabled("open_corporates"),
     kind="instant", depth_aware=False))
