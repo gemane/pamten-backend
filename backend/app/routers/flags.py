@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from app.config import settings
 from app.database import db
@@ -111,15 +111,31 @@ def create_flag(data: FlagCreate, request: Request,
 
 
 @router.get("")
-def list_flags(status: Optional[str] = None, target_kind: Optional[str] = None,
+def list_flags(response: Response,
+               status: Optional[str] = None, target_kind: Optional[str] = None,
                category: Optional[str] = None, group: bool = False,
+               related_to: Optional[str] = None,
+               skip: int = Query(0, ge=0, le=100_000),
                limit: int = Query(100, ge=1, le=500),
                _: dict = Depends(require_moderator)):
     """The moderation queue — newest first, with optional filters. Moderator only.
 
     With `group=true` the flags are collapsed to one row per target+category
     (so many reports of the same thing show as a single row with a `count` and
-    the member `flag_ids`), ordered by count then recency."""
+    the member `flag_ids`), ordered by count then recency.
+
+    `related_to` narrows to one company or person and **everything reported about
+    it**: the node itself, and any ownership or role relationship at either end.
+    A report filed against a subsidiary edge belongs to the company whose panel
+    it was filed from, so one id answers "what is disputed here".
+
+    `skip` pages the ungrouped list, and the matching total comes back in the
+    `X-Total-Count` header. A header rather than an envelope because this
+    endpoint returns a bare array and wrapping it would break every existing
+    caller — `relationships.py` sets `X-Result-Truncated` the same way. Paging is
+    not offered for `group=true`: groups are collapsed in Python over a fetched
+    window, so a page boundary would cut a group in half and report a wrong count.
+    """
     clauses, params = [], {}
     if status:
         clauses.append("f.status = $status")
@@ -130,17 +146,25 @@ def list_flags(status: Optional[str] = None, target_kind: Optional[str] = None,
     if category:
         clauses.append("f.category = $cat")
         params["cat"] = category
+    if related_to:
+        clauses.append("(f.node_id = $rel OR f.from_id = $rel OR f.to_id = $rel)")
+        params["rel"] = related_to
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     # When grouping we scan a wider window so a group's count is accurate, then
     # collapse in Python (ArcadeDB's Cypher aggregation/collect is unreliable).
     fetch = 1000 if group else int(limit)
+    # Interpolated, not parameterised. This file already interpolates its LIMIT,
+    # as do relationships.py, search.py and the scraper; the parameterised
+    # `SKIP $skip` in entities.py has no integration coverage against a real
+    # ArcadeDB, so it is unproven rather than precedent. Ints — nothing to inject.
+    page = "" if group else f"SKIP {int(skip)} "
     with db.get_session() as session:
         rows = session.run(
             f"MATCH (f:Flag) {where} RETURN f.id AS id, f.target_kind AS target_kind, "
             f"f.category AS category, f.note AS note, f.status AS status, "
             f"f.reporter_kind AS reporter_kind, f.from_id AS from_id, f.to_id AS to_id, "
             f"f.role AS role, f.node_id AS node_id, f.created_at AS created_at, "
-            f"f.updated_at AS updated_at ORDER BY f.created_at DESC LIMIT {fetch}",
+            f"f.updated_at AS updated_at ORDER BY f.created_at DESC {page}LIMIT {fetch}",
             **params,
         )
         # Read columns explicitly — dict(rec) on a whole ArcadeDB _Record raises.
@@ -153,6 +177,13 @@ def list_flags(status: Optional[str] = None, target_kind: Optional[str] = None,
         ]
 
     if not group:
+        # The total for the same filters, in a second query: ArcadeDB's Cypher
+        # aggregation is unreliable enough that this file collapses groups in
+        # Python, so rows-and-count in one round trip is not worth the risk.
+        # A bare count(f) is proven — /flags/summary uses it.
+        with db.get_session() as session:
+            rec = session.run(f"MATCH (f:Flag) {where} RETURN count(f) AS n", **params).single()
+        response.headers["X-Total-Count"] = str((rec["n"] if rec else 0) or 0)
         return flags
 
     groups: dict[tuple, dict] = {}
@@ -175,9 +206,19 @@ def list_flags(status: Optional[str] = None, target_kind: Optional[str] = None,
 
 @router.get("/summary")
 def flag_summary(node_id: Optional[str] = None, from_id: Optional[str] = None,
-                 to_id: Optional[str] = None, role: Optional[str] = None):
-    """Open-flag count for one target — powers the "disputed" badge. Public."""
-    if node_id:
+                 to_id: Optional[str] = None, role: Optional[str] = None,
+                 related_to: Optional[str] = None):
+    """Open-flag count for one target — powers the "disputed" badge. Public.
+
+    `related_to` counts everything reported about a company or person: the node
+    itself plus any relationship at either end. It is the same set `GET /flags`
+    returns for that id, so the badge and the queue behind it always agree — a
+    moderator who reads "Disputed (3)" finds three things.
+    """
+    if related_to:
+        clause = "(f.node_id = $rel OR f.from_id = $rel OR f.to_id = $rel)"
+        params = {"rel": related_to}
+    elif node_id:
         clause, params = "f.node_id = $node_id", {"node_id": node_id}
     elif from_id and to_id:
         clause, params = "f.from_id = $from_id AND f.to_id = $to_id", {"from_id": from_id, "to_id": to_id}
@@ -185,7 +226,8 @@ def flag_summary(node_id: Optional[str] = None, from_id: Optional[str] = None,
             clause += " AND f.role = $role"
             params["role"] = role
     else:
-        raise HTTPException(status_code=400, detail="Provide node_id, or from_id and to_id")
+        raise HTTPException(status_code=400,
+                            detail="Provide related_to, or node_id, or from_id and to_id")
     with db.get_session() as session:
         rec = session.run(
             f"MATCH (f:Flag) WHERE {clause} AND f.status = 'open' RETURN count(f) AS n",

@@ -4,6 +4,7 @@ target+category collapse to one group row, and resolving via one action (suppres
 cascades to every open flag on that target.
 """
 import pytest
+from fastapi import Response
 
 from app.routers import flags
 
@@ -17,7 +18,8 @@ def _flag(fid, cat, fp):
 
 
 def _open_groups():
-    return flags.list_flags(status="open", target_kind=None, category=None, group=True, limit=1000, _=None)
+    return flags.list_flags(Response(), status="open", target_kind=None, category=None,
+                            group=True, limit=1000, _=None)
 
 
 def test_group_collapses_and_suppress_cascades(it_db):
