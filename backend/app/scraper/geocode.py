@@ -12,7 +12,6 @@ never requested twice in a process. The coordinates persisted on each Entity act
 as the durable cache, so backfills only ever geocode what is still missing.
 """
 import logging
-import re
 import threading
 import time
 
