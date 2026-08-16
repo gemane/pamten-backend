@@ -104,6 +104,21 @@ class TestFlooding:
         assert router.EVENT_RATE_LIMIT >= 100
 
 
+class TestStatus:
+    """The write endpoint returns 204 either way, so without this there is no way
+    to tell "off" from "broken" without shell access to the server."""
+
+    def test_reports_that_it_is_on(self, client):
+        assert client.get("/v1/analytics/status").json() == {"enabled": True}
+
+    def test_reports_that_it_is_off(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "ANALYTICS_ENABLED", False)
+        assert client.get("/v1/analytics/status").json() == {"enabled": False}
+
+    def test_is_public_like_the_scraper_status(self, client):
+        assert client.get("/v1/analytics/status").status_code == 200
+
+
 class TestReadingItBack:
     def test_the_lists_are_admin_only(self, client, make_token):
         for path in ("/v1/analytics/searches", "/v1/analytics/usage", "/v1/analytics/endpoints"):

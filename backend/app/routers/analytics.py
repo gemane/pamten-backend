@@ -112,6 +112,18 @@ def record_event(body: AnalyticsEvent, request: Request):
     return Response(status_code=204)
 
 
+@router.get("/status")
+def analytics_status():
+    """Is measurement on?
+
+    Public and trivial, and it exists because of a real half hour: the write
+    endpoint answers 204 whether it recorded anything or not — deliberately, so
+    it can never leak or fail loudly — which also makes "switched off" and
+    "broken" indistinguishable from outside. Mirrors `/scraper/status`.
+    """
+    return {"enabled": settings.ANALYTICS_ENABLED}
+
+
 def _page(vtype: str, order_by: str, response: Response, skip: int, limit: int) -> list[dict]:
     """One page of counters, biggest first, with the full total in a header —
     the same shape the flag queue uses."""

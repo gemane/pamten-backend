@@ -85,6 +85,7 @@ Off unless `ANALYTICS_ENABLED` is set.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/analytics/event` | public (rate-limited) | Record one **settled** search (`{kind:"search", query, country?, outcome:"selected"\|"zero"\|"abandoned", rank?}`) or one allow-listed interaction (`{kind:"usage", event}`). Never a keystroke: the search box queries every 300 ms while typing, and counting requests would record prefixes. Always `204` — measurement may not break, slow or reveal anything about what it measures. Unknown event names are dropped silently; 240 events/hour per IP fingerprint (hashed in memory, never stored) |
+| GET | `/analytics/status` | — | Whether measurement is on. Exists because `/analytics/event` answers `204` whether it recorded anything or not, which makes "switched off" and "broken" indistinguishable from outside |
 | GET | `/analytics/searches` | admin | What was searched for, most-searched first, with `zero_results` — a ranked list of demand the graph cannot answer. Paged (`skip`, `X-Total-Count`) |
 | GET | `/analytics/usage` | admin | Feature counters and clicked result positions |
 | GET | `/analytics/endpoints` | admin | Request counts per route template, status class and latency band |
