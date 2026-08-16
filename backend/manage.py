@@ -192,6 +192,16 @@ def cmd_flag_nominees(args):
     print(f"Flagged {result['flagged']} nominee/custodian entities "
           f"(of {result['candidates']} name candidates)")
 
+def cmd_prune_analytics(args):
+    """Drop usage counters nothing has touched inside the retention window."""
+    from app.analytics import prune
+    result = prune(days=args.days, dry_run=args.dry_run)
+    verb = "Would delete" if args.dry_run else "Deleted"
+    print(f"{verb} rows older than {result.pop('cutoff')}:")
+    for vtype, n in result.items():
+        print(f"  {vtype:14} {n}")
+
+
 def cmd_verify_users(args):
     """One-off: mark all existing accounts email-verified. Login now requires a
     verified email, so accounts created before that feature would otherwise be
@@ -717,6 +727,14 @@ def _build_parser():
     p_nom = subparsers.add_parser('flag-nominees',
                                   help='Flag nominee/custodian entities (holders of record) by name')
     p_nom.set_defaults(func=cmd_flag_nominees)
+
+    # prune-analytics command
+    p_prune = subparsers.add_parser('prune-analytics',
+                                    help='Delete usage counters untouched within the retention window')
+    p_prune.add_argument('--days', type=int, default=365,
+                         help='Retention window in days (default 365)')
+    p_prune.add_argument('--dry-run', action='store_true', help='Report without deleting')
+    p_prune.set_defaults(func=cmd_prune_analytics)
 
     # verify-users command (one-off: unblock pre-existing accounts under the new
     # "login requires a verified email" rule)

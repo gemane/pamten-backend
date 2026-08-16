@@ -75,6 +75,20 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | GET | `/sources/entity/{id}` | Sources behind an entity's facts (from its edges + node) |
 | GET | `/sources/person/{id}` | Sources behind a person's roles/ownership |
 
+## Usage measurement
+
+Aggregate counters — what people search for, what they fail to find, which features get used.
+No user id, session, IP or per-event timestamp is stored, so no row can be attributed to a
+person; see `app/analytics.py` for the design and `pamten-legal` Activity 3 for the record.
+Off unless `ANALYTICS_ENABLED` is set.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/analytics/event` | public (rate-limited) | Record one **settled** search (`{kind:"search", query, country?, outcome:"selected"\|"zero"\|"abandoned", rank?}`) or one allow-listed interaction (`{kind:"usage", event}`). Never a keystroke: the search box queries every 300 ms while typing, and counting requests would record prefixes. Always `204` — measurement may not break, slow or reveal anything about what it measures. Unknown event names are dropped silently; 240 events/hour per IP fingerprint (hashed in memory, never stored) |
+| GET | `/analytics/searches` | admin | What was searched for, most-searched first, with `zero_results` — a ranked list of demand the graph cannot answer. Paged (`skip`, `X-Total-Count`) |
+| GET | `/analytics/usage` | admin | Feature counters and clicked result positions |
+| GET | `/analytics/endpoints` | admin | Request counts per route template, status class and latency band |
+
 ## Verification flags
 | Method | Path | Auth | Description |
 |---|---|---|---|
