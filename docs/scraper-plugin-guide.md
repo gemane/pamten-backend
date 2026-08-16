@@ -568,6 +568,10 @@ No attribution required but Owlgraph credits them in NOTICE.
 
 ## Checklist before deploying a new plugin
 
+The mechanical one is below. For what a source should *contribute* — which facts to take,
+how its records find the companies already in the graph, and the traps this project has
+already fallen into — see **[`new-source-checklist.md`](new-source-checklist.md)**.
+
 - [ ] `scrape_company()` returns `None` (not an exception) when not found
 - [ ] `401` and other auth errors raise `PermissionError` with an actionable message
 - [ ] HTTP 200 error payloads are checked and raise `RuntimeError`
@@ -576,8 +580,9 @@ No attribution required but Owlgraph credits them in NOTICE.
 - [ ] API key read from `settings`, never hardcoded
 - [ ] `SCRAPER_<SOURCE>_ENABLED` defaults to `False` in `config.py`
 - [ ] Source added to `KNOWN_SOURCES` in `sources.py`
-- [ ] `run_scrape_<source>()` checks all three flags (master, source env, Neo4j toggle)
+- [ ] `run_scrape_<source>()` checks all three flags (master, source env, DB source toggle)
 - [ ] `run_scrape_all()` includes the new source after existing scrapers
 - [ ] `/scraper/status` response includes the new flag
 - [ ] `.env.example` documents the new variables
 - [ ] Unit tests cover: 401 handling, not-found path, happy path, Person vs Entity split
+- [ ] Anything that writes has an integration test against a real ArcadeDB
