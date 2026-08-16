@@ -243,7 +243,7 @@ def _ensure_mysource_source() -> str:
 **`run_scrape_<source>(company_name: str) -> dict`**
 
 ```python
-def run_scrape_mysource(company_name: str) -> dict:
+def run_scrape_mysource(company_name: str, country: str | None = None) -> dict:
     if not settings.SCRAPER_ENABLED:
         raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true.")
     if not settings.SCRAPER_MYSOURCE_ENABLED:
@@ -288,10 +288,57 @@ from app.scraper.scraper_registry import ScraperSpec, register
 
 register(ScraperSpec(
     "my_source",
-    lambda q, d: run_scrape_mysource(q),   # (query, depth); ignore depth if unused
+    # (query, depth, country) — ignore depth if your source doesn't traverse.
+    lambda q, d, c=None: run_scrape_mysource(q, c),
     lambda: settings.SCRAPER_MYSOURCE_ENABLED and get_source_enabled("my_source"),
 ))
 ```
+
+### The country argument
+
+`country` is an ISO-2 the user picked in the search box, or `None`. Asked for
+"Alphabet", every source left to itself answers with Alphabet Inc of Mountain
+View, because it is the most famous company by that name. The country is the
+only thing standing between a German query and an American import.
+
+**Ask the source, if it can be asked.** A filter applied to the answer cannot
+find what the question never reached: Alphabet Fuhrparkmanagement, the German
+company called Alphabet, is nowhere near the global top hits and no amount of
+post-filtering will ever surface it. Wikidata's search index takes a statement
+filter, and OpenCorporates takes a `jurisdiction_code`, so both put the country
+*in the query*:
+
+```python
+data = search_their_api(name, country=country)     # the source does the filtering
+```
+
+**Check the match only when you cannot ask.** SEC EDGAR is the example: its
+search-side `State=` filter matches the *business address*, which for a foreign
+filer is usually its US filing office — Deutsche Bank AG lists New York — so
+filtering the search by it would hide German companies from a German search.
+There, EDGAR's single match is judged on what it states about incorporation:
+
+```python
+from app.scraper.country_match import matches_requested, country_mismatch
+
+found = filer_country(match)               # whatever your source calls it
+if not matches_requested(found, country):
+    return country_mismatch(company_name, found, country)
+```
+
+Do the check **before the first write**, so a rejection leaves nothing behind.
+
+**A match that states no country is rejected.** Asked for a company in Germany,
+"we do not know where this is" is not an answer — and it is what the source-side
+filters do anyway (an item with no `P17` is not in the index being searched), so
+the checked sources have to agree or "found in Germany" means two things. The
+cost is real: Deutsche Bank leaves `stateOfIncorporation` empty, so a German
+search will not find it through EDGAR.
+
+`register()` rejects a `run` that cannot take all three arguments. That check
+exists because the dispatchers catch every exception per source — a two-argument
+`run` would otherwise raise, be logged, and leave the scrape reporting success
+having run nothing.
 
 `run_scrape_all` applies the enabled/disabled/error wrapping uniformly to every
 registered scraper, so a registered spec is all the wiring `run-all` needs.
@@ -303,7 +350,7 @@ registered scraper, so a registered spec is all the wiring `run-all` needs.
 Once your scraper is registered (Step 4), it's **automatically** reachable through
 the generic registry-driven endpoints — no per-scraper route code:
 
-- `POST /scraper/source/{name}/run?company=…&depth=…` — run it
+- `POST /scraper/source/{name}/run?company=…&depth=…&country=…` — run it (`country` is the ISO-2 filter above, so a source can be exercised per-country straight from the API)
 - `GET  /scraper/source/{name}/status` — its enabled state
 - `GET  /scraper/registry` — lists every registered scraper + enabled state
 

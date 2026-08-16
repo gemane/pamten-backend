@@ -53,7 +53,9 @@ import logging
 import random
 import re
 import time
+import unicodedata
 import httpx
+from functools import lru_cache
 
 log = logging.getLogger(__name__)
 
@@ -115,6 +117,162 @@ def search_entity(query: str, limit: int = 5) -> list:
         "format":   "json",
     }, timeout=10)
     return r.json().get("search", [])
+
+
+# ── Searching inside one country ──────────────────────────────────────────────
+#
+# `search_entity` above asks Wikidata for the best "Alphabet" in the world, and
+# gets the one in Mountain View. Filtering that answer afterwards cannot find
+# Alphabet Fuhrparkmanagement, the German company of that name — it is nowhere
+# near the global top few. The country has to be part of the question.
+#
+# `haswbstatement:P17=Q183` does that: the search index is asked only for items
+# whose country IS Germany. `inlabel:` keeps the text match on labels and aliases
+# rather than descriptions, which otherwise drags in every item that merely
+# mentions the word.
+#
+# The consequence, and it is deliberate: an item with no `P17` at all cannot be
+# found this way. Asked for a company in Germany, "we do not know where this is"
+# is not an answer.
+
+
+def _fold(name: str) -> str:
+    """A name reduced to what a comparison should care about: no accents, no
+    legal suffix, lower case. 'Nestlé S.A.' and 'nestle' land in the same place."""
+    from app.scraper.mapper import normalize_entity_name
+
+    stripped = unicodedata.normalize("NFKD", name or "")
+    ascii_only = "".join(c for c in stripped if not unicodedata.combining(c))
+    return (normalize_entity_name(ascii_only) or ascii_only.strip().lower())
+
+
+@lru_cache(maxsize=512)
+def country_item(iso2: str) -> str | None:
+    """The Wikidata item for an ISO-2 country code, e.g. 'DE' → 'Q183'.
+
+    Looked up through P297 (ISO 3166-1 alpha-2) rather than hardcoded, and cached
+    for the life of the process: it is the same handful of countries all day, and
+    the answer does not change.
+    """
+    code = (iso2 or "").strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return None
+    r = _wd_get(WIKIDATA_API, {
+        "action": "query", "list": "search", "srsearch": f"haswbstatement:P297={code}",
+        "srnamespace": 0, "srlimit": 1, "format": "json",
+    }, timeout=10)
+    hits = r.json().get("query", {}).get("search", [])
+    return hits[0]["title"] if hits else None
+
+
+def _names_for(qids: list[str]) -> dict[str, list[str]]:
+    """Every English name an item goes by — label first, then aliases — for up to
+    50 items in one call.
+
+    Aliases matter: a search for "DTAG" reaches Deutsche Telekom through one, and
+    judging that hit on its label alone would throw it away.
+    """
+    if not qids:
+        return {}
+    r = _wd_get(WIKIDATA_API, {
+        "action": "wbgetentities", "ids": "|".join(qids[:50]),
+        "props": "labels|aliases", "languages": "en", "format": "json",
+    }, timeout=15)
+    out: dict[str, list[str]] = {}
+    for qid, ent in (r.json().get("entities") or {}).items():
+        label = ((ent.get("labels") or {}).get("en") or {}).get("value") or ""
+        aliases = [a.get("value", "") for a in ((ent.get("aliases") or {}).get("en") or [])]
+        out[qid] = [n for n in [label, *aliases] if n]
+    return out
+
+
+def rank_by_name(candidates: list[dict], query: str) -> list[dict]:
+    """Order candidates by how well the NAME matches: exact, starts-with, contains,
+    then the search engine's own order — shorter names first within a tier.
+
+    The country-restricted search ranks by text relevance across the whole item,
+    so "barclays" in the United Kingdom comes back with the Premier League first:
+    it was the Barclays Premier League for years and the alias is still there.
+    Ranking on the label puts the bank back on top. Same shape as `_rank` in
+    routers/search.py, for the same reason.
+
+    Names are compared folded — accents stripped, legal suffix dropped — so
+    "Nestle" matches "Nestlé" exactly instead of losing to "Nestle Nido", and
+    "Alphabet" matches "Alphabet Inc." exactly instead of merely starting it.
+    """
+    return sorted(candidates, key=lambda item: _sort_key(item, query))
+
+
+def _sort_key(item: dict, query: str) -> tuple:
+    """Best match over all names, then whether the LABEL is what matched, then the
+    matched name's length, then the search engine's order.
+
+    The label tiebreak earns its place on "Deutsche Telekom" in Germany: the
+    cycling team Wikidata labels "T-Mobile" carries "Deutsche Telekom" as an alias
+    — it raced under that name — so it ties the telco exactly and, being first in
+    the search order, won. An item actually *called* what you typed beats one that
+    merely answers to it.
+    """
+    tier, length = best_match(item, query)
+    label_tier, _ = best_match({"names": [item.get("label") or ""]}, query)
+    return (tier, label_tier, length, item.get("order", 0))
+
+
+def name_tier(item: dict, query: str) -> int:
+    """How well one of an item's names matches the query: 0 exact, 1 starts-with,
+    2 contains, 3 not really. The best of its label and aliases."""
+    return best_match(item, query)[0]
+
+
+def best_match(item: dict, query: str) -> tuple[int, int]:
+    """`(tier, length)` of the name that matches the query best.
+
+    The length is of the *matching* name, not the label. Judging the match on an
+    alias and then ranking on the label lets a short unrelated title win: an Azure
+    cloud region labelled "westindia" carries "Microsoft Azure West India" as an
+    alias, and a nine-character label beat the fifteen of "Microsoft India".
+    """
+    q = _fold(query)
+    best = (3, 0)
+    for name in item.get("names") or [item.get("label") or ""]:
+        n = _fold(name)
+        tier = 0 if n == q else 1 if n.startswith(q) else 2 if q in n else 3
+        best = min(best, (tier, len(n)))
+    return best
+
+
+def search_entity_in_country(query: str, iso2: str, limit: int = 8) -> list:
+    """Label search for `query`, restricted **at Wikidata** to items in `iso2`.
+
+    Returns `[{id, label}]`, best first, or `[]` when that country has nothing by
+    that name — which is a real answer, not a failure to look.
+    """
+    qid = country_item(iso2)
+    if not qid:
+        log.warning("Wikidata: no country item for %r — cannot restrict the search", iso2)
+        return []
+    r = _wd_get(WIKIDATA_API, {
+        "action": "query", "list": "search",
+        "srsearch": f'inlabel:"{query}" haswbstatement:P17={qid}',
+        "srnamespace": 0, "srlimit": limit, "format": "json",
+    }, timeout=15)
+    ids = [h["title"] for h in r.json().get("query", {}).get("search", [])]
+    if not ids:
+        return []
+    names = _names_for(ids)
+    candidates = [{"id": qid_, "names": names.get(qid_, []),
+                   "label": (names.get(qid_) or [""])[0], "order": i}
+                  for i, qid_ in enumerate(ids)]
+
+    # The item has to actually be called what the user typed. Restricted to one
+    # country the search reaches much deeper than a global one, so when a country
+    # has no company by that name it starts offering whatever it does have:
+    # "Alphabet" in France comes back with a breast-cancer trial whose acronym is
+    # ALPHABET. Requiring the query to *begin* one of the item's names keeps
+    # Alphabet Fuhrparkmanagement, Alphabet Brewing Company and Nestlé, and drops
+    # that. Nothing left means nothing there — which is a true answer.
+    named = [c for c in candidates if name_tier(c, query) <= 1]
+    return rank_by_name(named, query)
 
 
 #: Languages the label service may fall back through, in order of preference.
@@ -310,7 +468,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     return details
 
 
-def _fetch_related_countries(qids: set[str]) -> dict[str, dict]:
+def countries_for(qids: set[str]) -> dict[str, dict]:
     """Jurisdiction and headquarters country for related-company QIDs, in ONE query.
 
     Subsidiaries and owners are written as stubs when some *other* company is
@@ -376,7 +534,7 @@ def fetch_company_data(qid: str) -> dict | None:
     company_qids = {c["qid"] for c in data.get("subsidiaries", []) if c.get("qid")}
     company_qids |= {o["qid"] for o in data.get("owners", [])
                      if o.get("qid") and "Q5" not in o.get("instances", [])}
-    countries = _fetch_related_countries(company_qids)
+    countries = countries_for(company_qids)
     for group in ("subsidiaries", "owners"):
         for item in data.get(group, []) or []:
             if found := countries.get(item.get("qid")):

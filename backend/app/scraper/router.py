@@ -27,6 +27,10 @@ class EnsureRequest(BaseModel):
     query: str = Field(..., min_length=2, description="Company name to ensure is present + fresh")
     depth: int = Field(1, ge=0, le=3, description="Ownership depth to reach (phase 1 = 1, idle phase 2 = 2)")
     force: bool = Field(False, description="Re-scrape even if the company is fresh (< TTL)")
+    # The country chosen in the search box. Narrows both the DB lookup and what the
+    # sources are allowed to answer with — see app/scraper/country_match.py.
+    country: str | None = Field(None, pattern="^[A-Za-z]{2}$",
+                                description="ISO-2 country to restrict the search to")
 
 
 # ── On-demand enrichment (any verified user) ──────────────────────────────────
@@ -40,10 +44,10 @@ def scraper_ensure(body: EnsureRequest, _: dict = Depends(require_verified)):
     to a DB-only response when the master switch is off. See app/scraper/ondemand.py."""
     from app.scraper.ondemand import ensure_scrape
     try:
-        return ensure_scrape(body.query, body.depth, body.force)
+        return ensure_scrape(body.query, body.depth, body.force, body.country)
     except Exception:
-        logger.exception("ensure-scrape failed (query=%r, depth=%s, force=%s)",
-                         body.query, body.depth, body.force)
+        logger.exception("ensure-scrape failed (query=%r, depth=%s, force=%s, country=%r)",
+                         body.query, body.depth, body.force, body.country)
         raise HTTPException(status_code=500, detail="On-demand scrape failed. Check server logs.")
 
 
@@ -223,11 +227,16 @@ def scraper_source_run(
     name: str,
     company: str = Query(..., min_length=2, description="Company name to scrape"),
     depth:   int = Query(2, ge=0, le=3, description="Subsidiary depth (0–3; ignored by sources that don't traverse)"),
+    country: str | None = Query(None, pattern="^[A-Za-z]{2}$",
+                                description="ISO-2: reject a match the source finds in another country"),
     _: dict = Depends(require_contributor),
 ):
     """Run one registered scraper by name — the generic entry point for every
     scraper, current and future. Requires SCRAPER_ENABLED plus the scraper's own
-    switch/source toggle."""
+    switch/source toggle.
+
+    `country` is here so a source can be exercised per-country straight from the
+    API, without going through the search box."""
     if not settings.SCRAPER_ENABLED:
         raise HTTPException(status_code=403, detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
     spec = _get_scraper(name)
@@ -237,13 +246,13 @@ def scraper_source_run(
         raise HTTPException(status_code=403, detail=f"{name} scraper is disabled (check its switch / source toggle).")
     try:
         with record_run(name, company) as run:
-            result = spec.run(company, depth)
+            result = spec.run(company, depth, (country or "").upper() or None)
             run["total"] = result.get("total", 0) if isinstance(result, dict) else 0
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception:
-        logger.exception("%s scrape failed (company=%r)", name, company)
+        logger.exception("%s scrape failed (company=%r, country=%r)", name, company, country)
         raise HTTPException(status_code=500, detail=f"{name} scrape failed. Check server logs for details.")
 
 

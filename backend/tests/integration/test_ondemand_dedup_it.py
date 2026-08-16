@@ -19,7 +19,7 @@ def _wikidata_like():
     from app.scraper.graph_writer import _record_touched, _record_touched_entity, set_scrape_target
     from app.scraper.mapper import normalize_entity_name
 
-    def _run(query, depth):
+    def _run(query, depth, country=None):
         run_sql("UPDATE Entity SET name = :n, name_normalized = :nn, search_text = :st, "
                 "type = 'company' UPSERT WHERE id = :id",
                 {"n": query, "nn": normalize_entity_name(query), "st": query.lower(), "id": CO})
@@ -38,7 +38,7 @@ def _sec_like():
     from app.db.arcadedb import run_command, run_sql
     from app.scraper.graph_writer import _record_touched, set_scrape_target
 
-    def _run(query, depth):
+    def _run(query, depth, country=None):
         run_sql("UPDATE Person SET first_name='Page', last_name='Lawrence', "
                 "full_name='Page Lawrence', source_id='sec' UPSERT WHERE id='p-pl'")
         run_command("MATCH (p:Person {id:'p-pl'}) MATCH (e:Entity {id:$c}) "

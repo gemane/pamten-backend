@@ -80,7 +80,7 @@ _inflight: set[str] = set()
 
 
 @_with_autodedup
-def _run_instant_sources(query: str, decision: ScrapeDecision) -> dict:
+def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | None = None) -> dict:
     """Run the enabled **instant** sources for `query`; returns
     {status, names_run, target_id}. Kind-driven: iterate the registry, keep only
     `kind=="instant" and enabled()` — this structurally excludes bulk sources (GLEIF) and
@@ -108,7 +108,7 @@ def _run_instant_sources(query: str, decision: ScrapeDecision) -> dict:
         run_depth = decision.need_depth if spec.depth_aware else 0
         try:
             with record_run(spec.name, query) as run:
-                res = spec.run(query, run_depth)
+                res = spec.run(query, run_depth, country)
                 if isinstance(res, dict):
                     run["total"] = res.get("total", 0) or 0
                     if res.get("entity_id"):
@@ -119,15 +119,23 @@ def _run_instant_sources(query: str, decision: ScrapeDecision) -> dict:
     return {"status": "ok", "names_run": names_run, "target_id": target_id}
 
 
-def ensure_scrape(query: str, depth: int = 1, force: bool = False) -> dict:
+def ensure_scrape(query: str, depth: int = 1, force: bool = False,
+                  country: str | None = None) -> dict:
     """Ensure `query`'s company is present + fresh, scraping the instant sources only when
     the freshness rule says so. Returns {scraped, reason, entity_id, depth_reached,
     sources_run, profile}. Idempotent and safe to call twice (phase-1 depth 1, then
-    phase-2 depth 2 → `deepen` runs only depth-aware sources; a third call → `fresh`)."""
+    phase-2 depth 2 → `deepen` runs only depth-aware sources; a third call → `fresh`).
+
+    `country` is the ISO-2 chosen in the search box, and narrows the whole operation:
+    the DB lookup that decides freshness resolves within that country, the sources are
+    told to reject a match found elsewhere, and the re-resolve afterwards is scoped the
+    same way. Without it the German query "Alphabet" would be answered — from the DB or
+    from Wikidata — with the company in Mountain View."""
     from app.routers.search import resolve_best_entity, get_full_profile
 
     depth = max(0, min(int(depth), 3))
-    entity = resolve_best_entity(query)
+    country = (country or "").strip().upper() or None
+    entity = resolve_best_entity(query, country)
     decision = decide_scrape(entity, requested_depth=depth, force=force,
                              now=datetime.now(timezone.utc))
 
@@ -156,14 +164,14 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False) -> dict:
             return _served_from_db("in_progress")    # already scraping this target
         _inflight.add(key)
     try:
-        ran = _run_instant_sources(query, decision)
+        ran = _run_instant_sources(query, decision, country)
         names_run, target_id = ran["names_run"], ran["target_id"]
     finally:
         with _inflight_lock:
             _inflight.discard(key)
 
     if not target_id:                                # re-resolve (node may be new/merged)
-        again = resolve_best_entity(query)
+        again = resolve_best_entity(query, country)
         target_id = again.get("id") if again else None
     profile = _profile(target_id)
     depth_reached = decision.need_depth

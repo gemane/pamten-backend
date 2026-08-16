@@ -136,13 +136,25 @@ def test_scraper_source_run_dispatches_to_registered(client, make_token, monkeyp
     import app.scraper.scraper_registry as reg
     from app.scraper.scraper_registry import ScraperSpec
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
-    fake = ScraperSpec("faketest", lambda q, d: {"status": "ok", "total": 7, "echo": q, "depth": d}, lambda: True)
+    fake = ScraperSpec("faketest",
+                       lambda q, d, c=None: {"status": "ok", "total": 7, "echo": q, "depth": d, "country": c},
+                       lambda: True)
     monkeypatch.setattr(reg, "_registry", {**reg._registry, "faketest": fake})
 
     tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
     r = client.post("/scraper/source/faketest/run", params={"company": "Acme", "depth": 1}, headers=tok)
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "total": 7, "echo": "Acme", "depth": 1}
+    assert r.json() == {"status": "ok", "total": 7, "echo": "Acme", "depth": 1, "country": None}
+
+    # The same endpoint can restrict a source to one country, upper-cased on the way in
+    # so the ISO-2 comparisons downstream match.
+    r = client.post("/scraper/source/faketest/run",
+                    params={"company": "Acme", "depth": 1, "country": "de"}, headers=tok)
+    assert r.json()["country"] == "DE"
+
+    r = client.post("/scraper/source/faketest/run",
+                    params={"company": "Acme", "country": "Germany"}, headers=tok)
+    assert r.status_code == 422        # ISO-2 or nothing
 
 
 # ── Stats endpoint ──────────────────────────────────────────────────────────────
