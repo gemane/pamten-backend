@@ -74,6 +74,10 @@ _INDEXES: list[tuple[str, str, str]] = [
     # Import checkpoints — e.g. the last GLEIF publish a delta update applied, so
     # the daily refresh can pick a catch-up interval that covers any missed runs.
     ("ImportState", "key",          "UNIQUE"),
+    # Fruitless on-demand searches, so the same one is not run at every source
+    # again the moment a user clicks twice. Keyed by normalised query + country,
+    # which is exactly what makes two searches "the same search".
+    ("ScrapeMiss",  "key",          "UNIQUE"),
     # Address -> coordinate cache, so a shared registered-agent building is
     # geocoded once rather than once per company registered there (24 companies
     # share one Wilmington address in the dev graph alone). UNIQUE on the cleaned

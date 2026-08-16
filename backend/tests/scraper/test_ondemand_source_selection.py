@@ -24,6 +24,10 @@ def _setup(monkeypatch, entity, *, enable_oc=False, resolved=None):
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)  # _run_instant_sources now wraps dedup
     monkeypatch.setattr("app.scraper.run_log.record_run", _fake_record_run)
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+    # The miss memory reads and writes ScrapeMiss rows. This suite is about which
+    # sources run, and must not need a database to answer that; [] means "no miss
+    # recorded", which is the state every test here assumes.
+    monkeypatch.setattr("app.db.arcadedb.run_sql", lambda *a, **k: [])
 
     def mk(name, kind, depth_aware, enabled=True):
         def run(q, d, c=None):
