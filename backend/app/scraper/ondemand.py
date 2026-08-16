@@ -72,6 +72,59 @@ def decide_scrape(entity: dict | None, *, requested_depth: int, force: bool,
     return ScrapeDecision(False, "fresh", depth)
 
 
+# ── Fruitless searches ────────────────────────────────────────────────────────
+#
+# The freshness gate protects the sources by looking at the *company*: when it was
+# last scraped, how deep. A search that finds nothing has no company to hang that
+# on, so nothing was recorded and every repeat of a hopeless query ran every
+# source again. "Alphabet" in France has no answer, and asking twice in a row does
+# not make one appear.
+#
+# So a miss is remembered too, under the same key that makes two searches the same
+# search — normalised name plus country — and honoured for the same cooldown that
+# caps a forced re-scrape.
+
+
+def _miss_key(query: str, country: str | None) -> str:
+    """What makes two searches the same search: the normalised name and the
+    country. "Alphabet" in France and "Alphabet" in Germany are different
+    questions and must not share an answer."""
+    name = normalize_entity_name(query) or (query or "").strip().lower()
+    return f"{name}|{(country or '').strip().upper()}"
+
+
+def _recent_miss(key: str, now: datetime, hours: int) -> str | None:
+    """When this search last came back empty, if that was recent enough to still
+    count. An expired row is deleted on the way past — the cheapest prune there
+    is, and it only ever touches a key someone is asking about."""
+    if hours <= 0:
+        return None
+    from app.db.arcadedb import run_sql
+
+    rows = run_sql("SELECT missed_at FROM ScrapeMiss WHERE key = :k", {"k": key})
+    if not rows:
+        return None
+    at = _parse_dt(rows[0].get("missed_at"))
+    if at and (now - at) < timedelta(hours=hours):
+        return at.isoformat()
+    run_sql("DELETE FROM ScrapeMiss WHERE key = :k", {"k": key})
+    return None
+
+
+def _record_miss(key: str, now: datetime) -> None:
+    from app.db.arcadedb import run_sql
+
+    run_sql("UPDATE ScrapeMiss SET key = :k, missed_at = :now UPSERT WHERE key = :k",
+            {"k": key, "now": now.isoformat()})
+
+
+def _clear_miss(key: str) -> None:
+    """A search that found something cancels the memory of one that didn't."""
+    from app.db.arcadedb import run_sql
+
+    run_sql("DELETE FROM ScrapeMiss WHERE key = :k", {"k": key})
+
+
 # Serialise scrapes of the same target so a double-click / concurrent request doesn't
 # queue a second identical scrape. The 30-day freshness gate is the primary damper; this
 # just stops overlap. Keyed by the normalized company name.
@@ -126,6 +179,11 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
     sources_run, profile}. Idempotent and safe to call twice (phase-1 depth 1, then
     phase-2 depth 2 → `deepen` runs only depth-aware sources; a third call → `fresh`).
 
+    A search that finds nothing is remembered for the same cooldown, keyed by name
+    and country, and repeating it returns `reason: "recently_missed"` without
+    touching a source. Otherwise nothing records the attempt — there is no company
+    to stamp — and every repeat of a hopeless query runs every source again.
+
     `country` is the ISO-2 chosen in the search box, and narrows the whole operation:
     the DB lookup that decides freshness resolves within that country, the sources are
     told to reject a match found elsewhere, and the re-resolve afterwards is scoped the
@@ -158,7 +216,21 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
     if not settings.SCRAPER_ENABLED:
         return _served_from_db("disabled")           # master switch off — graceful
 
-    key = normalize_entity_name(query) or query.lower().strip()
+    now = datetime.now(timezone.utc)
+    miss_key = _miss_key(query, country)
+    missed_at = _recent_miss(miss_key, now, settings.SCRAPER_ONDEMAND_COOLDOWN_HOURS)
+    if missed_at:
+        # Asked and answered. Running every source again for a query that just came
+        # back empty is exactly the hammering the cooldown exists to prevent — and
+        # it is the same answer.
+        out = _served_from_db("recently_missed")
+        out["missed_at"] = missed_at
+        return out
+
+    # Same key as the miss memory: two searches are the same search when the name
+    # and the country match. Two countries are two scrapes and must not block
+    # each other.
+    key = miss_key
     with _inflight_lock:
         if key in _inflight:
             return _served_from_db("in_progress")    # already scraping this target
@@ -173,6 +245,11 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
     if not target_id:                                # re-resolve (node may be new/merged)
         again = resolve_best_entity(query, country)
         target_id = again.get("id") if again else None
+    if target_id:
+        _clear_miss(miss_key)
+    else:
+        _record_miss(miss_key, now)
+
     profile = _profile(target_id)
     depth_reached = decision.need_depth
     if profile and profile.get("entity"):
