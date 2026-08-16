@@ -17,18 +17,26 @@ class TestNothingAsked:
         assert matches_requested(None, None) is True
 
 
-class TestUnknownIsNotAMismatch:
-    """A source that states no country is not claiming a different one.
+class TestUnknownIsAMismatch:
+    """Asked for Germany, "we don't know where this is" is not an answer.
 
-    Many records legitimately carry none — a Wikidata item without P17 is
-    ordinary — and rejecting them would empty out the sparse sources without
-    preventing a single wrong import.
+    It is also the rule the source-side searches enforce for free — an item
+    without P17 is not in the index Wikidata searches — so the checked sources
+    have to agree, or "found in Germany" means two different things depending on
+    which source answered.
+
+    The cost, concretely: Deutsche Bank AG files with the SEC and leaves
+    `stateOfIncorporation` empty, so EDGAR will not turn it up for a German
+    search.
     """
 
-    def test_no_country_found_is_accepted(self):
-        assert matches_requested(None, "DE") is True
-        assert matches_requested("", "DE") is True
-        assert matches_requested("   ", "DE") is True
+    def test_no_country_found_is_rejected(self):
+        assert matches_requested(None, "DE") is False
+        assert matches_requested("", "DE") is False
+        assert matches_requested("   ", "DE") is False
+
+    def test_but_only_when_a_country_was_asked_for(self):
+        assert matches_requested(None, None) is True
 
 
 class TestComparison:

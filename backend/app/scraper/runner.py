@@ -19,7 +19,7 @@ from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.claims import record_claim, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
-from app.scraper.wikidata import search_entity, fetch_company_data
+from app.scraper.wikidata import search_entity, search_entity_in_country, fetch_company_data
 from app.scraper.sources import KNOWN_SOURCES
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
 from app.scraper.sources import get_source_enabled
@@ -748,46 +748,19 @@ def _scrape_node(
 # ── Wikidata public entry point ───────────────────────────────────────────────
 
 @_with_autodedup
-def _candidate_countries(results: list) -> str | None:
-    """The countries the candidates claim, for the rejection message. Joined
-    rather than picked, because "we found DE, US" explains a rejection that a
-    single country would not."""
-    from app.scraper.wikidata import countries_for
-    found = countries_for({r["id"] for r in results})
-    seen = [v.get("country") for v in found.values() if v.get("country")]
-    return ", ".join(sorted(set(seen))) or None
-
-
-def _pick_candidate(results: list, country: str | None) -> str | None:
-    """The QID to scrape: the first candidate in the requested country, or the
-    top hit when no country was asked for.
-
-    Returns None when a country was asked for and every candidate is known to be
-    elsewhere. A candidate with no country of its own is accepted — see
-    `country_match` on why unknown is not a mismatch — but only after the ones
-    that positively match, so a stated match always wins.
-    """
-    if not country:
-        return results[0]["id"]
-    from app.scraper.wikidata import countries_for
-    found = countries_for({r["id"] for r in results})
-    for r in results:                       # a stated match first
-        if (found.get(r["id"], {}).get("country") or "").upper() == country.upper():
-            return r["id"]
-    for r in results:                       # then one that claims nothing
-        if not found.get(r["id"], {}).get("country"):
-            return r["id"]
-    return None
-
-
 def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
     """
     Trigger a Wikidata scrape for a company name.
     Raises PermissionError if SCRAPER_ENABLED is not true.
 
-    With `country` (ISO-2, from the search box) the candidate list is filtered
-    rather than blindly taking the top hit: "Alphabet" asked of Wikidata returns
-    the Mountain View one first whatever country the user picked.
+    With `country` (ISO-2, from the search box) the search itself is restricted to
+    that country at Wikidata — `haswbstatement:P17` — rather than the world's best
+    "Alphabet" being fetched and then judged. The difference is not cosmetic:
+    Alphabet Fuhrparkmanagement, the German company of that name, is nowhere near
+    the global top hits, so no amount of filtering afterwards would ever find it.
+
+    An item that states no country cannot be found this way, by design. Asked for
+    a company in Germany, "we do not know where this is" is not an answer.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -804,15 +777,13 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
 
     depth = max(0, min(int(depth), 3))  # hard cap at 3 levels
 
-    results = search_entity(query, limit=3)
+    results = (search_entity_in_country(query, country) if country
+               else search_entity(query, limit=3))
     if not results:
-        return {"status": "no_results", "query": query, "total": 0, "scraped": []}
+        return {"status": "no_results", "query": query, "total": 0, "scraped": [],
+                "requested_country": country}
 
-    qid = _pick_candidate(results, country)
-    if qid is None:
-        # Every candidate is somewhere else. Nothing has been written yet, so
-        # there is nothing to undo.
-        return country_mismatch(query, _candidate_countries(results), country)
+    qid = results[0]["id"]
 
     source_id = _ensure_source(WIKIDATA_SOURCE_NAME, WIKIDATA_SOURCE_URL, WIKIDATA_CREDIBILITY, "knowledge_base")
     scraped: list = []
@@ -1324,8 +1295,17 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     Requires SCRAPER_ENABLED=true AND SCRAPER_SEC_EDGAR_ENABLED=true.
 
     With `country`, a filer registered elsewhere is rejected before anything is
-    written. EDGAR holds foreign filers as well as American ones, so the country
-    is checked per match rather than the whole source being skipped.
+    written.
+
+    Checked afterwards rather than asked for up front, unlike Wikidata and
+    OpenCorporates, because EDGAR's search-side `State=` filter is the wrong
+    field — it matches the *business address*, which for a foreign filer is
+    usually its US filing office. Deutsche Bank AG lists New York and states no
+    incorporation at all; Siemens AG states Germany and gives no address country.
+    Filtering the search by that field would hide both from a German search. So
+    the single match EDGAR returns is judged on `stateOfIncorporation`, which is
+    the field that answers the question — and a filer that states none is not an
+    answer to "in Germany".
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1643,9 +1623,10 @@ def run_scrape_open_corporates(company_name: str, country: str | None = None) ->
     Scrape OpenCorporates for registration details and officers for one company.
     Requires SCRAPER_ENABLED=true AND SCRAPER_OPENCORPORATES_ENABLED=true.
 
-    With `country`, a match in another jurisdiction is rejected: the first two
-    characters of an OpenCorporates `jurisdiction_code` ("gb", "us_de") are the
-    ISO-2 country.
+    `country` is passed to the API as `jurisdiction_code`, so the search runs
+    inside that country. The returned code is still checked — one line, no extra
+    call — because a filter that silently stops working is the kind of thing that
+    is only noticed once wrong data is in the graph.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -1664,7 +1645,7 @@ def run_scrape_open_corporates(company_name: str, country: str | None = None) ->
     from app.scraper.open_corporates import scrape_company
 
     log.info("OpenCorporates runner: starting scrape for %r", company_name)
-    data = scrape_company(company_name)
+    data = scrape_company(company_name, country)
 
     if not data:
         return {

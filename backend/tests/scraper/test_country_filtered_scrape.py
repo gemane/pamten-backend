@@ -26,64 +26,80 @@ def _scraper_on(monkeypatch):
     monkeypatch.setattr(runner, "get_source_enabled", lambda _name: True)
 
 
-# ── Wikidata: choosing among the candidates ───────────────────────────────────
+# ── Wikidata: the country is part of the question ─────────────────────────────
+#
+# Not a filter over global results — those are the wrong results. "Alphabet" asked
+# of Wikidata returns the Mountain View company; Alphabet Fuhrparkmanagement, the
+# German company of that name, is nowhere near the top and no amount of filtering
+# afterwards would ever reach it.
 
-CANDIDATES = [{"id": "Q1"}, {"id": "Q2"}, {"id": "Q3"}]
+class TestWikidataSearch:
+    def test_a_country_makes_it_search_inside_that_country(self):
+        with patch("app.scraper.runner.search_entity_in_country",
+                   return_value=[{"id": "Q2650924", "label": "Alphabet Fuhrparkmanagement"}]) as scoped, \
+             patch("app.scraper.runner.search_entity") as global_search, \
+             patch("app.scraper.runner._scrape_node"), \
+             patch("app.scraper.runner._ensure_source", return_value="s1"):
+            runner.run_scrape("Alphabet", depth=0, country="DE")
+        scoped.assert_called_once_with("Alphabet", "DE")
+        global_search.assert_not_called()      # the world's best is not fetched at all
 
+    def test_no_country_keeps_the_unrestricted_search(self):
+        with patch("app.scraper.runner.search_entity", return_value=[{"id": "Q20800404"}]) as global_search, \
+             patch("app.scraper.runner.search_entity_in_country") as scoped, \
+             patch("app.scraper.runner._scrape_node"), \
+             patch("app.scraper.runner._ensure_source", return_value="s1"):
+            runner.run_scrape("Alphabet", depth=0)
+        global_search.assert_called_once()
+        scoped.assert_not_called()
 
-def _countries(mapping):
-    """Patch the one SPARQL call the picker makes."""
-    return patch("app.scraper.wikidata.countries_for",
-                 lambda qids: {q: {"country": c, "hq_country": None} for q, c in mapping.items()})
-
-
-class TestWikidataCandidate:
-    def test_takes_the_top_hit_when_no_country_is_asked_for(self):
-        assert runner._pick_candidate(CANDIDATES, None) == "Q1"
-
-    def test_takes_the_candidate_in_the_asked_for_country(self):
-        # The whole feature in one line: the German one is not the top hit.
-        with _countries({"Q1": "US", "Q2": "DE", "Q3": "GB"}):
-            assert runner._pick_candidate(CANDIDATES, "DE") == "Q2"
-
-    def test_prefers_a_stated_match_over_one_that_states_nothing(self):
-        with _countries({"Q1": None, "Q2": "DE", "Q3": None}):
-            assert runner._pick_candidate(CANDIDATES, "DE") == "Q2"
-
-    def test_falls_back_to_a_candidate_with_no_country_of_its_own(self):
-        # Unknown is not a mismatch — see country_match. A Wikidata item without
-        # P17 is ordinary, and rejecting it would lose real companies.
-        with _countries({"Q1": "US", "Q2": None, "Q3": "GB"}):
-            assert runner._pick_candidate(CANDIDATES, "DE") == "Q2"
-
-    def test_rejects_when_every_candidate_is_somewhere_else(self):
-        with _countries({"Q1": "US", "Q2": "GB", "Q3": "FR"}):
-            assert runner._pick_candidate(CANDIDATES, "DE") is None
-
-    def test_the_case_of_the_asked_for_country_does_not_decide(self):
-        with _countries({"Q1": "US", "Q2": "DE", "Q3": "GB"}):
-            assert runner._pick_candidate(CANDIDATES, "de") == "Q2"
-
-
-class TestWikidataRun:
-    def test_a_rejected_query_scrapes_nothing(self):
-        with patch("app.scraper.runner.search_entity", return_value=CANDIDATES), \
-             _countries({"Q1": "US", "Q2": "GB", "Q3": "FR"}), \
+    def test_nothing_in_that_country_is_a_real_answer(self):
+        # Not "mismatch" — we never looked anywhere else, so there is nothing to
+        # report having found instead.
+        with patch("app.scraper.runner.search_entity_in_country", return_value=[]), \
              patch("app.scraper.runner._scrape_node") as scrape_node:
-            out = runner.run_scrape("Alphabet", depth=1, country="DE")
-        assert out["status"] == "country_mismatch"
-        assert out["total"] == 0
-        scrape_node.assert_not_called()        # nothing written, nothing to undo
+            out = runner.run_scrape("Alphabet", depth=1, country="FR")
+        assert out["status"] == "no_results" and out["requested_country"] == "FR"
+        scrape_node.assert_not_called()
 
-    def test_the_rejection_names_what_was_found_instead(self):
-        with patch("app.scraper.runner.search_entity", return_value=CANDIDATES), \
-             _countries({"Q1": "US", "Q2": "GB", "Q3": "US"}), \
-             patch("app.scraper.runner._scrape_node"):
-            out = runner.run_scrape("Alphabet", depth=1, country="DE")
-        assert out["found_country"] == "GB, US" and out["requested_country"] == "DE"
+    def test_it_scrapes_the_company_the_country_search_found(self):
+        with patch("app.scraper.runner.search_entity_in_country",
+                   return_value=[{"id": "Q2650924", "label": "Alphabet Fuhrparkmanagement"},
+                                 {"id": "Q999", "label": "Jeannes Alphabet"}]), \
+             patch("app.scraper.runner._ensure_source", return_value="s1"), \
+             patch("app.scraper.runner._scrape_node") as scrape_node:
+            runner.run_scrape("Alphabet", depth=1, country="DE")
+        assert scrape_node.call_args[0][0] == "Q2650924"
+
+
+class TestRankingWhatTheCountrySearchReturns:
+    """The country-restricted search ranks by text relevance over the whole item,
+    which is not the same as "is this the company I named"."""
+
+    def rank(self, labels, query):
+        from app.scraper.wikidata import rank_by_name
+        cands = [{"id": f"Q{i}", "label": lab, "order": i} for i, lab in enumerate(labels)]
+        return [c["label"] for c in rank_by_name(cands, query)]
+
+    def test_the_named_company_beats_a_competition_named_after_it(self):
+        # "barclays" in the UK really does come back with the Premier League
+        # first: it was the Barclays Premier League and the alias is still there.
+        assert self.rank(["Premier League", "Barclays", "ATP Finals"], "Barclays")[0] == "Barclays"
+
+    def test_accents_do_not_decide(self):
+        # Otherwise "Nestle" starts-with-matches "Nestle Nido" and loses "Nestlé".
+        assert self.rank(["Nestle Nido", "Nestlé"], "Nestle")[0] == "Nestlé"
+
+    def test_a_legal_suffix_does_not_decide(self):
+        assert self.rank(["Alphabet City", "Alphabet Inc."], "Alphabet")[0] == "Alphabet Inc."
+
+    def test_the_search_order_breaks_a_tie(self):
+        assert self.rank(["Siemens Mobile", "Siemens Energy"], "Siemens Something") == [
+            "Siemens Mobile", "Siemens Energy"]
 
 
 # ── SEC EDGAR: checking the filer ─────────────────────────────────────────────
+
 
 FILER = {"name": "ALPHABET INC.", "cik": "0001652044"}
 
@@ -126,10 +142,11 @@ class TestSecEdgar:
     def test_a_matching_filer_is_kept(self):
         assert _proceeded_past_the_check("US", "US") is True
 
-    def test_a_filer_of_unknown_country_is_kept(self):
-        # EDGAR knows nothing about where this one is registered; that is not a
-        # claim that it is somewhere else.
-        assert _proceeded_past_the_check(None, "DE") is True
+    def test_a_filer_that_states_no_incorporation_is_rejected(self):
+        # Deutsche Bank AG is the real case: it files with the SEC and leaves
+        # `stateOfIncorporation` empty. Asked for a company in Germany, a record
+        # that cannot say where it is is not the answer.
+        assert _proceeded_past_the_check(None, "DE") is False
 
     def test_without_a_country_every_filer_is_kept(self):
         assert _proceeded_past_the_check("US", None) is True

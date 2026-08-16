@@ -99,14 +99,22 @@ def _get(path: str, params: dict | None = None) -> dict:
 
 # ── Company search ────────────────────────────────────────────────────────────
 
-def search_company(name: str) -> dict | None:
+def search_company(name: str, country: str | None = None) -> dict | None:
     """
     Search OpenCorporates for a company by name.
     Returns {jurisdiction_code, company_number, name} for the best match, or None.
+
+    `country` (ISO-2) is passed to the API as `jurisdiction_code`, so the search
+    happens inside that country rather than being filtered after the fact. The
+    codes are lower case there, and sub-national ones extend the country's code
+    ("gb", "us_de"), so the ISO-2 lower-cased is the country-wide filter.
     """
-    log.info("OpenCorporates: searching for %r", name)
+    log.info("OpenCorporates: searching for %r%s", name, f" in {country}" if country else "")
+    params = {"q": name}
+    if country:
+        params["jurisdiction_code"] = country.strip().lower()
     try:
-        data = _get("/companies/search", {"q": name})
+        data = _get("/companies/search", params)
     except httpx.HTTPError as exc:
         log.error("OpenCorporates: search failed for %r: %s", name, exc)
         return None
@@ -206,12 +214,14 @@ def fetch_officers(jurisdiction_code: str, company_number: str) -> list:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def scrape_company(company_name: str) -> dict | None:
+def scrape_company(company_name: str, country: str | None = None) -> dict | None:
     """
     Full OpenCorporates scrape for one company.
     Returns structured dict or None if the company is not found.
+
+    `country` (ISO-2) restricts the search to that jurisdiction at the API.
     """
-    match = search_company(company_name)
+    match = search_company(company_name, country)
     if not match:
         return None
 

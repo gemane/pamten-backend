@@ -296,26 +296,44 @@ register(ScraperSpec(
 
 ### The country argument
 
-`country` is an ISO-2 the user picked in the search box, or `None`. If your source
-can tell **where** its match is, it must reject a match in another country —
-before writing anything:
+`country` is an ISO-2 the user picked in the search box, or `None`. Asked for
+"Alphabet", every source left to itself answers with Alphabet Inc of Mountain
+View, because it is the most famous company by that name. The country is the
+only thing standing between a German query and an American import.
+
+**Ask the source, if it can be asked.** A filter applied to the answer cannot
+find what the question never reached: Alphabet Fuhrparkmanagement, the German
+company called Alphabet, is nowhere near the global top hits and no amount of
+post-filtering will ever surface it. Wikidata's search index takes a statement
+filter, and OpenCorporates takes a `jurisdiction_code`, so both put the country
+*in the query*:
+
+```python
+data = search_their_api(name, country=country)     # the source does the filtering
+```
+
+**Check the match only when you cannot ask.** SEC EDGAR is the example: its
+search-side `State=` filter matches the *business address*, which for a foreign
+filer is usually its US filing office — Deutsche Bank AG lists New York — so
+filtering the search by it would hide German companies from a German search.
+There, EDGAR's single match is judged on what it states about incorporation:
 
 ```python
 from app.scraper.country_match import matches_requested, country_mismatch
 
-found = match.get("jurisdiction")          # whatever your source calls it
+found = filer_country(match)               # whatever your source calls it
 if not matches_requested(found, country):
     return country_mismatch(company_name, found, country)
 ```
 
-Why it is not optional: asked for "Alphabet", every source left to itself answers
-with Alphabet Inc of Mountain View, because it is the most famous company by that
-name. The country is the only thing standing between a German query and an
-American import.
+Do the check **before the first write**, so a rejection leaves nothing behind.
 
-`matches_requested` also settles the awkward case: a match whose country is
-**unknown** is accepted. It is not claiming to be somewhere else, and plenty of
-records legitimately state no country.
+**A match that states no country is rejected.** Asked for a company in Germany,
+"we do not know where this is" is not an answer — and it is what the source-side
+filters do anyway (an item with no `P17` is not in the index being searched), so
+the checked sources have to agree or "found in Germany" means two things. The
+cost is real: Deutsche Bank leaves `stateOfIncorporation` empty, so a German
+search will not find it through EDGAR.
 
 `register()` rejects a `run` that cannot take all three arguments. That check
 exists because the dispatchers catch every exception per source — a two-argument
