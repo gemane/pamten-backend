@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # the external sources aren't hammered. A deepen to a not-yet-reached depth is a
     # continuation of the same enrichment and is still allowed.
     SCRAPER_ONDEMAND_COOLDOWN_HOURS:  int  = 24
+    # Usage measurement: aggregate counts of what people search for and which
+    # features they use — no user id, no session, no IP (app/analytics.py).
+    # Default OFF so the code can ship before the privacy notice and the
+    # app-store declarations have caught up; turning it on is a deliberate step.
+    ANALYTICS_ENABLED:                bool = False
     # /search resilience: when the FULL_TEXT index returns nothing, fall back to a
     # bounded substring scan on the name so a degraded/incomplete FULL_TEXT index
     # (e.g. after an interrupted bulk-load) can't silently hide companies that ARE

@@ -78,6 +78,11 @@ _INDEXES: list[tuple[str, str, str]] = [
     # again the moment a user clicks twice. Keyed by normalised query + country,
     # which is exactly what makes two searches "the same search".
     ("ScrapeMiss",  "key",          "UNIQUE"),
+    # Usage measurement — aggregate counters only, never linked to a user, a
+    # session or an IP (see app/analytics.py for why that is the whole design).
+    ("SearchDemand", "key",          "UNIQUE"),
+    ("UsageCounter", "key",          "UNIQUE"),
+    ("EndpointStat", "key",          "UNIQUE"),
     # Address -> coordinate cache, so a shared registered-agent building is
     # geocoded once rather than once per company registered there (24 companies
     # share one Wilmington address in the dev graph alone). UNIQUE on the cleaned
