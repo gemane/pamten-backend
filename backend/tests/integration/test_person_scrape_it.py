@@ -163,3 +163,66 @@ class TestThroughEnsure:
 
         out = ondemand.ensure_scrape("Larry Page", depth=1, force=False)
         assert out["kind"] == "person" and out["reason"] == "fresh" and calls == []
+
+
+class TestWhenTheNameIsNotTheKind:
+    """The reported bug, end to end.
+
+    Wikidata's hits for "Steve Jobs" are the 2015 film, the book, then the man.
+    Taking the first wrote the film into the graph as a company — and because
+    that counted as a successful scrape, the person was never touched.
+    """
+
+    HITS = [
+        {"id": "Q18754959", "label": "Steve Jobs"},     # the film
+        {"id": "Q16460065", "label": "Steve Jobs"},     # the book
+        {"id": "Q19837", "label": "Steve Jobs"},        # the man
+    ]
+    FACTS = {
+        "Q18754959": {"instances": ["Q11424"], "is_human": False, "is_company": False},
+        "Q16460065": {"instances": ["Q3331189"], "is_human": False, "is_company": False},
+        "Q19837": {"instances": ["Q5"], "is_human": True, "is_company": False},
+    }
+
+    @pytest.fixture
+    def ambiguous(self, wikidata, monkeypatch):
+        monkeypatch.setattr(wikidata, "search_entity", lambda q, limit=3: list(self.HITS))
+        monkeypatch.setattr("app.scraper.wikidata.classify_candidates", lambda qids: self.FACTS)
+        monkeypatch.setattr("app.scraper.wikidata.fetch_person_details_for",
+                            lambda qid: {**DETAIL, "full_name": "Steve Jobs"} if qid == "Q19837" else None)
+        monkeypatch.setattr("app.scraper.wikidata.fetch_person_companies",
+                            lambda qid, limit=60: [LINKS[0]] if qid == "Q19837" else [])
+        return wikidata
+
+    def test_the_company_path_refuses_the_film(self, ambiguous):
+        from app.database import db
+
+        out = ambiguous.run_scrape("Steve Jobs", depth=0)
+        assert out["status"] == "not_a_company"
+        with db.get_session() as s:
+            assert s.run("MATCH (e:Entity) RETURN count(e) AS n").single()["n"] == 0
+
+    def test_the_person_path_finds_the_man_third_in_the_list(self, ambiguous):
+        from app.database import db
+
+        out = ambiguous.run_scrape_person("Steve Jobs")
+        assert out["status"] == "ok" and out["qid"] == "Q19837"
+        with db.get_session() as s:
+            p = s.run("MATCH (p:Person) RETURN p.full_name AS n, p.wikidata_id AS q").single()
+        assert (p["n"], p["q"]) == ("Steve Jobs", "Q19837")
+
+    def test_ensure_ends_up_with_the_person_and_no_film(self, ambiguous, monkeypatch):
+        from app.database import db
+        from app.scraper import ondemand
+        from app.scraper.scraper_registry import ScraperSpec, register
+
+        monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        register(ScraperSpec("wikidata", lambda q, d, c=None: ambiguous.run_scrape(q, d, c),
+                             lambda: True, kind="instant", depth_aware=True))
+
+        out = ondemand.ensure_scrape("Steve Jobs", depth=1, force=True)
+        assert out["kind"] == "person"
+        assert out["profile"]["person"]["full_name"] == "Steve Jobs"
+        with db.get_session() as s:
+            names = [r["n"] for r in s.run("MATCH (e:Entity) RETURN e.name AS n")]
+        assert "Steve Jobs" not in names, "the film was written as a company again"

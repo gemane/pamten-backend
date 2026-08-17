@@ -19,7 +19,8 @@ from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.claims import record_claim, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
-from app.scraper.wikidata import search_entity, search_entity_in_country, fetch_company_data
+from app.scraper.wikidata import (search_entity, search_entity_in_country,
+                                  fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
 from app.scraper.sources import get_source_enabled
@@ -850,7 +851,16 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
         return {"status": "no_results", "query": query, "total": 0, "scraped": [],
                 "requested_country": country}
 
-    qid = results[0]["id"]
+    # A name is not a kind. Searching "Steve Jobs" returns the 2015 film first,
+    # the book second and the man third — and taking the top hit wrote a Danny
+    # Boyle picture into the graph as a company, because `infer_entity_type`
+    # falls back to "company" for any P31 it does not recognise. Pick the hit
+    # that actually looks like a company, or say there is not one.
+    qid = pick_candidate(results, "company")
+    if qid is None:
+        log.info("Wikidata: nothing company-shaped among the hits for %r", query)
+        return {"status": "not_a_company", "query": query, "total": 0, "scraped": [],
+                "requested_country": country}
 
     source_id = _ensure_source(WIKIDATA_SOURCE_NAME, WIKIDATA_SOURCE_URL, WIKIDATA_CREDIBILITY, "knowledge_base")
     scraped: list = []
@@ -1640,8 +1650,10 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
         return {"status": "no_results", "query": query, "total": 0, "scraped": [],
                 "requested_country": country}
 
-    qid = results[0]["id"]
-    detail = fetch_person_details_for(qid)
+    # The same reason in the other direction: the man is the third hit for his
+    # own name, so the first is not the one to ask about.
+    qid = pick_candidate(results, "person")
+    detail = fetch_person_details_for(qid) if qid else None
     if not detail or not detail.get("is_human"):
         # Not a person — the company path handles this, and guessing here would
         # write a company into the person shape.
@@ -1649,8 +1661,9 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
 
     source_id = _ensure_source(WIKIDATA_SOURCE_NAME, WIKIDATA_SOURCE_URL,
                                WIKIDATA_CREDIBILITY, "knowledge_base")
+    chosen = next((r for r in results if r["id"] == qid), None) or {}
     person_id = _upsert_person(
-        full_name=detail.get("full_name") or results[0].get("label") or query,
+        full_name=detail.get("full_name") or chosen.get("label") or query,
         nationality=None, description=detail.get("description"), wikidata_id=qid,
         birth_date=detail.get("birth_date"), death_date=detail.get("death_date"),
         birth_place=detail.get("birth_place"), aliases=detail.get("aliases"),
