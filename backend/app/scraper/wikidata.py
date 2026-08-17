@@ -463,6 +463,60 @@ def looks_like_a_company(instances: list[str], signal_count: int) -> bool:
     return bool(signal_count) or any(i in INSTANCE_TYPE_MAP for i in instances)
 
 
+
+def classify_candidates(qids: list[str]) -> dict[str, dict]:
+    """For each candidate: what it is an instance of, whether it is a human, and
+    how many company signals it carries — in one query.
+
+    Needed because a name is not a kind. Searching "Steve Jobs" returns the 2015
+    film first, the book second and the man third; searching "Larry Page" returns
+    the man first and a British singer second. Whichever path is asking has to
+    pick its own kind out of that list rather than trust the ranking.
+    """
+    if not qids:
+        return {}
+    values = " ".join(f"wd:{q}" for q in qids)
+    signals = "\n".join(f"      OPTIONAL {{ ?item wdt:{p} ?sig{i} }}"
+                         for i, p in enumerate(COMPANY_SIGNAL_PROPS))
+    counts = " ".join(f"(COUNT(DISTINCT ?sig{i}) AS ?n{i})" for i in range(len(COMPANY_SIGNAL_PROPS)))
+    query = f"""
+    SELECT ?item (GROUP_CONCAT(DISTINCT ?inst; separator="|") AS ?instances) {counts} WHERE {{
+      VALUES ?item {{ {values} }}
+      OPTIONAL {{ ?item wdt:P31 ?i . BIND(STRAFTER(STR(?i), "entity/") AS ?inst) }}
+{signals}
+    }} GROUP BY ?item
+    """
+    r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=45)
+    out: dict[str, dict] = {}
+    for row in r.json()["results"]["bindings"]:
+        qid = _qid(_v(row, "item"))
+        instances = [i for i in (_v(row, "instances") or "").split("|") if i]
+        signal_count = sum(int(_v(row, f"n{i}") or 0) for i in range(len(COMPANY_SIGNAL_PROPS)))
+        out[qid] = {
+            "instances": instances,
+            "is_human": "Q5" in instances,
+            "is_company": looks_like_a_company(instances, signal_count),
+        }
+    return out
+
+
+def pick_candidate(results: list, kind: str) -> str | None:
+    """The first search hit that is the kind being asked for.
+
+    `kind` is "company" or "person". Returns None when none of them is — which is
+    a real answer: "Steve Jobs" has no company by that name, and inventing one
+    from the film is how a Danny Boyle picture ended up in an ownership graph.
+    """
+    qids = [r["id"] for r in results][:5]
+    if not qids:
+        return None
+    facts = classify_candidates(qids)
+    want = "is_human" if kind == "person" else "is_company"
+    for qid in qids:
+        if facts.get(qid, {}).get(want):
+            return qid
+    return None
+
 def fetch_person_details_for(qid: str) -> dict | None:
     """Everything needed to write one person: their name and description, plus the
     dates, birthplace, nationalities and aliases `_fetch_person_details` collects.
@@ -476,14 +530,31 @@ def fetch_person_details_for(qid: str) -> dict | None:
     detail = dict(_fetch_person_details({qid}).get(qid) or {})
     if detail.get("is_human") is not True:
         return None
+
+    # Ask for `mul` as well as `en`, and it is not a nicety: Wikidata added `mul`
+    # in 2024 for labels identical in every language — which is exactly what a
+    # personal name is — and newer or edited person items increasingly carry
+    # their label ONLY there. Steve Jobs is one. Asking for English alone
+    # returned nothing and made him look like not-a-person.
+    langs = "en|mul|de|fr|es|it|nl|pt|sv|da|fi|pl"
     r = _wd_get(WIKIDATA_API, {
         "action": "wbgetentities", "ids": qid, "props": "labels|descriptions",
-        "languages": "en", "format": "json",
+        "languages": langs, "languagefallback": 1, "format": "json",
     }, timeout=15)
     ent = (r.json().get("entities") or {}).get(qid) or {}
-    detail["full_name"] = ((ent.get("labels") or {}).get("en") or {}).get("value") or ""
-    detail["description"] = ((ent.get("descriptions") or {}).get("en") or {}).get("value") or ""
-    return detail if detail["full_name"] else None
+
+    def _first(block: dict) -> str:
+        for lang in langs.split("|"):
+            value = (block or {}).get(lang, {}).get("value")
+            if value:
+                return value
+        return ""
+
+    detail["full_name"] = _first(ent.get("labels") or {})
+    detail["description"] = _first(ent.get("descriptions") or {})
+    # A missing label does not make somebody not a person. `is_human` decides
+    # that; the caller has the name from the search hit and falls back to it.
+    return detail
 
 
 def fetch_person_companies(qid: str, limit: int = 60) -> list[dict]:
