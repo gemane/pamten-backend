@@ -49,6 +49,10 @@ def _setup(monkeypatch, entity, *, enable_oc=False, resolved=None):
         return entity
 
     monkeypatch.setattr(search, "resolve_best_entity", _resolve)
+    # The person branch queries through `search.run_sql`, a separate binding from
+    # `app.db.arcadedb.run_sql` — stubbing that one does not cover this, and the
+    # calls go straight to a real server. Nobody here is a person.
+    monkeypatch.setattr(search, "resolve_best_person", lambda q: None)
     monkeypatch.setattr(search, "get_full_profile",
                         lambda eid: {"entity": {"id": eid, "scrape_depth": 1}})
     return calls

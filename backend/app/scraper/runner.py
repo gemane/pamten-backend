@@ -1562,6 +1562,91 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     }
 
 
+# ── Scraping a person ─────────────────────────────────────────────────────────
+
+def _person_freshness(person_id: str, session) -> None:
+    """Stamp a scraped person the way `set_scrape_target` stamps a company, so the
+    on-demand freshness gate can tell an enriched person from an untouched one."""
+    session.run(
+        "MATCH (p:Person {id: $id}) SET p.on_demand_scraped = true, "
+        "p.last_scraped_at = $now, p.scrape_depth = 1",
+        id=person_id, now=_now_iso(),
+    )
+
+
+@_with_autodedup
+def run_scrape_person(query: str, country: str | None = None) -> dict:
+    """Scrape a PERSON: who they are, and the companies they run, founded or own.
+
+    The company scrape reads a company and finds its people. This is the other
+    direction, and it exists because searching a person's name used to do
+    something worse than nothing: the top Wikidata hit for "Larry Page" is the
+    man, and he was written into the graph as a company.
+
+    Wikidata records these links only from the company side, so the lookup is a
+    reverse one, and its results need filtering — "founded by" is used loosely
+    enough to include buildings, software and, in Elon Musk's case, a car and an
+    aeroplane. `looks_like_a_company` decides; see it for why.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_WIKIDATA_ENABLED:
+        raise PermissionError("Wikidata scraper is disabled.")
+    if not get_source_enabled("wikidata"):
+        raise PermissionError("Wikidata source is disabled. Enable it in the Scraper panel.")
+
+    from app.scraper.wikidata import (OWNER_ROLE, fetch_person_companies,
+                                      fetch_person_details_for)
+
+    results = (search_entity_in_country(query, country) if country
+               else search_entity(query, limit=3))
+    if not results:
+        return {"status": "no_results", "query": query, "total": 0, "scraped": [],
+                "requested_country": country}
+
+    qid = results[0]["id"]
+    detail = fetch_person_details_for(qid)
+    if not detail or not detail.get("is_human"):
+        # Not a person — the company path handles this, and guessing here would
+        # write a company into the person shape.
+        return {"status": "not_a_person", "query": query, "qid": qid, "total": 0, "scraped": []}
+
+    source_id = _ensure_source(WIKIDATA_SOURCE_NAME, WIKIDATA_SOURCE_URL,
+                               WIKIDATA_CREDIBILITY, "knowledge_base")
+    person_id = _upsert_person(
+        full_name=detail.get("full_name") or results[0].get("label") or query,
+        nationality=None, description=detail.get("description"), wikidata_id=qid,
+        birth_date=detail.get("birth_date"), death_date=detail.get("death_date"),
+        birth_place=detail.get("birth_place"), aliases=detail.get("aliases"),
+        nationalities=detail.get("nationalities"), source_id=source_id,
+    )
+
+    scraped: list[dict] = [{"type": "person", "name": detail.get("full_name"), "role": "target"}]
+    for link in fetch_person_companies(qid):
+        if not link["is_company"]:
+            log.info("Wikidata person scrape: skipping %r — not a company", link["name"])
+            continue
+        entity_id = _upsert_entity(
+            name=link["name"], entity_type=infer_entity_type(link["instances"]),
+            country=link.get("country"), founded=None, revenue=None, description=None,
+            wikidata_id=link["qid"], source_id=source_id,
+        )
+        for role in link["roles"]:
+            if role == OWNER_ROLE:
+                _upsert_owns(owner_id=person_id, owned_id=entity_id, source_id=source_id,
+                             owner_label="Person", credibility_score=WIKIDATA_CREDIBILITY)
+            else:
+                _upsert_role(person_id, entity_id, role, source_id,
+                             credibility_score=WIKIDATA_CREDIBILITY)
+        scraped.append({"type": "entity", "name": link["name"], "role": ", ".join(link["roles"])})
+
+    with db.get_session() as session:
+        _person_freshness(person_id, session)
+
+    return {"status": "ok", "query": query, "person_id": person_id, "qid": qid,
+            "total": len(scraped), "scraped": scraped}
+
+
 # ── Run-all entry point ───────────────────────────────────────────────────────
 
 @_with_autodedup

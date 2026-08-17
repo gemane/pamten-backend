@@ -172,6 +172,54 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
     return {"status": "ok", "names_run": names_run, "target_id": target_id}
 
 
+def _person_result(person_id: str | None, reason: str, scraped: bool,
+                   sources_run: list | None = None) -> dict:
+    """An ensure result describing a PERSON rather than a company.
+
+    Same envelope as the company one — a caller that only understands companies
+    sees `entity_id: None` and a profile it can ignore — plus `kind` and
+    `person_id`, so a caller that does understand people can render them.
+    """
+    from app.routers.search import get_person_profile
+
+    profile = None
+    if person_id:
+        try:
+            profile = get_person_profile(person_id)
+        except Exception:  # noqa: BLE001 - 404 / suppressed → no profile
+            profile = None
+    return {"scraped": scraped, "reason": reason, "kind": "person",
+            "entity_id": None, "person_id": person_id,
+            "depth_reached": 1, "sources_run": sources_run or [], "profile": profile}
+
+
+def _scrape_person(query: str, country: str | None, person: dict | None,
+                   decision: "ScrapeDecision") -> dict | None:
+    """Run the person scrape, or serve the person from the DB when they are fresh.
+
+    Returns None when nothing person-shaped came of it, so the caller can fall
+    back to reporting a company miss.
+    """
+    from app.routers.search import resolve_best_person
+    from app.scraper.runner import run_scrape_person
+
+    if not decision.should_scrape:
+        return _person_result(person.get("id") if person else None, decision.reason, False)
+    try:
+        out = run_scrape_person(query, country)
+    except PermissionError as exc:
+        log.info("person scrape unavailable: %s", exc)
+        return None
+    except Exception:  # noqa: BLE001 - one source failing mustn't sink the request
+        log.exception("person scrape failed for %r", query)
+        return None
+
+    if out.get("status") != "ok":
+        return None
+    person_id = out.get("person_id") or ((resolve_best_person(query) or {}).get("id"))
+    return _person_result(person_id, decision.reason, True, ["wikidata"])
+
+
 def ensure_scrape(query: str, depth: int = 1, force: bool = False,
                   country: str | None = None) -> dict:
     """Ensure `query`'s company is present + fresh, scraping the instant sources only when
@@ -194,6 +242,22 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
     depth = max(0, min(int(depth), 3))
     country = (country or "").strip().upper() or None
     entity = resolve_best_entity(query, country)
+
+    # A name the graph already knows as a person is a person question, and asking
+    # the company sources about it produces either nothing or something wrong —
+    # the top Wikidata hit for "Larry Page" is the man.
+    if entity is None:
+        from app.routers.search import resolve_best_person
+
+        person = resolve_best_person(query)
+        if person:
+            person_decision = decide_scrape(person, requested_depth=1, force=force,
+                                            now=datetime.now(timezone.utc))
+            if not settings.SCRAPER_ENABLED and person_decision.should_scrape:
+                return _person_result(person.get("id"), "disabled", False)
+            result = _scrape_person(query, country, person, person_decision)
+            if result:
+                return result
     decision = decide_scrape(entity, requested_depth=depth, force=force,
                              now=datetime.now(timezone.utc))
 
@@ -207,7 +271,8 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
 
     def _served_from_db(reason: str) -> dict:
         eid = entity.get("id") if entity else None
-        return {"scraped": False, "reason": reason, "entity_id": eid,
+        return {"scraped": False, "reason": reason, "kind": "entity", "entity_id": eid,
+                "person_id": None,
                 "depth_reached": int((entity or {}).get("scrape_depth") or 0),
                 "sources_run": [], "profile": _profile(eid)}
 
@@ -245,6 +310,15 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
     if not target_id:                                # re-resolve (node may be new/merged)
         again = resolve_best_entity(query, country)
         target_id = again.get("id") if again else None
+
+    if not target_id:
+        # No company by that name anywhere. Before recording a miss, ask whether
+        # the name is a person: `_scrape_node` refuses humans, so a search for
+        # somebody's name reaches here having written nothing.
+        person_result = _scrape_person(query, country, None, decision)
+        if person_result:
+            _clear_miss(miss_key)
+            return person_result
     if target_id:
         _clear_miss(miss_key)
     else:
@@ -254,5 +328,6 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
     depth_reached = decision.need_depth
     if profile and profile.get("entity"):
         depth_reached = int(profile["entity"].get("scrape_depth") or decision.need_depth)
-    return {"scraped": True, "reason": decision.reason, "entity_id": target_id,
+    return {"scraped": True, "reason": decision.reason, "kind": "entity",
+            "entity_id": target_id, "person_id": None,
             "depth_reached": depth_reached, "sources_run": names_run, "profile": profile}
