@@ -57,6 +57,8 @@ import unicodedata
 import httpx
 from functools import lru_cache
 
+from app.models.relationship import RoleType
+
 log = logging.getLogger(__name__)
 
 WIKIDATA_API  = "https://www.wikidata.org/w/api.php"
@@ -426,11 +428,16 @@ def _sparql(qid: str) -> list:
 OWNER_ROLE = "owner"
 
 #: Wikidata property -> the role name this graph stores.
+#:
+#: Taken from `RoleType` rather than written out. The first version spelled one of
+#: them "Board member", the company-side scrape writes "Board Member", and the two
+#: strings are two different edges — which is exactly how a person ended up listed
+#: twice on the same board.
 PERSON_LINK_PROPS = {
-    "P169": "CEO",
-    "P112": "Founder",
-    "P488": "Chairman",
-    "P3320": "Board member",
+    "P169": RoleType.ceo.value,
+    "P112": RoleType.founder.value,
+    "P488": RoleType.chairman.value,
+    "P3320": RoleType.board_member.value,
     "P127": OWNER_ROLE,
 }
 

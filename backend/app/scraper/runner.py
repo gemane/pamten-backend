@@ -530,7 +530,15 @@ def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
 def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                  since: str | None = None, until: str | None = None,
                  source_url: str | None = None, credibility_score: int = 80):
-    """Create a HAS_ROLE edge if one doesn't already exist (matched on role+since)."""
+    """Create a HAS_ROLE edge if one doesn't already exist.
+
+    Matched on role, and on `since` **only when the incoming assertion has one**.
+    A dated tenure is its own edge — someone can be CEO twice — but an *undated*
+    assertion of a role that is already recorded says nothing new, and adding it
+    is how a person came to be listed twice on the same board: the company scrape
+    knew Larry Page joined Alphabet's board in 1998, and the person scrape, which
+    gets no dates from the reverse lookup, added a second edge beside it.
+    """
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
                  credibility_score=credibility_score)
@@ -540,7 +548,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             """
             MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
             WHERE r.role = $role
-              AND (r.since = $since OR (r.since IS NULL AND $since IS NULL))
+              AND ($since IS NULL OR r.since = $since)
             RETURN r LIMIT 1
             """,
             pid=person_id,
@@ -553,7 +561,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role
-                  AND (r.since = $since OR (r.since IS NULL AND $since IS NULL))
+                  AND ($since IS NULL OR r.since = $since)
                 SET r.last_scraped_at = $now,
                     r.source_url = COALESCE($surl, r.source_url)
                 """,
@@ -561,6 +569,34 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                 surl=source_url,
             )
             return
+
+        if since:
+            # We now know when a role we already had started. That is the same
+            # role learning its date, not a second appointment — so fill the
+            # blank rather than creating an edge beside it. (The reverse order is
+            # handled above: an undated assertion matches a dated edge.)
+            undated = session.run(
+                """
+                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                WHERE r.role = $role AND r.since IS NULL
+                RETURN r LIMIT 1
+                """,
+                pid=person_id, eid=entity_id, role=role,
+            ).single()
+            if undated:
+                session.run(
+                    """
+                    MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                    WHERE r.role = $role AND r.since IS NULL
+                    SET r.since = $since, r.source_date = $since,
+                        r.last_scraped_at = $now,
+                        r.source_url = COALESCE($surl, r.source_url)
+                    """,
+                    pid=person_id, eid=entity_id, role=role, since=since, now=now,
+                    surl=source_url,
+                )
+                return
+
         session.run(
             """
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
