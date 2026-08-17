@@ -1,8 +1,9 @@
 """
 Real-ArcadeDB integration test for the person full-profile endpoint: a person's
-positions (HAS_ROLE → entity) and ownerships (OWNS → entity) must surface, and
-past edges (until set) must be excluded — the collect(DISTINCT {..}) map shape
-and the until-filter can only be validated against a real ArcadeDB.
+positions (HAS_ROLE → entity) and ownerships (OWNS → entity) must surface,
+*including* the ones that have ended — the profile feeds a timeline, and a
+career is mostly ended roles. The collect(DISTINCT {..}) map shape can only be
+validated against a real ArcadeDB.
 
 Skipped unless ARCADEDB_IT_URL is set — see conftest.py.
 """
@@ -17,9 +18,9 @@ def test_person_profile_surfaces_positions_and_holdings(it_db):
     it_db.run_command("CREATE (:Person {id: 'musk', full_name: 'Elon Musk'})")
     it_db.run_command("CREATE (:Entity {id: 'spacex', name: 'SpaceX', type: 'company'})")
     it_db.run_command("CREATE (:Entity {id: 'tesla',  name: 'Tesla',  type: 'company'})")
-    # TWO current CEO tenures at SpaceX (different `since`) — must collapse to one
-    # position row (most recent kept). Plus an owner edge, and a FORMER CEO of
-    # Tesla (until set → excluded entirely).
+    # Two CEO tenures at SpaceX with different `since` — two real spells, kept
+    # apart. Plus an owner edge, and a role at Tesla that has ended, which the
+    # profile used to drop.
     it_db.run_command("MATCH (p:Person {id:'musk'}), (e:Entity {id:'spacex'}) "
                       "CREATE (p)-[:HAS_ROLE {role:'CEO', since:'2002-03-14'}]->(e)")
     it_db.run_command("MATCH (p:Person {id:'musk'}), (e:Entity {id:'spacex'}) "
@@ -32,14 +33,13 @@ def test_person_profile_surfaces_positions_and_holdings(it_db):
     prof = get_person_profile("musk")
     assert prof["person"]["full_name"] == "Elon Musk"
 
-    # The duplicate SpaceX CEO tenure is collapsed to a single row.
-    spacex_ceo = [x for x in prof["positions"]
-                  if x["entity"]["name"] == "SpaceX" and x["role"]["role"] == "CEO"]
-    assert len(spacex_ceo) == 1
-    assert spacex_ceo[0]["role"]["since"] == "2018-01-01"   # most recent tenure kept
+    # Both spells at SpaceX survive: same company, same title, different start.
+    spacex_ceo = sorted(x["role"]["since"] for x in prof["positions"]
+                        if x["entity"]["name"] == "SpaceX" and x["role"]["role"] == "CEO")
+    assert spacex_ceo == ["2002-03-14", "2018-01-01"]
 
     positions = {(x["entity"]["name"], x["role"]["role"]) for x in prof["positions"]}
-    assert ("Tesla", "CEO") not in positions        # past role (until set) excluded
+    assert ("Tesla", "CEO") in positions            # ended, and still part of the record
 
     holdings = {(x["entity"]["name"], x["relationship"]["stake_percent"]) for x in prof["holdings"]}
     assert ("SpaceX", 42) in holdings

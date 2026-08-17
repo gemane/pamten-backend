@@ -56,14 +56,46 @@ def _row(entity, rel):
 
 
 class TestDedupePositions:
-    def test_collapses_same_entity_role_keeping_latest_tenure(self):
+    def test_collapses_the_same_spell_asserted_twice(self):
+        # Two sources describing one appointment. Same company, same role, same
+        # start — one row.
         rows = [
             _row({"id": "tesla", "name": "Tesla"}, {"role": "CEO", "since": "2008-10-01"}),
-            _row({"id": "tesla", "name": "Tesla"}, {"role": "CEO", "since": "2021-01-01"}),
+            _row({"id": "tesla", "name": "Tesla"}, {"role": "CEO", "since": "2008-10-01"}),
+        ]
+        assert len(_dedupe_positions(rows)) == 1
+
+    def test_keeps_two_spells_of_the_same_job(self):
+        # Steve Jobs sat on Apple's board from 1977, left in 1985 and came back
+        # in 1997. Keying on (company, role) alone threw one of those away — the
+        # bug that left the timeline showing a single board seat.
+        rows = [
+            _row({"id": "apple", "name": "Apple"},
+                 {"role": "Board Member", "since": "1977-03-01", "until": "1985-09-01"}),
+            _row({"id": "apple", "name": "Apple"},
+                 {"role": "Board Member", "since": "1997-01-01", "until": "2011-10-05"}),
         ]
         out = _dedupe_positions(rows)
-        assert len(out) == 1
-        assert out[0]["role"]["since"] == "2021-01-01"   # most recent tenure kept
+        assert [p["role"]["since"] for p in out] == ["1977-03-01", "1997-01-01"]
+
+    def test_an_undated_spell_is_not_merged_into_a_dated_one(self):
+        # They are not known to be the same appointment, and guessing costs more
+        # than the extra row: it would silently date a role the source never dated.
+        rows = [
+            _row({"id": "tesla", "name": "Tesla"}, {"role": "CEO", "since": None}),
+            _row({"id": "tesla", "name": "Tesla"}, {"role": "CEO", "since": "2008-10-01"}),
+        ]
+        assert len(_dedupe_positions(rows)) == 2
+
+    def test_the_better_informed_copy_of_a_spell_wins(self):
+        # Same spell from two sources, one of which knows it ended.
+        rows = [
+            _row({"id": "tesla", "name": "Tesla"}, {"role": "CEO", "since": "2008-10-01"}),
+            _row({"id": "tesla", "name": "Tesla"},
+                 {"role": "CEO", "since": "2008-10-01", "until": "2024-01-01"}),
+        ]
+        out = _dedupe_positions(rows)
+        assert len(out) == 1 and out[0]["role"]["until"] == "2024-01-01"
 
     def test_keeps_distinct_roles_at_the_same_entity(self):
         rows = [
@@ -90,6 +122,14 @@ class TestDedupePositions:
         ]
         out = _dedupe_positions(rows)
         assert [p["entity"]["name"] for p in out] == ["Alpha", "Beta"]
+
+    def test_spells_of_one_job_are_ordered_oldest_first(self):
+        rows = [
+            _row({"id": "apple", "name": "Apple"}, {"role": "Board Member", "since": "1997-01-01"}),
+            _row({"id": "apple", "name": "Apple"}, {"role": "Board Member", "since": "1977-03-01"}),
+        ]
+        out = _dedupe_positions(rows)
+        assert [p["role"]["since"] for p in out] == ["1977-03-01", "1997-01-01"]
 
 
 class TestDedupeHoldings:

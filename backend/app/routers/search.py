@@ -535,23 +535,32 @@ def get_full_profile(
 
 def _dedupe_positions(rows: list) -> list:
     """
-    Collapse to one entry per (entity, role). A person can hold several HAS_ROLE
-    edges for the same role at the same company — e.g. two CEO tenures with
-    different `since` dates — which are distinct in the graph but duplicate noise
-    in a current-positions view. Keep the most recent tenure. Sorted for a stable
-    display order.
+    Collapse to one entry per (entity, role, since) — one *spell*, not one job.
+
+    Two sources describing the same appointment must not become two rows; two
+    genuine spells of the same appointment must not become one. Where the same
+    spell arrives twice, keep the entry with the later end date, since the one
+    that knows the tenure ended later is the better-informed of the two. Sorted
+    for a stable display order.
     """
     best: dict[tuple, dict] = {}
     for x in rows:
         if not x["entity"]:
             continue
         entity, role = dict(x["entity"]), dict(x["rel"])
-        key = (entity["id"], role.get("role"))
+        # Keyed on the start date as well as the company and the role, because
+        # holding the same post twice is a real thing and the second spell is
+        # often the interesting one: Steve Jobs sat on Apple's board from 1977,
+        # left in 1985 and returned in 1997. Collapsing on (company, role) threw
+        # one of those away — and with it the fact the timeline exists to show.
+        key = (entity["id"], role.get("role"), role.get("since"))
         cur = best.get(key)
-        if cur is None or (role.get("since") or "") > (cur["role"].get("since") or ""):
+        if cur is None or (role.get("until") or "") > (cur["role"].get("until") or ""):
             best[key] = {"entity": entity, "role": role}
     return sorted(best.values(),
-                  key=lambda e: ((e["entity"].get("name") or "").lower(), e["role"].get("role") or ""))
+                  key=lambda e: ((e["entity"].get("name") or "").lower(),
+                                 e["role"].get("role") or "",
+                                 e["role"].get("since") or ""))
 
 
 def _dedupe_holdings(rows: list) -> list:
@@ -571,15 +580,22 @@ def _dedupe_holdings(rows: list) -> list:
 @router.get("/person/{person_id}/full-profile")
 def get_person_profile(person_id: str):
     """
-    Everything about a person in one call: the positions they hold (HAS_ROLE →
-    entity) and the entities they own (OWNS → entity). Both already in the graph
+    Everything about a person in one call: the positions they have held (HAS_ROLE
+    → entity) and the entities they own (OWNS → entity). Both already in the graph
     from scraping — the entity full-profile surfaces them from the company side;
     this surfaces them from the person side.
+
+    **Ended roles are included.** They were filtered out here, which made the
+    payload answer "what does this person do now" and nothing else: Steve Jobs
+    came back with three positions out of six, missing both of his spells on
+    Apple's board and his run as its CEO. A caller that wants only current
+    positions has `until` to filter on; a caller that wants a career — the
+    timeline — cannot invent what was never sent.
     """
     query = """
         MATCH (p:Person {id: $id})
-        OPTIONAL MATCH (p)-[role_r:HAS_ROLE]->(org:Entity) WHERE role_r.until IS NULL
-        OPTIONAL MATCH (p)-[owns_r:OWNS]->(owned:Entity)   WHERE owns_r.until IS NULL
+        OPTIONAL MATCH (p)-[role_r:HAS_ROLE]->(org:Entity)
+        OPTIONAL MATCH (p)-[owns_r:OWNS]->(owned:Entity)
         RETURN p,
                collect(DISTINCT {entity: org,   rel: role_r}) as positions,
                collect(DISTINCT {entity: owned, rel: owns_r}) as holdings
