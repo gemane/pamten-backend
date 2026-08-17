@@ -572,10 +572,21 @@ class TestUpsertOwns:
 
 class TestUpsertRole:
     def test_creates_role_edge_when_not_exists(self):
-        ctx, session = _make_session_mock(single_returns=[None])
+        # Three statements for a DATED role that is genuinely new: the match, then
+        # the "is there an undated edge for this role to adopt?" lookup, then the
+        # CREATE. The middle one is what stops a person appearing twice on a board
+        # when one scrape knows the start date and the other does not.
+        ctx, session = _make_session_mock(single_returns=[None, None])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
-        assert session.run.call_count == 2
+        assert session.run.call_count == 3
+        assert "CREATE" in session.run.call_args_list[2].args[0]
+
+    def test_an_undated_role_needs_no_adoption_lookup(self):
+        ctx, session = _make_session_mock(single_returns=[None])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_role("p-id", "e-id", "CEO", "src-1")
+        assert session.run.call_count == 2          # match, then CREATE
 
     def test_refreshes_and_backfills_when_same_role_and_since_exists(self):
         ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
