@@ -10,7 +10,6 @@ was never scraped at all.
 So each path picks its own kind out of the candidates rather than trusting the
 ranking. These are the real QIDs and the real order.
 """
-from unittest.mock import patch
 
 import pytest
 

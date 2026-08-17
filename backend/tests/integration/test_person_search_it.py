@@ -113,3 +113,48 @@ class TestAHumanIsNotACompany:
         runner._scrape_node("Q43", 0, set(), [], source_id="s1")
 
         assert run_sql("SELECT count(*) AS n FROM Entity")[0]["n"] == 1
+
+
+class TestTheProfileCarriesAHistory:
+    """A career is ended roles. The profile used to drop them, so Steve Jobs came
+    back with three positions out of six — missing both spells on Apple's board
+    and his run as its CEO — and no timeline could show what was never sent."""
+
+    def _jobs(self, runner):
+        person = runner._upsert_person_by_name("Steve Jobs", source_id=None)
+        apple = runner._upsert_entity_by_name(name="Apple Inc.", entity_type="company")
+        runner._upsert_role(person, apple, "Board Member", "s1",
+                            since="1977-03-01", until="1985-09-01")
+        runner._upsert_role(person, apple, "Board Member", "s1",
+                            since="1997-01-01", until="2011-10-05")
+        runner._upsert_role(person, apple, "Founder", "s1", since="1976-04-01")
+        return person
+
+    def _positions(self, person_id):
+        from app.routers.search import get_person_profile
+        return [(p["entity"]["name"], p["role"].get("role"), p["role"].get("since"))
+                for p in get_person_profile(person_id)["positions"]]
+
+    def test_an_ended_role_is_returned(self, runner):
+        person = self._jobs(runner)
+        assert ("Apple Inc.", "Board Member", "1977-03-01") in self._positions(person)
+
+    def test_both_spells_survive(self, runner):
+        # Keyed on the start date, not just company + role — the same identity
+        # the writer uses. Collapsing them loses the second appointment, which is
+        # usually the one worth knowing about.
+        person = self._jobs(runner)
+        boards = [p for p in self._positions(person) if p[1] == "Board Member"]
+        assert len(boards) == 2 and {b[2] for b in boards} == {"1977-03-01", "1997-01-01"}
+
+    def test_a_current_role_still_comes_back(self, runner):
+        person = self._jobs(runner)
+        assert ("Apple Inc.", "Founder", "1976-04-01") in self._positions(person)
+
+    def test_an_accidental_duplicate_is_still_collapsed(self, runner):
+        # Deduping still has a job: the same assertion twice is one position.
+        person = self._jobs(runner)
+        apple = runner._upsert_entity_by_name(name="Apple Inc.", entity_type="company")
+        runner._upsert_role(person, apple, "Board Member", "s2", since="1977-03-01")
+        boards = [p for p in self._positions(person) if p[1] == "Board Member"]
+        assert len(boards) == 2

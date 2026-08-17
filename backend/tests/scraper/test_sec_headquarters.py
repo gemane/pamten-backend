@@ -9,7 +9,6 @@ in the graph had no headquarters while EDGAR held their street address.
 
 So: business address → `hq_*`, incorporation → `country`, and never the reverse.
 """
-from unittest.mock import patch
 
 import pytest
 
