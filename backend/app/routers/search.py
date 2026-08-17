@@ -123,6 +123,33 @@ def resolve_best_entity(q: str, country: str | None = None) -> dict | None:
     return ranked[0][1]
 
 
+def resolve_best_person(q: str) -> dict | None:
+    """The best-matching (non-suppressed) Person for a query — the person-side twin
+    of `resolve_best_entity`, used by the on-demand scrape to decide whether a name
+    is somebody we already know.
+
+    No country parameter: `Person` carries a nationality, not a country of
+    registration, and filtering people by the country box would answer a question
+    nobody asked ("Germans called Müller") with data that means something else.
+    """
+    q_lower = (q or "").lower()
+    tokens = q_lower.split()
+    rows = [_clean(r) for r in run_sql(
+        "SELECT FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 15", {"q": q_lower})]
+    if not rows:
+        return None
+    with db.get_session() as session:
+        hidden = load_suppressed_nodes(session)
+    rows = [r for r in rows if r.get("id") not in hidden]
+    if not rows:
+        return None
+    # `_rank` keys off `name`; a Person's is `full_name`.
+    ranked = sorted(enumerate(rows),
+                    key=lambda ir: _rank({**ir[1], "name": ir[1].get("full_name", "")},
+                                         q_lower, tokens, ir[0], None))
+    return ranked[0][1]
+
+
 SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT = 20, 50
 
 

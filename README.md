@@ -364,6 +364,8 @@ detected by name with a confidence tier (registered address / shared hard id), a
 duplicate `OWNS` edges from multi-interest ownership records are collapsed — both via
 `/scraper/duplicate-*` endpoints.
 
+**Scraping a person.** The company scrape reads a company and finds its people; the person scrape goes the other way — the companies someone runs, founded or owns. Wikidata records those links only from the company side (P169 CEO, P112 founder, P488 chairperson, P3320 board member, P127 owner), so it is a reverse lookup, and the results need filtering: "founded by" also covers buildings, software, schools, a political party, and in Elon Musk's case a car and an aeroplane. A target counts as a company when its type is a recognised organisation **or** it carries a company signal — a legal form, an industry, an LEI or a stock listing. Nothing without one of those is written.
+
 📄 **Deep dive:** [`docs/deduplication.md`](docs/deduplication.md) — person scan signals + confidence model + param-mediated merge, entity same-company detection with confidence tiers, and OWNS edge dedup.
 
 ---

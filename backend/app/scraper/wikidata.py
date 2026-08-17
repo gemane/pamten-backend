@@ -412,6 +412,117 @@ def _sparql(qid: str) -> list:
     return rows
 
 
+
+# ── Scraping a person ─────────────────────────────────────────────────────────
+#
+# The company scrape reads a company and finds its people. This is the other
+# direction: a person, and the companies they run, founded or own. Wikidata models
+# it only from the company side (P169 CEO, P112 founder, P488 chairperson, P3320
+# board member, P127 owner), so the query is a reverse lookup — every item that
+# points at this person through one of those.
+
+#: Marks the one link that is ownership rather than a job. The caller turns it
+#: into an OWNS edge; everything else becomes HAS_ROLE.
+OWNER_ROLE = "owner"
+
+#: Wikidata property -> the role name this graph stores.
+PERSON_LINK_PROPS = {
+    "P169": "CEO",
+    "P112": "Founder",
+    "P488": "Chairman",
+    "P3320": "Board member",
+    "P127": OWNER_ROLE,
+}
+
+#: Signals that an item is an actual company rather than something a person
+#: merely "founded". Wikidata's founder property is used loosely: Larry Page is
+#: recorded as founder of Googleplex (a building), Google Summer of Code (a
+#: programme) and Google Photos (software), and Elon Musk of a school, a
+#: political party, a supercomputer, his own Tesla Roadster and an aeroplane.
+#: A legal form, an industry, an LEI or a stock listing is something none of
+#: those has and every real company does.
+COMPANY_SIGNAL_PROPS = ("P1454", "P452", "P1278", "P414")
+
+
+def looks_like_a_company(instances: list[str], signal_count: int) -> bool:
+    """Whether a person's link target belongs in an ownership graph.
+
+    A recognised organisation type, or any of the company signals above. Both
+    are needed: the type table is 24 QIDs and misses "limited liability company"
+    (H211, LLC), while signals alone would miss a company with a sparse item.
+    """
+    from app.scraper.mapper import INSTANCE_TYPE_MAP
+
+    return bool(signal_count) or any(i in INSTANCE_TYPE_MAP for i in instances)
+
+
+def fetch_person_details_for(qid: str) -> dict | None:
+    """Everything needed to write one person: their name and description, plus the
+    dates, birthplace, nationalities and aliases `_fetch_person_details` collects.
+
+    Returns None when the item is not a human. `is_human` is left None by the
+    detail query when the item states no P31 at all, and that counts as "not
+    confirmed" here — writing an unconfirmed item as a Person is how a company
+    ends up in the person shape, which is the mirror of the bug this whole path
+    exists to fix.
+    """
+    detail = dict(_fetch_person_details({qid}).get(qid) or {})
+    if detail.get("is_human") is not True:
+        return None
+    r = _wd_get(WIKIDATA_API, {
+        "action": "wbgetentities", "ids": qid, "props": "labels|descriptions",
+        "languages": "en", "format": "json",
+    }, timeout=15)
+    ent = (r.json().get("entities") or {}).get(qid) or {}
+    detail["full_name"] = ((ent.get("labels") or {}).get("en") or {}).get("value") or ""
+    detail["description"] = ((ent.get("descriptions") or {}).get("en") or {}).get("value") or ""
+    return detail if detail["full_name"] else None
+
+
+def fetch_person_companies(qid: str, limit: int = 60) -> list[dict]:
+    """The companies a person leads, founded or owns, in one query.
+
+    Returns `[{qid, name, country, roles, instances, is_company}]`. Aggregated
+    with GROUP_CONCAT so a company with three roles and four P31s is one row
+    rather than twelve, and without `P31/P279*` subclass traversal, which is what
+    makes WDQS time out (see `search_entity_in_country` for the same lesson).
+    """
+    values = " ".join(f'(wdt:{p} "{r}")' for p, r in PERSON_LINK_PROPS.items())
+    optionals = "\n".join(
+        f"  OPTIONAL {{ ?company wdt:{p} ?sig{i} }}" for i, p in enumerate(COMPANY_SIGNAL_PROPS))
+    counts = " ".join(f"(COUNT(DISTINCT ?sig{i}) AS ?n{i})" for i in range(len(COMPANY_SIGNAL_PROPS)))
+    query = f"""
+    SELECT ?company ?companyLabel ?countryCode
+           (GROUP_CONCAT(DISTINCT ?role; separator="|") AS ?roles)
+           (GROUP_CONCAT(DISTINCT ?inst; separator="|") AS ?instances)
+           {counts} WHERE {{
+      VALUES (?prop ?role) {{ {values} }}
+      ?company ?prop wd:{qid} .
+      OPTIONAL {{ ?company wdt:P31 ?i . BIND(STRAFTER(STR(?i), "entity/") AS ?inst) }}
+      OPTIONAL {{ ?company wdt:P17 ?c . ?c wdt:P297 ?countryCode }}
+{optionals}
+      {_LABEL_SERVICE}
+    }} GROUP BY ?company ?companyLabel ?countryCode LIMIT {int(limit)}
+    """
+    r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=60)
+    out = []
+    for row in r.json()["results"]["bindings"]:
+        target = row["company"]["value"].rsplit("/", 1)[-1]
+        name = _v(row, "companyLabel")
+        if not name or name == target:          # label service fell back to the QID
+            continue
+        instances = [i for i in (_v(row, "instances") or "").split("|") if i]
+        signals = sum(int(_v(row, f"n{i}") or 0) for i in range(len(COMPANY_SIGNAL_PROPS)))
+        out.append({
+            "qid": target,
+            "name": name,
+            "country": _v(row, "countryCode") or None,
+            "roles": [r_ for r_ in (_v(row, "roles") or "").split("|") if r_],
+            "instances": instances,
+            "is_company": looks_like_a_company(instances, signals),
+        })
+    return out
+
 def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     """
     Fetch per-person detail — date of birth (P569) / death (P570), place of birth
