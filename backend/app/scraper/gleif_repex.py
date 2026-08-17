@@ -175,24 +175,27 @@ def import_repex(filepath: str, limit: int | None = None) -> dict:
     created, and nothing is deleted: an exception GLEIF withdraws is superseded
     when the parent relationship it was standing in for arrives in the RR file.
 
-    Returns ``{records, companies, applied, not_here, skipped, errors}`` —
-    `records` counts exception statements, `companies` the nodes they were
-    written to (most filers state both categories, which is two records about one
-    company).
+    Returns ``{records, writes, applied, not_here, skipped, errors}`` — `records`
+    counts exception statements and `writes` the updates they became. The two
+    differ when a company's direct and ultimate exceptions land in the same batch
+    and merge into one update; in the full golden copy they never do (it is not
+    ordered by LEI), so there the two are equal.
     """
     raw, total = _open_json(filepath)
-    counts = {"records": 0, "companies": 0, "applied": 0, "not_here": 0,
+    counts = {"records": 0, "writes": 0, "applied": 0, "not_here": 0,
               "skipped": 0, "errors": 0}
-    # Keyed by company, because most filers state both categories and those are two
-    # records about one node: merging them here makes each id in a batch distinct,
-    # which is what lets the flush count its hits, and halves the statements.
+    # Keyed by company: two records about one node must not become two ids in a
+    # batch, because the flush counts its hits with one `IN` over them and a
+    # repeated id would be counted once. Most filers do state both categories,
+    # though in the full copy the pair rarely lands in the same batch — it is not
+    # ordered by LEI — so this mostly earns its keep on the deltas.
     buf: dict[str, dict] = {}
     bar = _ProgressBar("GLEIF repex")
 
     def flush() -> None:
         pending = list(buf.items())
         applied = _flush(pending)
-        counts["companies"] += len(pending)
+        counts["writes"] += len(pending)
         counts["applied"] += applied
         counts["not_here"] += len(pending) - applied
         buf.clear()
@@ -216,8 +219,7 @@ def import_repex(filepath: str, limit: int | None = None) -> dict:
                 if counts["errors"] <= 5:
                     log.warning("repex record error: %s", exc)
         flush()
-        bar.finish(f"{counts['records']:,} exceptions over {counts['companies']:,} "
-                   f"companies, {counts['applied']:,} applied, "
+        bar.finish(f"{counts['records']:,} exceptions, {counts['applied']:,} applied, "
                    f"{counts['not_here']:,} not in this database")
     finally:
         raw.close()

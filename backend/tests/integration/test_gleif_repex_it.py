@@ -77,9 +77,11 @@ class TestWhatItWrites:
         assert row["no_direct_parent_reason"] == "NATURAL_PERSONS"
         assert row["no_ultimate_parent_reason"] == "NO_LEI"
 
-    def test_two_records_about_one_company_count_as_one_company(self, graph, tmp_path):
-        # They are merged before the write, so the batch's ids stay distinct — the
-        # count of hits is a count of nodes, and cannot exceed them.
+    def test_two_records_about_one_company_become_one_write(self, graph, tmp_path):
+        # Merged before the write, so the batch's ids stay distinct. That is what
+        # makes the hit count meaningful: it comes from a single `IN` over those
+        # ids, and a repeated id would be counted once however many records it came
+        # from.
         from app.scraper.gleif_repex import import_repex
 
         counts = import_repex(_repex_zip(tmp_path, [
@@ -88,7 +90,7 @@ class TestWhatItWrites:
                        category="ULTIMATE_ACCOUNTING_CONSOLIDATION_PARENT"),
         ]))
         assert counts["records"] == 2
-        assert counts["companies"] == 1 and counts["applied"] == 1
+        assert counts["writes"] == 1 and counts["applied"] == 1
 
     def test_a_reference_is_written_beside_its_reason(self, graph, tmp_path):
         from app.scraper.gleif_repex import import_repex
