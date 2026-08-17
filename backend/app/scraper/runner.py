@@ -302,6 +302,21 @@ def _upsert_entity(
         return _record_touched_entity(entity_id)
 
 
+def _person_search_text(full_name: str, aliases: list[str] | None) -> str:
+    """What `/search` matches a person on.
+
+    Persons are found through a FULL_TEXT index on `search_text`, exactly as
+    entities are — and unlike entities, nothing was writing it. Every person a
+    scraper created was therefore invisible to search: 174 of 177 on the dev
+    graph, including Larry Page, who is in the graph as Google's founder and
+    could not be found by name.
+
+    Same recipe as `manage.py backfill-search` uses, so a fresh write and a
+    backfilled row are identical.
+    """
+    return " ".join(part for part in [full_name or "", *(aliases or [])] if part).strip()
+
+
 def _upsert_person(
     full_name: str,
     nationality: str | None,
@@ -348,10 +363,14 @@ def _upsert_person(
                     p.nationality   = CASE WHEN COALESCE(p.nationality, '') = '' THEN $nat  ELSE p.nationality END,
                     p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
                     p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 THEN p.nationalities ELSE $nats END,
-                    p.source_id     = COALESCE(p.source_id, $source_id)
+                    p.source_id     = COALESCE(p.source_id, $source_id),
+                    // Derived, so it is refreshed rather than blank-filled: this
+                    // pass may be the one that brought the aliases.
+                    p.search_text   = $search_text
                 """,
                 id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
                 desc=description or "", nat=nat,
+                search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities, source_id=source_id,
             )
             return _record_touched(rec["id"])
@@ -365,13 +384,14 @@ def _upsert_person(
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
                 verified: false, alias: $aliases, nationalities: $nats,
-                source_id: $source_id
+                source_id: $source_id, search_text: $search_text
             })
             """,
             id=person_id,
             first=first_name,
             last=last_name,
             full=full_name,
+            search_text=_person_search_text(full_name, aliases),
             nat=nat,
             desc=description or "",
             wid=wikidata_id,
@@ -577,6 +597,17 @@ def _scrape_node(
 
     data = fetch_company_data(qid)
     if not data or not data.get("name"):
+        return
+
+    # A person is not a company, and `infer_entity_type` cannot say so: it falls
+    # back to "company" for any P31 it does not recognise, which includes Q5.
+    # Searching "Larry Page" put the top Wikidata hit — the man — straight through
+    # here and wrote him as a company alongside the Person node that already
+    # existed for him. Owners and officers are checked for Q5 before they are
+    # written; the search target never was.
+    if "Q5" in (data.get("instances") or []):
+        log.info("Wikidata: %s (%s) is a person, not a company — not writing an Entity",
+                 data.get("name"), qid)
         return
 
     entity_type = infer_entity_type(data["instances"])
@@ -1019,10 +1050,11 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, nationality: '', description: '',
                 wikidata_id: null, verified: false, source_id: $source_id,
-                alias: [], nationalities: []
+                alias: [], nationalities: [], search_text: $search_text
             })
             """,
             id=person_id, first=first_name, last=last_name, full=full_name,
+            search_text=_person_search_text(full_name, None),
             source_id=source_id,
         )
         return _record_touched(person_id)
