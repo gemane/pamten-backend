@@ -233,3 +233,66 @@ class TestGeocodeCommand:
 
         out = self._run(monkeypatch, real)
         assert out  # no KeyError, no AttributeError
+
+
+class TestPruneAnalytics:
+    """The command behind the retention promise.
+
+    `prune-analytics` is the only thing that makes the published notice true —
+    the privacy pages and the record of processing both tell people a usage
+    total is deleted once it has been untouched for twelve months. It shipped
+    with the analytics feature and went unscheduled for a fortnight, which is
+    how a promise ends up being kept only on paper.
+    """
+
+    def test_the_retention_window_is_the_one_that_was_published(self):
+        # A tripwire, deliberately. Nothing in the code breaks if this becomes
+        # 30, but `public/legal/privacy.html`, its German twin, and Activity 3 of
+        # the record of processing all say twelve months, and they would silently
+        # start lying. Change them in the same commit as this number.
+        from app.analytics import RETENTION_DAYS
+        assert RETENTION_DAYS == 365
+
+    def test_the_default_is_what_the_cron_gets(self, monkeypatch):
+        # `cron-prune-analytics.sh` passes no --days, so the parser default is
+        # the window actually enforced every night. If the two drifted, the
+        # published figure and the enforced one would differ with nothing to say so.
+        from app.analytics import RETENTION_DAYS
+
+        import manage
+        args = manage._build_parser().parse_args(["prune-analytics"])
+        assert args.days == RETENTION_DAYS
+
+    def test_it_can_be_pointed_straight_at_the_database(self, monkeypatch):
+        # The same escape hatch the importers have. A year of counters behind
+        # dev-db's 60s nginx timeout is the case this exists for: a DELETE that
+        # 504s halfway is worse than one that never started.
+        #
+        # A URL nothing else could have set. The first version asserted
+        # `localhost:2480`, which is what the test config already points at — so
+        # it passed with the wiring removed entirely.
+        from app.config import settings
+
+        target = "http://db.invalid.test:2480"
+        assert settings.ARCADEDB_URL != target, "pick a URL the config does not already use"
+        monkeypatch.setattr(settings, "ARCADEDB_URL", settings.ARCADEDB_URL)
+        seen: list = []
+        monkeypatch.setattr("app.analytics.prune",
+                            lambda days, dry_run: seen.append((days, dry_run)) or
+                            {"SearchDemand": 0, "cutoff": "x"})
+        import manage
+        args = manage._build_parser().parse_args(["prune-analytics", "--db-url", target])
+        manage.cmd_prune_analytics(args)
+
+        assert settings.ARCADEDB_URL == target
+        assert seen == [(365, False)]
+
+    def test_a_dry_run_reaches_the_pruner(self, monkeypatch):
+        seen: list = []
+        monkeypatch.setattr("app.analytics.prune",
+                            lambda days, dry_run: seen.append((days, dry_run)) or
+                            {"SearchDemand": 0, "cutoff": "x"})
+        import manage
+        args = manage._build_parser().parse_args(["prune-analytics", "--dry-run", "--days", "30"])
+        manage.cmd_prune_analytics(args)
+        assert seen == [(30, True)]

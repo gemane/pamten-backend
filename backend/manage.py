@@ -207,6 +207,7 @@ def cmd_flag_nominees(args):
 
 def cmd_prune_analytics(args):
     """Drop usage counters nothing has touched inside the retention window."""
+    _apply_direct_db_url(args)
     from app.analytics import prune
     result = prune(days=args.days, dry_run=args.dry_run)
     verb = "Would delete" if args.dry_run else "Deleted"
@@ -757,6 +758,8 @@ def _build_parser():
     p_prune.add_argument('--days', type=int, default=365,
                          help='Retention window in days (default 365)')
     p_prune.add_argument('--dry-run', action='store_true', help='Report without deleting')
+    p_prune.add_argument('--db-url',
+                         help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_prune.set_defaults(func=cmd_prune_analytics)
 
     # verify-users command (one-off: unblock pre-existing accounts under the new
