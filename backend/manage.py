@@ -9,6 +9,7 @@ Usage:
   python3 manage.py normalize-nationalities
   python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
+  python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
   python3 manage.py ch-psc [options]          # Companies House PSC snapshot (UK ownership)
   python3 manage.py ch-company-data [options] # Companies House register (UK company names)
   python3 manage.py seed [options]
@@ -133,6 +134,17 @@ def cmd_gleif_lei_cdf(args):
     if result is not None:
         print(result)
 
+def cmd_gleif_repex(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    _apply_direct_db_url(args)
+    from app.scraper.runner import run_import_gleif_repex
+    result = _run_guarded_import("gleif-repex",
+        lambda: run_import_gleif_repex(local_file=args.file, limit=args.limit))
+    if result is not None:
+        print(result)
+
 def cmd_dedupe_entities(args):
     """Merge entities that share a hard external id (LEI / Companies House / SEC CIK /
     Wikidata) — the cross-source merge, no name match or Wikidata hub needed. Run after
@@ -165,7 +177,8 @@ def cmd_gleif_update(args):
     result = _run_guarded_import("gleif-update",
         lambda: run_gleif_update(interval=args.interval, lei_file=args.lei_file,
                                  rr_file=args.rr_file, limit=args.limit,
-                                 only_existing=args.only_existing),
+                                 only_existing=args.only_existing,
+                                 repex_file=args.repex_file),
         skip_ok=True)   # the cron rides on top of full-import → skip, don't error
     if result is not None:
         print(result)
@@ -653,6 +666,15 @@ def _build_parser():
     p_rr.add_argument('--emit-leis', help='With --only: write the family LEIs here (feed to gleif-lei-cdf --only-file to name them)')
     p_rr.set_defaults(func=cmd_gleif_rr)
 
+    # gleif-repex command (why a company reports no parent)
+    p_rx = subparsers.add_parser('gleif-repex',
+                                 help='Import GLEIF reporting exceptions — the published reasons companies give for naming no parent')
+    p_rx.add_argument('--file', required=True, help='Path to a local repex golden-copy .json/.zip')
+    p_rx.add_argument('--limit', type=int, help='Max records to scan')
+    p_rx.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_rx.set_defaults(func=cmd_gleif_repex)
+
     # ch-psc command (Companies House PSC snapshot — replaces UK PSC BODS)
     p_chp = subparsers.add_parser('ch-psc',
                                   help='Import a Companies House PSC snapshot (current UK beneficial ownership)')
@@ -712,6 +734,7 @@ def _build_parser():
                            'smallest window covering any missed runs since the last one')
     p_gu.add_argument('--lei-file', help='Use a local LEI-CDF delta .json/.zip instead of fetching')
     p_gu.add_argument('--rr-file', help='Use a local RR-CDF delta .json/.zip instead of fetching')
+    p_gu.add_argument('--repex-file', help='Use a local reporting-exceptions delta .json/.zip instead of fetching')
     p_gu.add_argument('--limit', type=int, help='Max records to scan (per file)')
     p_gu.add_argument('--only-existing', dest='only_existing', default=None,
                       action=argparse.BooleanOptionalAction,

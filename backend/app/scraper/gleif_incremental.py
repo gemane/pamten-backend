@@ -413,13 +413,26 @@ def fetch_publish_metadata() -> dict:
     return data["data"][0] if "data" in data else data
 
 
+# The golden copy's three sections: entities, relationships, and the reasons a
+# company gives for reporting no parent. `repex` is optional on download — an
+# older publish record without it must not stop the entity and relationship
+# refresh, which is the part the graph cannot be correct without.
+_DELTA_SECTIONS = ("lei2", "rr", "repex")
+
+
 def download_deltas(publish: dict, interval: str, dest_dir: str | None = None) -> dict:
-    """Download the LEI-CDF + RR delta .json.zip files for `interval` from a
-    publish record. Returns {'lei2': path, 'rr': path}."""
+    """Download the LEI-CDF + RR + repex delta .json.zip files for `interval` from
+    a publish record. Returns {'lei2': path, 'rr': path, 'repex': path}."""
     dest = dest_dir or tempfile.mkdtemp(prefix="gleif-delta-")
     out: dict = {}
-    for section in ("lei2", "rr"):
-        url = publish[section]["delta_files"][interval]["json"]["url"]
+    for section in _DELTA_SECTIONS:
+        try:
+            url = publish[section]["delta_files"][interval]["json"]["url"]
+        except (KeyError, TypeError):
+            if section == "repex":
+                log.warning("GLEIF publish has no repex %s delta — skipping it", interval)
+                continue
+            raise
         path = os.path.join(dest, os.path.basename(url))
         with httpx.stream("GET", url, timeout=300) as resp:
             resp.raise_for_status()

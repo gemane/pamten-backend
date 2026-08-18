@@ -4,7 +4,10 @@ covered against a real ArcadeDB in tests/integration/test_gleif_lei_cdf_it.py.""
 import json
 import zipfile
 
-from app.scraper.gleif_lei_cdf import _country, _entity_props, _founded, import_lei_cdf_entities
+from app.scraper.gleif_lei_cdf import (
+    _country, _entity_props, _founded, _validated_credibility, _validation_sources,
+    import_lei_cdf_entities,
+)
 
 
 def _w(v):
@@ -12,7 +15,7 @@ def _w(v):
 
 
 def _rec(lei, name, jurisdiction="US", other_form=None, address=None, created=None,
-         elf_code=None, reg=None, hq=None):
+         elf_code=None, reg=None, hq=None, validation=None):
     entity = {"LegalName": _w(name), "LegalJurisdiction": _w(jurisdiction)}
     if hq:
         entity["HeadquartersAddress"] = hq
@@ -33,7 +36,10 @@ def _rec(lei, name, jurisdiction="US", other_form=None, address=None, created=No
             "RegistrationAuthorityID": _w(authority_id),
             "RegistrationAuthorityEntityID": _w(entity_id),
         }
-    return {"LEI": _w(lei), "Entity": entity}
+    out = {"LEI": _w(lei), "Entity": entity}
+    if validation is not None:
+        out["Registration"] = {"ValidationSources": _w(validation)}
+    return out
 
 
 class TestCountry:
@@ -232,3 +238,76 @@ class TestFastLeiScan:
         raw = z.open(z.namelist()[0])
         got = [_v(r.get("LEI")) for r in _iter_records_for_leis(raw, {LEI_A})]
         assert got == [LEI_A]
+
+
+class TestHowFarGleifCheckedIt:
+    """`ValidationSources` — the only per-record quality signal in the file.
+
+    It says whether an LOU corroborated the record against the business register
+    or simply took the entity's word for it. Every GLEIF record used to score the
+    source's flat 92 either way, so a self-declared name outranked a
+    registry-checked one from elsewhere on the strength of its source alone.
+    """
+
+    def test_the_raw_value_is_kept(self):
+        # Stored as GLEIF's own enum: it is published with a defined meaning, and
+        # the UI can put it in prose without a translation baked into the graph.
+        _, props = _entity_props(_rec("L1", "Checked Co", validation="FULLY_CORROBORATED"),
+                                 "gleif", 92)
+        assert props["validation_sources"] == "FULLY_CORROBORATED"
+
+    def test_a_corroborated_record_keeps_the_full_source_score(self):
+        _, props = _entity_props(_rec("L2", "Checked Co", validation="FULLY_CORROBORATED"),
+                                 "gleif", 92)
+        assert props["name_credibility"] == 92
+
+    def test_a_partly_checked_record_scores_lower(self):
+        _, props = _entity_props(_rec("L3", "Half Co", validation="PARTIALLY_CORROBORATED"),
+                                 "gleif", 92)
+        assert props["name_credibility"] == 88
+
+    def test_an_unchecked_record_scores_lower_still(self):
+        _, props = _entity_props(_rec("L4", "Said So Co", validation="ENTITY_SUPPLIED_ONLY"),
+                                 "gleif", 92)
+        assert props["name_credibility"] == 82
+
+    def test_pending_validation_counts_as_unchecked(self):
+        # Nobody has corroborated it *yet*, which is the same evidential state as
+        # nobody having corroborated it at all.
+        _, props = _entity_props(_rec("L5", "Waiting Co", validation="PENDING"), "gleif", 92)
+        assert props["name_credibility"] == 82
+
+    def test_the_ladder_is_ordered(self):
+        def score(value):
+            return _validated_credibility({"Registration": {"ValidationSources": _w(value)}}, 92)
+
+        assert (score("FULLY_CORROBORATED") > score("PARTIALLY_CORROBORATED")
+                > score("ENTITY_SUPPLIED_ONLY"))
+
+    def test_even_an_unchecked_record_outranks_the_community_sources(self):
+        # A company's own statement of its own legal name is still good evidence —
+        # better than a Wikidata label, which is usually the common name rather
+        # than the registered one. The deduction is a tie-break, not a demotion.
+        assert _validated_credibility(
+            {"Registration": {"ValidationSources": _w("ENTITY_SUPPLIED_ONLY")}}, 92) > 80
+
+    def test_a_record_that_says_nothing_is_not_penalised(self):
+        # The deduction is for GLEIF telling us a record is unverified, never for
+        # a field we failed to read.
+        _, props = _entity_props(_rec("L6", "Quiet Co"), "gleif", 92)
+        assert props["name_credibility"] == 92
+        assert "validation_sources" not in props
+
+    def test_an_unrecognised_value_is_not_penalised_either(self):
+        _, props = _entity_props(_rec("L7", "Odd Co", validation="SOMETHING_NEW"), "gleif", 92)
+        assert props["name_credibility"] == 92
+        assert props["validation_sources"] == "SOMETHING_NEW"
+
+    def test_the_score_never_goes_negative(self):
+        assert _validated_credibility(
+            {"Registration": {"ValidationSources": _w("ENTITY_SUPPLIED_ONLY")}}, 3) == 0
+
+    def test_reading_the_value_off_a_record(self):
+        assert _validation_sources(_rec("L8", "X", validation="FULLY_CORROBORATED")) \
+            == "FULLY_CORROBORATED"
+        assert _validation_sources(_rec("L9", "X")) is None
