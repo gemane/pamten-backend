@@ -140,29 +140,55 @@ rather than the registered one), so an uncorroborated GLEIF record stays above t
 community sources at 80 while losing to a corroborated one. On a day's delta of
 18,166 records: 98.7% fully corroborated, 0.8% entity-supplied, 0.4% partial.
 
-### Why a company reports no parent
+### Why a company reports no parent — reporting exceptions (`repex`)
 
-GLEIF's commonest Level 2 answer is silence, and it has two very different
-meanings. Either nobody has ever said anything — absence of evidence — or the
-company filed a **reporting exception**: a published declaration that it is
-declining to name a parent, and why. `manage.py gleif-repex` imports the second,
-from the golden copy's third section (`repex`), onto
-`no_direct_parent_reason` / `no_ultimate_parent_reason` (the two are separate
-questions and a company can answer them differently; most filers state both).
+**`repex` is GLEIF's own abbreviation for *reporting exceptions*** — it is the
+name of the golden copy's third file, and it is worth spelling out, because the
+concept behind it is not obvious from the word.
 
-| reason | what it tells an ownership map |
+**The obligation is what makes this data exist.** Every LEI holder is *required*
+to report its parent company, and if it will not or cannot, it must file a
+**reason why not**. Silence is not an allowed answer. So GLEIF's Level 2 has
+three states, not two:
+
+| the record says | what we hold |
 |---|---|
-| `NATURAL_PERSONS` | the trail leads to people, not another company — exactly where GLEIF stops and UK PSC / SEC take over |
-| `NON_CONSOLIDATING` | a parent exists but does not consolidate the accounts, so GLEIF's accounting-based Level 2 would never carry it |
-| `NO_LEI` | the parent is real and outside the system; sometimes named in `ExceptionReference`, kept as `…_reference` |
-| `NO_KNOWN_PERSON` | nobody controls it |
-| `NON_PUBLIC`, `CONSENT_NOT_OBTAINED`, `LEGAL_OBSTACLES`, `DISCLOSURE_DETRIMENTAL`, … | a parent exists and is being withheld |
+| a parent, named | an `OWNS` edge |
+| **a reason, no parent** | `no_direct_parent_reason` / `no_ultimate_parent_reason` |
+| nothing at all | nothing — genuinely unlooked-at |
+
+We used to collapse the last two into "no parent known", which is the thing this
+importer fixes. A worked example from the dev graph: **GITHUB INDIA PRIVATE
+LIMITED** has no `OWNS` edge and obviously has a parent. What GLEIF holds is
+GitHub India's own declaration that *a parent exists and its accounts are not
+published, so it is not naming it* (`NON_PUBLIC`). That is a different fact from
+"nobody has looked", and the graph can now tell them apart.
+
+`manage.py gleif-repex` imports the file. The direct and ultimate parents are
+separate questions with separate answers — a company can decline them for
+different reasons, and most filers answer both.
+
+| reason | what it tells an ownership map | in the dev graph |
+|---|---|---|
+| `NO_LEI` | the parent is real and known, it simply has no LEI for GLEIF to point at (Rolls-Royce Poland's parent is Rolls-Royce). Sometimes named in `ExceptionReference`, kept as `…_reference` | 23 |
+| `NON_PUBLIC` | a parent exists; its accounts are not published (GitHub India, Nestlé Malaysia) | 23 |
+| `NON_CONSOLIDATING` | a parent exists but does not consolidate this company, so GLEIF's accounting-based Level 2 would never carry it however hard we looked | 9 |
+| `NO_KNOWN_PERSON` | nobody controls it — a widely-held listed company with no controlling shareholder (Rolls-Royce Holdings, Etsy) | 3 |
+| `NATURAL_PERSONS` | the chain ends in people rather than a company (Apple, Barclays). **The most useful of the five**: it marks exactly where GLEIF stops and the beneficial-ownership registers (UK PSC, SEC) have to take over | 2 |
+| `CONSENT_NOT_OBTAINED`, `LEGAL_OBSTACLES`, `DISCLOSURE_DETRIMENTAL`, `BINDING_LEGAL_COMMITMENTS`, `DETRIMENT_NOT_EXCLUDED` | a parent exists and is being withheld, for a stated legal or commercial reason | — |
+
+An unrecognised reason is stored as it stands rather than dropped: GLEIF has
+extended the list before (`NO_KNOWN_PERSON` is newer than the original schema).
 
 The importer **never creates a node**: writes are `UPDATE … WHERE id` with no
-`UPSERT`, because the file describes hundreds of thousands of companies and a
-statement about one this database does not carry must land nowhere rather than
-mint a node whose only content is "has no parent, because". Reasons are stored as
-GLEIF's own enum values; the UI turns them into prose.
+`UPSERT`, because the file describes 6.3 million companies and a statement about
+one this database does not carry must land nowhere rather than mint a node whose
+only content is "has no parent, because". Reasons are stored as GLEIF's own enum
+values; turning them into prose is the UI's job.
+
+**Not yet displayed.** The properties reach the API, but no panel says "no parent
+reported — the parent's accounts are not public" yet. Until it does, a user still
+cannot tell the second state from the third.
 
 ### How countries are represented, and one grouping we deliberately do not apply
 

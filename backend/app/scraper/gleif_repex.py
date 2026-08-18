@@ -1,18 +1,26 @@
 """
-GLEIF reporting exceptions (repex) — why a company reports no parent.
+GLEIF reporting exceptions — why a company reports no parent.
 
-GLEIF's Level 2 data answers "who owns whom", and its most common answer is
-silence. That silence has two very different meanings, and until this importer
-the graph could not tell them apart:
+`repex` is GLEIF's own abbreviation for *reporting exceptions*, and it names the
+golden copy's third file. The obligation behind it is what makes the data exist:
+every LEI holder must report its parent company, and if it will not or cannot, it
+must file a **reason why not**. Silence is not an allowed answer.
 
-* **Nobody has ever said.** The company has no parent recorded, and no statement
-  either way. Absence of evidence.
-* **A parent exists and was not named.** The company filed a *reporting
-  exception* — a formal declaration, published in its own golden-copy file, that
-  it is declining to report a parent and why. Evidence of absence, with a reason
-  attached.
+So GLEIF's Level 2 has three states, and until this importer the graph could only
+see two of them:
 
-The second is often the more interesting fact for an ownership map. A company
+* **A parent, named.** An `OWNS` edge, from the RR file.
+* **A reason, and no parent.** The company declined, formally and in public, and
+  said why. Evidence of absence rather than absence of evidence.
+* **Nothing at all.** Genuinely unlooked-at.
+
+The middle one is what was being lost — folded in with the third. GITHUB INDIA
+PRIVATE LIMITED is the example to hold in mind: no edge, an obvious parent, and
+GLEIF holding its declaration that the parent's accounts are not published
+(`NON_PUBLIC`). "Nobody has looked" and "a parent exists and is withheld" are
+different answers to a user asking who owns it.
+
+The reason is often the more interesting fact for an ownership map. A company
 whose parent is `NATURAL_PERSONS` is telling us the trail leads to people rather
 than to another company — the exact point where GLEIF stops and the beneficial
 ownership registers (UK PSC, SEC) take over. `NON_CONSOLIDATING` says the parent
