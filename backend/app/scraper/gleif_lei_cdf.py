@@ -13,6 +13,9 @@ so they all upsert the same nodes. It refreshes name/country/
 address/legal-form-type + is_nominee, and leaves enrichment from other sources
 (description, wikidata_id, hq_lat, revenue, verified) untouched.
 
+Each record also states how far GLEIF checked it (`ValidationSources`), which
+scales the credibility stamped on the entity — see `_validated_credibility`.
+
 LEI-CDF JSON quirks: array key `records`; scalars wrapped `{"$": value}`.
 """
 import json
@@ -180,6 +183,54 @@ def _registration(entity: dict) -> tuple[str | None, str | None, str | None]:
     return authority, number, code
 
 
+# ── how far GLEIF checked the record ──────────────────────────────────────────
+# Every LEI record states its own `ValidationSources`: whether an LOU corroborated
+# what the entity said against the business register, or simply took its word for
+# it. GLEIF publishes it precisely so consumers can weigh records against each
+# other, and it is the only per-record quality signal in the whole file.
+#
+# It matters here because our credibility score was flat: every GLEIF record
+# scored 92 whether a registrar had confirmed it or nobody had looked. That score
+# decides which source's name survives a conflict (`runner._upsert_entity`) and
+# which claim wins in `claims.py`, so a self-declared name was outranking a
+# registry-checked one from elsewhere on the strength of its source alone.
+#
+# The deductions are small on purpose. An entity's own statement of its own legal
+# name is still good evidence — better than a Wikidata label, which is often the
+# common name rather than the registered one — so an uncorroborated GLEIF record
+# stays above the community sources (80) while losing to a corroborated one.
+#
+# On a day's delta of 18,166 records: 98.7% FULLY_CORROBORATED, 0.8%
+# ENTITY_SUPPLIED_ONLY, 0.4% PARTIALLY_CORROBORATED. So this changes little for
+# most companies and everything for the few it is about.
+_VALIDATION_PENALTY = {
+    "FULLY_CORROBORATED": 0,        # an LOU checked it against the register
+    "PARTIALLY_CORROBORATED": -4,   # some of it, or a source short of the register
+    "ENTITY_SUPPLIED_ONLY": -10,    # nobody checked; the entity said so
+    "PENDING": -10,                 # validation not finished — treated as unchecked
+}
+
+
+def _validation_sources(rec: dict) -> str | None:
+    """GLEIF's `ValidationSources` for this record, e.g. 'FULLY_CORROBORATED'.
+
+    Stored raw rather than as a label: it is a published enum with a defined
+    meaning, and the UI can say it in prose without us baking a translation into
+    the graph."""
+    return _v((rec.get("Registration") or {}).get("ValidationSources"))
+
+
+def _validated_credibility(rec: dict, credibility_score: int) -> int:
+    """The source's credibility, reduced by how little of this record was checked.
+
+    An unrecognised or absent value scores the source's own figure unchanged: the
+    penalty is for GLEIF *telling us* a record is unverified, never for a field we
+    failed to read.
+    """
+    penalty = _VALIDATION_PENALTY.get(_validation_sources(rec) or "", 0)
+    return max(0, credibility_score + penalty)
+
+
 def _founded(entity: dict) -> int | None:
     d = _v(entity.get("EntityCreationDate"))
     if d and len(d) >= 4 and d[:4].isdigit():
@@ -210,7 +261,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "name": name,
         "name_normalized": normalize_entity_name(name),
         "search_text": name,
-        "name_credibility": credibility_score,
+        # Per record, not per source: what this one is worth depends on whether
+        # anybody corroborated it (see _validated_credibility).
+        "name_credibility": _validated_credibility(rec, credibility_score),
         "country": _country(entity),
         "jurisdiction_code": _jurisdiction_code(entity),
         "registered_address": _registered_address(entity),
@@ -227,6 +280,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "source_url": f"https://search.gleif.org/#/record/{lei}",
         "is_nominee": is_nominee_name(name),
     }
+    validation = _validation_sources(rec)
+    if validation:
+        props["validation_sources"] = validation
     # Real operating location (top of the node). Only set when GLEIF has an HQ address,
     # so we never clobber an existing (e.g. Wikidata) HQ with a null.
     hq_city, hq_country = _hq_location(entity)

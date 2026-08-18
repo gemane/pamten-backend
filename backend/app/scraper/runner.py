@@ -2056,6 +2056,34 @@ def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
             "duplicate_names": _duplicate_name_summary()}
 
 
+def run_import_gleif_repex(local_file: str, limit: int | None = None) -> dict:
+    """
+    Import GLEIF reporting exceptions — the published reasons companies give for
+    naming no parent (see `app/scraper/gleif_repex.py`). Writes onto entities this
+    database already holds and creates none, so it is safe to run against a
+    curated subset as well as a full load. Reuses the GLEIF source + flags.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+
+    from app.scraper.gleif_repex import import_repex
+
+    # The source node is ensured for consistency with the other GLEIF imports, even
+    # though an exception is a property on an existing entity rather than a new
+    # node or edge — the provenance is the entity's, already stamped by LEI-CDF.
+    _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
+    log.info("GLEIF repex: importing from %s (limit=%s)", local_file, limit)
+    counts = import_repex(filepath=local_file, limit=limit)
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+
+
 def run_import_gleif_rr(local_file: str, limit: int | None = None,
                         only_leis: set[str] | None = None,
                         emit_leis_path: str | None = None) -> dict:
@@ -2101,7 +2129,8 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None,
 
 def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
                      rr_file: str | None = None, limit: int | None = None,
-                     only_existing: bool | None = None) -> dict:
+                     only_existing: bool | None = None,
+                     repex_file: str | None = None) -> dict:
     """
     Apply a GLEIF **delta** update on top of the full golden-copy load — the
     retirement-aware daily refresh (see `app/scraper/gleif_incremental.py`). It
@@ -2115,7 +2144,7 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
     checkpoint — so a few missed daily runs self-heal on the next one. A gap wider
     than ~30 days can't be covered by a delta and raises (run a full reload). Pass an
     explicit `interval` (IntraDay/LastDay/LastWeek/LastMonth) to override, or
-    pre-downloaded `lei_file`/`rr_file` to skip the fetch.
+    pre-downloaded `lei_file`/`rr_file`/`repex_file` to skip the fetch.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -2127,6 +2156,7 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
             "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
         )
 
+    from app.scraper.gleif_repex import import_repex
     from app.scraper.gleif_incremental import (
         choose_catchup_interval,
         download_deltas,
@@ -2187,6 +2217,7 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
                 log.info("GLEIF update: fetching %s deltas", resolved)
             paths = download_deltas(publish, resolved)
             lei_file, rr_file = paths["lei2"], paths["rr"]
+            repex_file = repex_file or paths.get("repex")
 
         log.info("GLEIF update: applying LEI-CDF delta %s", lei_file)
         lei = import_lei_cdf_delta(lei_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit,
@@ -2194,6 +2225,14 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
         log.info("GLEIF update: applying RR delta %s", rr_file)
         rr = import_rr_delta(rr_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit,
                              only_existing=only_existing)
+        # Reporting exceptions last, so a company that gained a real parent in this
+        # same delta is written before the reason it once had none. The importer
+        # only ever updates entities that exist, so it needs no only_existing mode:
+        # a statement about a company we do not carry lands nowhere by construction.
+        repex = {}
+        if repex_file:
+            log.info("GLEIF update: applying repex delta %s", repex_file)
+            repex = import_repex(repex_file, limit=limit)
         run["total"] = lei["updated"] + rr["created"] + rr["closed"]
         # Advance the checkpoint only after a clean apply, and only when we fetched a
         # published delta in full (not local files, not a --limit spot check).
@@ -2201,7 +2240,7 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
             write_last_publish(current_publish)
 
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, "interval": resolved,
-            "publish_date": current_publish, "lei_cdf": lei, "rr": rr}
+            "publish_date": current_publish, "lei_cdf": lei, "rr": rr, "repex": repex}
 
 
 # ── Scraper registry ──────────────────────────────────────────────────────────

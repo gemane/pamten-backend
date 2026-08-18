@@ -11,7 +11,7 @@ and where it is registered are different places and the map can show either.
 
 | Label | Key properties |
 |---|---|
-| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding/government/foundation/fund/nonprofit — inferred from Wikidata P31 instance-of and GLEIF legal form), `country`, `countries`, `founded`, `revenue`, `employees` (+ `employees_as_of` year, from Wikidata P1128), `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `registered_address` (normalized GLEIF registered office — corroborates same-company dedup), `address` (human-readable GLEIF legal address for display), `legal_form` (ISO 20275 ELF name, e.g. "Private Limited Company" — resolved from the LEI-CDF ELF code via the bundled GLEIF ELF list), `registration_authority` + `registration_number` (gleif.org's "Registered At" — register name resolved from the RA code via the bundled GLEIF RA list, plus the entity's id there), `jurisdiction_code` (ISO 3166-2 legal jurisdiction where a source gives one, e.g. `US-DE` — see *How countries are represented* below; sparse, ~1% of GLEIF records), `hq_lat`/`hq_lng`/`hq_city`/`hq_country`/`hq_street`/`hq_postcode` (where it is **run**), `reg_lat`/`reg_lng`/`reg_geo_precision`/`reg_street`/`reg_city`/`reg_postcode` (where it is **registered** — geocoded from `address`; the two differ exactly where it matters, e.g. an agent's office on Grand Cayman versus a London headquarters, and the map's Registered/Headquarters switch draws one or the other; the `_street`/`_city`/`_postcode` parts are kept **as the source gave them** so geocoding is a structured query rather than an attempt to re-parse an assembled string — every country writes an address differently, and picking the city out of a comma-separated line is guesswork), `source_id`, `source_statement_ids[]` (BODS statement ids that declared the entity — accumulated for id-less parties collapsed under one name key, so per-statement provenance survives the collapse), `aliases[]` (other names — Wikidata skos:altLabel and SEC EDGAR `formerNames`), `search_text` (FULL_TEXT-indexed: name + description + aliases), `is_nominee` (name-detected nominee/custodian — holder of record, not a beneficial owner; `manage.py flag-nominees` backfills existing) |
+| `Entity` | `id`, `name`, `name_normalized`, `type` (company/brand/holding/government/foundation/fund/nonprofit — inferred from Wikidata P31 instance-of and GLEIF legal form), `country`, `countries`, `founded`, `revenue`, `employees` (+ `employees_as_of` year, from Wikidata P1128), `wikidata_id`, `sec_cik`, `lei_id`, `companies_house_id`, `registered_address` (normalized GLEIF registered office — corroborates same-company dedup), `address` (human-readable GLEIF legal address for display), `legal_form` (ISO 20275 ELF name, e.g. "Private Limited Company" — resolved from the LEI-CDF ELF code via the bundled GLEIF ELF list), `registration_authority` + `registration_number` (gleif.org's "Registered At" — register name resolved from the RA code via the bundled GLEIF RA list, plus the entity's id there), `jurisdiction_code` (ISO 3166-2 legal jurisdiction where a source gives one, e.g. `US-DE` — see *How countries are represented* below; sparse, ~1% of GLEIF records), `hq_lat`/`hq_lng`/`hq_city`/`hq_country`/`hq_street`/`hq_postcode` (where it is **run**), `reg_lat`/`reg_lng`/`reg_geo_precision`/`reg_street`/`reg_city`/`reg_postcode` (where it is **registered** — geocoded from `address`; the two differ exactly where it matters, e.g. an agent's office on Grand Cayman versus a London headquarters, and the map's Registered/Headquarters switch draws one or the other; the `_street`/`_city`/`_postcode` parts are kept **as the source gave them** so geocoding is a structured query rather than an attempt to re-parse an assembled string — every country writes an address differently, and picking the city out of a comma-separated line is guesswork), `source_id`, `source_statement_ids[]` (BODS statement ids that declared the entity — accumulated for id-less parties collapsed under one name key, so per-statement provenance survives the collapse), `aliases[]` (other names — Wikidata skos:altLabel and SEC EDGAR `formerNames`), `search_text` (FULL_TEXT-indexed: name + description + aliases), `is_nominee` (name-detected nominee/custodian — holder of record, not a beneficial owner; `manage.py flag-nominees` backfills existing), `validation_sources` (GLEIF's own statement of how far it checked the record — `FULLY_CORROBORATED` / `PARTIALLY_CORROBORATED` / `ENTITY_SUPPLIED_ONLY` / `PENDING`; scales `name_credibility`, see *How far GLEIF checked a record* below), `no_direct_parent_reason` / `no_ultimate_parent_reason` (+ `_reference`) (why the company reports no parent, from GLEIF's reporting-exceptions file — see *Why a company reports no parent* below) |
 | `GeoCache` | `query` (the cleaned address, UNIQUE), `lat`, `lng`, `precision`, `checked_at` — an address→coordinate cache so a shared registered-agent building is geocoded once rather than once per company registered there (24 dev companies share one Wilmington address). Misses are cached too, with the date, and retried after 30 days: re-asking Nominatim about an address OpenStreetMap does not have is the most wasteful thing the geocoder can do, and a permanent "no" would be a lie. |
 | `ScrapeMiss` | `key` (normalised company name + `|` + ISO-2 country, or an empty country for an unrestricted search — UNIQUE), `missed_at` — an on-demand search that found nothing. The freshness gate protects the sources by looking at the *company* (`last_scraped_at`, `scrape_depth`), and a search that found nothing has no company to hang that on, so every repeat used to ask every source the same hopeless question again. Honoured for `SCRAPER_ONDEMAND_COOLDOWN_HOURS`, cleared by a later successful scrape of the same name+country, and expired rows are deleted when next looked up. The country is part of the key because France having no "Alphabet" says nothing about Germany. |
 | `SearchDemand` | `key` (normalised query + `|` + ISO-2 country, UNIQUE), `query`, `country`, `searches`, `zero_results`, `selected`, `first_seen`, `last_seen` — one row per question asked, never per person asking. `zero_results` is the useful one: demand the graph could not answer, in demand order. Pruned after 365 idle days |
@@ -99,9 +99,70 @@ identifiers (`_entity_own_source_rows`) — claims describe relationships, not n
 GLEIF data comes from the **GLEIF golden copy** (current, daily), keyed `lei:{LEI}`:
 `manage.py gleif-lei-cdf` imports the **entities** (name, country, legal address,
 legal-form type) from LEI-CDF; `gleif-rr` imports the **relationships** (direct/
-ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF.
+ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF;
+`gleif-repex` imports the **reasons a company gives for reporting no parent**.
 This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
 at 2025‑03.
+
+Worth knowing about the provenance, because it shapes how much weight the data
+carries: **GLEIF collects almost none of it itself.** An entity applies for an LEI
+to an accredited LOU (~40 of them — LSEG, Bloomberg, GS1, WM Datenservice …) and
+supplies its own reference data; the LOU validates it against the national
+business register where one exists, and the record names that register in
+`RegistrationAuthority`. So the real upstream source is ~200 national registers,
+and GLEIF is the normalising layer over them. Level 1 (who is who) is
+registry-corroborated and reliable; Level 2 (who owns whom) is **accounting
+consolidation, not shareholding** — no percentages — and can be declined, which is
+what the reporting exceptions record.
+
+### How far GLEIF checked a record
+
+Every LEI record carries `ValidationSources`, GLEIF's own statement of whether an
+LOU corroborated it against the register or simply took the entity's word for it.
+It is the only per-record quality signal in the file, and it scales the
+credibility we stamp on the entity rather than every GLEIF record scoring the
+source's flat 92:
+
+| `ValidationSources` | `name_credibility` | meaning |
+|---|---|---|
+| `FULLY_CORROBORATED` | 92 | an LOU checked it against the business register |
+| `PARTIALLY_CORROBORATED` | 88 | some of it, or against a source short of the register |
+| `ENTITY_SUPPLIED_ONLY` | 82 | nobody checked; the entity said so |
+| `PENDING` | 82 | validation unfinished — the same evidential state |
+| absent / unrecognised | 92 | no penalty for a field we could not read |
+
+That score decides which source's name survives a conflict and which claim wins
+in [`claims.py`](../backend/app/claims.py), so without it a self-declared name
+outranked a registry-checked one from elsewhere on the strength of its source
+alone. The deductions are deliberately small: a company's own statement of its own
+legal name is still better evidence than a Wikidata label (usually the common name
+rather than the registered one), so an uncorroborated GLEIF record stays above the
+community sources at 80 while losing to a corroborated one. On a day's delta of
+18,166 records: 98.7% fully corroborated, 0.8% entity-supplied, 0.4% partial.
+
+### Why a company reports no parent
+
+GLEIF's commonest Level 2 answer is silence, and it has two very different
+meanings. Either nobody has ever said anything — absence of evidence — or the
+company filed a **reporting exception**: a published declaration that it is
+declining to name a parent, and why. `manage.py gleif-repex` imports the second,
+from the golden copy's third section (`repex`), onto
+`no_direct_parent_reason` / `no_ultimate_parent_reason` (the two are separate
+questions and a company can answer them differently; most filers state both).
+
+| reason | what it tells an ownership map |
+|---|---|
+| `NATURAL_PERSONS` | the trail leads to people, not another company — exactly where GLEIF stops and UK PSC / SEC take over |
+| `NON_CONSOLIDATING` | a parent exists but does not consolidate the accounts, so GLEIF's accounting-based Level 2 would never carry it |
+| `NO_LEI` | the parent is real and outside the system; sometimes named in `ExceptionReference`, kept as `…_reference` |
+| `NO_KNOWN_PERSON` | nobody controls it |
+| `NON_PUBLIC`, `CONSENT_NOT_OBTAINED`, `LEGAL_OBSTACLES`, `DISCLOSURE_DETRIMENTAL`, … | a parent exists and is being withheld |
+
+The importer **never creates a node**: writes are `UPDATE … WHERE id` with no
+`UPSERT`, because the file describes hundreds of thousands of companies and a
+statement about one this database does not carry must land nowhere rather than
+mint a node whose only content is "has no parent, because". Reasons are stored as
+GLEIF's own enum values; the UI turns them into prose.
 
 ### How countries are represented, and one grouping we deliberately do not apply
 
@@ -203,7 +264,8 @@ drops `also_ultimate` (the ultimate link ended) or reverts to `indirect` with it
 own period (the direct holding ended).
 
 Once the full copy is loaded, `manage.py gleif-update` applies GLEIF's published
-**delta files** (only records changed since the last publish) as a fast daily
+**delta files** for all three sections — entities, relationships and reporting
+exceptions (only records changed since the last publish) — as a fast daily
 refresh — see [`app/scraper/gleif_incremental.py`](../backend/app/scraper/gleif_incremental.py).
 It is **retirement-aware**: a relationship whose `RelationshipStatus` becomes
 non-ACTIVE has its `OWNS` edge *closed* (`until` = the relationship period's
