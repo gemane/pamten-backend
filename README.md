@@ -396,6 +396,54 @@ minutes is flagged `stale` (an interrupted run). Surfaced in the web app's
 
 ---
 
+## Usage measurement
+
+Counting what the product is asked for, so the roadmap follows demand rather than
+guesswork: which companies people search for, which searches find nothing (the
+best possible list of registers to add next), which features get used, and how
+the endpoints are behaving. Off by default — `ANALYTICS_ENABLED`.
+
+The design constraint is that it must not become surveillance, and one detail
+forced the whole shape: `SearchBar` calls `/search` every 300 ms while typing, so
+counting requests would record `mi`, `mic`, `micr` — useless as demand data and
+*more* intrusive than what we wanted, since partial typing exposes hesitation and
+correction. So the **client reports once, when a search settles** (a result was
+taken, nothing was found, or nothing was chosen), and the server keeps **totals,
+never events**.
+
+Three keyed counter types, in the database alongside `ImportState` and `GeoCache`:
+
+| type | key | counts |
+|---|---|---|
+| `SearchDemand` | normalised query + ISO-2 country | searches, zero-result searches, searches where a result was taken |
+| `UsageCounter` | an allow-listed event name (`export.csv`, `map.basis.hq`, `result.rank.3`) | occurrences |
+| `EndpointStat` | `METHOD route_template status_class` + latency bucket | requests |
+
+**No row can be tied to a person.** No user id, no account link, no session id, no
+stored IP address (a salted hash lives in memory for rate limiting and is never
+written), no device identifier, no user agent, and no per-event timestamp — only
+first- and last-seen on an aggregate. There is no event log, so no individual's
+activity can be reconstructed even by us. `EndpointStat` keys on the **route
+template**, never the raw path, so `/entities/{id}` does not mint a row per
+company.
+
+`POST /v1/analytics/event` is public and anonymous, rate-limited like `/flags`,
+and strictly allow-listed: an unknown event name is rejected, `query` is capped at
+120 characters and `rank` at 0–49. An open-ended key column on a public endpoint
+is unbounded row growth and a junk-injection vector. Reading it back —
+`GET /v1/analytics/searches` and `/usage` — is admin-only and paged.
+
+**The one honest caveat:** the `SearchDemand` key is free text, and somebody will
+search for a person's name. That name is stored, unlinked to whoever searched for
+it, readable only by an admin, and deleted once the query has been idle for twelve
+months (`prune-analytics`, daily at 05:15 via `~/scripts/cron-prune-analytics.sh`).
+The store is anonymous with respect to the *searcher*, not with respect to
+everyone who might be named in a search box — which is exactly how the record of
+processing and the published privacy notice put it. If the retention window here
+changes, those change with it.
+
+---
+
 ## Federation
 
 Independent instances, run by different people, share ownership data as
@@ -451,6 +499,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | none | SMTP credentials — for Gmail, the account + an **App Password**. Secret — env only |
 | `EMAIL_FROM` | = `SMTP_USERNAME` | `From` header on outgoing mail |
 | `APP_BASE_URL` | `http://localhost:5173` | Frontend origin used to build verification / reset links in emails |
+| `ANALYTICS_ENABLED` | `false` | Record aggregate usage counters — what is searched for, which features are used, endpoint health. No user, session, IP or per-event timestamp is stored; see *Usage measurement* below. Live on dev since 2026-08-04 |
 | `SCRAPER_ENABLED` | `false` | Master scraper switch (required for any scrape) |
 | `SCRAPER_WIKIDATA_ENABLED` | `true` | Wikidata source switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |
@@ -506,6 +555,7 @@ python3 manage.py init-schema
 | `rebuild-search` | REBUILD the FULL_TEXT `search_text` indexes so `/search` (`CONTAINSTEXT`) finds every row — needed after a non-bulk / `--only` import (the FULL_TEXT index isn't maintained incrementally). `--hard` first DROPs + re-CREATEs the indexes: use it to recover a **stuck/corrupted** index that a plain REBUILD reports "ok" on but never repopulates (e.g. after a bulk-load's REBUILD was cut off mid-flight by the nginx 60s proxy timeout). Run `--hard` against `--db-url http://localhost:2480` so it isn't cut off by that same proxy again. |
 | `verify-users` | Mark existing accounts email-verified (login now requires it). Run once after enabling verification so pre-existing users aren't locked out; `--email <addr>` targets one account. |
 | `set-password` | Set one account's password directly: `python manage.py set-password someone@example.com`. Prompts twice with hidden input (`--password` exists for scripting but puts the secret in shell history and `ps`). Applies the same policy as the API. The operator escape hatch for when neither in-app route works — the reset flow needs email, `/auth/change-password` needs the current password, and `ADMIN_PASSWORD` only ever seeds a *missing* account. |
+| `prune-analytics` | Delete usage counters untouched inside the retention window (`--days`, default 365; `--dry-run` first). **Scheduled** — `~/scripts/cron-prune-analytics.sh` runs it daily at 05:15, because the privacy notice tells people those rows are deleted after twelve months and that is only true if something deletes them. Shortening `--days` means changing the published notice too. |
 | `backup-database` | Take a consistent **online** backup — ArcadeDB's own `BACKUP DATABASE`, not a disk snapshot (pages and the WAL can be captured out of step). The **server** picks the path, so this only reports the filename; `~/scripts/backup-database.sh` wraps it with verification, rotation and an offsite copy. See [`docs/operations.md`](docs/operations.md) for the restore procedure. |
 | `sec-holdings` | Ingest the >5% stakes one SEC filer discloses in others: `python manage.py sec-holdings 0002100119 [--limit N] [--succeeds OLD_CIK]`. The mirror of a normal scrape, which reads filings *about* a company — an asset manager has none of those. Keyed on CIK because the live filer often isn't the one you'd search by name. `--succeeds` records a handover between filer entities as a `SUCCEEDED_BY` edge. |
 
