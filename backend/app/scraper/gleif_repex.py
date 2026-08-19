@@ -25,8 +25,15 @@ whose parent is `NATURAL_PERSONS` is telling us the trail leads to people rather
 than to another company — the exact point where GLEIF stops and the beneficial
 ownership registers (UK PSC, SEC) take over. `NON_CONSOLIDATING` says the parent
 exists but does not consolidate the accounts, so GLEIF's accounting-based Level 2
-would never carry it whatever we did. `NO_LEI` says the parent is real and simply
-outside the system, and sometimes names it in `ExceptionReference`.
+would never carry it whatever we did.
+
+**Read the definitions, do not infer them from the names.** They live in the
+`xs:documentation` annotations of the Reporting Exceptions 2.1 XSD
+(https://www.gleif.org/lei-data/access-and-use-lei-data/level-2-data-reporting-exceptions-2-1-format/2021-07-20_reporting-exceptions-format-v2-1.xsd)
+— GLEIF publishes no machine-readable code list for these, unlike ELF and RA, and
+the API returns the bare enum. `NO_LEI` is the trap: it does not mean "the parent
+has no LEI", it means **"The parent does not consent to have an LEI"** — a refusal,
+not an absence. This module said the former until 2026-08-19.
 
 Two categories are reported separately, because they are separate questions —
 the direct (closest) consolidating parent and the ultimate (top of tree) one:
@@ -72,22 +79,45 @@ CATEGORY_PROPS = {
     "ULTIMATE_ACCOUNTING_CONSOLIDATION_PARENT": "no_ultimate_parent_reason",
 }
 
-#: Every reason GLEIF publishes, in rough order of how often it appears. Not used
-#: to filter — an unknown reason is stored as-is, since the list has grown before
-#: (``NO_KNOWN_PERSON`` is newer than the original schema) and dropping a reason
-#: we do not recognise would be worse than carrying it.
+#: Every reason GLEIF publishes, in rough order of how often it appears, with its
+#: own definition from the 2.1 XSD (see the module docstring — these are quoted,
+#: not paraphrased from the code names).
+#:
+#: Not used to filter: an unknown reason is stored as-is, since the list has
+#: changed before and dropping a reason we do not recognise would be worse than
+#: carrying it.
 KNOWN_REASONS = (
-    "NATURAL_PERSONS",          # the parent is a person, not a company
-    "NON_CONSOLIDATING",        # a parent exists but does not consolidate accounts
-    "NO_LEI",                   # the parent has no LEI (sometimes named in the reference)
-    "NO_KNOWN_PERSON",          # no person or entity controls it
-    "NON_PUBLIC",               # the accounts are not published
-    "CONSENT_NOT_OBTAINED",     # the parent has not agreed to be named
-    "LEGAL_OBSTACLES",          # naming it would break a local law
-    "BINDING_LEGAL_COMMITMENTS",
-    "DETRIMENT_NOT_EXCLUDED",   # harm to either party cannot be ruled out
-    "DISCLOSURE_DETRIMENTAL",   # naming it would harm one of them
+    # "…the entity is controlled by natural person(s) without any intermediate
+    # legal entity meeting the definition of accounting consolidating parent."
+    "NATURAL_PERSONS",
+    # "…the entity is controlled by legal entities not subject to preparing
+    # consolidated financial statements."
+    "NON_CONSOLIDATING",
+    # "The parent does not consent to have an LEI." A REFUSAL, not an absence —
+    # the name invites the wrong reading and we made it once.
+    "NO_LEI",
+    # "…there is no known person controlling the entity (e.g. diversified
+    # shareholding)."
+    "NO_KNOWN_PERSON",
+    # "Relationship information must not be disclosed publicly." Since v2.1 this
+    # is the umbrella for the five below.
+    "NON_PUBLIC",
+    # ── Deprecated in v2.1 (2022-03-01), folded into NON_PUBLIC. Still present in
+    # records filed before then and not yet refreshed — 17 of 2,986 on a day's
+    # delta — so they are still read and still need display text. ──
+    "CONSENT_NOT_OBTAINED",     # "…the parent did not consent or could not be contacted"
+    "LEGAL_OBSTACLES",          # obstacles in the laws or regulations of a jurisdiction
+    "BINDING_LEGAL_COMMITMENTS",  # articles or a contract, rather than law
+    "DETRIMENT_NOT_EXCLUDED",   # the child could not confirm the absence of detriment
+    "DISCLOSURE_DETRIMENTAL",   # disclosure would be detrimental to either party
 )
+
+#: The five above that v2.1 retired. Kept as data because "this record predates
+#: March 2022" is a real thing to be able to say about a company's filing.
+DEPRECATED_REASONS = frozenset({
+    "CONSENT_NOT_OBTAINED", "LEGAL_OBSTACLES", "BINDING_LEGAL_COMMITMENTS",
+    "DETRIMENT_NOT_EXCLUDED", "DISCLOSURE_DETRIMENTAL",
+})
 
 _BATCH = 400
 

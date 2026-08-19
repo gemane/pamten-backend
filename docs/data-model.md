@@ -168,17 +168,25 @@ published, so it is not naming it* (`NON_PUBLIC`). That is a different fact from
 separate questions with separate answers — a company can decline them for
 different reasons, and most filers answer both.
 
-| reason | what it tells an ownership map | in the dev graph |
-|---|---|---|
-| `NO_LEI` | the parent is real and known, it simply has no LEI for GLEIF to point at (Rolls-Royce Poland's parent is Rolls-Royce). Sometimes named in `ExceptionReference`, kept as `…_reference` | 23 |
-| `NON_PUBLIC` | a parent exists; its accounts are not published (GitHub India, Nestlé Malaysia) | 23 |
-| `NON_CONSOLIDATING` | a parent exists but does not consolidate this company, so GLEIF's accounting-based Level 2 would never carry it however hard we looked | 9 |
-| `NO_KNOWN_PERSON` | nobody controls it — a widely-held listed company with no controlling shareholder (Rolls-Royce Holdings, Etsy) | 3 |
-| `NATURAL_PERSONS` | the chain ends in people rather than a company (Apple, Barclays). **The most useful of the five**: it marks exactly where GLEIF stops and the beneficial-ownership registers (UK PSC, SEC) have to take over | 2 |
-| `CONSENT_NOT_OBTAINED`, `LEGAL_OBSTACLES`, `DISCLOSURE_DETRIMENTAL`, `BINDING_LEGAL_COMMITMENTS`, `DETRIMENT_NOT_EXCLUDED` | a parent exists and is being withheld, for a stated legal or commercial reason | — |
+**Take the definitions from GLEIF, not from the code names.** They are published
+only as `xs:documentation` annotations inside the [Reporting Exceptions 2.1
+XSD](https://www.gleif.org/lei-data/access-and-use-lei-data/level-2-data-reporting-exceptions-2-1-format/2021-07-20_reporting-exceptions-format-v2-1.xsd)
+— there is no downloadable code list as there is for ELF and RA, and the API
+returns the bare enum. `NO_LEI` is the trap, and this document got it wrong until
+2026-08-19: it does **not** mean the parent has no LEI, it means the parent
+*refuses* to have one.
 
-An unrecognised reason is stored as it stands rather than dropped: GLEIF has
-extended the list before (`NO_KNOWN_PERSON` is newer than the original schema).
+| reason | GLEIF's definition, condensed | in the dev graph |
+|---|---|---|
+| `NO_LEI` | *"The parent does not consent to have an LEI."* A refusal, not an absence. Sometimes the filer points at the parent anyway in `ExceptionReference`, kept as `…_reference` | 23 |
+| `NON_PUBLIC` | the relationship must not be disclosed publicly (GitHub India, Nestlé Malaysia). Since v2.1 this is the umbrella for the five deprecated reasons below | 23 |
+| `NON_CONSOLIDATING` | controlled by legal entities not subject to preparing consolidated financial statements — so GLEIF's accounting-based Level 2 would never carry the parent however hard we looked | 9 |
+| `NO_KNOWN_PERSON` | no known person controls it, e.g. diversified shareholding (Rolls-Royce Holdings, Etsy) | 3 |
+| `NATURAL_PERSONS` | controlled by natural persons with no intermediate legal entity meeting the definition of a consolidating parent (Apple, Barclays). **The most useful of them**: it marks exactly where GLEIF stops and the beneficial-ownership registers (UK PSC, SEC) have to take over | 2 |
+| `CONSENT_NOT_OBTAINED`, `LEGAL_OBSTACLES`, `BINDING_LEGAL_COMMITMENTS`, `DISCLOSURE_DETRIMENTAL`, `DETRIMENT_NOT_EXCLUDED` | **Deprecated in v2.1 (1 March 2022)** and folded into `NON_PUBLIC`. Still arriving on records filed before then and not since refreshed — 17 of 2,986 on a day's delta — so they are still read and still displayed | — |
+
+An unrecognised reason is stored as it stands rather than dropped: the list has
+changed before, in both directions.
 
 The importer **never creates a node**: writes are `UPDATE … WHERE id` with no
 `UPSERT`, because the file describes 6.3 million companies and a statement about
