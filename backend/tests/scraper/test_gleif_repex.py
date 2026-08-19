@@ -7,7 +7,9 @@ two that a parser written from the schema alone gets wrong: `ExceptionReason` is
 a **list** even when it holds one reason, and one company usually files twice —
 once about its direct parent, once about its ultimate one.
 """
-from app.scraper.gleif_repex import CATEGORY_PROPS, KNOWN_REASONS, _exception_props, _values
+from app.scraper.gleif_repex import (
+    CATEGORY_PROPS, DEPRECATED_REASONS, KNOWN_REASONS, _exception_props, _values,
+)
 
 
 def _w(value):
@@ -87,6 +89,16 @@ class TestWhatOneExceptionSays:
         # the ones actually seen in the feed.
         assert {"NATURAL_PERSONS", "NON_CONSOLIDATING", "NO_LEI",
                 "NO_KNOWN_PERSON", "NON_PUBLIC"} <= set(KNOWN_REASONS)
+
+    def test_the_reasons_v2_1_retired_are_marked_and_still_read(self):
+        # Folded into NON_PUBLIC on 2022-03-01, but a record filed before then and
+        # never refreshed still carries one — 17 of 2,986 on a day's delta. Marked
+        # so a reader knows they are legacy; still parsed, because they are still
+        # arriving.
+        assert DEPRECATED_REASONS < set(KNOWN_REASONS)
+        assert "NON_PUBLIC" not in DEPRECATED_REASONS, "the umbrella is current, not legacy"
+        _, props = _exception_props(record(reasons=("CONSENT_NOT_OBTAINED",)))
+        assert props["no_direct_parent_reason"] == "CONSENT_NOT_OBTAINED"
 
 
 class TestWhatIsRefused:
