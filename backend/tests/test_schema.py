@@ -69,3 +69,27 @@ def test_unreachable_db_is_skipped_without_raising():
     assert result["skipped"] is True
     # bailed on the very first statement, no exception propagated
     assert result["failed"] == []
+
+
+def test_the_psc_edge_index_is_declared():
+    """The Companies House refresh matches an edge by `psc_self_link`, in batches,
+    then updates by the same key. Both work unindexed — by scanning every OWNS edge
+    per batch — so nothing *fails* without the index, it just takes hours instead of
+    minutes. Asserted on the emitted DDL, because a test that loops over the
+    declaration list passes happily when the list is empty."""
+    with _run() as m:
+        schema.ensure_indexes()
+    issued = [c.args[0] for c in m.call_args_list]
+    assert "CREATE PROPERTY OWNS.psc_self_link IF NOT EXISTS STRING" in issued
+    assert "CREATE INDEX IF NOT EXISTS ON OWNS (psc_self_link) NOTUNIQUE" in issued
+
+
+def test_an_edge_index_does_not_create_a_vertex_type():
+    """`_INDEXES`'s first element drives `CREATE VERTEX TYPE`, which is exactly why
+    edge indexes live in their own list. Declaring OWNS in the wrong one would make
+    the bootstrap try to create a vertex type shadowing the edge type."""
+    with _run() as m:
+        schema.ensure_indexes()
+    issued = [c.args[0] for c in m.call_args_list]
+    assert "CREATE VERTEX TYPE OWNS IF NOT EXISTS" not in issued
+    assert "CREATE EDGE TYPE OWNS IF NOT EXISTS" in issued

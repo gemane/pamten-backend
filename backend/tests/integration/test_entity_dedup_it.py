@@ -136,3 +136,54 @@ def test_bulk_heal_keeps_one_per_lei_and_drops_the_rest(it_db):
     # The dropped node's edge is gone with it.
     edges = it_db.run_command("MATCH (:Entity {id:'owner'})-[r:OWNS]->() RETURN count(r) AS n")
     assert edges[0]["n"] == 0
+
+
+def test_a_merge_carries_every_edge_property(it_db):
+    """An OWNS edge is *recreated* during a merge, not moved — so any property the
+    migration query forgets is silently destroyed.
+
+    Three were being lost: `interest_types`, `direct_or_indirect` (GLEIF's
+    direct/ultimate marker, which the renderer and `mark-shortcuts` both read) and
+    `psc_self_link` (the key the Companies House refresh matches an edge on — lose
+    it and the next refresh cannot find the edge, so it creates a second one).
+
+    Asserted on both directions, because the migration has a separate query for
+    each and fixing only the one you happened to test is the easy mistake.
+    """
+    from app.scraper import maintenance
+
+    it_db.run_command("CREATE (e:Entity {id:'old-props', name:'Acme AG', lei_id:'LEI-X', "
+                      "name_credibility:80, verified:false})")
+    it_db.run_command("CREATE (e:Entity {id:'lei:LEI-X', name:'Acme AG', lei_id:'LEI-X', "
+                      "name_credibility:90, verified:false})")
+    it_db.run_command("CREATE (e:Entity {id:'target-co', name:'Target Ltd'})")
+    it_db.run_command("CREATE (p:Person {id:'person-props', full_name:'Ann Owner'})")
+
+    # Outgoing: the dead node owns something.
+    it_db.run_command(
+        "MATCH (a:Entity {id:'old-props'}), (t:Entity {id:'target-co'}) "
+        "CREATE (a)-[:OWNS {stake_percent:60, direct_or_indirect:'indirect', "
+        "interest_types:['shareholding'], psc_self_link:'/link/out', until:null}]->(t)")
+    # Incoming: a person owns the dead node.
+    it_db.run_command(
+        "MATCH (p:Person {id:'person-props'}), (b:Entity {id:'old-props'}) "
+        "CREATE (p)-[:OWNS {stake_percent:30, direct_or_indirect:'direct', "
+        "interest_types:['votingRights'], psc_self_link:'/link/in', until:null}]->(b)")
+
+    assert maintenance.deduplicate_entities()["entities_merged"] == 1
+
+    out = it_db.run_command(
+        "MATCH (a:Entity {id:'lei:LEI-X'})-[r:OWNS]->(t:Entity {id:'target-co'}) "
+        "RETURN r.direct_or_indirect AS doi, r.psc_self_link AS pscl, "
+        "r.interest_types AS itypes")[0]
+    assert out["doi"] == "indirect", "GLEIF's direct/ultimate marker was dropped"
+    assert out["pscl"] == "/link/out", "the PSC refresh key was dropped"
+    assert out["itypes"] == ["shareholding"]
+
+    inc = it_db.run_command(
+        "MATCH (p:Person {id:'person-props'})-[r:OWNS]->(b:Entity {id:'lei:LEI-X'}) "
+        "RETURN r.direct_or_indirect AS doi, r.psc_self_link AS pscl, "
+        "r.interest_types AS itypes")[0]
+    assert inc["doi"] == "direct"
+    assert inc["pscl"] == "/link/in"
+    assert inc["itypes"] == ["votingRights"]

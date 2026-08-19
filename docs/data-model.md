@@ -335,3 +335,24 @@ map to `stake_percent` (ownership-of-shares band floor), `voting_power_pct` (vot
 band floor) and `ownership_type` (`controlling` when they carry voting / appointment /
 significant-influence rights). This replaces the OpenOwnership UK PSC BODS export
 (`bods-uk-psc`), which was frozen at 2025‑03.
+
+**Which `kind`s are imported.** Six of the eight the snapshot contains: the four
+person-with-significant-control kinds, plus the two Register of Overseas Entities
+*beneficial owner* kinds and their corporate twins. Only the two **super-secure**
+kinds are skipped — Companies House withholds those details for personal safety and
+the record carries no name to write. The corporate beneficial-owner kinds
+(`corporate-entity-beneficial-owner`, ~13k register-wide, and
+`legal-person-beneficial-owner`, ~540) were **dropped until 2026-08-19** while their
+individual twin was imported; a load from before then is missing them.
+
+**A PSC OWNS edge carries `psc_self_link`** — the Companies House appointment link,
+one per snapshot record. It is the key an incremental refresh matches an edge on, so
+anything that recreates an OWNS edge (notably the entity-merge migration) must carry
+it across or the edge is orphaned from its record.
+
+⚠️ **`--only` used to lose data.** The subset import stopped reading once every
+requested company had been seen once, on the assumption that a snapshot groups a
+company's records together. It does not — measured on the real file, **16.9% of
+companies reappear** after another has intervened — so about one company in six lost
+its later PSCs, silently. Fixed 2026-08-19 by reading the whole file; **any curated
+database built before that is incomplete** and wants reloading.

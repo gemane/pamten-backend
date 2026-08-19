@@ -5,8 +5,8 @@ import json
 import zipfile
 
 from app.scraper.companies_house_psc import (
-    _band_floor, _birth_date, _control, _entity_psc_id, _iso2_country, _psc_address,
-    _psc_name, import_ch_psc,
+    _band_floor, _birth_date, _control, _ENTITY_KINDS, _entity_psc_id, _iso2_country,
+    _PERSON_KINDS, _psc_address, _psc_name, _SKIP_KINDS, import_ch_psc, psc_record,
 )
 
 
@@ -68,7 +68,11 @@ def _psc_zip(tmp_path, company_numbers):
 class TestOnlyCompanies:
     """--only / --only-file curated subset: import just the listed company numbers."""
 
-    def test_filters_to_listed_company_and_stops_early(self, tmp_path, monkeypatch):
+    def test_filters_to_the_listed_company(self, tmp_path, monkeypatch):
+        # Named for what it checks: the raw-bytes prefilter. It used to be called
+        # "…and stops early", but with one target among three lines the prefilter
+        # alone produces this result — the early stop it claimed to cover was never
+        # exercised by it, which is how the bug below survived.
         from app.scraper import companies_house_psc as m
         seen = []
         monkeypatch.setattr(m, "_process",
@@ -80,6 +84,45 @@ class TestOnlyCompanies:
         assert seen == ["00000002"]          # only the listed company processed
         assert counts["persons"] == 1
         assert counts["records"] == 1        # non-matches rejected before the JSON parse
+
+    def test_a_company_whose_records_are_not_adjacent_is_fully_imported(self, tmp_path, monkeypatch):
+        """The bug the early stop caused, in miniature.
+
+        A snapshot does NOT group a company's PSC records together — measured on the
+        real file, 16.9% of companies reappear after another has intervened. Reading
+        stopped at the first sighting of each target, so those companies lost every
+        later PSC. Silently: the run reported success with a plausible count.
+        """
+        from app.scraper import companies_house_psc as m
+        seen = []
+        monkeypatch.setattr(m, "_process",
+                            lambda rec, *a: seen.append(rec["data"]["name"]) or "person")
+
+        # Target, interloper, target again — the shape the real file has.
+        z = _psc_zip(tmp_path, ["00000002", "00000009", "00000002"])
+        counts = import_ch_psc(z, "src", 97, only_companies={"00000002"})
+
+        assert len(seen) == 2, "the second PSC of a non-adjacent company was dropped"
+        assert counts["persons"] == 2
+
+    def test_reports_how_many_requested_companies_were_found(self, tmp_path, monkeypatch):
+        # A company with no PSC records is normal — dissolved, exempt, or simply not
+        # filed — but a large gap means the wrong list, and the run should say so
+        # rather than look like a success.
+        from app.scraper import companies_house_psc as m
+        monkeypatch.setattr(m, "_process", lambda rec, *a: "person")
+
+        z = _psc_zip(tmp_path, ["00000001", "00000002"])
+        counts = import_ch_psc(z, "src", 97,
+                               only_companies={"00000002", "00000404", "00000405"})
+
+        assert counts["requested"] == 3 and counts["found"] == 1
+
+    def test_says_nothing_about_requested_counts_without_a_list(self, tmp_path, monkeypatch):
+        from app.scraper import companies_house_psc as m
+        monkeypatch.setattr(m, "_process", lambda rec, *a: "person")
+        counts = import_ch_psc(_psc_zip(tmp_path, ["00000001"]), "src", 97)
+        assert "requested" not in counts and "found" not in counts
 
     def test_no_filter_processes_all(self, tmp_path, monkeypatch):
         from app.scraper import companies_house_psc as m
@@ -136,3 +179,89 @@ class TestPscFields:
             "registration_number": "999", "country_registered": "Delaware"},
             "links": {"self": "/company/x/corporate-entity/zzz"}})
         assert node_id == "chpsc:/company/x/corporate-entity/zzz" and chid is None
+
+
+class TestEveryKindIsAccountedFor:
+    """All eight kinds the snapshot contains, sorted deliberately.
+
+    Two were dropped until 2026-08-19: `corporate-entity-beneficial-owner` (~13k
+    register-wide) and `legal-person-beneficial-owner` (~540), while their
+    individual twin was mapped. That mattered more than the counts suggest — the
+    incremental refresh can never backfill an unmapped kind, because a record that
+    produces nothing when imported also produces nothing when it changes.
+    """
+
+    ALL_KINDS = {
+        "individual-person-with-significant-control": "person",
+        "individual-beneficial-owner": "person",
+        "corporate-entity-person-with-significant-control": "entity",
+        "legal-person-person-with-significant-control": "entity",
+        "corporate-entity-beneficial-owner": "entity",
+        "legal-person-beneficial-owner": "entity",
+        "super-secure-person-with-significant-control": None,
+        "super-secure-beneficial-owner": None,
+    }
+
+    def _rec(self, kind):
+        return {"company_number": "00000001", "data": {
+            "kind": kind, "name": "A Body",
+            "links": {"self": f"/company/00000001/psc/{kind}"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+
+    def test_each_kind_lands_where_it_should(self):
+        for kind, expected in self.ALL_KINDS.items():
+            mapped = psc_record(self._rec(kind), "src", 97)
+            got = mapped.kind_cat if mapped else None
+            assert got == expected, f"{kind} mapped to {got}, expected {expected}"
+
+    def test_the_corporate_beneficial_owners_are_imported(self):
+        # The regression itself, stated on its own so a future trim of the tuple
+        # fails with the reason rather than as one row of a loop.
+        for kind in ("corporate-entity-beneficial-owner", "legal-person-beneficial-owner"):
+            assert psc_record(self._rec(kind), "src", 97) is not None, f"{kind} dropped"
+
+    def test_skipping_super_secure_is_a_decision(self):
+        # Companies House withholds these for personal safety and the record carries
+        # no name to write. Listed explicitly so the skip is not an accident of the
+        # allow-list test.
+        assert set(_SKIP_KINDS) == {"super-secure-person-with-significant-control",
+                                    "super-secure-beneficial-owner"}
+        assert not set(_SKIP_KINDS) & set(_PERSON_KINDS + _ENTITY_KINDS)
+
+    def test_the_lists_cover_the_kinds_the_snapshot_contains(self):
+        assert set(self.ALL_KINDS) == set(_PERSON_KINDS + _ENTITY_KINDS + _SKIP_KINDS)
+
+
+class TestTheMappingIsPure:
+    """`psc_record` is what the incremental refresh reuses, so it must be a function
+    of its input alone — no clock, no writer, no database."""
+
+    def _rec(self):
+        return {"company_number": "07434180", "data": {
+            "kind": "individual-person-with-significant-control", "name": "Ann Owner",
+            "links": {"self": "/company/07434180/psc/individual/abc"},
+            "notified_on": "2016-04-06",
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+
+    def test_the_same_record_maps_the_same_way_twice(self):
+        assert psc_record(self._rec(), "src", 97) == psc_record(self._rec(), "src", 97)
+
+    def test_it_carries_no_timestamp(self):
+        # `last_scraped_at` is a clock reading and belongs to the writer. If it
+        # leaked in here, two mappings of one record would differ and the refresh's
+        # digest would report every record as changed, every night.
+        mapped = psc_record(self._rec(), "src", 97)
+        assert "last_scraped_at" not in mapped.edge_props
+
+    def test_the_edge_carries_the_key_the_refresh_matches_on(self):
+        mapped = psc_record(self._rec(), "src", 97)
+        assert mapped.edge_props["psc_self_link"] == "/company/07434180/psc/individual/abc"
+        assert mapped.self_link == mapped.edge_props["psc_self_link"]
+
+    def test_a_ceased_psc_carries_its_end_date(self):
+        rec = self._rec()
+        rec["data"]["ceased_on"] = "2020-01-31"
+        assert psc_record(rec, "src", 97).edge_props["until"] == "2020-01-31"
+
+    def test_an_active_psc_has_no_end_date(self):
+        assert psc_record(self._rec(), "src", 97).edge_props["until"] is None
