@@ -273,7 +273,8 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
 def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                   limit: int | None = None, bulk_load: bool = False,
                   batch_size: int = 400,
-                  only_companies: set[str] | None = None) -> dict:
+                  only_companies: set[str] | None = None,
+                  digest_out: str | None = None) -> dict:
     """Import a Companies House PSC snapshot (.zip/.txt). Returns counts.
 
     ``batch_size`` sets how many records flush per ``sqlscript`` round-trip. Behind
@@ -285,6 +286,13 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
     ``only_companies`` restricts the import to that set of company numbers (the curated
     test subset). A cheap raw-bytes prefilter skips JSON parsing for non-matches, so a
     handful of companies still loads quickly — but the whole file is read.
+
+    ``digest_out`` writes the digest sidecar the incremental refresh diffs against,
+    from this same pass over the same bytes so the two can never describe different
+    files. It covers **every record in the snapshot**, including those this load
+    skipped: the refresh digests the whole file, so a digest of only the subset
+    would make the next run see the entire register as new. That means a subset
+    load with ``--digest-out`` gives up the prefilter and parses all 15.8M lines.
 
     It used to stop early, once every target company had been seen, on the stated
     assumption that "a CH snapshot groups a company's PSC records together". **It does
@@ -309,6 +317,15 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
 
     counts = {"records": 0, "persons": 0, "entities": 0, "skipped": 0, "errors": 0}
     only_bytes = [c.encode() for c in only_companies] if only_companies else None
+    # The incremental refresh diffs against a digest of the snapshot this load came
+    # from. Writing it here, from the same pass over the same bytes, is what stops
+    # baseline and digest ever describing different files. Streamed to disk — the
+    # register is 15.6M rows and holding them would cost more memory than the
+    # import itself.
+    digest_sink = None
+    if digest_out:
+        from app.scraper.ch_psc_incremental import DigestSink
+        digest_sink = DigestSink(digest_out)
     matched: set[str] = set()
     if bulk_load:
         _drop_secondary_indexes()
@@ -325,13 +342,25 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                 break
             # Curated subset: reject non-matching lines before the JSON parse (cheap
             # bytes search), then confirm the exact company_number after parsing.
-            if only_bytes is not None and not any(cb in line for cb in only_bytes):
+            #
+            # …unless a digest is being written, in which case every line has to be
+            # parsed anyway. The digest describes the SNAPSHOT, not the subset we
+            # chose to import: the refresh digests the whole file and diffs the two,
+            # so a subset digest would make the next run see 15.8M records "added".
+            # A subset load with --digest-out therefore costs a full parse.
+            prefiltered_out = only_bytes is not None and not any(cb in line for cb in only_bytes)
+            if prefiltered_out and digest_sink is None:
                 continue
-            counts["records"] += 1
-            if counts["records"] % 50000 == 0:
-                bar.render(done, total_bytes)
+            if not prefiltered_out:
+                counts["records"] += 1
+                if counts["records"] % 50000 == 0:
+                    bar.render(done, total_bytes)
             try:
                 rec = json.loads(line)
+                if digest_sink is not None:
+                    digest_sink.add_record(rec)
+                if prefiltered_out:
+                    continue                      # digested, but not ours to import
                 if only_companies is not None:
                     cn = (rec.get("company_number") or "").strip()
                     if cn not in only_companies:
@@ -364,10 +393,18 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                    f"{counts['persons']:,} persons + {counts['entities']:,} entities"
                    + (f", {counts['found']}/{counts['requested']} requested companies found"
                       if only_companies is not None else ""))
+    except BaseException:
+        if digest_sink is not None:
+            digest_sink.abandon()      # a partial sidecar must never look like a baseline
+        raise
     finally:
         raw.close()
         if bulk_load:
             _rebuild_indexes()
+
+    if digest_sink is not None:
+        counts["digest"] = digest_sink.finish()
+        counts["digest_records"] = digest_sink.rows
 
     log.info("CH PSC import done: %s", counts)
     return counts

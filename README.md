@@ -322,8 +322,13 @@ one. A gap wider than ~30 days can't be covered by a delta, so the run **fails l
 marker), then let the daily `gleif-update` cron take over — the first run cold-starts
 `LastMonth` (reconciles up to a month), then settles into nightly `LastDay`.
 
-UK PSC has no clean delta feed (Companies House publishes a daily *full* snapshot), so
-its incremental refresh is a later, separate design.
+UK PSC has no clean delta feed — Companies House publishes a daily *full* snapshot and
+no deltas at all — so `manage.py ch-psc-update` computes one locally, by digesting
+today's snapshot and diffing it against the last one applied. Cessations, corrections
+that reopen a closed holding, and withdrawn records are all handled; re-running against
+an unchanged snapshot is a no-op. **Deliberately not scheduled** — it is run by hand
+until it has proved itself over several real snapshots. See *Refreshing it* in
+[`docs/data-model.md`](docs/data-model.md).
 
 ---
 
@@ -547,6 +552,7 @@ python3 manage.py init-schema
 | `backfill-sec-headquarters` | Fill SEC filers' `hq_address`/`hq_city`/`hq_country` from EDGAR's **business address** — where a company is *run*. Deliberately separate from the country repair: a business address is poor evidence of a **domicile** (a foreign filer often files through a US office, which is why `sec_country` refuses to read one from it) and good evidence of a **headquarters**. The scraper had been fetching that address to read a single state code out of it and discarding the rest, leaving 40 of 43 SEC companies with no headquarters at all. |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers) — see *GLEIF sourcing* in [`docs/data-model.md`](docs/data-model.md) |
+| `ch-psc-update` | Refresh UK PSC **incrementally**, by diffing today's Companies House snapshot against the digest of the last one applied — the source publishes no deltas. Closes ceased and withdrawn holdings, reopens corrected ones, and is a no-op when nothing moved. Guarded by a churn limit that refuses before writing; `--dry-run` reports the diff. Run by hand, not scheduled |
 | `gleif-repex` | Import GLEIF **reporting exceptions** (`repex` = GLEIF's abbreviation). Every LEI holder must name its parent *or file a reason why not*, so "no parent recorded" and "a parent exists and was withheld" are different facts — `NATURAL_PERSONS`, `NON_PUBLIC`, `NO_LEI`, … Take the code meanings from GLEIF's XSD rather than their names: `NO_LEI` means the parent *refuses* an LEI, not that it lacks one. See *Why a company reports no parent* in [`docs/data-model.md`](docs/data-model.md). Only ever updates entities already held; never creates one |
 | `gleif-update` | Apply a GLEIF **delta** on top of the full load — the retirement-aware daily refresh (new/changed entities, merges, closed relationships). `--interval auto` (default) is gap-aware: it picks the smallest delta window covering any missed runs since the last one (fails loudly past ~30 days → full-reload). Override with `--interval LastDay\|LastWeek\|LastMonth` or pass `--lei-file`/`--rr-file`/`--repex-file`. Idempotent; runs against the live-indexed DB (no `--bulk-load`). Daily via `~/scripts/cron-gleif-update.sh` |
 | `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`). Company names come from a companion `ch-company-data` import |

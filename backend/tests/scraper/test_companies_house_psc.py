@@ -57,6 +57,7 @@ def _psc_zip(tmp_path, company_numbers):
         "company_number": cn,
         "data": {"kind": "individual-person-with-significant-control",
                  "name": f"Mr {cn}",
+                 "links": {"self": f"/company/{cn}/persons-with-significant-control/individual/{cn}"},
                  "natures_of_control": ["ownership-of-shares-75-to-100-percent"]},
     }) for cn in company_numbers)
     zpath = tmp_path / "psc.zip"
@@ -117,6 +118,30 @@ class TestOnlyCompanies:
                                only_companies={"00000002", "00000404", "00000405"})
 
         assert counts["requested"] == 3 and counts["found"] == 1
+
+    def test_the_digest_covers_the_whole_file_not_just_the_subset(self, tmp_path, monkeypatch):
+        """The digest describes the SNAPSHOT, the subset describes what we imported.
+
+        Conflating them is silent and total: the refresh digests the whole file and
+        diffs it against this one, so a digest covering only the imported companies
+        makes the very next run see all 15.8M records as newly added — which the
+        churn guard then refuses, leaving the subset unrefreshable.
+
+        Found by running the real baseline import and looking at the sidecar.
+        """
+        import gzip
+
+        from app.scraper import companies_house_psc as m
+        monkeypatch.setattr(m, "_process", lambda rec, *a: "person")
+
+        z = _psc_zip(tmp_path, ["00000001", "00000002", "00000003"])
+        out = tmp_path / "digest.tsv.gz"
+        counts = import_ch_psc(z, "src", 97, only_companies={"00000002"},
+                               digest_out=str(out))
+
+        with gzip.open(out, "rt") as fh:
+            assert len(fh.readlines()) == 3, "the digest must cover every record"
+        assert counts["persons"] == 1, "…while still importing only the one asked for"
 
     def test_says_nothing_about_requested_counts_without_a_list(self, tmp_path, monkeypatch):
         from app.scraper import companies_house_psc as m

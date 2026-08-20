@@ -350,6 +350,64 @@ one per snapshot record. It is the key an incremental refresh matches an edge on
 anything that recreates an OWNS edge (notably the entity-merge migration) must carry
 it across or the edge is orphaned from its record.
 
+### Refreshing it — a delta from a source that has none
+
+Companies House publishes **no delta files**: one full snapshot, overwritten every
+morning, and nothing else. So `manage.py ch-psc-update` computes the delta locally
+— digest today's snapshot, compare against the digest of the last one applied, and
+write only what moved (`app/scraper/ch_psc_incremental.py`).
+
+Three facts about the data make that exact rather than a guess:
+
+* **Ceased PSCs stay in the snapshot**, carrying `ceased_on` — 17.9% of records.
+  A PSC's control ending is an in-record change, not a record disappearing.
+* **`data.links.self`** identifies an *appointment* and is unique across the file,
+  so each changed record maps to exactly one OWNS edge (via `psc_self_link`).
+* **A snapshot is a complete state.** Diffing against a week-old digest yields a
+  week's changes; there is no catch-up window to fall out of, so nothing here
+  corresponds to GLEIF's `choose_catchup_interval`.
+
+| the record | the graph |
+|---|---|
+| new | nodes upserted, edge created |
+| changed | re-mapped and rewritten; `until` written **unconditionally**, so a correction that removes `ceased_on` reopens the edge |
+| vanished | closed with `until` = the **snapshot's** date and `until_reason = withdrawn` — never deleted, and the `Claim` is closed with it |
+
+`until_reason` distinguishes the two ways a holding ends: a *ceased* PSC really did
+control the company until that date; a *withdrawn* one is the register saying the
+record was wrong.
+
+**The digest covers a projection** — the fields the mapping reads — not the raw
+line and not Companies House's `etag`. Both of those are cheaper and both would
+report millions of records as changed while `identity_verification_details` rolls
+out across the register, for a field the graph never stores.
+
+**Writes are batched on the indexed `psc_self_link`**: one `IN :links` probe per
+1000 sorts a batch into updates and creates. The bulk importer's `CREATE EDGE`
+duplicates on re-run and is cleaned up by a whole-database dedup pass — fine once,
+for a load into an empty graph, and unacceptable for a refresh. Re-running against
+an unchanged snapshot is not merely idempotent, it is a **no-op**: the diff is
+empty, so nothing is attempted.
+
+**A churn guard refuses before writing** if more than `--max-churn-pct` (5% by
+default, scaled by the gap in days) of records moved, if the snapshot is not newer
+than the last applied, or if the projection version changed. A snapshot diff can
+rewrite the whole graph in one run if something upstream shifts, and the diff is
+computed in full before any write precisely so that refusal is possible.
+
+**Run by hand.** There is deliberately no cron: a new pipeline over 15.6M records
+should be driven manually until it has proved itself over several real snapshots.
+
+```
+bash ~/scripts/steps/refresh-psc-snapshot.sh   # fetch + verify (2.2 GB)
+python3 manage.py ch-psc-update --dry-run      # read the churn first
+python3 manage.py ch-psc-update
+```
+
+The baseline digest is written by the full import (`ch-psc --digest-out`), from the
+same pass over the same bytes, so baseline and digest cannot describe different
+files. `--rebuild-digest` re-establishes one, forfeiting a day's changes.
+
 ⚠️ **`--only` used to lose data.** The subset import stopped reading once every
 requested company had been seen once, on the assumption that a snapshot groups a
 company's records together. It does not — measured on the real file, **16.9% of
