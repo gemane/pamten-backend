@@ -273,7 +273,8 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
 def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                   limit: int | None = None, bulk_load: bool = False,
                   batch_size: int = 400,
-                  only_companies: set[str] | None = None) -> dict:
+                  only_companies: set[str] | None = None,
+                  digest_out: str | None = None) -> dict:
     """Import a Companies House PSC snapshot (.zip/.txt). Returns counts.
 
     ``batch_size`` sets how many records flush per ``sqlscript`` round-trip. Behind
@@ -309,6 +310,15 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
 
     counts = {"records": 0, "persons": 0, "entities": 0, "skipped": 0, "errors": 0}
     only_bytes = [c.encode() for c in only_companies] if only_companies else None
+    # The incremental refresh diffs against a digest of the snapshot this load came
+    # from. Writing it here, from the same pass over the same bytes, is what stops
+    # baseline and digest ever describing different files. Streamed to disk — the
+    # register is 15.6M rows and holding them would cost more memory than the
+    # import itself.
+    digest_sink = None
+    if digest_out:
+        from app.scraper.ch_psc_incremental import DigestSink
+        digest_sink = DigestSink(digest_out)
     matched: set[str] = set()
     if bulk_load:
         _drop_secondary_indexes()
@@ -337,6 +347,8 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                     if cn not in only_companies:
                         continue                  # substring hit in another field
                     matched.add(cn)
+                if digest_sink is not None:
+                    digest_sink.add_record(rec)
                 cat = _process(rec, batch, source_id, credibility_score)
                 if cat == "person":
                     counts["persons"] += 1
@@ -364,10 +376,18 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                    f"{counts['persons']:,} persons + {counts['entities']:,} entities"
                    + (f", {counts['found']}/{counts['requested']} requested companies found"
                       if only_companies is not None else ""))
+    except BaseException:
+        if digest_sink is not None:
+            digest_sink.abandon()      # a partial sidecar must never look like a baseline
+        raise
     finally:
         raw.close()
         if bulk_load:
             _rebuild_indexes()
+
+    if digest_sink is not None:
+        counts["digest"] = digest_sink.finish()
+        counts["digest_records"] = digest_sink.rows
 
     log.info("CH PSC import done: %s", counts)
     return counts

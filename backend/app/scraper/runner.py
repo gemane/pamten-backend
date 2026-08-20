@@ -12,8 +12,10 @@ All entry points:
 - Write using MERGE so repeated runs are safe (no duplicates).
 """
 
+import os
 import uuid
 import logging
+import zipfile
 from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
@@ -1913,7 +1915,8 @@ def _post_bods_import() -> dict:
 
 def run_import_ch_psc(local_file: str, limit: int | None = None,
                       bulk_load: bool = False, batch_size: int = 400,
-                      only_companies: set[str] | None = None) -> dict:
+                      only_companies: set[str] | None = None,
+                      digest_out: str | None = None) -> dict:
     """
     Import a Companies House PSC snapshot (current UK beneficial ownership, daily)
     — the replacement for the frozen OpenOwnership UK PSC BODS export. Reuses the
@@ -1941,9 +1944,124 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
         bulk_load=bulk_load,
         batch_size=batch_size,
         only_companies=only_companies,
+        digest_out=digest_out,
     )
+    # Stamp the baseline marker the incremental refresh rides on. Narrowing by
+    # --limit or --only means the graph holds part of the register, so a refresh
+    # must run in only-existing mode; recording *which* lets the refusal say why
+    # rather than claim PSC was never loaded.
+    from app.scraper.ch_psc_incremental import mark_psc_load_done
+    mark_psc_load_done("subset" if (limit or only_companies) else "full")
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts,
             **_post_bods_import()}
+
+
+def run_ch_psc_update(local_file: str, digest: str | None = None,
+                      limit: int | None = None, batch_size: int = 1000,
+                      only_existing: bool | None = None, max_churn_pct: float = 5.0,
+                      force: bool = False, dry_run: bool = False,
+                      rebuild_digest: bool = False) -> dict:
+    """
+    Apply a Companies House PSC snapshot **incrementally**, by diffing it against
+    the digest of the last one applied (see `app/scraper/ch_psc_incremental.py`).
+
+    Companies House publishes no delta feed — only a full snapshot, overwritten
+    daily — so the delta is computed locally. A snapshot is a complete state, so
+    there is no catch-up window to miss: diffing against a week-old digest simply
+    yields a week's changes.
+
+    Deliberately **not scheduled**. It is driven by hand until it has proved itself
+    over several real snapshots; `--dry-run` and the churn guard exist to make those
+    runs legible.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable.")
+    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
+        raise PermissionError(
+            "UK PSC scraper is disabled. "
+            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable.")
+
+    from app.db.schema import ensure_indexes
+    from app.scraper import ch_psc_incremental as inc
+    from app.scraper.run_log import record_run
+
+    # Idempotent, and it is what creates the OWNS.psc_self_link index the whole
+    # write path matches on — a refresh against a database that never had it would
+    # full-scan every edge, per batch.
+    ensure_indexes()
+
+    digest = digest or inc.default_digest_path(local_file)
+    entry = inc.snapshot_entry(zipfile.ZipFile(local_file)) if local_file.lower().endswith(".zip") \
+        else os.path.basename(local_file)
+    snap_date = inc.snapshot_date(entry)
+
+    if rebuild_digest:
+        # Escape hatch: re-establish the baseline digest without touching the graph.
+        # Loud, because it silently forfeits whatever changed since the last one.
+        log.warning("CH PSC: rebuilding the digest from %s — this FORFEITS any changes "
+                    "since the last applied snapshot", entry)
+        counts = inc.write_digest(local_file, digest, limit=limit)
+        inc.write_last_snapshot(snap_date, counts["records"])
+        return {"status": "ok", "source": UK_PSC_SOURCE_NAME, "rebuilt": True, **counts}
+
+    scope = inc.psc_load_scope()
+    if scope is None:
+        raise RuntimeError(
+            "No Companies House PSC load found — the refresh rides on top of a full "
+            "snapshot import. Run `manage.py ch-psc --file … --digest-out …` first.")
+    if not os.path.exists(digest):
+        raise RuntimeError(
+            f"No baseline digest at {digest} — it is written by `ch-psc --digest-out`, "
+            "or rebuild one with `ch-psc-update --rebuild-digest` (which forfeits a day).")
+
+    source_id = _ensure_source(UK_PSC_SOURCE_NAME, UK_PSC_SOURCE_URL, BODS_UK_PSC_CREDIBILITY)
+    with record_run("ch-psc-update", snap_date) as run:
+        # A subset baseline holds part of the register, so refreshing it whole would
+        # not update it — it would drag the rest of the UK in. Same policy as GLEIF.
+        only_existing = scope != "full" if only_existing is None else only_existing
+        if only_existing:
+            run["note"] = ("only-existing mode: refreshing the companies this database "
+                           "already holds, ignoring the rest of the register")
+
+        last = inc.read_last_snapshot() or {}
+        if last.get("projection_version") not in (None, inc.PROJECTION_VERSION) and not force:
+            raise RuntimeError(
+                f"the stored digest was built by projection v{last.get('projection_version')}, "
+                f"this code is v{inc.PROJECTION_VERSION} — every digest is invalidated by "
+                "that change. Rebuild with --rebuild-digest.")
+        if last.get("snapshot_date") and snap_date <= last["snapshot_date"] and not force:
+            return {"status": "skipped", "source": UK_PSC_SOURCE_NAME,
+                    "reason": f"snapshot {snap_date} is not newer than the last applied "
+                              f"{last['snapshot_date']}"}
+
+        new_digest = inc.new_digest_tempfile(digest)
+        log.info("CH PSC refresh: digesting %s", entry)
+        dcounts = inc.write_digest(local_file, new_digest, limit=limit)
+        diff = inc.diff_digests(digest, new_digest)
+        gap = inc.days_since(last.get("snapshot_date"))
+        ok, why = inc.churn_allowed(diff, max_churn_pct, gap)
+        summary = {"snapshot_date": snap_date, "added": diff.added, "changed": diff.changed,
+                   "vanished": len(diff.vanished), "churn_pct": round(inc.churn_pct(diff), 3),
+                   "records": dcounts["records"], "gap_days": gap}
+        if not ok and not force:
+            os.unlink(new_digest)
+            raise RuntimeError(f"CH PSC refresh refused: {why}")
+        if dry_run:
+            os.unlink(new_digest)
+            run["total"] = diff.total
+            return {"status": "dry-run", "source": UK_PSC_SOURCE_NAME, **summary}
+
+        applied = inc.apply_diff(local_file, diff, source_id, BODS_UK_PSC_CREDIBILITY,
+                                 until_date=snap_date, only_existing=only_existing,
+                                 batch_size=batch_size)
+        # Only now: a crash before this leaves tomorrow's diff a superset of today's,
+        # which is redone idempotently. Rotating first would lose it outright.
+        inc.rotate_digest(new_digest, digest)
+        inc.write_last_snapshot(snap_date, dcounts["records"])
+        run["total"] = diff.total
+
+    return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **summary, **applied}
 
 
 def run_import_basic_company_data(local_file: str, limit: int | None = None,

@@ -10,6 +10,7 @@ Usage:
   python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
   python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
+  python3 manage.py ch-psc-update [options]   # UK PSC incremental refresh (snapshot diff)
   python3 manage.py ch-psc [options]          # Companies House PSC snapshot (UK ownership)
   python3 manage.py ch-company-data [options] # Companies House register (UK company names)
   python3 manage.py seed [options]
@@ -103,7 +104,24 @@ def cmd_ch_psc(args):
         lambda: run_import_ch_psc(local_file=args.file, limit=args.limit,
                                   bulk_load=getattr(args, "bulk_load", False),
                                   batch_size=getattr(args, "batch_size", None) or 400,
-                                  only_companies=_only_ids(args)))
+                                  only_companies=_only_ids(args),
+                                  digest_out=getattr(args, "digest_out", None)))
+    if result is not None:
+        print(result)
+
+def cmd_ch_psc_update(args):
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
+    _apply_direct_db_url(args)
+    from app.scraper.runner import run_ch_psc_update
+    result = _run_guarded_import("ch-psc-update",
+        lambda: run_ch_psc_update(
+            local_file=args.file, digest=args.digest, limit=args.limit,
+            batch_size=getattr(args, "batch_size", None) or 1000,
+            only_existing=args.only_existing, max_churn_pct=args.max_churn_pct,
+            force=args.force, dry_run=args.dry_run, rebuild_digest=args.rebuild_digest),
+        skip_ok=True)   # driven by hand; a held lock is a skip, not a failure
     if result is not None:
         print(result)
 
@@ -689,7 +707,34 @@ def _build_parser():
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_chp.add_argument('--only', help='Comma-separated company numbers to import (curated test subset)')
     p_chp.add_argument('--only-file', help='File of company numbers (one per line, # comments) to import')
+    p_chp.add_argument('--digest-out',
+                       help='Also write a digest of this snapshot here — the baseline the incremental `ch-psc-update` diffs against')
     p_chp.set_defaults(func=cmd_ch_psc)
+
+    # ch-psc-update command (incremental refresh by snapshot diff)
+    p_pu = subparsers.add_parser('ch-psc-update',
+                                 help='Refresh UK PSC incrementally by diffing today\'s snapshot against the last one applied')
+    p_pu.add_argument('--file', default='/home/administrator/data/companies-house-psc/psc-snapshot.zip',
+                      help='PSC snapshot .zip/.txt (default: the standard data path)')
+    p_pu.add_argument('--digest', help='Baseline digest (default: psc-digest.tsv.gz beside --file)')
+    p_pu.add_argument('--limit', type=int, help='Max records to scan (a spot check; never advances the checkpoint fully)')
+    p_pu.add_argument('--batch-size', type=int, help='Records per probe/flush (default 1000)')
+    p_pu.add_argument('--only-existing', dest='only_existing', default=None,
+                      action=argparse.BooleanOptionalAction,
+                      help='Refresh only companies already in this database. Defaults ON when '
+                           'the PSC baseline here is a subset (refreshing it whole would drag '
+                           'in the rest of the register) and OFF after a full load')
+    p_pu.add_argument('--max-churn-pct', type=float, default=5.0,
+                      help='Refuse if more than this %% of records moved, scaled by the gap in '
+                           'days (default 5.0). A snapshot diff can rewrite the whole graph if '
+                           'something upstream shifts')
+    p_pu.add_argument('--force', action='store_true', help='Override the churn and staleness guards')
+    p_pu.add_argument('--dry-run', action='store_true', help='Report the diff, write nothing')
+    p_pu.add_argument('--rebuild-digest', action='store_true',
+                      help='Rewrite the baseline digest from this snapshot and exit — FORFEITS any changes since the last applied one')
+    p_pu.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_pu.set_defaults(func=cmd_ch_psc_update)
 
     # ch-company-data command (Companies House register — names/addresses for PSC companies)
     p_chc = subparsers.add_parser('ch-company-data',
