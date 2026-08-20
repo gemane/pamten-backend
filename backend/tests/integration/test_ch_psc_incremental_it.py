@@ -253,3 +253,40 @@ class TestTheOnlyExistingGate:
         assert "lei:SOMELEI" not in ids
         assert all(i.startswith("gb-coh:") for i in ids)
         assert "gb-coh:00000001" in ids, "the CH companies really are there"
+
+
+class TestTheBaselineRecordsItsSnapshot:
+    def test_a_load_with_a_digest_records_which_snapshot_it_was(self, it_db, tmp_path):
+        """Otherwise the first refresh cannot tell how big a gap it is covering.
+
+        Found by running the real thing: after a baseline import from the 27 July
+        snapshot, a refresh against 20 August reported `gap_days: 1`. The churn
+        allowance scales with the gap, so 24 days of legitimate change would have
+        been measured against a single day's budget — and the staleness guard had
+        nothing to compare against, so an *older* snapshot could be applied over a
+        newer baseline.
+        """
+        from app.scraper.ch_psc_incremental import read_last_snapshot
+        from app.scraper.runner import run_import_ch_psc
+        from app.config import settings
+
+        settings.SCRAPER_ENABLED = True
+        settings.SCRAPER_BODS_UK_PSC_ENABLED = True
+        snap = _snapshot(tmp_path, [_individual("00000001", "one")], "2026-07-27", "base.zip")
+        run_import_ch_psc(snap, digest_out=str(tmp_path / "d.tsv.gz"))
+
+        state = read_last_snapshot()
+        assert state and state["snapshot_date"] == "2026-07-27"
+
+    def test_a_load_without_a_digest_records_no_snapshot(self, it_db, tmp_path):
+        # No digest means no baseline to diff against, so claiming a snapshot was
+        # "applied" would let a refresh run with nothing to compare to.
+        from app.scraper.ch_psc_incremental import read_last_snapshot
+        from app.scraper.runner import run_import_ch_psc
+        from app.config import settings
+
+        settings.SCRAPER_ENABLED = True
+        settings.SCRAPER_BODS_UK_PSC_ENABLED = True
+        snap = _snapshot(tmp_path, [_individual("00000002", "two")], "2026-07-27", "nodigest.zip")
+        run_import_ch_psc(snap)
+        assert read_last_snapshot() is None

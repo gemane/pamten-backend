@@ -225,6 +225,22 @@ class TestTheChurnGuard:
         assert not churn_allowed(d, max_pct=5.0, days=1)[0]
         assert churn_allowed(d, max_pct=5.0, days=7)[0]
 
+    def test_the_scaling_is_capped(self):
+        # Unbounded scaling disables the guard exactly when it matters: a month's
+        # gap would permit a 150% rewrite, which is to say anything at all.
+        d = self._diff(60000, 100000)                      # 60%
+        assert not churn_allowed(d, max_pct=5.0, days=30)[0]
+        assert not churn_allowed(d, max_pct=5.0, days=3650)[0]
+
+    def test_a_real_delta_passes_comfortably(self):
+        # Measured: 24 days of the real register moved 1.26% — 82,921 added,
+        # 114,933 changed, 319 vanished of 15.85M. The default is ~100× that per
+        # day, so the guard catches disasters without tripping on ordinary weeks.
+        d = DiffResult(added=82921, changed=114933,
+                       vanished=["x"] * 319, prev_records=15771180)
+        assert churn_pct(d) < 1.5
+        assert churn_allowed(d, max_pct=5.0, days=24)[0]
+
     def test_percentages_are_of_the_previous_register(self):
         assert churn_pct(self._diff(500, 10000)) == 5.0
 

@@ -324,14 +324,24 @@ def churn_pct(diff: DiffResult) -> float:
     return 0.0 if not base else diff.total / base * 100.0
 
 
+#: However long the gap, never wave through a rewrite of this much of the register.
+#: Scaling by the gap is right — a week's changes really are about seven days'
+#: worth — but unbounded scaling disables the guard exactly when it matters, since
+#: a month's gap would permit 150%. Measured against reality: 24 days of real
+#: change is 1.26% (82,921 added, 114,933 changed, 319 vanished of 15.85M), so
+#: ~0.05%/day. This cap is 500× that, and still catches a garbage file.
+MAX_CHURN_CEILING_PCT = 25.0
+
+
 def churn_allowed(diff: DiffResult, max_pct: float, days: int) -> tuple[bool, str]:
     """Whether this much movement is plausible for the gap it covers.
 
     A snapshot diff can rewrite the whole graph in one run if something upstream
     shifts — a schema change, a truncated file, a projection edit. The guard is
-    scaled by the gap, because a week's changes really are about seven days' worth.
+    scaled by the gap, because a week's changes really are about seven days' worth,
+    but capped, because otherwise a long enough gap allows anything.
     """
-    allowed = max_pct * max(1, days)
+    allowed = min(max_pct * max(1, days), MAX_CHURN_CEILING_PCT)
     pct = churn_pct(diff)
     if pct <= allowed:
         return True, f"{pct:.2f}% of {diff.prev_records:,} records"

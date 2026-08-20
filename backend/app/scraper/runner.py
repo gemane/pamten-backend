@@ -1950,8 +1950,20 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
     # --limit or --only means the graph holds part of the register, so a refresh
     # must run in only-existing mode; recording *which* lets the refusal say why
     # rather than claim PSC was never loaded.
-    from app.scraper.ch_psc_incremental import mark_psc_load_done
+    from app.scraper.ch_psc_incremental import (
+        mark_psc_load_done, snapshot_date, snapshot_entry, write_last_snapshot,
+    )
     mark_psc_load_done("subset" if (limit or only_companies) else "full")
+    # A digest written here IS the baseline for this snapshot, so record which
+    # snapshot that was. Without it the first refresh cannot tell how big a gap it
+    # is covering — it assumed one day, so a month's legitimate changes would be
+    # measured against a single day's allowance — and the staleness guard has
+    # nothing to compare against, leaving an older snapshot applyable over a newer
+    # baseline. Found by running the real thing: it reported gap_days 1 for 24.
+    if digest_out:
+        entry = (snapshot_entry(zipfile.ZipFile(local_file))
+                 if local_file.lower().endswith(".zip") else os.path.basename(local_file))
+        write_last_snapshot(snapshot_date(entry), counts.get("digest_records", 0))
     return {"status": "ok", "source": UK_PSC_SOURCE_NAME, **counts,
             **_post_bods_import()}
 
