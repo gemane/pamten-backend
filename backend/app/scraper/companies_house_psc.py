@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import zipfile
+from dataclasses import dataclass
 from typing import IO
 
 from app.scraper.bulk_import import (
@@ -35,9 +36,28 @@ from app.scraper.mapper import derive_ownership_type, parse_full_name
 
 log = logging.getLogger(__name__)
 
-_PERSON_KINDS = ("individual-person-with-significant-control", "individual-beneficial-owner")
-_ENTITY_KINDS = ("corporate-entity-person-with-significant-control",
-                 "legal-person-person-with-significant-control")
+# Every `kind` the snapshot contains, sorted into what it becomes. Counts are per
+# 4M sampled records, so the rare ones are rare register-wide, not rare in a sample.
+_PERSON_KINDS = (
+    "individual-person-with-significant-control",     # 3,698,654
+    "individual-beneficial-owner",                    # 8,343 — Register of Overseas Entities
+)
+_ENTITY_KINDS = (
+    "corporate-entity-person-with-significant-control",  # 284,471
+    "legal-person-person-with-significant-control",      # 4,924
+    # The corporate twins of `individual-beneficial-owner`, both silently dropped
+    # until 2026-08-19 while the individual one was mapped. The individual/corporate
+    # split is Companies House's, not a distinction the graph cares about.
+    "corporate-entity-beneficial-owner",                 # 3,336
+    "legal-person-beneficial-owner",                     # 139
+)
+# Deliberately not imported. A super-secure PSC is one whose details Companies House
+# withholds for personal safety; the record carries no name to write. Named here so
+# the skip is a decision, rather than whatever falls through the allow-list.
+_SKIP_KINDS = (
+    "super-secure-person-with-significant-control",   # 116
+    "super-secure-beneficial-owner",                  # 17
+)
 _BAND = re.compile(r"(\d+)-to-\d+-percent")
 
 
@@ -140,8 +160,32 @@ def _psc_address(addr: dict | None) -> tuple[str | None, str | None, str | None]
     return display, city, _iso2_country(addr.get("country"))
 
 
-def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int) -> str | None:
-    """Write one PSC record's nodes + OWNS edge. Returns 'person' | 'entity' | None."""
+@dataclass(frozen=True)
+class PscMapped:
+    """One PSC record, mapped to graph shapes but not yet written anywhere.
+
+    Pure: no writer, no database, no clock. That is what lets the incremental
+    refresh reuse the mapping without reusing the bulk writer, and what lets the
+    mapping be unit-tested at all — while it lived inside `_process` the only way
+    to see its output was to hand it a batch writer and inspect the calls.
+    """
+    kind_cat: str                 # 'person' | 'entity'
+    self_link: str                # data.links.self — identifies the APPOINTMENT
+    company_id: str               # gb-coh:{number}, the company being controlled
+    company_props: dict
+    owner_id: str
+    owner_label: str              # 'Person' | 'Entity'
+    owner_props: dict
+    edge_props: dict
+
+
+def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped | None:
+    """Map one snapshot record, or None when it is not one we import.
+
+    `last_scraped_at` is deliberately absent from `edge_props`: it is a clock
+    reading, and leaving it to the caller keeps this function's output a pure
+    function of its input — which is what the refresh's digest depends on.
+    """
     company_number = (rec.get("company_number") or "").strip()
     data = rec.get("data") or {}
     kind = data.get("kind")
@@ -150,49 +194,80 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
     name = _psc_name(data)
     if not name:
         return None
-
-    owned_id = f"gb-coh:{company_number}"
-    # Ensure the controlled company exists (named later from BasicCompanyData).
-    batch.entity(owned_id, {"companies_house_id": company_number, "source_id": source_id})
+    self_link = ((data.get("links") or {}).get("self") or "").strip()
 
     stake, voting, otype, interest_types = _control(data.get("natures_of_control"))
     since = data.get("notified_on") or None
     until = data.get("ceased_on") or None
 
     if kind in _PERSON_KINDS:
-        self_link = ((data.get("links") or {}).get("self") or "").strip()
         first, last = parse_full_name(name)
-        batch.person(f"chpsc:{self_link}", {
+        owner_id, owner_label = f"chpsc:{self_link}", "Person"
+        owner_props = {
             "first_name": first, "last_name": last, "full_name": name,
             "search_text": name, "nationality": _nationality(data.get("nationality")),
             "birth_date": _birth_date(data), "description": "",
             "verified": False, "alias": [], "nationalities": [],
-        })
-        owner_id, owner_label = f"chpsc:{self_link}", "Person"
+        }
         kind_cat = "person"
     else:
         owner_id, chid = _entity_psc_id(data)
         # The corporate PSC's own correspondence address (in the record) → its address
         # + map location; otherwise it's a name-only node.
         reg_addr, hq_city, hq_country = _psc_address(data.get("address"))
-        _entity(batch, owner_id, name=name, entity_type="company",
-                country=((data.get("identification") or {}).get("country_registered") or None),
-                founded=None, lei_id=None, companies_house_id=chid,
-                source_id=source_id, credibility_score=credibility_score,
-                registered_address=reg_addr, hq_address=reg_addr,
-                hq_city=hq_city, hq_country=hq_country)
-        owner_label = "Entity"
-        kind_cat = "entity"
+        owner_label, kind_cat = "Entity", "entity"
+        owner_props = {
+            "name": name, "entity_type": "company",
+            "country": ((data.get("identification") or {}).get("country_registered") or None),
+            "companies_house_id": chid, "registered_address": reg_addr,
+            "hq_address": reg_addr, "hq_city": hq_city, "hq_country": hq_country,
+        }
 
-    batch.owns(owner_id, owner_label, owned_id, {
-        "stake_percent": stake, "voting_power_pct": voting, "ownership_type": otype,
-        "interest_types": interest_types, "direct_or_indirect": None,
-        "since": since, "until": until, "source_id": source_id,
-        "credibility_score": credibility_score,
-        "source_url": f"https://find-and-update.company-information.service.gov.uk/company/{company_number}/persons-with-significant-control",
-        "source_date": since, "last_scraped_at": _now_iso(),
-    })
-    return kind_cat
+    return PscMapped(
+        kind_cat=kind_cat,
+        self_link=self_link,
+        company_id=f"gb-coh:{company_number}",
+        # The controlled company is ensured to exist, and named later from
+        # BasicCompanyData — this import knows its number and nothing else.
+        company_props={"companies_house_id": company_number, "source_id": source_id},
+        owner_id=owner_id,
+        owner_label=owner_label,
+        owner_props=owner_props,
+        edge_props={
+            "stake_percent": stake, "voting_power_pct": voting, "ownership_type": otype,
+            "interest_types": interest_types, "direct_or_indirect": None,
+            "since": since, "until": until, "source_id": source_id,
+            "credibility_score": credibility_score,
+            # The key the incremental refresh matches an edge on. Per appointment,
+            # so exactly one edge per snapshot record — see ch_psc_incremental.
+            "psc_self_link": self_link,
+            "source_url": f"https://find-and-update.company-information.service.gov.uk/company/{company_number}/persons-with-significant-control",
+            "source_date": since,
+        },
+    )
+
+
+def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int) -> str | None:
+    """Write one PSC record's nodes + OWNS edge. Returns 'person' | 'entity' | None."""
+    mapped = psc_record(rec, source_id, credibility_score)
+    if mapped is None:
+        return None
+
+    batch.entity(mapped.company_id, mapped.company_props)
+    if mapped.kind_cat == "person":
+        batch.person(mapped.owner_id, mapped.owner_props)
+    else:
+        props = mapped.owner_props
+        _entity(batch, mapped.owner_id, name=props["name"], entity_type=props["entity_type"],
+                country=props["country"], founded=None, lei_id=None,
+                companies_house_id=props["companies_house_id"],
+                source_id=source_id, credibility_score=credibility_score,
+                registered_address=props["registered_address"], hq_address=props["hq_address"],
+                hq_city=props["hq_city"], hq_country=props["hq_country"])
+
+    batch.owns(mapped.owner_id, mapped.owner_label, mapped.company_id,
+               {**mapped.edge_props, "last_scraped_at": _now_iso()})
+    return mapped.kind_cat
 
 
 def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
@@ -208,9 +283,20 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
     batch cuts round-trips.
 
     ``only_companies`` restricts the import to that set of company numbers (the curated
-    test subset). A cheap raw-bytes prefilter skips JSON parsing for non-matches, and —
-    since a CH snapshot groups a company's PSC records together — reading stops once all
-    target companies have been seen. So a handful of companies loads in seconds."""
+    test subset). A cheap raw-bytes prefilter skips JSON parsing for non-matches, so a
+    handful of companies still loads quickly — but the whole file is read.
+
+    It used to stop early, once every target company had been seen, on the stated
+    assumption that "a CH snapshot groups a company's PSC records together". **It does
+    not.** Measured over 300,000 lines of the real snapshot: 41,847 of 247,219 distinct
+    companies reappear after another company has intervened — **16.9%**. Stopping at the
+    first sighting therefore dropped later PSC records for about one company in six, and
+    silently: the run reported success with a plausible count. Every curated database
+    built this way, including the dev graph and `psc-import-test.sh`, is affected.
+
+    A full pass over 12.9 GB costs a couple of minutes with the prefilter doing the work.
+    That is the price of the subset being complete, and the refresh that rides on this
+    baseline can only be correct if the baseline is."""
     if filepath.lower().endswith(".zip"):
         zf = zipfile.ZipFile(filepath)
         entry = zf.namelist()[0]
@@ -262,11 +348,22 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                 counts["errors"] += 1
                 if counts["errors"] <= 5:
                     log.warning("CH PSC record error: %s", exc)
-            if only_companies is not None and len(matched) >= len(only_companies):
-                break                             # all target companies loaded
         batch.flush()
+        if only_companies is not None:
+            # Now that the whole file is read, this is a real answer rather than a
+            # restatement of the stop condition: how many of the companies asked for
+            # actually carry PSC records. A company with none is normal (dissolved,
+            # exempt, or simply not filed), but a large gap means the wrong list.
+            counts["requested"] = len(only_companies)
+            counts["found"] = len(matched)
+            missing = len(only_companies) - len(matched)
+            if missing:
+                log.info("CH PSC: %d of %d requested companies had no PSC records",
+                         missing, len(only_companies))
         bar.finish(f"{counts['records']:,} records, "
-                   f"{counts['persons']:,} persons + {counts['entities']:,} entities")
+                   f"{counts['persons']:,} persons + {counts['entities']:,} entities"
+                   + (f", {counts['found']}/{counts['requested']} requested companies found"
+                      if only_companies is not None else ""))
     finally:
         raw.close()
         if bulk_load:

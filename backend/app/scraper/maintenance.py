@@ -519,6 +519,14 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     Location is not among them any more — HQ lives on the Entity's own
     properties, so the surviving node keeps its own and there is nothing to
     move.
+
+    **An OWNS edge is recreated, not moved**, so every property has to be listed
+    here or it is silently lost on merge. Three were: `interest_types` and
+    `direct_or_indirect` (GLEIF's direct/ultimate marker, which the graph renderer
+    and `mark-shortcuts` both read), and `psc_self_link` — the key the Companies
+    House refresh matches an edge on, whose loss would orphan the edge and make
+    the next refresh create a duplicate beside it. If you add a property to an
+    OWNS edge anywhere, add it to all three blocks below.
     """
     migrated = 0
 
@@ -531,7 +539,9 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         RETURN t.id AS tid, r.stake_percent AS stake, r.ownership_type AS otype,
                r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
                r.source_id AS source_id, r.credibility_score AS cred,
-               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa,
+               r.interest_types AS itypes, r.direct_or_indirect AS doi,
+               r.psc_self_link AS pscl
         """,
         {"id": dead_id},
     ):
@@ -546,12 +556,15 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             CREATE (a)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
                 voting_power_pct: $vpp, since: $since, until: $until,
                 source_id: $source_id, credibility_score: $cred,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(t)
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa,
+                interest_types: $itypes, direct_or_indirect: $doi,
+                psc_self_link: $pscl}]->(t)
             """,
             {"k": keep_id, "tid": e["tid"], "stake": e.get("stake"), "otype": e.get("otype"),
              "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
              "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
-             "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+             "sdate": e.get("sdate"), "lsa": e.get("lsa"), "itypes": e.get("itypes"),
+             "doi": e.get("doi"), "pscl": e.get("pscl")},
         )
         migrated += 1
 
@@ -565,7 +578,9 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                r.stake_percent AS stake, r.ownership_type AS otype,
                r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
                r.source_id AS source_id, r.credibility_score AS cred,
-               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
+               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa,
+               r.interest_types AS itypes, r.direct_or_indirect AS doi,
+               r.psc_self_link AS pscl
         """,
         {"id": dead_id},
     ):
@@ -583,12 +598,15 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             CREATE (s)-[:OWNS {{stake_percent: $stake, ownership_type: $otype,
                 voting_power_pct: $vpp, since: $since, until: $until,
                 source_id: $source_id, credibility_score: $cred,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}}]->(b)
+                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa,
+                interest_types: $itypes, direct_or_indirect: $doi,
+                psc_self_link: $pscl}}]->(b)
             """,
             {"sid": e["sid"], "k": keep_id, "stake": e.get("stake"), "otype": e.get("otype"),
              "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
              "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
-             "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+             "sdate": e.get("sdate"), "lsa": e.get("lsa"), "itypes": e.get("itypes"),
+             "doi": e.get("doi"), "pscl": e.get("pscl")},
         )
         migrated += 1
 

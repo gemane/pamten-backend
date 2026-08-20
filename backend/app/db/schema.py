@@ -131,6 +131,19 @@ _FULLTEXT_INDEXES: list[tuple[str, str]] = [
 ]
 
 
+# Indexes on an EDGE property. Separate from `_INDEXES` because that list's first
+# element drives `CREATE VERTEX TYPE`, and OWNS is an edge — appending it there
+# would try to create a vertex type of the same name.
+#
+# `psc_self_link` is the Companies House PSC appointment link. The incremental
+# refresh finds the edge a changed snapshot record belongs to by matching on it, in
+# batches of ~1000 via `WHERE psc_self_link IN :links`; unindexed that is a full
+# scan of every OWNS edge per batch.
+_EDGE_INDEXES: list[tuple[str, str, str]] = [
+    ("OWNS", "psc_self_link", "NOTUNIQUE"),
+]
+
+
 def _statements() -> list[str]:
     stmts: list[str] = []
     for vtype in sorted({t for t, _, _ in _INDEXES}):
@@ -143,6 +156,9 @@ def _statements() -> list[str]:
         # "property already exists" failure for every property.
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}")
+    for etype, prop, kind in _EDGE_INDEXES:
+        stmts.append(f"CREATE PROPERTY {etype}.{prop} IF NOT EXISTS STRING")
+        stmts.append(f"CREATE INDEX IF NOT EXISTS ON {etype} ({prop}) {kind}")
     for vtype, prop in _FULLTEXT_INDEXES:
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT")
