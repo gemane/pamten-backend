@@ -287,6 +287,13 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
     test subset). A cheap raw-bytes prefilter skips JSON parsing for non-matches, so a
     handful of companies still loads quickly — but the whole file is read.
 
+    ``digest_out`` writes the digest sidecar the incremental refresh diffs against,
+    from this same pass over the same bytes so the two can never describe different
+    files. It covers **every record in the snapshot**, including those this load
+    skipped: the refresh digests the whole file, so a digest of only the subset
+    would make the next run see the entire register as new. That means a subset
+    load with ``--digest-out`` gives up the prefilter and parses all 15.8M lines.
+
     It used to stop early, once every target company had been seen, on the stated
     assumption that "a CH snapshot groups a company's PSC records together". **It does
     not.** Measured over 300,000 lines of the real snapshot: 41,847 of 247,219 distinct
@@ -335,20 +342,30 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                 break
             # Curated subset: reject non-matching lines before the JSON parse (cheap
             # bytes search), then confirm the exact company_number after parsing.
-            if only_bytes is not None and not any(cb in line for cb in only_bytes):
+            #
+            # …unless a digest is being written, in which case every line has to be
+            # parsed anyway. The digest describes the SNAPSHOT, not the subset we
+            # chose to import: the refresh digests the whole file and diffs the two,
+            # so a subset digest would make the next run see 15.8M records "added".
+            # A subset load with --digest-out therefore costs a full parse.
+            prefiltered_out = only_bytes is not None and not any(cb in line for cb in only_bytes)
+            if prefiltered_out and digest_sink is None:
                 continue
-            counts["records"] += 1
-            if counts["records"] % 50000 == 0:
-                bar.render(done, total_bytes)
+            if not prefiltered_out:
+                counts["records"] += 1
+                if counts["records"] % 50000 == 0:
+                    bar.render(done, total_bytes)
             try:
                 rec = json.loads(line)
+                if digest_sink is not None:
+                    digest_sink.add_record(rec)
+                if prefiltered_out:
+                    continue                      # digested, but not ours to import
                 if only_companies is not None:
                     cn = (rec.get("company_number") or "").strip()
                     if cn not in only_companies:
                         continue                  # substring hit in another field
                     matched.add(cn)
-                if digest_sink is not None:
-                    digest_sink.add_record(rec)
                 cat = _process(rec, batch, source_id, credibility_score)
                 if cat == "person":
                     counts["persons"] += 1
