@@ -3,8 +3,11 @@
 Idempotency of the edge upserts and end-to-end apply are covered against a real
 ArcadeDB in tests/integration/test_gleif_incremental_it.py."""
 
+import os
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.scraper.gleif_incremental import (
     _PUBLISH_FMT,
@@ -13,6 +16,7 @@ from app.scraper.gleif_incremental import (
     _relationship_end_date,
     _rr_delta_relationship,
     choose_catchup_interval,
+    downloaded_deltas,
     fetch_gleif_deltas,
 )
 
@@ -150,3 +154,61 @@ class TestFetchDeltas:
         assert out["lei2"].endswith("lei2-LastDay.json.zip")
         assert out["rr"].endswith("rr-LastDay.json.zip")
         assert (tmp_path / "lei2-LastDay.json.zip").read_bytes() == b"zipbytes"
+
+
+class TestTheDownloadedDeltasAreCleanedUp:
+    """`download_deltas` leaves its temp directory behind, and the nightly update
+    called it directly — one `gleif-delta-*` directory per run, for months. By the
+    time anyone looked there were thirteen of them and 135 MB in /tmp, which
+    survives reboots here. Slow, silent and unbounded.
+
+    The fix is a context manager rather than a `finally` at the call site, because
+    the call site is exactly where it was forgotten.
+    """
+
+    def _patched(self):
+        api = MagicMock()
+        api.json.return_value = {"data": [{}]}
+        stream_resp = MagicMock()
+        stream_resp.iter_bytes.return_value = [b"zipbytes"]
+        stream_ctx = MagicMock()
+        stream_ctx.__enter__.return_value = stream_resp
+        return patch("httpx.stream", return_value=stream_ctx)
+
+    def _publish(self):
+        def _section(name):
+            return {"delta_files": {"LastDay": {"json": {
+                "url": f"https://goldencopy.gleif.org/{name}-LastDay.json.zip"}}}}
+        return {"lei2": _section("lei2"), "rr": _section("rr")}
+
+    def test_the_files_exist_inside_the_block(self):
+        with self._patched():
+            with downloaded_deltas(self._publish(), "LastDay") as paths:
+                assert os.path.exists(paths["lei2"]) and os.path.exists(paths["rr"])
+
+    def test_and_are_gone_after_it(self):
+        with self._patched():
+            with downloaded_deltas(self._publish(), "LastDay") as paths:
+                held = paths["lei2"]
+            assert not os.path.exists(held)
+            assert not os.path.exists(os.path.dirname(held)), "the temp directory leaked"
+
+    def test_they_are_cleaned_up_when_the_apply_fails(self):
+        # The case that actually accumulates: a run that dies partway still has to
+        # take its 135 MB with it. The URLs come from a dated publish record, so a
+        # retry re-fetches exactly the same bytes and keeping them buys nothing.
+        held = {}
+        with self._patched():
+            with pytest.raises(RuntimeError, match="apply blew up"):
+                with downloaded_deltas(self._publish(), "LastDay") as paths:
+                    held["dir"] = os.path.dirname(paths["lei2"])
+                    raise RuntimeError("apply blew up")
+        assert not os.path.exists(held["dir"])
+
+    def test_a_caller_supplied_directory_is_left_alone(self, tmp_path):
+        # `download_deltas` with an explicit dest_dir is the caller's directory to
+        # keep — deleting it would be a surprise, and `fetch_gleif_deltas` exists
+        # precisely so a human can fetch files and look at them.
+        with self._patched():
+            out = fetch_gleif_deltas(interval="LastDay", dest_dir=str(tmp_path))
+        assert os.path.exists(out["lei2"]), "an explicitly requested file was deleted"

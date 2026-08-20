@@ -10,6 +10,7 @@ bulk importers don't have:
 
 Skipped unless ARCADEDB_IT_URL is set — see conftest.py.
 """
+import os
 import json
 import zipfile
 
@@ -489,3 +490,59 @@ def test_the_flag_overrides_the_baseline_either_way(it_db, _gleif_enabled, tmp_p
                             only_existing=True)      # ...but the caller says otherwise
 
     assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS c")[0]["c"] == 0
+
+
+def test_the_fetched_deltas_survive_the_apply_and_then_go(it_db, _gleif_enabled,
+                                                          tmp_path, monkeypatch):
+    """The download's temp directory must outlive the apply and not outlive the run.
+
+    Both halves matter and they pull against each other. The nightly update leaked
+    one `gleif-delta-*` directory per run for months — 135 MB of them in a /tmp that
+    survives reboots. The obvious fix, wrapping the download in a `with` where it
+    happens, deletes the files *before* the apply reads them: the download sits in
+    an `if` and the apply is below it. Hence an ExitStack held open across the whole
+    run, and hence this test, which fails on either mistake.
+    """
+    from app.scraper import runner
+    from app.scraper.gleif_incremental import mark_full_load_done
+
+    it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Old'}})")
+    mark_full_load_done("full")
+    lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(IN_DB, "Fresh")], [])
+
+    # Stand in for the publishes API and the download: hand back copies of the local
+    # zips inside a temp dir, exactly as the real fetch would.
+    seen: dict = {}
+
+    def fake_download(publish, interval, dest_dir=None):
+        import shutil as sh
+        seen["dir"] = dest_dir
+        return {"lei2": sh.copy(lei_zip, dest_dir), "rr": sh.copy(rr_zip, dest_dir)}
+
+    monkeypatch.setattr("app.scraper.gleif_incremental.fetch_publish_metadata",
+                        lambda: {"publish_date": "2026-08-20 16:00:00"})
+    monkeypatch.setattr("app.scraper.gleif_incremental.download_deltas", fake_download)
+
+    result = runner.run_gleif_update(interval="LastDay")
+
+    # It read them — so they were still there when the apply ran.
+    assert result["status"] == "ok" and result["lei_cdf"]["updated"] == 1
+    assert it_db.run_command(
+        f"MATCH (e:Entity {{id:'lei:{IN_DB}'}}) RETURN e.name AS n")[0]["n"] == "Fresh"
+    # …and they are gone now.
+    assert seen["dir"] and not os.path.exists(seen["dir"]), "the temp directory leaked"
+
+
+def test_local_delta_files_are_never_deleted(it_db, _gleif_enabled, tmp_path):
+    """Passing --lei-file/--rr-file means the files are the operator's, sitting in
+    their own directory. Cleaning those up would delete a human's data."""
+    from app.scraper import runner
+    from app.scraper.gleif_incremental import mark_full_load_done
+
+    it_db.run_command(f"CREATE (:Entity {{id:'lei:{IN_DB}', lei_id:'{IN_DB}', name:'Old'}})")
+    mark_full_load_done("full")
+    lei_zip, rr_zip = _delta_zips(tmp_path, [_entity(IN_DB, "Fresh")], [])
+
+    runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
+
+    assert os.path.exists(lei_zip) and os.path.exists(rr_zip)
