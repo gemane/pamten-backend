@@ -23,8 +23,10 @@ importers' parsers. Two things differ from a bulk load:
 """
 import logging
 import os
+import shutil
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime
 from typing import IO
 
@@ -422,7 +424,12 @@ _DELTA_SECTIONS = ("lei2", "rr", "repex")
 
 def download_deltas(publish: dict, interval: str, dest_dir: str | None = None) -> dict:
     """Download the LEI-CDF + RR + repex delta .json.zip files for `interval` from
-    a publish record. Returns {'lei2': path, 'rr': path, 'repex': path}."""
+    a publish record. Returns {'lei2': path, 'rr': path, 'repex': path}.
+
+    Without `dest_dir` this leaves a temp directory behind for the caller to deal
+    with — see `downloaded_deltas`, which is what the nightly update uses and what
+    anything running repeatedly should use.
+    """
     dest = dest_dir or tempfile.mkdtemp(prefix="gleif-delta-")
     out: dict = {}
     for section in _DELTA_SECTIONS:
@@ -442,6 +449,28 @@ def download_deltas(publish: dict, interval: str, dest_dir: str | None = None) -
         out[section] = path
         log.info("GLEIF %s %s delta: %s", section, interval, path)
     return out
+
+
+@contextmanager
+def downloaded_deltas(publish: dict, interval: str):
+    """The delta files for `interval`, cleaned up afterwards.
+
+    `download_deltas` alone leaves its temp directory behind, and the nightly cron
+    called it directly: one `gleif-delta-*` directory per run, for months, never
+    removed. Thirteen of them and 135 MB had accumulated in /tmp by the time anyone
+    looked — slow enough to go unnoticed and unbounded, which is the worst shape a
+    leak can have. `/tmp` here survives reboots.
+
+    A context manager rather than a `finally` at the call site, because the call
+    site is where it was forgotten. Cleanup runs on failure too: the URLs come from
+    a dated publish record, so a failed run re-fetches exactly the same bytes and
+    keeping them buys nothing.
+    """
+    dest = tempfile.mkdtemp(prefix="gleif-delta-")
+    try:
+        yield download_deltas(publish, interval, dest_dir=dest)
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
 
 
 def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -> dict:

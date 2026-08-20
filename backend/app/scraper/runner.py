@@ -16,6 +16,7 @@ import os
 import uuid
 import logging
 import zipfile
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
@@ -2289,7 +2290,7 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
     from app.scraper.gleif_repex import import_repex
     from app.scraper.gleif_incremental import (
         choose_catchup_interval,
-        download_deltas,
+        downloaded_deltas,
         fetch_publish_metadata,
         load_scope,
         import_lei_cdf_delta,
@@ -2306,7 +2307,9 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
     ensure_indexes()
 
     source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
-    with record_run("gleif-update", interval) as run:
+    # ExitStack so the downloaded deltas (when we fetch any) are removed however
+    # the run ends, without the happy path having to nest another `with`.
+    with ExitStack() as stack, record_run("gleif-update", interval) as run:
         # The delta rides on top of the full golden copy. A delta carries every
         # record GLEIF changed worldwide, so applying it to anything less than that
         # baseline does not refresh the graph — it floods it.
@@ -2345,9 +2348,13 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
             else:
                 resolved = interval
                 log.info("GLEIF update: fetching %s deltas", resolved)
-            paths = download_deltas(publish, resolved)
-            lei_file, rr_file = paths["lei2"], paths["rr"]
-            repex_file = repex_file or paths.get("repex")
+            # Held open across the whole apply below: the files have to survive
+            # until they are read, and be gone once they are. `download_deltas`
+            # alone leaks its temp directory, which is what it had been doing here
+            # nightly for months.
+            fetched = stack.enter_context(downloaded_deltas(publish, resolved))
+            lei_file, rr_file = fetched["lei2"], fetched["rr"]
+            repex_file = repex_file or fetched.get("repex")
 
         log.info("GLEIF update: applying LEI-CDF delta %s", lei_file)
         lei = import_lei_cdf_delta(lei_file, source_id, BODS_GLEIF_CREDIBILITY, limit=limit,
