@@ -6,10 +6,11 @@ direction, and it exists because searching a person's name used to do something
 worse than nothing — the top Wikidata hit for "Larry Page" is the man, and he was
 written into the graph as a company.
 
-Wikidata is mocked here (the shapes are copied from real responses, including
-Larry Page's actual link list); `fetch_person_companies` and
-`fetch_person_details_for` are exercised against the live API in their own right
-during development. What these tests pin is what reaches the graph — a Person
+Wikidata is mocked here — all of it, including the candidate classifier, which
+was reaching query.wikidata.org for real until the suite started refusing outbound
+requests. The shapes are copied from real responses, including Larry Page's actual
+link list; `fetch_person_companies` and `fetch_person_details_for` are exercised
+against the live API in their own right during development. What these tests pin is what reaches the graph — a Person
 with their dates, HAS_ROLE and OWNS edges, and *not* the building, the programme
 or the software Wikidata also says he founded.
 """
@@ -52,6 +53,17 @@ def wikidata(it_db, monkeypatch):
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)
     monkeypatch.setattr(runner, "get_source_enabled", lambda _n: True)
     monkeypatch.setattr(runner, "search_entity", lambda q, limit=3: [{"id": "Q4934", "label": q}])
+    # `run_scrape_person` asks Wikidata to classify the hits before choosing one.
+    # Left live, this reached query.wikidata.org for real — nine SPARQL calls per
+    # run, from a file whose docstring says Wikidata is mocked.
+    #
+    # Stubbed at `classify_candidates`, the thing that makes the request, rather
+    # than at `pick_candidate` above it: the choosing logic is what
+    # TestWhenTheNameIsNotTheKind exists to test, and stubbing it out made those
+    # tests pass no matter which candidate was picked.
+    monkeypatch.setattr("app.scraper.wikidata.classify_candidates",
+                        lambda qids: {q: {"instances": ["Q5"], "is_human": True,
+                                          "is_company": False} for q in qids})
     monkeypatch.setattr("app.scraper.wikidata.fetch_person_details_for", lambda qid: DETAIL)
     monkeypatch.setattr("app.scraper.wikidata.fetch_person_companies",
                         lambda qid, limit=60: list(LINKS))
