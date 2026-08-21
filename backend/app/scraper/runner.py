@@ -25,7 +25,7 @@ from app.claims import record_claim, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
 from app.scraper.wikidata import (search_entity, search_entity_in_country,
                                   fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, coherent_ownership_type, is_nominee_name
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
@@ -432,6 +432,9 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
     Entity) so the id lookups use the per-type index — a label-less
     `MATCH (a {id}), (b {id})` full-scans every node (~14s on 3M) per edge.
     """
+    if owner_id == owned_id:
+        log.warning("refusing a self-owning edge on %s", owner_id)
+        return
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = _now_iso()
     record_claim(
@@ -1131,6 +1134,17 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     closed rather than duplicated; with no active edge the closed one is written
     directly, so re-reading old filings still builds the timeline.
     """
+    if owner_id == owned_id:
+        # A company cannot own itself, and the graph had nine that did — Apple,
+        # Microsoft and Alphabet all "holding" 7.48% of themselves, which is
+        # Vanguard's stake in each. So a filer's holding was being attributed to
+        # the issuer, i.e. two different companies resolved to one node. Refused
+        # loudly rather than dropped: the write is the symptom, the resolution is
+        # the disease, and a silent skip would hide it again.
+        log.warning("SEC: refusing a self-owning edge on %s (stake %s) — the filer "
+                    "and the issuer resolved to the same node", owner_id, stake_percent)
+        return
+    ownership_type = coherent_ownership_type(stake_percent, ownership_type)
     record_claim(kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
                  stake_percent=stake_percent, ownership_type=ownership_type,
                  since=file_date, until=until, source_url=source_url,

@@ -19,7 +19,7 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
     Edges that cannot be matched are reported in 'not_found_in_db'.
     """
     from app.scraper.proxy_statement import fetch_proxy_ownership
-    from app.scraper.mapper import normalize_entity_name
+    from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 
     proxy = fetch_proxy_ownership(company)
     if proxy.get("error") and not proxy.get("owners"):
@@ -103,33 +103,31 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
             )
             name_corrected = True
 
-        # ── Delete old edge and recreate with voting_power_pct ────────────
+        # ── Add voting_power_pct to the existing edge ─────────────────────
+        #
+        # An UPDATE, not the delete-and-recreate this used to do. Recreating an edge
+        # from a hand-written property list keeps only the properties on that list,
+        # and this one named seven: every proxy statement processed was silently
+        # stripping `source_url`, `credibility_score`, `last_scraped_at`,
+        # `interest_types`, `direct_or_indirect` (GLEIF's direct/ultimate marker) and
+        # `psc_self_link` (the key the Companies House refresh matches an edge on,
+        # whose loss would orphan the edge and duplicate it on the next run).
+        #
+        # The same mistake as `_migrate_entity_edges`, fixed there in #256. Setting
+        # the one property we came to set cannot lose the others, so the class of bug
+        # goes away rather than being patched.
         run_command(
             """MATCH (n {id: $oid})-[r:OWNS]->(c {id: $cid})
                WHERE r.until IS NULL
-               DELETE r""",
-            {"oid": oid, "cid": company_id},
-        )
-        run_command(
-            """MATCH (n {id: $oid}), (c {id: $cid})
-               CREATE (n)-[:OWNS {
-                   stake_percent:     $stake,
-                   file_date:         $file_date,
-                   source_id:         $source_id,
-                   ownership_type:    $ownership_type,
-                   since:             $since,
-                   until:             null,
-                   voting_power_pct:  $pct
-               }]->(c)""",
+               SET r.voting_power_pct = $pct,
+                   r.ownership_type   = $otype""",
             {
-                "oid":            oid,
-                "cid":            company_id,
-                "stake":          row.get("stake"),
-                "file_date":      row.get("file_date"),
-                "source_id":      row.get("source_id"),
-                "ownership_type": row.get("ownership_type"),
-                "since":          row.get("since"),
-                "pct":            pct,
+                "oid":   oid,
+                "cid":   company_id,
+                "pct":   pct,
+                # A stake and `unknown` cannot both be true; re-derive rather than
+                # carry the contradiction forward.
+                "otype": coherent_ownership_type(row.get("stake"), row.get("ownership_type")),
             },
         )
         entry: dict = {

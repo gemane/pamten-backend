@@ -10,6 +10,7 @@ because nobody *holds* the free float.
 import pytest
 
 from app.models.relationship import OwnershipType, coerce_ownership_type
+from app.scraper.mapper import coherent_ownership_type
 
 
 class TestVocabulary:
@@ -67,3 +68,52 @@ class TestPinBoundary:
         from app.models.flag import PinRequest
 
         assert PinRequest(stake_percent=42.0).ownership_type is None
+
+
+class TestAStakeAndUnknownCannotBothBeTrue:
+    """`unknown` means "we have no idea what kind of holding this is". A disclosed
+    percentage is that idea, so the pair is a contradiction.
+
+    Reported from the UI: on Alphabet, Larry Page showed a grey "Owned · 6.12%"
+    badge beside Sergey Brin's orange "Minority · 6.16%". Same holding, two
+    renderings, because the badge colours by type and Page's edge carried a stake
+    with `unknown` next to it.
+    """
+
+    def test_a_stake_replaces_unknown(self):
+        assert coherent_ownership_type(6.12, "unknown") == "minority"
+
+    def test_a_stake_fills_a_missing_type(self):
+        assert coherent_ownership_type(6.12, None) == "minority"
+        assert coherent_ownership_type(6.12, "") == "minority"
+
+    def test_the_derived_type_follows_the_thresholds(self):
+        assert coherent_ownership_type(99.5, "unknown") == "full"
+        assert coherent_ownership_type(60, "unknown") == "majority"
+        assert coherent_ownership_type(25, "unknown") == "controlling"
+        assert coherent_ownership_type(1.03, "unknown") == "minority"
+
+    def test_a_real_type_is_never_overridden(self):
+        # The reason this only touches `unknown`. A UK PSC with 75% AND the right
+        # to appoint directors is `controlling`; re-deriving from the percentage
+        # alone would call it `majority` and throw away the appointment right —
+        # the more important half of the fact.
+        assert coherent_ownership_type(75, "controlling") == "controlling"
+        assert coherent_ownership_type(3, "majority") == "majority"
+
+    def test_no_stake_leaves_the_type_alone(self):
+        # A stakeless GLEIF consolidation edge is genuinely `controlling`, and a
+        # founder listed as an owner with no percentage is genuinely unknown.
+        assert coherent_ownership_type(None, "controlling") == "controlling"
+        assert coherent_ownership_type(None, "unknown") == "unknown"
+        assert coherent_ownership_type(None, None) == "unknown"
+
+    def test_a_zero_stake_is_still_a_disclosure(self):
+        # 0% is a fact — an exited holding — not an absence of one.
+        assert coherent_ownership_type(0, "unknown") == "minority"
+
+    def test_it_only_ever_returns_a_valid_type(self):
+        vocabulary = {t.value for t in OwnershipType}
+        for stake in (None, 0, 1.03, 25, 60, 99.5):
+            for given in (None, "", "unknown", "minority", "controlling"):
+                assert coherent_ownership_type(stake, given) in vocabulary
