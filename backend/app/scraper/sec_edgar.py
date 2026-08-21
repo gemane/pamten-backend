@@ -1318,6 +1318,11 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
                          max_filings: int | None = None) -> list[dict]:
     """Companies this filer discloses a >5% stake in, newest disclosure per company.
 
+    Only OUTBOUND filings. EDGAR's index for a CIK lists filings the company is
+    *named in* as well as ones it submitted, so a 13G somebody else filed about it
+    appears here too — and reading that filing's issuer gives the company itself
+    back. See the subject == filer skip below.
+
     One row per subject company:
       stake_percent — the last disclosed non-zero percentage
       until         — set when a *newer* amendment reported 0%, i.e. the filer has
@@ -1370,6 +1375,20 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
         if not parsed:
             continue
         sid = parsed["subject_cik"]
+        # A filing whose subject IS this filer is an INBOUND one — somebody else's
+        # 13D/13G about them — and EDGAR's index carries it because the company is
+        # named in it, not because the company submitted it. Reading its issuer
+        # gives the company back, so it lands as "X holds 7.48% of X", with the
+        # percentage being some third party's stake in X.
+        #
+        # Nine of those were live in the graph, Apple, Microsoft and Alphabet among
+        # them. An issuer does not file 13D/13G about its own stock (buybacks go in
+        # a 10-K or 8-K), so subject == filer always means inbound and is always
+        # safe to drop.
+        if sid == _cik_int(cik).zfill(10):
+            log.debug("SEC EDGAR: skipping inbound filing %s — %s is the subject, "
+                      "not the filer", filing["accession"], sid)
+            continue
         if sid in done:
             continue
 
