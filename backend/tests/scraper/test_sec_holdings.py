@@ -93,6 +93,39 @@ class TestFetchFilerHoldings:
         assert {r["subject_name"] for r in rows} == {"West Pharmaceutical", "Hologic Inc"}
         assert all(r["until"] is None for r in rows)
 
+    def test_a_filing_about_the_filer_itself_is_not_a_holding(self):
+        """EDGAR's index for a CIK carries filings the company is NAMED IN as well
+        as ones it submitted, so somebody else's 13G about it appears here — and
+        reading that filing's issuer hands the company straight back.
+
+        The result was nine companies owning themselves, Apple, Microsoft and
+        Alphabet among them, each "holding" a percentage that was really a third
+        party's stake in it. `fetch_filer_holdings('0000320193')` returned exactly
+        one row: Apple Inc, 7.48% of Apple Inc.
+        """
+        subs = _subs([("SCHEDULE 13G", "inbound", "2026-04-30"),
+                      ("SCHEDULE 13G", "outbound", "2026-04-29")])
+        docs = {
+            # Somebody's 13G about Apple, sitting in Apple's own filing index.
+            "inbound":  XML.format(cik="0000320193", name="Apple Inc", pct="7.48"),
+            "outbound": XML.format(cik="0000105770", name="West Pharmaceutical", pct="6.1"),
+        }
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for(docs)):
+            rows = fetch_filer_holdings("0000320193")
+
+        assert [r["subject_name"] for r in rows] == ["West Pharmaceutical"], \
+            "the filer was reported as holding itself"
+
+    def test_the_filer_is_matched_however_its_cik_is_written(self):
+        # The subject arrives zero-padded from the filing; the caller's CIK may not
+        # be. Comparing them raw would let every inbound filing straight through.
+        subs = _subs([("SCHEDULE 13G", "inbound", "2026-04-30")])
+        docs = {"inbound": XML.format(cik="0000320193", name="Apple Inc", pct="7.48")}
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for(docs)):
+            assert fetch_filer_holdings("320193") == []
+
     def test_a_later_zero_closes_the_earlier_stake(self):
         # The Vanguard case: the newest filing for a company reports 0%, so the
         # last real percentage is recorded as history with the exit date.
