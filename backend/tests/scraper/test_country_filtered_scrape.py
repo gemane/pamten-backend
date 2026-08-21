@@ -33,12 +33,24 @@ def _scraper_on(monkeypatch):
 # German company of that name, is nowhere near the top and no amount of filtering
 # afterwards would ever reach it.
 
+def _first_qid(results, kind):
+    """Stand in for `pick_candidate`, which asks Wikidata to classify each hit.
+
+    Without it these tests reach the live API: three of them spent 1.6–11s on real
+    network I/O, and one finally timed out in CI. They are about which *search*
+    `run_scrape` chooses, not about picking between candidates, so the classifier
+    is out of scope for them and belongs mocked.
+    """
+    return results[0]["id"] if results else None
+
+
 class TestWikidataSearch:
     def test_a_country_makes_it_search_inside_that_country(self):
         with patch("app.scraper.runner.search_entity_in_country",
                    return_value=[{"id": "Q2650924", "label": "Alphabet Fuhrparkmanagement"}]) as scoped, \
              patch("app.scraper.runner.search_entity") as global_search, \
              patch("app.scraper.runner._scrape_node"), \
+             patch("app.scraper.runner.pick_candidate", side_effect=_first_qid), \
              patch("app.scraper.runner._ensure_source", return_value="s1"):
             runner.run_scrape("Alphabet", depth=0, country="DE")
         scoped.assert_called_once_with("Alphabet", "DE")
@@ -48,6 +60,7 @@ class TestWikidataSearch:
         with patch("app.scraper.runner.search_entity", return_value=[{"id": "Q20800404"}]) as global_search, \
              patch("app.scraper.runner.search_entity_in_country") as scoped, \
              patch("app.scraper.runner._scrape_node"), \
+             patch("app.scraper.runner.pick_candidate", side_effect=_first_qid), \
              patch("app.scraper.runner._ensure_source", return_value="s1"):
             runner.run_scrape("Alphabet", depth=0)
         global_search.assert_called_once()
@@ -57,6 +70,7 @@ class TestWikidataSearch:
         # Not "mismatch" — we never looked anywhere else, so there is nothing to
         # report having found instead.
         with patch("app.scraper.runner.search_entity_in_country", return_value=[]), \
+             patch("app.scraper.runner.pick_candidate", side_effect=_first_qid), \
              patch("app.scraper.runner._scrape_node") as scrape_node:
             out = runner.run_scrape("Alphabet", depth=1, country="FR")
         assert out["status"] == "no_results" and out["requested_country"] == "FR"
@@ -67,6 +81,7 @@ class TestWikidataSearch:
                    return_value=[{"id": "Q2650924", "label": "Alphabet Fuhrparkmanagement"},
                                  {"id": "Q999", "label": "Jeannes Alphabet"}]), \
              patch("app.scraper.runner._ensure_source", return_value="s1"), \
+             patch("app.scraper.runner.pick_candidate", side_effect=_first_qid), \
              patch("app.scraper.runner._scrape_node") as scrape_node:
             runner.run_scrape("Alphabet", depth=1, country="DE")
         assert scrape_node.call_args[0][0] == "Q2650924"
