@@ -238,8 +238,13 @@ class TestRunScrapeOpenCorporates:
 
     def test_returns_ok_with_location_and_person(self):
         ctx, _ = _make_session_mock()
+        # `geocode_address` is stubbed because the scrape geocodes the registered
+        # address it has just written: a live Nominatim request, to a rate-limited
+        # public service, from a test about OpenCorporates. The geocoder has its
+        # own tests.
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.geocode_address", return_value=None), \
              patch("app.scraper.open_corporates.scrape_company", return_value=self.OC_DATA):
             result = run_scrape_open_corporates("Tesla")
 
@@ -377,6 +382,19 @@ class TestRunScrapeWikidata:
         "parents":     [],
         "ceos":        [],
     }
+
+    @pytest.fixture(autouse=True)
+    def _offline(self):
+        """`run_scrape` asks Wikidata to classify each search hit before choosing
+        one. These tests stub the search and the company data but not that, so
+        every one of them was making a live API call — several seconds each, and
+        eventually a CI timeout on an unrelated branch.
+
+        Class-level rather than per-test: the dependency belongs to `run_scrape`,
+        so every test here has it, and the next one added would inherit the hole."""
+        with patch("app.scraper.runner.pick_candidate",
+                   side_effect=lambda results, kind: results[0]["id"] if results else None):
+            yield
 
     def _ctx(self):
         return _make_session_mock()[0]

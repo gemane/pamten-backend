@@ -46,6 +46,58 @@ def scraper_env(monkeypatch):
         monkeypatch.setenv(k, v)
 
 
+# ── No test reaches the internet ──────────────────────────────────────────────
+#
+# The same reasoning as the forced console email backend above: a test that can
+# reach the outside world eventually does, and the damage is silent. Here it took
+# the form of "unit" tests calling Wikidata, EDGAR and GLEIF for real — a dozen
+# seconds a run, until one finally timed out in CI and failed an unrelated branch,
+# which is the worst possible moment to discover it.
+#
+# Every host is refused except the database. Integration tests genuinely need
+# ArcadeDB and reach it over HTTP, so localhost and whatever ARCADEDB_IT_URL names
+# are allowed through; everything else raises with the name of the host it wanted,
+# which is the one fact needed to write the missing mock.
+#
+# `allow_network` is the opt-out, for a test whose whole point is a real request.
+# There are none today, and adding one should feel like a decision.
+
+_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver"}
+
+
+def _allowed(url) -> bool:
+    host = getattr(url, "host", None) or ""
+    if host in _ALLOWED_HOSTS:
+        return True
+    for var in ("ARCADEDB_IT_URL", "ARCADEDB_URL"):
+        configured = os.environ.get(var) or ""
+        if host and host in configured:
+            return True
+    return False
+
+
+class NetworkAccessAttempted(RuntimeError):
+    """A test tried to reach a host that is not the database."""
+
+
+@pytest.fixture(autouse=True)
+def no_network(request, monkeypatch):
+    if "allow_network" in request.keywords:
+        return
+    import httpx
+
+    real_send = httpx.Client.send
+
+    def guarded(self, request_, *a, **kw):
+        if not _allowed(request_.url):
+            raise NetworkAccessAttempted(
+                f"test tried to reach {request_.url.host} — mock it, or mark the test "
+                f"`@pytest.mark.allow_network` if the request is the point")
+        return real_send(self, request_, *a, **kw)
+
+    monkeypatch.setattr(httpx.Client, "send", guarded)
+
+
 # ── Router / auth test support ─────────────────────────────────────────────────
 #
 # These fixtures let the API be tested end-to-end (real auth, real security,
