@@ -44,7 +44,7 @@ from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.models.federation import PeerCreate
-from app.scraper.mapper import normalize_entity_name
+from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 from app.routers.persons import deduplicate_high_confidence
 from app import federation_keys
 
@@ -364,16 +364,27 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
             if not oid or not tid:
                 counts["skipped"] += 1
                 continue
+            if oid == tid:
+                # A company cannot own itself. A peer asserting one has resolved two
+                # names to one node; taking it would plant a self-loop here too.
+                log.warning("federation: skipping a self-owning edge on %s", oid)
+                counts["skipped"] += 1
+                continue
+            # `COALESCE(r.ownership_type, …)` looked right and was not: 'unknown' is
+            # a VALUE, so it survived, while the null stake beside it was filled in
+            # from the peer. The edge then held a percentage typed 'unknown' — the
+            # grey "Owned" badge on Alphabet's Larry Page.
+            stake = o.get("stake_percent")
             session.run(
                 "MATCH (a {id:$oid}), (b {id:$tid}) MERGE (a)-[r:OWNS]->(b) "
                 "SET r.stake_percent = COALESCE(r.stake_percent, $stake), "
-                "    r.ownership_type = COALESCE(r.ownership_type, $otype), "
+                "    r.ownership_type = $otype, "
                 "    r.source_id = $sid, "
                 "    r.source_url = COALESCE($surl, r.source_url), "
                 "    r.source_date = COALESCE($sdate, r.source_date)",
-                oid=oid, tid=tid, stake=o.get("stake_percent"),
-                otype=o.get("ownership_type"), sid=source_id,
-                surl=o.get("source_url"), sdate=o.get("source_date"))
+                oid=oid, tid=tid, stake=stake,
+                otype=coherent_ownership_type(stake, o.get("ownership_type")),
+                sid=source_id, surl=o.get("source_url"), sdate=o.get("source_date"))
             counts["ownerships"] += 1
     return counts
 

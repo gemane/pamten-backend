@@ -171,6 +171,25 @@ _LEGAL_SUFFIX_NORM = re.compile(
     re.IGNORECASE,
 )
 
+
+def coherent_ownership_type(stake_pct: float | None, ownership_type: str | None) -> str:
+    """Reconcile a stake with the type stored beside it.
+
+    `unknown` means "we have no idea what kind of holding this is". A disclosed
+    percentage *is* that idea, so the two cannot both be true — yet several writers
+    set the fields independently and the pair drifts apart. On Alphabet, Larry Page
+    sat at 6.12% typed `unknown` (grey, "Owned") beside Sergey Brin at 6.16% typed
+    `minority` (orange): the same holding, rendered as two different things.
+
+    Only `unknown` is overridden, never a real type. A UK PSC with a 75% stake and
+    the right to appoint directors is `controlling`, and re-deriving from the
+    percentage alone would quietly downgrade it to `majority`, throwing away the
+    appointment right — the more important half of the fact.
+    """
+    if stake_pct is not None and ownership_type in (None, "", "unknown"):
+        return derive_ownership_type(stake_pct)
+    return ownership_type or "unknown"
+
 def normalize_entity_name(name: str) -> str:
     """
     Canonical form of a company name for cross-source deduplication.
