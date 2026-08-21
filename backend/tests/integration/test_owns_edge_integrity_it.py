@@ -206,3 +206,104 @@ class TestWhatAPeerSendsIsReconciledToo:
         assert counts["ownerships"] == 0
         assert it_db.run_command(
             "MATCH (a)-[r:OWNS]->(b) WHERE a.id = b.id RETURN count(r) AS n")[0]["n"] == 0
+
+
+class TestAnEdgeCitesOneSource:
+    """`source_id`, `source_url` and `source_date` on one edge must describe the
+    same source.
+
+    Reported from the UI, once the row menu started naming the source above the
+    link: Sergey Brin's holding in Alphabet said "SEC EDGAR" and linked to
+    wikidata.org. SEC created the edge; a later Wikidata scrape found the same
+    pair, replaced the URL, and left the id — so the edge cited one source with
+    another's link. The mismatch had been there all along and nothing showed it.
+    """
+
+    def _seed_sec_edge(self, it_db):
+        _company(it_db, "cite-co", "Alphabet Inc.")
+        it_db.run_command("CREATE (p:Person {id:'cite-p', full_name:'Sergey Brin'})")
+        it_db.run_command(
+            "MATCH (p:Person {id:'cite-p'}), (c {id:'cite-co'}) "
+            "CREATE (p)-[:OWNS {stake_percent:6.16, ownership_type:'minority', "
+            "source_id:'sec-src', source_url:'https://www.sec.gov/filing/1', "
+            "source_date:'2026-01-01', until:null}]->(c)")
+
+    def _confirm_from_wikidata(self):
+        from app.scraper.runner import _upsert_owns
+        _upsert_owns("cite-p", "cite-co", "wikidata-src",
+                     source_url="https://www.wikidata.org/wiki/Q20800404",
+                     source_date="2026-08-01", owner_label="Person")
+
+    def test_a_second_source_does_not_steal_the_link(self, it_db):
+        self._seed_sec_edge(it_db)
+        self._confirm_from_wikidata()
+        e = it_db.run_command(
+            "MATCH (p {id:'cite-p'})-[r:OWNS]->(c {id:'cite-co'}) "
+            "RETURN r.source_id AS sid, r.source_url AS url, r.source_date AS sdate")[0]
+        assert e["sid"] == "sec-src"
+        assert e["url"] == "https://www.sec.gov/filing/1", \
+            "the edge is attributed to SEC but links somewhere else"
+        assert e["sdate"] == "2026-01-01"
+
+    def test_but_it_is_still_recorded_as_having_confirmed_it(self, it_db):
+        # Nothing is lost by refusing to overwrite: the second source's assertion
+        # lives in its own Claim, which is what claims are for.
+        self._seed_sec_edge(it_db)
+        self._confirm_from_wikidata()
+        claims = it_db.run_command(
+            "MATCH (c:Claim) WHERE c.from_id = 'cite-p' AND c.to_id = 'cite-co' "
+            "RETURN c.source_id AS sid")
+        assert {r["sid"] for r in claims} >= {"wikidata-src"}
+
+    def test_and_the_edge_is_marked_as_freshly_confirmed(self, it_db):
+        # `last_scraped_at` still moves — "confirmed again just now" is true
+        # whoever confirmed it, and it is what the UI shows as freshness.
+        #
+        # The stale value is set on the edge as it is created, not by a follow-up
+        # label-less `MATCH ()-[r:OWNS]->()`: written that way the test passed
+        # against a mutant that froze the timestamp entirely, because the seeded
+        # edge had no timestamp to freeze.
+        _company(it_db, "fresh-co", "Alphabet Inc.")
+        it_db.run_command("CREATE (p:Person {id:'fresh-p', full_name:'Sergey Brin'})")
+        it_db.run_command(
+            "MATCH (p:Person {id:'fresh-p'}), (c {id:'fresh-co'}) "
+            "CREATE (p)-[:OWNS {source_id:'sec-src', source_url:'https://www.sec.gov/f/1', "
+            "last_scraped_at:'2020-01-01T00:00:00Z', until:null}]->(c)")
+        stale = it_db.run_command(
+            "MATCH (p {id:'fresh-p'})-[r:OWNS]->(c {id:'fresh-co'}) "
+            "RETURN r.last_scraped_at AS seen")[0]["seen"]
+
+        from app.scraper.runner import _upsert_owns
+        _upsert_owns("fresh-p", "fresh-co", "wikidata-src",
+                     source_url="https://www.wikidata.org/wiki/Q1", owner_label="Person")
+
+        seen = it_db.run_command(
+            "MATCH (p {id:'fresh-p'})-[r:OWNS]->(c {id:'fresh-co'}) "
+            "RETURN r.last_scraped_at AS seen")[0]["seen"]
+        # Compared against what the database actually stored, not against the
+        # literal that was written. ArcadeDB normalises the timestamp — the
+        # seeded '2020-01-01T00:00:00Z' comes back as '2020-01-01T00:00Z' — and
+        # that shorter string is lexically GREATER ('Z' > ':'), so `seen >
+        # "2020-01-01T00:00:00Z"` was true even when the value never moved. The
+        # test passed against a mutant that froze the timestamp outright.
+        assert seen is not None and seen != stale, \
+            f"the edge was not marked as re-confirmed (still {seen!r})"
+        assert seen > stale
+
+    def test_a_link_is_still_filled_in_where_there_is_none(self, it_db):
+        # Backfill is the point: an edge created before provenance existed, or by a
+        # source that had no URL, should gain one from whoever does have it.
+        _company(it_db, "fill-co", "Some Co")
+        it_db.run_command("CREATE (p:Person {id:'fill-p', full_name:'A Person'})")
+        it_db.run_command(
+            "MATCH (p:Person {id:'fill-p'}), (c {id:'fill-co'}) "
+            "CREATE (p)-[:OWNS {source_id:'old-src', source_url:null, until:null}]->(c)")
+
+        from app.scraper.runner import _upsert_owns
+        _upsert_owns("fill-p", "fill-co", "wikidata-src",
+                     source_url="https://www.wikidata.org/wiki/Q1", owner_label="Person")
+
+        e = it_db.run_command(
+            "MATCH (p {id:'fill-p'})-[r:OWNS]->(c {id:'fill-co'}) "
+            "RETURN r.source_url AS url")[0]
+        assert e["url"] == "https://www.wikidata.org/wiki/Q1"

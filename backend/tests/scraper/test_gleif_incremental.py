@@ -209,6 +209,13 @@ class TestTheDownloadedDeltasAreCleanedUp:
         # `download_deltas` with an explicit dest_dir is the caller's directory to
         # keep — deleting it would be a surprise, and `fetch_gleif_deltas` exists
         # precisely so a human can fetch files and look at them.
-        with self._patched():
+        #
+        # `fetch_gleif_deltas` fetches the publish record before downloading, so
+        # httpx.get is patched as well as httpx.stream. Without it this test spent
+        # five seconds on the live GLEIF API — a unit test quietly depending on the
+        # internet, which is how the country-filter tests came to fail in CI.
+        api = MagicMock()
+        api.json.return_value = {"data": [self._publish()]}
+        with self._patched(), patch("httpx.get", return_value=api):
             out = fetch_gleif_deltas(interval="LastDay", dest_dir=str(tmp_path))
         assert os.path.exists(out["lei2"]), "an explicitly requested file was deleted"

@@ -421,12 +421,21 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
 
     The edge holds one answer; the claim holds *this* source's answer. That
     matters on the existing-edge path below, which is reached whenever a second
-    source confirms a relationship a first source already recorded: it refreshes
-    source_url and source_date but deliberately leaves source_id alone, since
-    the edge is still attributed to whoever created it. Before claims existed
-    that was simply wrong — the edge ended up citing one source with another
-    source's link — and the second source's assertion vanished. Now it is
-    recorded as its own claim.
+    source confirms a relationship a first source already recorded.
+
+    That path leaves source_id alone — the edge stays attributed to whoever
+    created it — and therefore must leave source_url alone too. It used to
+    overwrite the URL while keeping the id, so the edge cited one source with
+    another's link: Sergey Brin's holding in Alphabet was attributed to SEC EDGAR
+    and linked to wikidata.org. Invisible until the row menu started naming the
+    source above the link, and then obvious.
+
+    So the URL and date are **backfilled, never replaced** — `COALESCE(existing,
+    new)`, the convention `_upsert_entity` states — and the id, url and date on an
+    edge always describe one source. The second source's assertion is not lost:
+    it is recorded as its own claim, which is what claims are for.
+    `last_scraped_at` still moves, because "confirmed again just now" is true
+    whoever confirmed it.
 
     Both endpoints are labelled (owner is Entity or Person, owned is always
     Entity) so the id lookups use the per-type index — a label-less
@@ -457,8 +466,8 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
                 MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
                 WHERE r.until IS NULL
                 SET r.last_scraped_at = $now,
-                    r.source_url  = COALESCE($surl,  r.source_url),
-                    r.source_date = COALESCE($sdate, r.source_date)
+                    r.source_url  = COALESCE(r.source_url,  $surl),
+                    r.source_date = COALESCE(r.source_date, $sdate)
                 """,
                 oid=owner_id, nid=owned_id, now=now,
                 surl=source_url, sdate=source_date,
@@ -570,7 +579,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                 WHERE r.role = $role
                   AND ($since IS NULL OR r.since = $since)
                 SET r.last_scraped_at = $now,
-                    r.source_url = COALESCE($surl, r.source_url)
+                    r.source_url = COALESCE(r.source_url, $surl)
                 """,
                 pid=person_id, eid=entity_id, role=role, since=since, now=now,
                 surl=source_url,
