@@ -11,6 +11,7 @@ Usage:
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
   python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
   python3 manage.py ch-psc-update [options]   # UK PSC incremental refresh (snapshot diff)
+  python3 manage.py quality-report            # data quality as numbers
   python3 manage.py ch-psc [options]          # Companies House PSC snapshot (UK ownership)
   python3 manage.py ch-company-data [options] # Companies House register (UK company names)
   python3 manage.py seed [options]
@@ -222,6 +223,13 @@ def cmd_flag_nominees(args):
     result = flag_nominee_entities()
     print(f"Flagged {result['flagged']} nominee/custodian entities "
           f"(of {result['candidates']} name candidates)")
+
+def cmd_quality_report(args):
+    """Data quality as numbers — run before and after any change to the source mix."""
+    _apply_direct_db_url(args)
+    from app.quality import format_report, quality_report
+    report = quality_report()
+    print(format_report(report) if not args.json else __import__("json").dumps(report, indent=2))
 
 def cmd_prune_analytics(args):
     """Drop usage counters nothing has touched inside the retention window."""
@@ -796,6 +804,14 @@ def _build_parser():
     p_nom = subparsers.add_parser('flag-nominees',
                                   help='Flag nominee/custodian entities (holders of record) by name')
     p_nom.set_defaults(func=cmd_flag_nominees)
+
+    # quality-report command
+    p_qr = subparsers.add_parser('quality-report',
+                                 help='Data quality as numbers: stakes, corroboration, official ids, freshness, contradiction gauges')
+    p_qr.add_argument('--json', action='store_true', help='Machine-readable output')
+    p_qr.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_qr.set_defaults(func=cmd_quality_report)
 
     # prune-analytics command
     p_prune = subparsers.add_parser('prune-analytics',

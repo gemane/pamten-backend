@@ -469,6 +469,14 @@ def proxy_statement_write(
 
 # ── Ownership-type migration endpoint ────────────────────────────────────────
 
+@router.get("/quality")
+def quality(_: dict = Depends(require_admin)):
+    """The quality report, for the admin UI — same numbers as `manage.py
+    quality-report`, computed the same way, so the two can never disagree."""
+    from app.quality import quality_report
+    return quality_report()
+
+
 @router.post("/migrate-ownership-types")
 def migrate_ownership_types(_: dict = Depends(require_admin)):
     """One-time migration deriving canonical ownership_type values. Admin only."""

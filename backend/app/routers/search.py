@@ -255,6 +255,56 @@ _FREE_FLOAT_MIN = 0.5    # don't surface a residual smaller than this (rounding 
 _OVER_100_TOL   = 0.5    # tolerance before flagging disclosed ownership > 100%
 
 
+def _corroborations_for(entity_id: str) -> dict[tuple, list[str]]:
+    """Which sources assert each relationship touching this entity.
+
+    Read from `Claim`, which has recorded every source's assertion since claims
+    shipped — the writers emit one per edge write — but which nothing ever read
+    back. Keyed (from, to, kind), the claim's own identity minus the source, so
+    the caller can look up any row it is rendering.
+
+    One query for the whole profile rather than one per row: a profile shows up
+    to ~200 relationships and this is on the panel-open path.
+
+    Returns source NAMES, resolved here, because the id is meaningless to the
+    client and the edge's own source may not be in the node's source list at all
+    (an edge is attributed to whoever created it — the #261 lesson).
+    """
+    from app.db.arcadedb import run_sql
+
+    rows = run_sql(
+        "SELECT from_id, to_id, kind, source_id FROM Claim "
+        "WHERE from_id = :id OR to_id = :id", {"id": entity_id})
+    if not rows:
+        return {}
+    names = {r["id"]: r["name"] for r in run_sql("SELECT id, name FROM Source")}
+    out: dict[tuple, list[str]] = {}
+    for r in rows:
+        name = names.get(r["source_id"])
+        if not name:
+            continue
+        key = (r["from_id"], r["to_id"], r["kind"])
+        bucket = out.setdefault(key, [])
+        if name not in bucket:      # one source asserting twice is one source
+            bucket.append(name)
+    return out
+
+
+def _attach_corroboration(rel: dict, claims: dict[tuple, list[str]],
+                          from_id: str, to_id: str, kind: str) -> dict:
+    """Stamp the asserting sources onto a relationship dict, in place.
+
+    `corroborations` counts distinct sources; `asserted_by` names them, sorted so
+    the payload is stable. Rows with no claim rows (edges older than the claims
+    table) get 0 and an empty list rather than nothing — absent and unknown are
+    different things, and the UI should not have to guess which it is seeing.
+    """
+    sources = sorted(claims.get((from_id, to_id, kind), []))
+    rel["corroborations"] = len(sources)
+    rel["asserted_by"] = sources
+    return rel
+
+
 def _ownership_summary(owners: list[dict]) -> dict:
     """Derive a free-float / data-quality summary from an entity's owners.
 
@@ -488,6 +538,10 @@ def get_full_profile(
             if cur is None or (rel.get("stake_percent") or -1) > (cur["relationship"].get("stake_percent") or -1):
                 owners_by[oid] = {"owner": owner, "relationship": rel}
         owners = list(owners_by.values())
+        claims = _corroborations_for(entity_id)
+        for o in owners:
+            _attach_corroboration(o["relationship"], claims,
+                                  o["owner"].get("id"), entity_id, "owns")
 
         subs_by: dict[str, dict] = {}
         for s in record["subsidiaries"]:
@@ -502,6 +556,9 @@ def get_full_profile(
             if cur is None or (rel.get("stake_percent") or -1) > (cur["relationship"].get("stake_percent") or -1):
                 subs_by[sid] = {"entity": sub, "relationship": rel}
         subsidiaries = list(subs_by.values())
+        for sub in subsidiaries:
+            _attach_corroboration(sub["relationship"], claims,
+                                  entity_id, sub["entity"].get("id"), "owns")
 
         execs_by: dict[tuple, dict] = {}
         for ex in record["executives"]:
@@ -512,6 +569,9 @@ def get_full_profile(
                 continue
             execs_by.setdefault((person.get("id"), role.get("role")), {"person": person, "role": role})
         executives = list(execs_by.values())
+        for ex in executives:
+            _attach_corroboration(ex["role"], claims,
+                                  ex["person"].get("id"), entity_id, "role")
 
         # Circular ownership: an entity that is BOTH an owner and a subsidiary of
         # this one (A↔B reciprocal holding). Surface it as a data-quality signal.
@@ -633,9 +693,18 @@ def get_person_profile(person_id: str):
         for h in holdings_out:
             h["relationship"] = apply_pin(pins, person_id, h["entity"].get("id"), h["relationship"])
 
+        claims = _corroborations_for(person_id)
+        positions_out = _dedupe_positions(positions)
+        for pos in positions_out:
+            _attach_corroboration(pos["role"], claims,
+                                  person_id, pos["entity"].get("id"), "role")
+        for h in holdings_out:
+            _attach_corroboration(h["relationship"], claims,
+                                  person_id, h["entity"].get("id"), "owns")
+
         return {
             "person": dict(record["p"]),
-            "positions": _dedupe_positions(positions),
+            "positions": positions_out,
             "holdings": holdings_out,
         }
 
