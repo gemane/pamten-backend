@@ -94,6 +94,33 @@ single, fast, current-best answer — and the claims sit beside it as the eviden
 An entity's own record provenance is a different question, answered from its hard
 identifiers (`_entity_own_source_rows`) — claims describe relationships, not nodes.
 
+## Source tiers, containment and staleness
+
+Sources sit in tiers, encoded by their credibility scores rather than by name so a
+new source lands in the right tier by scoring itself honestly:
+
+| tier | sources | authoritative for |
+|---|---|---|
+| statutory (≥97) | SEC EDGAR 98, UK PSC 97 | ownership **and** stakes |
+| official (≥90) | GLEIF 92 (validation-scaled) | existence, structure, consolidation |
+| community (<90) | Wikidata 80, OpenCorporates 85 | discovery and enrichment |
+
+Two rules keep the tiers meaning something on OWNS edges:
+
+* **The freshness gate.** A source may refresh `last_scraped_at` on an edge at or
+  below its own credibility, and no higher — a Wikidata visit re-confirming an SEC
+  edge records a claim (corroboration) but does not launder the register fact's
+  freshness. `last_scraped_at` on a register edge therefore means *the register
+  confirmed it*.
+* **Staleness** (`manage.py mark-stale`, default 180 days). Wikidata has no
+  retirement signal — a deleted statement just stops being seen — so a
+  community-tier edge nothing has confirmed in six months is marked `stale=true`:
+  dimmed in the UI, never deleted, never closed, because an unconfirmed community
+  edge is weak evidence of removal and nobody stated an end date. Exempt: register
+  edges (they retire facts properly via deltas, snapshot diffs and 0% amendments),
+  pairs any register claim vouches for, and closed edges. The pass clears as well
+  as sets, and the quality report counts stale edges per source.
+
 ## GLEIF sourcing
 
 GLEIF data comes from the **GLEIF golden copy** (current, daily), keyed `lei:{LEI}`:
