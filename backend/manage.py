@@ -224,6 +224,14 @@ def cmd_flag_nominees(args):
     print(f"Flagged {result['flagged']} nominee/custodian entities "
           f"(of {result['candidates']} name candidates)")
 
+def cmd_mark_stale(args):
+    """Mark community-tier OWNS edges nothing has confirmed in --days as stale."""
+    _apply_direct_db_url(args)
+    from app.scraper.maintenance import mark_stale_ownership
+    res = mark_stale_ownership(days=args.days)
+    print(f"Marked {res['marked']} stale, cleared {res['cleared']} "
+          f"(of {res['community_edges']} community-tier edges; cutoff {res['cutoff'][:10]})")
+
 def cmd_quality_report(args):
     """Data quality as numbers — run before and after any change to the source mix."""
     _apply_direct_db_url(args)
@@ -804,6 +812,15 @@ def _build_parser():
     p_nom = subparsers.add_parser('flag-nominees',
                                   help='Flag nominee/custodian entities (holders of record) by name')
     p_nom.set_defaults(func=cmd_flag_nominees)
+
+    # mark-stale command
+    p_ms = subparsers.add_parser('mark-stale',
+                                 help='Mark community-tier OWNS edges unconfirmed for --days as stale (dimmed, never deleted). Register-tier and register-vouched edges are exempt')
+    p_ms.add_argument('--days', type=int, default=180,
+                      help='Confirmation age that counts as stale (default 180)')
+    p_ms.add_argument('--db-url',
+                      help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_ms.set_defaults(func=cmd_mark_stale)
 
     # quality-report command
     p_qr = subparsers.add_parser('quality-report',

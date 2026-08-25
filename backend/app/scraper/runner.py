@@ -461,15 +461,29 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
             nid=owned_id,
         ).single()
         if exists:
+            # A source may refresh the freshness of an edge at or below its own
+            # credibility, and no higher. `last_scraped_at` is what the UI shows
+            # as "last confirmed against the source", and what the staleness pass
+            # reads — a Wikidata visit re-confirming an SEC edge would otherwise
+            # launder a register fact's freshness through a community source. The
+            # claim above is recorded either way: corroboration is exactly what a
+            # lower-tier source confirming a register edge is worth.
+            #
+            # The refresh also clears `stale` — the mark the maintenance pass puts
+            # on community edges nothing has confirmed for months — because a
+            # legitimate re-confirmation is precisely what staleness is not.
             session.run(
                 f"""
                 MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
                 WHERE r.until IS NULL
-                SET r.last_scraped_at = $now,
+                SET r.last_scraped_at = CASE WHEN COALESCE(r.credibility_score, 0) <= $cred
+                                             THEN $now ELSE r.last_scraped_at END,
+                    r.stale           = CASE WHEN COALESCE(r.credibility_score, 0) <= $cred
+                                             THEN false ELSE r.stale END,
                     r.source_url  = COALESCE(r.source_url,  $surl),
                     r.source_date = COALESCE(r.source_date, $sdate)
                 """,
-                oid=owner_id, nid=owned_id, now=now,
+                oid=owner_id, nid=owned_id, now=now, cred=credibility_score,
                 surl=source_url, sdate=source_date,
             )
             return

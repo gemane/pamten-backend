@@ -60,13 +60,14 @@ def _owns_by_source(names: dict) -> dict:
     now = datetime.now(timezone.utc)
     cutoffs = {d: (now - timedelta(days=d)).isoformat() for d in _FRESHNESS_WINDOWS}
     per: dict = defaultdict(lambda: {
-        "edges": 0, "with_stake": 0, "closed": 0,
+        "edges": 0, "with_stake": 0, "closed": 0, "stale": 0,
         **{f"confirmed_{d}d": 0 for d in _FRESHNESS_WINDOWS},
     })
     with db.get_session() as s:
         rows = s.run("""MATCH ()-[r:OWNS]->()
                         RETURN r.source_id AS sid, r.stake_percent AS stake,
-                               r.until AS until, r.last_scraped_at AS seen""")
+                               r.until AS until, r.last_scraped_at AS seen,
+                               r.stale AS stale""")
         for r in rows:
             src = names.get(r["sid"], "(unattributed)")
             p = per[src]
@@ -75,6 +76,8 @@ def _owns_by_source(names: dict) -> dict:
                 p["with_stake"] += 1
             if r["until"]:
                 p["closed"] += 1
+            if r["stale"]:
+                p["stale"] += 1
             seen = r["seen"] or ""
             for d in _FRESHNESS_WINDOWS:
                 if seen and seen >= cutoffs[d]:
@@ -165,11 +168,11 @@ def quality_report() -> dict:
 def format_report(report: dict) -> str:
     """The report as the table a terminal wants, mirroring the dict exactly."""
     lines = [f"Quality report — {report['generated_at'][:19]}", ""]
-    lines.append(f"{'source':<16} {'edges':>6} {'stake%':>7} {'closed':>7} "
+    lines.append(f"{'source':<16} {'edges':>6} {'stake%':>7} {'closed':>7} {'stale':>6} "
                  + " ".join(f"{'<' + str(d) + 'd':>6}" for d in _FRESHNESS_WINDOWS))
     for src, p in sorted(report["owns_by_source"].items(), key=lambda kv: -kv[1]["edges"]):
         stake_pct = round(p["with_stake"] / p["edges"] * 100) if p["edges"] else 0
-        lines.append(f"{src:<16} {p['edges']:>6} {stake_pct:>6}% {p['closed']:>7} "
+        lines.append(f"{src:<16} {p['edges']:>6} {stake_pct:>6}% {p['closed']:>7} {p['stale']:>6} "
                      + " ".join(f"{p[f'confirmed_{d}d']:>6}" for d in _FRESHNESS_WINDOWS))
     c = report["corroboration"]
     lines += ["", f"corroboration: {c['corroborated']} of {c['relationships_with_claims']} "

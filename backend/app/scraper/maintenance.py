@@ -651,6 +651,83 @@ _SHORTCUT_MAX_DEPTH = 6
 _SHORTCUT_WRITE_BATCH = 500
 
 
+#: The credibility floor of the official tier. GLEIF (92), UK PSC (97) and SEC
+#: EDGAR (98) sit above it; Wikidata (80) and OpenCorporates (85) below. Tier by
+#: score rather than by source name, so a new source lands in the right tier by
+#: setting its credibility honestly instead of by editing lists here.
+OFFICIAL_TIER_MIN_CREDIBILITY = 90
+
+#: How long a community-tier ownership assertion stays current without anybody
+#: re-confirming it. Six months: Wikidata has no retirement signal at all — a
+#: deleted statement simply stops appearing — so age of last confirmation is the
+#: only evidence available, and it is weak evidence, which is why the outcome is
+#: a marking and not a closure.
+STALE_AFTER_DAYS = 180
+
+
+def mark_stale_ownership(days: int = STALE_AFTER_DAYS) -> dict:
+    """Mark community-tier OWNS edges nothing has confirmed in `days` as stale.
+
+    The Wikidata half of the removal problem. The register sources have real
+    retirement channels — GLEIF deltas close relationships, the PSC snapshot diff
+    closes vanished records, a 13G/A can amend to 0% — but a Wikidata statement
+    that an editor deletes just stops being seen, and the edge it created would
+    otherwise stand forever, indistinguishable from a confirmed fact.
+
+    So: dimmed, never deleted, never closed. An unconfirmed community edge is
+    weak evidence of removal — the next scrape may simply not have covered that
+    company — and stamping `until` would assert an end date nobody stated.
+
+    Exempt, in order of the reason:
+      * edges at or above the official tier — their sources retire facts properly;
+      * edges whose PAIR any official-tier source corroborates (a Claim with
+        credibility ≥ 90) — the register vouches for the fact even though the
+        edge happens to carry community attribution;
+      * closed edges — history is not stale, it is history.
+
+    Clears as well as sets, so the pass is self-healing in both directions and a
+    re-confirmed edge recovers on the next run even if the write path's own
+    clearing were bypassed.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    # Pairs an official-tier source vouches for, from the claims.
+    vouched: set[tuple] = set()
+    for r in run_sql("SELECT from_id, to_id FROM Claim "
+                     "WHERE kind = 'owns' AND credibility_score >= :c",
+                     {"c": OFFICIAL_TIER_MIN_CREDIBILITY}):
+        vouched.add((r["from_id"], r["to_id"]))
+
+    marked = cleared = 0
+    with db.get_session() as session:
+        rows = list(session.run(
+            """MATCH (a)-[r:OWNS]->(b)
+               WHERE r.until IS NULL
+                 AND COALESCE(r.credibility_score, 0) < $tier
+               RETURN a.id AS aid, b.id AS bid, r.last_scraped_at AS seen,
+                      r.stale AS stale""",
+            tier=OFFICIAL_TIER_MIN_CREDIBILITY))
+        for r in rows:
+            is_stale = bool(r["seen"]) and str(r["seen"]) < cutoff \
+                and (r["aid"], r["bid"]) not in vouched
+            if is_stale and not r["stale"]:
+                session.run(
+                    """MATCH (a {id: $a})-[r:OWNS]->(b {id: $b})
+                       WHERE r.until IS NULL SET r.stale = true""",
+                    a=r["aid"], b=r["bid"])
+                marked += 1
+            elif r["stale"] and not is_stale:
+                session.run(
+                    """MATCH (a {id: $a})-[r:OWNS]->(b {id: $b})
+                       WHERE r.until IS NULL SET r.stale = false""",
+                    a=r["aid"], b=r["bid"])
+                cleared += 1
+    return {"marked": marked, "cleared": cleared, "community_edges": len(rows),
+            "cutoff": cutoff}
+
+
 def mark_ownership_shortcuts(limit: int | None = None) -> dict:
     """Flag the GLEIF ultimate-parent edges that duplicate a path already in the graph.
 
