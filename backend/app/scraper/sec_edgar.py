@@ -619,6 +619,100 @@ _PERCENT_PATTERNS = [
 ]
 
 
+#: Cover-page rows 5–8 (13G) / 7–10 (13D). Row labels are stable across both.
+_POWER_ROWS = {
+    "sole_voting":       r'sole\s+voting\s+power',
+    "shared_voting":     r'shared\s+voting\s+power',
+    "sole_dispositive":  r'sole\s+dispositive\s+power',
+    "shared_dispositive": r'shared\s+dispositive\s+power',
+}
+
+
+def _parse_power_rows(text: str) -> dict:
+    """Share counts from the cover page's four power rows.
+
+    These are what make a 13D honest. "Beneficial ownership" is about power,
+    not property: a member of a voting group reports the WHOLE group's shares
+    in row 11, so summing row 13 percentages across a group counts the same
+    shares once per member. AB InBev summed to 109.9% that way — Altria and the
+    Stichting each reporting the same billion shares.
+
+    Sole dispositive power is what the filer can actually sell: its own stake.
+    Altria's cover reads sole-voting 0, shared-voting 1,020,598,157, and
+    sole-dispositive 159,121,937 — the last is Altria's real 8.1%, and the
+    first is the Voting Agreement bloc it votes within.
+
+    Missing rows are absent from the result rather than zero: "the filing did
+    not say" and "the filing said none" must not be confused, since a zero
+    would otherwise read as a genuine 0% stake.
+    """
+    plain = _plain_text(text)
+    out: dict = {}
+    for key, label in _POWER_ROWS.items():
+        m = re.search(label + r'[^0-9\-]{0,40}([\d,]+)', plain, re.IGNORECASE)
+        if not m:
+            continue
+        try:
+            out[key] = int(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+    return out
+
+
+def _shares_outstanding(text: str) -> int | None:
+    """The denominator, from the filing's own footnote ("based on a total of
+    N shares issued and outstanding"). Filings state it so the percentages can
+    be checked; we use it to turn a share count into a percentage."""
+    plain = _plain_text(text)
+    m = re.search(r'based\s+(?:up)?on\s+a?\s*total\s+of\s+([\d,]{7,})', plain, re.IGNORECASE)
+    if not m:
+        m = re.search(r'([\d,]{9,})\s+(?:voting\s+)?shares?\s+issued\s+and\s+outstanding',
+                      plain, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1).replace(",", ""))
+        return n if n > 0 else None
+    except ValueError:
+        return None
+
+
+def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
+    """Split a 13D/G cover into (own stake %, voting-bloc %).
+
+    Returns the filer's OWN holding as the stake and the reported row-13
+    figure as voting power whenever the two genuinely differ — i.e. when the
+    filer is part of a group. For a lone filer sole-dispositive equals the
+    aggregate and there is no bloc, so voting comes back None and nothing
+    about the common case changes.
+    """
+    rows = _parse_power_rows(text)
+    sole_disp = rows.get("sole_dispositive")
+    shared_vote = rows.get("shared_voting")
+    if sole_disp is None or not shared_vote:
+        return reported_pct, None
+    if sole_disp >= shared_vote:
+        return reported_pct, None          # no group: the filer holds it all
+
+    if sole_disp == 0:
+        # Everything this filer holds, it holds jointly — BRC S.à.r.l. can
+        # dispose of nothing alone; its shares sit in the Stichting it co-owns
+        # with EPS. There is no individual stake to state, and 0.0 would read
+        # as "owns nothing" — the opposite of the truth. Unknown, plus the
+        # bloc it votes in; `unknown_owners` in the ownership summary already
+        # accounts for owners whose share we cannot put a number on.
+        return None, reported_pct
+
+    total = _shares_outstanding(text)
+    if not total:
+        # The bloc is real but the denominator is unknown. Keeping the bloc
+        # figure as the stake is exactly what produced the >100% sums, so
+        # state only what is certain.
+        return None, reported_pct
+    own_pct = round(sole_disp / total * 100, 4)
+    return own_pct, reported_pct
+
+
 def _plain_text(raw: str) -> str:
     """Strip HTML tags and decode entities so regex patterns match cleanly."""
     decoded = html_lib.unescape(raw)
@@ -901,6 +995,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
     results: list[dict] = []
     for inv in enriched:
         pct           = None
+        voting        = None
         is_individual = None
         if inv.get("primary_url"):
             try:
@@ -912,6 +1007,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                         inv["investor_name"], issuer, company_name)
                     continue
                 pct           = _parse_percent_from_text(text)
+                pct, voting    = _own_stake_and_voting(text, pct)
                 is_individual = _parse_reporter_type_from_text(text)
             except httpx.HTTPError:
                 pass
@@ -927,6 +1023,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "file_date":        inv["file_date"],
             "period_of_report": None,
             "stake_percent":    pct,
+            # The bloc a group member votes within — see _own_stake_and_voting.
+            # None for a lone filer, whose stake already is its whole position.
+            "voting_power_pct": voting,
             "ownership_type":   derive_ownership_type(pct, inv["form_type"]),
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
             # Provenance: the filing index page (readable), with the primary doc
