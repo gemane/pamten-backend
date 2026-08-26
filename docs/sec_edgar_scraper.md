@@ -142,6 +142,34 @@ Atom feed) and parse the HTML to find the `(Filed by)` section:
 
 This reliably gives both the investor name and their real CIK.
 
+### The wrong-subject problem (issuer verification)
+
+The filing agent problem has an uglier sibling: **the metadata can name the
+wrong company entirely.** A company's browse feed and submissions JSON list
+filings it is *involved in* — including filings it FILED about a different
+issuer. Worse, the agent can mis-fill the SGML header: Embraer's SC 13D/A about
+**Eve Holding** carried `SUBJECT COMPANY: EMBRAER S.A.` in the header, so the
+index page, the SGML header and the accession prefix all pointed at the wrong
+company. The graph gained "Embraer Aircraft Holding owns 83% of Embraer"; the
+real statement was 83% of Eve Holding. The company also appeared in its own
+executive list as a "Director" via its Form 4s about Eve.
+
+**Solution — verify against the document, not the metadata:**
+
+* **SC 13D/G:** the cover page's `Xxx (Name of Issuer)` line is the only field
+  on the filing that reliably states whose shares are reported. It is parsed
+  from the primary document (fetched for every accepted filing — this also
+  yields stake % and reporter type for all rows, not just the former top five)
+  and compared by significant-token overlap against **every name the CIK has
+  filed under** (current + EDGAR `formerNames` — a rename keeps the CIK, and a
+  scrape of "Meta Platforms" must not throw away a cover saying "Facebook,
+  Inc"). Tokens are diacritic-folded ("Nestlé" ≡ "Nestle") and legal-form noise
+  (`S.A.`, `Inc`, `NV`, …) carries no identity. Only a *positive mismatch*
+  rejects: an unparseable cover keeps the filing, and so does a name list with
+  no identity left after noise removal.
+* **Form 3/4:** exact, no fuzz — the XML states `issuer/issuerCik`, which is
+  compared numerically (padding-proof) to the scraped CIK.
+
 ### Parsing stake percentages
 
 The primary filing document (linked from the index page's document table) contains
