@@ -222,6 +222,33 @@ its filing; and the merged node accumulates every declaring statement id in
 `Entity.source_statement_ids[]` (capped at 1000 — beyond that the edges still
 carry per-relationship provenance).
 
+## Design note: country-aware legal-form stripping (not built)
+
+`normalize_entity_name` (mapper) strips legal-form words from names with one
+global list. Legal forms are jurisdictional — ISO 20275, the GLEIF **ELF code
+list**, is exactly that catalogue — and a global list has a known failure
+shape: a word that is a legal form *somewhere* can be identity *elsewhere*.
+Stripping `SA` from a US company called "SA Recycling" (initials, not société
+anonyme) erases identity rather than noise, and a collision with a genuinely
+different "Recycling …" company becomes a dedup candidate it should never be.
+
+The data to do better is already imported: entities carry `country`, and
+register-backed entities store `legal_form` from the GLEIF LEI-CDF. The right
+build, when it is worth it:
+
+* a small **ELF-code → noise-words mapping per jurisdiction** (derived from the
+  GLEIF ELF list, not hand-curated), so `sa` is noise for FR/BE/CH/LU entities,
+  `ab` for SE, `as` for NO/DK, and none of them for US;
+* fall back to the global list when the entity has no country — never *more*
+  aggressive than today, only more careful where we know better.
+
+Why it is recorded rather than built (decision 2026-08-26): entity dedup keys
+primarily on hard ids (LEI / Companies House / CIK / QID) with names as a
+secondary signal; no false merge of this shape has surfaced; and the SEC-side
+name comparisons (ticker matching, 13D issuer verification) cannot use it at
+all — they compare raw filing strings with no country attached at comparison
+time, and are built to fail safe in the direction over-stripping pushes.
+
 ## Same company, different identifiers — detection only
 
 The current importer keys each entity on its LEI/CH id (`bods._entity_node_id`), so
