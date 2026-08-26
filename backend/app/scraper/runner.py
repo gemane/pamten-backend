@@ -1139,7 +1139,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
                      stake_percent: float | None, source_url: str | None = None,
                      owner_label: str = "Entity", credibility_score: int = 98,
-                     until: str | None = None):
+                     until: str | None = None, voting_power_pct: float | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
@@ -1170,6 +1170,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     ownership_type = coherent_ownership_type(stake_percent, ownership_type)
     record_claim(kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
                  stake_percent=stake_percent, ownership_type=ownership_type,
+                 voting_power_pct=voting_power_pct,
                  since=file_date, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score)
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
@@ -1199,11 +1200,14 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 WHERE r.source_id = $sid {active_only}
                 SET r.last_scraped_at = $now,
                     r.until       = $until,
+                    r.stake_percent    = $stake,
+                    r.voting_power_pct = $vote,
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
                 surl=source_url, sdate=file_date, until=until,
+                stake=stake_percent, vote=voting_power_pct,
             )
             return
         session.run(
@@ -1211,6 +1215,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
             CREATE (a)-[:OWNS {{
                 stake_percent:    $stake,
+                voting_power_pct: $vote,
                 ownership_type:   $otype,
                 since:            $since,
                 until:            $until,
@@ -1222,7 +1227,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             }}]->(b)
             """,
             oid=owner_id, nid=owned_id,
-            stake=stake_percent, otype=ownership_type,
+            stake=stake_percent, vote=voting_power_pct, otype=ownership_type,
             since=file_date, sid=source_id, score=credibility_score,
             surl=source_url, sdate=file_date, now=now, until=until,
         )
@@ -1375,7 +1380,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             owner_id=filer_id, owned_id=subject_id, source_id=source_id,
             ownership_type="minority", file_date=h.get("file_date"),
             stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
-            until=h.get("until"),
+            voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
         )
         written += 1
         if h.get("until"):
@@ -1513,6 +1518,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             ownership_type=filing.get("ownership_type", "unknown"),
             file_date=filing.get("file_date"),
             stake_percent=filing.get("stake_percent"),
+            voting_power_pct=filing.get("voting_power_pct"),
             source_url=filing.get("source_url"),
             owner_label="Person" if is_individual else "Entity",
         )

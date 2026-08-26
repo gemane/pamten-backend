@@ -13,6 +13,8 @@ during development:
 import textwrap
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from app.scraper.sec_edgar import (
     _normalize_sec_name,
     _title_to_role,
@@ -675,3 +677,111 @@ class TestForm34IssuerVerification:
                           return_value=self._xml("GOMES NETO FRANCISCO", "0001355444")):
             execs = sec_edgar.fetch_executives("1355444")
         assert len(execs) == 1
+
+
+class TestBeneficialOwnershipVsRealStake:
+    """AB InBev summed to 109.9% because "beneficial ownership" is about power,
+    not property: every member of a voting group reports the WHOLE group's
+    shares in row 11, so summing row-13 percentages counts the same shares once
+    per member. Altria and the Stichting each reported the same billion shares.
+
+    The cover page's power rows tell the truth. Numbers below are the real ones
+    from Altria's SC 13D/A (Amendment No. 6, September 2024).
+    """
+
+    ALTRIA = ("Sole Voting Power 0 Shared Voting Power 1,020,598,157 "
+              "Sole Dispositive Power 159,121,937 Shared Dispositive Power 0 "
+              "Percent of Class Represented by Amount in Row 11 51.7% "
+              "based on a total of 1,975,913,221 Voting Shares issued and outstanding.")
+    LONE = ("Sole Voting Power 31,554,913 Shared Voting Power 0 "
+            "Sole Dispositive Power 32,416,315 Shared Dispositive Power 0 "
+            "Percent of Class Represented by Amount in Row 11 5.7%")
+    JOINT_ONLY = ("Sole Voting Power 0 Shared Voting Power 1,033,081,237 "
+                  "Sole Dispositive Power 0 Shared Dispositive Power 771,096,582 "
+                  "Percent of Class Represented by Amount in Row 11 52.3% "
+                  "based on a total of 1,975,913,221 shares issued and outstanding.")
+
+    def test_the_power_rows_are_read(self):
+        from app.scraper.sec_edgar import _parse_power_rows
+        rows = _parse_power_rows(self.ALTRIA)
+        assert rows == {"sole_voting": 0, "shared_voting": 1020598157,
+                        "sole_dispositive": 159121937, "shared_dispositive": 0}
+
+    def test_a_missing_row_is_absent_not_zero(self):
+        # "the filing did not say" must not become a genuine 0% stake.
+        from app.scraper.sec_edgar import _parse_power_rows
+        assert "sole_dispositive" not in _parse_power_rows("Sole Voting Power 5,000")
+
+    def test_the_denominator_comes_from_the_filing(self):
+        from app.scraper.sec_edgar import _shares_outstanding
+        assert _shares_outstanding(self.ALTRIA) == 1975913221
+        assert _shares_outstanding("no denominator here") is None
+
+    def test_a_group_member_gets_its_own_stake_and_the_bloc_as_voting(self):
+        # The heart of it: Altria's real holding is 159.1M/1.976B = 8.05%, and
+        # the 51.7% is the Voting Agreement bloc, not Altria's shares.
+        from app.scraper.sec_edgar import _own_stake_and_voting
+        stake, voting = _own_stake_and_voting(self.ALTRIA, 51.7)
+        assert stake == pytest.approx(8.05, abs=0.01)
+        assert voting == 51.7
+
+    def test_a_lone_filer_is_untouched(self):
+        # No group, no bloc: the common case must not change at all.
+        from app.scraper.sec_edgar import _own_stake_and_voting
+        assert _own_stake_and_voting(self.LONE, 5.7) == (5.7, None)
+
+    def test_a_purely_joint_holder_gets_no_invented_stake(self):
+        # BRC can dispose of nothing alone — its shares sit in the Stichting it
+        # co-owns with EPS. 0.0 would read as "owns nothing", the opposite of
+        # the truth, so the stake is unknown and only the bloc is stated.
+        from app.scraper.sec_edgar import _own_stake_and_voting
+        stake, voting = _own_stake_and_voting(self.JOINT_ONLY, 52.3)
+        assert stake is None
+        assert voting == 52.3
+
+    def test_no_denominator_means_no_invented_stake(self):
+        # The bloc is real but unquantifiable per member; keeping the bloc
+        # figure as the stake is exactly what produced 109.9%.
+        from app.scraper.sec_edgar import _own_stake_and_voting
+        text = self.ALTRIA.split("based on")[0]
+        assert _own_stake_and_voting(text, 51.7) == (None, 51.7)
+
+    def test_the_sums_stop_exceeding_the_company(self):
+        # The regression this exists to prevent, in one assertion: the three
+        # real AB InBev filings can no longer add up to more than 100%.
+        from app.scraper.sec_edgar import _own_stake_and_voting
+        bevco = ("Sole Voting Power 0 Shared Voting Power 102,862,718 "
+                 "Sole Dispositive Power 102,862,718 Shared Dispositive Power 0 "
+                 "Percent of Class Represented by Amount in Row 11 5.9%")
+        stakes = [_own_stake_and_voting(t, p)[0] for t, p in
+                  ((self.ALTRIA, 51.7), (self.JOINT_ONLY, 52.3), (bevco, 5.9))]
+        assert sum(s for s in stakes if s is not None) < 100
+
+    def test_the_bloc_reaches_the_scrape_result(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13D/A"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2024-09-27</filing-date>
+            <accession-number>0001193125-24-230346</accession-number>
+          </content></entry>
+        </feed>"""
+        index = ('<span class="companyName">Altria Group, Inc. (Filed by)'
+                 '</span> <a href="x">CIK=0000764180</a>'
+                 '<table><tr><td><a href="/Archives/edgar/data/1/d.htm">doc</a>'
+                 '</td><td>SC 13D/A</td></tr></table>')
+        doc = "Anheuser-Busch InBev SA/NV (Name of Issuer) " + self.ALTRIA
+        pages = {None: atom, "https://x.test/i.htm": index,
+                 "https://www.sec.gov/Archives/edgar/data/1/d.htm": doc}
+
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=lambda url, params=None: pages.get(url, pages[None])), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Anheuser-Busch InBev", "1668717")
+
+        assert len(res) == 1
+        assert res[0]["stake_percent"] == pytest.approx(8.05, abs=0.01)
+        assert res[0]["voting_power_pct"] == 51.7

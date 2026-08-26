@@ -170,6 +170,50 @@ executive list as a "Director" via its Form 4s about Eve.
 * **Form 3/4:** exact, no fuzz — the XML states `issuer/issuerCik`, which is
   compared numerically (padding-proof) to the scraped CIK.
 
+### Beneficial ownership is not a shareholding
+
+SEC "beneficial ownership" is about **power, not property**: you beneficially
+own a share if you can vote it *or* dispose of it. Members of a voting group
+must each report the **whole group's** shares, so summing row-13 percentages
+across the members counts the same shares once per member.
+
+AB InBev summed to **109.9%** that way. Altria's SC 13D/A cover decomposes it:
+
+```
+Sole Voting Power                  0
+Shared Voting Power    1,020,598,157   <- the Voting Agreement bloc
+Sole Dispositive Power   159,121,937   <- what Altria can actually sell
+Shared Dispositive Power           0
+Percent of Class (row 13)     51.7%    <- the bloc, not Altria's stake
+```
+
+The bloc is Altria + Bevco (Santo Domingo family) + Stichting AB InBev (the
+founding families, owned jointly by BRC and EPS). Their real holdings —
+159,121,937 + 102,862,718 + 758,613,502 — sum to exactly the 1,020,598,157 all
+three report.
+
+`_own_stake_and_voting` therefore splits the cover into two numbers:
+
+| cover shape | `stake_percent` | `voting_power_pct` |
+|---|---|---|
+| sole dispositive ≥ shared voting (lone filer) | row 13, unchanged | `None` |
+| 0 < sole dispositive < shared voting (group member) | sole dispositive ÷ shares outstanding | row 13 (the bloc) |
+| sole dispositive = 0 (holds only jointly) | `None` | row 13 |
+| denominator not stated | `None` | row 13 |
+
+Two deliberate `None`s. A purely joint holder like BRC — which can dispose of
+nothing alone, its shares sitting in the Stichting it co-owns with EPS — would
+read as "owns nothing" if given 0.0, the opposite of the truth. And keeping the
+bloc figure as a stake when the denominator is unknown is precisely what
+produced the >100% sums. Unknown is stated as unknown; `unknown_owners` in the
+ownership summary already accounts for it.
+
+**Consequence to expect:** a company controlled through a bloc will show a
+*lower* disclosed total than before, not a higher one — AB InBev goes from an
+impossible 109.9% to a conservative 13.95%, with the 51.7% bloc shown as voting
+power. Attributing the group's holding to its members individually needs the
+group modelled as a group; see the voting-group note in `deduplication.md`.
+
 ### Parsing stake percentages
 
 The primary filing document (linked from the index page's document table) contains
