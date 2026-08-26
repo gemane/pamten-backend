@@ -405,3 +405,273 @@ def test_fetch_insider_holding_none_when_no_cik():
     from app.scraper.sec_edgar import fetch_insider_holding
     with patch("app.scraper.sec_edgar._lookup_person_cik", return_value=None):
         assert fetch_insider_holding("Nobody", "0001364742") is None
+
+
+class TestIssuerVerification:
+    """The wrong-subject bug: EDGAR's index metadata can name the wrong company.
+
+    Embraer's agent filed the Eve Holding 13D/A with EMBRAER S.A. as SUBJECT
+    COMPANY, so the index page, the SGML header and the accession prefix all
+    agreed on the wrong company — and the graph gained "Embraer Aircraft
+    Holding owns 83% of Embraer" (the real statement: 83% of Eve Holding).
+    The cover page of the document is the only field that told the truth, so
+    that is what gets verified now, for every filing an edge would come from.
+
+    Cover snippets below are from the real filings.
+    """
+
+    EVE_COVER = ("SCHEDULE 13D Under the Securities Exchange Act of 1934 "
+                 "(Amendment No. 2)* Eve Holding, Inc. (Name of Issuer) "
+                 "Common Stock (Title of Class of Securities)")
+    ABI_COVER = ("SCHEDULE 13D/A Anheuser-Busch InBev SA/NV (Name of Issuer) "
+                 "Ordinary Shares (Title of Class of Securities)")
+    TXT_COVER = ("SCHEDULE 13G EMBRAER S.A. ------------------------------ "
+                 "(Name of Issuer)")
+
+    def test_extracts_the_issuer_from_the_cover(self):
+        from app.scraper.sec_edgar import _parse_issuer_from_text
+        assert _parse_issuer_from_text(self.EVE_COVER) == "Eve Holding, Inc"
+
+    def test_boilerplate_before_the_name_is_trimmed(self):
+        # The capture reaches back into "…Act of 1934 (Amendment No. 2)*"; only
+        # the company name may survive.
+        from app.scraper.sec_edgar import _parse_issuer_from_text
+        got = _parse_issuer_from_text(self.EVE_COVER)
+        assert "1934" not in got and "Amendment" not in got
+
+    def test_text_format_underline_rules_are_trimmed(self):
+        from app.scraper.sec_edgar import _parse_issuer_from_text
+        assert _parse_issuer_from_text(self.TXT_COVER) == "EMBRAER S.A"
+
+    def test_a_coverless_document_yields_none(self):
+        from app.scraper.sec_edgar import _parse_issuer_from_text
+        assert _parse_issuer_from_text("no cover page here at all") is None
+
+    def test_the_wrong_issuer_is_a_mismatch(self):
+        # The bug, distilled: a filing about Eve Holding must not survive a
+        # scrape of Embraer.
+        from app.scraper.sec_edgar import _issuer_matches, _parse_issuer_from_text
+        issuer = _parse_issuer_from_text(self.EVE_COVER)
+        assert _issuer_matches("Embraer", issuer) is False
+
+    def test_legal_form_variants_agree(self):
+        from app.scraper.sec_edgar import _issuer_matches
+        assert _issuer_matches("Embraer", "EMBRAER S.A")
+        assert _issuer_matches("Anheuser-Busch InBev", "Anheuser-Busch InBev SA/NV")
+        assert _issuer_matches("Alphabet", "Alphabet Inc.")
+
+    def test_diacritics_do_not_reject_a_real_owner(self):
+        # "Nestlé" must tokenize to "nestle", not split on the é into a stump —
+        # otherwise every legitimate filing about an accented-name company is
+        # silently thrown away. This is a loss-of-owners bug, the exact harm
+        # the verification must never cause.
+        from app.scraper.sec_edgar import _issuer_matches
+        assert _issuer_matches("Nestlé", "Nestle S.A.") is True
+        assert _issuer_matches("Nestle", "Nestlé S.A.") is True
+
+    def test_a_renamed_company_keeps_its_old_filings(self):
+        # EDGAR keeps the CIK through a rename; covers from before it carry the
+        # old name. The caller passes current + former names, and agreement with
+        # ANY of them keeps the filing.
+        from app.scraper.sec_edgar import _issuer_matches
+        assert _issuer_matches(["Meta Platforms", "Facebook Inc"],
+                               "Facebook, Inc.") is True
+        assert _issuer_matches(["Meta Platforms", "Facebook Inc"],
+                               "Eve Holding, Inc") is False
+
+    def test_former_names_are_consulted_in_the_scan(self):
+        # End to end: a filing whose cover names the OLD name survives a scrape
+        # under the new one, because fetch_former_names is folded in.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13G"/><content type="text/xml">
+            <filing-href>https://x.test/old-index.htm</filing-href>
+            <filing-date>2021-02-01</filing-date>
+            <accession-number>0001104659-21-000001</accession-number>
+          </content></entry>
+        </feed>"""
+        old_index = ('<span class="companyName">Vanguard Group Inc (Filed by)'
+                     '</span> <a href="x">CIK=0000102909</a>'
+                     '<table><tr><td><a href="/Archives/edgar/data/1/old.htm">doc</a>'
+                     '</td><td>SC 13G</td></tr></table>')
+        old_doc = ("SCHEDULE 13G Facebook, Inc. (Name of Issuer) "
+                   "PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11: 7.0% ")
+        pages = {
+            None: atom,
+            "https://x.test/old-index.htm": old_index,
+            "https://www.sec.gov/Archives/edgar/data/1/old.htm": old_doc,
+        }
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=lambda url, params=None: pages.get(url, pages[None])), \
+             patch.object(sec_edgar, "fetch_former_names",
+                          return_value=["Facebook Inc"]) as former:
+            results = sec_edgar.fetch_ownership_filings("Meta Platforms", "1326801")
+
+        former.assert_called_once_with("1326801")
+        assert [r["investor_name"] for r in results] == ["Vanguard Group Inc"]
+        assert results[0]["stake_percent"] == 7.0
+
+    def test_no_issuer_is_not_a_mismatch(self):
+        # Old text filings may not parse. A positive mismatch is the only safe
+        # ground to throw a filing away.
+        from app.scraper.sec_edgar import _issuer_matches
+        assert _issuer_matches("Embraer", None) is True
+
+    def test_pure_legal_noise_never_decides(self):
+        # A name that normalizes to nothing ("The Company Inc") must not veto —
+        # there is no identity in it to disagree with. Both directions: as the
+        # filing's issuer, and as the scraped company's own name.
+        from app.scraper.sec_edgar import _issuer_matches
+        assert _issuer_matches("Embraer", "The Company Inc.") is True
+        assert _issuer_matches("The Group Inc", "Eve Holding, Inc") is True
+        assert _issuer_matches(["The Group Inc", "Holdings Co"], "Eve Holding, Inc") is True
+
+    def test_a_mismatched_filing_produces_no_investor(self):
+        # End to end through fetch_ownership_filings: the Eve filing arrives via
+        # the Atom feed exactly as the real one did (agent accession prefix, so
+        # the outbound pre-filter does not catch it) and must be dropped at the
+        # document stage; the BlackRock filing survives with its stake parsed.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13D/A"/><content type="text/xml">
+            <filing-href>https://x.test/eve-index.htm</filing-href>
+            <filing-date>2024-09-05</filing-date>
+            <accession-number>0001292814-24-003347</accession-number>
+          </content></entry>
+          <entry><category term="SC 13G"/><content type="text/xml">
+            <filing-href>https://x.test/blk-index.htm</filing-href>
+            <filing-date>2023-02-01</filing-date>
+            <accession-number>0001306550-23-008505</accession-number>
+          </content></entry>
+          <entry><category term="SC 13D"/><content type="text/xml">
+            <filing-href>https://x.test/self-index.htm</filing-href>
+            <filing-date>2025-01-01</filing-date>
+            <accession-number>0001292814-25-000001</accession-number>
+          </content></entry>
+        </feed>"""
+        eve_index = ('<span class="companyName">Embraer Aircraft Holding, Inc. (Filed by)'
+                     '</span> <a href="x">CIK=0001926968</a>'
+                     '<table><tr><td><a href="/Archives/edgar/data/1/eve.htm">doc</a>'
+                     '</td><td>SC 13D/A</td></tr></table>')
+        blk_index = ('<span class="companyName">BlackRock Inc. (Filed by)'
+                     '</span> <a href="x">CIK=0001364742</a>'
+                     '<table><tr><td><a href="/Archives/edgar/data/1/blk.htm">doc</a>'
+                     '</td><td>SC 13G</td></tr></table>')
+        # The company filing about itself, through an agent: the accession
+        # prefix is the agent's CIK so the pre-filter misses it, and its cover
+        # names the company itself so the issuer check passes it. Only the
+        # investor-CIK guard stands between this and "Embraer owns Embraer" —
+        # and that guard compares zero-padded CIKs against an UNPADDED
+        # company_cik, which never matched until it was normalised.
+        self_index = ('<span class="companyName">EMBRAER S.A. (Filed by)'
+                      '</span> <a href="x">CIK=0001355444</a>'
+                      '<table><tr><td><a href="/Archives/edgar/data/1/self.htm">doc</a>'
+                      '</td><td>SC 13D</td></tr></table>')
+        blk_doc = (self.TXT_COVER +
+                   " PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11: 5.7% "
+                   " TYPE OF REPORTING PERSON  CO ")
+
+        pages = {
+            None: atom,   # the browse call passes params, url is BROWSE_URL
+            "https://x.test/eve-index.htm": eve_index,
+            "https://x.test/blk-index.htm": blk_index,
+            "https://x.test/self-index.htm": self_index,
+            "https://www.sec.gov/Archives/edgar/data/1/self.htm":
+                self.TXT_COVER + " PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11: 34.6% ",
+            "https://www.sec.gov/Archives/edgar/data/1/eve.htm":
+                self.EVE_COVER + " PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11: 83.0% ",
+            "https://www.sec.gov/Archives/edgar/data/1/blk.htm": blk_doc,
+        }
+
+        def fake_get_text(url, params=None):
+            return pages[url if url in pages else None]
+
+        with patch.object(sec_edgar, "_get_text", side_effect=fake_get_text):
+            results = sec_edgar.fetch_ownership_filings("Embraer", "1355444")
+
+        names = [r["investor_name"] for r in results]
+        assert "Embraer Aircraft Holding, Inc." not in str(names), \
+            "the Eve Holding filing leaked through as an owner of Embraer"
+        assert names == ["Blackrock Inc."], \
+            "the company's own agent-filed 13D leaked through as an owner of itself"
+        assert results[0]["stake_percent"] == 5.7
+        assert results[0]["is_individual"] is False
+
+
+class TestForm34IssuerVerification:
+    """The wrong-subject bug's second door: a company's submissions feed lists
+    Form 3/4s it FILED about other issuers, and parsing them put "EMBRAER S.A."
+    into Embraer's executive list as a Director — isDirector meant director of
+    Eve Holding. The XML names the issuer's CIK exactly, so unlike the 13D
+    cover there is nothing fuzzy about the check."""
+
+    def _xml(self, owner: str, issuer_cik: str | None) -> str:
+        issuer = f"<issuer><issuerCik>{issuer_cik}</issuerCik></issuer>" if issuer_cik else ""
+        return (f'<?xml version="1.0"?><ownershipDocument>{issuer}'
+                f'<reportingOwner><reportingOwnerId>'
+                f'<rptOwnerName>{owner}</rptOwnerName></reportingOwnerId>'
+                f'<reportingOwnerRelationship><isDirector>1</isDirector>'
+                f'</reportingOwnerRelationship></reportingOwner>'
+                f'</ownershipDocument>')
+
+    def test_the_parser_reports_the_issuer(self):
+        out = _parse_form34_xml(self._xml("EMBRAER S.A.", "0001823652"))
+        assert out["issuer_cik"] == "0001823652"
+
+    def test_a_form_about_another_issuer_is_dropped(self):
+        # Embraer (CIK 1355444) scanning its feed must not keep a Form 4 whose
+        # issuer is Eve Holding (1823652), whoever the reporting owner is.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+
+        submissions = {"filings": {"recent": {
+            "form":            ["4", "4"],
+            "accessionNumber": ["0001292814-24-000001", "0000000001-24-000002"],
+            "primaryDocument": ["eve.xml", "own.xml"],
+            "filingDate":      ["2024-09-05", "2024-09-06"],
+        }}}
+        docs = {
+            "eve.xml": self._xml("EMBRAER S.A.", "0001823652"),      # about Eve
+            "own.xml": self._xml("GOMES NETO FRANCISCO", "1355444"),  # about Embraer
+        }
+
+        def fake_get(url, params=None):
+            return submissions
+
+        def fake_get_text(url, params=None):
+            return docs[url.rsplit("/", 1)[-1]]
+
+        with patch.object(sec_edgar, "_get", side_effect=fake_get), \
+             patch.object(sec_edgar, "_get_text", side_effect=fake_get_text):
+            execs = sec_edgar.fetch_executives("1355444")
+
+        names = [e["name"] for e in execs]
+        assert "Embraer S.A." not in str(names) and "EMBRAER" not in str(names), \
+            "the Eve Holding Form 4 leaked the company into its own executive list"
+        assert len(execs) == 1 and "Francisco" in execs[0]["name"]
+
+    def test_a_form_with_no_issuer_cik_is_kept(self):
+        # Absent metadata is not a mismatch — same principle as the 13D check.
+        out = _parse_form34_xml(self._xml("SOME PERSON", None))
+        assert out is not None and out["issuer_cik"] is None
+
+    def test_padding_does_not_defeat_the_comparison(self):
+        # issuerCik may or may not be zero-padded; 1355444 == 0001355444.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+
+        submissions = {"filings": {"recent": {
+            "form": ["4"], "accessionNumber": ["0000000001-24-000003"],
+            "primaryDocument": ["p.xml"], "filingDate": ["2024-01-01"],
+        }}}
+        with patch.object(sec_edgar, "_get", return_value=submissions), \
+             patch.object(sec_edgar, "_get_text",
+                          return_value=self._xml("GOMES NETO FRANCISCO", "0001355444")):
+            execs = sec_edgar.fetch_executives("1355444")
+        assert len(execs) == 1

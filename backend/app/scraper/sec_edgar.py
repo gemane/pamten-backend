@@ -47,6 +47,7 @@ import re
 import time
 import threading
 import html as html_lib
+import unicodedata
 import logging
 import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
@@ -76,7 +77,6 @@ HOLDINGS_MAX_ARCHIVE_PAGES = 4
 
 _HOLDING_FORMS = ("SCHEDULE 13G", "SCHEDULE 13D", "SC 13G", "SC 13D")
 
-MAX_PERCENT_FETCH = 5     # max investors to fetch actual stake % for
 
 SEARCH_URL      = "https://efts.sec.gov/LATEST/search-index"
 BROWSE_URL      = "https://www.sec.gov/cgi-bin/browse-edgar"
@@ -372,9 +372,19 @@ def _get_tickers() -> dict:
     return _tickers_cache
 
 
+#: Legal-form and filler words that carry no company identity. The single
+#: source for BOTH name-comparison helpers in this module: `_LEGAL_SUFFIXES`
+#: (ticker matching) and `_significant_tokens` (issuer verification) — two
+#: shapes of the same knowledge, which drifted apart when they were two lists.
+_LEGAL_FORM_WORDS = (
+    "inc", "incorporated", "corp", "corporation", "co", "company", "companies",
+    "ltd", "limited", "llc", "lp", "llp", "plc", "sa", "nv", "se", "ag", "ab",
+    "as", "asa", "spa", "gmbh", "bv", "kk", "sarl", "srl",
+    "group", "holding", "holdings",
+)
+
 _LEGAL_SUFFIXES = re.compile(
-    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp"
-    r"|group|holding|holdings)\b",
+    r"\b(" + "|".join(_LEGAL_FORM_WORDS) + r")\b",
     re.IGNORECASE,
 )
 
@@ -635,6 +645,82 @@ def _parse_percent_from_text(text: str) -> float | None:
     return None
 
 
+def _parse_issuer_from_text(text: str) -> str | None:
+    """Extract the issuer's name from a SC 13D/13G cover page.
+
+    Every 13D/G cover opens with the company whose shares are being reported:
+    "Eve Holding, Inc. (Name of Issuer)". This is the only field on the whole
+    filing that reliably says WHO the stake is in — the EDGAR index metadata
+    does not: Embraer's agent filed its Eve Holding 13D/A with EMBRAER S.A. in
+    the SUBJECT COMPANY header, so both the index page and the SGML header
+    named the wrong company, and only the cover page told the truth.
+    """
+    plain = _plain_text(text)
+    m = re.search(r'([^()]{2,100}?)\s*\(\s*Name\s+of\s+Issuer\s*\)', plain,
+                  re.IGNORECASE)
+    if not m:
+        return None
+    name = m.group(1).strip()
+    # The capture is greedy backwards into the boilerplate; keep the tail after
+    # the last sentence-ish break so "…Act of 1934 Eve Holding, Inc." trims to
+    # the company name alone.
+    name = re.split(r'(?:\*|\d{4}|No\.\s*\d*\)?|schedule\s+13[dg](?:/a)?)\s+',
+                    name, flags=re.IGNORECASE)[-1].strip(' .*')
+    # Text-format filings underline the name with a rule of dashes; drop any
+    # trailing run of punctuation ("EMBRAER S.A. ------------" -> "EMBRAER S.A.").
+    name = re.sub(r'[\s\-_=~.]{3,}$', '', name).strip()
+    return name or None
+
+
+#: The issuer check filters tokens rather than substituting substrings, and
+#: additionally ignores pure filler and depositary-receipt words that the
+#: ticker matcher has no reason to strip.
+_NAME_NOISE = frozenset(_LEGAL_FORM_WORDS) | {"the", "of", "and", "adr", "ads"}
+
+
+def _significant_tokens(name: str) -> set:
+    # Fold diacritics first: "Nestlé" must tokenize to "nestle", not split on
+    # the é into a stump that matches nothing — that would silently reject
+    # every legitimate filing about an accented-name company.
+    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    tokens = re.split(r"[^a-z0-9]+", folded.lower())
+    return {t for t in tokens if t and t not in _NAME_NOISE}
+
+
+def _issuer_matches(company_names, issuer_name: str | None) -> bool:
+    """Does the filing's cover-page issuer plausibly mean the scraped company?
+
+    Deliberately tolerant: it exists to catch a filing about a DIFFERENT company
+    ("Eve Holding" vs "Embraer"), not to police spelling. Sharing one
+    significant token with ANY known name of the company is agreement —
+    "Anheuser-Busch InBev SA/NV" vs "Anheuser-Busch InBev", "EMBRAER S.A." vs
+    "Embraer". `company_names` may be one name or an iterable of them: the
+    caller passes the current name plus EDGAR's formerNames, because a rename
+    keeps the CIK and the older covers carry the old name — a scrape of "Meta
+    Platforms" must not throw away a 13G whose cover says "Facebook, Inc".
+
+    No issuer extracted (None) is also agreement: a positive mismatch is the
+    only safe ground to throw a filing away, and old text-format filings may
+    not parse.
+    """
+    if not issuer_name:
+        return True
+    if isinstance(company_names, str):
+        company_names = [company_names]
+    theirs = _significant_tokens(issuer_name)
+    if not theirs:
+        return True
+    seen_any = False
+    for name in company_names:
+        ours = _significant_tokens(name)
+        if not ours:
+            continue
+        seen_any = True
+        if ours & theirs:
+            return True
+    return not seen_any
+
+
 def _parse_reporter_type_from_text(text: str) -> bool | None:
     """
     Extract Item 8 'Type of Reporting Person' from a SC 13D/13G filing.
@@ -772,8 +858,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
 
     # Fetch filing index pages; deduplicate by investor CIK (Atom is most-recent-first)
     seen_investor_ciks: set[str] = set()
-    if company_cik:
-        seen_investor_ciks.add(company_cik)   # skip the company's own filings
+    # Skip the company filing about itself — compared zero-padded, because the
+    # investor CIKs below are zfill(10) and an unpadded entry never matched.
+    seen_investor_ciks.add(norm_company_cik)
     enriched: list[dict] = []
 
     for raw in raw_entries:
@@ -794,17 +881,36 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "index_url":     raw["index_url"],  # the readable filing index page
         })
 
-    # Fetch stake % and reporter type from the primary filing document.
-    # We only fetch the document for the top N investors to limit requests;
-    # for the rest, is_individual stays None and the runner falls back to
-    # the name heuristic.
+    # Fetch the primary document for EVERY accepted filing — it is the only
+    # place the issuer's identity can be trusted. The index metadata lies when
+    # an agent mis-files the header: Embraer's Eve Holding 13D/A carried
+    # EMBRAER S.A. as SUBJECT COMPANY, sailed through every metadata check, and
+    # wrote "Embraer Aircraft Holding owns 83% of Embraer" into the graph (the
+    # real statement was 83% of Eve Holding). Only the cover page said Eve.
+    #
+    # This used to fetch documents for just the top MAX_PERCENT_FETCH investors
+    # as a request economy; verification ends that economy, and stake % and
+    # reporter type now come along for free on every row.
+    # Every name this CIK has filed under: renames keep the CIK, and covers
+    # from before a rename carry the old name. One request, only spent when
+    # there are filings to verify.
+    known_names: list[str] = [company_name]
+    if enriched:
+        known_names += fetch_former_names(company_cik)
+
     results: list[dict] = []
-    for i, inv in enumerate(enriched):
+    for inv in enriched:
         pct           = None
         is_individual = None
-        if i < MAX_PERCENT_FETCH and inv.get("primary_url"):
+        if inv.get("primary_url"):
             try:
                 text          = _get_text(inv["primary_url"])
+                issuer        = _parse_issuer_from_text(text)
+                if not _issuer_matches(known_names, issuer):
+                    log.info(
+                        "SEC EDGAR: dropping filing by %r — its issuer is %r, not %r",
+                        inv["investor_name"], issuer, company_name)
+                    continue
                 pct           = _parse_percent_from_text(text)
                 is_individual = _parse_reporter_type_from_text(text)
             except httpx.HTTPError:
@@ -841,10 +947,18 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
     None otherwise.
 
     Form 3/4 XML schema (key fields):
+      issuer/issuerCik                                   — whose shares (verified by caller)
       reportingOwner/reportingOwnerId/rptOwnerName       — person's name
       reportingOwner/reportingOwnerRelationship/isOfficer   — "1" or "0"
       reportingOwner/reportingOwnerRelationship/isDirector  — "1" or "0"
       reportingOwner/reportingOwnerRelationship/officerTitle — e.g. "Chief Executive Officer"
+
+    The result carries `issuer_cik` so the caller can check the form is about
+    the company being scraped. A company's submissions feed also lists forms it
+    FILED about other issuers — Embraer's Form 4s about Eve Holding put
+    "EMBRAER S.A." into Embraer's own executive list as a "Director", because
+    isDirector meant director OF EVE. Unlike the 13D cover page this is exact:
+    the XML states the issuer's CIK outright.
     """
     try:
         root = ET.fromstring(xml_text)
@@ -854,6 +968,8 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
     owner = root.find(".//reportingOwner")
     if owner is None:
         return None
+
+    issuer_cik = (root.findtext(".//issuer/issuerCik") or "").strip() or None
 
     name_elem = owner.find(".//rptOwnerName")
     if name_elem is None or not (name_elem.text or "").strip():
@@ -883,7 +999,8 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
             continue
     shares_owned = max(share_vals) if share_vals else None
 
-    return {"name": name, "title": officer_title, "role": role, "shares_owned": shares_owned}
+    return {"name": name, "title": officer_title, "role": role,
+            "shares_owned": shares_owned, "issuer_cik": issuer_cik}
 
 
 def fetch_executives(cik: str) -> list:
@@ -943,6 +1060,14 @@ def fetch_executives(cik: str) -> list:
         scanned += 1
 
         result = _parse_form34_xml(xml_text)
+        # A form about a different issuer is the company filing about a stake it
+        # holds elsewhere — its reporting "owner" is usually the company itself,
+        # and writing it here made Embraer a Director of Embraer.
+        if result and result.get("issuer_cik") and \
+                _cik_int(result["issuer_cik"]) != issuer_cik_int:
+            log.info("SEC EDGAR: dropping Form 3/4 by %r — issuer CIK %s is not %s",
+                     result["name"], result["issuer_cik"], cik)
+            continue
         if result and result["name"] and result["name"] not in seen_names:
             seen_names.add(result["name"])
             result["source_url"]  = _filing_index_url(cik, accessions[i]) or None
