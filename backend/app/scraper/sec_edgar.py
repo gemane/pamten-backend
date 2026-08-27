@@ -1066,7 +1066,11 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             share_class   = xml.get("class_title")
             is_individual = (person["type_code"] in _INDIVIDUAL_CODES
                              if person.get("type_code") else None)
-            group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml"}
+            group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml",
+                              # Item 8's code: IN means a human being. Stated by
+                              # the filer, so the writer need not guess from the
+                              # shape of the name.
+                              "type_code": o.get("type_code")}
                              for o in xml["persons"] if o is not person]
         elif inv.get("primary_url"):
             try:
@@ -1585,7 +1589,9 @@ def _sgml_group_members(subject_cik: str, accession: str) -> list[dict]:
     # a single match swallows the rest of the header as one enormous "name".
     text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
     names = re.findall(r"GROUP MEMBERS:[ \t]*([^\r\n]+)", text)
-    return [{"name": n.strip(), "cik": None, "source": "sgml"} for n in names if n.strip()]
+    # No type code in the header — the writer falls back to a name heuristic here.
+    return [{"name": n.strip(), "cik": None, "source": "sgml", "type_code": None}
+            for n in names if n.strip()]
 
 
 def _is_structured(form_type: str) -> bool:

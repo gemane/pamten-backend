@@ -216,7 +216,12 @@ def build_export() -> dict:
              "founded": r.get("founded"), "wikidata_id": r.get("wd"), "sec_cik": r.get("cik"),
              "lei_id": r.get("lei"), "companies_house_id": r.get("ch")}
             for r in session.run(
-                "MATCH (e:Entity) RETURN e.name AS name, e.type AS type, e.country AS country, "
+                # Voting groups are not exported: they carry no identifier, so a
+                # peer importing one would resolve it by normalised name onto
+                # whatever it already has under that name. They are also local
+                # derivations from SEC filings, which any peer can derive itself.
+                "MATCH (e:Entity) WHERE e.type <> 'voting_group' "
+                "RETURN e.name AS name, e.type AS type, e.country AS country, "
                 "e.founded AS founded, e.wikidata_id AS wd, e.sec_cik AS cik, "
                 "e.lei_id AS lei, e.companies_house_id AS ch")
         ]

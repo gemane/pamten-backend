@@ -112,12 +112,20 @@ def _corroboration() -> dict:
     }
 
 
+#: Not a legal organisation, so it cannot appear in a ratio about registration.
+#: A voting group is a contract between parties; it will never hold an LEI, and
+#: counting it would make the graph look permanently less identified than it is.
+_NOT_A_LEGAL_ENTITY = "type <> 'voting_group'"
+
+
 def _identity() -> dict:
     """Official ids versus Wikidata-only — the breadth/quality ratio."""
-    total = run_sql("SELECT count(*) AS n FROM Entity")[0]["n"]
-    official = run_sql("""SELECT count(*) AS n FROM Entity WHERE lei_id IS NOT NULL
-                          OR sec_cik IS NOT NULL OR companies_house_id IS NOT NULL""")[0]["n"]
-    wd_only = run_sql("""SELECT count(*) AS n FROM Entity WHERE wikidata_id IS NOT NULL
+    total = run_sql(f"SELECT count(*) AS n FROM Entity WHERE {_NOT_A_LEGAL_ENTITY}")[0]["n"]
+    official = run_sql(f"""SELECT count(*) AS n FROM Entity WHERE {_NOT_A_LEGAL_ENTITY}
+                          AND (lei_id IS NOT NULL
+                          OR sec_cik IS NOT NULL OR companies_house_id IS NOT NULL)""")[0]["n"]
+    wd_only = run_sql(f"""SELECT count(*) AS n FROM Entity WHERE {_NOT_A_LEGAL_ENTITY}
+                         AND wikidata_id IS NOT NULL
                          AND lei_id IS NULL AND sec_cik IS NULL
                          AND companies_house_id IS NULL""")[0]["n"]
     return {

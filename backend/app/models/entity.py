@@ -12,6 +12,9 @@ class EntityType(str, Enum):
     fund = "fund"
     nonprofit = "nonprofit"
     person = "person"
+    # Not a legal organisation: a set of parties acting together under a
+    # shareholders' or voting agreement, as reported on SEC Schedule 13D.
+    voting_group = "voting_group"
 
 
 class EntityCreate(BaseModel):

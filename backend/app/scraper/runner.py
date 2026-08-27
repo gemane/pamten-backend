@@ -14,6 +14,7 @@ All entry points:
 
 import os
 import uuid
+import unicodedata
 import logging
 import zipfile
 from contextlib import ExitStack
@@ -1135,6 +1136,176 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
         return _record_touched(person_id)
 
 
+#: A filing group is not a legal person: it holds no LEI, has no country, and
+#: cannot be geocoded or deduplicated like a company. Everything that assumes an
+#: Entity is a real organisation filters this type out — see `app/quality.py`
+#: and the country/dedup passes in `app/scraper/maintenance.py`.
+VOTING_GROUP_TYPE = "voting_group"
+
+#: Item 8 codes meaning a human being, mirrored from sec_edgar so the writer can
+#: classify a group member from what the filer stated rather than from its name.
+_INDIVIDUAL_CODES = {"IN"}
+
+
+def _is_control_filing(form_type: str | None) -> bool:
+    """Schedule 13D — filed with control intent — as opposed to a passive 13G.
+
+    The distinction decides whether a set of co-filers is a governance bloc or
+    an asset manager's internal plumbing. Verified on Embraer: Morgan Stanley and
+    Brandes file 13G there while AB InBev's families file 13D.
+    """
+    return "13D" in (form_type or "").upper()
+
+#: Two rosters are the same group when they share this much. Overlap, not
+#: equality, because both extremes are wrong: keying on the filer breaks as soon
+#: as a different member submits the next amendment, and keying on the exact set
+#: orphans the node the moment one party joins or leaves a continuing agreement.
+_GROUP_MATCH_MIN_SHARED = 2
+_GROUP_MATCH_MIN_RATIO = 0.5
+
+
+def _member_key(name: str, cik: str | None) -> str:
+    """Both identifiers for one party, encoded "cik|name".
+
+    EDGAR gives a CIK only to members that are registrants — of AB InBev's nine
+    reporting persons exactly one is — and pre-2024 filings carry names alone.
+    Keeping both, and matching on either, is what lets a member that has a CIK in
+    a post-2024 XML filing still match itself in an older SGML amendment.
+
+    Encoded as a string rather than kept as a dict because the roster is stored
+    on the node, and ArcadeDB rejects a property whose list contains maps
+    ("InvalidPropertyType - Property values can not contain map values"). A list
+    of scalars is fine — `interest_types` on PSC edges is the precedent.
+    """
+    from app.scraper.sec_edgar import _cik_int
+    # Fold diacritics before normalising. EDGAR writes these names in ASCII —
+    # "Eugenie Patri Sebastien S.A.", "BRC S.a R.L." — while every other source
+    # accents them, and `normalize_entity_name` preserves accents, so the same
+    # party would otherwise key two different ways ('brc rl' vs 'brc sà rl').
+    # Folded here rather than in the shared normaliser: that one drives entity
+    # dedup graph-wide and changing it is a separate decision.
+    folded = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
+    norm = normalize_entity_name(folded) or folded.strip().lower()
+    return f"{_cik_int(cik).zfill(10) if cik else ''}|{norm}"
+
+
+def _split_member_key(key: str) -> tuple:
+    cik, _, norm = (key or "").partition("|")
+    return (cik or None), norm
+
+
+def _same_member(a: str, b: str) -> bool:
+    """One party seen twice. Either identifier suffices, because which one a
+    filing carries depends on the era it was filed in."""
+    a_cik, a_name = _split_member_key(a)
+    b_cik, b_name = _split_member_key(b)
+    if a_cik and b_cik:
+        return a_cik == b_cik
+    return bool(a_name) and a_name == b_name
+
+
+def _roster_overlap(a: list, b: list) -> int:
+    """How many parties two rosters share."""
+    unmatched = list(b)
+    shared = 0
+    for m in a:
+        for i, other in enumerate(unmatched):
+            if _same_member(m, other):
+                shared += 1
+                unmatched.pop(i)
+                break
+    return shared
+
+
+def _rosters_match(a: list, b: list) -> bool:
+    if not a or not b:
+        return False
+    shared = _roster_overlap(a, b)
+    smaller = min(len(a), len(b))
+    return shared >= _GROUP_MATCH_MIN_SHARED and shared / smaller >= _GROUP_MATCH_MIN_RATIO
+
+
+def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
+                         source_id: str, filer_name: str) -> str:
+    """The node standing for a 13D filing group, found by its roster.
+
+    Deliberately not routed through `_upsert_entity_by_name`: that resolves on
+    `name_normalized`, so two groups whose names normalise alike would silently
+    become one. Identity here is the set of parties, matched by overlap against
+    the groups already pointing at this same subject.
+    """
+    now = _now_iso()
+    with db.get_session() as session:
+        existing = list(session.run(
+            f"""MATCH (g:Entity {{type: '{VOTING_GROUP_TYPE}'}})-[:OWNS]->(s:Entity {{id: $sid}})
+                RETURN g.id AS id, g.member_keys AS roster""",
+            sid=subject_id))
+
+        best, best_shared = None, 0
+        for row in existing:
+            other = row["roster"] or []
+            if _rosters_match(roster, other):
+                shared = _roster_overlap(roster, other)
+                if shared > best_shared:
+                    best, best_shared = row["id"], shared
+
+        if best:
+            # Same agreement, new roster: parties join and leave, and the node
+            # should follow rather than fork.
+            session.run("""MATCH (g:Entity {id: $id})
+                           SET g.member_keys = $roster, g.last_scraped_at = $now""",
+                        id=best, roster=roster, now=now)
+            return best
+
+        name = f"Voting group — {subject_name}"
+        if existing:
+            # A second bloc over one company: AB InBev has two overlapping
+            # agreements, so the name has to say which.
+            name = f"{name} ({filer_name})"
+        gid = str(uuid.uuid4())
+        session.run(
+            f"""CREATE (g:Entity {{
+                    id: $id, name: $name, name_normalized: $norm, search_text: $name,
+                    type: '{VOTING_GROUP_TYPE}', member_keys: $roster,
+                    source_id: $src, verified: false, last_scraped_at: $now,
+                    description: $desc
+                }})""",
+            id=gid, name=name, norm=normalize_entity_name(name) or name.lower(),
+            roster=roster, src=source_id, now=now,
+            desc=(f"Parties acting together under a shareholders' or voting agreement "
+                  f"reported to the SEC on Schedule 13D concerning {subject_name}."))
+        return gid
+
+
+def _upsert_group_membership(member_id: str, group_id: str, member_label: str,
+                             source_id: str) -> None:
+    """A party belongs to a filing group. NOT ownership — the same shape and the
+    same reasoning as `_upsert_affiliate` below, which already models 13F fund
+    groups as `RELATED_TO` rather than inventing an ownership edge."""
+    with db.get_session() as session:
+        session.run(
+            f"""MATCH (m:{member_label} {{id: $mid}}), (g:Entity {{id: $gid}})
+                MERGE (m)-[r:RELATED_TO {{relation: 'group_member'}}]->(g)
+                SET r.source_id = $src, r.last_scraped_at = $now""",
+            mid=member_id, gid=group_id, src=source_id, now=_now_iso())
+
+
+def _retire_superseded_bloc_edge(filer_id: str, subject_id: str, source_id: str,
+                                 filer_label: str) -> None:
+    """Delete the filer's own bloc edge, now that the group carries it.
+
+    Only an edge with no stake: the bloc rows are exactly the ones written with
+    `stake_percent` null (a group member can rarely dispose of anything alone),
+    while a member that also reports a real holding of its own keeps it.
+    """
+    with db.get_session() as session:
+        session.run(
+            f"""MATCH (a:{filer_label} {{id: $fid}})-[r:OWNS]->(b:Entity {{id: $sid}})
+                WHERE r.source_id = $src AND r.stake_percent IS NULL
+                DELETE r""",
+            fid=filer_id, sid=subject_id, src=source_id)
+
+
 def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
                      stake_percent: float | None, source_url: str | None = None,
@@ -1514,6 +1685,60 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 source_id=source_id,
             )
             scraped.append({"type": "entity", "name": investor_name, "role": "investor"})
+
+        # A group of parties acting together, filed on one schedule. The bloc
+        # belongs to the group, not to whoever submitted the form — hanging
+        # 52.3% off BRC said BRC votes it, when in truth nine parties do and BRC
+        # merely filed. Only Schedule 13D: a 13G reporting "shared voting power"
+        # is an asset manager aggregating across its own subsidiaries (State
+        # Street, Morgan Stanley), which is not a governance bloc at all.
+        members = filing.get("group_members") or []
+        if members and _is_control_filing(filing.get("form_type")):
+            roster = [_member_key(investor_name, filing.get("investor_cik"))]
+            roster += [_member_key(m["name"], m.get("cik")) for m in members]
+            group_id = _upsert_voting_group(
+                subject_id=target_id, subject_name=data["name"], roster=roster,
+                source_id=source_id, filer_name=investor_name)
+
+            # The filer joins as a member like everybody else; it gets no edge
+            # of its own, or the company would list both it and the group.
+            _upsert_group_membership(investor_node_id, group_id,
+                                     "Person" if is_individual else "Entity", source_id)
+            for m in members:
+                m_individual = (m.get("type_code") in _INDIVIDUAL_CODES
+                                if m.get("type_code") else is_person_name(m["name"]))
+                if m_individual:
+                    mid = _upsert_person_by_name(m["name"], source_id=source_id)
+                    scraped.append({"type": "person", "name": m["name"], "role": "group member"})
+                else:
+                    mid = _upsert_entity_by_name(name=m["name"], entity_type="company",
+                                                 cik=m.get("cik"), source_id=source_id)
+                    scraped.append({"type": "entity", "name": m["name"], "role": "group member"})
+                _upsert_group_membership(mid, group_id,
+                                         "Person" if m_individual else "Entity", source_id)
+
+            _upsert_owns_sec(
+                owner_id=group_id, owned_id=target_id, source_id=source_id,
+                ownership_type=filing.get("ownership_type", "unknown"),
+                file_date=filing.get("file_date"),
+                # No stake: the group's members hold the shares individually, and
+                # a bloc percentage summed with theirs would exceed the company.
+                stake_percent=None,
+                voting_power_pct=filing.get("voting_power_pct") or filing.get("stake_percent"),
+                share_class=filing.get("share_class"),
+                source_url=filing.get("source_url"),
+            )
+            # Retire the edge this filing used to produce. Before groups existed
+            # the bloc was written straight onto the filer, and that row is not
+            # merely stale — it is the same filing, now represented by the group,
+            # so leaving it would show the company both its group and BRC each
+            # voting 52.3%. Scoped hard: same source, same filer, no stake of its
+            # own, so a member's genuine holding is untouched.
+            _retire_superseded_bloc_edge(investor_node_id, target_id, source_id,
+                                         "Person" if is_individual else "Entity")
+            log.info("SEC EDGAR: wrote voting group of %d over %r (filed by %r)",
+                     len(roster), data["name"], investor_name)
+            continue
 
         _upsert_owns_sec(
             owner_id=investor_node_id,
