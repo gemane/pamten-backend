@@ -1139,7 +1139,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
                      stake_percent: float | None, source_url: str | None = None,
                      owner_label: str = "Entity", credibility_score: int = 98,
-                     until: str | None = None, voting_power_pct: float | None = None):
+                     until: str | None = None, voting_power_pct: float | None = None,
+                     share_class: str | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
@@ -1202,12 +1203,13 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.until       = $until,
                     r.stake_percent    = $stake,
                     r.voting_power_pct = $vote,
+                    r.share_class      = $sclass,
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
                 surl=source_url, sdate=file_date, until=until,
-                stake=stake_percent, vote=voting_power_pct,
+                stake=stake_percent, vote=voting_power_pct, sclass=share_class,
             )
             return
         session.run(
@@ -1216,6 +1218,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             CREATE (a)-[:OWNS {{
                 stake_percent:    $stake,
                 voting_power_pct: $vote,
+                share_class:      $sclass,
                 ownership_type:   $otype,
                 since:            $since,
                 until:            $until,
@@ -1227,7 +1230,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             }}]->(b)
             """,
             oid=owner_id, nid=owned_id,
-            stake=stake_percent, vote=voting_power_pct, otype=ownership_type,
+            stake=stake_percent, vote=voting_power_pct, sclass=share_class,
+            otype=ownership_type,
             since=file_date, sid=source_id, score=credibility_score,
             surl=source_url, sdate=file_date, now=now, until=until,
         )
@@ -1519,6 +1523,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             file_date=filing.get("file_date"),
             stake_percent=filing.get("stake_percent"),
             voting_power_pct=filing.get("voting_power_pct"),
+            share_class=filing.get("share_class"),
             source_url=filing.get("source_url"),
             owner_label="Person" if is_individual else "Entity",
         )

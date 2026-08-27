@@ -861,6 +861,14 @@ class TestStructuredFilings:
         d = _parse_13dg_xml(_fixture("13ga_wellington.xml"))
         assert 5.36 not in [p["percent"] for p in d["persons"]]
 
+    def test_the_security_the_percentages_measure_is_captured(self):
+        # Without this, 22.3% of one share class and 9.7% of another look
+        # addable — which is how Grupo Televisa reached 115.9% of itself.
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        assert _parse_13dg_xml(_fixture("13g_vanguard.xml"))["class_title"] == "Common Stock"
+        assert _parse_13dg_xml(_fixture("13d_tactical.xml"))["class_title"] == \
+            "Common Shares, par value $0.0001 per share"
+
     def test_decimal_and_integer_share_counts_both_parse(self):
         from app.scraper.sec_edgar import _parse_13dg_xml
         d13d = _parse_13dg_xml(_fixture("13d_tactical.xml"))   # "1598232.00"
@@ -881,6 +889,26 @@ class TestStructuredFilings:
         from app.scraper.sec_edgar import _parse_13dg_xml
         assert _parse_13dg_xml("<html>404</html>") is None
         assert _parse_13dg_xml("not xml at all <<<") is None
+
+
+class TestClassTitleFromCoverPages:
+    def test_the_title_is_read_off_a_cover(self):
+        from app.scraper.sec_edgar import _parse_class_title_from_text
+        assert _parse_class_title_from_text(
+            "Anheuser-Busch InBev SA/NV (Name of Issuer) "
+            "Ordinary Shares, without nominal value (Title of Class of Securities)"
+        ) == "Ordinary Shares, without nominal value"
+
+    def test_the_issuer_line_is_not_swallowed_into_it(self):
+        from app.scraper.sec_edgar import _parse_class_title_from_text
+        got = _parse_class_title_from_text(
+            "SCHEDULE 13D Grupo Televisa (Name of Issuer) "
+            "Series A Shares (Title of Class of Securities)")
+        assert got == "Series A Shares"
+
+    def test_a_cover_without_the_label_yields_nothing(self):
+        from app.scraper.sec_edgar import _parse_class_title_from_text
+        assert _parse_class_title_from_text("no class label anywhere here") is None
 
 
 class TestEraDetection:
@@ -1058,6 +1086,15 @@ class TestStructuredScrapeEndToEnd:
         assert res[0]["is_individual"] is False          # IA is an entity
         index.assert_not_called(), "the XML path must not fetch the index page"
 
+    def test_the_share_class_reaches_the_result(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        pages = {self.XML_URL: _fixture("13g_vanguard.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(self.ATOM, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert res[0]["share_class"] == "Common Stock"
+
     def test_the_provenance_link_is_still_the_readable_index(self):
         from unittest.mock import patch
         from app.scraper import sec_edgar
@@ -1092,13 +1129,17 @@ class TestStructuredScrapeEndToEnd:
                 '<a href="x">CIK=0000000123</a>'
                 '<table><tr><td><a href="/Archives/edgar/data/1/d.htm">d</a></td>'
                 '<td>SC 13G</td></tr></table>')
-        doc = "Apple Inc (Name of Issuer) PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11 6.0%"
+        doc = ("Apple Inc (Name of Issuer) Common Stock (Title of Class of Securities) "
+               "PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11 6.0%")
         pages = {"https://x.test/i.htm": html,
                  "https://www.sec.gov/Archives/edgar/data/1/d.htm": doc}
         with patch.object(sec_edgar, "_get_text", side_effect=_serve(self.ATOM, pages)), \
              patch.object(sec_edgar, "fetch_former_names", return_value=[]):
             res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
         assert len(res) == 1 and res[0]["stake_percent"] == 6.0
+        # Pre-2024 filings have no XML, so the cover page is the only place the
+        # class is stated — and it is stated on every one of them.
+        assert res[0]["share_class"] == "Common Stock"
 
     def test_an_unverifiable_filing_is_dropped_not_admitted(self):
         # A modern index page offers no SC-13-typed .htm, so primary_url is

@@ -134,6 +134,29 @@ The XML has no shares-outstanding field. Prefer the figure the filer states in
 `commentContent` / `comments`; derive `aggregate ÷ percent` only as a fallback, since
 `percentOfClass` is often two significant figures.
 
+### A percent of *what*
+
+Every 13D/G percentage is a **percent of a class**, and a company with several
+classes has several denominators. Grupo Televisa's filers report 22.3% of its
+"Series A Shares; Series B Shares; Dividend Preferred Shares" beside 9.7% of its
+"Certificados de Participacion Ordinarios (CPOs) and Global D Shares" — different
+instruments, and adding them gave the company **115.9% of itself**.
+
+The structured XML states it as `securitiesClassTitle`; pre-2024 covers carry it
+next to the issuer ("… (Title of Class of Securities)"), which
+`_parse_class_title_from_text` reads. Either way it is stored as `share_class` on
+the OWNS edge, and `_ownership_summary` groups by it: when the named classes
+disagree, `disclosed_pct` becomes **null** and `by_class` carries a total per
+security, because no single number is true.
+
+Titles are compared by their **component set** rather than as strings — filers
+describe one security many ways (`Common Stock` vs `Common Stock, par value
+$0.0001 per share`; `Series A Shares ("A Shares"), Series B Shares` vs
+`Series A Shares; Series B Shares`). Where normalisation can't be sure (Televisa's
+CPOs appear in both Spanish and English), it **over-splits deliberately**: an
+extra bucket costs a slightly noisier breakdown, whereas a wrong merge resurrects
+the bug.
+
 ### Group membership without prose
 
 A filing group's members are structured, in two complementary places:
