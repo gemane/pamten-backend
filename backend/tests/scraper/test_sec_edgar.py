@@ -30,6 +30,28 @@ from app.scraper.sec_edgar import (
 )
 
 
+def _serve(atom: str, pages: dict):
+    """A fake `_get_text` that 404s on anything it was not given.
+
+    The old idiom fell back to the Atom feed for an unknown URL, so a code path
+    that started requesting a new document (say `primary_doc.xml`) would be
+    handed a feed, fail to parse it, quietly take the fallback branch, and the
+    test would pass for the wrong reason. Unknown URLs now raise the way EDGAR
+    does, which is what makes these tests able to say the legacy path was used.
+    """
+    import httpx
+
+    def _get_text(url, params=None):
+        if params is not None:      # the browse call is the only one with params
+            return atom
+        if url not in pages:
+            raise httpx.HTTPStatusError(
+                "404", request=httpx.Request("GET", url),
+                response=httpx.Response(404))
+        return pages[url]
+    return _get_text
+
+
 class TestFetchFormerNames:
     _SUBS = {"name": "Meta Platforms, Inc.", "formerNames": [
         {"name": "Facebook Inc", "from": "2005-05-06T00:00:00.000Z", "to": "2021-10-27T00:00:00.000Z"},
@@ -506,8 +528,7 @@ class TestIssuerVerification:
             "https://x.test/old-index.htm": old_index,
             "https://www.sec.gov/Archives/edgar/data/1/old.htm": old_doc,
         }
-        with patch.object(sec_edgar, "_get_text",
-                          side_effect=lambda url, params=None: pages.get(url, pages[None])), \
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
              patch.object(sec_edgar, "fetch_former_names",
                           return_value=["Facebook Inc"]) as former:
             results = sec_edgar.fetch_ownership_filings("Meta Platforms", "1326801")
@@ -580,7 +601,6 @@ class TestIssuerVerification:
                    " TYPE OF REPORTING PERSON  CO ")
 
         pages = {
-            None: atom,   # the browse call passes params, url is BROWSE_URL
             "https://x.test/eve-index.htm": eve_index,
             "https://x.test/blk-index.htm": blk_index,
             "https://x.test/self-index.htm": self_index,
@@ -591,10 +611,8 @@ class TestIssuerVerification:
             "https://www.sec.gov/Archives/edgar/data/1/blk.htm": blk_doc,
         }
 
-        def fake_get_text(url, params=None):
-            return pages[url if url in pages else None]
 
-        with patch.object(sec_edgar, "_get_text", side_effect=fake_get_text):
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)):
             results = sec_edgar.fetch_ownership_filings("Embraer", "1355444")
 
         names = [r["investor_name"] for r in results]
@@ -777,11 +795,377 @@ class TestBeneficialOwnershipVsRealStake:
         pages = {None: atom, "https://x.test/i.htm": index,
                  "https://www.sec.gov/Archives/edgar/data/1/d.htm": doc}
 
-        with patch.object(sec_edgar, "_get_text",
-                          side_effect=lambda url, params=None: pages.get(url, pages[None])), \
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
              patch.object(sec_edgar, "fetch_former_names", return_value=[]):
             res = sec_edgar.fetch_ownership_filings("Anheuser-Busch InBev", "1668717")
 
         assert len(res) == 1
         assert res[0]["stake_percent"] == pytest.approx(8.05, abs=0.01)
         assert res[0]["voting_power_pct"] == 51.7
+
+
+def _fixture(name: str) -> str:
+    """A real filing, trimmed to what the parser reads.
+
+    Trimmed, never invented: the 13D/13G schema split was invisible for exactly
+    as long as the fixtures were written from imagination.
+    """
+    import pathlib
+    return (pathlib.Path(__file__).parent / "fixtures" / name).read_text()
+
+
+class TestStructuredFilings:
+    """The SEC's Dec-2024 modernization made 13D/G machine-readable, which is
+    where the group membership behind AB InBev's voting bloc comes from — no
+    Item 6 prose. Two schedules, two sets of tag names for the same facts."""
+
+    def test_reads_the_13g_spelling(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        d = _parse_13dg_xml(_fixture("13g_vanguard.xml"))
+        assert d["issuer_cik"] == "0000320193"
+        assert d["issuer_name"] == "Apple Inc"
+        assert len(d["persons"]) == 1
+        assert d["persons"][0]["percent"] == 7.48
+        assert d["persons"][0]["type_code"] == "IA"
+
+    def test_reads_the_13d_spelling(self):
+        # issuerCIK / percentOfClass / reportingPersonInfo — a 13G-only reader
+        # returns nothing at all here, which is what used to happen.
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        d = _parse_13dg_xml(_fixture("13d_tactical.xml"))
+        assert d["issuer_cik"] == "0002041208"
+        assert d["persons"][0]["percent"] == 11.7
+        assert [p["name"] for p in d["persons"]] == [
+            "Blue Bird Capital Enterprises LLC", "Justus Parmar"]
+
+    def test_every_group_member_gets_its_own_numbers(self):
+        # Wellington's four blocks are NOT identical: the fourth reports 5.1 and
+        # 28,489,718 where the others report 5.4 and 28,990,296. A lookup that
+        # searches the whole document instead of the person's own subtree hands
+        # every member the first block's figures.
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        d = _parse_13dg_xml(_fixture("13ga_wellington.xml"))
+        assert [p["percent"] for p in d["persons"]] == [5.4, 5.4, 5.4, 5.1]
+        assert d["persons"][3]["shared_voting"] == 28489718
+        assert d["persons"][0]["shared_voting"] == 28990296
+        # `percent` and `shared_voting` are what pin the scoping here — they are
+        # the two fields these four real blocks disagree on. All four report
+        # sole voting and sole dispositive of 0, so those columns would look
+        # identical however they were read; the mechanism is shared, so proving
+        # it on these two proves it for the row.
+
+    def test_the_items_percentage_does_not_leak_in(self):
+        # The same tag reappears further down the document with a different
+        # value (5.36). No person may be given it.
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        d = _parse_13dg_xml(_fixture("13ga_wellington.xml"))
+        assert 5.36 not in [p["percent"] for p in d["persons"]]
+
+    def test_decimal_and_integer_share_counts_both_parse(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        d13d = _parse_13dg_xml(_fixture("13d_tactical.xml"))   # "1598232.00"
+        d13g = _parse_13dg_xml(_fixture("13g_vanguard.xml"))   # "145321305"
+        assert d13d["persons"][0]["sole_dispositive"] == 1598232
+        assert d13g["persons"][0]["sole_voting"] == 145321305
+
+    def test_an_absent_row_stays_absent(self):
+        # None and 0 mean different things to _split_stake; conflating them
+        # invents a 0% stake.
+        from app.scraper.sec_edgar import _xml_num
+        import xml.etree.ElementTree as ET
+        el = ET.fromstring("<a><soleVotingPower>0</soleVotingPower></a>")
+        assert _xml_num(el, "soleVotingPower") == 0
+        assert _xml_num(el, "soleDispositivePower") is None
+
+    def test_junk_is_not_a_filing(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        assert _parse_13dg_xml("<html>404</html>") is None
+        assert _parse_13dg_xml("not xml at all <<<") is None
+
+
+class TestEraDetection:
+    def test_modern_form_names_have_xml(self):
+        from app.scraper.sec_edgar import _is_structured
+        assert _is_structured("SCHEDULE 13D") is True
+        assert _is_structured("SCHEDULE 13G/A") is True
+
+    def test_legacy_form_names_do_not(self):
+        from app.scraper.sec_edgar import _is_structured
+        assert _is_structured("SC 13D") is False
+        assert _is_structured("SC 13G/A") is False
+
+    def test_other_schedules_are_not_mistaken_for_13s(self):
+        # "SCHEDULE" alone would catch SCHEDULE TO-I and friends.
+        from app.scraper.sec_edgar import _is_structured
+        assert _is_structured("SCHEDULE TO-I") is False
+        assert _is_structured("SCHEDULE 14A") is False
+
+
+class TestXmlIssuerVerification:
+    """Two tiers. The CIK is strong but agent-typed — the Embraer mis-file came
+    from that same keyboard — while the name can be years out of date."""
+
+    def test_the_matching_cik_is_enough(self):
+        from app.scraper.sec_edgar import _xml_issuer_matches
+        xml = {"issuer_cik": "0000320193", "issuer_name": "Apple Inc"}
+        assert _xml_issuer_matches(xml, "320193", ["Apple Inc"]) is True
+
+    def test_a_stale_name_with_the_right_cik_survives(self):
+        # Wellington's real filing: correct CIK, "The NASDAQ OMX Group, Inc."
+        from app.scraper.sec_edgar import _xml_issuer_matches
+        xml = {"issuer_cik": "0001120193", "issuer_name": "The NASDAQ OMX Group, Inc."}
+        assert _xml_issuer_matches(xml, "1120193", ["Nasdaq, Inc."]) is True
+
+    def test_the_matching_cik_carries_a_name_that_shares_nothing(self):
+        # The case the CIK tier exists for: a rename with no word in common.
+        # Alphabet's CIK still carries filings that say "Google Inc." — token
+        # overlap is zero, so only the CIK keeps this real owner.
+        from app.scraper.sec_edgar import _xml_issuer_matches
+        xml = {"issuer_cik": "0001652044", "issuer_name": "Google Inc."}
+        assert _xml_issuer_matches(xml, "1652044", ["Alphabet Inc."]) is True
+
+    def test_a_wrong_cik_with_a_matching_name_survives(self):
+        # The mirror case: the agent typed the wrong CIK but the name is ours.
+        from app.scraper.sec_edgar import _xml_issuer_matches
+        xml = {"issuer_cik": "0009999999", "issuer_name": "Embraer S.A."}
+        assert _xml_issuer_matches(xml, "1355444", ["Embraer"]) is True
+
+    def test_a_filing_about_another_company_is_dropped(self):
+        # Eve Holding, in structured form: both tiers disagree.
+        from app.scraper.sec_edgar import _xml_issuer_matches
+        xml = {"issuer_cik": "0001823652", "issuer_name": "Eve Holding, Inc."}
+        assert _xml_issuer_matches(xml, "1355444", ["Embraer"]) is False
+
+    def test_no_stated_issuer_is_not_a_mismatch(self):
+        from app.scraper.sec_edgar import _xml_issuer_matches
+        assert _xml_issuer_matches({"issuer_cik": None}, "1355444", ["Embraer"]) is True
+
+
+class TestStakeFromStructuredFilings:
+    def test_a_stated_denominator_is_preferred_over_a_derived_one(self):
+        # The two must disagree or the test proves nothing. Stated 1,250,000
+        # gives 8.0%; deriving from 500,000 at 50% would give 1,000,000 and
+        # therefore 10.0%. `percentOfClass` is often two significant figures,
+        # so the stated figure is the better one whenever the filer gives it.
+        from app.scraper.sec_edgar import _stake_from_person
+        xml = {"comment_text": "based on a total of 1,250,000 shares issued and outstanding"}
+        person = {"name": "X", "sole_voting": 0, "shared_voting": 500000,
+                  "sole_dispositive": 100000, "shared_dispositive": 0,
+                  "aggregate": 500000, "percent": 50.0}
+        stake, voting = _stake_from_person(xml, person)
+        assert stake == 8.0, "the derived denominator was used despite a stated one"
+        assert voting == 50.0
+
+    def test_derivation_is_the_fallback_when_nothing_is_stated(self):
+        from app.scraper.sec_edgar import _stake_from_person
+        person = {"name": "X", "sole_voting": 0, "shared_voting": 1020598157,
+                  "sole_dispositive": 159121937, "shared_dispositive": 0,
+                  "aggregate": 1020598157, "percent": 51.7}
+        stake, voting = _stake_from_person({"comment_text": ""}, person)
+        assert stake == pytest.approx(8.06, abs=0.01)   # Altria's real holding
+        assert voting == 51.7
+
+    def test_a_zero_percent_amendment_does_not_divide_by_zero(self):
+        # A 13G/A reporting 0% is a filer announcing it has exited; common.
+        from app.scraper.sec_edgar import _derive_total
+        assert _derive_total(0, 0.0) is None
+        assert _derive_total(1000, 0.0) is None
+        assert _derive_total(None, 5.0) is None
+
+    def test_a_lone_filer_keeps_its_reported_percentage(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml, _stake_from_person
+        d = _parse_13dg_xml(_fixture("13g_vanguard.xml"))
+        stake, voting = _stake_from_person(d, d["persons"][0])
+        assert stake == 7.48 and voting is None
+
+
+class TestPersonSelection:
+    def test_the_filer_is_picked_out_of_the_group(self):
+        from app.scraper.sec_edgar import _select_person
+        xml = {"persons": [{"name": "A", "cik": "0000000111"},
+                           {"name": "B", "cik": "0000000222"}]}
+        assert _select_person(xml, "222")["name"] == "B"
+
+    def test_the_first_block_is_used_when_no_cik_matches(self):
+        # 13G person blocks carry no CIK at all.
+        from app.scraper.sec_edgar import _select_person
+        xml = {"persons": [{"name": "A", "cik": None}, {"name": "B", "cik": None}]}
+        assert _select_person(xml, "999")["name"] == "A"
+
+    def test_no_persons_means_no_selection(self):
+        from app.scraper.sec_edgar import _select_person
+        assert _select_person({"persons": []}, "1") is None
+
+
+class TestGroupMembersFromSgml:
+    def test_the_header_lines_are_read_one_per_member(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        header = ("<pre>GROUP MEMBERS:\t\tJORGE PAULO LEMANN\n"
+                  "GROUP MEMBERS:\t\tSTICHTING ANHEUSER-BUSCH INBEV\n"
+                  "GROUP MEMBERS:\t\tRAYVAX SOCIETE D INVESTISSEMENTS S.A.\n"
+                  "SUBJECT COMPANY:\nCOMPANY CONFORMED NAME: Anheuser-Busch InBev SA/NV\n</pre>")
+        with patch.object(sec_edgar, "_get_text", return_value=header):
+            got = sec_edgar._sgml_group_members("1668717", "0001193125-24-230284")
+        assert [g["name"] for g in got] == [
+            "JORGE PAULO LEMANN", "STICHTING ANHEUSER-BUSCH INBEV",
+            "RAYVAX SOCIETE D INVESTISSEMENTS S.A."]
+        assert all(g["source"] == "sgml" and g["cik"] is None for g in got)
+
+    def test_the_rest_of_the_header_is_not_swallowed(self):
+        # The header is line-oriented. Flattening whitespace first makes a
+        # single match run to the end of the document and return the whole
+        # header as one enormous "name" — which is what happened.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        header = "GROUP MEMBERS:\tA CORP\nSUBJECT COMPANY:\tSOMETHING ELSE\n"
+        with patch.object(sec_edgar, "_get_text", return_value=header):
+            got = sec_edgar._sgml_group_members("1", "0000000000-00-000000")
+        assert [g["name"] for g in got] == ["A CORP"]
+
+    def test_a_missing_header_is_not_fatal(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text", side_effect=Exception("404")):
+            assert sec_edgar._sgml_group_members("1", "0000000000-00-000000") == []
+
+
+class TestStructuredScrapeEndToEnd:
+    """`fetch_ownership_filings` over the modern feed and the XML documents."""
+
+    ATOM = """<?xml version="1.0"?>
+    <feed xmlns="http://www.w3.org/2005/Atom">
+      <entry><category term="SCHEDULE 13G"/><content type="text/xml">
+        <filing-href>https://x.test/i.htm</filing-href>
+        <filing-date>2026-04-29</filing-date>
+        <accession-number>0002100119-26-000139</accession-number>
+      </content></entry>
+    </feed>"""
+    XML_URL = ("https://www.sec.gov/Archives/edgar/data/320193/"
+               "000210011926000139/primary_doc.xml")
+
+    def test_a_modern_filing_is_read_from_xml_without_the_index_page(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        pages = {self.XML_URL: _fixture("13g_vanguard.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(self.ATOM, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
+             patch.object(sec_edgar, "_fetch_filing_index") as index:
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert len(res) == 1
+        assert res[0]["investor_name"] == "Vanguard Capital Management"
+        assert res[0]["stake_percent"] == 7.48
+        assert res[0]["is_individual"] is False          # IA is an entity
+        index.assert_not_called(), "the XML path must not fetch the index page"
+
+    def test_the_provenance_link_is_still_the_readable_index(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        pages = {self.XML_URL: _fixture("13g_vanguard.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(self.ATOM, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert res[0]["source_url"].endswith("-index.htm")
+
+    def test_the_other_group_members_come_back(self):
+        # Wellington files for four entities; three are the group.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = self.ATOM.replace("0002100119-26-000139", "0000902219-26-000292")
+        url = ("https://www.sec.gov/Archives/edgar/data/1120193/"
+               "000090221926000292/primary_doc.xml")
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=_serve(atom, {url: _fixture("13ga_wellington.xml")})), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Nasdaq, Inc.", "1120193")
+        assert len(res) == 1
+        names = [g["name"] for g in res[0]["group_members"]]
+        assert len(names) == 3
+        assert "Wellington Management Company LLP" in names
+        assert res[0]["investor_name"] not in names, "the filer is not its own group member"
+
+    def test_a_modern_filing_whose_xml_is_missing_falls_back(self):
+        # Coverage is not total even post-mandate; the HTML path must still run.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        html = ('<span class="companyName">Someone Corp (Filed by)</span>'
+                '<a href="x">CIK=0000000123</a>'
+                '<table><tr><td><a href="/Archives/edgar/data/1/d.htm">d</a></td>'
+                '<td>SC 13G</td></tr></table>')
+        doc = "Apple Inc (Name of Issuer) PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11 6.0%"
+        pages = {"https://x.test/i.htm": html,
+                 "https://www.sec.gov/Archives/edgar/data/1/d.htm": doc}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(self.ATOM, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert len(res) == 1 and res[0]["stake_percent"] == 6.0
+
+    def test_an_unverifiable_filing_is_dropped_not_admitted(self):
+        # A modern index page offers no SC-13-typed .htm, so primary_url is
+        # None and there is nothing to check the issuer against. Admitting it
+        # is how the Eve Holding rows got in.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        html = ('<span class="companyName">Someone Corp (Filed by)</span>'
+                '<a href="x">CIK=0000000123</a>'
+                '<table><tr><td><a href="/Archives/edgar/data/1/x.htm">x</a></td>'
+                '<td>EX-99</td></tr></table>')
+        pages = {"https://x.test/i.htm": html}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(self.ATOM, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert res == []
+
+    def test_a_dropped_filing_does_not_burn_the_investors_slot(self):
+        # Two filings by one investor: the first names the wrong issuer, the
+        # second is correct. Claiming the CIK before verification lost the good
+        # one — and the wrong-issuer filing is the newer, so it is seen first.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13D"/><content type="text/xml">
+            <filing-href>https://x.test/bad.htm</filing-href>
+            <filing-date>2024-06-01</filing-date>
+            <accession-number>0000000999-24-000001</accession-number>
+          </content></entry>
+          <entry><category term="SC 13D"/><content type="text/xml">
+            <filing-href>https://x.test/good.htm</filing-href>
+            <filing-date>2024-01-01</filing-date>
+            <accession-number>0000000999-24-000002</accession-number>
+          </content></entry>
+        </feed>"""
+        idx = ('<span class="companyName">Acme Capital (Filed by)</span>'
+               '<a href="x">CIK=0000000555</a>'
+               '<table><tr><td><a href="/Archives/edgar/data/1/{d}.htm">d</a></td>'
+               '<td>SC 13D</td></tr></table>')
+        pages = {
+            "https://x.test/bad.htm":  idx.format(d="bad"),
+            "https://x.test/good.htm": idx.format(d="good"),
+            "https://www.sec.gov/Archives/edgar/data/1/bad.htm":
+                "Eve Holding, Inc. (Name of Issuer) PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11 83.0%",
+            "https://www.sec.gov/Archives/edgar/data/1/good.htm":
+                "Embraer S.A. (Name of Issuer) PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11 9.9%",
+        }
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Embraer", "1355444")
+        assert [r["stake_percent"] for r in res] == [9.9]
+
+    def test_the_feed_asks_for_both_form_name_eras(self):
+        # "SC 13" is a PREFIX match and the forms were renamed to "SCHEDULE 13G"
+        # in Dec 2024 — asking for "SC 13" silently returned nothing newer than
+        # early 2024. This is the one that made the scraper go blind.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        seen = {}
+
+        def capture(url, params=None):
+            if params:
+                seen.update(params)
+                return "<feed xmlns='http://www.w3.org/2005/Atom'></feed>"
+            raise AssertionError("no document should be fetched")
+
+        with patch.object(sec_edgar, "_get_text", side_effect=capture):
+            sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert seen["type"] == "SC", f"feed asked for {seen['type']!r}"
