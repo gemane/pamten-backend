@@ -71,6 +71,59 @@ def test_resend_backend_omits_html_when_absent(monkeypatch):
     assert "html" not in post.call_args.kwargs["json"]
 
 
+def test_backend_selects_scaleway_when_configured(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "EMAIL_BACKEND", "scaleway")
+    assert isinstance(mail.get_email_sender(), mail.ScalewayBackend)
+
+
+def test_scaleway_backend_posts_to_the_api(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SCALEWAY_SECRET_KEY", "scw_secret")
+    monkeypatch.setattr(settings, "SCALEWAY_PROJECT_ID", "proj-123")
+    monkeypatch.setattr(settings, "SCALEWAY_TEM_REGION", "fr-par")
+    monkeypatch.setattr(settings, "EMAIL_FROM", "Owlgraph <noreply@owlgraph.org>")
+    resp = MagicMock()
+    with patch("app.notifications.email.httpx.post", return_value=resp) as post:
+        mail.ScalewayBackend().send("to@example.com", "Verify", "click the link", "<p>click</p>")
+    url = post.call_args.args[0]
+    kwargs = post.call_args.kwargs
+    assert url == ("https://api.scaleway.com/transactional-email/v1alpha1"
+                   "/regions/fr-par/emails")
+    assert kwargs["headers"]["X-Auth-Token"] == "scw_secret"
+    body = kwargs["json"]
+    # EMAIL_FROM parsed into Scaleway's structured {email, name} sender object
+    assert body["from"] == {"email": "noreply@owlgraph.org", "name": "Owlgraph"}
+    assert body["to"] == [{"email": "to@example.com"}]
+    assert body["project_id"] == "proj-123"
+    assert body["subject"] == "Verify" and body["text"] == "click the link"
+    assert body["html"] == "<p>click</p>"
+    resp.raise_for_status.assert_called_once()   # non-2xx would surface as an error
+
+
+def test_scaleway_backend_omits_html_and_name_when_absent(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SCALEWAY_SECRET_KEY", "scw_secret")
+    monkeypatch.setattr(settings, "SCALEWAY_PROJECT_ID", "proj-123")
+    monkeypatch.setattr(settings, "EMAIL_FROM", "noreply@owlgraph.org")   # bare, no display name
+    with patch("app.notifications.email.httpx.post", return_value=MagicMock()) as post:
+        mail.ScalewayBackend().send("to@example.com", "S", "text only")
+    body = post.call_args.kwargs["json"]
+    assert "html" not in body
+    assert body["from"] == {"email": "noreply@owlgraph.org"}   # no "name" key without a display name
+
+
+def test_scaleway_backend_defaults_region_when_blank(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SCALEWAY_SECRET_KEY", "scw_secret")
+    monkeypatch.setattr(settings, "SCALEWAY_PROJECT_ID", "proj-123")
+    monkeypatch.setattr(settings, "SCALEWAY_TEM_REGION", "")   # empty → fr-par
+    monkeypatch.setattr(settings, "EMAIL_FROM", "noreply@owlgraph.org")
+    with patch("app.notifications.email.httpx.post", return_value=MagicMock()) as post:
+        mail.ScalewayBackend().send("to@example.com", "S", "body")
+    assert "/regions/fr-par/emails" in post.call_args.args[0]
+
+
 def test_smtp_backend_logs_in_and_sends(monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
