@@ -18,13 +18,52 @@ from app.scraper.sec_edgar import (
     _parse_holding_filing, fetch_filer_holdings, HOLDINGS_MAX_LOOKBACK,
 )
 
-# Real shape: schema X0202, default namespace, issuer + percent as fields.
+# Schema X0202, 13G spelling (`issuerCik`, `classPercent`), trimmed from the real
+# Vanguard-Capital-Management/Apple filing 0002100119-26-000139.
+#
+# The cover's reporting-person block matters and was missing from the earlier
+# version of this fixture: a real 13G states the percent per person there, and
+# repeats a (sometimes different) figure under `items`. Without the block, the
+# fixture agreed with a parser that took the first `classPercent` anywhere —
+# so the fixture could not have caught a scoping mistake, and the shape it
+# described was one EDGAR never emits.
 XML = """<?xml version="1.0" encoding="UTF-8"?>
 <edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13g">
 <formData><coverPageHeader><issuerInfo>
 <issuerCik>{cik}</issuerCik><issuerName>{name}</issuerName>
-</issuerInfo></coverPageHeader>
-<items><item4><classPercent>{pct}</classPercent></item4></items>
+</issuerInfo>
+<coverPageHeaderReportingPersonDetails>
+<reportingPersonName>Vanguard Capital Management</reportingPersonName>
+<reportingPersonBeneficiallyOwnedNumberOfShares>
+<soleVotingPower>145321305</soleVotingPower><sharedVotingPower>0</sharedVotingPower>
+<soleDispositivePower>1099168953</soleDispositivePower><sharedDispositivePower>0</sharedDispositivePower>
+</reportingPersonBeneficiallyOwnedNumberOfShares>
+<reportingPersonBeneficiallyOwnedAggregateNumberOfShares>1099168953</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+<classPercent>{pct}</classPercent>
+<typeOfReportingPerson>IA</typeOfReportingPerson>
+</coverPageHeaderReportingPersonDetails>
+</coverPageHeader>
+<items><item4><classPercent>99.9</classPercent></item4></items>
+</formData></edgarSubmission>"""
+
+# A Schedule 13D — the OTHER schema. Trimmed from 0001213900-26-094095
+# (Blue Bird Capital / Tactical Resources). Different tag spellings for the
+# same facts, which is why a 13G-only parser silently returned None for every
+# 13D even though `_HOLDING_FORMS` includes them.
+XML_13D = """<?xml version="1.0" encoding="UTF-8"?>
+<edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13D">
+<formData><coverPageHeader>
+<issuerInfo><issuerCIK>{cik}</issuerCIK><issuerName>{name}</issuerName></issuerInfo>
+</coverPageHeader>
+<reportingPersons><reportingPersonInfo>
+<reportingPersonCIK>0002110854</reportingPersonCIK>
+<reportingPersonName>Blue Bird Capital Enterprises LLC</reportingPersonName>
+<soleVotingPower>1598232.00</soleVotingPower><sharedVotingPower>0.00</sharedVotingPower>
+<soleDispositivePower>1598232.00</soleDispositivePower><sharedDispositivePower>0.00</sharedDispositivePower>
+<aggregateAmountOwned>1598232.00</aggregateAmountOwned>
+<percentOfClass>{pct}</percentOfClass>
+<typeOfReportingPerson>OO</typeOfReportingPerson>
+</reportingPersonInfo></reportingPersons>
 </formData></edgarSubmission>"""
 
 

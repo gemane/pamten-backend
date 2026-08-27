@@ -686,7 +686,16 @@ def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
     aggregate and there is no bloc, so voting comes back None and nothing
     about the common case changes.
     """
-    rows = _parse_power_rows(text)
+    return _split_stake(_parse_power_rows(text), _shares_outstanding(text), reported_pct)
+
+
+def _split_stake(rows: dict, total: int | None, reported_pct: float | None) -> tuple:
+    """The stake/voting split over already-extracted numbers.
+
+    Separated from the text parsing so the XML path can reuse the judgement
+    without going near a regex; `_own_stake_and_voting` above is now a thin
+    wrapper that supplies the numbers from an HTML cover page.
+    """
     sole_disp = rows.get("sole_dispositive")
     shared_vote = rows.get("shared_voting")
     if sole_disp is None or not shared_vote:
@@ -703,7 +712,6 @@ def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
         # accounts for owners whose share we cannot put a number on.
         return None, reported_pct
 
-    total = _shares_outstanding(text)
     if not total:
         # The bloc is real but the denominator is unknown. Keeping the bloc
         # figure as the stake is exactly what produced the >100% sums, so
@@ -891,7 +899,15 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         atom_text = _get_text(BROWSE_URL, {
             "action": "getcompany",
             "CIK":    company_cik,
-            "type":   "SC 13",
+            # "SC", not "SC 13": EDGAR matches this as a PREFIX, and the
+            # December-2024 modernization renamed the forms from "SC 13G" to
+            # "SCHEDULE 13G". The two sets are disjoint, so "SC 13" quietly
+            # stopped returning anything filed after early 2024 — on Apple, the
+            # newest hit was 2024-02-14 while the company had filings from 2026.
+            # "SC" spans both; the SC TO-*/SC 14* noise it also matches is
+            # dropped by the `"13" not in form_type` test below, before any
+            # request is spent on it.
+            "type":   "SC",
             "dateb":  "",
             "owner":  "include",
             "count":  "100",  # large institutions file many outbound SC 13s; need room for inbound
@@ -948,56 +964,88 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "index_url": index_url,
             "form_type": form_type,
             "file_date": file_date,
+            "accession": accession,      # builds the structured-XML URL
         })
 
-    # Fetch filing index pages; deduplicate by investor CIK (Atom is most-recent-first)
+    # One pass per filing: fetch, verify, then claim the investor's slot.
+    #
+    # This used to be two passes, enrichment then verification, with the dedup
+    # claim made in the first. That let a filing dropped for naming the wrong
+    # issuer still burn its investor's CIK, so a later, correct filing by the
+    # same investor was silently skipped. The claim now happens only after the
+    # filing has been verified, which requires it to be in the same loop.
     seen_investor_ciks: set[str] = set()
-    # Skip the company filing about itself — compared zero-padded, because the
+    # The company filing about itself — compared zero-padded, because the
     # investor CIKs below are zfill(10) and an unpadded entry never matched.
     seen_investor_ciks.add(norm_company_cik)
-    enriched: list[dict] = []
 
-    for raw in raw_entries:
-        if len(enriched) >= limit:
-            break
-        name, cik, primary_url = _fetch_filing_index(raw["index_url"])
-        if not name or not cik:
-            continue
-        if cik in seen_investor_ciks:
-            continue
-        seen_investor_ciks.add(cik)
-        enriched.append({
-            "investor_name": name,
-            "investor_cik":  cik,
-            "form_type":     raw["form_type"],
-            "file_date":     raw["file_date"],
-            "primary_url":   primary_url,    # used to parse stake %, not for display
-            "index_url":     raw["index_url"],  # the readable filing index page
-        })
-
-    # Fetch the primary document for EVERY accepted filing — it is the only
-    # place the issuer's identity can be trusted. The index metadata lies when
-    # an agent mis-files the header: Embraer's Eve Holding 13D/A carried
-    # EMBRAER S.A. as SUBJECT COMPANY, sailed through every metadata check, and
-    # wrote "Embraer Aircraft Holding owns 83% of Embraer" into the graph (the
-    # real statement was 83% of Eve Holding). Only the cover page said Eve.
-    #
-    # This used to fetch documents for just the top MAX_PERCENT_FETCH investors
-    # as a request economy; verification ends that economy, and stake % and
-    # reporter type now come along for free on every row.
     # Every name this CIK has filed under: renames keep the CIK, and covers
-    # from before a rename carry the old name. One request, only spent when
-    # there are filings to verify.
-    known_names: list[str] = [company_name]
-    if enriched:
-        known_names += fetch_former_names(company_cik)
+    # from before a rename carry the old name. Fetched at most once, and only
+    # when a filing actually needs verifying.
+    known_names: list[str] | None = None
 
     results: list[dict] = []
-    for inv in enriched:
+    for raw in raw_entries:
+        if len(results) >= limit:
+            break
+
+        xml = None
+        if _is_structured(raw["form_type"]) and raw.get("accession"):
+            xml = _fetch_13dg_xml(company_cik, raw["accession"])
+
+        if xml:
+            # The XML names the filer, so the index page is not needed at all —
+            # one request instead of two — and `_filing_index_url` still gives a
+            # readable link for provenance without fetching it.
+            person = _select_person(xml, xml.get("filer_cik"))
+            if person is None:
+                continue
+            investor_name = person["name"]
+            investor_cik  = _cik_int(person["cik"] or xml.get("filer_cik") or "").zfill(10)
+            index_url     = _filing_index_url(company_cik, raw["accession"])
+            primary_url   = None
+        else:
+            investor_name, investor_cik, primary_url = _fetch_filing_index(raw["index_url"])
+            index_url = raw["index_url"]
+            if not investor_name or not investor_cik:
+                continue
+
+        if not investor_cik or investor_cik in seen_investor_ciks:
+            continue
+
+        if known_names is None:
+            known_names = [company_name] + fetch_former_names(company_cik)
+
+        inv = {
+            "investor_name": investor_name,
+            "investor_cik":  investor_cik,
+            "form_type":     raw["form_type"],
+            "file_date":     raw["file_date"],
+            "primary_url":   primary_url,
+            "index_url":     index_url,
+            "accession":     raw.get("accession"),
+            "xml":           xml,
+            "person":        person if xml else None,
+        }
+
         pct           = None
         voting        = None
         is_individual = None
-        if inv.get("primary_url"):
+        group_members: list[dict] = []
+
+        if inv.get("xml"):
+            xml, person = inv["xml"], inv["person"]
+            if not _xml_issuer_matches(xml, company_cik, known_names):
+                log.info("SEC EDGAR: dropping filing by %r — its issuer is %r (CIK %s), not %r",
+                         inv["investor_name"], xml.get("issuer_name"),
+                         xml.get("issuer_cik"), company_name)
+                continue
+            pct, voting   = _stake_from_person(xml, person)
+            is_individual = (person["type_code"] in _INDIVIDUAL_CODES
+                             if person.get("type_code") else None)
+            group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml"}
+                             for o in xml["persons"] if o is not person]
+        elif inv.get("primary_url"):
             try:
                 text          = _get_text(inv["primary_url"])
                 issuer        = _parse_issuer_from_text(text)
@@ -1009,9 +1057,24 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 pct           = _parse_percent_from_text(text)
                 pct, voting    = _own_stake_and_voting(text, pct)
                 is_individual = _parse_reporter_type_from_text(text)
+                if voting and inv.get("accession"):
+                    # A bloc without an XML membership list: the SGML header
+                    # names the co-filers. Only fetched for the few filings that
+                    # actually report one — 3 of AB InBev's 40, not all 40.
+                    group_members = _sgml_group_members(company_cik, inv["accession"])
             except httpx.HTTPError:
                 pass
+        else:
+            # Neither a parsed XML nor a cover page to check: admitting this
+            # would be an unverified filing, which is how the Eve Holding rows
+            # got in. A modern index page offers no `SC 13`-typed .htm at all,
+            # so this is exactly the case a widened feed would otherwise slip
+            # through unverified.
+            log.info("SEC EDGAR: dropping unverifiable filing by %r (no XML, no cover page)",
+                     inv["investor_name"])
+            continue
 
+        seen_investor_ciks.add(inv["investor_cik"])
         log.info(
             "SEC EDGAR: investor %r (CIK=%s) stake=%s is_individual=%s",
             inv["investor_name"], inv["investor_cik"], pct, is_individual,
@@ -1031,6 +1094,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # Provenance: the filing index page (readable), with the primary doc
             # as a fallback. file_date is the filing's date.
             "source_url":       inv.get("index_url") or inv.get("primary_url"),
+            # Co-filers on this schedule — the filing group. Returned for the
+            # caller to use; deliberately NOT written to the graph (see the
+            # module docstring), because membership is not ownership.
+            "group_members":    group_members,
         })
 
     log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)
@@ -1373,9 +1440,234 @@ def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMI
 
 
 def _xml_field(root, tag: str) -> str | None:
-    """First value of `tag` at any depth, ignoring the XML namespace."""
-    el = root.find(f".//{{*}}{tag}")
-    return el.text.strip() if el is not None and el.text else None
+    """First value of `tag` at any depth, ignoring the XML namespace.
+
+    Beware the "first": on a multi-person filing the same tag recurs once per
+    reporting person AND again inside `items`, with different values. Use
+    `_xml_child` against a person's own element when the value belongs to that
+    person. Wellington's Nasdaq 13G/A is the case in point — four cover blocks
+    reading 5.4 / 5.4 / 5.4 / 5.1 and a fifth value of 5.36 under `items`.
+    """
+    return _xml_child(root, tag)
+
+
+def _xml_child(el, tag: str) -> str | None:
+    """First value of `tag` within THIS element's subtree, namespace-agnostic."""
+    found = el.find(f".//{{*}}{tag}")
+    return found.text.strip() if found is not None and found.text else None
+
+
+def _xml_num(el, tag: str, *, as_int: bool = True):
+    """A numeric field, or None when the filing does not state it.
+
+    Absent must not become zero: `_split_stake` reads "no sole dispositive row"
+    and "sole dispositive of nothing" as different facts, and conflating them
+    invents a 0% stake. Values arrive both as "0" and as "1312500.00", so parse
+    through float().
+    """
+    raw = _xml_child(el, tag)
+    if raw is None:
+        return None
+    try:
+        val = float(raw.replace(",", ""))
+    except ValueError:
+        return None
+    return int(val) if as_int else val
+
+
+#: The two schedules use different tag names for the same facts, and EDGAR
+#: publishes them under different namespaces. Layout is chosen by which person
+#: container is present, not by the form string or the namespace URI, so a
+#: schema bump that keeps the shape keeps working.
+_XML_LAYOUTS = (
+    # (person container, issuer-cik tag, percent tag, aggregate tag, person-cik tag)
+    ("reportingPersonInfo", "issuerCIK", "percentOfClass",
+     "aggregateAmountOwned", "reportingPersonCIK"),
+    ("coverPageHeaderReportingPersonDetails", "issuerCik", "classPercent",
+     "reportingPersonBeneficiallyOwnedAggregateNumberOfShares", None),
+)
+
+
+def _xml_issuer_matches(xml: dict, company_cik: str, known_names: list) -> bool:
+    """Is this structured filing about the company being scraped?
+
+    Two tiers, and both must fail before a filing is thrown away. The CIK is
+    the strong signal, but it is typed by the filer's agent — the same kind of
+    human who filed Embraer's Eve Holding schedule under EMBRAER's name — while
+    the reverse also occurs: Wellington's Nasdaq 13G/A carries the correct CIK
+    beside the long-superseded name "The NASDAQ OMX Group, Inc.". Rejecting on
+    either alone would lose a real owner in one of those two cases.
+    """
+    issuer_cik = xml.get("issuer_cik")
+    if issuer_cik and _cik_int(issuer_cik) == _cik_int(company_cik):
+        return True
+    if issuer_cik and _issuer_matches(known_names, xml.get("issuer_name")):
+        return True          # right company, stale or reworded name
+    return not issuer_cik    # nothing stated is not a mismatch
+
+
+def _stake_from_person(xml: dict, person: dict) -> tuple:
+    """(own stake %, voting-bloc %) for one reporting person of a structured filing.
+
+    The same judgement `_own_stake_and_voting` applies to an HTML cover, fed
+    from fields instead of regexes. The denominator is not a tagged value, so
+    prefer the one the filer states in the comment and fall back to deriving it
+    from the aggregate — derivation is only as precise as `percentOfClass`,
+    which is often two significant figures.
+    """
+    rows = {k: person[k] for k in
+            ("sole_voting", "shared_voting", "sole_dispositive", "shared_dispositive")
+            if person.get(k) is not None}
+    total = _shares_outstanding(xml.get("comment_text") or "")
+    if not total:
+        total = _derive_total(person.get("aggregate"), person.get("percent"))
+        if total:
+            log.info("SEC EDGAR: derived %s shares outstanding for %r from %s at %s%%",
+                     total, person["name"], person.get("aggregate"), person.get("percent"))
+    return _split_stake(rows, total, person.get("percent"))
+
+
+def _derive_total(aggregate: int | None, percent: float | None) -> int | None:
+    """Shares outstanding implied by "this many shares are that percent".
+
+    `percent > 0` is not defensive dressing: a 13G/A amending to 0% — the
+    filer announcing it has exited — is common, and would divide by zero.
+    """
+    if not aggregate or not percent or percent <= 0:
+        return None
+    return round(aggregate / (percent / 100))
+
+
+def _sgml_group_members(subject_cik: str, accession: str) -> list[dict]:
+    """Co-filers named in the submission's SGML header.
+
+    Pre-2024 filings carry no XML, but EDGAR's header has always listed
+    `GROUP MEMBERS:` — names only, no CIKs. Read from the header-only document
+    (about 4 KB) rather than the full submission, which for AB InBev's schedule
+    is 287 KB of exhibits.
+    """
+    nodash = accession.replace("-", "")
+    url = (f"{ARCHIVES_URL}/{_cik_int(subject_cik)}/{nodash}/"
+           f"{accession}-index-headers.htm")
+    try:
+        raw = _get_text(url)
+    except Exception as exc:  # noqa: BLE001 - a missing header must not sink the scrape
+        log.debug("SEC EDGAR: no SGML header for %s (%s)", accession, exc)
+        return []
+    # NOT _plain_text: it collapses every run of whitespace including newlines,
+    # and this format is line-oriented — one GROUP MEMBERS per line. Flattened,
+    # a single match swallows the rest of the header as one enormous "name".
+    text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
+    names = re.findall(r"GROUP MEMBERS:[ \t]*([^\r\n]+)", text)
+    return [{"name": n.strip(), "cik": None, "source": "sgml"} for n in names if n.strip()]
+
+
+def _is_structured(form_type: str) -> bool:
+    """Does this filing have a `primary_doc.xml`?
+
+    Decided from the form name the feed already gave us, so no request is
+    wasted discovering it: the December-2024 modernization both mandated the
+    XML and renamed the forms, so "SCHEDULE 13D" has it and the older
+    "SC 13D" does not. A modern filing whose XML is missing anyway costs one
+    404 and falls back to HTML.
+    """
+    return form_type.strip().upper().startswith("SCHEDULE 13")
+
+
+def _fetch_13dg_xml(subject_cik: str, accession: str) -> dict | None:
+    """The structured filing, or None if it isn't there or won't parse.
+
+    The Archives path accepts the SUBJECT's CIK even though another party
+    filed, so this needs nothing the Atom feed did not already provide.
+    """
+    nodash = accession.replace("-", "")
+    url = f"{ARCHIVES_URL}/{_cik_int(subject_cik)}/{nodash}/primary_doc.xml"
+    try:
+        raw = _get_text(url)
+    except Exception as exc:  # noqa: BLE001 - absent XML is normal; fall back to HTML
+        log.debug("SEC EDGAR: no structured XML for %s (%s)", accession, exc)
+        return None
+    return _parse_13dg_xml(raw)
+
+
+def _select_person(xml: dict, filer_cik: str | None) -> dict | None:
+    """Which reporting person is *the investor* on this filing.
+
+    A group files one schedule listing every member, so one block has to be
+    chosen as the edge's owner and the rest become the group. Prefer the block
+    whose CIK is the filer's; 13G blocks carry no CIK, so fall back to the
+    first, which is where the form puts the primary filer.
+    """
+    persons = xml.get("persons") or []
+    if not persons:
+        return None
+    if filer_cik:
+        want = _cik_int(filer_cik)
+        for p in persons:
+            if p.get("cik") and _cik_int(p["cik"]) == want:
+                return p
+        log.debug("SEC EDGAR: no reporting person matched filer CIK %s; using the first",
+                  filer_cik)
+    return persons[0]
+
+
+def _parse_13dg_xml(raw: str) -> dict | None:
+    """A Schedule 13D or 13G `primary_doc.xml`, normalised.
+
+    Since the SEC's December 2024 beneficial-ownership modernization these
+    filings are machine-readable, which removes the guesswork this module used
+    to do against HTML cover pages: the issuer is a CIK rather than a name to
+    match, the four power rows are fields rather than regex captures, and — the
+    reason this was written — every member of a filing group gets its own
+    block, so group membership no longer has to be read out of Item 6 prose.
+
+    Returns None for anything unparseable, including pre-2024 filings, which
+    simply have no XML; the caller falls back to the HTML path for those.
+    """
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        log.debug("SEC EDGAR: unparseable 13D/G XML: %s", exc)
+        return None
+
+    for container, issuer_tag, pct_tag, agg_tag, person_cik_tag in _XML_LAYOUTS:
+        blocks = root.findall(f".//{{*}}{container}")
+        if blocks:
+            break
+    else:
+        return None
+
+    persons = []
+    for b in blocks:
+        name = _xml_child(b, "reportingPersonName")
+        if not name:
+            continue
+        persons.append({
+            "name":               name,
+            "cik":                _xml_child(b, person_cik_tag) if person_cik_tag else None,
+            "sole_voting":        _xml_num(b, "soleVotingPower"),
+            "shared_voting":      _xml_num(b, "sharedVotingPower"),
+            "sole_dispositive":   _xml_num(b, "soleDispositivePower"),
+            "shared_dispositive": _xml_num(b, "sharedDispositivePower"),
+            "aggregate":          _xml_num(b, agg_tag),
+            "percent":            _xml_num(b, pct_tag, as_int=False),
+            "type_code":          _xml_child(b, "typeOfReportingPerson"),
+        })
+    if not persons:
+        return None
+
+    # The denominator is not a field, but filers usually state it in the
+    # comment; that text is worth carrying so `_shares_outstanding` can read it.
+    comments = [(e.text or "") for tag in ("commentContent", "comments")
+                for e in root.findall(f".//{{*}}{tag}")]
+
+    return {
+        "issuer_cik":   _xml_child(root, issuer_tag),
+        "issuer_name":  _xml_child(root, "issuerName"),
+        "filer_cik":    _xml_child(root, "cik"),
+        "persons":      persons,
+        "comment_text": " ".join(comments),
+    }
 
 
 def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
@@ -1384,34 +1676,25 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
     Returns `percent` as a float — **0.0 is meaningful**, not missing: an
     amendment reporting 0% is the filer declaring it has dropped below the 5%
     threshold, i.e. the end of a holding rather than the absence of one.
+
+    Reads through the shared `_parse_13dg_xml`, which knows both schedules.
+    Written against 13G tag names alone, this function returned None for every
+    Schedule 13D — `issuerCik`/`classPercent` are 13G spellings, and 13D uses
+    `issuerCIK`/`percentOfClass`. Since `_HOLDING_FORMS` includes 13D, that was
+    a silent hole in what a filer was seen to own.
     """
-    nodash = accession.replace("-", "")
-    url = f"{ARCHIVES_URL}/{_cik_int(filer_cik)}/{nodash}/primary_doc.xml"
-    try:
-        raw = _get_text(url)
-    except Exception as exc:  # noqa: BLE001 - pre-XML filings 404 here; skip them
-        log.debug("SEC EDGAR: no XML for %s (%s)", accession, exc)
-        return None
-    try:
-        root = ET.fromstring(raw)
-    except ET.ParseError as exc:
-        log.debug("SEC EDGAR: unparseable XML for %s: %s", accession, exc)
+    xml = _fetch_13dg_xml(filer_cik, accession)
+    if not xml or not xml.get("issuer_cik") or not xml.get("issuer_name"):
         return None
 
-    subject_cik = _xml_field(root, "issuerCik")
-    subject_name = _xml_field(root, "issuerName")
-    if not subject_cik or not subject_name:
-        return None
-
-    raw_pct = _xml_field(root, "classPercent")
-    try:
-        percent = float(raw_pct) if raw_pct is not None else None
-    except ValueError:
-        percent = None
+    # Read the percent off the first reporting person rather than the document,
+    # because the same tag reappears under `items` with a different value —
+    # Wellington's Nasdaq 13G/A carries 5.4 on the cover and 5.36 below it.
+    percent = (xml["persons"][0].get("percent")) if xml.get("persons") else None
 
     return {
-        "subject_cik":  _cik_int(subject_cik).zfill(10),
-        "subject_name": subject_name,
+        "subject_cik":  _cik_int(xml["issuer_cik"]).zfill(10),
+        "subject_name": xml["issuer_name"],
         "percent":      percent,
         "accession":    accession,
     }

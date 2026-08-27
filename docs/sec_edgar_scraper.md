@@ -86,6 +86,74 @@ with the SEC within 10 days:
 Both forms have a standardised cover page. **Item 13** is mandatory and states
 the percentage of shares beneficially owned.
 
+### The form rename (and the two years it cost us)
+
+EDGAR's browse `type=` is a **prefix match**. The December-2024 beneficial-ownership
+modernization renamed the schedules from `SC 13G` to `SCHEDULE 13G`, and the two sets
+are disjoint — so a request for `type=SC 13` silently stopped returning anything filed
+after early 2024. Measured on Apple (CIK 320193): `SC 13` gave a newest filing of
+**2024-02-14** while `SCHEDULE 13` gave 2026-04-29.
+
+We now ask for **`type=SC`**, which spans both eras. The `SC TO-*` / `SC 14*` noise it
+also matches is dropped by the `"13" not in form_type` test before any request is spent.
+
+### Structured filings (schema X0202)
+
+The same modernization made these filings machine-readable:
+`{ARCHIVES_URL}/{cik}/{accession}/primary_doc.xml`. The **subject's** CIK works in that
+path, so it is built from the Atom feed alone — no index-page fetch, which makes the
+modern path *cheaper* than the legacy one (one request per filing instead of two).
+
+**There are two schemas, one per schedule**, and they spell the same facts differently:
+
+| | Schedule 13D | Schedule 13G |
+|---|---|---|
+| person container | `reportingPersonInfo` | `coverPageHeaderReportingPersonDetails` |
+| issuer CIK | `issuerCIK` | `issuerCik` |
+| percent | `percentOfClass` | `classPercent` |
+| aggregate | `aggregateAmountOwned` | `reportingPersonBeneficiallyOwned…Shares` |
+| person CIK | `reportingPersonCIK` | absent — name only |
+
+`_parse_13dg_xml` picks the layout by **which container is present**, not by the form
+string or namespace URI, so a schema bump that keeps the shape keeps working. Written
+against 13G names alone — as `_parse_holding_filing` originally was — a reader returns
+`None` for every 13D without saying so.
+
+Two traps worth naming:
+
+* **Scope every per-person read to that person's element.** The same tag recurs once per
+  reporting person *and* again under `items` with a different value. Wellington's Nasdaq
+  13G/A carries 5.4 / 5.4 / 5.4 / 5.1 on the cover and 5.36 below it; a document-wide
+  `.//` lookup hands all four members 5.4.
+* **Absent is not zero.** `_split_stake` reads "no sole-dispositive row" and "sole
+  dispositive of nothing" as different facts, so `_xml_num` returns `None`, not 0.
+
+Numbers appear both as `0` and as `1598232.00` — parse through `float()`.
+
+The XML has no shares-outstanding field. Prefer the figure the filer states in
+`commentContent` / `comments`; derive `aggregate ÷ percent` only as a fallback, since
+`percentOfClass` is often two significant figures.
+
+### Group membership without prose
+
+A filing group's members are structured, in two complementary places:
+
+* **XML era:** one `reportingPersonInfo` / `coverPageHeaderReportingPersonDetails` block
+  per member. 13D blocks carry CIKs; 13G blocks do not.
+* **Pre-2024:** the SGML submission header lists `GROUP MEMBERS:`, one per line — read
+  from `{accession}-index-headers.htm` (≈4 KB) rather than the full submission (287 KB
+  for AB InBev's). Parse the raw lines: flattening whitespace first makes one match
+  swallow the entire header as a single "name".
+
+Both are returned as `group_members` and **not written to the graph**: membership is not
+ownership, and the SGML names carry no CIK, so persisting them would mint duplicate
+low-confidence nodes beside the ones their own filings already created.
+
+**The limitation:** a filer who files alone and disclaims group membership appears in
+neither source. Altria's AB InBev schedule is the example — it names its counterparties
+(BEVCO and the Stichting) only in Item 6 prose. So the structured data gives the
+families' side of that bloc completely and Altria's side not at all.
+
 ### Finding filings for a company
 
 The EDGAR company browse endpoint with `output=atom` returns an Atom XML feed of
@@ -143,6 +211,17 @@ Atom feed) and parse the HTML to find the `(Filed by)` section:
 This reliably gives both the investor name and their real CIK.
 
 ### The wrong-subject problem (issuer verification)
+
+On the structured path this is `_xml_issuer_matches`, and it is **two tiers**: reject only
+when the stated `issuerCIK` differs from the company *and* the name fails token matching.
+Neither alone is safe. The CIK is typed by the filer's agent — the same keyboard that
+produced the Embraer mis-file — while the name can be years stale (Wellington's filing
+carries the correct Nasdaq CIK beside "The NASDAQ OMX Group, Inc."), and a rename can
+leave no shared token at all (a filing saying "Google Inc." against a company we know as
+"Alphabet"). A filing that yields neither parsed XML nor a checkable cover page is
+**dropped**, not admitted: on a modern index page there is no `SC 13`-typed `.htm` for the
+legacy regex to find, so admitting the unverifiable would reopen the hole this closed.
+
 
 The filing agent problem has an uglier sibling: **the metadata can name the
 wrong company entirely.** A company's browse feed and submissions JSON list
