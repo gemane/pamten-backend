@@ -121,6 +121,55 @@ Two rules keep the tiers meaning something on OWNS edges:
   pairs any register claim vouches for, and closed edges. The pass clears as well
   as sets, and the quality report counts stale edges per source.
 
+## Voting groups
+
+A Schedule 13D filed by several parties acting together is one **`voting_group`**
+Entity, not a bloc percentage hung on whoever submitted the form. AB InBev's
+52.3% sat on BRC S.à r.l. for exactly that reason, when nine parties vote it and
+BRC merely filed.
+
+```
+(Stichting)─┐
+(BRC)───────┤ RELATED_TO {relation:'group_member'}
+(EPS)───────┼─▶ (Voting group — AB InBev)──OWNS──▶ (AB InBev)
+(Lemann)────┘        type: voting_group        stake_percent: null
+                                               voting_power_pct: 52.3
+```
+
+* **Only Schedule 13D.** A 13G reporting "shared voting power" is an asset
+  manager aggregating across its own subsidiaries — State Street, Morgan Stanley
+  — which is not a governance bloc. Modelling those would be misleading; on the
+  dev graph it would have created 17 group nodes instead of ~4.
+* **Membership is `RELATED_TO {relation:'group_member'}`**, following
+  `_upsert_affiliate`, which already models 13F fund groups this way. Membership
+  is not ownership, and no new edge type was needed.
+* **The group's OWNS edge carries a null stake.** Its members hold the shares
+  individually; adding a bloc percentage to theirs is what put companies over
+  100% of themselves.
+* **The filer's own bloc edge is retired** when the group is written — it is the
+  same filing, not a second fact — but only the stakeless one, so a member that
+  also reports a real holding keeps it.
+
+### Identity
+
+Groups are matched by **roster overlap**, never by name or by filer:
+
+* each member key holds *both* a CIK and a diacritic-folded normalised name, and
+  two entries match when **either** does. EDGAR gives a CIK only to registrants —
+  one of AB InBev's nine — and pre-2024 filings carry names alone, so a
+  single-identifier key would fail to match a member against itself across the
+  December-2024 XML boundary. Folding matters too: EDGAR writes ASCII
+  ("Eugenie Patri Sebastien"), everyone else accents it.
+* two rosters are the same group when they share **≥2 members and ≥50% of the
+  smaller roster**. Keying on the filer breaks when another member files the next
+  amendment; keying on the exact set orphans the node when one party joins or
+  leaves. Overlap survives both, while keeping AB InBev's two overlapping
+  agreements — they share only the Stichting — as separate groups.
+
+A voting group is **not a legal entity**: it holds no LEI and has no country, so
+it is excluded from the quality report's identity ratio, country backfill,
+name-based dedup, federation export, and `/entities/without-country`.
+
 ## GLEIF sourcing
 
 GLEIF data comes from the **GLEIF golden copy** (current, daily), keyed `lei:{LEI}`:
