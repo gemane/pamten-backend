@@ -84,6 +84,25 @@ class SMTPBackend(EmailSender):
         log.info("[email:smtp] sent %r to %s", subject, to)
 
 
+def _raise_for_status(resp: "httpx.Response", provider: str) -> None:
+    """Fail loudly, and say what the provider actually objected to.
+
+    `raise_for_status()` alone reports "400 Bad Request" and throws the body
+    away — but the body is the whole message: an unverified sender domain, a
+    project id that does not match the key, a malformed address. Diagnosing a
+    send failure without it means guessing, so the body (truncated) is logged
+    and folded into the exception before it propagates.
+    """
+    if resp.is_success:
+        return
+    detail = (resp.text or "").strip().replace("\n", " ")[:400]
+    log.error("[email:%s] send rejected — HTTP %s: %s", provider, resp.status_code, detail)
+    raise httpx.HTTPStatusError(
+        f"{provider} rejected the send — HTTP {resp.status_code}: {detail}",
+        request=resp.request, response=resp,
+    )
+
+
 class ResendBackend(EmailSender):
     """Sends via the Resend HTTPS API — works from Render (unlike SMTP)."""
 
@@ -96,7 +115,7 @@ class ResendBackend(EmailSender):
             headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
             json=payload, timeout=10,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, "resend")
         log.info("[email:resend] sent %r to %s", subject, to)
 
 
@@ -147,7 +166,7 @@ class ScalewayBackend(EmailSender):
             headers={"X-Auth-Token": settings.SCALEWAY_SECRET_KEY},
             json=payload, timeout=10,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, "scaleway")
         log.info("[email:scaleway] sent %r to %s (region=%s)", subject, to, region)
 
 

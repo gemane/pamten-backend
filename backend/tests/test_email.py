@@ -2,6 +2,7 @@
 Unit tests for the provider-agnostic email sender (app/notifications/email.py).
 No network: the SMTP path is exercised with a mocked smtplib.SMTP.
 """
+import pytest
 from unittest.mock import MagicMock, patch
 
 from app.notifications import email as mail
@@ -60,7 +61,6 @@ def test_resend_backend_posts_to_the_api(monkeypatch):
     assert body["from"] == "Owlgraph <noreply@owlgraph.org>"
     assert body["to"] == ["to@example.com"]
     assert body["subject"] == "Verify" and body["text"] == "click the link" and body["html"] == "<p>click</p>"
-    resp.raise_for_status.assert_called_once()   # non-2xx would surface as an error
 
 
 def test_resend_backend_omits_html_when_absent(monkeypatch):
@@ -98,7 +98,6 @@ def test_scaleway_backend_posts_to_the_api(monkeypatch):
     assert body["project_id"] == "proj-123"
     assert body["subject"] == "Verify" and body["text"] == "click the link"
     assert body["html"] == "<p>click</p>"
-    resp.raise_for_status.assert_called_once()   # non-2xx would surface as an error
 
 
 def test_scaleway_backend_omits_html_and_name_when_absent(monkeypatch):
@@ -154,3 +153,60 @@ def test_verification_email_contains_action_link(monkeypatch):
         mail.send_verification_email("u@example.com", "TOK123")
     assert "https://app.example/?action=verify-email&token=TOK123" in sent["text"]
     assert "TOK123" in sent["html"]
+
+
+# ── What a rejected send tells you ───────────────────────────────────────────
+#
+# `raise_for_status()` reports "400 Bad Request" and discards the body, but the
+# body is the whole message — an unverified sender domain, a project id that does
+# not match the key. Diagnosing a failed send without it is guesswork.
+
+def _rejection(status: int, body: str):
+    """A real httpx.Response, so is_success/status_code/text behave properly."""
+    import httpx
+    return httpx.Response(status, text=body,
+                          request=httpx.Request("POST", "https://api.example.test/emails"))
+
+
+@pytest.mark.parametrize("backend,provider,setup", [
+    ("ScalewayBackend", "scaleway", {"SCALEWAY_SECRET_KEY": "k", "SCALEWAY_PROJECT_ID": "p"}),
+    ("ResendBackend",   "resend",   {"RESEND_API_KEY": "k"}),
+])
+def test_a_rejected_send_names_the_reason(monkeypatch, backend, provider, setup, caplog):
+    import httpx
+    from app.config import settings
+    for k, v in setup.items():
+        monkeypatch.setattr(settings, k, v)
+    monkeypatch.setattr(settings, "EMAIL_FROM", "noreply@owlgraph.org")
+    body = '{"message": "domain owlgraph.org is not verified", "type": "invalid_request"}'
+
+    with patch("app.notifications.email.httpx.post", return_value=_rejection(400, body)):
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            getattr(mail, backend)().send("to@example.com", "S", "text")
+
+    assert "not verified" in str(exc.value), "the provider's reason was thrown away"
+    assert provider in str(exc.value)
+    assert "not verified" in caplog.text, "nothing actionable reached the log"
+
+
+def test_a_successful_send_does_not_raise(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SCALEWAY_SECRET_KEY", "k")
+    monkeypatch.setattr(settings, "SCALEWAY_PROJECT_ID", "p")
+    monkeypatch.setattr(settings, "EMAIL_FROM", "noreply@owlgraph.org")
+    with patch("app.notifications.email.httpx.post", return_value=_rejection(200, "{}")):
+        mail.ScalewayBackend().send("to@example.com", "S", "text")   # must not raise
+
+
+def test_a_long_error_body_is_truncated(monkeypatch):
+    # Providers can return a wall of HTML; the log line should stay readable.
+    import httpx
+    from app.config import settings
+    monkeypatch.setattr(settings, "SCALEWAY_SECRET_KEY", "k")
+    monkeypatch.setattr(settings, "SCALEWAY_PROJECT_ID", "p")
+    monkeypatch.setattr(settings, "EMAIL_FROM", "noreply@owlgraph.org")
+    with patch("app.notifications.email.httpx.post",
+               return_value=_rejection(500, "x" * 5000)):
+        with pytest.raises(httpx.HTTPStatusError) as exc:
+            mail.ScalewayBackend().send("to@example.com", "S", "text")
+    assert len(str(exc.value)) < 700
