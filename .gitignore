@@ -1,6 +1,14 @@
 # Environment
 .env
 *.env
+# Editor swap/backup files. `.env` is ignored but its swap file is not covered
+# by that pattern — nano writes `..env.swp`, vim `.env.swp` — and one of those
+# reached a public commit. A swap file of a secrets file is a secrets file.
+*.swp
+*.swo
+.*.swp
+.*.swo
+*~
 
 # Python
 __pycache__/
