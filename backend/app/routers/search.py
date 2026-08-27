@@ -652,8 +652,25 @@ def get_full_profile(
         sub_ids = {s["entity"]["id"] for s in subsidiaries}
         cross_holdings = [o["owner"] for o in owners if o["owner"].get("id") in sub_ids]
 
+        # The parties to a filing group. They join by RELATED_TO, not OWNS —
+        # membership is not ownership — so nothing in the owners query above can
+        # see them, and the group's panel would otherwise list nobody.
+        group_members = []
+        if (dict(record["e"]).get("type") or "") == "voting_group":
+            for m in session.run(
+                    """MATCH (m)-[r:RELATED_TO]->(g:Entity {id: $id})
+                       WHERE r.relation = 'group_member'
+                       RETURN m, labels(m)[0] AS label""", id=entity_id):
+                node = dict(m["m"])
+                if node.get("id") in hidden:
+                    continue
+                group_members.append({"party": node, "kind": m["label"].lower()})
+            group_members.sort(key=lambda x: (x["party"].get("name")
+                                              or x["party"].get("full_name") or ""))
+
         return {
             "entity": dict(record["e"]),
+            "group_members": group_members,
             # True totals, independent of the per-section row limit above.
             "counts": counts,
             "owners": owners,

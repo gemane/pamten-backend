@@ -1225,8 +1225,13 @@ def _rosters_match(a: list, b: list) -> bool:
     return shared >= _GROUP_MATCH_MIN_SHARED and shared / smaller >= _GROUP_MATCH_MIN_RATIO
 
 
+def _voting_group_name(size: int) -> str:
+    """What a filing group is called: what it is, and how many are in it."""
+    return f"Voting group · {size} parties" if size != 1 else "Voting group · 1 party"
+
+
 def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
-                         source_id: str, filer_name: str) -> str:
+                         source_id: str) -> str:
     """The node standing for a 13D filing group, found by its roster.
 
     Deliberately not routed through `_upsert_entity_by_name`: that resolves on
@@ -1249,19 +1254,22 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
                 if shared > best_shared:
                     best, best_shared = row["id"], shared
 
+        # Named for what it is and how big, not for the company it holds: the
+        # panel already shows whose shares these are, and "Voting group —
+        # Anheuser-Busch InBev SA/NV" reads as though the group were a
+        # subsidiary of it. Uniqueness is not needed — groups are found by their
+        # roster (above) and excluded from name-based dedup — so the count can
+        # sit in the name, where it is the most useful thing to say.
+        name = _voting_group_name(len(roster))
+
         if best:
             # Same agreement, new roster: parties join and leave, and the node
-            # should follow rather than fork.
+            # should follow rather than fork. The name follows the count.
             session.run("""MATCH (g:Entity {id: $id})
-                           SET g.member_keys = $roster, g.last_scraped_at = $now""",
-                        id=best, roster=roster, now=now)
+                           SET g.member_keys = $roster, g.name = $name,
+                               g.search_text = $name, g.last_scraped_at = $now""",
+                        id=best, roster=roster, name=name, now=now)
             return best
-
-        name = f"Voting group — {subject_name}"
-        if existing:
-            # A second bloc over one company: AB InBev has two overlapping
-            # agreements, so the name has to say which.
-            name = f"{name} ({filer_name})"
         gid = str(uuid.uuid4())
         session.run(
             f"""CREATE (g:Entity {{
@@ -1698,7 +1706,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             roster += [_member_key(m["name"], m.get("cik")) for m in members]
             group_id = _upsert_voting_group(
                 subject_id=target_id, subject_name=data["name"], roster=roster,
-                source_id=source_id, filer_name=investor_name)
+                source_id=source_id)
 
             # The filer joins as a member like everybody else; it gets no edge
             # of its own, or the company would list both it and the group.
