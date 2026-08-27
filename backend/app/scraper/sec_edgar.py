@@ -823,6 +823,27 @@ def _issuer_matches(company_names, issuer_name: str | None) -> bool:
     return not seen_any
 
 
+def _parse_class_title_from_text(text: str) -> str | None:
+    """The security a cover page's percentages refer to.
+
+    Every 13D/G cover names it right under the issuer: "Ordinary Shares,
+    without nominal value (Title of Class of Securities)". Pre-2024 filings
+    have no XML, so this is the only way to know whether two percentages share
+    a denominator.
+    """
+    plain = _plain_text(text)
+    m = re.search(r'([^()]{2,120}?)\s*\(\s*Title\s+of\s+Class\s+of\s+Securities\s*\)',
+                  plain, re.IGNORECASE)
+    if not m:
+        return None
+    title = m.group(1).strip()
+    # The capture reaches back through the issuer line; keep only what follows
+    # the "(Name of Issuer)" marker when it is there.
+    title = re.split(r'\(\s*Name\s+of\s+Issuer\s*\)', title, flags=re.IGNORECASE)[-1]
+    title = re.sub(r'[\s\-_=~.]{3,}$', '', title).strip(' .,*')
+    return title or None
+
+
 def _parse_reporter_type_from_text(text: str) -> bool | None:
     """
     Extract Item 8 'Type of Reporting Person' from a SC 13D/13G filing.
@@ -1031,6 +1052,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         pct           = None
         voting        = None
         is_individual = None
+        share_class   = None
         group_members: list[dict] = []
 
         if inv.get("xml"):
@@ -1041,6 +1063,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                          xml.get("issuer_cik"), company_name)
                 continue
             pct, voting   = _stake_from_person(xml, person)
+            share_class   = xml.get("class_title")
             is_individual = (person["type_code"] in _INDIVIDUAL_CODES
                              if person.get("type_code") else None)
             group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml"}
@@ -1057,6 +1080,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 pct           = _parse_percent_from_text(text)
                 pct, voting    = _own_stake_and_voting(text, pct)
                 is_individual = _parse_reporter_type_from_text(text)
+                share_class   = _parse_class_title_from_text(text)
                 if voting and inv.get("accession"):
                     # A bloc without an XML membership list: the SGML header
                     # names the co-filers. Only fetched for the few filings that
@@ -1090,6 +1114,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # None for a lone filer, whose stake already is its whole position.
             "voting_power_pct": voting,
             "ownership_type":   derive_ownership_type(pct, inv["form_type"]),
+            # The security this percentage is a percentage OF.
+            "share_class":      share_class,
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
             # Provenance: the filing index page (readable), with the primary doc
             # as a fallback. file_date is the filing's date.
@@ -1665,6 +1691,11 @@ def _parse_13dg_xml(raw: str) -> dict | None:
         "issuer_cik":   _xml_child(root, issuer_tag),
         "issuer_name":  _xml_child(root, "issuerName"),
         "filer_cik":    _xml_child(root, "cik"),
+        # WHICH security the percentages are percentages OF. A percent of class
+        # is meaningless without it: Grupo Televisa's filers report 22.3% of
+        # "Series A/B/Dividend Preferred" beside 9.7% of "CPOs and Global D
+        # shares", and adding those gave the company 115.9% of itself.
+        "class_title":  _xml_child(root, "securitiesClassTitle"),
         "persons":      persons,
         "comment_text": " ".join(comments),
     }

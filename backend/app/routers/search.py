@@ -1,5 +1,7 @@
 from typing import Annotated
 
+import re
+
 from fastapi import APIRouter, Query, HTTPException
 from app.config import settings
 from app.database import db
@@ -305,6 +307,44 @@ def _attach_corroboration(rel: dict, claims: dict[tuple, list[str]],
     return rel
 
 
+#: Words in a class title that describe rather than identify the security.
+#: "Common Stock" and "Common Stock, $0.01 par value per share" are one class;
+#: "Series A Shares" and "CPOs" are two.
+_CLASS_NOISE = re.compile(
+    r"(,?\s*(without|with)\s+(a\s+)?(nominal|par)\s+value[^,;]*)"
+    r"|(,?\s*(\$|usd|eur)?\s*[\d.]+\s*(par\s+value|per\s+share)[^,;]*)"
+    r"|(,?\s*par\s+value[^,;]*)",
+    re.IGNORECASE,
+)
+
+
+def _class_key(title: str | None) -> str | None:
+    """A class title reduced to its identity, or None when unstated.
+
+    Two filings describing the same security rarely spell it identically —
+    "Common Stock" against "Common Stock, par value $0.0001 per share" — so the
+    descriptive tail is dropped before comparing. What survives still separates
+    genuinely different instruments, which is the point: Grupo Televisa's
+    "Series A Shares; Series B Shares; Dividend Preferred Shares" and
+    "Certificados de Participacion Ordinarios (CPOs) and Global D Shares" are
+    not the same denominator, and adding percentages of both gave the company
+    115.9% of itself.
+    """
+    if not title or not title.strip():
+        return None
+    key = title
+    key = re.sub(r"\([^)]*\)", " ", key)            # parenthetical glosses: ("A Shares")
+    key = re.sub(r",\s*(which|each)\b.*$", "", key, flags=re.IGNORECASE)  # trailing prose
+    key = _CLASS_NOISE.sub("", key)
+    # A title is often a LIST of securities, and two filers list the same ones
+    # in different order with different separators. Compare the set of parts,
+    # not the sentence: "Series A Shares; Series B Shares" and "Series A Shares
+    # ("A Shares"), Series B Shares ("B Shares")" name one denominator.
+    parts = re.split(r"[;,]|\band\b", key, flags=re.IGNORECASE)
+    cleaned = sorted({re.sub(r"[^a-z0-9]+", " ", p.lower()).strip() for p in parts} - {""})
+    return " | ".join(cleaned) or None
+
+
 def _ownership_summary(owners: list[dict]) -> dict:
     """Derive a free-float / data-quality summary from an entity's owners.
 
@@ -320,7 +360,34 @@ def _ownership_summary(owners: list[dict]) -> dict:
         1 for o in owners
         if not isinstance(o["relationship"].get("stake_percent"), (int, float))
     )
+
+    # Group the stakes by the security they are percentages OF. A percentage is
+    # only addable to another when both share a denominator, and a company with
+    # several share classes has several denominators.
+    by_class: dict = {}
+    for o in owners:
+        rel = o["relationship"]
+        pct = rel.get("stake_percent")
+        if not isinstance(pct, (int, float)):
+            continue
+        key = _class_key(rel.get("share_class"))
+        bucket = by_class.setdefault(key, {"title": rel.get("share_class"),
+                                           "disclosed_pct": 0.0, "owners": 0})
+        bucket["disclosed_pct"] += pct
+        bucket["owners"] += 1
+    for b in by_class.values():
+        b["disclosed_pct"] = round(b["disclosed_pct"], 4)
+
+    # Filings that name their class and disagree about it. Unnamed ones (every
+    # pre-2024 filing) can't contradict anybody, so they don't trigger this.
+    named = {k for k in by_class if k is not None}
+    multi_class = len(named) > 1
+
     disclosed = round(sum(known), 4) if known else None
+    if multi_class:
+        # No single number is true here: the parts are measured against
+        # different wholes. Saying nothing beats saying 115.9%.
+        disclosed = None
     exceeds = disclosed is not None and disclosed > 100.0 + _OVER_100_TOL
     free_float = None
     if disclosed is not None and unknown_owners == 0 and not exceeds:
@@ -332,6 +399,13 @@ def _ownership_summary(owners: list[dict]) -> dict:
         "free_float_pct": free_float,
         "unknown_owners": unknown_owners,
         "exceeds_100": exceeds,
+        "multi_class": multi_class,
+        # Per-security totals, largest first; the unnamed bucket last.
+        "by_class": sorted(
+            ({"share_class": b["title"], **{k: v for k, v in b.items() if k != "title"}}
+             for b in by_class.values()),
+            key=lambda b: (b["share_class"] is None, -b["disclosed_pct"]),
+        ),
     }
 
 

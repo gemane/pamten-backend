@@ -3,12 +3,13 @@ Unit tests for the search router's pure helpers (no DB needed). The endpoint
 itself is exercised end-to-end in tests/integration/test_person_profile_it.py.
 """
 from app.routers.search import (
-    _dedupe_positions, _dedupe_holdings, _clean, _ownership_summary,
+    _dedupe_positions, _dedupe_holdings, _clean, _ownership_summary, _class_key,
 )
 
 
-def _owner(stake):
-    return {"owner": {"id": "x"}, "relationship": {"stake_percent": stake}}
+def _owner(stake, share_class=None):
+    return {"owner": {"id": "x"},
+            "relationship": {"stake_percent": stake, "share_class": share_class}}
 
 
 class TestOwnershipSummary:
@@ -151,3 +152,87 @@ class TestDedupeHoldings:
 
     def test_skips_null_entities(self):
         assert _dedupe_holdings([_row(None, None)]) == []
+
+
+class TestShareClassIdentity:
+    """A percentage is only addable to another when both measure the same
+    security. Grupo Televisa's filers report 22.3% of its Series A/B/Preferred
+    shares beside 9.7% of its CPOs — different instruments, different
+    denominators — and adding them gave the company 115.9% of itself."""
+
+    def test_a_descriptive_tail_does_not_make_a_new_class(self):
+        assert _class_key("Common Stock") == _class_key(
+            "Common Stock, par value $0.0001 per share")
+        assert _class_key("Ordinary Shares") == _class_key(
+            "Ordinary Shares, without nominal value")
+
+    def test_parenthetical_glosses_are_ignored(self):
+        # Real Televisa filings differ only by the abbreviations they define.
+        assert _class_key('Series A Shares ("A Shares"), Series B Shares ("B Shares")') \
+            == _class_key("Series A Shares; Series B Shares")
+
+    def test_order_and_separator_do_not_matter(self):
+        assert _class_key("Series B Shares and Series A Shares") \
+            == _class_key("Series A Shares; Series B Shares")
+
+    def test_trailing_prose_is_cut(self):
+        assert _class_key("Global Depositary Shares") == _class_key(
+            "Global Depositary Shares, each representing five CPOs")
+
+    def test_genuinely_different_securities_stay_apart(self):
+        # The whole point: these must never merge.
+        assert _class_key("Series A Shares; Series B Shares") != _class_key(
+            "Certificados de Participacion Ordinarios (CPOs)")
+        assert _class_key("Common Stock") != _class_key("Global Depositary Shares")
+
+    def test_an_unstated_class_is_none(self):
+        assert _class_key(None) is None
+        assert _class_key("   ") is None
+
+
+class TestClassAwareSummary:
+    def test_one_class_behaves_exactly_as_before(self):
+        s = _ownership_summary([_owner(7.0, "Common Stock"),
+                                _owner(5.0, "Common Stock, $0.01 par value")])
+        assert s["disclosed_pct"] == 12.0
+        assert s["free_float_pct"] == 88.0
+        assert s["multi_class"] is False
+
+    def test_unnamed_classes_do_not_trigger_a_split(self):
+        # Every pre-2024 filing lacks a class title; those can't contradict
+        # anyone, so they must not suppress the total for the whole graph.
+        s = _ownership_summary([_owner(7.0), _owner(5.0)])
+        assert s["disclosed_pct"] == 12.0
+        assert s["multi_class"] is False
+
+    def test_two_securities_yield_no_single_total(self):
+        # Saying nothing beats saying 115.9%.
+        s = _ownership_summary([_owner(22.3, "Series A Shares; Series B Shares"),
+                                _owner(9.7, "Certificados de Participacion Ordinarios")])
+        assert s["multi_class"] is True
+        assert s["disclosed_pct"] is None
+        assert s["free_float_pct"] is None
+        assert s["exceeds_100"] is False
+
+    def test_each_security_still_gets_its_own_total(self):
+        s = _ownership_summary([
+            _owner(22.3, "Series A Shares"), _owner(9.0, "Series A Shares"),
+            _owner(9.7, "CPOs"),
+        ])
+        by = {b["share_class"]: b for b in s["by_class"]}
+        assert by["Series A Shares"]["disclosed_pct"] == 31.3
+        assert by["Series A Shares"]["owners"] == 2
+        assert by["CPOs"]["disclosed_pct"] == 9.7
+
+    def test_the_breakdown_is_ordered_largest_first_with_unnamed_last(self):
+        s = _ownership_summary([_owner(5.0, "CPOs"), _owner(40.0),
+                                _owner(30.0, "Series A Shares")])
+        assert [b["share_class"] for b in s["by_class"]] == [
+            "Series A Shares", "CPOs", None]
+
+    def test_a_single_named_class_beside_unnamed_ones_still_totals(self):
+        # Televisa's oldest filings name no class; one that does cannot make
+        # the company multi-class on its own.
+        s = _ownership_summary([_owner(44.2), _owner(5.3, "Common Stock")])
+        assert s["multi_class"] is False
+        assert s["disclosed_pct"] == 49.5
