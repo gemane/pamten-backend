@@ -144,6 +144,18 @@ class TestIdentity:
         assert i["wikidata_only"] == 1
         assert i["no_id_at_all"] == 1
 
+    def test_a_voting_group_is_not_counted_at_all(self, graph):
+        # A filing group is an agreement between parties, not an organisation:
+        # it can never hold an LEI, so counting it would make the graph look
+        # permanently less register-identified than it is.
+        graph.run_command("MATCH (e {id:'co-a'}) SET e.lei_id = 'L1'")
+        graph.run_command("CREATE (g:Entity {id:'grp', name:'Voting group — Held Co', "
+                          "type:'voting_group'})")
+        from app.quality import quality_report
+        i = quality_report()["identity"]
+        assert i["entities"] == 3, "the group was counted among the entities"
+        assert i["no_id_at_all"] == 2
+
     def test_an_entity_with_both_counts_as_official(self, graph):
         # Wikidata-only means ONLY — a register-identified company that also has a
         # QID is register-backed, and counting it as community would overstate the

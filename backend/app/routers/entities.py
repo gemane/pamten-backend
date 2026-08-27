@@ -137,9 +137,11 @@ def get_entities_without_country(
     segment that a real country code could one day collide with.
     """
     prop = _basis_property(basis)
+    # A voting group has no country by nature, so listing it here as work to be
+    # done would never stop being true.
     query = f"""
         MATCH (e:Entity)
-        WHERE {prop} IS NULL OR {prop} = ''
+        WHERE ({prop} IS NULL OR {prop} = '') AND e.type <> 'voting_group'
         RETURN e.id AS id, e.name AS name, e.type AS type
         ORDER BY e.name
         LIMIT $limit
