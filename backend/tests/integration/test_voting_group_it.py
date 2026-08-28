@@ -470,3 +470,89 @@ class TestTheWholeScrapeWritesTheGroup:
         assert graph.run_command(
             "MATCH (a:Entity)-[r:OWNS]->(b:Entity) WHERE a.name = 'State Street Corporation' "
             "RETURN r.voting_power_pct AS v")[0]["v"] == 52.3
+
+
+class TestAMergeDoesNotLoseMembership:
+    """`_migrate_entity_edges` moved OWNS and HAS_ROLE only, so a merge
+    destroyed RELATED_TO without trace — a party merged into another node simply
+    vanished from the group it belongs to. It predates voting groups (13F fund
+    affiliation used the same edge) but membership now depends on it."""
+
+    def _merge(self, dead: str, keep: str):
+        from app.scraper.maintenance import _migrate_entity_edges
+        return _migrate_entity_edges(dead, keep)
+
+    def test_membership_follows_the_surviving_node(self, graph):
+        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership
+        gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
+        graph.run_command("CREATE (e:Entity {id:'dupe', name:'Stichting (dupe)'})")
+        _upsert_group_membership("dupe", gid, "Entity", "sec")
+
+        self._merge("dupe", "stichting")
+        rows = graph.run_command(
+            "MATCH (m {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) "
+            "RETURN r.relation AS rel", {"g": gid})
+        assert [r["rel"] for r in rows] == ["group_member"], \
+            "the merged party lost its place in the group"
+
+    def test_the_direction_is_preserved(self, graph):
+        # A member points AT its group. Reversing it would make the group a
+        # member of itself.
+        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership
+        gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
+        graph.run_command("CREATE (e:Entity {id:'dupe', name:'Dupe'})")
+        _upsert_group_membership("dupe", gid, "Entity", "sec")
+        self._merge("dupe", "stichting")
+        assert graph.run_command(
+            "MATCH (g {id:$g})-[r:RELATED_TO]->(m {id:'stichting'}) RETURN r",
+            {"g": gid}) == []
+
+    def test_a_group_keeps_its_parties_when_the_group_is_merged(self, graph):
+        # The other direction: the surviving group must inherit the incoming
+        # membership edges of the one merged away.
+        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership
+        graph.run_command("CREATE (e:Entity {id:'other', name:'Other Co', type:'company'})")
+        keep = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
+        dead = _upsert_voting_group("other", "Other Co", _roster(*ABI_ROSTER[:3]), "sec")
+        _upsert_group_membership("stichting", dead, "Entity", "sec")
+
+        self._merge(dead, keep)
+        rows = graph.run_command(
+            "MATCH (m {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) RETURN r", {"g": keep})
+        assert len(rows) == 1
+
+    def test_an_edge_the_survivor_already_has_is_not_duplicated(self, graph):
+        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership
+        gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
+        graph.run_command("CREATE (e:Entity {id:'dupe', name:'Dupe'})")
+        _upsert_group_membership("dupe", gid, "Entity", "sec")
+        _upsert_group_membership("stichting", gid, "Entity", "sec")
+        self._merge("dupe", "stichting")
+        rows = graph.run_command(
+            "MATCH (m {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) RETURN r", {"g": gid})
+        assert len(rows) == 1
+
+
+def test_a_merge_keeps_the_share_counts(graph):
+    """The docstring warns that an OWNS edge is RECREATED, so every property
+    must be listed — and four added this week were not: share_class, shares,
+    shares_outstanding and voting_shares would all have been dropped."""
+    from app.scraper.runner import _upsert_owns_sec
+    from app.scraper.maintenance import _migrate_entity_edges
+
+    graph.run_command("CREATE (e:Entity {id:'dead', name:'Old Altria'})")
+    graph.run_command("CREATE (e:Entity {id:'keep', name:'Altria'})")
+    _upsert_owns_sec("dead", "abi", "sec", "minority", "2025-02-07", 8.05,
+                     share_class="Ordinary Shares", shares=159121937,
+                     shares_outstanding=1975847422, voting_shares=1020598157,
+                     voting_power_pct=51.9)
+    _migrate_entity_edges("dead", "keep")
+
+    r = graph.run_command(
+        "MATCH (a {id:'keep'})-[r:OWNS]->(b {id:'abi'}) "
+        "RETURN r.share_class AS cls, r.shares AS sh, "
+        "r.shares_outstanding AS tot, r.voting_shares AS vs")[0]
+    assert r["cls"] == "Ordinary Shares"
+    assert r["sh"] == 159121937
+    assert r["tot"] == 1975847422
+    assert r["vs"] == 1020598157
