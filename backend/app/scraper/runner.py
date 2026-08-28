@@ -1398,6 +1398,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 WHERE r.source_id = $sid {active_only}
                 SET r.last_scraped_at = $now,
                     r.until       = $until,
+                    r.stale       = false,
                     r.stake_percent    = $stake,
                     r.voting_power_pct = $vote,
                     r.share_class      = $sclass,

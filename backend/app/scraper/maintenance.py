@@ -269,77 +269,81 @@ def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = N
 
 
 def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
-    """Move all OWNS and HAS_ROLE edges from dead_id → keep_id, return count migrated."""
+    """Move all OWNS / HAS_ROLE / RELATED_TO edges from dead_id → keep_id.
+
+    This was the recreate block the entity path's "add it to all three blocks"
+    docstring did not know about: it named 6 of 25 OWNS properties, and it runs
+    automatically after every scrape via auto-dedup — so every person merge
+    silently stripped provenance, counts and voting data from the surviving
+    edges. Property lists now come from ``edge_schema``, same as the entity
+    path, so both carry whatever the schema carries.
+    """
+    from app.scraper.edge_schema import (OWNS_PROPS, ROLE_PROPS, RELATED_TO_PROPS,
+                                         edge_return_clause, edge_create_clause,
+                                         edge_params)
     migrated = 0
 
-    # OWNS edges the dead node owns
-    owns_out = run_query(
-        """
-        MATCH (p:Person {id: $pid})-[r:OWNS]->(t)
-        RETURN t.id AS tid, r.stake_percent AS stake, r.file_date AS file_date,
-               r.source_id AS source_id, r.ownership_type AS ownership_type,
-               r.since AS since, r.until AS until
-        """,
+    for e in run_query(
+        f"""MATCH (p:Person {{id: $pid}})-[r:OWNS]->(t:Entity)
+            RETURN t.id AS tid, {edge_return_clause('r', OWNS_PROPS)}""",
         {"pid": dead_id},
-    )
-    for e in owns_out:
-        tid = e["tid"]
-        # Skip if keep already has an active OWNS edge to the same target
-        existing = run_query(
-            "MATCH (p:Person {id: $pid})-[r:OWNS]->(t {id: $tid}) WHERE r.until IS NULL RETURN r LIMIT 1",
-            {"pid": keep_id, "tid": tid},
+    ):
+        if run_query(
+            "MATCH (p:Person {id: $pid})-[r:OWNS]->(t:Entity {id: $tid}) "
+            "WHERE r.until IS NULL RETURN r LIMIT 1",
+            {"pid": keep_id, "tid": e["tid"]},
+        ):
+            continue
+        run_command(
+            f"""MATCH (p:Person {{id: $pid}}), (t:Entity {{id: $tid}})
+                CREATE (p)-[:OWNS {{{edge_create_clause(OWNS_PROPS)}}}]->(t)""",
+            {"pid": keep_id, "tid": e["tid"], **edge_params(e, OWNS_PROPS)},
         )
-        if not existing:
-            run_command(
-                """
-                MATCH (p:Person {id: $pid}), (t {id: $tid})
-                CREATE (p)-[:OWNS {
-                    stake_percent: $stake, file_date: $file_date,
-                    source_id: $source_id, ownership_type: $otype,
-                    since: $since, until: $until
-                }]->(t)
-                """,
-                {"pid": keep_id, "tid": tid, "stake": e.get("stake"),
-                 "file_date": e.get("file_date"), "source_id": e.get("source_id"),
-                 "otype": e.get("ownership_type"), "since": e.get("since"),
-                 "until": e.get("until")},
-            )
-            migrated += 1
+        migrated += 1
 
-    # HAS_ROLE edges
-    roles = run_query(
-        """
-        MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(t)
-        RETURN t.id AS tid, r.role AS role, r.since AS since, r.until AS until,
-               r.source_id AS source_id
-        """,
+    for e in run_query(
+        f"""MATCH (p:Person {{id: $pid}})-[r:HAS_ROLE]->(t:Entity)
+            RETURN t.id AS tid, {edge_return_clause('r', ROLE_PROPS)}""",
         {"pid": dead_id},
-    )
-    for e in roles:
-        tid = e["tid"]
-        existing = run_query(
-            """
-            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(t {id: $tid})
-            WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1
-            """,
-            {"pid": keep_id, "tid": tid, "role": e.get("role")},
+    ):
+        if run_query(
+            "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(t:Entity {id: $tid}) "
+            "WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1",
+            {"pid": keep_id, "tid": e["tid"], "role": e.get("role")},
+        ):
+            continue
+        run_command(
+            f"""MATCH (p:Person {{id: $pid}}), (t:Entity {{id: $tid}})
+                CREATE (p)-[:HAS_ROLE {{{edge_create_clause(ROLE_PROPS)}}}]->(t)""",
+            {"pid": keep_id, "tid": e["tid"], **edge_params(e, ROLE_PROPS)},
         )
-        if not existing:
-            run_command(
-                """
-                MATCH (p:Person {id: $pid}), (t {id: $tid})
-                CREATE (p)-[:HAS_ROLE {
-                    role: $role, since: $since, until: $until, source_id: $source_id
-                }]->(t)
-                """,
-                {"pid": keep_id, "tid": tid, "role": e.get("role"),
-                 "since": e.get("since"), "until": e.get("until"),
-                 "source_id": e.get("source_id")},
-            )
-            migrated += 1
+        migrated += 1
+
+    # People are group members too — Lemann, Sicupira and Telles all are — and
+    # a person-merge used to sever them from their bloc exactly as the entity
+    # path once did.
+    for e in run_query(
+        f"""MATCH (p:Person {{id: $pid}})-[r:RELATED_TO]->(t:Entity)
+            RETURN t.id AS tid, {edge_return_clause('r', RELATED_TO_PROPS)}""",
+        {"pid": dead_id},
+    ):
+        if run_query(
+            "MATCH (p:Person {id: $pid})-[r:RELATED_TO]->(t:Entity {id: $tid}) "
+            "WHERE r.relation = $relation RETURN r LIMIT 1",
+            {"pid": keep_id, "tid": e["tid"], "relation": e.get("relation")},
+        ):
+            continue
+        run_command(
+            f"""MATCH (p:Person {{id: $pid}}), (t:Entity {{id: $tid}})
+                CREATE (p)-[:RELATED_TO {{{edge_create_clause(RELATED_TO_PROPS)}}}]->(t)""",
+            {"pid": keep_id, "tid": e["tid"], **edge_params(e, RELATED_TO_PROPS)},
+        )
+        migrated += 1
+
+    from app.claims import migrate_claims
+    migrate_claims(dead_id, keep_id)
 
     return migrated
-
 
 def deduplicate_person_nodes() -> dict:
     """
@@ -515,88 +519,53 @@ def _coalesce_entity_props(dead_id: str, keep_id: str) -> int:
 def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     """Move every OWNS / HAS_ROLE / RELATED_TO edge off ``dead_id`` onto ``keep_id``.
 
-    Covers the ways an Entity is wired: OWNS it makes (outgoing), OWNS made *to*
-    it (incoming, from a Person or Entity), HAS_ROLE held *in* it, and
-    RELATED_TO in both directions — filing-group membership and 13F fund
-    affiliation, which a merge used to destroy without trace.
-    An edge that ``keep`` already has (active, same target/role) is dropped
-    rather than duplicated. Returns the number of edges migrated.
+    An edge is RECREATED, not moved, so its property list decides what
+    survives — and hand-written lists here fell behind three separate times
+    (interest_types/direct_or_indirect/psc_self_link, then the share counts,
+    then shortcut/also_ultimate/until_reason/value_usd). The lists now come
+    from ``edge_schema``: one tuple per edge kind, and the RETURN and CREATE
+    clauses are generated from it, so a property added to the schema is
+    carried through every merge without this function changing.
 
-    Location is not among them any more — HQ lives on the Entity's own
-    properties, so the surviving node keeps its own and there is nothing to
-    move.
+    Why not ``properties(r)`` server-side: prod ArcadeDB silently no-ops
+    cross-edge property reads. Generated clauses with bound $params are the
+    one shape proven reliable there.
 
-    **An OWNS edge is recreated, not moved**, so every property has to be listed
-    here or it is silently lost on merge. Three were: `interest_types` and
-    `direct_or_indirect` (GLEIF's direct/ultimate marker, which the graph renderer
-    and `mark-shortcuts` both read), and `psc_self_link` — the key the Companies
-    House refresh matches an edge on, whose loss would orphan the edge and make
-    the next refresh create a duplicate beside it. If you add a property to an
-    OWNS edge anywhere, add it to all three blocks below.
+    An edge that ``keep`` already has (active, same target/role/relation) is
+    dropped rather than duplicated. Returns the number migrated.
     """
+    from app.scraper.edge_schema import (OWNS_PROPS, ROLE_PROPS, RELATED_TO_PROPS,
+                                         edge_return_clause, edge_create_clause,
+                                         edge_params)
     migrated = 0
 
-    # 1. Outgoing OWNS  (dead)-[:OWNS]->(t)  — OWNS always points to an Entity, so
-    # label t:Entity: a label-less `(t {id})` can't use the per-type id index and
-    # full-scans every node (~14s each on 3M nodes), which hung the last merge.
+    # 1. Outgoing OWNS. Labelled endpoints so the id lookups are index-backed —
+    # a label-less match full-scans every node (~14s each on 3M), which hung a
+    # merge once.
     for e in run_query(
-        """
-        MATCH (a:Entity {id: $id})-[r:OWNS]->(t:Entity)
-        RETURN t.id AS tid, r.stake_percent AS stake, r.ownership_type AS otype,
-               r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
-               r.source_id AS source_id, r.credibility_score AS cred,
-               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa,
-               r.interest_types AS itypes, r.direct_or_indirect AS doi,
-               r.psc_self_link AS pscl, r.share_class AS sclass,
-               r.shares AS shares, r.shares_outstanding AS shtotal,
-               r.voting_shares AS vshares, r.stale AS stale
-        """,
+        f"""MATCH (a:Entity {{id: $id}})-[r:OWNS]->(t:Entity)
+            RETURN t.id AS tid, {edge_return_clause('r', OWNS_PROPS)}""",
         {"id": dead_id},
     ):
         if run_query(
-            "MATCH (a:Entity {id: $k})-[r:OWNS]->(t:Entity {id: $tid}) WHERE r.until IS NULL RETURN r LIMIT 1",
+            "MATCH (a:Entity {id: $k})-[r:OWNS]->(t:Entity {id: $tid}) "
+            "WHERE r.until IS NULL RETURN r LIMIT 1",
             {"k": keep_id, "tid": e["tid"]},
         ):
             continue
         run_command(
-            """
-            MATCH (a:Entity {id: $k}), (t:Entity {id: $tid})
-            CREATE (a)-[:OWNS {stake_percent: $stake, ownership_type: $otype,
-                voting_power_pct: $vpp, since: $since, until: $until,
-                source_id: $source_id, credibility_score: $cred,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa,
-                interest_types: $itypes, direct_or_indirect: $doi,
-                psc_self_link: $pscl, share_class: $sclass, shares: $shares,
-                shares_outstanding: $shtotal, voting_shares: $vshares,
-                stale: $stale}]->(t)
-            """,
-            {"k": keep_id, "tid": e["tid"], "stake": e.get("stake"), "otype": e.get("otype"),
-             "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
-             "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
-             "sdate": e.get("sdate"), "lsa": e.get("lsa"), "itypes": e.get("itypes"),
-             "doi": e.get("doi"), "pscl": e.get("pscl"),
-             "sclass": e.get("sclass"), "shares": e.get("shares"),
-             "shtotal": e.get("shtotal"), "vshares": e.get("vshares"),
-             "stale": e.get("stale")},
+            f"""MATCH (a:Entity {{id: $k}}), (t:Entity {{id: $tid}})
+                CREATE (a)-[:OWNS {{{edge_create_clause(OWNS_PROPS)}}}]->(t)""",
+            {"k": keep_id, "tid": e["tid"], **edge_params(e, OWNS_PROPS)},
         )
         migrated += 1
 
-    # 2. Incoming OWNS  (s)-[:OWNS]->(dead)   — owner may be Person or Entity, so
-    # capture its label at read time (labels(s)) and interpolate it into the
-    # write, again so the id match is index-backed rather than a full scan.
+    # 2. Incoming OWNS — the owner may be a Person or an Entity, so its label
+    # is captured at read time and interpolated, keeping the match index-backed.
     for e in run_query(
-        """
-        MATCH (s)-[r:OWNS]->(b:Entity {id: $id})
-        RETURN s.id AS sid, labels(s) AS slabels,
-               r.stake_percent AS stake, r.ownership_type AS otype,
-               r.voting_power_pct AS vpp, r.since AS since, r.until AS until,
-               r.source_id AS source_id, r.credibility_score AS cred,
-               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa,
-               r.interest_types AS itypes, r.direct_or_indirect AS doi,
-               r.psc_self_link AS pscl, r.share_class AS sclass,
-               r.shares AS shares, r.shares_outstanding AS shtotal,
-               r.voting_shares AS vshares, r.stale AS stale
-        """,
+        f"""MATCH (s)-[r:OWNS]->(b:Entity {{id: $id}})
+            RETURN s.id AS sid, labels(s) AS slabels,
+                   {edge_return_clause('r', OWNS_PROPS)}""",
         {"id": dead_id},
     ):
         slabels = e.get("slabels") or []
@@ -608,36 +577,16 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         ):
             continue
         run_command(
-            f"""
-            MATCH (s:{slabel} {{id: $sid}}), (b:Entity {{id: $k}})
-            CREATE (s)-[:OWNS {{stake_percent: $stake, ownership_type: $otype,
-                voting_power_pct: $vpp, since: $since, until: $until,
-                source_id: $source_id, credibility_score: $cred,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa,
-                interest_types: $itypes, direct_or_indirect: $doi,
-                psc_self_link: $pscl, share_class: $sclass, shares: $shares,
-                shares_outstanding: $shtotal, voting_shares: $vshares,
-                stale: $stale}}]->(b)
-            """,
-            {"sid": e["sid"], "k": keep_id, "stake": e.get("stake"), "otype": e.get("otype"),
-             "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
-             "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
-             "sdate": e.get("sdate"), "lsa": e.get("lsa"), "itypes": e.get("itypes"),
-             "doi": e.get("doi"), "pscl": e.get("pscl"),
-             "sclass": e.get("sclass"), "shares": e.get("shares"),
-             "shtotal": e.get("shtotal"), "vshares": e.get("vshares"),
-             "stale": e.get("stale")},
+            f"""MATCH (s:{slabel} {{id: $sid}}), (b:Entity {{id: $k}})
+                CREATE (s)-[:OWNS {{{edge_create_clause(OWNS_PROPS)}}}]->(b)""",
+            {"sid": e["sid"], "k": keep_id, **edge_params(e, OWNS_PROPS)},
         )
         migrated += 1
 
-    # 3. Incoming HAS_ROLE  (p:Person)-[:HAS_ROLE]->(dead)
+    # 3. Incoming HAS_ROLE.
     for e in run_query(
-        """
-        MATCH (p:Person)-[r:HAS_ROLE]->(b:Entity {id: $id})
-        RETURN p.id AS pid, r.role AS role, r.since AS since, r.until AS until,
-               r.source_id AS source_id, r.credibility_score AS cred,
-               r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa
-        """,
+        f"""MATCH (p:Person)-[r:HAS_ROLE]->(b:Entity {{id: $id}})
+            RETURN p.id AS pid, {edge_return_clause('r', ROLE_PROPS)}""",
         {"id": dead_id},
     ):
         if run_query(
@@ -647,57 +596,36 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         ):
             continue
         run_command(
-            """
-            MATCH (p:Person {id: $pid}), (b:Entity {id: $k})
-            CREATE (p)-[:HAS_ROLE {role: $role, since: $since, until: $until,
-                source_id: $source_id, credibility_score: $cred,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $lsa}]->(b)
-            """,
-            {"pid": e["pid"], "k": keep_id, "role": e.get("role"), "since": e.get("since"),
-             "until": e.get("until"), "source_id": e.get("source_id"), "cred": e.get("cred"),
-             "surl": e.get("surl"), "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+            f"""MATCH (p:Person {{id: $pid}}), (b:Entity {{id: $k}})
+                CREATE (p)-[:HAS_ROLE {{{edge_create_clause(ROLE_PROPS)}}}]->(b)""",
+            {"pid": e["pid"], "k": keep_id, **edge_params(e, ROLE_PROPS)},
         )
         migrated += 1
 
-    # 4. RELATED_TO, both directions. Not ownership — it carries filing-group
-    # membership and 13F fund affiliation — and until now it was the one edge
-    # kind a merge silently destroyed. A party merged into another node simply
-    # vanished from the voting group it belongs to, leaving a group that no
-    # longer lists all its parties and no record that it ever did.
-    #
-    # Direction is preserved rather than normalised: a member points AT its
-    # group, and reversing that would make the group a member of itself.
+    # 4. RELATED_TO, both directions — filing-group membership and 13F fund
+    # affiliation. Direction preserved: a member points AT its group.
     for e in run_query(
-        """
-        MATCH (a:Entity {id: $id})-[r:RELATED_TO]->(t:Entity)
-        RETURN t.id AS tid, r.relation AS rel, r.source_id AS source_id,
-               r.last_scraped_at AS lsa
-        """,
+        f"""MATCH (a:Entity {{id: $id}})-[r:RELATED_TO]->(t:Entity)
+            RETURN t.id AS tid, {edge_return_clause('r', RELATED_TO_PROPS)}""",
         {"id": dead_id},
     ):
         if run_query(
             "MATCH (a:Entity {id: $k})-[r:RELATED_TO]->(t:Entity {id: $tid}) "
             "WHERE r.relation = $rel RETURN r LIMIT 1",
-            {"k": keep_id, "tid": e["tid"], "rel": e.get("rel")},
+            {"k": keep_id, "tid": e["tid"], "rel": e.get("relation")},
         ):
             continue
         run_command(
-            """
-            MATCH (a:Entity {id: $k}), (t:Entity {id: $tid})
-            CREATE (a)-[:RELATED_TO {relation: $rel, source_id: $source_id,
-                last_scraped_at: $lsa}]->(t)
-            """,
-            {"k": keep_id, "tid": e["tid"], "rel": e.get("rel"),
-             "source_id": e.get("source_id"), "lsa": e.get("lsa")},
+            f"""MATCH (a:Entity {{id: $k}}), (t:Entity {{id: $tid}})
+                CREATE (a)-[:RELATED_TO {{{edge_create_clause(RELATED_TO_PROPS)}}}]->(t)""",
+            {"k": keep_id, "tid": e["tid"], **edge_params(e, RELATED_TO_PROPS)},
         )
         migrated += 1
 
     for e in run_query(
-        """
-        MATCH (s)-[r:RELATED_TO]->(b:Entity {id: $id})
-        RETURN s.id AS sid, labels(s) AS slabels, r.relation AS rel,
-               r.source_id AS source_id, r.last_scraped_at AS lsa
-        """,
+        f"""MATCH (s)-[r:RELATED_TO]->(b:Entity {{id: $id}})
+            RETURN s.id AS sid, labels(s) AS slabels,
+                   {edge_return_clause('r', RELATED_TO_PROPS)}""",
         {"id": dead_id},
     ):
         slabels = e.get("slabels") or []
@@ -705,31 +633,20 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         if run_query(
             f"MATCH (s:{slabel} {{id: $sid}})-[r:RELATED_TO]->(b:Entity {{id: $k}}) "
             "WHERE r.relation = $rel RETURN r LIMIT 1",
-            {"sid": e["sid"], "k": keep_id, "rel": e.get("rel")},
+            {"sid": e["sid"], "k": keep_id, "rel": e.get("relation")},
         ):
             continue
         run_command(
-            f"""
-            MATCH (s:{slabel} {{id: $sid}}), (b:Entity {{id: $k}})
-            CREATE (s)-[:RELATED_TO {{relation: $rel, source_id: $source_id,
-                last_scraped_at: $lsa}}]->(b)
-            """,
-            {"sid": e["sid"], "k": keep_id, "rel": e.get("rel"),
-             "source_id": e.get("source_id"), "lsa": e.get("lsa")},
+            f"""MATCH (s:{slabel} {{id: $sid}}), (b:Entity {{id: $k}})
+                CREATE (s)-[:RELATED_TO {{{edge_create_clause(RELATED_TO_PROPS)}}}]->(b)""",
+            {"sid": e["sid"], "k": keep_id, **edge_params(e, RELATED_TO_PROPS)},
         )
         migrated += 1
 
+    from app.claims import migrate_claims
+    migrate_claims(dead_id, keep_id)
+
     return migrated
-
-
-# Depth to search for a direct chain before calling a shortcut load-bearing.
-# Corporate structures are deep but not unbounded; erring short is the safe
-# direction, since an unfound chain leaves the edge drawn.
-_SHORTCUT_MAX_DEPTH = 6
-
-# Edge updates per sqlscript round-trip, matching the dedup pass's batching.
-_SHORTCUT_WRITE_BATCH = 500
-
 
 #: The credibility floor of the official tier. GLEIF (92), UK PSC (97) and SEC
 #: EDGAR (98) sit above it; Wikidata (80) and OpenCorporates (85) below. Tier by
@@ -807,6 +724,13 @@ def mark_stale_ownership(days: int = STALE_AFTER_DAYS) -> dict:
     return {"marked": marked, "cleared": cleared, "community_edges": len(rows),
             "cutoff": cutoff}
 
+
+# Depth to search for a direct chain before calling a shortcut load-bearing.
+# Corporate structures are deep but not unbounded; erring short is the safe
+# direction, since an unfound chain leaves the edge drawn.
+_SHORTCUT_MAX_DEPTH = 6
+# Edge updates per sqlscript round-trip, matching the dedup pass's batching.
+_SHORTCUT_WRITE_BATCH = 500
 
 def mark_ownership_shortcuts(limit: int | None = None) -> dict:
     """Flag the GLEIF ultimate-parent edges that duplicate a path already in the graph.
