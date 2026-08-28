@@ -1336,7 +1336,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      until: str | None = None, voting_power_pct: float | None = None,
                      share_class: str | None = None,
                      shares: int | None = None,
-                     shares_outstanding: int | None = None):
+                     shares_outstanding: int | None = None,
+                     voting_shares: int | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
@@ -1402,13 +1403,14 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.share_class      = $sclass,
                     r.shares           = COALESCE($shares, r.shares),
                     r.shares_outstanding = COALESCE($shtotal, r.shares_outstanding),
+                    r.voting_shares    = COALESCE($vshares, r.voting_shares),
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
                 surl=source_url, sdate=file_date, until=until,
                 stake=stake_percent, vote=voting_power_pct, sclass=share_class,
-                shares=shares, shtotal=shares_outstanding,
+                shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
             )
             return
         session.run(
@@ -1420,6 +1422,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 share_class:      $sclass,
                 shares:           $shares,
                 shares_outstanding: $shtotal,
+                voting_shares:    $vshares,
                 ownership_type:   $otype,
                 since:            $since,
                 until:            $until,
@@ -1432,7 +1435,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             """,
             oid=owner_id, nid=owned_id,
             stake=stake_percent, vote=voting_power_pct, sclass=share_class,
-            shares=shares, shtotal=shares_outstanding, otype=ownership_type,
+            shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
+            otype=ownership_type,
             since=file_date, sid=source_id, score=credibility_score,
             surl=source_url, sdate=file_date, now=now, until=until,
         )
@@ -1755,6 +1759,9 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 # a bloc percentage summed with theirs would exceed the company.
                 stake_percent=None,
                 voting_power_pct=filing.get("voting_power_pct") or filing.get("stake_percent"),
+                # The bloc's count belongs on the group's edge above all: this
+                # is the one place it is not a number repeated by nine parties.
+                voting_shares=filing.get("voting_shares"),
                 share_class=filing.get("share_class"),
                 source_url=filing.get("source_url"),
             )
@@ -1781,6 +1788,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             share_class=filing.get("share_class"),
             shares=filing.get("shares"),
             shares_outstanding=filing.get("shares_outstanding"),
+            voting_shares=filing.get("voting_shares"),
             source_url=filing.get("source_url"),
             owner_label="Person" if is_individual else "Entity",
         )

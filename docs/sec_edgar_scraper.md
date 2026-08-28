@@ -162,9 +162,13 @@ nil position and an unstated one are different facts.
 Form 3/4 states an insider's holding exactly, and that count is now kept too —
 it previously decided whether to write an edge and was then discarded.
 
-Not stored: a count behind `voting_power_pct`. A bloc's share count exists in the
-filing but pairs with a figure every group member repeats, so it would need the
-same care the percentage did.
+`voting_shares` is the count behind `voting_power_pct` — row 11, the number that
+percentage is computed from. It carries the same caveat as the percentage and for
+the same reason: it belongs to the **group** and is repeated verbatim by every
+member (Wellington's four blocks all report one aggregate), so it may be shown but
+**never summed** across owners. It is `None` for a lone filer, who has no bloc —
+not zero, and not its own holding restated. On a voting group's own edge it is the
+one place the number is not a repetition: there it is the group's, once.
 
 ### A percent of *what*
 
