@@ -39,6 +39,11 @@ independent signals. A bucket with ≥2 people becomes a candidate group.
 tuple**: lowercase, split on non-alphanumerics, drop honorifics (mr/dr/…), sort.
 So `Page Lawrence` and `Lawrence Page` both key to `(lawrence, page)`.
 
+**Middle initials are dropped too** — `Eric E. Schmidt` keys to `(eric, schmidt)`,
+the same as `Eric Schmidt`; an initial is an abbreviation, not a different name.
+Only while at least two substantive tokens remain: `J. Smith` keeps its initial,
+because `(smith,)` would match every Smith in the graph.
+
 Crucially, each person is indexed under the key of their `full_name` **and every
 Wikidata alias**. That's what links a node stored under a legal name to a
 common-name node:
@@ -111,10 +116,26 @@ So the post-scrape auto-dedup passes `seed_ids` — the persons that *this* scra
 created/updated (tracked via a context-local collector in the scraper). The scan is
 then restricted to those seeds plus existing persons sharing an exact full-name /
 alias / `wikidata_id` (index-backed equality lookups — ArcadeDB does **not** use an
-index for `IN`, so candidates are probed per value). The within-scrape cross-source
-duplicates (SEC "Page Lawrence" ↔ Wikidata "Larry Page") are all in the seed set and
-still caught; cross-spelling matches against *pre-existing* persons are left to the
-periodic full scan (`POST /persons/deduplicate`). The dismissed-pairs
+index for an `IN` over a parameter list, so candidates are probed per value;
+`$name IN p.alias` is the other direction, one value against a stored list, served
+by the element-wise index on `Person.alias`).
+
+Two things make that candidate set actually reach its targets, both fixed
+2026-08-28 after "Eric Schmidt / Eric E. Schmidt" and "Larry Page / Page Lawrence"
+survived every scrape while the *full* scan found them instantly:
+
+* the **alias side** is queried, not just other nodes' `full_name`. SEC writes
+  "Page Lawrence"; the Wikidata node carries that only as an alias, so the
+  full-name probe matched nothing and the pair was never even compared.
+* **name variants** of each seed are probed as well (`_name_lookup_variants`):
+  the initials-stripped spelling and, for a two-token name, the reversed order.
+  Groups are matched on `_name_key`, but candidates can only be *fetched* by
+  exact string — so without this a seed could never retrieve the node it would
+  then have matched.
+
+Cross-spelling matches beyond those mechanical families (nicknames, unrelated
+spellings) against *pre-existing* persons are still left to the periodic full scan
+(`POST /persons/deduplicate`). The dismissed-pairs
 (`NOT_DUPLICATE`) lookup is short-circuited by a SQL count so it never full-scans
 persons when there are none.
 

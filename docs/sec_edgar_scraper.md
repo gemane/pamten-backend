@@ -235,6 +235,24 @@ The feed is returned most-recent-first, which enables deduplication: process
 entries in order and skip any investor already seen (SC 13G/A amendments share
 the same investor but have different accession numbers).
 
+**A filing reporting nothing is an exit, not a 0% holding.** When every power row
+and the class percentage are zero, the filer has dropped below the 5% threshold —
+the CIK is recorded in `closed_since` and deliberately *not* marked as seen, so
+that investor's next (older) filing is still read and emitted with `until` set to
+the zero filing's date. The position stays in the timeline instead of appearing as
+a live "owns 0.0%" edge, and instead of vanishing as if it had never existed.
+
+The Vanguard Group's January-2026 internal realignment is what surfaced this: its
+subsidiaries now report beneficial ownership separately, so the parent files
+amendments reporting 0 for every row, and eighteen of those went into the graph as
+live 0.0% holdings. `fetch_filer_holdings` (the filer side) had always read a zero
+this way; `fetch_ownership_filings` (the issuer side) never did — the same fact,
+two code paths, one of them taught.
+
+The test is `not pct and not voting`, not `not pct` alone: a 13D group member can
+hold nothing individually while voting a real bloc (BRC reports a null stake beside
+the Stichting's 52.3%), and reading that as an exit would delete the voting group.
+
 ### Key XML namespace gotcha
 
 The Atom feed uses `xmlns="http://www.w3.org/2005/Atom"` as the **default**

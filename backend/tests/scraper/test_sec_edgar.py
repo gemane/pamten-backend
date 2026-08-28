@@ -1300,3 +1300,92 @@ class TestTheBlocsOwnCount:
         d = _parse_13dg_xml(_fixture("13ga_wellington.xml"))
         aggregates = [p["aggregate"] for p in d["persons"][:3]]
         assert len(set(aggregates)) == 1
+
+
+class TestAnExitIsNotAZeroPercentHolding:
+    """The Vanguard Group's January-2026 realignment moved its holdings to
+    subsidiaries that file separately, so its 13G/As report 0 in every power
+    row. `fetch_filer_holdings` has always read a zero as an exit; this side
+    wrote it as a live "owns 0.0%" edge — eighteen of them on the dev graph."""
+
+    # Both real, both by The Vanguard Group (CIK 0000102909) about GCI Liberty:
+    # 10.84% on 2026-01-07, then 0 in every power row on 2026-03-26.
+    ZERO_XML = ("https://www.sec.gov/Archives/edgar/data/2057463/"
+                "000010290926000394/primary_doc.xml")
+    HELD_XML = ("https://www.sec.gov/Archives/edgar/data/2057463/"
+                "000010290926000024/primary_doc.xml")
+
+    def _atom(self, *entries: tuple[str, str]) -> str:
+        rows = "".join(
+            f'<entry><category term="SCHEDULE 13G/A"/><content type="text/xml">'
+            f'<filing-href>https://x.test/{acc}.htm</filing-href>'
+            f'<filing-date>{date}</filing-date>'
+            f'<accession-number>{acc}</accession-number>'
+            f'</content></entry>' for acc, date in entries)
+        return f'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">{rows}</feed>'
+
+    def test_a_zero_filing_writes_no_holding(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = self._atom(("0000102909-26-000394", "2026-03-26"))
+        pages = {self.ZERO_XML: _fixture("13ga_vanguard_exit.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("GCI Liberty Inc", "0002057463")
+        assert res == [], "a filer reporting nothing is not an owner of 0.0%"
+
+    def test_an_older_holding_is_closed_with_the_exit_date(self):
+        """The timeline: the position existed and then ended. Dropping the pair
+        outright would lose that it was ever held."""
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = self._atom(("0000102909-26-000394", "2026-03-26"),   # the exit
+                          ("0000102909-26-000024", "2026-01-07"))   # 10.84%
+        pages = {self.ZERO_XML: _fixture("13ga_vanguard_exit.xml"),
+                 self.HELD_XML: _fixture("13ga_vanguard_held.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("GCI Liberty Inc", "0002057463")
+        assert len(res) == 1
+        assert res[0]["stake_percent"] == 10.84
+        assert res[0]["until"] == "2026-03-26"
+
+    def test_the_exit_is_scoped_to_the_cik_that_filed_it(self):
+        """The realignment moved holdings from the parent to a subsidiary that
+        files separately. The parent's zero must not suppress the subsidiary's
+        real position — losing that would be worse than the 0% row was."""
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        apple_zero = ("https://www.sec.gov/Archives/edgar/data/320193/"
+                      "000010290926000394/primary_doc.xml")
+        atom = self._atom(("0000102909-26-000394", "2026-03-26"),      # parent, 0%
+                          ("0002100119-26-000139", "2026-04-29"))      # subsidiary, 7.48%
+        # The exit fixture names GCI Liberty, so serve it where the issuer
+        # matches: this test is about CIK scoping, not issuer verification.
+        pages = {apple_zero: _fixture("13ga_vanguard_exit.xml"),
+                 ("https://www.sec.gov/Archives/edgar/data/320193/"
+                  "000210011926000139/primary_doc.xml"): _fixture("13g_vanguard.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert [(r["investor_name"], r["stake_percent"]) for r in res] == \
+               [("Vanguard Capital Management", 7.48)]
+
+    def test_a_live_holding_carries_no_until(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = self._atom(("0000102909-26-000024", "2026-01-07"))
+        pages = {self.HELD_XML: _fixture("13ga_vanguard_held.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("GCI Liberty Inc", "0002057463")
+        assert res[0]["until"] is None
+
+    def test_a_bloc_member_with_no_individual_stake_is_not_an_exit(self):
+        """BRC can dispose of nothing alone — null stake beside a real 52.3%
+        bloc. Reading that as "holds nothing" would delete the voting group the
+        whole 13D model is built on."""
+        from app.scraper.sec_edgar import _split_stake
+        pct, voting = _split_stake({"sole_dispositive": 0, "shared_voting": 1_020_598_157},
+                                   None, 52.3)
+        assert pct is None and voting == 52.3

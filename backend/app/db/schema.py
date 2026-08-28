@@ -40,6 +40,11 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Person",   "id",              "UNIQUE"),
     ("Person",   "full_name",       "NOTUNIQUE"),
     ("Person",   "wikidata_id",     "NOTUNIQUE"),
+    # Element-wise over the LIST: `$name IN p.alias` is how the scoped
+    # post-scrape dedup finds a node recorded under another of its names.
+    # Typed LIST below — declared STRING, ArcadeDB rejects the comparison with
+    # "IN requires a list on the right side, got String".
+    ("Person",   "alias",           "NOTUNIQUE"),
     ("Source",   "id",              "UNIQUE"),
     ("User",     "id",              "UNIQUE"),
     ("User",     "email",           "UNIQUE"),
@@ -143,6 +148,13 @@ _EDGE_INDEXES: list[tuple[str, str, str]] = [
     ("OWNS", "psc_self_link", "NOTUNIQUE"),
 ]
 
+#: Indexed properties that are NOT strings. Declaring `alias` STRING makes
+#: ArcadeDB reject `$name IN p.alias` ("IN requires a list on the right side,
+#: got String") — the property type is part of the contract, not decoration.
+_PROPERTY_TYPES: dict[tuple[str, str], str] = {
+    ("Person", "alias"): "LIST",
+}
+
 
 def _statements() -> list[str]:
     stmts: list[str] = []
@@ -154,7 +166,8 @@ def _statements() -> list[str]:
         # `IF NOT EXISTS` goes BEFORE the type in ArcadeDB SQL — makes the DDL
         # idempotent so re-runs (startup, bulk-load index rebuild) don't log a
         # "property already exists" failure for every property.
-        stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
+        ptype = _PROPERTY_TYPES.get((vtype, prop), "STRING")
+        stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS {ptype}")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}")
     for etype, prop, kind in _EDGE_INDEXES:
         stmts.append(f"CREATE PROPERTY {etype}.{prop} IF NOT EXISTS STRING")
