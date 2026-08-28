@@ -290,3 +290,37 @@ class TestTheBaselineRecordsItsSnapshot:
         snap = _snapshot(tmp_path, [_individual("00000002", "two")], "2026-07-27", "nodigest.zip")
         run_import_ch_psc(snap)
         assert read_last_snapshot() is None
+
+
+class TestClaimsFollowTheRefresh:
+    """The refresh previously touched only the edge: a claim's last_seen_at
+    stayed frozen at bulk-import time and a NEW appointment got no claim at
+    all — while close_vanished diligently closed claims this path had never
+    created."""
+
+    def _claim_for(self, it_db, company):
+        from app.db.arcadedb import run_sql
+        rows = run_sql(
+            "SELECT from_id, to_id, source_id, stake_percent, ownership_type, "
+            "first_seen_at, last_seen_at, credibility_score FROM Claim "
+            "WHERE to_id = :c", {"c": f"gb-coh:{company}"})
+        return rows
+
+    def test_a_new_appointment_gets_a_claim(self, loaded, it_db):
+        _apply(loaded, _b_records())
+        rows = self._claim_for(it_db, "00000007")
+        assert len(rows) == 1
+        assert rows[0]["source_id"] == SRC
+        assert rows[0]["credibility_score"] == CRED
+
+    def test_a_refresh_moves_last_seen_and_keeps_first_seen(self, loaded, it_db):
+        before = self._claim_for(it_db, "00000004")
+        assert len(before) == 1, "the bulk import writes the baseline claim"
+        _apply(loaded, _b_records())          # natures change → restake touched
+        after = self._claim_for(it_db, "00000004")
+        assert len(after) == 1, "a refresh UPSERTs the same claim_key"
+        assert after[0]["first_seen_at"] == before[0]["first_seen_at"], \
+            "COALESCE(first_seen_at, …) must keep the original sighting"
+        assert after[0]["last_seen_at"] >= before[0]["last_seen_at"]
+        assert after[0]["stake_percent"] != before[0]["stake_percent"], \
+            "the refreshed claim records the new stake band"

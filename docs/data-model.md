@@ -83,7 +83,11 @@ single, fast, current-best answer — and the claims sit beside it as the eviden
   make two different claims collide.
 - **Written by the edge writers themselves** — `_BatchWriter.owns/role/succeeded_by`
   for bulk imports and `record_claim` in the incremental scrapers — so an importer
-  cannot record an edge and forget the evidence.
+  cannot record an edge and forget the evidence. This now includes **every** OWNS
+  writer: the GLEIF delta, both PSC refresh paths (batched, same statement shape
+  as their edge writes), federation imports (credibility = the peer's configured
+  trust), and the manual API (skipped when the request names no `source_id` — a
+  claim is one source's statement, and unsourced claims would all share a key).
 - **Which claim wins**: highest `credibility_score`, ties broken by the most
   recent `source_date` (`best_claim` in [`app/claims.py`](../backend/app/claims.py)).
   A credible "owns, amount undisclosed" deliberately beats a weak source's number.

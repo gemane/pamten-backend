@@ -115,3 +115,68 @@ def test_peer_registry(it_db, monkeypatch):
 
     remove_peer(pid, _=admin)
     assert all(p["id"] != pid for p in list_peers(_=admin)["peers"])
+
+
+# ── What an import must leave behind (PR: claims & federation completeness) ──
+# Federated nodes used to be created without `search_text`, so a peer's company
+# existed but could never be FOUND; federated edges carried no credibility_score
+# (mark_stale read COALESCE(cred, 0) → community tier) and no last_scraped_at
+# (→ never judged stale), and asserted no claim (→ never corroborated anything).
+
+_SNAP = {
+    "format": "owlgraph-federation", "version": 1,
+    "entities": [
+        {"name": "Peer Parent AG", "type": "company", "wikidata_id": "Q7001"},
+        {"name": "Peer Child GmbH", "type": "company", "wikidata_id": "Q7002"},
+    ],
+    "persons": [{"full_name": "Petra Peer", "wikidata_id": "Q7003"}],
+    "ownerships": [{
+        "owner": {"name": "Peer Parent AG", "wikidata_id": "Q7001"},
+        "owned": {"name": "Peer Child GmbH", "wikidata_id": "Q7002"},
+        "stake_percent": 61.0, "ownership_type": "majority",
+        "source_url": "https://peer.example.com/company/7002",
+        "source_date": "2026-08-01",
+    }],
+}
+
+
+def test_imported_nodes_are_searchable(it_db):
+    from app.routers.federation import import_snapshot
+    import_snapshot(_SNAP, source_name="Peer: Complete", credibility=70)
+    ent = it_db.run_command(
+        "MATCH (e:Entity {wikidata_id:'Q7001'}) "
+        "RETURN e.search_text AS st, e.is_nominee AS nom, e.name_credibility AS nc")[0]
+    assert ent["st"] == "Peer Parent AG"
+    assert ent["nom"] is False
+    assert ent["nc"] == 70, "name_credibility carries the peer's configured trust"
+    person = it_db.run_command(
+        "MATCH (p:Person {wikidata_id:'Q7003'}) RETURN p.search_text AS st")[0]
+    assert person["st"] == "Petra Peer"
+
+
+def test_imported_edge_carries_tier_and_freshness(it_db):
+    from app.routers.federation import import_snapshot
+    import_snapshot(_SNAP, source_name="Peer: Complete", credibility=70)
+    edge = it_db.run_command(
+        "MATCH (:Entity {wikidata_id:'Q7001'})-[r:OWNS]->(:Entity {wikidata_id:'Q7002'}) "
+        "RETURN r.credibility_score AS cred, r.last_scraped_at AS seen")[0]
+    assert edge["cred"] == 70
+    assert edge["seen"] is not None, "an edge with no last_scraped_at can never go stale"
+
+
+def test_import_records_the_peers_claim(it_db):
+    from app.claims import claims_for
+    from app.routers.federation import import_snapshot
+    import_snapshot(_SNAP, source_name="Peer: Complete", credibility=70)
+    oid = it_db.run_command(
+        "MATCH (e:Entity {wikidata_id:'Q7001'}) RETURN e.id AS id")[0]["id"]
+    tid = it_db.run_command(
+        "MATCH (e:Entity {wikidata_id:'Q7002'}) RETURN e.id AS id")[0]["id"]
+    rows = claims_for(from_id=oid, to_id=tid)
+    assert len(rows) == 1
+    assert rows[0]["stake_percent"] == 61.0
+    assert rows[0]["credibility_score"] == 70
+
+    # A re-import is the peer re-asserting, not a second assertion.
+    import_snapshot(_SNAP, source_name="Peer: Complete", credibility=70)
+    assert len(claims_for(from_id=oid, to_id=tid)) == 1

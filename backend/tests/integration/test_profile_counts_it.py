@@ -205,3 +205,27 @@ def test_an_unchecked_edge_is_kept(it_db):
     _owns(it_db, "p", "u", "indirect")      # no shortcut property at all
 
     assert get_full_profile("p")["counts"]["subsidiaries"] == 1
+
+
+# ── The same rule reaches the tree and the owners list ────────────────────────
+# search.py's node sections and the profile already excluded stamped shortcuts;
+# /relationships/owners and the ownership tree did not, so the panel and the
+# graph could disagree about who owns the company. One rule everywhere now.
+
+def test_a_stamped_shortcut_leaves_the_tree(it_db):
+    _chain(it_db)
+    it_db.run_command(
+        "MATCH (:Entity {id:'parent'})-[r:OWNS {direct_or_indirect:'indirect'}]->"
+        "(:Entity {id:'leaf'}) SET r.shortcut = true")
+    paths, _ = ownership_tree_of("parent", depth=3)
+    assert len(paths) == 2, "the redundant hop is gone, the chain it duplicates stays"
+    reached = {n["id"] for p in paths for n in p["nodes"]}
+    assert "leaf" in reached, "the leaf is still reachable through the real chain"
+
+
+def test_a_stamped_shortcut_leaves_the_owners_list(it_db):
+    from app.routers.relationships import owners_of
+    _dup_pair(it_db)
+    owners, _ = owners_of("s")
+    assert len(owners) == 1, "GLEIF's duplicate ultimate-parent statement is folded"
+    assert owners[0]["relationship"].get("direct_or_indirect") == "direct"
