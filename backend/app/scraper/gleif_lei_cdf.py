@@ -29,7 +29,8 @@ from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _legal_form_type, _ProgressBar,
     _ProgressStream, _rebuild_indexes,
 )
-from app.scraper.gleif_reference import legal_form_name, registration_authority_name
+from app.scraper.gleif_reference import (
+    legal_form_name, make_register_id, registration_authority_name)
 from app.scraper.gleif_succession import _iter_lei_records, _legal_name, _v
 from app.scraper.mapper import is_nominee_name, normalize_entity_name
 
@@ -260,7 +261,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     props: dict = {
         "name": name,
         "name_normalized": normalize_entity_name(name),
-        "search_text": name,
+        # The register number joins the search tokens (FULL_TEXT is whole-word),
+        # so a company is findable by the id printed on its own paperwork.
+        "search_text": f"{name} {reg_number}" if reg_number else name,
         # Per record, not per source: what this one is worth depends on whether
         # anybody corroborated it (see _validated_credibility).
         "name_credibility": _validated_credibility(rec, credibility_score),
@@ -270,7 +273,13 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "address": _display_address(entity),
         "legal_form": _legal_form(entity),
         "registration_authority": reg_authority,
+        "registration_authority_code": reg_code,
         "registration_number": reg_number,
+        # The fifth hard identifier: unambiguous register + number. UK companies
+        # get this AND companies_house_id below — the keys agree on every merge,
+        # and register_id also covers the Scottish/NI registers (RA000587/586)
+        # that the companies_house_id special case never did.
+        "register_id": make_register_id(reg_code, reg_number),
         "founded": _founded(entity),
         "founded_date": _founded_date(entity),
         "lei_id": lei,

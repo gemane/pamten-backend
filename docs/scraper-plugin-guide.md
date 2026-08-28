@@ -446,9 +446,12 @@ US-DE domiciled with a Delaware C/O legal address but HQ in Montevideo, UY). The
 for legal form (e.g. `H0PO`) and authority (e.g. `RA000585`); these are resolved to
 names ("Private Limited Company", "Companies Register") via GLEIF's ELF + RA reference
 code lists, bundled as `app/scraper/data/gleif_{elf,ra}.json` (see
-`app/scraper/gleif_reference.py`). Refresh those two JSONs from
-<https://www.gleif.org/en/about-lei/code-lists> when GLEIF publishes a new list
-version. These fields populate on (re)import — existing rows only gain them after a
+`app/scraper/gleif_reference.py`). The RA bundle is richer than the ELF one —
+`{code: {"name": …, "countries": ["XX", …]}}` — because it also powers the
+`register_id` hard identifier and the sole-register-per-country lookup; regenerate
+it with `python scripts/build_gleif_ra_bundle.py <CSV url or path>` when GLEIF
+publishes a new RA list at
+<https://www.gleif.org/en/about-lei/code-lists> (the ELF JSON stays hand-refreshed). These fields populate on (re)import — existing rows only gain them after a
 re-run of `gleif-lei-cdf`.
 
 ### UK (Companies House)
