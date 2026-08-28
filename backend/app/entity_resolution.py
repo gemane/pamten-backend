@@ -14,7 +14,7 @@ companies_house_id), then the canonical normalized name, then the raw name.
 
 # All of these are indexed on Entity (see db/schema.py).
 _RESOLVE_FIELDS: tuple[str, ...] = (
-    "wikidata_id", "sec_cik", "lei_id", "companies_house_id",
+    "wikidata_id", "sec_cik", "lei_id", "companies_house_id", "register_id",
     "name_normalized", "name",
 )
 

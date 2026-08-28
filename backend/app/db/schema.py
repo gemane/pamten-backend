@@ -32,6 +32,7 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Entity",   "sec_cik",            "NOTUNIQUE"),
     ("Entity",   "lei_id",             "NOTUNIQUE"),
     ("Entity",   "companies_house_id", "NOTUNIQUE"),
+    ("Entity",   "register_id",        "NOTUNIQUE"),  # "{RA code}:{number}" hard id
     ("Entity",   "registered_address", "NOTUNIQUE"),  # dup-detection corroborator
     # Filtered on every map drill-down (/entities/by-country/{country}) and by the
     # country-scoped search; without an index each one scans every Entity.

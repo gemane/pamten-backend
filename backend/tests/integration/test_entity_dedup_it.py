@@ -187,3 +187,37 @@ def test_a_merge_carries_every_edge_property(it_db):
     assert inc["doi"] == "direct"
     assert inc["pscl"] == "/link/in"
     assert inc["itypes"] == ["votingRights"]
+
+
+# ── register_id, the fifth hard identifier ───────────────────────────────────
+
+def test_two_nodes_sharing_only_register_id_merge(it_db):
+    """A GLEIF node and a register-sourced node for the same company share no
+    LEI/CH/CIK/QID — the register number is the ONE id both have."""
+    from app.scraper import maintenance
+
+    it_db.run_command("CREATE (e:Entity {id:'lei:X', name:'Muster GmbH', "
+                      "register_id:'RA000242:HRB12345', name_credibility:90, verified:false})")
+    it_db.run_command("CREATE (e:Entity {id:'reg:X', name:'Muster GmbH', "
+                      "register_id:'RA000242:HRB12345', name_credibility:50, verified:false})")
+
+    res = maintenance.deduplicate_entities()
+    assert res["entities_merged"] == 1
+    surv = it_db.run_command(
+        "MATCH (e:Entity) WHERE e.register_id = 'RA000242:HRB12345' RETURN e.id AS id")
+    assert len(surv) == 1 and surv[0]["id"] == "lei:X"
+
+
+def test_bulk_strategy_also_keys_on_register_id(it_db):
+    from app.scraper.maintenance import deduplicate_entities_bulk
+
+    it_db.run_command("CREATE (e:Entity {id:'a', name:'Dup Co', "
+                      "register_id:'RA000123:99', name_credibility:90})")
+    it_db.run_command("CREATE (e:Entity {id:'b', name:'Dup Co', "
+                      "register_id:'RA000123:99', name_credibility:10})")
+
+    res = deduplicate_entities_bulk()
+    assert res["entities_removed"] >= 1
+    n = it_db.run_command(
+        "MATCH (e:Entity) WHERE e.register_id = 'RA000123:99' RETURN count(e) AS n")
+    assert n[0]["n"] == 1

@@ -311,3 +311,41 @@ class TestHowFarGleifCheckedIt:
         assert _validation_sources(_rec("L8", "X", validation="FULLY_CORROBORATED")) \
             == "FULLY_CORROBORATED"
         assert _validation_sources(_rec("L9", "X")) is None
+
+
+class TestRegisterId:
+    """register_id = "{RA code}:{number}" — the fifth hard identifier."""
+
+    def test_code_and_register_id_are_emitted(self):
+        _, props = _entity_props(_rec("R1", "US Co", reg=("RA000602", "3112015")), "gleif", 92)
+        assert props["registration_authority_code"] == "RA000602"
+        assert props["register_id"] == "RA000602:3112015"
+
+    def test_a_uk_company_gets_both_keys(self):
+        # Deliberate double key: companies_house_id merges with PSC nodes,
+        # register_id is the uniform identifier — they agree on every merge.
+        _, props = _entity_props(
+            _rec("R2", "UK Co", reg=("RA000585", "07524813")), "gleif", 92)
+        assert props["companies_house_id"] == "07524813"
+        assert props["register_id"] == "RA000585:07524813"
+
+    def test_self_registered_keeps_the_number_but_no_register_id(self):
+        # RA999999 = no registration authority: the number identifies nothing.
+        _, props = _entity_props(_rec("R3", "Self Co", reg=("RA999999", "123")), "gleif", 92)
+        assert props["registration_number"] == "123"
+        assert props["register_id"] is None
+
+    def test_no_number_no_register_id(self):
+        _, props = _entity_props(_rec("R4", "Plain Co"), "gleif", 92)
+        assert props["register_id"] is None
+        assert props["registration_authority_code"] is None
+
+    def test_the_number_is_a_search_token(self):
+        # FULL_TEXT is whole-word: folding the number into search_text makes a
+        # company findable by the id printed on its own paperwork.
+        _, props = _entity_props(_rec("R5", "Searchable Co", reg=("RA000585", "07524813")),
+                                 "gleif", 92)
+        assert "07524813" in props["search_text"]
+        assert props["search_text"].startswith("Searchable Co")
+        _, plain = _entity_props(_rec("R6", "Plain Co"), "gleif", 92)
+        assert plain["search_text"] == "Plain Co"

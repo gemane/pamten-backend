@@ -180,3 +180,29 @@ def test_import_records_the_peers_claim(it_db):
     # A re-import is the peer re-asserting, not a second assertion.
     import_snapshot(_SNAP, source_name="Peer: Complete", credibility=70)
     assert len(claims_for(from_id=oid, to_id=tid)) == 1
+
+
+def test_register_id_reconciles_across_the_federation(it_db):
+    """Round-trip: a company whose ONLY identifier is its register number must
+    come back as the same node, not a duplicate — and the created node must
+    carry the id so the next snapshot still reconciles."""
+    from app.routers.federation import build_export, import_snapshot
+
+    it_db.run_command("CREATE (:Entity {id:'e1', name:'Registro SA', "
+                      "name_normalized:'registro sa', type:'company', "
+                      "register_id:'RA000440:155692169'})")
+    snap = build_export()
+    assert any(e.get("register_id") == "RA000440:155692169" for e in snap["entities"])
+
+    # Same-graph import simulates the peer already holding the company.
+    counts = import_snapshot(snap, source_name="Peer: Reg", credibility=70)
+    n = it_db.run_command(
+        "MATCH (e:Entity) WHERE e.register_id = 'RA000440:155692169' RETURN count(e) AS n")
+    assert n[0]["n"] == 1, f"duplicate created despite shared register_id ({counts})"
+
+    # And a fresh graph must CREATE the node carrying the id.
+    it_db.run_command("MATCH (e:Entity) DETACH DELETE e")
+    import_snapshot(snap, source_name="Peer: Reg", credibility=70)
+    row = it_db.run_command(
+        "MATCH (e:Entity {name:'Registro SA'}) RETURN e.register_id AS rid")[0]
+    assert row["rid"] == "RA000440:155692169"

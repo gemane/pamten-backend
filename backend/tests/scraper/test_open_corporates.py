@@ -229,3 +229,58 @@ class TestScrapeCompany:
         with patch("httpx.get", return_value=not_found):
             result = scrape_company("NonExistentXYZ")
         assert result is None
+
+
+class TestStampRegistration:
+    """jurisdiction + number IS OpenCorporates' identity model; it used to be
+    fetched and dropped after building the source URL."""
+
+    @staticmethod
+    def _stamp(fake_db, jurisdiction, number):
+        from app.scraper.runner import _stamp_registration
+        _stamp_registration("e1", jurisdiction, number)
+        assert len(fake_db.calls) == 1
+        cypher, params = fake_db.calls[0]
+        # fill-if-missing on EVERY field: this scraper resolves by name, so the
+        # node may already carry a register's own statement of the same fact
+        for field in ("registration_number", "companies_house_id", "register_id"):
+            assert f"e.{field} = COALESCE(e.{field}," in cypher, field
+        return params
+
+    def test_gb_becomes_companies_house_id(self, fake_db):
+        params = self._stamp(fake_db, "gb", "07524813")
+        assert params["number"] == "07524813"
+        assert params["ch"] == "07524813"
+        assert params["rid"] is None
+
+    def test_sole_register_country_becomes_register_id(self, fake_db):
+        from app.scraper.gleif_reference import sole_register_for_country
+        code = sole_register_for_country("PA")
+        assert code, "Panama left the sole-register list — pick another fixture country"
+        params = self._stamp(fake_db, "pa", "155692169")
+        assert params["rid"] == f"{code}:155692169"
+        assert params["ch"] is None
+
+    def test_sub_national_keeps_the_number_only(self, fake_db):
+        # "us_de" is Delaware's register, not a US-wide one — the ISO-2 prefix
+        # cannot pick between state namespaces.
+        params = self._stamp(fake_db, "us_de", "3112015")
+        assert params["number"] == "3112015"
+        assert params["ch"] is None and params["rid"] is None
+
+    def test_multi_register_country_keeps_the_number_only(self, fake_db):
+        params = self._stamp(fake_db, "de", "HRB12345")
+        assert params["ch"] is None and params["rid"] is None
+
+    def test_a_subdivision_of_a_sole_register_country_is_not_national(self, fake_db):
+        # Hypothetical "pa_colon": a sub-national register's numbers must not be
+        # stamped into the NATIONAL register's namespace — that is a false-merge
+        # generator, and exactly what the sub_national guard exists to prevent.
+        params = self._stamp(fake_db, "pa_colon", "155692169")
+        assert params["rid"] is None and params["ch"] is None
+
+    def test_missing_parts_write_nothing(self, fake_db):
+        from app.scraper.runner import _stamp_registration
+        _stamp_registration("e1", None, "123")
+        _stamp_registration("e1", "de", None)
+        assert fake_db.calls == []

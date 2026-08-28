@@ -290,3 +290,48 @@ class TestTheMappingIsPure:
 
     def test_an_active_psc_has_no_end_date(self):
         assert psc_record(self._rec(), "src", 97).edge_props["until"] is None
+
+
+class TestCorporateRegistration:
+    """A corporate PSC's register number is identity, not trivia — it used to be
+    dropped entirely for every non-UK parent."""
+
+    @staticmethod
+    def _corp(country, number, place=None):
+        ident = {"country_registered": country}
+        if number is not None:
+            ident["registration_number"] = number
+        if place is not None:
+            ident["place_registered"] = place
+        return psc_record({"company_number": "07434180", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Holdco Ltd", "identification": ident,
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+            "links": {"self": "/company/07434180/persons-with-significant-control/corporate/x"},
+        }}, "src", 97)
+
+    def test_a_foreign_number_and_register_name_are_stored(self):
+        mapped = self._corp("Germany", "HRB 12345", place="Amtsgericht München")
+        assert mapped.owner_props["registration_number"] == "HRB 12345"
+        assert mapped.owner_props["registration_authority"] == "Amtsgericht München"
+        # DE has 177 per-court registers sharing HRB numbering — the unsafe case.
+        assert mapped.owner_props["register_id"] is None
+
+    def test_a_sole_register_country_yields_a_register_id(self):
+        from app.scraper.gleif_reference import sole_register_for_country
+        code = sole_register_for_country("PA")
+        assert code, "Panama left the sole-register list — pick another fixture country"
+        mapped = self._corp("Panama", "155 692 169")
+        assert mapped.owner_props["register_id"] == f"{code}:155692169"
+
+    def test_a_uk_corporate_keeps_its_key_scheme(self):
+        mapped = self._corp("England & Wales", "00686734")
+        assert mapped.owner_id == "gb-coh:00686734"          # node id unchanged
+        assert mapped.owner_props["companies_house_id"] == "00686734"
+        assert mapped.owner_props["registration_number"] == "00686734"
+        assert mapped.owner_props["register_id"] is None     # CH id already merges
+
+    def test_no_number_stores_nothing(self):
+        mapped = self._corp("Germany", None)
+        assert mapped.owner_props["registration_number"] is None
+        assert mapped.owner_props["register_id"] is None

@@ -197,3 +197,46 @@ class TestValidatePeerUrl:
 
     def test_rejects_bare_hostname_no_dot_with_port(self):
         self._bad("https://postgres:5432")
+
+
+def test_export_carries_register_id_everywhere(fake_db):
+    """Entities AND both ownership refs — a snapshot that exports the id on the
+    node but not on the edge refs reconciles the edge by name (bug class of PR
+    #280's search_text: one path taught, its sibling not)."""
+    from app.routers.federation import build_export
+    fake_db.queue(
+        [{"name": "Alpha", "type": "company", "country": "PA", "founded": None,
+          "wd": None, "cik": None, "lei": None, "ch": None, "rid": "RA000123:99"}],
+        [],  # persons
+        [{"a_wd": None, "a_cik": None, "a_lei": None, "a_ch": None,
+          "a_rid": "RA000123:99", "a_name": "Alpha", "a_full": None,
+          "b_wd": None, "b_cik": None, "b_lei": None, "b_ch": None,
+          "b_rid": "RA000123:77", "b_name": "Beta",
+          "stake": 10.0, "otype": "minority", "surl": None, "sdate": None}],
+        [],  # person-owned edges
+    )
+    snap = build_export()
+    assert snap["entities"][0]["register_id"] == "RA000123:99"
+    own = snap["ownerships"][0]
+    assert own["owner"]["register_id"] == "RA000123:99"
+    assert own["owned"]["register_id"] == "RA000123:77"
+
+
+def test_import_resolves_and_creates_with_register_id(fake_db):
+    from app.routers.federation import _upsert_entity
+    # resolve: register_id must be among the lookups tried (it is the first
+    # non-empty id on this ref, so the first lookup is the register_id one)
+    fake_db.queue([{"id": "found"}])
+    got = _upsert_entity(fake_db, {"name": "Alpha", "register_id": "RA000123:99"}, "src", 70)
+    assert got == "found"
+    assert any("e.register_id = $v" in c for c, _ in fake_db.calls)
+
+    # create: a peer-imported node must CARRY the id, or the next snapshot
+    # re-creates it beside the first
+    fake_db.calls.clear()
+    got = _upsert_entity(fake_db, {"name": "Gamma", "register_id": "RA000123:55"}, "src", 70)
+    assert got and got != "found"
+    create = next(c for c, _ in fake_db.calls if c.startswith("CREATE"))
+    assert "register_id:$rid" in create
+    _, params = next((c, p) for c, p in fake_db.calls if c.startswith("CREATE"))
+    assert params["rid"] == "RA000123:55"

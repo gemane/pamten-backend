@@ -49,3 +49,17 @@ def test_custom_label(fake_db):
     fake_db.queue([{"id": "c1"}])
     resolve_entity_id(fake_db, label="Company", name_normalized="acme")
     assert "MATCH (e:Company)" in fake_db.calls[0][0]
+
+
+def test_register_id_is_a_resolve_field_after_the_established_ids(fake_db):
+    """The fifth hard identifier: checked after companies_house_id (established
+    ids first) and before the name fields (an id beats a name match)."""
+    from app.entity_resolution import _RESOLVE_FIELDS
+    fields = list(_RESOLVE_FIELDS)
+    assert fields.index("register_id") == fields.index("companies_house_id") + 1
+    assert fields.index("register_id") < fields.index("name_normalized")
+
+    fake_db.queue([{"id": "rid-hit"}])
+    got = resolve_entity_id(fake_db, name="Acme", register_id="RA000585:07524813")
+    assert got == "rid-hit"
+    assert "e.register_id = $v" in fake_db.calls[0][0]

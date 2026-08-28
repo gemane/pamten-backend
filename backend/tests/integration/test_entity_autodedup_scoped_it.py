@@ -79,3 +79,20 @@ def test_touched_entity_collector_records_upserts(it_db):
 
     # outside a collector context it's a harmless no-op that returns the id
     assert _record_touched_entity("x") == "x"
+
+
+def test_shared_register_id_is_definitive(it_db):
+    """Fails if register_id is missing from EITHER the member SELECT or the
+    _group_confidence tuple — the check can only see selected columns."""
+    from app.scraper.maintenance import deduplicate_entities_for
+
+    _entity(it_db, "omega-keep", "omega",
+            register_id="RA000242:HRB77", name_credibility=90)
+    _entity(it_db, "omega-dup", "omega",
+            register_id="RA000242:HRB77", name_credibility=10)
+
+    res = deduplicate_entities_for(["omega-keep"], apply=True)
+    assert res["entities_merged"] == 1
+    n = it_db.run_command(
+        "MATCH (e:Entity) WHERE e.register_id = 'RA000242:HRB77' RETURN count(e) AS n")
+    assert n[0]["n"] == 1

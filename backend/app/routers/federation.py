@@ -215,7 +215,8 @@ def build_export() -> dict:
         entities = [
             {"name": r.get("name"), "type": r.get("type"), "country": r.get("country"),
              "founded": r.get("founded"), "wikidata_id": r.get("wd"), "sec_cik": r.get("cik"),
-             "lei_id": r.get("lei"), "companies_house_id": r.get("ch")}
+             "lei_id": r.get("lei"), "companies_house_id": r.get("ch"),
+             "register_id": r.get("rid")}
             for r in session.run(
                 # Voting groups are not exported: they carry no identifier, so a
                 # peer importing one would resolve it by normalised name onto
@@ -224,7 +225,7 @@ def build_export() -> dict:
                 "MATCH (e:Entity) WHERE e.type <> 'voting_group' "
                 "RETURN e.name AS name, e.type AS type, e.country AS country, "
                 "e.founded AS founded, e.wikidata_id AS wd, e.sec_cik AS cik, "
-                "e.lei_id AS lei, e.companies_house_id AS ch")
+                "e.lei_id AS lei, e.companies_house_id AS ch, e.register_id AS rid")
         ]
         persons = [
             {"full_name": r.get("full_name"), "first_name": r.get("first"), "last_name": r.get("last"),
@@ -241,19 +242,22 @@ def build_export() -> dict:
             for r in session.run(
                 f"MATCH {pat} RETURN "
                 "a.wikidata_id AS a_wd, a.sec_cik AS a_cik, a.lei_id AS a_lei, "
-                "a.companies_house_id AS a_ch, a.name AS a_name, a.full_name AS a_full, "
+                "a.companies_house_id AS a_ch, a.register_id AS a_rid, "
+                "a.name AS a_name, a.full_name AS a_full, "
                 "b.wikidata_id AS b_wd, b.sec_cik AS b_cik, b.lei_id AS b_lei, "
-                "b.companies_house_id AS b_ch, b.name AS b_name, "
+                "b.companies_house_id AS b_ch, b.register_id AS b_rid, b.name AS b_name, "
                 "r.stake_percent AS stake, r.ownership_type AS otype, "
                 "r.source_url AS surl, r.source_date AS sdate"):
                 ownerships.append({
                     "owner": {"kind": owner_kind, "wikidata_id": r.get("a_wd"),
                               "sec_cik": r.get("a_cik"), "lei_id": r.get("a_lei"),
                               "companies_house_id": r.get("a_ch"),
+                              "register_id": r.get("a_rid"),
                               "name": r.get("a_name") or r.get("a_full")},
                     "owned": {"kind": "entity", "wikidata_id": r.get("b_wd"),
                               "sec_cik": r.get("b_cik"), "lei_id": r.get("b_lei"),
-                              "companies_house_id": r.get("b_ch"), "name": r.get("b_name")},
+                              "companies_house_id": r.get("b_ch"),
+                              "register_id": r.get("b_rid"), "name": r.get("b_name")},
                     "stake_percent": r.get("stake"), "ownership_type": r.get("otype"),
                     "source_url": r.get("surl"), "source_date": r.get("sdate"),
                 })
@@ -311,6 +315,7 @@ def _upsert_entity(session, ref: dict, source_id: str, credibility: int = 60) ->
         session,
         wikidata_id=ref.get("wikidata_id"), sec_cik=ref.get("sec_cik"),
         lei_id=ref.get("lei_id"), companies_house_id=ref.get("companies_house_id"),
+        register_id=ref.get("register_id"),
         name_normalized=nn,
     )
     if found:
@@ -325,11 +330,12 @@ def _upsert_entity(session, ref: dict, source_id: str, credibility: int = 60) ->
         "CREATE (e:Entity {id:$id, name:$name, name_normalized:$nn, "
         "search_text:$stext, type:$type, "
         "country:$country, wikidata_id:$wd, sec_cik:$cik, lei_id:$lei, "
-        "companies_house_id:$ch, source_id:$sid, verified:false, "
+        "companies_house_id:$ch, register_id:$rid, source_id:$sid, verified:false, "
         "is_nominee:false, name_credibility:$namecred})",
         id=eid, name=name, nn=nn, stext=name, type=ref.get("type") or "company",
         country=ref.get("country"), wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"),
-        lei=ref.get("lei_id"), ch=ref.get("companies_house_id"), sid=source_id,
+        lei=ref.get("lei_id"), ch=ref.get("companies_house_id"),
+        rid=ref.get("register_id"), sid=source_id,
         namecred=credibility)
     return eid
 

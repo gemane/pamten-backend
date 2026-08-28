@@ -67,6 +67,41 @@ def _opencorporates_url(jurisdiction_code: str | None, company_number: str | Non
         return None
     return f"https://opencorporates.com/companies/{jurisdiction_code}/{company_number}"
 
+
+def _stamp_registration(entity_id: str, jurisdiction_code: str | None,
+                        company_number: str | None) -> None:
+    """Record an OpenCorporates company number as identity, fill-if-missing.
+
+    jurisdiction + number IS OpenCorporates' identity model, yet it used to be
+    fetched and thrown away after building the source URL. `gb` becomes
+    companies_house_id (the same convention GLEIF and PSC use); other national
+    jurisdictions become register_id when the country maps to exactly one
+    register. Sub-national codes ("us_de") keep the number only — state
+    registers are distinct namespaces the ISO-2 prefix cannot pick between.
+
+    COALESCE: this scraper resolves by name, so `entity_id` may be a node
+    another source already stamped — a lookup must never overwrite a register's
+    own statement of the same fact.
+    """
+    from app.scraper.gleif_reference import make_register_id, sole_register_for_country
+
+    if not jurisdiction_code or not company_number:
+        return
+    number = company_number.strip()
+    iso2 = jurisdiction_code[:2].upper() if len(jurisdiction_code) >= 2 else None
+    sub_national = len(jurisdiction_code) > 2
+    ch_id = number if iso2 == "GB" and not sub_national else None
+    register_id = None
+    if not ch_id and not sub_national:
+        register_id = make_register_id(sole_register_for_country(iso2), number)
+    with db.get_session() as session:
+        session.run(
+            "MATCH (e:Entity {id: $id}) "
+            "SET e.registration_number = COALESCE(e.registration_number, $number), "
+            "    e.companies_house_id = COALESCE(e.companies_house_id, $ch), "
+            "    e.register_id = COALESCE(e.register_id, $rid)",
+            id=entity_id, number=number, ch=ch_id, rid=register_id)
+
 log = logging.getLogger(__name__)
 
 
@@ -2157,6 +2192,7 @@ def run_scrape_open_corporates(company_name: str, country: str | None = None) ->
         entity_type="company",
         source_id=source_id,
     )
+    _stamp_registration(target_id, data.get("jurisdiction_code"), data.get("company_number"))
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 
     # Registered address → geocoded onto the entity itself.

@@ -28,6 +28,7 @@ import zipfile
 from dataclasses import dataclass
 from typing import IO
 
+from app.scraper.gleif_reference import make_register_id, sole_register_for_country
 from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
     _ProgressBar, _rebuild_indexes,
@@ -216,11 +217,27 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         # + map location; otherwise it's a name-only node.
         reg_addr, hq_city, hq_country = _psc_address(data.get("address"))
         owner_label, kind_cat = "Entity", "entity"
+        ident = data.get("identification") or {}
+        reg_number = (ident.get("registration_number") or "").strip() or None
+        # A foreign parent's register number used to be dropped entirely (only
+        # the UK special case in _entity_psc_id kept one). It is stored now, and
+        # becomes the register_id hard identifier when the stated country maps
+        # to exactly one register. No UK special-casing needed: GB has 16
+        # registers so the sole-register map yields None there (and
+        # companies_house_id already covers the merge); DE's 177 per-court
+        # registers sharing HRB numbering yield None for the same reason.
+        register_id = None
+        if reg_number:
+            iso2 = _iso2_country(ident.get("country_registered"))
+            register_id = make_register_id(sole_register_for_country(iso2), reg_number)
         owner_props = {
             "name": name, "entity_type": "company",
-            "country": ((data.get("identification") or {}).get("country_registered") or None),
+            "country": (ident.get("country_registered") or None),
             "companies_house_id": chid, "registered_address": reg_addr,
             "hq_address": reg_addr, "hq_city": hq_city, "hq_country": hq_country,
+            "registration_number": reg_number,
+            "registration_authority": (ident.get("place_registered") or "").strip() or None,
+            "register_id": register_id,
         }
 
     return PscMapped(

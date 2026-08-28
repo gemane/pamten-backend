@@ -218,8 +218,8 @@ _CONFIDENCE_RANK = {"definitive": 0, "high": 1, "medium": 2, "low": 3}
 
 def _group_confidence(members: list[dict]) -> str:
     """How sure are we the same-name members are the SAME company?
-      definitive — they share a wikidata_id / sec_cik / companies_house_id
-                   (a hard external identifier ⇒ same entity).
+      definitive — they share a wikidata_id / sec_cik / companies_house_id /
+                   lei_id / register_id (a hard external identifier ⇒ same entity).
       high       — same registered_address (GLEIF registered office).
       medium     — same country AND same founded year.
       low        — name only (differing address/country ⇒ probably different).
@@ -228,7 +228,8 @@ def _group_confidence(members: list[dict]) -> str:
         vals = [m.get(field) for m in members if m.get(field)]
         return len(vals) >= 2 and len(set(vals)) < len(vals)
 
-    if any(_shared(f) for f in ("lei_id", "wikidata_id", "sec_cik", "companies_house_id")):
+    if any(_shared(f) for f in ("lei_id", "wikidata_id", "sec_cik",
+                                "companies_house_id", "register_id")):
         return "definitive"
     if _shared("registered_address"):
         return "high"
@@ -251,7 +252,7 @@ def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = N
     for name_norm, cnt in groups:
         members = run_sql(
             "SELECT id, name, country, founded, lei_id, companies_house_id, "
-            "sec_cik, wikidata_id, registered_address FROM Entity "
+            "sec_cik, wikidata_id, register_id, registered_address FROM Entity "
             "WHERE name_normalized = :nn LIMIT 25", {"nn": name_norm})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
         confidence = _group_confidence(members)
@@ -481,11 +482,15 @@ def _merge_entity_props(keep: dict, dead: dict) -> dict:
         out["verified"] = True
 
     # Keep the FULL_TEXT column consistent with the merged aliases, or the company
-    # stops being findable under a name it just absorbed.
+    # stops being findable under a name it just absorbed. The registration number
+    # is a search token too (the GLEIF importer folds it in) — rebuild it here or
+    # the first merge silently makes the company unfindable by its register id.
     name = keep.get("name") or ""
     description = out.get("description", keep.get("description")) or ""
     aliases = out.get("aliases", keep.get("aliases")) or []
-    out["search_text"] = " ".join(p for p in (name, description, " ".join(aliases)) if p).strip()
+    reg_number = out.get("registration_number", keep.get("registration_number")) or ""
+    out["search_text"] = " ".join(
+        p for p in (name, description, " ".join(aliases), reg_number) if p).strip()
     return out
 
 
@@ -1060,7 +1065,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     for nn in names:
         members = run_sql(
             "SELECT id, name, country, founded, lei_id, companies_house_id, sec_cik, "
-            "wikidata_id, registered_address, COALESCE(name_credibility, 0) AS cred, "
+            "wikidata_id, register_id, registered_address, COALESCE(name_credibility, 0) AS cred, "
             "COALESCE(verified, false) AS verified FROM Entity "
             "WHERE name_normalized = :nn AND type <> 'voting_group' LIMIT 50", {"nn": nn})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
@@ -1114,6 +1119,7 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     dup_keys += [("companies_house_id", k) for k in _duplicate_keys("companies_house_id")]
     dup_keys += [("sec_cik", k) for k in _duplicate_keys("sec_cik")]
     dup_keys += [("wikidata_id", k) for k in _duplicate_keys("wikidata_id")]
+    dup_keys += [("register_id", k) for k in _duplicate_keys("register_id")]
     total = len(dup_keys)
     batch = dup_keys if limit is None else dup_keys[:limit]
 
@@ -1204,7 +1210,9 @@ def deduplicate_entities_bulk(batch_size: int = 200) -> dict:
     """
     removed_total = 0
     by: dict[str, dict] = {}
-    for key_prop in ("lei_id", "companies_house_id"):
+    # Every register_id starts "RA", so the first-char pass lands them all in one
+    # shard; _dup_groups_sharded's adaptive sub-sharding recurses past that.
+    for key_prop in ("lei_id", "companies_house_id", "register_id"):
         groups = _dup_groups_sharded(key_prop)   # (value, keeper, member-count)
         removed = sum(c - 1 for _, _, c in groups)
         for i in range(0, len(groups), batch_size):

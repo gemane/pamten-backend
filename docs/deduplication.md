@@ -179,8 +179,8 @@ Two ways the same company becomes multiple `Entity` nodes, with different fixes.
 ## Same identifier, two nodes — `deduplicate_entities`
 
 When the same company arrives from two sources it becomes two nodes that **share a hard
-external id** — an **LEI, Companies House number, SEC CIK or Wikidata id** —
-so `deduplicate_entities` merges them by that id (sharded by id prefix to stay under
+external id** — an **LEI, Companies House number, SEC CIK, Wikidata id or
+`register_id`** — so `deduplicate_entities` merges them by that id (sharded by id prefix to stay under
 ArcadeDB's query-heap cap). This is the **cross-source merge and needs no name match or
 Wikidata hub**: e.g. a UK company imported from both GLEIF (`lei:…`) and PSC (`gb-coh:…`)
 shares `companies_house_id` — GLEIF stamps it from the registration number when the
@@ -197,6 +197,26 @@ LEI, many operating companies don't (e.g. Microsoft's is null). For the rest, th
 LEI↔CIK path is GLEIF's OpenCorporates id → the OpenCorporates record's SEC CIK, which
 needs a **paid OpenCorporates API token** (the API returns 401 anonymously; the CIK is
 only free on their website).
+
+**The fifth hard id — `register_id`.** The national business register is the one
+identifier virtually every real company has, so GLEIF's `RegistrationAuthority`
+pair (unambiguous RA *code* + the entity's number there) is derived into a single
+scalar `register_id = "{RA code}:{number}"`, e.g. `RA000585:07524813`. It joins
+every dedup path and `resolve_entity_id`. Three GLEIF placeholder codes never
+qualify — `RA777777` (public legal documents), `RA888888` (temporary),
+`RA999999` (no registration authority / self-registered) — because their
+"numbers" share no namespace: two unrelated self-registered companies both
+numbered "123" would merge. UK companies get `register_id` **and**
+`companies_house_id` (the keys agree on every merge, and `register_id` also
+covers the Scottish/Northern-Irish registers RA000587/RA000586 that the
+`companies_house_id` special case never did). Sources that state only a
+*country* (PSC's `country_registered`, an OpenCorporates jurisdiction)
+contribute a `register_id` only when that country has exactly **one** register
+in GLEIF's RA list (~25 countries) — unambiguous by construction; Germany's 177
+per-court registers sharing HRB numbering are exactly why a bare country+number
+key is unsafe. A curated primary-register-per-country map (e.g. FR → Sirene) is
+future work. Existing rows cannot be backfilled (only the ambiguous authority
+*name* was stored historically); a re-import populates them.
 
 ## Id-less parties — collapsed by name at import
 
@@ -269,7 +289,7 @@ build, when it is worth it:
   aggressive than today, only more careful where we know better.
 
 Why it is recorded rather than built (decision 2026-08-26): entity dedup keys
-primarily on hard ids (LEI / Companies House / CIK / QID) with names as a
+primarily on hard ids (LEI / Companies House / CIK / QID / register id) with names as a
 secondary signal; no false merge of this shape has surfaced; and the SEC-side
 name comparisons (ticker matching, 13D issuer verification) cannot use it at
 all — they compare raw filing strings with no country attached at comparison
@@ -290,7 +310,7 @@ OOMs the heap) and tags each group with a **confidence** it's the same company:
 
 | Confidence | Signal |
 |---|---|
-| `definitive` | members share a `wikidata_id` / `sec_cik` / `companies_house_id` |
+| `definitive` | members share a `wikidata_id` / `sec_cik` / `companies_house_id` / `lei_id` / `register_id` |
 | `high` | same `registered_address` (GLEIF registered office) |
 | `medium` | same `country` **and** `founded` year |
 | `low` | name only — differing address/country ⇒ probably *different* firms |
