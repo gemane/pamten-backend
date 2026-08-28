@@ -4,6 +4,8 @@ from app.auth.dependencies import require_contributor
 from app.database import db
 from app.db.arcadedb import run_sql
 from app.merged_ids import record_merge, resolve_current_id
+from app.claims import migrate_claims
+from app.scraper.edge_schema import OWNS_PROPS, RELATED_TO_PROPS, ROLE_PROPS
 from collections import defaultdict
 from datetime import datetime, timezone
 from itertools import combinations
@@ -501,11 +503,12 @@ def merge_person_records(keep: str, dup: str) -> None:
     if keep == dup:
         raise ValueError("keep_id and dup_id must differ")
 
-    OWNS_PROPS = ["stake_percent", "voting_power_pct", "ownership_type", "since", "until",
-                  "value_usd", "source_id", "credibility_score", "source_url", "source_date",
-                  "last_scraped_at"]
-    ROLE_PROPS = ["role", "since", "until", "source_id", "credibility_score",
-                  "source_url", "source_date", "last_scraped_at"]
+    # The FIFTH edge-recreate block. The audit behind the edge-schema work found
+    # four (all in maintenance.py) and missed this one, so it kept its own list
+    # of 11 of the 25 OWNS properties — silently dropping the share counts, the
+    # PSC interest fields, `stale`, `shortcut` and the ultimate-parent dates from
+    # every person merge. Now that the post-scrape auto-dedup actually reaches
+    # its duplicates, this path runs often. It reads the schema, like the others.
     BIO_COALESCE = ["wikidata_id", "sec_cik", "birth_date", "death_date", "birth_place", "wikipedia_url"]
 
     with db.get_session() as session:
@@ -546,6 +549,7 @@ def merge_person_records(keep: str, dup: str) -> None:
 
         # OWNS → fold onto the kept person's existing edge to the same target.
         owns_set = ", ".join(f"nr.{p} = COALESCE(nr.{p}, ${p})" for p in OWNS_PROPS)
+        # (OWNS_PROPS / ROLE_PROPS / RELATED_TO_PROPS come from edge_schema.)
         for e in _edges("OWNS", OWNS_PROPS, out=True):
             session.run(
                 f"MATCH (keep:Person {{id:$keep}}), (x {{id:$target}}) "
@@ -560,19 +564,18 @@ def merge_person_records(keep: str, dup: str) -> None:
                 f"CREATE (keep)-[nr:HAS_ROLE]->(x) SET {role_set}",
                 keep=keep, target=e["target"], **{p: e[p] for p in ROLE_PROPS})
 
-        # RELATED_TO (both directions) → fold onto keep's edge.
-        for e in _edges("RELATED_TO", ["relation", "source_id"], out=True):
-            session.run(
-                "MATCH (keep:Person {id:$keep}), (x {id:$target}) "
-                "MERGE (keep)-[nr:RELATED_TO]->(x) "
-                "SET nr.relation = COALESCE(nr.relation, $relation), nr.source_id = COALESCE(nr.source_id, $source_id)",
-                keep=keep, target=e["target"], relation=e["relation"], source_id=e["source_id"])
-        for e in _edges("RELATED_TO", ["relation", "source_id"], out=False):
-            session.run(
-                "MATCH (keep:Person {id:$keep}), (x {id:$target}) "
-                "MERGE (x)-[nr:RELATED_TO]->(keep) "
-                "SET nr.relation = COALESCE(nr.relation, $relation), nr.source_id = COALESCE(nr.source_id, $source_id)",
-                keep=keep, target=e["target"], relation=e["relation"], source_id=e["source_id"])
+        # RELATED_TO (both directions) → fold onto keep's edge. This is how a
+        # merged person keeps their voting-group membership.
+        rel_set = ", ".join(f"nr.{p} = COALESCE(nr.{p}, ${p})" for p in RELATED_TO_PROPS)
+        for out in (True, False):
+            pattern = ("MERGE (keep)-[nr:RELATED_TO]->(x)" if out
+                       else "MERGE (x)-[nr:RELATED_TO]->(keep)")
+            for e in _edges("RELATED_TO", list(RELATED_TO_PROPS), out=out):
+                session.run(
+                    f"MATCH (keep:Person {{id:$keep}}), (x {{id:$target}}) {pattern} "
+                    f"SET {rel_set}",
+                    keep=keep, target=e["target"],
+                    **{p: e[p] for p in RELATED_TO_PROPS})
 
         # Backfill blank bio fields on the kept person from the duplicate's values.
         bio_set = ", ".join(f"keep.{p} = COALESCE(keep.{p}, ${p})" for p in BIO_COALESCE)
@@ -604,6 +607,14 @@ def merge_person_records(keep: str, dup: str) -> None:
         # Forwarding address BEFORE the delete: the dup's id may be in a shared
         # link, a client cache, or a federation peer's copy of our data.
         record_merge(session, old_id=dup, new_id=keep, kind="Person")
+
+        # Re-key the duplicate's claims onto the survivor. claim_key hashes
+        # (kind|from|to|source), so the rows do not follow the edges by
+        # themselves: left alone they point at a deleted node and the
+        # survivor's Sources panel loses that evidence. The entity merge paths
+        # have done this since the claims work; this one was missed, and six
+        # claims were stranded the first time the fixed auto-dedup ran.
+        migrate_claims(dup, keep)
 
         session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
 
