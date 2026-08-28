@@ -94,8 +94,15 @@ class Settings(BaseSettings):
     # when SMTP_HOST is unset, so local dev + tests need no secrets. For Gmail:
     # SMTP_HOST=smtp.gmail.com, SMTP_PORT=587, SMTP_USERNAME=<you@gmail.com>,
     # SMTP_PASSWORD=<Google App Password> (needs 2-Step Verification enabled).
-    EMAIL_BACKEND:                    str  = ""     # "console" | "smtp" | "resend" | "" (auto)
+    EMAIL_BACKEND:                    str  = ""     # "console" | "smtp" | "resend" | "scaleway" | "" (auto)
     RESEND_API_KEY:                   str  = ""     # secret — env only; for EMAIL_BACKEND=resend
+    # Scaleway Transactional Email (HTTPS API, works from Render). For
+    # EMAIL_BACKEND=scaleway: SCALEWAY_SECRET_KEY (the API key's Secret Key, used
+    # as the X-Auth-Token header), SCALEWAY_PROJECT_ID (the sending domain's
+    # project), region default fr-par, and EMAIL_FROM on the verified domain.
+    SCALEWAY_SECRET_KEY:              str  = ""     # secret — env only; for EMAIL_BACKEND=scaleway
+    SCALEWAY_PROJECT_ID:              str  = ""
+    SCALEWAY_TEM_REGION:              str  = "fr-par"   # fr-par | nl-ams | pl-waw
     SMTP_HOST:                        str  = ""
     SMTP_PORT:                        int  = 587
     SMTP_USERNAME:                    str  = ""

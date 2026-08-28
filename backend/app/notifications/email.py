@@ -11,12 +11,17 @@ Backends, chosen by ``settings.EMAIL_BACKEND``:
                   Render (HTTPS, port 443). ``EMAIL_FROM`` must be a Resend-verified
                   sender (a verified domain, or ``onboarding@resend.dev`` in test
                   mode — which only delivers to the account owner).
+  * ``scaleway`` — send via the Scaleway Transactional Email HTTPS API
+                  (``SCALEWAY_SECRET_KEY`` + ``SCALEWAY_PROJECT_ID``). Works from
+                  Render. ``EMAIL_FROM`` must be an address on a domain verified
+                  in Scaleway TEM (SPF/DKIM/DMARC). See ``ScalewayBackend``.
 
 Uses only stdlib + ``httpx`` (already a dependency) — no provider SDKs.
 """
 import logging
 import smtplib
 from email.message import EmailMessage
+from email.utils import parseaddr
 
 import httpx
 
@@ -25,7 +30,7 @@ from app.notifications.i18n import t
 
 log = logging.getLogger(__name__)
 
-_KNOWN_BACKENDS = ("console", "smtp", "resend")
+_KNOWN_BACKENDS = ("console", "smtp", "resend", "scaleway")
 
 
 def _resolve_backend() -> str:
@@ -79,6 +84,25 @@ class SMTPBackend(EmailSender):
         log.info("[email:smtp] sent %r to %s", subject, to)
 
 
+def _raise_for_status(resp: "httpx.Response", provider: str) -> None:
+    """Fail loudly, and say what the provider actually objected to.
+
+    `raise_for_status()` alone reports "400 Bad Request" and throws the body
+    away — but the body is the whole message: an unverified sender domain, a
+    project id that does not match the key, a malformed address. Diagnosing a
+    send failure without it means guessing, so the body (truncated) is logged
+    and folded into the exception before it propagates.
+    """
+    if resp.is_success:
+        return
+    detail = (resp.text or "").strip().replace("\n", " ")[:400]
+    log.error("[email:%s] send rejected — HTTP %s: %s", provider, resp.status_code, detail)
+    raise httpx.HTTPStatusError(
+        f"{provider} rejected the send — HTTP {resp.status_code}: {detail}",
+        request=resp.request, response=resp,
+    )
+
+
 class ResendBackend(EmailSender):
     """Sends via the Resend HTTPS API — works from Render (unlike SMTP)."""
 
@@ -91,14 +115,67 @@ class ResendBackend(EmailSender):
             headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
             json=payload, timeout=10,
         )
-        resp.raise_for_status()
+        _raise_for_status(resp, "resend")
         log.info("[email:resend] sent %r to %s", subject, to)
+
+
+class ScalewayBackend(EmailSender):
+    """Sends via the Scaleway Transactional Email HTTPS API — works from Render.
+
+    Request (Scaleway TEM ``v1alpha1``)::
+
+        POST https://api.scaleway.com/transactional-email/v1alpha1/regions/{region}/emails
+        X-Auth-Token: <SCALEWAY_SECRET_KEY>          # the API key's Secret Key
+        Content-Type: application/json
+        {
+          "from":       {"email": "noreply@owlgraph.org", "name": "Owlgraph"},
+          "to":         [{"email": "user@example.com"}],
+          "subject":    "...",
+          "text":       "...",
+          "html":       "...",          # omitted when no HTML part
+          "project_id": "<SCALEWAY_PROJECT_ID>"
+        }
+
+    ``region`` is ``SCALEWAY_TEM_REGION`` (default ``fr-par``). The ``from`` email
+    must be on a domain verified in Scaleway TEM (SPF/DKIM/DMARC), or the API
+    rejects the send. ``EMAIL_FROM`` may be a bare address or ``Name <addr>`` —
+    parseaddr splits it into the structured ``from`` object either way.
+    """
+
+    _BASE = "https://api.scaleway.com/transactional-email/v1alpha1/regions"
+
+    def send(self, to: str, subject: str, text: str, html: str | None = None) -> None:
+        display_name, addr = parseaddr(_from_address())
+        sender: dict = {"email": addr}
+        if display_name:
+            sender["name"] = display_name
+
+        payload: dict = {
+            "from":       sender,
+            "to":         [{"email": to}],
+            "subject":    subject,
+            "text":       text,
+            "project_id": settings.SCALEWAY_PROJECT_ID,
+        }
+        if html:
+            payload["html"] = html
+
+        region = settings.SCALEWAY_TEM_REGION.strip() or "fr-par"
+        resp = httpx.post(
+            f"{self._BASE}/{region}/emails",
+            headers={"X-Auth-Token": settings.SCALEWAY_SECRET_KEY},
+            json=payload, timeout=10,
+        )
+        _raise_for_status(resp, "scaleway")
+        log.info("[email:scaleway] sent %r to %s (region=%s)", subject, to, region)
 
 
 def get_email_sender() -> EmailSender:
     backend = _resolve_backend()
     if backend == "resend":
         return ResendBackend()
+    if backend == "scaleway":
+        return ScalewayBackend()
     if backend == "smtp":
         return SMTPBackend()
     return ConsoleBackend()
