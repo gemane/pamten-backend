@@ -121,6 +121,22 @@ Two rules keep the tiers meaning something on OWNS edges:
   pairs any register claim vouches for, and closed edges. The pass clears as well
   as sets, and the quality report counts stale edges per source.
 
+## The OWNS property schema
+
+`app/scraper/edge_schema.py` is the one place that knows what sits on an edge:
+`OWNS_PROPS` (25 properties), `ROLE_PROPS`, `RELATED_TO_PROPS`. The merge paths
+generate their Cypher from it; the two runner writers build their CREATEs from
+`owns_props(**kw)`, which rejects any keyword the schema lacks; and
+`tests/scraper/test_writer_parity.py` parses every other writer's source and
+fails when one invents or drops a property.
+
+**Adding a property to an OWNS edge** is therefore: add it to `OWNS_PROPS`,
+pass it where a writer learns it, and update that writer's expected subset in
+the parity test — which fails with a readable diff until you do. The merges,
+the schema-parameterised merge tests, and `owns_props` all pick it up with no
+further edits. The claim should usually learn it too (`claim_props`); the
+parity test's claim check says which fields count as factual.
+
 ## Voting groups
 
 A Schedule 13D filed by several parties acting together is one **`voting_group`**

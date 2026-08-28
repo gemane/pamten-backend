@@ -23,6 +23,7 @@ from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.claims import record_claim, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
+from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.scraper.wikidata import (search_entity, search_entity_in_country,
                                   fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
@@ -447,6 +448,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
         return
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = _now_iso()
+    create_clause = edge_create_clause(OWNS_PROPS)
     record_claim(
         kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
         source_url=source_url, source_date=source_date,
@@ -491,18 +493,16 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
         session.run(
             f"""
             MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
-            CREATE (a)-[:OWNS {{
-                stake_percent: null, ownership_type: 'unknown',
-                since: null, until: null,
-                source_id: $sid, credibility_score: $score,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $now
-            }}]->(b)
+            CREATE (a)-[:OWNS {{{create_clause}}}]->(b)
             """,
-            oid=owner_id,
-            nid=owned_id,
-            sid=source_id,
-            score=credibility_score,
-            surl=source_url, sdate=source_date, now=now,
+            oid=owner_id, nid=owned_id,
+            # The full schema bag — Wikidata states no stake, so almost all of
+            # it is null, but the key set matches every other writer's, which
+            # is the point: the same schema, however sparse the source.
+            **owns_props(ownership_type="unknown", source_id=source_id,
+                         credibility_score=credibility_score,
+                         source_url=source_url, source_date=source_date,
+                         last_scraped_at=now, stale=False),
         )
 
 
@@ -1369,10 +1369,25 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     record_claim(kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
                  stake_percent=stake_percent, ownership_type=ownership_type,
                  voting_power_pct=voting_power_pct,
+                 share_class=share_class, shares=shares,
+                 shares_outstanding=shares_outstanding, voting_shares=voting_shares,
                  since=file_date, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score)
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = datetime.now(timezone.utc).isoformat()
+    # The full schema bag: every OWNS property, None where this filing did not
+    # say. The CREATE clause is generated from the same schema, so the write
+    # can never carry a property the merges do not know, and vice versa.
+    bag = owns_props(
+        stake_percent=stake_percent, voting_power_pct=voting_power_pct,
+        ownership_type=ownership_type, since=file_date, until=until,
+        source_id=source_id, credibility_score=credibility_score,
+        source_url=source_url, source_date=file_date, last_scraped_at=now,
+        share_class=share_class, shares=shares,
+        shares_outstanding=shares_outstanding, voting_shares=voting_shares,
+        stale=False,
+    )
+    create_clause = edge_create_clause(OWNS_PROPS)
     # Closing an edge has to match one that is ALREADY closed too, or re-reading
     # the same filings creates a second historical edge every run — the active-only
     # match never finds the one written last time.
@@ -1417,29 +1432,9 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         session.run(
             f"""
             MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
-            CREATE (a)-[:OWNS {{
-                stake_percent:    $stake,
-                voting_power_pct: $vote,
-                share_class:      $sclass,
-                shares:           $shares,
-                shares_outstanding: $shtotal,
-                voting_shares:    $vshares,
-                ownership_type:   $otype,
-                since:            $since,
-                until:            $until,
-                source_id:        $sid,
-                credibility_score: $score,
-                source_url:       $surl,
-                source_date:      $sdate,
-                last_scraped_at:  $now
-            }}]->(b)
+            CREATE (a)-[:OWNS {{{create_clause}}}]->(b)
             """,
-            oid=owner_id, nid=owned_id,
-            stake=stake_percent, vote=voting_power_pct, sclass=share_class,
-            shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
-            otype=ownership_type,
-            since=file_date, sid=source_id, score=credibility_score,
-            surl=source_url, sdate=file_date, now=now, until=until,
+            oid=owner_id, nid=owned_id, **bag,
         )
 
 
