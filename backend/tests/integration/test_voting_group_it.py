@@ -179,6 +179,26 @@ class TestTheProfileShowsTheParties:
         assert by_kind["entity"] == "Stichting Anheuser-Busch InBev"
         assert by_kind["person"] == "Jorge Paulo Lemann"
 
+    def test_a_person_member_sees_the_group_too(self, graph):
+        # A bloc's members are as often people as companies — AB InBev's
+        # includes Lemann, Sicupira and Telles — and the person profile is a
+        # separate endpoint that knew nothing about groups.
+        from app.scraper.runner import (_upsert_voting_group, _upsert_group_membership,
+                                        _upsert_person_by_name)
+        from app.routers.search import get_person_profile
+        gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
+        pid = _upsert_person_by_name("Jorge Paulo Lemann", source_id="sec")
+        _upsert_group_membership(pid, gid, "Person", "sec")
+
+        prof = get_person_profile(pid)
+        assert [g["group"]["id"] for g in prof["voting_groups"]] == [gid]
+
+    def test_a_person_in_no_group_gets_an_empty_list(self, graph):
+        from app.scraper.runner import _upsert_person_by_name
+        from app.routers.search import get_person_profile
+        pid = _upsert_person_by_name("Nobody Special", source_id="sec")
+        assert get_person_profile(pid)["voting_groups"] == []
+
     def test_an_ordinary_company_has_no_parties(self, graph):
         # The query costs a round trip, so it only runs for a group — and a
         # company is not one even if something points a membership edge at it.

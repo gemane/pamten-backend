@@ -345,6 +345,24 @@ def _class_key(title: str | None) -> str | None:
     return " | ".join(cleaned) or None
 
 
+def _voting_groups_of(session, node_id: str, hidden: set) -> list[dict]:
+    """The filing groups a node is a party to.
+
+    Needed on every profile, not just an entity's: a bloc's members are as often
+    people as companies — AB InBev's includes Lemann, Sicupira and Telles — and
+    without this their pages could not show the agreement they vote in.
+    """
+    out = []
+    for g in session.run(
+            """MATCH (m {id: $id})-[r:RELATED_TO]->(g:Entity)
+               WHERE r.relation = 'group_member'
+               RETURN g""", id=node_id):
+        node = dict(g["g"])
+        if node.get("id") not in hidden:
+            out.append({"group": node})
+    return out
+
+
 def _ownership_summary(owners: list[dict]) -> dict:
     """Derive a free-float / data-quality summary from an entity's owners.
 
@@ -672,14 +690,7 @@ def get_full_profile(
         # without it a member's profile has no idea it belongs to a bloc, so
         # centring Altria could never draw the agreement it votes in — the
         # payload simply lacked the fact.
-        voting_groups = []
-        for g in session.run(
-                """MATCH (m {id: $id})-[r:RELATED_TO]->(g:Entity)
-                   WHERE r.relation = 'group_member'
-                   RETURN g""", id=entity_id):
-            node = dict(g["g"])
-            if node.get("id") not in hidden:
-                voting_groups.append({"group": node})
+        voting_groups = _voting_groups_of(session, entity_id, hidden)
 
         return {
             "entity": dict(record["e"]),
@@ -811,6 +822,7 @@ def get_person_profile(person_id: str):
             "person": dict(record["p"]),
             "positions": positions_out,
             "holdings": holdings_out,
+            "voting_groups": _voting_groups_of(session, person_id, hidden),
         }
 
 
