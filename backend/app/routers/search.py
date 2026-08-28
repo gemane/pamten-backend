@@ -668,9 +668,23 @@ def get_full_profile(
             group_members.sort(key=lambda x: (x["party"].get("name")
                                               or x["party"].get("full_name") or ""))
 
+        # …and the groups this entity is a party TO. The mirror of the above:
+        # without it a member's profile has no idea it belongs to a bloc, so
+        # centring Altria could never draw the agreement it votes in — the
+        # payload simply lacked the fact.
+        voting_groups = []
+        for g in session.run(
+                """MATCH (m {id: $id})-[r:RELATED_TO]->(g:Entity)
+                   WHERE r.relation = 'group_member'
+                   RETURN g""", id=entity_id):
+            node = dict(g["g"])
+            if node.get("id") not in hidden:
+                voting_groups.append({"group": node})
+
         return {
             "entity": dict(record["e"]),
             "group_members": group_members,
+            "voting_groups": voting_groups,
             # True totals, independent of the per-section row limit above.
             "counts": counts,
             "owners": owners,

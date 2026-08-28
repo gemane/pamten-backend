@@ -1261,24 +1261,39 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
         # roster (above) and excluded from name-based dedup — so the count can
         # sit in the name, where it is the most useful thing to say.
         name = _voting_group_name(len(roster))
+        # The DISPLAY name says what the thing is and how big it is, and that is
+        # all a reader wants on a row. But two nine-party groups over different
+        # companies would then share a `name_normalized`, which is the field
+        # `resolve_entity_id` matches on — so the matching key carries the
+        # subject even though the label does not. Deliberately not
+        # `normalize_entity_name(name)`: display and identity answer different
+        # questions here, and conflating them is how one company's bloc would
+        # resolve onto another's.
+        norm = f"voting group {normalize_entity_name(subject_name) or subject_name.lower()}"
+        # Searchable by the company too — "anheuser voting" should find it, and
+        # a bare "Voting group · 9 parties" in a result list says nothing about
+        # whose shares are involved.
+        search_text = f"{name} {subject_name}"
 
         if best:
             # Same agreement, new roster: parties join and leave, and the node
             # should follow rather than fork. The name follows the count.
             session.run("""MATCH (g:Entity {id: $id})
                            SET g.member_keys = $roster, g.name = $name,
-                               g.search_text = $name, g.last_scraped_at = $now""",
-                        id=best, roster=roster, name=name, now=now)
+                               g.name_normalized = $norm, g.search_text = $stext,
+                               g.last_scraped_at = $now""",
+                        id=best, roster=roster, name=name, norm=norm,
+                        stext=search_text, now=now)
             return best
         gid = str(uuid.uuid4())
         session.run(
             f"""CREATE (g:Entity {{
-                    id: $id, name: $name, name_normalized: $norm, search_text: $name,
+                    id: $id, name: $name, name_normalized: $norm, search_text: $stext,
                     type: '{VOTING_GROUP_TYPE}', member_keys: $roster,
                     source_id: $src, verified: false, last_scraped_at: $now,
                     description: $desc
                 }})""",
-            id=gid, name=name, norm=normalize_entity_name(name) or name.lower(),
+            id=gid, name=name, norm=norm, stext=search_text,
             roster=roster, src=source_id, now=now,
             desc=(f"Parties acting together under a shareholders' or voting agreement "
                   f"reported to the SEC on Schedule 13D concerning {subject_name}."))
