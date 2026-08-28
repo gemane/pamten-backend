@@ -1055,6 +1055,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         share_class   = None
         shares        = None
         shares_total  = None
+        voting_shares = None
         group_members: list[dict] = []
 
         if inv.get("xml"):
@@ -1073,6 +1074,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             shares        = _shares_held(rows, person.get("aggregate"))
             shares_total  = (_shares_outstanding(xml.get("comment_text") or "")
                              or _derive_total(person.get("aggregate"), person.get("percent")))
+            voting_shares = _shares_voted(person.get("aggregate"), voting)
             is_individual = (person["type_code"] in _INDIVIDUAL_CODES
                              if person.get("type_code") else None)
             group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml",
@@ -1094,8 +1096,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 pct, voting    = _own_stake_and_voting(text, pct)
                 is_individual = _parse_reporter_type_from_text(text)
                 share_class   = _parse_class_title_from_text(text)
-                shares        = _shares_held(_parse_power_rows(text), None)
+                aggregate     = _parse_aggregate_from_text(text)
+                shares        = _shares_held(_parse_power_rows(text), aggregate)
                 shares_total  = _shares_outstanding(text)
+                voting_shares = _shares_voted(aggregate, voting)
                 if voting and inv.get("accession"):
                     # A bloc without an XML membership list: the SGML header
                     # names the co-filers. Only fetched for the few filings that
@@ -1135,6 +1139,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # and redone: a stake is `shares / shares_outstanding`.
             "shares":           shares,
             "shares_outstanding": shares_total,
+            # The bloc's own count. Belongs to the group, repeated by every
+            # member — never summed, exactly like voting_power_pct.
+            "voting_shares":    voting_shares,
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
             # Provenance: the filing index page (readable), with the primary doc
             # as a fallback. file_date is the filing's date.
@@ -1570,6 +1577,31 @@ def _stake_from_person(xml: dict, person: dict) -> tuple:
             log.info("SEC EDGAR: derived %s shares outstanding for %r from %s at %s%%",
                      total, person["name"], person.get("aggregate"), person.get("percent"))
     return _split_stake(rows, total, person.get("percent"))
+
+
+def _parse_aggregate_from_text(text: str) -> int | None:
+    """Row 11, "Aggregate Amount Beneficially Owned" — the count the cover's
+    percent-of-class is a percentage of."""
+    m = re.search(r'Aggregate Amount Beneficially Owned[^0-9]{0,60}([\d,]{4,})',
+                  _plain_text(text), re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return int(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _shares_voted(aggregate: int | None, voting_pct: float | None) -> int | None:
+    """The count behind a voting bloc, or None when there is no bloc.
+
+    Row 11 is what row 13's percentage is computed from, so this is that
+    percentage's numerator. Like the percentage, it belongs to the GROUP and is
+    repeated verbatim by every member — Altria and the Stichting each report the
+    same 1,020,598,157 shares. Never sum it across owners, for exactly the
+    reason `stake_percent` may not be summed across share classes.
+    """
+    return aggregate if voting_pct is not None else None
 
 
 def _shares_held(rows: dict, aggregate: int | None) -> int | None:

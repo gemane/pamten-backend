@@ -1267,3 +1267,36 @@ class TestShareCountsAreKept:
         # facts, and a 0 here would read as "sold out".
         from app.scraper.sec_edgar import _shares_held
         assert _shares_held({"sole_dispositive": 0, "shared_dispositive": 0}, None) is None
+
+
+class TestTheBlocsOwnCount:
+    """`voting_power_pct` has a numerator too — row 11. Like the percentage it
+    belongs to the GROUP and is repeated verbatim by every member, so it may
+    never be summed across owners."""
+
+    def test_a_bloc_reports_its_count(self):
+        from app.scraper.sec_edgar import _shares_voted
+        assert _shares_voted(1020598157, 51.7) == 1020598157
+
+    def test_a_lone_filer_has_no_bloc_count(self):
+        # No bloc, no number — not zero, and not its own holding restated.
+        from app.scraper.sec_edgar import _shares_voted
+        assert _shares_voted(32416315, None) is None
+
+    def test_row_eleven_is_read_off_a_cover(self):
+        from app.scraper.sec_edgar import _parse_aggregate_from_text
+        assert _parse_aggregate_from_text(
+            "11. Aggregate Amount Beneficially Owned by Each Reporting Person "
+            "1,020,598,157 12. Check if") == 1020598157
+
+    def test_a_cover_without_row_eleven_yields_nothing(self):
+        from app.scraper.sec_edgar import _parse_aggregate_from_text
+        assert _parse_aggregate_from_text("no such row here") is None
+
+    def test_every_member_reports_the_same_number(self):
+        # The property that makes summing wrong. Wellington's four blocks each
+        # carry the same aggregate; adding them would quadruple the bloc.
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        d = _parse_13dg_xml(_fixture("13ga_wellington.xml"))
+        aggregates = [p["aggregate"] for p in d["persons"][:3]]
+        assert len(set(aggregates)) == 1

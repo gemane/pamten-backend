@@ -229,13 +229,35 @@ def test_a_count_survives_a_rescrape_that_omits_it(graph):
     from app.database import db as _db
     graph.run_command("CREATE (e:Entity {id:'altria', name:'Altria', type:'company'})")
     _upsert_owns_sec("altria", "abi", "sec", "minority", "2025-01-01", 8.0,
-                     shares=159121937, shares_outstanding=1975847422)
+                     shares=159121937, shares_outstanding=1975847422,
+                     voting_shares=1020598157)
     _upsert_owns_sec("altria", "abi", "sec", "minority", "2025-06-01", 8.1)
     with _db.get_session() as s:
         r = list(s.run("""MATCH (a {id:'altria'})-[r:OWNS]->(b {id:'abi'})
-                          RETURN r.shares AS sh, r.stake_percent AS pct"""))[0]
+                          RETURN r.shares AS sh, r.voting_shares AS vs,
+                                 r.stake_percent AS pct"""))[0]
     assert r["sh"] == 159121937, "the earlier count was wiped by a filing that had none"
+    assert r["vs"] == 1020598157, "the bloc count was wiped the same way"
     assert r["pct"] == 8.1, "the newer percentage should still win"
+
+
+def test_the_group_edge_carries_the_blocs_count(graph):
+    """The one place a bloc's number is not repeated by nine parties: on the
+    group's own edge it is the group's, once."""
+    from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
+    from app.database import db as _db
+    gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
+    _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-02-07", None,
+                     voting_power_pct=52.3, voting_shares=1033081237)
+    with _db.get_session() as s:
+        r = list(s.run("""MATCH (g:Entity)-[r:OWNS]->(b {id:'abi'})
+                          WHERE g.type = 'voting_group'
+                          RETURN r.voting_shares AS vs, r.shares AS sh,
+                                 r.voting_power_pct AS vp"""))[0]
+    assert r["vs"] == 1033081237
+    assert r["vp"] == 52.3
+    # Still no stake and no holding: the members own the shares, the group votes them.
+    assert r["sh"] is None
 
 
 def test_the_bloc_does_not_enter_the_disclosed_total(graph):
@@ -277,6 +299,7 @@ class TestTheWholeScrapeWritesTheGroup:
         "stake_percent": None, "voting_power_pct": 52.3,
         "ownership_type": "unknown", "is_individual": False,
         "share_class": "Ordinary Shares", "source_url": "https://sec.gov/x-index.htm",
+        "voting_shares": 1033081237,
         "group_members": [
             {"name": "Stichting Anheuser-Busch InBev", "cik": None, "source": "xml",
              "type_code": "CO"},
@@ -329,10 +352,12 @@ class TestTheWholeScrapeWritesTheGroup:
         self._scrape(graph, self.FILING)
         rows = graph.run_command(
             "MATCH (g:Entity)-[r:OWNS]->(b:Entity) WHERE g.type = 'voting_group' "
-            "RETURN r.stake_percent AS stake, r.voting_power_pct AS vote")
+            "RETURN r.stake_percent AS stake, r.voting_power_pct AS vote, "
+            "r.voting_shares AS vshares")
         assert len(rows) == 1
         assert rows[0]["stake"] is None
         assert rows[0]["vote"] == 52.3
+        assert rows[0]["vshares"] == 1033081237, "the bloc's count never reached the group"
 
     def test_an_individual_member_becomes_a_person(self, graph):
         # Item 8's "IN" code says so; nothing has to guess from the name.
