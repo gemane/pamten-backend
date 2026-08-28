@@ -145,15 +145,26 @@ Medium/low and father/son cases are left for a human, deliberately.
 
 `merge_person_records(keep, dup)` folds `dup` into `keep`:
 
-1. **Re-home edges** — `OWNS` (`OWNS_PROPS`) folds onto the kept person's edge to
-   the same target with `COALESCE` (blanks backfilled, existing values kept);
-   `HAS_ROLE` (`ROLE_PROPS`) is created (distinct tenures dedupe on display);
-   `RELATED_TO` folds in both directions.
+1. **Re-home edges** — `OWNS` folds onto the kept person's edge to the same
+   target with `COALESCE` (blanks backfilled, existing values kept); `HAS_ROLE`
+   is created (distinct tenures dedupe on display); `RELATED_TO` folds in both
+   directions, which is how a merged person keeps their voting-group membership.
+   The property lists come from `scraper/edge_schema.py` — this is the **fifth**
+   edge-recreate block, and until 2026-08-28 it was the one the edge-schema audit
+   missed: it carried a hand-written 11 of the 25 OWNS properties, silently
+   dropping the share counts, the PSC interest fields, `stale`, `shortcut` and
+   the ultimate-parent dates from every person merge.
 2. **Backfill bio** — `BIO_COALESCE` fields (`wikidata_id`, `sec_cik`, birth/death,
    `wikipedia_url`) fill only where the kept person is blank.
 3. **Alias** — the dup's `full_name` and aliases become aliases of the kept
    person, so it stays findable (and feeds Signal 1 on the next scan).
-4. **Log + delete** — write a `MergeLog` row, then `DETACH DELETE` the dup.
+4. **Migrate claims** — `claim_key` hashes (kind|from|to|source), so claims do
+   **not** follow the edges by themselves; `migrate_claims` re-keys them onto the
+   survivor. Left out, they point at a deleted node and the survivor's Sources
+   panel loses that evidence (six were stranded the first time the fixed
+   auto-dedup ran on dev).
+5. **Log + delete** — write a `MergeLog` row and a `MergedId` forwarding row,
+   then `DETACH DELETE` the dup.
 
 **Which node is kept** (`suggested_keep_id`): prefer a Wikidata node, then the
 most-connected, then the shortest name.
