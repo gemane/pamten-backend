@@ -75,6 +75,27 @@ class TestGroupNodeIdentity:
                                  "RETURN g.member_keys AS member_keys")
         assert len(rows[0]["member_keys"]) == 4
 
+    def test_two_groups_of_the_same_size_do_not_share_a_matching_key(self, graph):
+        # Both are called "Voting group · 5 parties" — that is the point of the
+        # name. But `name_normalized` is what `resolve_entity_id` matches on, so
+        # if the label were normalised straight into it, one company's bloc could
+        # resolve onto another's.
+        from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
+        graph.run_command("CREATE (e:Entity {id:'other', name:'Other Co', type:'company'})")
+        a = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*ABI_ROSTER), "sec")
+        _upsert_owns_sec(a, "abi", "sec", "unknown", "2025-01-01", None, voting_power_pct=52.3)
+        b = _upsert_voting_group("other", "Other Co", _roster(*ABI_ROSTER), "sec")
+
+        rows = graph.run_command(
+            "MATCH (g:Entity) WHERE g.type = 'voting_group' "
+            "RETURN g.name AS name, g.name_normalized AS norm, g.search_text AS st")
+        assert len({r["name"] for r in rows}) == 1, "the display names should match"
+        assert len({r["norm"] for r in rows}) == 2, "the matching keys must not"
+        # And each is findable by the company whose shares it votes.
+        assert any("anheuser" in (r["st"] or "").lower() for r in rows)
+        assert any("other co" in (r["st"] or "").lower() for r in rows)
+        assert a != b
+
     def test_a_second_bloc_over_one_company_is_its_own_node(self, graph):
         # AB InBev genuinely has two: the families' pact and the Altria voting
         # agreement, overlapping only on the Stichting.
