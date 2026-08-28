@@ -200,3 +200,46 @@ def test_a_filer_listing_itself_is_skipped(it_db):
     result = _run_with_affiliates(affiliates=self_ref)
     assert result["affiliates"] == 0
     assert it_db.run_sql("SELECT count(*) AS n FROM RELATED_TO")[0]["n"] == 0
+
+
+# ── The issuer-side path closes an exit too (reported 2026-08-28) ────────────
+# `fetch_ownership_filings` had no zero-percent handling at all — its filer-side
+# sibling above has had it since the beginning. Vanguard's realignment 13G/As
+# report 0 in every power row, and eighteen went into the graph as live
+# "owns 0.0%" edges instead of closing the position.
+
+def _write_issuer_side(it_db, filings):
+    """Drive the issuer-side writer with parsed filings, as a scrape would."""
+    from unittest.mock import patch
+    data = {"name": "Apple Inc", "cik": "0000320193",
+            "ownership_filings": filings, "executives": [], "holdings": []}
+    with patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+         patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
+         patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
+         patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+         patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+        return runner.run_scrape_sec_edgar("Apple Inc")
+
+
+def _filing(**over):
+    base = {"investor_name": "The Vanguard Group", "investor_cik": "0000102909",
+            "form_type": "SCHEDULE 13G/A", "file_date": "2025-02-10",
+            "stake_percent": 7.48, "voting_power_pct": None, "ownership_type": "minority",
+            "share_class": "Common Stock", "shares": None, "shares_outstanding": None,
+            "voting_shares": None, "is_individual": False, "until": None,
+            "source_url": "https://sec.gov/x/1", "group_members": []}
+    base.update(over)
+    return base
+
+
+def test_an_issuer_side_exit_closes_the_holding(it_db):
+    _write_issuer_side(it_db, [_filing(until="2026-03-26")])
+    edge = _edge_with_stake(it_db, 7.48)
+    assert edge is not None, "the position must stay in the timeline, not vanish"
+    assert edge.get("until") == "2026-03-26"
+
+
+def test_a_live_issuer_side_holding_stays_current(it_db):
+    _write_issuer_side(it_db, [_filing()])
+    edge = _edge_with_stake(it_db, 7.48)
+    assert edge is not None and edge.get("until") is None

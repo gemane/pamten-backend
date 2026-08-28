@@ -999,6 +999,13 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
     # The company filing about itself — compared zero-padded, because the
     # investor CIKs below are zfill(10) and an unpadded entry never matched.
     seen_investor_ciks.add(norm_company_cik)
+    # investor CIK → the date they reported holding nothing. `fetch_filer_holdings`
+    # has always read a zero this way; this side never did, so an exit was written
+    # as a live "owns 0.0%" edge instead of closing the position. The Vanguard
+    # Group's January-2026 realignment put eighteen of those in the graph at once:
+    # its 13G/As report 0 for every power row because the holdings moved to
+    # subsidiaries that now file separately. Newest zero wins (feed order).
+    closed_since: dict[str, str] = {}
 
     # Every name this CIK has filed under: renames keep the CIK, and covers
     # from before a rename carry the old name. Fetched at most once, and only
@@ -1117,6 +1124,18 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                      inv["investor_name"])
             continue
 
+        if not pct and not voting:
+            # Nothing held and no bloc voted: an exit, not a holding. `voting`
+            # is what separates this from a group member who can dispose of
+            # nothing alone — BRC reports a null stake beside a real 52.3% bloc
+            # and must stay. The CIK is deliberately NOT marked seen, so this
+            # investor's older, non-zero filing is still read and emitted below,
+            # closed with this date — which is what builds the timeline.
+            closed_since.setdefault(inv["investor_cik"], inv["file_date"])
+            log.info("SEC EDGAR: %r reported no position on %s — closing, not writing 0%%",
+                     inv["investor_name"], inv["file_date"])
+            continue
+
         seen_investor_ciks.add(inv["investor_cik"])
         log.info(
             "SEC EDGAR: investor %r (CIK=%s) stake=%s is_individual=%s",
@@ -1143,6 +1162,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # member — never summed, exactly like voting_power_pct.
             "voting_shares":    voting_shares,
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
+            # Set when a NEWER filing by this investor reported nothing: the
+            # position is history, and the writer closes the edge with it.
+            "until":            closed_since.get(inv["investor_cik"]),
             # Provenance: the filing index page (readable), with the primary doc
             # as a fallback. file_date is the filing's date.
             "source_url":       inv.get("index_url") or inv.get("primary_url"),

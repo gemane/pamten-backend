@@ -35,9 +35,44 @@ _NICKNAMES = {
 
 
 def _name_key(full_name: str | None) -> tuple:
-    """Order/case/honorific-insensitive token set — 'Page Lawrence' == 'Lawrence Page'."""
+    """Order/case/honorific-insensitive token set — 'Page Lawrence' == 'Lawrence Page'.
+
+    Middle INITIALS are dropped: "Eric E. Schmidt" is not a different person from
+    "Eric Schmidt", and treating the "e" as a distinguishing token kept SEC's
+    initialled filings apart from their Wikidata nodes forever. Only when at
+    least two substantive tokens remain — "J. Smith" keeps its initial, because
+    reducing it to ("smith",) would match every Smith in the graph.
+    """
     toks = [t for t in re.findall(r"[a-z0-9]+", (full_name or "").lower()) if t not in _HONORIFICS]
-    return tuple(sorted(toks))
+    substantive = [t for t in toks if len(t) > 1]
+    return tuple(sorted(substantive if len(substantive) >= 2 else toks))
+
+
+def _name_lookup_variants(name: str) -> set[str]:
+    """Spellings of `name` to look up by exact (indexed) match, besides itself.
+
+    The scan matches on `_name_key`, but the scoped candidate set can only be
+    fetched by exact string — so a seed could never RETRIEVE the node it would
+    then have matched. SEC writes "Eric E. Schmidt" and "Page Lawrence";
+    Wikidata holds "Eric Schmidt" and "Larry Page". Both differences are
+    mechanical, so the variants are generated the same way rather than guessed:
+    drop the initials, and swap a two-token name's order.
+
+    Deliberately not exhaustive — no string can enumerate every spelling with a
+    given key. Nickname and cross-spelling matches against pre-existing persons
+    stay the periodic full scan's job, as `_candidate_persons` has always said.
+    """
+    toks = [t for t in re.findall(r"[A-Za-z0-9.'-]+", name or "") if t.lower().strip(".") not in _HONORIFICS]
+    full = [t for t in toks if len(t.strip(".")) > 1]
+    out = set()
+    if len(full) >= 2:
+        out.add(" ".join(full))                    # "Eric E. Schmidt" → "Eric Schmidt"
+        if len(full) == 2:
+            out.add(f"{full[1]} {full[0]}")        # "Page Lawrence" → "Lawrence Page"
+    if len(toks) == 2:
+        out.add(f"{toks[1]} {toks[0]}")
+    out.discard(name)
+    return out
 
 
 def _norm_place(place: str | None) -> str:
@@ -50,11 +85,19 @@ def _first_token(name: str | None) -> str:
 
 
 def _surname_key(last_name: str | None, full_name: str | None) -> str:
-    """Normalised surname — the parsed last_name if present, else the final
-    (honorific-stripped) token of the full name, in name order (not sorted)."""
-    if last_name and last_name.strip():
-        return _norm_place(last_name)
-    toks = [t for t in re.findall(r"[a-z0-9]+", (full_name or "").lower()) if t not in _HONORIFICS]
+    """Normalised surname — the final token of the parsed last_name if present,
+    else the final (honorific-stripped) token of the full name.
+
+    The FINAL token, not the whole field: `parse_full_name` splits on the first
+    space, so every middle name lands in last_name — "Eric E. Schmidt" parses to
+    ("Eric", "E. Schmidt") and keying on "eschmidt" put him in a different bucket
+    from "Eric Schmidt", which is why the two never met. Being slightly lossy
+    here (a Dutch "Van Der Berg" keys as "berg") only widens the candidate
+    bucket; the pair still needs a shared company and a compatible given name,
+    and only ever reaches `medium` — review, not an automatic merge.
+    """
+    source = last_name if (last_name and last_name.strip()) else full_name
+    toks = [t for t in re.findall(r"[a-z0-9]+", (source or "").lower()) if t not in _HONORIFICS]
     return toks[-1] if toks else ""
 
 
@@ -128,8 +171,11 @@ def _dismissed_pairs(session, scan_ids: list[str] | None) -> set:
 def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
     """The scan set for a *scoped* dedup: the seed persons a scrape just touched,
     plus existing persons sharing an exact full_name/alias or wikidata_id with a seed.
-    Uses per-value equality (index-backed) — ArcadeDB does NOT use the index for `IN`,
-    which full-scans, so on a multi-million-person DB that would defeat the point.
+    Uses per-value equality (index-backed) — ArcadeDB does NOT use the index for an
+    `IN` over a parameter LIST, which full-scans, so on a multi-million-person DB
+    that would defeat the point. (`$name IN p.alias` is the other direction — one
+    value against a stored list — and is served by the element-wise index on
+    Person.alias declared in db/schema.py.)
     Cross-spelling matches against *pre-existing* persons (surname/birth signals) are
     left to the periodic full scan; the common within-scrape cross-source duplicates
     are all in the seed set and grouped here."""
@@ -140,9 +186,18 @@ def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
             rows[pid] = _person_row(r)
     # Expand from the SEEDS only (one hop) — exact full_name/alias and wikidata_id.
     names = {n for p in rows.values() for n in [p["full_name"], *p["alias"]] if n}
+    names |= {v for n in list(names) for v in _name_lookup_variants(n)}
     wids  = {p["wikidata_id"] for p in rows.values() if p["wikidata_id"]}
     for name in names:
         for r in session.run(f"MATCH (p:Person) WHERE p.full_name = $n {_PERSON_RETURN}", n=name):
+            rows.setdefault(r.get("id"), _person_row(r))
+        # …and against other nodes' ALIASES, which this function has claimed to
+        # do since it was written but never did. Without it the scoped scan
+        # cannot see the very case the auto-dedup exists for: SEC files
+        # "Page Lawrence", Wikidata's "Larry Page" carries it only as an alias,
+        # the full_name lookup matches nothing, and the pair survives every
+        # scrape until somebody runs the periodic full scan by hand.
+        for r in session.run(f"MATCH (p:Person) WHERE $n IN p.alias {_PERSON_RETURN}", n=name):
             rows.setdefault(r.get("id"), _person_row(r))
     for wid in wids:
         for r in session.run(f"MATCH (p:Person) WHERE p.wikidata_id = $w {_PERSON_RETURN}", w=wid):

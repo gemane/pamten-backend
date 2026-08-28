@@ -1,5 +1,6 @@
 """Tests for the schema/index bootstrap (SQL layer mocked)."""
 
+import re
 from unittest.mock import patch
 
 from app.db import schema
@@ -47,7 +48,18 @@ def test_is_idempotent_all_ddl_uses_if_not_exists():
     for s in issued:
         assert "IF NOT EXISTS" in s, s
         if s.startswith("CREATE PROPERTY"):
-            assert s.endswith("IF NOT EXISTS STRING"), s
+            # The type follows IF NOT EXISTS; it is STRING unless _PROPERTY_TYPES
+            # overrides it (Person.alias is a LIST — declared STRING, ArcadeDB
+            # rejects `$name IN p.alias`).
+            assert re.search(r"IF NOT EXISTS (STRING|LIST)$", s), s
+
+
+def test_declared_property_types_are_rendered():
+    with _run() as m:
+        schema.ensure_indexes()
+    issued = [c.args[0] for c in m.call_args_list]
+    assert "CREATE PROPERTY Person.alias IF NOT EXISTS LIST" in issued
+    assert "CREATE PROPERTY Person.full_name IF NOT EXISTS STRING" in issued
 
 
 def test_continues_and_records_failures():

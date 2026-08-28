@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13g" xmlns:com="http://www.sec.gov/edgar/common">
+<headerData>
+<submissionType>SCHEDULE 13G/A</submissionType>
+<filerInfo>
+<filer>
+<filerCredentials>
+<cik>0000102909</cik>
+<ccc>XXXXXXXX</ccc>
+</filerCredentials>
+</filer>
+<liveTestFlag>LIVE</liveTestFlag>
+</filerInfo>
+</headerData>
+<formData>
+<coverPageHeader>
+<amendmentNo>1</amendmentNo>
+<securitiesClassTitle>Common Stock</securitiesClassTitle>
+<eventDateRequiresFilingThisStatement>12/31/2025</eventDateRequiresFilingThisStatement>
+<issuerInfo>
+<issuerCik>0002057463</issuerCik>
+<issuerName>GCI Liberty Inc</issuerName>
+<issuerCusip>36164V602</issuerCusip>
+<issuerPrincipalExecutiveOfficeAddress>
+<com:street1>12300 LIBERTY BLVD</com:street1>
+<com:city>ENGLEWOOD</com:city>
+<com:stateOrCountry>CO</com:stateOrCountry>
+<com:zipCode>80112</com:zipCode>
+</issuerPrincipalExecutiveOfficeAddress>
+</issuerInfo>
+<designateRulesPursuantThisScheduleFiled>
+<designateRulePursuantThisScheduleFiled>Rule 13d-1(b)</designateRulePursuantThisScheduleFiled>
+</designateRulesPursuantThisScheduleFiled>
+</coverPageHeader>
+<coverPageHeaderReportingPersonDetails>
+<reportingPersonName>The Vanguard Group</reportingPersonName>
+<citizenshipOrOrganization>PA</citizenshipOrOrganization>
+<reportingPersonBeneficiallyOwnedNumberOfShares>
+<soleVotingPower>0</soleVotingPower>
+<sharedVotingPower>17528</sharedVotingPower>
+<soleDispositivePower>376576</soleDispositivePower>
+<sharedDispositivePower>19236</sharedDispositivePower>
+</reportingPersonBeneficiallyOwnedNumberOfShares>
+<reportingPersonBeneficiallyOwnedAggregateNumberOfShares>395812</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+<classPercent>10.84</classPercent>
+<typeOfReportingPerson>IA</typeOfReportingPerson>
+</coverPageHeaderReportingPersonDetails>
+</formData>
+</edgarSubmission>

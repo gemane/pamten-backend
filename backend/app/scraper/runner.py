@@ -1786,6 +1786,9 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             shares_outstanding=filing.get("shares_outstanding"),
             voting_shares=filing.get("voting_shares"),
             source_url=filing.get("source_url"),
+            # A newer filing reported no position — the holding is history.
+            # The holdings path below has always done this; this one did not.
+            until=filing.get("until"),
             owner_label="Person" if is_individual else "Entity",
         )
         log.info(
