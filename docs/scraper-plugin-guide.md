@@ -491,6 +491,15 @@ wrapper scripts `lei-cdf-import-test.sh` / `psc-import-test.sh` do exactly this;
 bundled `data/test_{leis,companies}.txt` are the curated cases (edit to taste). The
 full loads remain `lei-cdf-import.sh` etc.
 
+Both lists also cover **the per-company scrape list** (`scripts/scrape-companies.sh`,
+which `update.sh` drives), so a test rebuild holds those companies from the registers
+and not only from Wikidata/SEC — and the two halves join up: each UK company in
+`test_companies.txt` has a real PSC statement naming the group parent that
+`test_leis.txt` imports from GLEIF (Google UK Ltd → Alphabet, Inc.; Tesla Financial
+Services → Tesla, Inc.), so the subset exercises cross-source merging rather than two
+disconnected graphs. CITIC Group, Mubadala and Al Jazeera Media Network have no LEI
+and are deliberately absent rather than guessed at.
+
 `gleif-rr --only-file <seeds> --emit-leis <path>` imports the **corporate family** of
 the seed LEIs — every consolidation edge among the seeds, their ancestors and all their
 descendants (the RR file is small, so it loads the edges and walks the tree in memory)

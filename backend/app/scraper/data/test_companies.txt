@@ -16,3 +16,21 @@
 08810260   # Willerfoss Homes Ltd — Michael Charles Saunders (75-100% shares)
 06022970   # Puddleducks & P.O.S.H. Ltd — Jean Carol Randle (50-75% shares)
 08301480   # Everest Salts Ltd — Robert Power (right to appoint/remove directors)
+
+# --- UK arms of the scrape list (mirrors scripts/scrape-companies.sh) ---
+# Each one's PSC is the group parent that the LEI list above imports from GLEIF, so
+# the two halves of the test graph join up: a GLEIF parent and its UK subsidiary,
+# linked by a real PSC statement rather than by a name match. All verified to have
+# live PSC records in the current snapshot.
+00078439   # Carlsberg UK Ltd — Carlsberg UK Holdings (right to appoint/remove)
+00462438   # Nestlé Holdings (U.K.) plc — Nestlé S.A. (75-100%)
+00017049   # Unilever U.K. Holdings Ltd — Unilever PLC (75-100%)
+03185285   # Bertelsmann UK Ltd — Christoph Mohn (individual, significant influence)
+03977902   # Google UK Ltd — Alphabet, Inc. (75-100%)
+00081701   # News Corp UK & Ireland Ltd — News Corp Holdings UK & Ireland (75-100%)
+03115186   # SoftBank Group Capital Europe Ltd — SoftBank Group Corp (75-100%)
+03086621   # Samsung Electronics (UK) Ltd — Samsung Electronics Co. Ltd (75-100%)
+03835716   # Tata Consumer Products UK Group Ltd — Tata Consumer Products Capital (50-75%)
+06721521   # Alibaba Cloud (Europe) Ltd — Alibaba Group Holding Limited (75-100%)
+03230337   # Berkshire Hathaway International Insurance Ltd — Berkshire Hathaway Inc. (voting 75-100%)
+09533203   # Tesla Financial Services Ltd — Tesla, Inc. (75-100%)
