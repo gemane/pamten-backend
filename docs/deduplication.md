@@ -222,6 +222,21 @@ its filing; and the merged node accumulates every declaring statement id in
 `Entity.source_statement_ids[]` (capped at 1000 — beyond that the edges still
 carry per-relationship provenance).
 
+## What a merge carries
+
+`_migrate_entity_edges` moves **OWNS**, **HAS_ROLE** and **RELATED_TO** (both
+directions) from the losing node onto the survivor. RELATED_TO was added late:
+it carries filing-group membership and 13F fund affiliation, and until then a
+merge destroyed it without trace — a party merged into another node simply
+vanished from the group it belongs to.
+
+**An OWNS edge is recreated, not moved**, so every property must be named in the
+migration or it is silently lost. That list has now fallen behind twice: first
+`interest_types` / `direct_or_indirect` / `psc_self_link`, then `share_class`,
+`shares`, `shares_outstanding`, `voting_shares` and `stale`. A test now merges an
+edge carrying the share counts and asserts they survive, which is cheaper than
+remembering.
+
 ## Design note: country-aware legal-form stripping (not built)
 
 `normalize_entity_name` (mapper) strips legal-form words from names with one

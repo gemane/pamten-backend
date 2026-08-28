@@ -513,10 +513,12 @@ def _coalesce_entity_props(dead_id: str, keep_id: str) -> int:
 
 
 def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
-    """Move every OWNS / HAS_ROLE edge off ``dead_id`` onto ``keep_id``.
+    """Move every OWNS / HAS_ROLE / RELATED_TO edge off ``dead_id`` onto ``keep_id``.
 
-    Covers the three ways an Entity is wired: OWNS it makes (outgoing), OWNS
-    made *to* it (incoming, from a Person or Entity), and HAS_ROLE held *in* it.
+    Covers the ways an Entity is wired: OWNS it makes (outgoing), OWNS made *to*
+    it (incoming, from a Person or Entity), HAS_ROLE held *in* it, and
+    RELATED_TO in both directions — filing-group membership and 13F fund
+    affiliation, which a merge used to destroy without trace.
     An edge that ``keep`` already has (active, same target/role) is dropped
     rather than duplicated. Returns the number of edges migrated.
 
@@ -545,7 +547,9 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                r.source_id AS source_id, r.credibility_score AS cred,
                r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa,
                r.interest_types AS itypes, r.direct_or_indirect AS doi,
-               r.psc_self_link AS pscl
+               r.psc_self_link AS pscl, r.share_class AS sclass,
+               r.shares AS shares, r.shares_outstanding AS shtotal,
+               r.voting_shares AS vshares, r.stale AS stale
         """,
         {"id": dead_id},
     ):
@@ -562,13 +566,18 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                 source_id: $source_id, credibility_score: $cred,
                 source_url: $surl, source_date: $sdate, last_scraped_at: $lsa,
                 interest_types: $itypes, direct_or_indirect: $doi,
-                psc_self_link: $pscl}]->(t)
+                psc_self_link: $pscl, share_class: $sclass, shares: $shares,
+                shares_outstanding: $shtotal, voting_shares: $vshares,
+                stale: $stale}]->(t)
             """,
             {"k": keep_id, "tid": e["tid"], "stake": e.get("stake"), "otype": e.get("otype"),
              "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
              "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
              "sdate": e.get("sdate"), "lsa": e.get("lsa"), "itypes": e.get("itypes"),
-             "doi": e.get("doi"), "pscl": e.get("pscl")},
+             "doi": e.get("doi"), "pscl": e.get("pscl"),
+             "sclass": e.get("sclass"), "shares": e.get("shares"),
+             "shtotal": e.get("shtotal"), "vshares": e.get("vshares"),
+             "stale": e.get("stale")},
         )
         migrated += 1
 
@@ -584,7 +593,9 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                r.source_id AS source_id, r.credibility_score AS cred,
                r.source_url AS surl, r.source_date AS sdate, r.last_scraped_at AS lsa,
                r.interest_types AS itypes, r.direct_or_indirect AS doi,
-               r.psc_self_link AS pscl
+               r.psc_self_link AS pscl, r.share_class AS sclass,
+               r.shares AS shares, r.shares_outstanding AS shtotal,
+               r.voting_shares AS vshares, r.stale AS stale
         """,
         {"id": dead_id},
     ):
@@ -604,13 +615,18 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                 source_id: $source_id, credibility_score: $cred,
                 source_url: $surl, source_date: $sdate, last_scraped_at: $lsa,
                 interest_types: $itypes, direct_or_indirect: $doi,
-                psc_self_link: $pscl}}]->(b)
+                psc_self_link: $pscl, share_class: $sclass, shares: $shares,
+                shares_outstanding: $shtotal, voting_shares: $vshares,
+                stale: $stale}}]->(b)
             """,
             {"sid": e["sid"], "k": keep_id, "stake": e.get("stake"), "otype": e.get("otype"),
              "vpp": e.get("vpp"), "since": e.get("since"), "until": e.get("until"),
              "source_id": e.get("source_id"), "cred": e.get("cred"), "surl": e.get("surl"),
              "sdate": e.get("sdate"), "lsa": e.get("lsa"), "itypes": e.get("itypes"),
-             "doi": e.get("doi"), "pscl": e.get("pscl")},
+             "doi": e.get("doi"), "pscl": e.get("pscl"),
+             "sclass": e.get("sclass"), "shares": e.get("shares"),
+             "shtotal": e.get("shtotal"), "vshares": e.get("vshares"),
+             "stale": e.get("stale")},
         )
         migrated += 1
 
@@ -640,6 +656,66 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             {"pid": e["pid"], "k": keep_id, "role": e.get("role"), "since": e.get("since"),
              "until": e.get("until"), "source_id": e.get("source_id"), "cred": e.get("cred"),
              "surl": e.get("surl"), "sdate": e.get("sdate"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    # 4. RELATED_TO, both directions. Not ownership — it carries filing-group
+    # membership and 13F fund affiliation — and until now it was the one edge
+    # kind a merge silently destroyed. A party merged into another node simply
+    # vanished from the voting group it belongs to, leaving a group that no
+    # longer lists all its parties and no record that it ever did.
+    #
+    # Direction is preserved rather than normalised: a member points AT its
+    # group, and reversing that would make the group a member of itself.
+    for e in run_query(
+        """
+        MATCH (a:Entity {id: $id})-[r:RELATED_TO]->(t:Entity)
+        RETURN t.id AS tid, r.relation AS rel, r.source_id AS source_id,
+               r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        if run_query(
+            "MATCH (a:Entity {id: $k})-[r:RELATED_TO]->(t:Entity {id: $tid}) "
+            "WHERE r.relation = $rel RETURN r LIMIT 1",
+            {"k": keep_id, "tid": e["tid"], "rel": e.get("rel")},
+        ):
+            continue
+        run_command(
+            """
+            MATCH (a:Entity {id: $k}), (t:Entity {id: $tid})
+            CREATE (a)-[:RELATED_TO {relation: $rel, source_id: $source_id,
+                last_scraped_at: $lsa}]->(t)
+            """,
+            {"k": keep_id, "tid": e["tid"], "rel": e.get("rel"),
+             "source_id": e.get("source_id"), "lsa": e.get("lsa")},
+        )
+        migrated += 1
+
+    for e in run_query(
+        """
+        MATCH (s)-[r:RELATED_TO]->(b:Entity {id: $id})
+        RETURN s.id AS sid, labels(s) AS slabels, r.relation AS rel,
+               r.source_id AS source_id, r.last_scraped_at AS lsa
+        """,
+        {"id": dead_id},
+    ):
+        slabels = e.get("slabels") or []
+        slabel = slabels[0] if slabels and slabels[0] in ("Entity", "Person") else "Entity"
+        if run_query(
+            f"MATCH (s:{slabel} {{id: $sid}})-[r:RELATED_TO]->(b:Entity {{id: $k}}) "
+            "WHERE r.relation = $rel RETURN r LIMIT 1",
+            {"sid": e["sid"], "k": keep_id, "rel": e.get("rel")},
+        ):
+            continue
+        run_command(
+            f"""
+            MATCH (s:{slabel} {{id: $sid}}), (b:Entity {{id: $k}})
+            CREATE (s)-[:RELATED_TO {{relation: $rel, source_id: $source_id,
+                last_scraped_at: $lsa}}]->(b)
+            """,
+            {"sid": e["sid"], "k": keep_id, "rel": e.get("rel"),
+             "source_id": e.get("source_id"), "lsa": e.get("lsa")},
         )
         migrated += 1
 
