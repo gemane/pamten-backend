@@ -1053,6 +1053,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         voting        = None
         is_individual = None
         share_class   = None
+        shares        = None
+        shares_total  = None
         group_members: list[dict] = []
 
         if inv.get("xml"):
@@ -1064,6 +1066,13 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 continue
             pct, voting   = _stake_from_person(xml, person)
             share_class   = xml.get("class_title")
+            rows          = {k: person[k] for k in
+                             ("sole_voting", "shared_voting",
+                              "sole_dispositive", "shared_dispositive")
+                             if person.get(k) is not None}
+            shares        = _shares_held(rows, person.get("aggregate"))
+            shares_total  = (_shares_outstanding(xml.get("comment_text") or "")
+                             or _derive_total(person.get("aggregate"), person.get("percent")))
             is_individual = (person["type_code"] in _INDIVIDUAL_CODES
                              if person.get("type_code") else None)
             group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml",
@@ -1085,6 +1094,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 pct, voting    = _own_stake_and_voting(text, pct)
                 is_individual = _parse_reporter_type_from_text(text)
                 share_class   = _parse_class_title_from_text(text)
+                shares        = _shares_held(_parse_power_rows(text), None)
+                shares_total  = _shares_outstanding(text)
                 if voting and inv.get("accession"):
                     # A bloc without an XML membership list: the SGML header
                     # names the co-filers. Only fetched for the few filings that
@@ -1120,6 +1131,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "ownership_type":   derive_ownership_type(pct, inv["form_type"]),
             # The security this percentage is a percentage OF.
             "share_class":      share_class,
+            # The counts behind the percentage, so the arithmetic can be seen
+            # and redone: a stake is `shares / shares_outstanding`.
+            "shares":           shares,
+            "shares_outstanding": shares_total,
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
             # Provenance: the filing index page (readable), with the primary doc
             # as a fallback. file_date is the filing's date.
@@ -1555,6 +1570,28 @@ def _stake_from_person(xml: dict, person: dict) -> tuple:
             log.info("SEC EDGAR: derived %s shares outstanding for %r from %s at %s%%",
                      total, person["name"], person.get("aggregate"), person.get("percent"))
     return _split_stake(rows, total, person.get("percent"))
+
+
+def _shares_held(rows: dict, aggregate: int | None) -> int | None:
+    """How many shares this filer actually holds, as a count.
+
+    The count is the fact the filing states; the percentage is a division we
+    perform against a denominator that moves. Bevco's "5.9%" went stale purely
+    because AB InBev issued more shares — its holding never changed — so the
+    number worth keeping is the one that did not.
+
+    Dispositive power, not voting: what the filer can sell is what it owns.
+    Sole where it has any, otherwise the shares it disposes of jointly (BRC can
+    sell nothing alone, but the Stichting it co-owns holds 771,096,582), and the
+    reported aggregate only when neither row is given.
+    """
+    sole = rows.get("sole_dispositive")
+    if sole:
+        return sole
+    shared = rows.get("shared_dispositive")
+    if shared:
+        return shared
+    return aggregate
 
 
 def _derive_total(aggregate: int | None, percent: float | None) -> int | None:
