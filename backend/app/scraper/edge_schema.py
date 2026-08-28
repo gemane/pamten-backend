@@ -90,3 +90,26 @@ def edge_create_clause(props: tuple) -> str:
 def edge_params(record, props: tuple) -> dict:
     """The bound-parameter dict for a record read via `edge_return_clause`."""
     return {p: record.get(p) for p in props}
+
+
+def owns_props(**kwargs) -> dict:
+    """The full property bag for one OWNS edge — every schema field, None where
+    the caller did not say.
+
+    Strict on purpose: an unknown keyword raises, so a new property must be
+    added to ``OWNS_PROPS`` before any writer can pass it. That inverts the
+    failure mode — instead of a writer silently carrying a field the schema
+    (and therefore the merges) does not know, the write fails loudly at the
+    first call.
+
+    Writers keep their own update semantics (matching keys, COALESCE
+    direction, credibility defaults differ per source, deliberately); what
+    they share is this vocabulary.
+    """
+    unknown = set(kwargs) - set(OWNS_PROPS)
+    if unknown:
+        raise TypeError(
+            f"owns_props: {sorted(unknown)} not in OWNS_PROPS — "
+            f"add the property to the schema first, so the merge paths and "
+            f"parity tests know it exists")
+    return {p: kwargs.get(p) for p in OWNS_PROPS}

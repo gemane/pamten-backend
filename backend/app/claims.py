@@ -75,6 +75,10 @@ def claim_props(
     source_url: str | None = None,
     source_date: str | None = None,
     credibility_score: int = 80,
+    share_class: str | None = None,
+    shares: int | None = None,
+    shares_outstanding: int | None = None,
+    voting_shares: int | None = None,
 ) -> dict:
     """The property bag for one claim, ready to UPSERT on `claim_key`.
 
@@ -97,6 +101,13 @@ def claim_props(
         "source_url": source_url,
         "source_date": source_date,
         "credibility_score": credibility_score,
+        # The counts behind the percentages — a claim that records 8.05% but
+        # not the 159,121,937 shares it came from cannot be rechecked, which
+        # was the whole argument for storing counts on the edge.
+        "share_class": share_class,
+        "shares": shares,
+        "shares_outstanding": shares_outstanding,
+        "voting_shares": voting_shares,
         "last_seen_at": now_iso(),
     }
 
