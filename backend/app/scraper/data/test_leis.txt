@@ -22,3 +22,37 @@ KY37LUS27QQX7BB93L28   # Nestlé S.A.                   [CH]
 # --- smaller / niche ---
 2138007AJRLHRVQZLD07   # Fevertree Drinks PLC          [GB]
 213800IYPFIRRQQE9R62   # Naked Wines PLC               [GB]
+
+# --- the scrape list (mirrors scripts/scrape-companies.sh, i.e. update.sh) ---
+# The same companies the per-company scrape run covers, so a test rebuild has them
+# from the REGISTERS too and not only from Wikidata/SEC. Every LEI below was
+# verified present in the LEI-CDF golden copy. Apple, Microsoft, Nestlé S.A.,
+# Unilever PLC and MercadoLibre are already listed above.
+# No LEI exists for CITIC Group, Mubadala Investment Company or Al Jazeera Media
+# Network — deliberately absent rather than guessed at.
+5493008H3828EMEXB082   # Anheuser-Busch InBev SA/NV     [BE]
+724500K5PTPSST86UQ23   # Heineken N.V.                  [NL]
+5299001O0WJQYB5GYZ19   # Carlsberg A/S                  [DK]
+5299001BUUGXAREGE533   # Bertelsmann SE & Co. KGaA      [DE]
+529900PXZU3YHO6HMD80   # Axel Springer SE               [DE]
+5493006MHB84DD0ZWV18   # Alphabet Inc.                  [US-DE]
+549300ITS31QK8VRBQ14   # News Corporation               [US-DE]
+549300O4AF0C816ILN62   # Grupo Televisa S.A.B.          [MX]
+549300EM51WYXFHUY333   # Embraer S.A.                   [BR]
+5493000RIXURZEBFEV60   # Grupo Bimbo S.A.B. de C.V.     [MX]
+5493003BZYYYCDIO0R13   # SoftBank Group Corp.           [JP]
+9884007ER46L6N7EI764   # Samsung Electronics Co., Ltd.  [KR]
+335800YLT7FVL71YN622   # Tata Sons Private Limited      [IN]
+5493001NTNQJDH60PM02   # Alibaba Group Holding Limited  [KY]
+5586006WD91QHB7J4X50   # Saudi Arabian Oil Company      [SA]
+21380044BQ8812EEKT59   # Naspers Limited                [ZA]
+0292007042B6O5C1G755   # Dangote Industries Limited     [NG]
+2549009JD6Q6XHZS5E05   # MTN Group Limited              [ZA]
+5493003L32ZX9557ST85   # Wesfarmers Limited             [AU]
+529900WLXD3X7TFOAI42   # Nine Entertainment Co. Holdings Limited [AU]
+54930043XZGB27CTOV49   # Tesla, Inc.                    [US-DE]
+549300B9WLO96RQCXP87   # Space Exploration Technologies Corp. [US-DE]
+529900VBK42Y5HHRMD23   # BlackRock, Inc.                [US-DE]
+5493002789CX3L0CJP65   # The Vanguard Group, Inc.       [US-PA]
+5493000C01ZX7D35SD85   # Berkshire Hathaway Inc.        [US-DE]
+6X064LF7Y6B4DKF2GZ26   # FMR LLC                        [US-DE]
