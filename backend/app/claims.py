@@ -192,3 +192,38 @@ def edge_values_from(claims: list[dict]) -> dict:
         "source_date": winner.get("source_date"),
         "credibility_score": winner.get("credibility_score"),
     }
+
+
+def migrate_claims(dead_id: str, keep_id: str) -> int:
+    """Re-point the claims of a merged-away node at its survivor.
+
+    A claim's key is a hash of (kind | from | to | source), so this cannot be a
+    simple UPDATE: rewriting an endpoint changes the key. Each claim is re-keyed
+    against the survivor and UPSERTed — an existing claim the survivor already
+    holds for the same (kind, pair, source) wins, because it describes the same
+    assertion — and the old rows are deleted.
+
+    Without this, every merge orphaned the dead node's claims: the surviving
+    edges existed, `claims_for()` found nothing for them, and the merged
+    company showed as uncorroborated however many sources had asserted it.
+    """
+    from app.db.arcadedb import run_sql
+
+    moved = 0
+    for end in ("from_id", "to_id"):
+        rows = run_sql(f"SELECT FROM Claim WHERE {end} = :d", {"d": dead_id})
+        for r in rows:
+            props = {k: r.get(k) for k in (
+                "kind", "from_id", "to_id", "source_id", "stake_percent",
+                "voting_power_pct", "ownership_type", "role", "since", "until",
+                "source_url", "source_date", "credibility_score", "last_seen_at",
+            )}
+            props[end] = keep_id
+            props["claim_key"] = claim_key(props["kind"], props["from_id"],
+                                           props["to_id"], props["source_id"])
+            sets = ", ".join(f"{k} = :{k}" for k in props)
+            run_sql(f"UPDATE Claim SET {sets} UPSERT WHERE claim_key = :claim_key",
+                    props)
+            moved += 1
+        run_sql(f"DELETE FROM Claim WHERE {end} = :d", {"d": dead_id})
+    return moved

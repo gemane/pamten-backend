@@ -230,12 +230,23 @@ it carries filing-group membership and 13F fund affiliation, and until then a
 merge destroyed it without trace — a party merged into another node simply
 vanished from the group it belongs to.
 
-**An OWNS edge is recreated, not moved**, so every property must be named in the
-migration or it is silently lost. That list has now fallen behind twice: first
-`interest_types` / `direct_or_indirect` / `psc_self_link`, then `share_class`,
-`shares`, `shares_outstanding`, `voting_shares` and `stale`. A test now merges an
-edge carrying the share counts and asserts they survive, which is cheaper than
-remembering.
+**An OWNS edge is recreated, not moved**, so its property list decides what
+survives — and hand-written lists here fell behind **four separate times**, the
+worst block naming 6 of 25 properties while running on every auto-dedup. The
+lists now live in one place, `app/scraper/edge_schema.py` (`OWNS_PROPS`,
+`ROLE_PROPS`, `RELATED_TO_PROPS`), and the merge Cypher is **generated** from
+them — a property added to the schema is carried through every merge with no
+edit here. Generated with bound `$params`, never `properties(r)`, which prod
+ArcadeDB silently no-ops.
+
+`tests/integration/test_edge_schema_it.py` is parameterised **over the schema**:
+every property is asserted to survive both merge paths, so a future field is
+covered the day it is added.
+
+**Claims follow the survivor too.** A claim's key hashes its endpoints, so
+`migrate_claims` re-keys and UPSERTs rather than updating; without it every
+merge orphaned the dead node's claims and the merged company showed as
+uncorroborated.
 
 ## Design note: country-aware legal-form stripping (not built)
 
