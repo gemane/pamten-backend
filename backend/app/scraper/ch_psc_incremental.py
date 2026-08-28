@@ -378,6 +378,41 @@ def existing_company_ids() -> set[str]:
     return ids
 
 
+def _claim_stmt(k: int, mapped, params: dict, now: str) -> str:
+    """One batched UPSERT for the claim behind a PSC edge.
+
+    The refresh previously touched only the edge, so a claim's `last_seen_at`
+    stayed frozen at bulk-import time and a NEW appointment got no claim at
+    all — while `close_vanished` diligently closed claims this path had never
+    created. Same batching as the edge writes, for the same 60s-proxy reason.
+    """
+    from app.claims import claim_key, claim_props
+
+    props = claim_props(
+        kind=KIND_OWNS, from_id=mapped.owner_id, to_id=mapped.company_id,
+        source_id=mapped.edge_props.get("source_id"),
+        stake_percent=mapped.edge_props.get("stake_percent"),
+        voting_power_pct=mapped.edge_props.get("voting_power_pct"),
+        ownership_type=mapped.edge_props.get("ownership_type"),
+        since=mapped.edge_props.get("since"),
+        until=mapped.edge_props.get("until"),
+        source_url=mapped.edge_props.get("source_url"),
+        source_date=mapped.edge_props.get("source_date"),
+        credibility_score=mapped.edge_props.get("credibility_score") or 97,
+    )
+    sets = []
+    for name, value in props.items():
+        pk = f"cl_{name}__{k}"
+        params[pk] = value
+        sets.append(f"{name} = :{pk}")
+    key = claim_key(KIND_OWNS, mapped.owner_id, mapped.company_id,
+                    props["source_id"])
+    params[f"clkey__{k}"] = key
+    return (f"UPDATE Claim SET {', '.join(sets)}, "
+            f"first_seen_at = COALESCE(first_seen_at, :cl_last_seen_at__{k}) "
+            f"UPSERT WHERE claim_key = :clkey__{k};")
+
+
 class _PscEdgeWriter:
     """Buffers PSC edge writes and applies them without duplicating anything.
 
@@ -438,6 +473,7 @@ class _PscEdgeWriter:
             # its delta records are partial statements; copying that here would
             # leave a corrected PSC closed forever.
             stmts.append(f"UPDATE OWNS SET {', '.join(sets)} WHERE psc_self_link = :link__{k};")
+            stmts.append(_claim_stmt(k, m, params, now))
         _flush_script("\n".join(stmts), params)
         self.counts["updated"] += len(batch)
 
@@ -455,6 +491,8 @@ class _PscEdgeWriter:
             self._flush_updates([mapped])
             self.counts["updated"] -= 1      # counted as adopted, not as an update
             return
+        cparams: dict = {}
+        _flush_script(_claim_stmt(0, mapped, cparams, _now_iso()), cparams)
         props = {**mapped.edge_props, "last_scraped_at": _now_iso()}
         sets = ", ".join(f"{k} = :{k}" for k in props)
         run_sql(

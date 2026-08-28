@@ -546,3 +546,42 @@ def test_local_delta_files_are_never_deleted(it_db, _gleif_enabled, tmp_path):
     runner.run_gleif_update(interval="LastDay", lei_file=lei_zip, rr_file=rr_zip)
 
     assert os.path.exists(lei_zip) and os.path.exists(rr_zip)
+
+
+# ── The delta edge carries a claim ───────────────────────────────────────────
+# Delta edges previously recorded no claim at all: a GLEIF-confirmed pair could
+# not vouch in mark_stale_ownership's register-backed set, and the corroboration
+# badge never counted GLEIF's agreement. The claim is asserted per PAIR, so all
+# three upsert outcomes — created, updated, folded — must leave the same row.
+
+def _gleif_claims(it_db):
+    from app.claims import claims_for
+    return claims_for(from_id=f"lei:{PARENT}", to_id=f"lei:{CHILD}")
+
+
+def test_a_created_delta_edge_records_a_claim(it_db, tmp_path):
+    _apply(tmp_path, "a.json.zip", [_rel(CHILD, PARENT, start_date="2015-01-01")])
+    rows = _gleif_claims(it_db)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["source_id"] == "gleif-src"
+    assert row["credibility_score"] == 92
+    assert row["ownership_type"] == "controlling"
+    assert row["since"] == "2015-01-01"
+    assert CHILD in row["source_url"]
+
+
+def test_reapplying_the_delta_updates_the_claim_not_duplicates_it(it_db, tmp_path):
+    _apply(tmp_path, "a.json.zip", [_rel(CHILD, PARENT)])
+    _apply(tmp_path, "b.json.zip", [_rel(CHILD, PARENT)])
+    assert len(_gleif_claims(it_db)) == 1, \
+        "claim_key is (kind|from|to|source) — a re-run must UPSERT, not insert"
+
+
+def test_a_folded_ultimate_record_still_asserts_the_claim(it_db, tmp_path):
+    # The fold path rewrites an existing edge instead of creating one; the
+    # claim must not depend on which branch the edge upsert took.
+    _apply(tmp_path, "a.json.zip", [_rel(CHILD, PARENT, start_date="2015-01-01")])
+    second = _apply(tmp_path, "b.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE)])
+    assert second["folded"] == 1 and second["created"] == 0
+    assert len(_gleif_claims(it_db)) == 1

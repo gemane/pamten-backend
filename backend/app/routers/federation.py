@@ -41,6 +41,7 @@ import httpx
 
 from app.auth.dependencies import require_admin, require_contributor
 from app.config import settings
+from app.claims import KIND_OWNS, record_claim
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.models.federation import PeerCreate
@@ -299,7 +300,7 @@ def _ensure_peer_source(session, name: str, credibility: int, verified: bool, ke
     return sid
 
 
-def _upsert_entity(session, ref: dict, source_id: str) -> str | None:
+def _upsert_entity(session, ref: dict, source_id: str, credibility: int = 60) -> str | None:
     name = (ref.get("name") or "").strip()
     if not name:
         return None
@@ -316,12 +317,20 @@ def _upsert_entity(session, ref: dict, source_id: str) -> str | None:
         return found
     eid = str(uuid.uuid4())
     session.run(
-        "CREATE (e:Entity {id:$id, name:$name, name_normalized:$nn, type:$type, "
+        # search_text is what the FULL_TEXT index serves /search from — without
+        # it a federated company existed but could never be FOUND, which is how
+        # every peer-imported node shipped invisible. is_nominee and
+        # name_credibility feed the nominee flagging and merge-survivor
+        # selection that silently misjudged federated nodes without them.
+        "CREATE (e:Entity {id:$id, name:$name, name_normalized:$nn, "
+        "search_text:$stext, type:$type, "
         "country:$country, wikidata_id:$wd, sec_cik:$cik, lei_id:$lei, "
-        "companies_house_id:$ch, source_id:$sid, verified:false})",
-        id=eid, name=name, nn=nn, type=ref.get("type") or "company",
+        "companies_house_id:$ch, source_id:$sid, verified:false, "
+        "is_nominee:false, name_credibility:$namecred})",
+        id=eid, name=name, nn=nn, stext=name, type=ref.get("type") or "company",
         country=ref.get("country"), wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"),
-        lei=ref.get("lei_id"), ch=ref.get("companies_house_id"), sid=source_id)
+        lei=ref.get("lei_id"), ch=ref.get("companies_house_id"), sid=source_id,
+        namecred=credibility)
     return eid
 
 
@@ -339,9 +348,10 @@ def _upsert_person(session, ref: dict, source_id: str) -> str | None:
     pid = str(uuid.uuid4())
     session.run(
         "CREATE (p:Person {id:$id, full_name:$full, first_name:$first, last_name:$last, "
+        "search_text:$stext, "
         "wikidata_id:$wd, sec_cik:$cik, birth_date:$bd, birth_place:$bp, "
         "nationality:$nat, source_id:$sid, alias:[], verified:false})",
-        id=pid, full=full, first=ref.get("first_name"), last=ref.get("last_name"),
+        id=pid, full=full, stext=full, first=ref.get("first_name"), last=ref.get("last_name"),
         wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"), bd=ref.get("birth_date"),
         bp=ref.get("birth_place"), nat=ref.get("nationality"), sid=source_id)
     return pid
@@ -356,7 +366,7 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
     with db.get_session() as session:
         source_id = _ensure_peer_source(session, source_name, credibility, verified, key_id)
         for e in data.get("entities", []):
-            if _upsert_entity(session, e, source_id):
+            if _upsert_entity(session, e, source_id, credibility):
                 counts["entities"] += 1
         for p in data.get("persons", []):
             if _upsert_person(session, p, source_id):
@@ -364,8 +374,8 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
         for o in data.get("ownerships", []):
             owner, owned = o.get("owner") or {}, o.get("owned") or {}
             oid = (_upsert_person(session, owner, source_id) if owner.get("kind") == "person"
-                   else _upsert_entity(session, owner, source_id))
-            tid = _upsert_entity(session, owned, source_id)
+                   else _upsert_entity(session, owner, source_id, credibility))
+            tid = _upsert_entity(session, owned, source_id, credibility)
             if not oid or not tid:
                 counts["skipped"] += 1
                 continue
@@ -380,16 +390,32 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
             # from the peer. The edge then held a percentage typed 'unknown' — the
             # grey "Owned" badge on Alphabet's Larry Page.
             stake = o.get("stake_percent")
+            # credibility_score and last_scraped_at were missing here, which
+            # broke mark_stale_ownership twice over: COALESCE(cred, 0) read a
+            # federated edge as community-tier, and a null last_scraped_at
+            # meant it could never be judged stale either.
             session.run(
                 "MATCH (a {id:$oid}), (b {id:$tid}) MERGE (a)-[r:OWNS]->(b) "
                 "SET r.stake_percent = COALESCE(r.stake_percent, $stake), "
                 "    r.ownership_type = $otype, "
                 "    r.source_id = $sid, "
+                "    r.credibility_score = $cred, "
+                "    r.last_scraped_at = $now, "
                 "    r.source_url = COALESCE($surl, r.source_url), "
                 "    r.source_date = COALESCE($sdate, r.source_date)",
                 oid=oid, tid=tid, stake=stake,
                 otype=coherent_ownership_type(stake, o.get("ownership_type")),
-                sid=source_id, surl=o.get("source_url"), sdate=o.get("source_date"))
+                sid=source_id, cred=credibility,
+                now=datetime.now(timezone.utc).isoformat(),
+                surl=o.get("source_url"), sdate=o.get("source_date"))
+            # The peer's assertion, recorded like any other source's — without
+            # it a peer-agreed pair never counted toward corroboration.
+            record_claim(kind=KIND_OWNS, from_id=oid, to_id=tid,
+                         source_id=source_id, stake_percent=stake,
+                         ownership_type=coherent_ownership_type(stake, o.get("ownership_type")),
+                         source_url=o.get("source_url"),
+                         source_date=o.get("source_date"),
+                         credibility_score=credibility)
             counts["ownerships"] += 1
     return counts
 

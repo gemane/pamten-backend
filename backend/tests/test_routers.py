@@ -511,3 +511,82 @@ def test_create_owns_persists_provenance(client, fake_db, make_token):
     assert params["source_url"] == "https://www.sec.gov/Archives/edgar/data/1/x.htm"
     assert params["source_date"] == "2025-02-14"
     assert params["last_scraped_at"]  # non-empty ISO timestamp
+
+
+def test_create_owns_records_the_claim(client, fake_db, make_token):
+    """The manual API asserts like any scraper: edge + claim, or the entry
+    could never corroborate (or be contradicted by) a scraped one."""
+    fake_db.queue([{"r": {"source_id": "s1"}}])
+    with patch("app.routers.relationships.record_claim") as rc:
+        r = client.post(
+            "/relationships/owns",
+            json={"owner_id": "a", "owned_id": "b", "ownership_type": "majority",
+                  "stake_percent": 61.0, "source_id": "s1",
+                  "source_url": "https://example.com/x", "source_date": "2025-02-14"},
+            headers=auth(make_token, "contributor"),
+        )
+    assert r.status_code == 200
+    kw = rc.call_args.kwargs
+    assert (kw["from_id"], kw["to_id"], kw["source_id"]) == ("a", "b", "s1")
+    assert kw["stake_percent"] == 61.0
+    assert kw["ownership_type"] == "majority"     # the enum's value, not its repr
+    assert kw["credibility_score"] == 80          # unstated → claim default, not None
+
+
+def test_create_owns_without_a_source_records_no_claim(client, fake_db, make_token):
+    """A claim is one source's statement; keyed on (kind|from|to|source), an
+    unsourced one would collide with every other unsourced claim on the pair."""
+    fake_db.queue([{"r": {}}])
+    with patch("app.routers.relationships.record_claim") as rc:
+        r = client.post(
+            "/relationships/owns",
+            json={"owner_id": "a", "owned_id": "b", "ownership_type": "majority"},
+            headers=auth(make_token, "contributor"),
+        )
+    assert r.status_code == 200
+    rc.assert_not_called()
+
+
+def test_create_owns_failure_records_no_claim(client, fake_db, make_token):
+    """No edge, no claim — a 404 must not leave evidence for a fact that was
+    never written."""
+    fake_db.queue([])  # CREATE matched nothing
+    with patch("app.routers.relationships.record_claim") as rc:
+        r = client.post(
+            "/relationships/owns",
+            json={"owner_id": "a", "owned_id": "missing",
+                  "ownership_type": "majority", "source_id": "s1"},
+            headers=auth(make_token, "contributor"),
+        )
+    assert r.status_code == 404
+    rc.assert_not_called()
+
+
+def test_owners_query_drops_proven_shortcuts(fake_db):
+    """search.py's node sections already exclude shortcut-stamped edges; the
+    owners list must apply the same rule or the two views disagree about who
+    owns the company (the exact drift class this refactor exists to end)."""
+    from app.routers.relationships import owners_of
+    owners_of("e1")
+    cypher, _ = fake_db.calls[0]
+    assert "r.shortcut IS NULL OR r.shortcut <> true" in cypher
+
+
+def test_tree_query_drops_proven_shortcuts_on_every_hop(fake_db):
+    """COALESCE form, not _NOT_A_SHORTCUT: ArcadeDB rejects parenthesized
+    predicates inside ALL() — see the comment at the query site."""
+    from app.routers.relationships import ownership_tree_of
+    ownership_tree_of("e1", depth=3, include_indirect=True)
+    cypher, _ = fake_db.calls[0]
+    assert "ALL(e IN r WHERE" in cypher
+    assert "COALESCE(e.shortcut, false) <> true" in cypher
+    assert "(e.shortcut IS NULL" not in cypher, \
+        "parenthesized predicates inside ALL() fail on real ArcadeDB"
+
+
+def test_tree_query_keeps_the_indirect_filter_composable(fake_db):
+    from app.routers.relationships import ownership_tree_of
+    ownership_tree_of("e1", depth=3, include_indirect=False)
+    cypher, _ = fake_db.calls[0]
+    assert "COALESCE(e.shortcut, false) <> true" in cypher
+    assert "COALESCE(e.direct_or_indirect, 'direct') <> 'indirect'" in cypher

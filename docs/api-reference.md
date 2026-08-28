@@ -108,12 +108,12 @@ Off unless `ANALYTICS_ENABLED` is set.
 ## Relationships
 | Method | Path | Description |
 |---|---|---|
-| POST | `/relationships/owns` | Create OWNS edge |
+| POST | `/relationships/owns` | Create OWNS edge; when `source_id` is set, also records the matching `Claim` |
 | POST | `/relationships/owns/close` | Set `until` date (end ownership) |
 | POST | `/relationships/roles` | Create HAS_ROLE edge |
 | POST | `/relationships/roles/close` | End a role |
 | POST | `/relationships/related-to` | Create RELATED_TO edge between persons |
-| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (`depth` max 10; `limit` paths, default 500, max 5000). `include_indirect=true` by default — most ultimate-parent edges duplicate a path the tree already contains, but some are the only link to a company, so excluding them by kind loses entities. Redundancy is decided by `POST /scraper/mark-shortcuts`, which stamps `shortcut` on the edge |
+| GET | `/relationships/ownership-tree/{id}` | Recursive ownership tree (`depth` max 10; `limit` paths, default 500, max 5000). `include_indirect=true` by default — most ultimate-parent edges duplicate a path the tree already contains, but some are the only link to a company, so excluding them by kind loses entities. Redundancy is decided by `POST /scraper/mark-shortcuts`, which stamps `shortcut` on the edge; stamped edges are excluded from the tree and from `/relationships/owners`, same rule as the graph views |
 | GET | `/relationships/owners/{id}` | Current active owners of an entity (`limit`, default 200, max 1000) |
 | GET | `/relationships/history/{id}` | Full history: ownership in/out + executive roles (`limit` **per category**, default 500, max 2000) |
 

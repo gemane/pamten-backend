@@ -12,6 +12,8 @@ from app.models.relationship import (
 from app.database import db
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
+from app.claims import KIND_OWNS, record_claim
+from app.routers.search import _NOT_A_SHORTCUT
 
 router = APIRouter(prefix="/relationships", tags=["Relationships"])
 
@@ -74,7 +76,17 @@ def create_owns_relationship(data: OwnsRelationshipCreate, _: dict = Depends(req
         result = session.run(query, last_scraped_at=_now_iso(), **data.model_dump())
         if not result.single():
             raise HTTPException(status_code=404, detail="Owner or Entity not found")
-        return {"message": "Ownership relationship created"}
+    # A manual assertion is still an assertion: without the claim, an edge
+    # created here could never corroborate (or be contradicted by) a scraper's.
+    # A claim is one source's statement, so it needs a source to speak for —
+    # no source_id, no claim (the edge itself is still created above).
+    if data.source_id:
+        record_claim(kind=KIND_OWNS, from_id=data.owner_id, to_id=data.owned_id,
+                     source_id=data.source_id, stake_percent=data.stake_percent,
+                     ownership_type=data.ownership_type.value, since=data.since,
+                     source_url=data.source_url, source_date=data.source_date,
+                     credibility_score=data.credibility_score or 80)
+    return {"message": "Ownership relationship created"}
 
 
 @router.post("/owns/close")
@@ -232,10 +244,20 @@ def ownership_tree_of(
     # the bound edge list rather than a plain WHERE, which would test only the
     # last edge and let a shortcut back in halfway down a chain. Verified against
     # a real ArcadeDB: ALL() over a variable-length binding is supported.
-    edge_filter = "" if include_indirect else (
-        "WHERE ALL(e IN r WHERE e.direct_or_indirect IS NULL "
-        "OR e.direct_or_indirect <> 'indirect')"
-    )
+    # Proven-redundant shortcuts are always dropped — the docstring above has
+    # promised "filter on that, not on the kind" since the include_indirect
+    # episode, and search.py's graph endpoints already do; a tree keeping them
+    # repeats a company at every level of its group.
+    #
+    # COALESCE instead of `x IS NULL OR x <> v`: ArcadeDB's Cypher rejects any
+    # PARENTHESIZED predicate inside ALL(...) with "Variable 'e' not defined"
+    # (verified on 26.7.3), so _NOT_A_SHORTCUT — fine in a plain WHERE, used in
+    # owners_of below — cannot be composed here. Same null semantics: an
+    # unstamped edge is kept.
+    only_direct = ("" if include_indirect else
+                   " AND COALESCE(e.direct_or_indirect, 'direct') <> 'indirect'")
+    edge_filter = ("WHERE ALL(e IN r WHERE "
+                   f"COALESCE(e.shortcut, false) <> true{only_direct})")
     query = f"""
         MATCH path = (:Entity {{id: $entity_id}})-[r:OWNS*1..{safe_depth}]->(subsidiary)
         {edge_filter}
@@ -282,9 +304,12 @@ def owners_of(entity_id: str, limit: int = OWNERS_DEFAULT_LIMIT) -> tuple[list[d
     """
     # Anchor on the indexed Entity and follow the edge inward — the unanchored
     # (owner)-[:OWNS]->(e {id}) form makes ArcadeDB scan every node at scale.
+    # Same shortcut rule as search.py's node sections: a redundant
+    # ultimate-parent edge would list the same owner twice here while the
+    # graph view (which filters) shows it once.
     query = f"""
         MATCH (e:Entity {{id: $entity_id}})<-[r:OWNS]-(owner)
-        WHERE r.until IS NULL
+        WHERE r.until IS NULL AND {_NOT_A_SHORTCUT.format(rel="r")}
         RETURN owner, r
         LIMIT {limit + 1}
     """

@@ -16,7 +16,11 @@ Two principles make this safe:
 - **Reconcile, don't overwrite.** Pulled nodes are matched to yours on external
   ids and folded in; pulled facts are attributed to the peer, never blindly
   merged into yours (keep-all-claims). You decide what to trust at read time via
-  each `Source`'s credibility.
+  each `Source`'s credibility. An import writes first-class citizens: created
+  nodes get `search_text` (findable via `/search`), edges carry the peer's
+  configured `credibility_score` and a `last_scraped_at` (so `mark-stale` tiers
+  and ages them like anything else), and each ownership records a `Claim` — a
+  peer-agreed pair counts toward corroboration.
 - **Verify provenance.** Exports are signed; a pull from a peer whose key you
   hold is cryptographically verified (below).
 

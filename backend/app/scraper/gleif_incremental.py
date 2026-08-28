@@ -34,6 +34,7 @@ import httpx
 import ijson
 
 from app.db.arcadedb import run_command, run_sql
+from app.claims import KIND_OWNS, record_claim
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
 from app.scraper.gleif_lei_cdf import _entity_props
 from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei, _relationship_dates
@@ -134,6 +135,15 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
     the second assertion is recorded **on** the existing edge rather than beside it.
     """
     now = _now_iso()
+    # Every path below asserts the same fact — this parent consolidates this
+    # child — so the claim is recorded once, up front. Delta edges previously
+    # carried no claim at all, which meant a GLEIF-confirmed pair could not
+    # vouch for anything in mark_stale_ownership's register-backed set, and the
+    # corroboration badge never counted GLEIF's agreement.
+    record_claim(kind=KIND_OWNS, from_id=parent_id, to_id=child_id,
+                 source_id=source_id, ownership_type="controlling", since=since,
+                 source_url=f"https://search.gleif.org/#/record/{child_lei}",
+                 credibility_score=credibility_score)
     existing = _existing_consolidation_edge(parent_id, child_id)
 
     if existing is None:
