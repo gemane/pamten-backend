@@ -134,6 +134,38 @@ The XML has no shares-outstanding field. Prefer the figure the filer states in
 `commentContent` / `comments`; derive `aggregate ÷ percent` only as a fallback, since
 `percentOfClass` is often two significant figures.
 
+### The counts, not only the quotient
+
+A share count is what a filing *states*; a percentage is a division we perform
+against a denominator that moves. So `shares` and `shares_outstanding` are stored
+on the OWNS edge beside `stake_percent`, and the pop-up shows them, because a
+quotient alone cannot be rechecked or recomputed.
+
+What that makes visible, on AB InBev:
+
+```
+Altria   159,121,937 of 1,965,328,900  = 8.10%   (2025 filing)
+Bevco    102,862,718 of 1,730,242,027  = 5.94%   (2020 filing)
+```
+
+Bevco's holding has not changed since 2020; it reads 5.9% only because it is
+divided by a five-year-old total. Against the current one it is 5.23%. Without
+the counts that is invisible — the two percentages look equally current.
+
+`_shares_held` takes **dispositive** power, not voting: what a filer can sell is
+what it owns. Sole where it has any, else the shares it disposes of jointly (BRC
+can sell nothing alone, but the Stichting it co-owns holds 771,096,582 — a real
+number where `stake_percent` must say `None`), and the reported aggregate only
+when neither row is given. Zero is not a holding: absent stays absent, because a
+nil position and an unstated one are different facts.
+
+Form 3/4 states an insider's holding exactly, and that count is now kept too —
+it previously decided whether to write an edge and was then discarded.
+
+Not stored: a count behind `voting_power_pct`. A bloc's share count exists in the
+filing but pairs with a figure every group member repeats, so it would need the
+same care the percentage did.
+
 ### A percent of *what*
 
 Every 13D/G percentage is a **percent of a class**, and a company with several

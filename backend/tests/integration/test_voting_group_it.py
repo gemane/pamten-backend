@@ -204,6 +204,40 @@ class TestTheProfileShowsTheParties:
         assert [p["party"]["name"] for p in parties] == ["Stichting Anheuser-Busch InBev"]
 
 
+def test_the_counts_behind_a_stake_are_stored(graph):
+    """The arithmetic should be visible on the edge, not only its result — a
+    percentage cannot be rechecked, or recomputed against a newer denominator,
+    from the quotient alone."""
+    from app.scraper.runner import _upsert_owns_sec
+    from app.database import db as _db
+
+    graph.run_command("CREATE (e:Entity {id:'altria', name:'Altria', type:'company'})")
+    _upsert_owns_sec("altria", "abi", "sec", "minority", "2025-02-07", 8.0534,
+                     shares=159121937, shares_outstanding=1975847422)
+    with _db.get_session() as s:
+        r = list(s.run("""MATCH (a {id:'altria'})-[r:OWNS]->(b {id:'abi'})
+                          RETURN r.shares AS sh, r.shares_outstanding AS tot,
+                                 r.stake_percent AS pct"""))[0]
+    assert r["sh"] == 159121937 and r["tot"] == 1975847422
+    assert round(r["sh"] / r["tot"] * 100, 4) == r["pct"], "the stored stake no longer follows from the counts"
+
+
+def test_a_count_survives_a_rescrape_that_omits_it(graph):
+    # COALESCE, not overwrite: a later filing that states no count must not
+    # erase one an earlier filing gave.
+    from app.scraper.runner import _upsert_owns_sec
+    from app.database import db as _db
+    graph.run_command("CREATE (e:Entity {id:'altria', name:'Altria', type:'company'})")
+    _upsert_owns_sec("altria", "abi", "sec", "minority", "2025-01-01", 8.0,
+                     shares=159121937, shares_outstanding=1975847422)
+    _upsert_owns_sec("altria", "abi", "sec", "minority", "2025-06-01", 8.1)
+    with _db.get_session() as s:
+        r = list(s.run("""MATCH (a {id:'altria'})-[r:OWNS]->(b {id:'abi'})
+                          RETURN r.shares AS sh, r.stake_percent AS pct"""))[0]
+    assert r["sh"] == 159121937, "the earlier count was wiped by a filing that had none"
+    assert r["pct"] == 8.1, "the newer percentage should still win"
+
+
 def test_the_bloc_does_not_enter_the_disclosed_total(graph):
     # The reason the group's OWNS edge carries a null stake: its members hold the
     # shares individually, and adding a bloc percentage to theirs would put the
@@ -350,6 +384,34 @@ class TestTheWholeScrapeWritesTheGroup:
             "WHERE g.type = 'voting_group' RETURN r.relation AS rel")
         assert [r["rel"] for r in linked] == ["group_member"], \
             "the existing Stichting node was not the one joined to the group"
+
+    def test_an_insiders_form_4_holding_keeps_its_share_count(self, graph):
+        # Form 4 states the holding exactly. Until now that number decided
+        # whether to write an edge at all and was then thrown away, leaving only
+        # a percentage derived from a denominator that moves.
+        payload_exec = {"name": "COOK TIMOTHY D", "role": "CEO",
+                        "shares_owned": 3280000, "stake_percent": 0.02,
+                        "source_date": "2026-02-01",
+                        "source_url": "https://sec.gov/f4-index.htm"}
+        from unittest.mock import patch
+        from app.scraper import runner, sec_edgar
+        payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
+                   "ownership_filings": [], "executives": [payload_exec],
+                   "holdings": [], "former_names": [], "lei": None}
+        with patch.object(sec_edgar, "scrape_company", return_value=payload), \
+             patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
+             patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+             patch.object(runner, "get_source_enabled", return_value=True), \
+             patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+             patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+            runner.run_scrape_sec_edgar("Anheuser-Busch InBev")
+
+        rows = graph.run_command(
+            "MATCH (p:Person)-[r:OWNS]->(e:Entity) RETURN r.shares AS sh, "
+            "r.stake_percent AS pct")
+        assert len(rows) == 1
+        assert rows[0]["sh"] == 3280000, "the exact holding was discarded again"
+        assert rows[0]["pct"] == 0.02
 
     def test_a_13g_bloc_makes_no_group(self, graph):
         # State Street sharing voting power across its own subsidiaries is not a

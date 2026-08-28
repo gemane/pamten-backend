@@ -1210,3 +1210,60 @@ class TestStructuredScrapeEndToEnd:
         with patch.object(sec_edgar, "_get_text", side_effect=capture):
             sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
         assert seen["type"] == "SC", f"feed asked for {seen['type']!r}"
+
+
+class TestShareCountsAreKept:
+    """A count is what the filing states; a percentage is a division we perform
+    against a denominator that moves. Bevco's 5.9% went stale purely because AB
+    InBev issued more shares — its holding never changed."""
+
+    def test_a_lone_filer_keeps_its_holding(self):
+        from app.scraper.sec_edgar import _shares_held
+        assert _shares_held({"sole_dispositive": 1099168953}, None) == 1099168953
+
+    def test_dispositive_power_is_what_counts_not_voting(self):
+        # What the filer can sell is what it owns. Altria votes a billion shares
+        # and can dispose of 159 million.
+        from app.scraper.sec_edgar import _shares_held
+        rows = {"sole_voting": 0, "shared_voting": 1020598157,
+                "sole_dispositive": 159121937, "shared_dispositive": 0}
+        assert _shares_held(rows, 1020598157) == 159121937
+
+    def test_a_purely_joint_holder_reports_what_it_disposes_of_jointly(self):
+        # BRC can sell nothing alone, but the Stichting it co-owns holds
+        # 771,096,582 — a real number, where stake_percent has to say None.
+        from app.scraper.sec_edgar import _shares_held
+        rows = {"sole_dispositive": 0, "shared_dispositive": 771096582}
+        assert _shares_held(rows, 1033081237) == 771096582
+
+    def test_the_aggregate_is_the_last_resort(self):
+        from app.scraper.sec_edgar import _shares_held
+        assert _shares_held({}, 5000) == 5000
+        assert _shares_held({}, None) is None
+
+    def test_the_counts_reach_the_scrape_result(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SCHEDULE 13G"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2026-04-29</filing-date>
+            <accession-number>0002100119-26-000139</accession-number>
+          </content></entry>
+        </feed>"""
+        url = ("https://www.sec.gov/Archives/edgar/data/320193/"
+               "000210011926000139/primary_doc.xml")
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=_serve(atom, {url: _fixture("13g_vanguard.xml")})), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert res[0]["shares"] == 1099168953
+        # 7.48% of what? The stake is checkable only if both numbers survive.
+        assert res[0]["stake_percent"] == 7.48
+
+    def test_a_filing_without_counts_stores_none_rather_than_zero(self):
+        # Absent is not zero: a nil holding and an unstated one are different
+        # facts, and a 0 here would read as "sold out".
+        from app.scraper.sec_edgar import _shares_held
+        assert _shares_held({"sole_dispositive": 0, "shared_dispositive": 0}, None) is None
