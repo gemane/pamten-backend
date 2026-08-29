@@ -139,6 +139,31 @@ class TestIsNomineeName:
         assert infer_entity_type(["Q79913"]) == "nonprofit"      # NGO
         assert infer_entity_type(["Q48204"]) == "nonprofit"      # voluntary association
 
+    def test_the_organs_of_a_state_are_government(self):
+        """The State Council of the PRC — which holds CITIC Group — was typed
+        `company`: Wikidata files it under cabinet / executive branch / state
+        institution / legislature, and none of those were in the table, so it
+        fell through to the default. The default is right for an unknown
+        organisation, which is why a gap here reads as a plausible wrong answer
+        rather than an obvious one."""
+        from app.scraper.mapper import infer_entity_type
+        assert infer_entity_type(["Q640506"]) == "government"     # cabinet
+        assert infer_entity_type(["Q35798"]) == "government"      # executive branch
+        assert infer_entity_type(["Q98676607"]) == "government"   # state level institution
+        assert infer_entity_type(["Q11204"]) == "government"      # legislature
+        assert infer_entity_type(["Q3624078"]) == "government"    # sovereign state
+        # the real Q59261 claim list, in the order Wikidata returns it
+        assert infer_entity_type(
+            ["Q640506", "Q35798", "Q98676607", "Q11204"]) == "government"
+
+    def test_a_state_investment_vehicle_is_still_a_fund(self):
+        """Widening `government` must not swallow the funds: a sovereign wealth
+        fund carries government P31s too, and `fund` is the more useful type in
+        an ownership graph. The priority order is what protects this."""
+        from app.scraper.mapper import infer_entity_type
+        assert infer_entity_type(["Q1061648", "Q3624078"]) == "fund"
+        assert infer_entity_type(["Q4201895", "Q35798"]) == "fund"
+
     def test_sovereign_wealth_fund_is_fund_not_government(self):
         # Regression: Q1061648 (sovereign wealth fund, e.g. Mubadala Investment
         # Company) was mis-mapped to government despite being an investment vehicle.
