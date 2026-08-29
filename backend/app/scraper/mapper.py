@@ -32,6 +32,21 @@ _TYPE_QIDS: list[tuple[str, set[str]]] = [
         "Q327333",    # government agency
         "Q4383245",   # public authority
         "Q2659904",   # government organization
+        # The organs of a state, not just its agencies. Wikidata files a national
+        # cabinet under these and under none of the four above, so the State
+        # Council of the PRC — which holds CITIC Group, i.e. the top of a real
+        # state-ownership chain — fell through to the "company" default and was
+        # labelled a company. The default is right for an unknown organisation
+        # in an ownership graph, which is exactly why a gap here produces a
+        # wrong-but-plausible label instead of an obvious one.
+        "Q640506",    # cabinet
+        "Q35798",     # executive branch
+        "Q98676607",  # state level institution (China)
+        "Q11204",     # legislature — a parliament that owns something is the
+                      # state owning it; Wikidata also puts this on the State
+                      # Council beside "cabinet"
+        "Q3624078",   # sovereign state — "Republic of X" appears as an owner in
+                      # its own right, and is not a company either
     }),
     ("foundation", {
         "Q157031",    # foundation
