@@ -677,6 +677,28 @@ def _shares_outstanding(text: str) -> int | None:
         return None
 
 
+def _pct_of(part: float | None, whole: int | float | None) -> float | None:
+    """`part` as a percentage of `whole`, or None when no percentage can be stated.
+
+    A holding can be entirely real and still round to 0.0 at four decimals: six
+    Apple directors hold 1,139 shares each, which is 0.0000076% of ~15bn shares.
+    Storing that as `0.0` says "owns nothing" — the opposite of the truth, and
+    indistinguishable from a filer who has actually exited. None says "we know
+    the share count, not a meaningful percentage", and the count is on the edge
+    to say the rest; `unknown_owners` in the ownership summary already accounts
+    for owners whose share cannot be put in a number.
+
+    Same reasoning as `_split_stake`'s sole-dispositive-of-nothing branch, which
+    returns None for exactly this reason.
+    """
+    if part is None or not whole:
+        return None
+    pct = round(part / whole * 100, 4)
+    if pct == 0 and part:
+        return None                 # real, but below the precision floor
+    return pct
+
+
 def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
     """Split a 13D/G cover into (own stake %, voting-bloc %).
 
@@ -717,8 +739,7 @@ def _split_stake(rows: dict, total: int | None, reported_pct: float | None) -> t
         # figure as the stake is exactly what produced the >100% sums, so
         # state only what is certain.
         return None, reported_pct
-    own_pct = round(sole_disp / total * 100, 4)
-    return own_pct, reported_pct
+    return _pct_of(sole_disp, total), reported_pct
 
 
 def _plain_text(raw: str) -> str:
@@ -1383,7 +1404,7 @@ def fetch_insider_holding(name: str, issuer_cik: str,
         held = max(shares) if shares else None
         if not held or held <= 0:
             return None
-        stake = round(held / shares_outstanding * 100, 4) if shares_outstanding else None
+        stake = _pct_of(held, shares_outstanding)
         return {
             "shares_owned":  held,
             "stake_percent": stake,
@@ -1484,7 +1505,7 @@ def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMI
         for ex in executives:
             so = ex.get("shares_owned")
             if so and so > 0:
-                ex["stake_percent"] = round(so / shares_out * 100, 4)
+                ex["stake_percent"] = _pct_of(so, shares_out)
 
     return {
         "cik":                company["cik"],

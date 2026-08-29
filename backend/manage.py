@@ -303,6 +303,69 @@ def cmd_set_password(args):
     print(f"Password updated for {email}.")
 
 
+def cmd_ensure_user(args):
+    """Create or update a service account — idempotent, for use after a rebuild.
+
+    `new-database.sh` drops the whole database, users included. Only the account
+    named by ADMIN_EMAIL comes back, because the app re-provisions that one at
+    startup; a separate scraper account simply vanishes, and the next
+    `update.sh` dies on a 401 having scraped nothing. This is the step that puts
+    it back.
+
+    The password comes from the environment (default `ENSURE_USER_PASSWORD`),
+    never from argv — an argument lands in shell history and in `ps` output for
+    every user on the box. Existing accounts keep their password and only have
+    role/verified corrected, so re-running is safe.
+
+    Guarded like the other destructive-adjacent commands: this mints a
+    privileged account from whatever the environment says, so it refuses to run
+    unless --confirm-database matches the database actually configured.
+    """
+    import os
+    import uuid as _uuid
+    from app.auth.password_policy import password_policy_error
+    from app.auth.security import hash_password
+    from app.config import settings
+    from app.db.arcadedb import run_sql
+
+    if args.confirm_database != settings.ARCADEDB_DATABASE:
+        print(f"refusing: --confirm-database must be {settings.ARCADEDB_DATABASE!r} "
+              f"(the configured database), got {args.confirm_database!r}.")
+        raise SystemExit(2)
+
+    email = args.email.strip().lower()
+    password = os.getenv(args.password_env, "")
+    role = args.role
+
+    rows = run_sql("SELECT email, role FROM User WHERE email = :e", {"e": email})
+    if rows:
+        run_sql("UPDATE User SET role = :r, email_verified = true WHERE email = :e",
+                {"r": role, "e": email})
+        print(f"{email}: already present — role set to {role}, email verified. "
+              f"Password left alone.")
+        return
+
+    if not password:
+        print(f"refusing: {email} does not exist and ${args.password_env} is empty, "
+              f"so there is no password to create it with.")
+        raise SystemExit(1)
+    problem = password_policy_error(password)
+    if problem:
+        print(f"refusing: {problem}")
+        raise SystemExit(1)
+
+    run_sql("INSERT INTO User SET id = :id, email = :e, password_hash = :h, "
+            "role = :r, email_verified = true, created_at = :now",
+            {"id": str(_uuid.uuid4()), "e": email, "h": hash_password(password),
+             "r": role, "now": _now_iso_manage()})
+    print(f"{email}: created with role {role}, email verified.")
+
+
+def _now_iso_manage() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
 def cmd_sec_holdings(args):
     """Ingest the >5% stakes one SEC filer discloses in other companies.
 
@@ -864,6 +927,21 @@ def _build_parser():
     p_sp.add_argument('--password',
                       help='Non-interactive password (avoid — lands in shell history and ps)')
     p_sp.set_defaults(func=cmd_set_password)
+
+    # ensure-user: put a service account back after a rebuild. Idempotent, so the
+    # import scripts can call it unconditionally.
+    p_eu = subparsers.add_parser('ensure-user',
+        help='Create or correct a service account (password from an env var, not argv)')
+    p_eu.add_argument('--email', required=True, help='Account to create or correct')
+    p_eu.add_argument('--role', default='contributor',
+                      choices=['viewer', 'contributor', 'moderator', 'admin'],
+                      help='Role to set (default: contributor)')
+    p_eu.add_argument('--password-env', default='ENSURE_USER_PASSWORD',
+                      help='Environment variable holding the password for a NEW account')
+    p_eu.add_argument('--confirm-database', required=True,
+                      help='Must match the configured database — this mints a privileged account')
+    p_eu.set_defaults(func=cmd_ensure_user)
+
     # backup-database: server-side online backup (app/db/backup.py explains why a
     # disk snapshot is not a substitute).
     p_bk = subparsers.add_parser('backup-database',
