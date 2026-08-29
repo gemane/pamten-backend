@@ -296,3 +296,102 @@ class TestPruneAnalytics:
         args = manage._build_parser().parse_args(["prune-analytics", "--dry-run", "--days", "30"])
         manage.cmd_prune_analytics(args)
         assert seen == [(30, True)]
+
+
+# ── ensure-user: put the service account back after a rebuild ────────────────
+# new-database.sh drops the database, users included. Only ADMIN_EMAIL's account
+# returns (the app re-provisions it at startup); the scraper account vanished and
+# the next update.sh died on a 401 having scraped nothing.
+
+def _ensure_args(**kw):
+    kw.setdefault("role", "contributor")
+    kw.setdefault("password_env", "ENSURE_USER_PASSWORD")
+    kw.setdefault("confirm_database", "owlgraph")
+    return _args(**kw)
+
+
+def _db_name(monkeypatch, name="owlgraph"):
+    from app.config import settings
+    monkeypatch.setattr(settings, "ARCADEDB_DATABASE", name)
+
+
+def test_ensure_user_creates_a_verified_account(monkeypatch):
+    from app.auth.security import verify_password
+    _db_name(monkeypatch)
+    monkeypatch.setenv("ENSURE_USER_PASSWORD", "Zt9mQ2vLp4rK")
+    calls = _stub_sql(monkeypatch, [])          # no such user yet
+
+    import manage
+    manage.cmd_ensure_user(_ensure_args(email="scraper@owlgraph.org"))
+
+    inserts = [(q, p) for q, p in calls if q.strip().upper().startswith("INSERT")]
+    assert len(inserts) == 1
+    query, params = inserts[0]
+    assert params["e"] == "scraper@owlgraph.org"
+    assert params["r"] == "contributor"
+    assert "email_verified = true" in query      # or it cannot log in at all
+    assert params["h"] != "Zt9mQ2vLp4rK" and verify_password("Zt9mQ2vLp4rK", params["h"])
+
+
+def test_ensure_user_is_idempotent_and_keeps_the_password(monkeypatch):
+    """Called unconditionally by the rebuild, so a second run must correct the
+    role without touching a password it was not given."""
+    _db_name(monkeypatch)
+    monkeypatch.setenv("ENSURE_USER_PASSWORD", "Zt9mQ2vLp4rK")
+    calls = _stub_sql(monkeypatch, [{"email": "scraper@owlgraph.org", "role": "viewer"}])
+
+    import manage
+    manage.cmd_ensure_user(_ensure_args(email="scraper@owlgraph.org"))
+
+    assert not [q for q, _ in calls if q.strip().upper().startswith("INSERT")]
+    updates = [(q, p) for q, p in calls if q.strip().upper().startswith("UPDATE")]
+    assert len(updates) == 1
+    query, params = updates[0]
+    assert params["r"] == "contributor" and "email_verified = true" in query
+    assert "password_hash" not in query
+
+
+def test_ensure_user_refuses_on_a_database_name_mismatch(monkeypatch):
+    """It mints a privileged account from whatever the environment says, so it
+    gets the same guard as the destructive commands."""
+    _db_name(monkeypatch, "owlgraph")
+    calls = _stub_sql(monkeypatch, [])
+    import manage
+    with pytest.raises(SystemExit) as e:
+        manage.cmd_ensure_user(_ensure_args(email="x@owlgraph.org",
+                                            confirm_database="some-other-db"))
+    assert e.value.code == 2
+    assert calls == [], "must not touch the database at all"
+
+
+def test_ensure_user_refuses_to_create_without_a_password(monkeypatch):
+    _db_name(monkeypatch)
+    monkeypatch.delenv("ENSURE_USER_PASSWORD", raising=False)
+    _stub_sql(monkeypatch, [])
+    import manage
+    with pytest.raises(SystemExit) as e:
+        manage.cmd_ensure_user(_ensure_args(email="x@owlgraph.org"))
+    assert e.value.code == 1
+
+
+def test_ensure_user_enforces_the_password_policy(monkeypatch):
+    _db_name(monkeypatch)
+    monkeypatch.setenv("ENSURE_USER_PASSWORD", "short")
+    _stub_sql(monkeypatch, [])
+    import manage
+    with pytest.raises(SystemExit) as e:
+        manage.cmd_ensure_user(_ensure_args(email="x@owlgraph.org"))
+    assert e.value.code == 1
+
+
+def test_ensure_user_takes_the_password_from_the_environment_only(monkeypatch):
+    """Never from argv: an argument lands in shell history and in `ps` output for
+    every user on the box."""
+    import manage
+    p = manage._build_parser()
+    action = next(a for a in p._subparsers._group_actions[0].choices["ensure-user"]._actions
+                  if a.dest == "password_env")
+    assert action.default == "ENSURE_USER_PASSWORD"
+    opts = {o for a in p._subparsers._group_actions[0].choices["ensure-user"]._actions
+            for o in a.option_strings}
+    assert "--password" not in opts

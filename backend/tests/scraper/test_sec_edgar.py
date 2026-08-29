@@ -1389,3 +1389,43 @@ class TestAnExitIsNotAZeroPercentHolding:
         pct, voting = _split_stake({"sole_dispositive": 0, "shared_voting": 1_020_598_157},
                                    None, 52.3)
         assert pct is None and voting == 52.3
+
+
+class TestANegligibleHoldingIsNotZero:
+    """Six Apple directors hold 1,139 shares each — 0.0000076% of ~15bn. Stored
+    as 0.0 that reads as "owns nothing", which is both false and
+    indistinguishable from a filer who has actually exited."""
+
+    def test_a_real_but_tiny_holding_has_no_percentage(self):
+        from app.scraper.sec_edgar import _pct_of
+        assert _pct_of(1139, 14_935_826_000) is None
+        assert _pct_of(250, 734_000_000) is None
+
+    def test_a_holding_above_the_floor_keeps_its_number(self):
+        from app.scraper.sec_edgar import _pct_of
+        assert _pct_of(159121937, 1965328900) == 8.0965
+        assert _pct_of(1, 1_000_000) == 0.0001      # exactly at four decimals
+
+    def test_holding_nothing_really_is_zero(self):
+        """The exit rule reads a zero as "has left"; a genuine zero must stay 0.0
+        or `not pct and not voting` stops firing and exits go unrecorded."""
+        from app.scraper.sec_edgar import _pct_of
+        assert _pct_of(0, 1_000_000) == 0.0
+
+    def test_no_denominator_no_percentage(self):
+        from app.scraper.sec_edgar import _pct_of
+        assert _pct_of(1139, None) is None
+        assert _pct_of(None, 1_000_000) is None
+
+    def test_every_stake_computation_goes_through_it(self):
+        """Three sites divided shares by shares-outstanding, each rounding to 4
+        decimals on its own — the sibling-path shape this codebase keeps paying
+        for. They share the helper now, so the floor rule cannot drift apart."""
+        import inspect, re
+        from app.scraper import sec_edgar
+        src = inspect.getsource(sec_edgar)
+        helper = inspect.getsource(sec_edgar._pct_of)
+        elsewhere = src.replace(helper, "")
+        assert not re.search(r"round\([^)]*/[^)]*\*\s*100,\s*4\)", elsewhere), \
+            "a stake is rounded outside _pct_of — the floor rule will drift"
+        assert elsewhere.count("_pct_of(") == 3      # the three call sites

@@ -1,6 +1,7 @@
 # Operations
 
-Running the database day to day: backups, and getting one back.
+Running the database day to day: backups, getting one back, and the service
+account a rebuild takes with it.
 
 ## Backups
 
@@ -83,3 +84,33 @@ Backups contain the personal data in the graph (PSC people: names, birth months,
 the retention window belongs in the Art. 30 record, and an erasure request has to say what happens
 to copies sitting in backups. The usual answer — copies age out on a documented cycle rather than
 being surgically edited — is defensible, but only if it is written down.
+
+## Service accounts after a rebuild
+
+`new-database.sh` drops the database, and users live in it. Only the account named
+by `ADMIN_EMAIL` comes back, because the app re-provisions that one at startup —
+any *other* account is simply gone, including the contributor that
+`scripts/update.sh` logs in with. The symptom is not obvious: the scrape
+authenticates against nothing, every company returns 401, and on 2026-08-28 the
+run exited without scraping anything.
+
+`finish-import.sh` restores it as its last step, so a rebuild leaves a database the
+scrape can actually use:
+
+```bash
+ENSURE_USER_PASSWORD=… python3 manage.py ensure-user \
+    --email scraper-service@owlgraph.org \
+    --role contributor \
+    --confirm-database "$ARCADEDB_DATABASE"
+```
+
+- **Idempotent.** An existing account has its role corrected and is marked
+  verified; its password is left alone. Safe to run on every import.
+- **The password comes from the environment**, never from an argument — argv lands
+  in shell history and in `ps` output for every user on the box. Without it, an
+  account that does not exist is refused rather than created blank.
+- **`--confirm-database` must match** the configured database. The command mints a
+  privileged account from whatever the environment says, so it gets the same guard
+  as `wipe-source`.
+- The rebuild step reads the credentials from `~/.config/owlgraph/scrape.env`, and
+  skips (loudly, non-fatally) when that file is absent.

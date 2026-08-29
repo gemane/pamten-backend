@@ -253,6 +253,17 @@ The test is `not pct and not voting`, not `not pct` alone: a 13D group member ca
 hold nothing individually while voting a real bloc (BRC reports a null stake beside
 the Stichting's 52.3%), and reading that as an exit would delete the voting group.
 
+**A holding below the precision floor has no percentage, not a zero one.** Every
+stake is `shares / shares_outstanding` rounded to four decimals, and a real holding
+can round to `0.0`: six Apple directors hold 1,139 shares each, which is 0.0000076%
+of ~15bn. Stored as `0.0` that says "owns nothing" — false, and indistinguishable
+from the exit above. `_pct_of` returns None in that case and the share count carries
+the fact instead; `unknown_owners` in the ownership summary already accounts for
+owners whose share cannot be put in a number. A genuine zero (nothing held) still
+returns `0.0`, or the exit rule would stop firing. All three places that divided
+shares by shares-outstanding now share that helper — they used to round
+independently, which is the sibling-path shape this scraper keeps paying for.
+
 ### Key XML namespace gotcha
 
 The Atom feed uses `xmlns="http://www.w3.org/2005/Atom"` as the **default**
