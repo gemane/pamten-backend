@@ -382,7 +382,8 @@ def cmd_sec_13f(args):
     settings.SCRAPER_ENABLED = True
     settings.SCRAPER_SEC_EDGAR_ENABLED = True
     from app.scraper.runner import run_sec_13f
-    result = run_sec_13f(args.company, limit=args.limit)
+    result = run_sec_13f(args.company, limit=args.limit,
+                         window_days=args.window_days)
     if result["status"] != "ok":
         print(f"No entity in the graph matches {args.company!r} — "
               f"sec-13f enriches, it does not discover.")
@@ -945,6 +946,9 @@ def _build_parser():
     p_13f.add_argument('company', help='Company name as known to the graph')
     p_13f.add_argument('--limit', type=int, default=100,
                        help='Max 13F filings to read (relevance-ordered; default 100)')
+    p_13f.add_argument('--window-days', type=int, default=135,
+                       help='Only filings from the last N days — one quarter plus the '
+                            '45-day deadline, so only CURRENT positions come in. 0 = all time')
     p_13f.set_defaults(func=cmd_sec_13f)
 
     p_sh = subparsers.add_parser('sec-holdings',

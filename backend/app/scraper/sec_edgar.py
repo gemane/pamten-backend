@@ -45,6 +45,7 @@ How to verify:
 
 import re
 import time
+from datetime import datetime, timedelta, timezone
 import threading
 import html as html_lib
 import unicodedata
@@ -2019,23 +2020,37 @@ def fetch_affiliated_managers(cik: str) -> list[dict]:
 
 _13F_PAGE = 10          # EFTS returns 10 document hits per page
 
+# One quarter plus the 45-day filing deadline: every filing about the CURRENT
+# reporting period fits, and nothing older gets in. Without this, relevance
+# ordering happily serves 2022 filings for a widely-held issuer — the Televisa
+# smoke run wrote "current" positions with as-of dates spanning four years.
+_13F_WINDOW_DAYS = 135
 
-def _13f_filings_for(query: str, limit: int) -> tuple[list[dict], int]:
+
+def _13f_filings_for(query: str, limit: int,
+                     window_days: int = _13F_WINDOW_DAYS) -> tuple[list[dict], int]:
     """13F filings whose info table mentions `query`, newest-per-filer.
 
     Full-text search matches the information-table DOCUMENT, so each hit is one
-    filing naming the issuer. Hits are relevance-ordered; for a rarely-held
-    issuer (SpaceX: 91 filings) `limit` covers everything, for a mega-cap it is
-    a sample — the caller reports fetched-vs-total so nobody mistakes one for
-    the other. Amendments (13F-HR/A) restate the whole table, so per filer only
-    the newest accession survives.
+    filing naming the issuer. Hits are relevance-ordered, NOT date-ordered, so
+    the search is windowed to the last `window_days` (0 = all time): a stale
+    position from years ago is not a current holding, however relevant the
+    document. Within the window, for a rarely-held issuer (SpaceX: 91 filings)
+    `limit` covers everything; for a mega-cap it is a sample — the caller
+    reports fetched-vs-total so nobody mistakes one for the other. Amendments
+    (13F-HR/A) restate the whole table, so per filer only the newest accession
+    survives.
     """
+    params: dict = {"q": f'"{query}"', "forms": "13F-HR"}
+    if window_days:
+        start = (datetime.now(timezone.utc) - timedelta(days=window_days)).date()
+        params |= {"dateRange": "custom", "startdt": start.isoformat(),
+                   "enddt": datetime.now(timezone.utc).date().isoformat()}
     seen_acc: set[str] = set()
     by_filer: dict[str, dict] = {}
     total = 0
     for offset in range(0, limit, _13F_PAGE):
-        data = _get(SEARCH_URL, {"q": f'"{query}"', "forms": "13F-HR",
-                                 "from": offset})
+        data = _get(SEARCH_URL, {**params, "from": offset})
         hits = data.get("hits", {}).get("hits", [])
         total = data.get("hits", {}).get("total", {}).get("value", 0)
         if not hits:
@@ -2112,7 +2127,8 @@ def _13f_rows(info_xml: str) -> list[dict]:
 
 
 def fetch_13f_holders(company_name: str, known_names: list | None = None,
-                      cusip: str | None = None, limit: int = 100) -> dict:
+                      cusip: str | None = None, limit: int = 100,
+                      window_days: int = _13F_WINDOW_DAYS) -> dict:
     """Institutional holders of one issuer, from Form 13F information tables.
 
     Matching ladder: a known CUSIP matches rows exactly; without one, rows are
@@ -2130,7 +2146,7 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
     on counts rather than a transcribed number.
     """
     names = known_names or [company_name]
-    filings, total = _13f_filings_for(cusip or company_name, limit)
+    filings, total = _13f_filings_for(cusip or company_name, limit, window_days)
     holders: list[dict] = []
     period_seen = None
     # One issuer legitimately has SEVERAL CUSIPs — SpaceX's filers report

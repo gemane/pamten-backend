@@ -207,3 +207,32 @@ class TestCusipFromSchedules:
             raw = (FIX / fixture).read_text()
             parsed = sec_edgar._parse_13dg_xml(raw)
             assert parsed and parsed.get("issuer_cusip"), fixture
+
+
+class TestTheDateWindow:
+    """Relevance ordering serves 2022 filings for a widely-held issuer — the
+    Televisa smoke run wrote "current" positions with as-of dates spanning four
+    years. The window keeps the search inside the current reporting period."""
+
+    def _fts_params(self, **kw):
+        g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
+                          _giga_docs())
+        with g as get_mock, t:
+            fetch_13f_holders("SpaceX", known_names=["Space Exploration Technologies Corp."],
+                              **kw)
+        fts = next(c for c in get_mock.call_args_list
+                   if c.args[0] == sec_edgar.SEARCH_URL)
+        return fts.args[1] if len(fts.args) > 1 else fts.kwargs.get("params", fts.args[1])
+
+    def test_the_default_window_is_one_period_plus_the_deadline(self):
+        from datetime import datetime, timedelta, timezone
+        params = self._fts_params()
+        assert params["dateRange"] == "custom"
+        start = datetime.fromisoformat(params["startdt"])
+        expect = datetime.now(timezone.utc).date() - timedelta(days=135)
+        assert abs((start.date() - expect).days) <= 1
+        assert params["enddt"] == datetime.now(timezone.utc).date().isoformat()
+
+    def test_zero_disables_the_window(self):
+        params = self._fts_params(window_days=0)
+        assert "dateRange" not in params and "startdt" not in params

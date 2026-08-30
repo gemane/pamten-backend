@@ -446,11 +446,18 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   authority over its own held shares — a different fact from
   `voting_power_pct`, which is a bloc's share of the issuer's votes. Mapping
   one onto the other would mark every index fund as a voting bloc.
-- **Truncation is explicit.** Full-text search is relevance-ordered;
-  `--limit` (default 100) caps the filings read. For SpaceX (91 filings) that
-  is complete; for a mega-cap it is a sample, and the command prints
-  fetched-vs-total so nobody mistakes one for the other. Amendments (13F-HR/A)
-  restate the whole table, so only the newest accession per filer is read.
+- **The search is windowed to the current period.** Full-text search is
+  relevance-ordered, NOT date-ordered — unwindowed, a widely-held issuer's
+  sample mixes filings from years apart, and the first Televisa run wrote
+  "current" positions with as-of dates spanning 2022–2026. `--window-days`
+  (default 135 — one quarter plus the 45-day deadline) keeps only filings
+  about the current reporting period; `0` disables it for a deliberate
+  historical read.
+- **Truncation is explicit.** `--limit` (default 100) caps the filings read
+  within the window. For SpaceX (91 filings) that is complete; for a mega-cap
+  it is a sample, and the command prints fetched-vs-total so nobody mistakes
+  one for the other. Amendments (13F-HR/A) restate the whole table, so only
+  the newest accession per filer is read.
 - **Values are dollars as filed.** The SEC dropped report-in-thousands in
   2023, but some filers still do it; values are stored as the source gave them
   (source fidelity beats a guessed correction).

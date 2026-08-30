@@ -1577,7 +1577,7 @@ def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> 
 
 
 @_with_autodedup
-def run_sec_13f(company: str, limit: int = 100) -> dict:
+def run_sec_13f(company: str, limit: int = 100, window_days: int = 135) -> dict:
     """Ingest one issuer's institutional holders from Form 13F info tables.
 
     The inverse question to `run_sec_holdings` (what a manager holds): who holds
@@ -1618,7 +1618,8 @@ def run_sec_13f(company: str, limit: int = 100) -> dict:
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
                                    SEC_EDGAR_CREDIBILITY)
         data = fetch_13f_holders(entity.get("name") or company, known_names=names,
-                                 cusip=entity.get("cusip"), limit=limit)
+                                 cusip=entity.get("cusip"), limit=limit,
+                                 window_days=window_days)
 
         # The denominator, once per run. Padded: the companyconcept endpoint
         # 404s an unpadded CIK. A company with no XBRL (SpaceX is private)
