@@ -79,6 +79,7 @@ def claim_props(
     shares: int | None = None,
     shares_outstanding: int | None = None,
     voting_shares: int | None = None,
+    filing_type: str | None = None,
 ) -> dict:
     """The property bag for one claim, ready to UPSERT on `claim_key`.
 
@@ -108,6 +109,9 @@ def claim_props(
         "shares": shares,
         "shares_outstanding": shares_outstanding,
         "voting_shares": voting_shares,
+        # The record KIND behind the assertion — the Sources panel shows it as
+        # "SEC EDGAR · 13F", which tells a reader whose rulebook to read.
+        "filing_type": filing_type,
         "last_seen_at": now_iso(),
     }
 

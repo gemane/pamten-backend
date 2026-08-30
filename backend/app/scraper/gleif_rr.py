@@ -245,7 +245,9 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             credibility_score=credibility_score,
             source_url=f"https://search.gleif.org/#/record/{child}",
             interest_types=["accountingConsolidation"], direct_or_indirect=marker,
-            extra=extra,
+            # "RR" = GLEIF's relationship-record file — until this tag, RR and
+            # LEI-CDF provenance were indistinguishable in the stored graph.
+            extra={**extra, "filing_type": "RR"},
         )
 
     family: set[str] | None = None

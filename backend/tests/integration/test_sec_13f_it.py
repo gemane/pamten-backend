@@ -148,3 +148,25 @@ def test_an_unknown_company_writes_nothing(it_db):
     res, _, _ = _run(it_db)
     assert res["status"] == "no_results"
     assert _edges(it_db) == []
+
+
+def test_the_filing_type_reaches_edge_claim_and_sources_panel(it_db):
+    """The whole chain the "SEC EDGAR · 13F" label depends on: writer → OWNS
+    edge → claim → the sources endpoint's claims query → the deduped row."""
+    from app.claims import claims_for
+    from app.routers.sources import get_sources_for_entity
+
+    _company(it_db)
+    _run(it_db)
+
+    edge = it_db.run_command(
+        "MATCH ()-[r:OWNS]->(:Entity {id:'sx'}) RETURN r.filing_type AS ft LIMIT 1")[0]
+    assert edge["ft"] == "13F"
+
+    giga = it_db.run_command("MATCH (e:Entity) WHERE e.sec_cik = '1713833' "
+                             "RETURN e.id AS id")[0]["id"]
+    assert claims_for(from_id=giga, to_id="sx")[0]["filing_type"] == "13F"
+
+    rows = get_sources_for_entity("sx")
+    sec_rows = [r for r in rows if r.get("filing_type")]
+    assert sec_rows and all(r["filing_type"] == "13F" for r in sec_rows)

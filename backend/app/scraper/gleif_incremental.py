@@ -143,13 +143,14 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
     record_claim(kind=KIND_OWNS, from_id=parent_id, to_id=child_id,
                  source_id=source_id, ownership_type="controlling", since=since,
                  source_url=f"https://search.gleif.org/#/record/{child_lei}",
-                 credibility_score=credibility_score)
+                 credibility_score=credibility_score, filing_type="RR")
     existing = _existing_consolidation_edge(parent_id, child_id)
 
     if existing is None:
         run_command(
             "MATCH (a:Entity {id:$p}) MATCH (b:Entity {id:$c}) "
             "CREATE (a)-[:OWNS {direct_or_indirect:$m, ownership_type:'controlling', "
+            "filing_type:'RR', "
             "interest_types:$it, source_id:$src, credibility_score:$cred, "
             "source_url:$url, since:$since, last_scraped_at:$now}]->(b)",
             {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],

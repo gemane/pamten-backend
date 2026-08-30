@@ -227,7 +227,9 @@ class TestCollapseThroughTheImporter:
         assert res["edges"] == 1            # one edge written
         assert res["collapsed"] == 1
         assert written[0]["direct_or_indirect"] == "direct"
-        assert written[0]["extra"] == {"also_ultimate": True}
+        # filing_type rides in extra on every RR edge — it is what finally
+        # distinguishes RR provenance from LEI-CDF in the stored graph.
+        assert written[0]["extra"] == {"also_ultimate": True, "filing_type": "RR"}
 
     def test_the_records_may_be_far_apart_in_the_file(self, tmp_path, monkeypatch):
         res, written = self._run(tmp_path, monkeypatch, [
@@ -257,4 +259,6 @@ class TestCollapseThroughTheImporter:
         _res, written = self._run(tmp_path, monkeypatch, [
             ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY"),
         ])
-        assert written[0]["extra"] == {}
+            # "nothing to record" means no fold artifacts — the constant RR tag is
+        # deliberate and carries no nulls.
+        assert written[0]["extra"] == {"filing_type": "RR"}

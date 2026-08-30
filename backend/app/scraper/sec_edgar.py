@@ -311,6 +311,20 @@ def _iso_date(raw: str | None) -> str | None:
     return f"{m.group(3)}-{m.group(1)}-{m.group(2)}" if m else raw
 
 
+def _short_form(form_type: str | None) -> str | None:
+    """"SCHEDULE 13G/A" / "SC 13G/A" → "13G/A" — a display label, not the record.
+
+    Both eras' spellings collapse to the number the rules are named after; the
+    raw string stays reachable through source_url. Unknown shapes pass through
+    untouched rather than being guessed at.
+    """
+    if not form_type:
+        return None
+    short = re.sub(r"^(SCHEDULE|SC)\s+", "", form_type.strip(), flags=re.I)
+    short = re.sub(r"^13F-HR", "13F", short)
+    return short or None
+
+
 def _filing_index_url(cik: str, accession: str) -> str | None:
     """
     Canonical, human-readable EDGAR filing index page for a filing, e.g.
@@ -1197,6 +1211,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # info tables match on, so a 13D/G scrape leaves the company ready
             # for an exact `sec-13f` run.
             "issuer_cusip":     (inv["xml"].get("issuer_cusip") if inv.get("xml") else None),
+            "filing_type":      _short_form(inv["form_type"]),
             "stake_percent":    pct,
             # The bloc a group member votes within — see _own_stake_and_voting.
             # None for a lone filer, whose stake already is its whole position.
@@ -2350,6 +2365,7 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             "stake_percent": parsed["percent"],
             "file_date":     filing["date"],
             "form_type":     filing["form"],
+            "filing_type":   _short_form(filing["form"]),
             "until":         closed_since.get(sid),
             "source_url":    _filing_index_url(cik, filing["accession"]),
         })

@@ -335,3 +335,16 @@ class TestCorporateRegistration:
         mapped = self._corp("Germany", None)
         assert mapped.owner_props["registration_number"] is None
         assert mapped.owner_props["register_id"] is None
+
+
+def test_every_psc_edge_is_tagged_with_its_record_kind():
+    """filing_type "PSC" rides in the shared mapper's edge_props, so bulk and
+    incremental both carry it — and the claim builders read it from there."""
+    rec = {"company_number": "07434180", "data": {
+        "kind": "individual-person-with-significant-control",
+        "name": "Jean Carol Randle",
+        "natures_of_control": ["ownership-of-shares-50-to-75-percent"],
+        "links": {"self": "/company/07434180/persons-with-significant-control/individual/x"},
+    }}
+    mapped = psc_record(rec, "src", 97)
+    assert mapped.edge_props["filing_type"] == "PSC"

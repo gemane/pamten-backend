@@ -316,3 +316,19 @@ class TestSharesFromTheCoverPage:
         g, t = self._serve(["10-Q"], cover=doubled)
         with g, t:
             assert sec_edgar.fetch_shares_outstanding("0001181412") == 13_181_779_945
+
+
+class TestShortForm:
+    def test_both_eras_spellings_collapse_to_the_number(self):
+        from app.scraper.sec_edgar import _short_form
+        assert _short_form("SCHEDULE 13G/A") == "13G/A"
+        assert _short_form("SC 13D") == "13D"
+        assert _short_form("SCHEDULE 13G") == "13G"
+        assert _short_form("13F-HR") == "13F"
+        assert _short_form("13F-HR/A") == "13F/A"
+
+    def test_unknown_shapes_pass_through_not_guessed(self):
+        from app.scraper.sec_edgar import _short_form
+        assert _short_form("4") == "4"
+        assert _short_form(None) is None
+        assert _short_form("") is None

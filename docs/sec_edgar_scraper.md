@@ -466,6 +466,11 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   it is a sample, and the command prints fetched-vs-total so nobody mistakes
   one for the other. Amendments (13F-HR/A) restate the whole table, so only
   the newest accession per filer is read.
+- **Every SEC-written edge and claim carries `filing_type`** — "13F", "13G/A",
+  "Form 4" — via `_short_form()`, which collapses both eras' spellings
+  ("SCHEDULE 13G/A" / "SC 13G/A" → "13G/A"). GLEIF RR edges carry "RR" and UK
+  PSC "PSC" for the same reason: the source names the register, the filing
+  type names the rulebook, and the Sources panel shows "SEC EDGAR · 13F".
 - **Values are dollars as filed.** The SEC dropped report-in-thousands in
   2023, but some filers still do it; values are stored as the source gave them
   (source fidelity beats a guessed correction).

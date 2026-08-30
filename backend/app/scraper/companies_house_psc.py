@@ -251,6 +251,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         owner_label=owner_label,
         owner_props=owner_props,
         edge_props={
+            "filing_type": "PSC",
             "stake_percent": stake, "voting_power_pct": voting, "ownership_type": otype,
             "interest_types": interest_types, "direct_or_indirect": None,
             "since": since, "until": until, "source_id": source_id,
