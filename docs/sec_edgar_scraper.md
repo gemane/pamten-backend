@@ -436,9 +436,17 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   beside 69608A108), so a name-matching run must not lock onto the first CUSIP
   it sees, and CUSIP is **not** a dedup identifier.
 - **Percentages are computed, never transcribed.** 13F reports counts and
-  dollars; stake = shares ÷ shares outstanding (XBRL `companyconcept`, padded
-  CIK) through `_pct_of` with its precision floor. A private issuer with no
-  XBRL keeps honest counts and no percentage.
+  dollars; stake = shares ÷ shares outstanding through `_pct_of` with its
+  precision floor. The denominator has two layers: the XBRL `companyconcept`
+  endpoint (padded CIK), and — because a MULTI-class issuer's per-class cover
+  facts are dimensioned and never reach the aggregated endpoints — a fallback
+  that reads the newest 10-Q/10-K inline-XBRL cover and sums the classes.
+  SpaceX's 13.18bn total (7.70bn Class A + 5.49bn Class B, stated to the share
+  on its 10-Q cover) only exists via that fallback; it is where the press got
+  the number too. Restricted to 10-Q/10-K deliberately: a 20-F filer's cover
+  counts UNDERLYING shares while its 13F filers report ADRs/GDRs — Televisa's
+  GDR bundles 585 of them, so that division is wrong by 585×. An issuer with
+  neither keeps honest counts and no percentage.
 - **Option rows are not holdings.** 20 of BNP's 21 real SpaceX rows carry
   `putCall` — shares *underlying* contracts, owned by nobody. Skipped, as are
   `PRN` (debt principal) rows.

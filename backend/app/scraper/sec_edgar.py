@@ -1446,8 +1446,21 @@ def fetch_insider_holding(name: str, issuer_cik: str,
 def fetch_shares_outstanding(cik: str) -> float | None:
     """
     Latest reported common shares outstanding for an issuer (SEC XBRL facts),
-    used to turn an insider's Form-4 share count into a stake percentage.
+    used to turn a share count into a stake percentage.
     Best-effort — returns None if unavailable.
+
+    Two layers. The concept API serves single-class issuers; a MULTI-CLASS
+    issuer reports one cover-page fact per class, and dimensioned facts never
+    reach the aggregated endpoints — SpaceX's 13.18bn total (7.70bn Class A +
+    5.49bn Class B, stated to the share on its 10-Q cover) is simply absent
+    there, which is why its holders had counts but no percentages while every
+    news article computed them. The fallback reads the inline-XBRL cover of the
+    newest 10-Q/10-K and sums the per-class facts.
+
+    Restricted to 10-Q/10-K deliberately: a foreign private issuer files 20-F,
+    and its cover counts UNDERLYING shares while 13F filers report ADRs/GDRs —
+    Televisa's GDR bundles 585 shares, so that division is wrong by 585x. No
+    denominator beats a confidently wrong one.
     """
     for concept in ("dei/EntityCommonStockSharesOutstanding",
                     "us-gaap/CommonStockSharesOutstanding"):
@@ -1464,7 +1477,45 @@ def fetch_shares_outstanding(cik: str) -> float | None:
                 return float(dated[-1][1])
             except (TypeError, ValueError):
                 continue
-    return None
+    return _shares_outstanding_from_cover(cik)
+
+
+def _shares_outstanding_from_cover(cik: str) -> float | None:
+    """Sum of per-class share counts from the newest 10-Q/10-K inline-XBRL cover."""
+    try:
+        subs = _submissions(cik)
+    except httpx.HTTPError:
+        return None
+    rec = (subs.get("filings") or {}).get("recent") or {}
+    forms = rec.get("form") or []
+    idx = next((i for i, f in enumerate(forms) if f in ("10-Q", "10-K")), None)
+    if idx is None:
+        return None
+    acc = rec["accessionNumber"][idx].replace("-", "")
+    doc = (rec.get("primaryDocument") or [""])[idx]
+    if not doc:
+        return None
+    try:
+        html = _get_text(f"{ARCHIVES_URL}/{_cik_int(cik)}/{acc}/{doc}")
+    except httpx.HTTPError:
+        return None
+    # One ix:nonFraction fact per share class. Keyed by contextRef, which is
+    # what distinguishes the classes — and, being a dict, also what keeps a
+    # fact echoed elsewhere in the document from double-counting.
+    seen: dict[str, float] = {}
+    for tag in re.findall(r"<ix:nonFraction[^>]*>", html):
+        if 'name="dei:EntityCommonStockSharesOutstanding"' not in tag:
+            continue
+        ctx = re.search(r'contextRef="([^"]+)"', tag)
+        if not ctx:
+            continue
+        m = re.search(re.escape(tag) + r"([\d,]+)<", html)
+        if m:
+            try:
+                seen[ctx.group(1)] = float(m.group(1).replace(",", ""))
+            except ValueError:
+                continue
+    return sum(seen.values()) or None
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -2056,6 +2107,11 @@ def _13f_filings_for(query: str, limit: int,
         if not hits:
             break
         for h in hits:
+            # EFTS documents 10 hits a page and sometimes returns far more (a
+            # windowed query has come back with 91 in one response), so the cap
+            # binds HERE, not on the page count — or --limit 100 reads 187.
+            if len(seen_acc) >= limit:
+                break
             src = h.get("_source", {})
             accession = (h.get("_id") or "").split(":")[0]
             ciks = src.get("ciks") or []
@@ -2068,7 +2124,7 @@ def _13f_filings_for(query: str, limit: int,
             best = by_filer.get(entry["filer_cik"])
             if best is None or entry["file_date"] > best["file_date"]:
                 by_filer[entry["filer_cik"]] = entry
-        if offset + _13F_PAGE >= total:
+        if offset + _13F_PAGE >= total or len(seen_acc) >= limit:
             break
     return list(by_filer.values()), total
 

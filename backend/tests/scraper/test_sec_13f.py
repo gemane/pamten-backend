@@ -169,6 +169,25 @@ class TestFetch13FHolders:
         assert out["filings_total"] == 3000
         assert out["filings_fetched"] == 10
 
+    def test_limit_binds_even_when_a_page_overflows(self):
+        # EFTS documents 10 hits a page and has returned 91 in one response —
+        # the cap must bind on filings accepted, not pages requested, or
+        # --limit 100 quietly reads 187.
+        hits = [_fts_hit(f"000114036{i:02d}-26-032507", str(2000 + i), f"F{i}",
+                         "2026-08-01") for i in range(40)]
+        docs = {}
+        for i in range(40):
+            docs[f"{2000 + i}/000114036{i:02d}26032507/index"] = []
+        def one_big_page(url, params=None):
+            if url == sec_edgar.SEARCH_URL:
+                return {"hits": {"total": {"value": 40}, "hits": hits}}   # all at once
+            key = url.split("/data/")[1].rsplit("/", 1)[0]
+            return {"directory": {"item": [{"name": n} for n in docs.get(f"{key}/index", [])]}}
+        with patch.object(sec_edgar, "_get", side_effect=one_big_page), \
+             patch.object(sec_edgar, "_get_text", side_effect=AssertionError):
+            out = fetch_13f_holders("X", known_names=["X"], limit=15)
+        assert out["filings_fetched"] == 15
+
 
 class TestBackoff:
     def test_a_429_with_retry_after_is_retried_once(self):
@@ -236,3 +255,64 @@ class TestTheDateWindow:
     def test_zero_disables_the_window(self):
         params = self._fts_params(window_days=0)
         assert "dateRange" not in params and "startdt" not in params
+
+
+class TestSharesFromTheCoverPage:
+    """A multi-class issuer's per-class share counts never reach the aggregated
+    XBRL endpoints (dimensioned facts don't), so SpaceX's holders had counts
+    and no percentages while every news article computed 4.2% for Alphabet —
+    from the 10-Q cover, which states the classes to the share."""
+
+    COVER = (FIX / "10q_spacex_cover.htm").read_text()
+
+    def _serve(self, forms, cover=None, concept_404=True):
+        import httpx
+
+        def _get(url, params=None):
+            if "companyconcept" in url:
+                if concept_404:
+                    raise httpx.HTTPStatusError("404", request=httpx.Request("GET", url),
+                                                response=httpx.Response(404))
+                return {"units": {"shares": [{"end": "2026-06-30", "val": 999}]}}
+            if "submissions" in url:
+                n = len(forms)
+                return {"filings": {"recent": {
+                    "form": forms,
+                    "accessionNumber": [f"0001628280-26-05253{i}" for i in range(n)],
+                    "primaryDocument": ["spcx-20260630.htm"] * n}}}
+            raise httpx.ConnectError(f"unexpected {url}")
+
+        def _get_text(url, params=None):
+            if url.endswith(".htm"):
+                return cover if cover is not None else self.COVER
+            raise httpx.ConnectError(f"unexpected {url}")
+
+        return patch.object(sec_edgar, "_get", side_effect=_get), \
+               patch.object(sec_edgar, "_get_text", side_effect=_get_text)
+
+    def test_the_classes_are_summed(self):
+        g, t = self._serve(["SCHEDULE 13G", "10-Q"])
+        with g, t:
+            out = sec_edgar.fetch_shares_outstanding("0001181412")
+        assert out == 13_181_779_945          # 7,696,293,669 A + 5,485,486,276 B
+
+    def test_the_concept_api_still_wins_when_it_answers(self):
+        g, t = self._serve(["10-Q"], concept_404=False)
+        with g, t as text_mock:
+            out = sec_edgar.fetch_shares_outstanding("0000320193")
+        assert out == 999
+        assert not text_mock.called, "no cover fetch when the cheap endpoint answers"
+
+    def test_a_20f_filer_gets_no_cover_fallback(self):
+        """A foreign private issuer's cover counts UNDERLYING shares while 13F
+        filers report GDRs — Televisa's GDR bundles 585 of them, so that
+        division is wrong by 585x. No denominator beats a wrong one."""
+        g, t = self._serve(["SCHEDULE 13G", "20-F", "6-K"])
+        with g, t:
+            assert sec_edgar.fetch_shares_outstanding("0000912892") is None
+
+    def test_an_echoed_fact_is_not_double_counted(self):
+        doubled = self.COVER + self.COVER      # same contextRefs repeated
+        g, t = self._serve(["10-Q"], cover=doubled)
+        with g, t:
+            assert sec_edgar.fetch_shares_outstanding("0001181412") == 13_181_779_945
