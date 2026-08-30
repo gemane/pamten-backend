@@ -104,7 +104,7 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       and on this host that made SEC scraping look broken: every fresh connection spent
       ~6s failing over a dead IPv6 route to sec.gov. `curl` looked fine and will mislead
       you — see the host IPv6 note in the ops docs.
-- [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent.
+- [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_edgar._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
 - [ ] **Bulk imports take the import lock** (`ImportState key='import-lock'`) so two
       dataset loads cannot interleave, and batch their writes — the dev database sits
       behind a 60-second proxy timeout.

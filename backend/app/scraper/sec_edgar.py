@@ -126,18 +126,34 @@ def close_client() -> None:
             _client = None
 
 
-def _get(url: str, params: dict | None = None) -> dict:
+# One retry, honouring Retry-After, capped so a hostile header cannot park the
+# scrape for an hour. efts.sec.gov (full-text search) throttles harder than
+# www.sec.gov, and the new-source checklist has demanded this since it was
+# written — every source shares these two functions, so they all get it.
+_RETRY_STATUSES = (429, 503)
+_RETRY_AFTER_CAP = 30.0
+
+
+def _response(url: str, params: dict | None) -> httpx.Response:
     r = _get_client().get(url, params=params)
+    if r.status_code in _RETRY_STATUSES:
+        try:
+            wait = min(float(r.headers.get("Retry-After", 2)), _RETRY_AFTER_CAP)
+        except ValueError:            # a date-formatted Retry-After — just pause briefly
+            wait = 2.0
+        time.sleep(wait)
+        r = _get_client().get(url, params=params)
     r.raise_for_status()
     time.sleep(REQUEST_DELAY)
-    return r.json()
+    return r
+
+
+def _get(url: str, params: dict | None = None) -> dict:
+    return _response(url, params).json()
 
 
 def _get_text(url: str, params: dict | None = None) -> str:
-    r = _get_client().get(url, params=params)
-    r.raise_for_status()
-    time.sleep(REQUEST_DELAY)
-    return r.text
+    return _response(url, params).text
 
 
 # ── CIK helpers ───────────────────────────────────────────────────────────────
@@ -284,6 +300,14 @@ def fetch_filer_country(cik: str) -> str | None:
     except Exception as exc:  # noqa: BLE001 - a country is a nicety, not worth aborting a scrape
         log.warning("SEC EDGAR: country lookup failed for CIK=%s: %s", cik, exc)
         return None
+
+
+def _iso_date(raw: str | None) -> str | None:
+    """EDGAR's MM-DD-YYYY (13F periodOfReport) → ISO YYYY-MM-DD; ISO passes through."""
+    if not raw:
+        return None
+    m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", raw.strip())
+    return f"{m.group(3)}-{m.group(1)}-{m.group(2)}" if m else raw
 
 
 def _filing_index_url(cik: str, accession: str) -> str | None:
@@ -1168,6 +1192,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "form_type":        inv["form_type"],
             "file_date":        inv["file_date"],
             "period_of_report": None,
+            # The issuer's security id from the schedule cover — the key 13F
+            # info tables match on, so a 13D/G scrape leaves the company ready
+            # for an exact `sec-13f` run.
+            "issuer_cusip":     (inv["xml"].get("issuer_cusip") if inv.get("xml") else None),
             "stake_percent":    pct,
             # The bloc a group member votes within — see _own_stake_and_voting.
             # None for a lone filer, whose stake already is its whole position.
@@ -1808,6 +1836,10 @@ def _parse_13dg_xml(raw: str) -> dict | None:
     return {
         "issuer_cik":   _xml_child(root, issuer_tag),
         "issuer_name":  _xml_child(root, "issuerName"),
+        # The security identifier 13F info tables key on — harvesting it from
+        # the schedules we already read is how companies gain a CUSIP without a
+        # licensed database. Both spellings occur in real filings.
+        "issuer_cusip": _xml_child(root, "issuerCusipNumber") or _xml_child(root, "issuerCusip"),
         "filer_cik":    _xml_child(root, "cik"),
         # WHICH security the percentages are percentages OF. A percent of class
         # is meaningless without it: Grupo Televisa's filers report 22.3% of
@@ -1968,6 +2000,193 @@ def fetch_affiliated_managers(cik: str) -> list[dict]:
     log.info("SEC EDGAR: %d affiliated managers for CIK=%s (from %s)",
              len(out), cik, latest["form"])
     return out
+
+
+# ── Quarterly holdings — Form 13F ────────────────────────────────────────────
+#
+# Every institutional manager over $100M files a quarterly holdings report whose
+# information table is structured XML: issuer name, CUSIP, dollar value, share
+# count, voting authority. It is the third beneficial-ownership family this
+# module reads, and it fills a structural blind spot: 13D/G only exists above
+# the 5% threshold, so an 0.9% Nvidia or a 1.2% PIF position in SpaceX can
+# never appear there — but every one of them is in somebody's 13F.
+#
+# Issuers are identified ONLY by CUSIP and a free-text name. The CUSIP is the
+# reliable key; it is harvested from the 13D/G schedules we already parse
+# (issuerCusipNumber) and adopted from the first name-verified 13F row, then
+# stored on the entity — individual identifiers from public filings, not a
+# licensed CUSIP database.
+
+_13F_PAGE = 10          # EFTS returns 10 document hits per page
+
+
+def _13f_filings_for(query: str, limit: int) -> tuple[list[dict], int]:
+    """13F filings whose info table mentions `query`, newest-per-filer.
+
+    Full-text search matches the information-table DOCUMENT, so each hit is one
+    filing naming the issuer. Hits are relevance-ordered; for a rarely-held
+    issuer (SpaceX: 91 filings) `limit` covers everything, for a mega-cap it is
+    a sample — the caller reports fetched-vs-total so nobody mistakes one for
+    the other. Amendments (13F-HR/A) restate the whole table, so per filer only
+    the newest accession survives.
+    """
+    seen_acc: set[str] = set()
+    by_filer: dict[str, dict] = {}
+    total = 0
+    for offset in range(0, limit, _13F_PAGE):
+        data = _get(SEARCH_URL, {"q": f'"{query}"', "forms": "13F-HR",
+                                 "from": offset})
+        hits = data.get("hits", {}).get("hits", [])
+        total = data.get("hits", {}).get("total", {}).get("value", 0)
+        if not hits:
+            break
+        for h in hits:
+            src = h.get("_source", {})
+            accession = (h.get("_id") or "").split(":")[0]
+            ciks = src.get("ciks") or []
+            if not accession or accession in seen_acc or not ciks:
+                continue
+            seen_acc.add(accession)
+            entry = {"accession": accession, "filer_cik": ciks[0].lstrip("0") or "0",
+                     "file_date": src.get("file_date") or "",
+                     "display_name": (src.get("display_names") or [""])[0]}
+            best = by_filer.get(entry["filer_cik"])
+            if best is None or entry["file_date"] > best["file_date"]:
+                by_filer[entry["filer_cik"]] = entry
+        if offset + _13F_PAGE >= total:
+            break
+    return list(by_filer.values()), total
+
+
+def _13f_documents(filer_cik: str, accession: str) -> tuple[str | None, str | None]:
+    """(info table XML, primary_doc XML) for one 13F accession, either None on miss.
+
+    The info table's file NAME varies by filing agent (informationtable.xml,
+    infotable.xml, form13fInfoTable.xml…), so it is found by shape — an XML that
+    is not the primary document — rather than by name.
+    """
+    nodash = accession.replace("-", "")
+    base = f"{ARCHIVES_URL}/{_cik_int(filer_cik)}/{nodash}"
+    try:
+        index = _get(f"{base}/index.json")
+    except httpx.HTTPError:
+        return None, None
+    names = [i.get("name", "") for i in index.get("directory", {}).get("item", [])]
+    info_name = next((n for n in names
+                      if n.lower().endswith(".xml") and "primary" not in n.lower()), None)
+    info = primary = None
+    try:
+        if info_name:
+            info = _get_text(f"{base}/{info_name}")
+        if "primary_doc.xml" in names:
+            primary = _get_text(f"{base}/primary_doc.xml")
+    except httpx.HTTPError:
+        pass
+    return info, primary
+
+
+def _13f_rows(info_xml: str) -> list[dict]:
+    """The information table as dicts; share rows only (PRN = debt principal)."""
+    try:
+        root = ET.fromstring(info_xml)
+    except ET.ParseError:
+        return []
+    rows = []
+    for t in root.findall(".//{*}infoTable"):
+        kind = (_xml_child(t, "sshPrnamtType") or "SH").upper()
+        if kind != "SH":
+            continue
+        # An option row reports the shares UNDERLYING the contract, not shares
+        # held — BNP's SpaceX table carries "Option"/"Equity Option" rows worth
+        # hundreds of millions that own nothing. putCall marks them.
+        if _xml_child(t, "putCall"):
+            continue
+        rows.append({
+            "issuer":  _xml_child(t, "nameOfIssuer"),
+            "class":   _xml_child(t, "titleOfClass"),
+            "cusip":   (_xml_child(t, "cusip") or "").strip().upper() or None,
+            "value":   _xml_num(t, "value"),
+            "shares":  _xml_num(t, "sshPrnamt"),
+        })
+    return rows
+
+
+def fetch_13f_holders(company_name: str, known_names: list | None = None,
+                      cusip: str | None = None, limit: int = 100) -> dict:
+    """Institutional holders of one issuer, from Form 13F information tables.
+
+    Matching ladder: a known CUSIP matches rows exactly; without one, rows are
+    verified by `_issuer_matches` against the company's names — the same
+    tolerant, diacritic-folded check the 13D/G path uses, because the free-text
+    `nameOfIssuer` is typed by each filing agent ("APPLE INC" / "Apple Inc") —
+    and the first verified row's CUSIP is returned in `cusip_seen` for the
+    caller to stamp on the entity, making the next run exact.
+
+    A filer may hold the issuer in several rows (share classes, lending
+    programs): rows aggregate per (filer, share class), shares and value
+    summed. Values are dollars (the SEC dropped the report-in-thousands rule in
+    2023). Percentages are deliberately NOT computed here — the caller divides
+    shares by shares outstanding, so every percent in the graph is arithmetic
+    on counts rather than a transcribed number.
+    """
+    names = known_names or [company_name]
+    filings, total = _13f_filings_for(cusip or company_name, limit)
+    holders: list[dict] = []
+    period_seen = None
+    # One issuer legitimately has SEVERAL CUSIPs — SpaceX's filers report
+    # 84615Q103 (Class A) and 69608A108 side by side — so a name-matching run
+    # must NOT lock onto the first CUSIP it sees or every filer holding another
+    # class is silently skipped. With no stored CUSIP the whole run matches by
+    # name; the most-reported CUSIP is returned for stamping.
+    cusip_counts: dict[str, int] = {}
+    for f in filings:
+        info, primary = _13f_documents(f["filer_cik"], f["accession"])
+        if not info:
+            continue
+        period = None
+        manager = None
+        if primary:
+            try:
+                proot = ET.fromstring(primary)
+                period = _iso_date(_xml_child(proot, "periodOfReport"))
+                manager = _xml_child(proot, "name")
+            except ET.ParseError:
+                pass
+        if not manager:
+            # "Gigafund Management Company, LLC  (CIK 0001713833)" → the name
+            manager = re.sub(r"\s*\(CIK[^)]*\)\s*$", "", f["display_name"]).strip()
+        by_class: dict[str, dict] = {}
+        for row in _13f_rows(info):
+            if cusip:
+                if row["cusip"] != cusip:
+                    continue
+            elif not _issuer_matches(names, row["issuer"]):
+                continue
+            if row["cusip"]:
+                cusip_counts[row["cusip"]] = cusip_counts.get(row["cusip"], 0) + 1
+            agg = by_class.setdefault(row["class"] or "", {"shares": 0, "value": 0})
+            agg["shares"] += row["shares"] or 0
+            agg["value"] += row["value"] or 0
+        for share_class, agg in by_class.items():
+            if not agg["shares"]:
+                continue
+            holders.append({
+                "filer_cik":   f["filer_cik"],
+                "filer_name":  manager,
+                "shares":      agg["shares"],
+                "value_usd":   agg["value"] or None,
+                "share_class": share_class or None,
+                "period":      period or f["file_date"],
+                "source_url":  _filing_index_url(f["filer_cik"], f["accession"]),
+            })
+            period_seen = period_seen or period
+    cusip_seen = cusip or (max(cusip_counts, key=cusip_counts.get)
+                           if cusip_counts else None)
+    log.info("SEC EDGAR 13F: %d holders of %r from %d filings (%d total on EDGAR)",
+             len(holders), company_name, len(filings), total)
+    return {"cusip_seen": cusip_seen, "period": period_seen,
+            "filings_total": total, "filings_fetched": len(filings),
+            "holders": holders}
 
 
 def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,

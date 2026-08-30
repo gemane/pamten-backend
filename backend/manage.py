@@ -366,6 +366,36 @@ def _now_iso_manage() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def cmd_sec_13f(args):
+    """Ingest one issuer's institutional holders from Form 13F filings.
+
+    The inverse of sec-holdings: WHO HOLDS this company, including everyone
+    below the 5% line that 13D/G never shows. The company must already be in
+    the graph. Percentages are computed from share counts against shares
+    outstanding — 13F reports counts and dollars, never percentages — and a
+    company with no XBRL denominator (a private issuer like SpaceX) keeps the
+    counts with no percentage, which is honest.
+    """
+    from app.config import settings
+    # Manual command: flip the flags for this run, like the gleif commands do —
+    # sec-holdings requiring pre-set env flags is a known wart, not a pattern.
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_SEC_EDGAR_ENABLED = True
+    from app.scraper.runner import run_sec_13f
+    result = run_sec_13f(args.company, limit=args.limit)
+    if result["status"] != "ok":
+        print(f"No entity in the graph matches {args.company!r} — "
+              f"sec-13f enriches, it does not discover.")
+        raise SystemExit(1)
+    out = int(result.get("shares_outstanding") or 0)
+    print(f"{result['total']} holder edges for {result['company']!r} "
+          f"(period {result.get('period')}, cusip {result.get('cusip')}).")
+    print(f"Read {result['filings_fetched']} of {result['filings_total']} filings "
+          f"on EDGAR — raise --limit for more of a widely-held issuer.")
+    print("Percentages computed against shares outstanding: "
+          + (f"{out:,.0f}" if out else "UNKNOWN (no XBRL) — counts only, no percentages."))
+
+
 def cmd_sec_holdings(args):
     """Ingest the >5% stakes one SEC filer discloses in other companies.
 
@@ -910,6 +940,13 @@ def _build_parser():
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
     # filings), as opposed to a normal scrape which reads filings about a company.
+    p_13f = subparsers.add_parser('sec-13f',
+        help="Institutional holders of one company from Form 13F (the sub-5% view)")
+    p_13f.add_argument('company', help='Company name as known to the graph')
+    p_13f.add_argument('--limit', type=int, default=100,
+                       help='Max 13F filings to read (relevance-ordered; default 100)')
+    p_13f.set_defaults(func=cmd_sec_13f)
+
     p_sh = subparsers.add_parser('sec-holdings',
                                  help="Ingest the >5%% stakes a SEC filer discloses in others")
     p_sh.add_argument('cik', help='CIK of the filer (e.g. 0002100119 for Vanguard Capital Management)')
