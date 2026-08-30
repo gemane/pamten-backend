@@ -1372,7 +1372,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      share_class: str | None = None,
                      shares: int | None = None,
                      shares_outstanding: int | None = None,
-                     voting_shares: int | None = None):
+                     voting_shares: int | None = None,
+                     value_usd: float | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
@@ -1420,6 +1421,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         source_url=source_url, source_date=file_date, last_scraped_at=now,
         share_class=share_class, shares=shares,
         shares_outstanding=shares_outstanding, voting_shares=voting_shares,
+        value_usd=value_usd,
         stale=False,
     )
     create_clause = edge_create_clause(OWNS_PROPS)
@@ -1455,6 +1457,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.shares           = COALESCE($shares, r.shares),
                     r.shares_outstanding = COALESCE($shtotal, r.shares_outstanding),
                     r.voting_shares    = COALESCE($vshares, r.voting_shares),
+                    r.value_usd        = COALESCE($vusd, r.value_usd),
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
@@ -1462,6 +1465,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 surl=source_url, sdate=file_date, until=until,
                 stake=stake_percent, vote=voting_power_pct, sclass=share_class,
                 shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
+                vusd=value_usd,
             )
             return
         session.run(
@@ -1570,6 +1574,93 @@ def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> 
                           source_url=aff.get("source_url"), source_date=aff.get("source_date"))
         written += 1
     return written
+
+
+@_with_autodedup
+def run_sec_13f(company: str, limit: int = 100) -> dict:
+    """Ingest one issuer's institutional holders from Form 13F info tables.
+
+    The inverse question to `run_sec_holdings` (what a manager holds): who holds
+    this company. 13F fills the sub-5% blind spot — 13D/G only exists above the
+    threshold, so Nvidia's 0.9% of SpaceX can never appear there, but it is in
+    every quarter's 13F.
+
+    Enriches, does not discover: the company must already be in the graph (any
+    source), because the write needs a node to point at and the matching needs
+    its names. Percentages are computed, never transcribed — 13F reports counts
+    and dollars, and stake = shares / shares outstanding via `_pct_of`, with its
+    precision floor (a real but tiny position gets no percentage rather than a
+    false 0.0%). votingAuthority is deliberately NOT written: it states the
+    manager's authority over its own held shares, not a bloc's share of the
+    issuer's votes, and mapping it onto `voting_power_pct` would mark every
+    index fund as a voting bloc.
+
+    The discovered CUSIP is stamped on the company (fill-if-missing), so the
+    next run matches info-table rows exactly instead of by name.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise PermissionError("SEC EDGAR scraper is disabled. "
+                              "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
+
+    from app.routers.search import resolve_best_entity
+    from app.scraper.run_log import record_run
+    from app.scraper.sec_edgar import _cik10, _pct_of, fetch_13f_holders, fetch_shares_outstanding
+
+    entity = resolve_best_entity(company, None)
+    if not entity:
+        return {"status": "no_results", "company": company, "total": 0, "scraped": []}
+    company_id = entity["id"]
+    names = [n for n in [entity.get("name"), *(entity.get("aliases") or [])] if n]
+
+    with record_run("sec-13f", company) as run:
+        source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
+                                   SEC_EDGAR_CREDIBILITY)
+        data = fetch_13f_holders(entity.get("name") or company, known_names=names,
+                                 cusip=entity.get("cusip"), limit=limit)
+
+        # The denominator, once per run. Padded: the companyconcept endpoint
+        # 404s an unpadded CIK. A company with no XBRL (SpaceX is private)
+        # yields None and every stake stays a share count without a percentage
+        # — which is honest, and the UI shows the counts.
+        outstanding = None
+        if entity.get("sec_cik"):
+            outstanding = fetch_shares_outstanding(_cik10(entity["sec_cik"]))
+
+        if data["cusip_seen"] and not entity.get("cusip"):
+            with db.get_session() as session:
+                session.run("MATCH (e:Entity {id: $id}) "
+                            "SET e.cusip = COALESCE(e.cusip, $c)",
+                            id=company_id, c=data["cusip_seen"])
+
+        written = 0
+        for h in data["holders"]:
+            filer_id = _upsert_entity_by_name(
+                name=h["filer_name"], entity_type="company",
+                cik=h["filer_cik"], source_id=source_id)
+            if not filer_id:
+                continue
+            pct = _pct_of(h["shares"], outstanding)
+            _upsert_owns_sec(
+                owner_id=filer_id, owned_id=company_id, source_id=source_id,
+                ownership_type=(derive_ownership_type(pct) if pct is not None
+                                else "minority"),
+                file_date=h.get("period"),
+                stake_percent=pct,
+                shares=h["shares"], shares_outstanding=outstanding,
+                share_class=h.get("share_class"), value_usd=h.get("value_usd"),
+                source_url=h.get("source_url"))
+            written += 1
+
+        run["total"] = written
+        log.info("SEC 13F: %d holder edges for %r (%d/%d filings read)",
+                 written, company, data["filings_fetched"], data["filings_total"])
+        return {"status": "ok", "company": company, "entity_id": company_id,
+                "total": written, "cusip": data["cusip_seen"],
+                "period": data["period"], "shares_outstanding": outstanding,
+                "filings_fetched": data["filings_fetched"],
+                "filings_total": data["filings_total"]}
 
 
 def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None) -> dict:
@@ -1727,6 +1818,16 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 
     # Ownership filings → investor nodes + OWNS edges
+    # CUSIP from the first schedule that states one — fill-if-missing, so a
+    # hand-set or 13F-adopted value is never clobbered. This is what lets
+    # `sec-13f` match info-table rows exactly instead of by name.
+    cusip = next((f.get("issuer_cusip") for f in data.get("ownership_filings", [])
+                  if f.get("issuer_cusip")), None)
+    if cusip:
+        with db.get_session() as session:
+            session.run("MATCH (e:Entity {id: $id}) SET e.cusip = COALESCE(e.cusip, $c)",
+                        id=target_id, c=cusip)
+
     for filing in data.get("ownership_filings", []):
         investor_name = filing.get("investor_name", "").strip()
         if not investor_name:

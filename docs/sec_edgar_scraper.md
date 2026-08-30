@@ -412,6 +412,49 @@ r'percent\s+of\s+class\s+represented\s+by\s+amount\s+in\s+row\s+\d+\s+(\d{1,2}\.
 
 ---
 
+## Quarterly Holdings — Form 13F
+
+Every institutional manager over $100M files a quarterly report of what it
+holds. Since 2013 the information table is structured XML — issuer name, CUSIP,
+dollar value, share count, voting authority — so unlike the pre-2024 schedules
+there is no prose to parse at all.
+
+**Why it matters: 13D/G only exists above 5%.** Nvidia's 0.9% of SpaceX or
+PIF's 1.2% can never appear in a schedule; every one of them is in somebody's
+13F. `manage.py sec-13f <company>` asks the issuer-side question — who holds
+this company — via EDGAR full-text search (`efts.sec.gov`), which indexes the
+info-table documents themselves.
+
+The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
+
+- **CUSIP is the join key, harvested rather than licensed.** Info-table rows
+  identify issuers only by CUSIP plus a free-text name typed by each filing
+  agent ("APPLE INC" / "Apple Inc"). The CUSIP comes from the 13D/G schedules
+  we already parse (`issuerCusipNumber`) and from the first name-verified 13F
+  rows, and is stamped on the entity fill-if-missing. One company legitimately
+  has several CUSIPs (one per share class — SpaceX's filers report 84615Q103
+  beside 69608A108), so a name-matching run must not lock onto the first CUSIP
+  it sees, and CUSIP is **not** a dedup identifier.
+- **Percentages are computed, never transcribed.** 13F reports counts and
+  dollars; stake = shares ÷ shares outstanding (XBRL `companyconcept`, padded
+  CIK) through `_pct_of` with its precision floor. A private issuer with no
+  XBRL keeps honest counts and no percentage.
+- **Option rows are not holdings.** 20 of BNP's 21 real SpaceX rows carry
+  `putCall` — shares *underlying* contracts, owned by nobody. Skipped, as are
+  `PRN` (debt principal) rows.
+- **votingAuthority is deliberately not written.** It states the manager's
+  authority over its own held shares — a different fact from
+  `voting_power_pct`, which is a bloc's share of the issuer's votes. Mapping
+  one onto the other would mark every index fund as a voting bloc.
+- **Truncation is explicit.** Full-text search is relevance-ordered;
+  `--limit` (default 100) caps the filings read. For SpaceX (91 filings) that
+  is complete; for a mega-cap it is a sample, and the command prints
+  fetched-vs-total so nobody mistakes one for the other. Amendments (13F-HR/A)
+  restate the whole table, so only the newest accession per filer is read.
+- **Values are dollars as filed.** The SEC dropped report-in-thousands in
+  2023, but some filers still do it; values are stored as the source gave them
+  (source fidelity beats a guessed correction).
+
 ## Executives — Form 3 / Form 4
 
 ### What these forms are
@@ -519,9 +562,11 @@ to the Wikidata scrape.
 
 - **Only US public companies** are on EDGAR. Foreign-listed companies (Volkswagen,
   Samsung, Nestlé, Alibaba, etc.) require a different data source.
-- **SC 13G/13D covers >5% stakes only.** Smaller institutional positions
-  are not disclosed in these forms (they may appear in 13F quarterly reports,
-  which are filed by the investor, not the company, and require a separate lookup).
+- **SC 13G/13D covers >5% stakes only.** Smaller institutional positions are
+  disclosed in Form 13F instead — covered by `manage.py sec-13f`, see
+  *Quarterly Holdings* above. 13F has its own limits: quarterly with a 45-day
+  lag, institutional managers over $100M only (an insider's personal stake
+  never appears), and only securities on the SEC's 13(f) list.
 - **Amendment deduplication is conservative.** The Atom feed with `count=30`
   may not include all historic amendments; only the most recent filing per
   investor is retained.

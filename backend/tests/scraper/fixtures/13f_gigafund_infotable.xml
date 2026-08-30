@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="us-ascii"?>
+<informationTable xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.sec.gov/edgar/document/thirteenf/informationtable">
+    <infoTable>
+        <nameOfIssuer>SPACE EXPLORATION TECHNOLOGIES CORP</nameOfIssuer>
+        <titleOfClass>CLASS A COM STK</titleOfClass>
+        <cusip>84615Q103</cusip>
+        <value>29358317651</value>
+        <shrsOrPrnAmt>
+            <sshPrnamt>171826745</sshPrnamt>
+            <sshPrnamtType>SH</sshPrnamtType>
+        </shrsOrPrnAmt>
+        <investmentDiscretion>SOLE</investmentDiscretion>
+        <votingAuthority>
+            <Sole>171826745</Sole>
+            <Shared>0</Shared>
+            <None>0</None>
+        </votingAuthority>
+    </infoTable>
+    <infoTable>
+        <nameOfIssuer>ANGEL STUDIOS INC</nameOfIssuer>
+        <titleOfClass>CL A COM</titleOfClass>
+        <cusip>034948109</cusip>
+        <value>71417767</value>
+        <shrsOrPrnAmt>
+            <sshPrnamt>19459882</sshPrnamt>
+            <sshPrnamtType>SH</sshPrnamtType>
+        </shrsOrPrnAmt>
+        <investmentDiscretion>SOLE</investmentDiscretion>
+        <votingAuthority>
+            <Sole>19459882</Sole>
+            <Shared>0</Shared>
+            <None>0</None>
+        </votingAuthority>
+    </infoTable>
+</informationTable>
