@@ -185,6 +185,7 @@ class _BatchWriter:
             since=props.get("since"), until=props.get("until"),
             source_url=props.get("source_url"), source_date=props.get("source_date"),
             credibility_score=props.get("credibility_score") or 80,
+            filing_type=props.get("filing_type"),
         ))
 
     def entity(self, node_id: str, props: dict) -> None:

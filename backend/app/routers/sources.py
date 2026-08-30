@@ -74,7 +74,7 @@ _PROVENANCE_QUERIES = (
     RETURN s.id AS id, s.name AS name, s.type AS type,
            s.credibility_score AS credibility_score, s.url AS source_home_url,
            c.source_url AS source_url, c.source_date AS source_date,
-           c.last_seen_at AS last_scraped_at
+           c.last_seen_at AS last_scraped_at, c.filing_type AS filing_type
     """,
     # NOTE: the entity's OWN record provenance is a different question, answered by
     # _entity_own_source_rows from its hard identifiers — claims describe relationships,
@@ -151,6 +151,9 @@ def _dedupe_source_rows(rows: list[dict]) -> list[dict]:
             "url":               url,
             "source_date":       r.get("source_date"),
             "last_scraped_at":   r.get("last_scraped_at"),
+            # One row is one (source, link) and one link is one filing, so the
+            # kind ("13F", "13G/A", "RR") aggregates without conflict.
+            "filing_type":       r.get("filing_type"),
         }
         cur = best.get(key)
         if cur is None or (row["source_date"] or "", row["last_scraped_at"] or "") \
@@ -176,7 +179,7 @@ def get_sources_for_entity(entity_id: str):
     # Read columns explicitly with rec.get(): the ArcadeDB result-record type
     # supports __getitem__/get but not dict(rec) on a whole multi-column row.
     _COLS = ("id", "name", "type", "credibility_score", "source_home_url",
-             "source_url", "source_date", "last_scraped_at")
+             "source_url", "source_date", "last_scraped_at", "filing_type")
     rows: list[dict] = []
     with db.get_session() as session:
         for query in _PROVENANCE_QUERIES:            # owners + roles (edge provenance)

@@ -51,6 +51,11 @@ OWNS_PROPS: tuple = (
     "ultimate_until",
     "value_usd",
     "file_date",
+    # Which KIND of record asserted this — "13G/A", "13F", "RR", "PSC". The
+    # source names the register; this names the rulebook the fact lives under,
+    # which is what a reader needs to judge it (a 13G is a >5% event filing,
+    # a 13F a quarterly snapshot). Unset where there is no filing (Wikidata).
+    "filing_type",
 )
 
 ROLE_PROPS: tuple = (

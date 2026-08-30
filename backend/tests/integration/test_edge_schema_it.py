@@ -33,6 +33,7 @@ _SAMPLE = {
     "stale": False, "shortcut": False, "also_ultimate": True,
     "ultimate_since": "2017-01-01", "ultimate_until": None,
     "value_usd": 12345678.9, "file_date": "2025-02-07",
+    "filing_type": "13G/A",
     "role": "CEO", "relation": "group_member",
 }
 

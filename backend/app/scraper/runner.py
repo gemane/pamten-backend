@@ -1373,7 +1373,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      shares: int | None = None,
                      shares_outstanding: int | None = None,
                      voting_shares: int | None = None,
-                     value_usd: float | None = None):
+                     value_usd: float | None = None,
+                     filing_type: str | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
@@ -1408,7 +1409,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                  share_class=share_class, shares=shares,
                  shares_outstanding=shares_outstanding, voting_shares=voting_shares,
                  since=file_date, until=until, source_url=source_url,
-                 source_date=file_date, credibility_score=credibility_score)
+                 source_date=file_date, credibility_score=credibility_score,
+                 filing_type=filing_type)
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = datetime.now(timezone.utc).isoformat()
     # The full schema bag: every OWNS property, None where this filing did not
@@ -1421,7 +1423,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         source_url=source_url, source_date=file_date, last_scraped_at=now,
         share_class=share_class, shares=shares,
         shares_outstanding=shares_outstanding, voting_shares=voting_shares,
-        value_usd=value_usd,
+        value_usd=value_usd, filing_type=filing_type,
         stale=False,
     )
     create_clause = edge_create_clause(OWNS_PROPS)
@@ -1458,6 +1460,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.shares_outstanding = COALESCE($shtotal, r.shares_outstanding),
                     r.voting_shares    = COALESCE($vshares, r.voting_shares),
                     r.value_usd        = COALESCE($vusd, r.value_usd),
+                    r.filing_type      = COALESCE($ftype, r.filing_type),
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
@@ -1465,7 +1468,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 surl=source_url, sdate=file_date, until=until,
                 stake=stake_percent, vote=voting_power_pct, sclass=share_class,
                 shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
-                vusd=value_usd,
+                vusd=value_usd, ftype=filing_type,
             )
             return
         session.run(
@@ -1651,6 +1654,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135) -> dict:
                 stake_percent=pct,
                 shares=h["shares"], shares_outstanding=outstanding,
                 share_class=h.get("share_class"), value_usd=h.get("value_usd"),
+                filing_type="13F",
                 source_url=h.get("source_url"))
             written += 1
 
@@ -1713,6 +1717,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             ownership_type="minority", file_date=h.get("file_date"),
             stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
             voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
+            filing_type=h.get("filing_type"),
         )
         written += 1
         if h.get("until"):
@@ -1896,6 +1901,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 # is the one place it is not a number repeated by nine parties.
                 voting_shares=filing.get("voting_shares"),
                 share_class=filing.get("share_class"),
+                filing_type=filing.get("filing_type"),
                 source_url=filing.get("source_url"),
             )
             # Retire the edge this filing used to produce. Before groups existed
@@ -1923,6 +1929,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             shares_outstanding=filing.get("shares_outstanding"),
             voting_shares=filing.get("voting_shares"),
             source_url=filing.get("source_url"),
+            filing_type=filing.get("filing_type"),
             # A newer filing reported no position — the holding is history.
             # The holdings path below has always done this; this one did not.
             until=filing.get("until"),
@@ -1996,7 +2003,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 stake_percent=stake,
                 # Form 4 states the holding exactly; until now it decided
                 # whether to write an edge and was then thrown away.
-                shares=shares,
+                shares=shares, filing_type="Form 4",
                 source_url=exec_rec.get("source_url"),
                 owner_label="Person",
             )

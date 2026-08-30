@@ -105,7 +105,8 @@ def test_a_person_merge_carries_every_owns_property(it_db):
               "shares": 159121937, "shares_outstanding": 1965328900,
               "voting_shares": 1020598157, "stale": False, "shortcut": False,
               "also_ultimate": True, "ultimate_since": "2019-05-05",
-              "ultimate_until": None, "value_usd": 1234.5, "file_date": "2026-01-02"}
+              "ultimate_until": None, "value_usd": 1234.5, "file_date": "2026-01-02",
+              "filing_type": "13G/A"}
     assert set(sample) == set(OWNS_PROPS), "keep the fixture in step with the schema"
 
     it_db.run_command("CREATE (:Person {id:'keep', full_name:'Warren Buffett', alias:[]})")
