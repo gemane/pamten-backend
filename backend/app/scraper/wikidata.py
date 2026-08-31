@@ -326,9 +326,20 @@ def _sparql(qid: str) -> list:
       # (Microsoft included), so Wikidata's P1278 is the bridge that exists.
       OPTIONAL {{ ?item wdt:P1278 ?lei }}
       OPTIONAL {{ ?item wdt:P5531 ?cik }}
-      # P856 = official website. Functionally single-valued, so it does not
-      # multiply core rows the way P1128's yearly statements would.
-      OPTIONAL {{ ?item wdt:P856 ?website }}
+      # P856 = official website. NOT single-valued in practice — Apple carries
+      # 100+ regional storefronts at equal rank, which multiplied core rows
+      # (the P1128 hazard) and made the picked URL arbitrary (apple.com/za).
+      # The uncorrelated subselect returns AT MOST ONE row: preferred rank
+      # first, then the shortest URL, which is the root domain in every
+      # multi-storefront case seen.
+      OPTIONAL {{
+        {{ SELECT ?website WHERE {{
+            wd:{qid} p:P856 ?wsStmt .
+            ?wsStmt ps:P856 ?website ; wikibase:rank ?wsRank .
+            FILTER(?wsRank != wikibase:DeprecatedRank)
+            BIND(IF(?wsRank = wikibase:PreferredRank, 0, 1) AS ?wsOrd)
+          }} ORDER BY ASC(?wsOrd) ASC(STRLEN(STR(?website))) LIMIT 1 }}
+      }}
       OPTIONAL {{ ?item wdt:P17 ?country . ?country wdt:P297 ?countryCode }}
       OPTIONAL {{ ?item wdt:P625 ?itemCoord }}
       OPTIONAL {{
@@ -897,8 +908,14 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             result["lei"] = normalize_lei(_v(row, "lei"))
         if result["sec_cik"] is None:
             result["sec_cik"] = normalize_cik(_v(row, "cik"))
-        if result["website"] is None:
-            result["website"] = normalize_url(_v(row, "website"))
+        # Shortest valid URL wins, not first-seen: the subselect in the core
+        # query already returns one row, but rows from a cache or an older
+        # query shape may still carry the full storefront list — and among
+        # https://apple.com/ and 100 regional variants, the root domain is
+        # always the shortest.
+        if candidate := normalize_url(_v(row, "website")):
+            if result["website"] is None or len(candidate) < len(result["website"]):
+                result["website"] = candidate
 
         # Employees — from the dedicated employees query (its own rows, so read
         # independently of the name block above). Latest value + its as-of year.
