@@ -65,7 +65,8 @@ def test_the_country_is_case_insensitive_end_to_end(two_alphabets):
     assert _ensure("Alphabet", country="de")["entity_id"] == "ent-de"
 
 
-def test_the_country_reaches_the_sources_too(it_db, monkeypatch):
+def test_the_country_reaches_the_sources_too(it_db, monkeypatch, fake_sources):
+    fake_sources("faux", kind="instant")
     """The other half: what the sources are told.
 
     A fake instant source records the country it was handed. The DB resolve and the

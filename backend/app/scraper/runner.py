@@ -2007,15 +2007,11 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
 # ── Scraper registry ──────────────────────────────────────────────────────────
 # Register the built-in scrapers so run_scrape_all (and, later, the router) can
 # iterate them. A new scraper registers its own ScraperSpec — no dispatch edits.
-register(ScraperSpec(
-    "wikidata", lambda q, d, c=None: run_scrape(q, d, c),
-    lambda: settings.SCRAPER_WIKIDATA_ENABLED and get_source_enabled("wikidata"),
-    kind="instant", depth_aware=True))
-register(ScraperSpec(
-    "sec_edgar", lambda q, d, c=None: run_scrape_sec_edgar(q, c),
-    lambda: settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar"),
-    kind="instant", depth_aware=False))
-register(ScraperSpec(
-    "open_corporates", lambda q, d, c=None: run_scrape_open_corporates(q, c),
-    lambda: settings.SCRAPER_OPENCORPORATES_ENABLED and get_source_enabled("open_corporates"),
-    kind="instant", depth_aware=False))
+# One declaration per source. enabled() derives from the settings flag + the
+# per-source DB toggle; label/credibility/url come from the KNOWN_SOURCES entry
+# via spec.meta; register() validates all of it loudly at import time.
+register(ScraperSpec("wikidata", lambda q, d, c=None: run_scrape(q, d, c),
+                     depth_aware=True))
+register(ScraperSpec("sec_edgar", lambda q, d, c=None: run_scrape_sec_edgar(q, c)))
+register(ScraperSpec("open_corporates", lambda q, d, c=None: run_scrape_open_corporates(q, c),
+                     settings_flag="SCRAPER_OPENCORPORATES_ENABLED"))

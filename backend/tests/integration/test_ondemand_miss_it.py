@@ -18,7 +18,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def scraping(it_db, monkeypatch):
+def scraping(it_db, monkeypatch, fake_sources):
     """A registry with one source that finds nothing, and the DB pointed at the test
     database. Returns the call log."""
     from app.config import settings
@@ -28,6 +28,7 @@ def scraping(it_db, monkeypatch):
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)
     monkeypatch.setattr(settings, "SCRAPER_ONDEMAND_COOLDOWN_HOURS", 24)
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+    fake_sources("faux")
 
     calls: list = []
     register(ScraperSpec("faux", lambda q, d, c=None: (calls.append((q, c)),
@@ -105,7 +106,8 @@ def test_a_cooldown_of_zero_turns_the_memory_off(scraping, monkeypatch):
     assert len(scraping) == 2
 
 
-def test_finding_something_cancels_the_memory(it_db, monkeypatch):
+def test_finding_something_cancels_the_memory(it_db, monkeypatch, fake_sources):
+    fake_sources("faux", kind="instant")
     """A miss is not a verdict on the company, only on that moment. Once a source
     does find it, the next search must not be turned away by a stale miss."""
     from app.config import settings

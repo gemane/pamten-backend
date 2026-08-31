@@ -1421,7 +1421,8 @@ class TestANegligibleHoldingIsNotZero:
         """Three sites divided shares by shares-outstanding, each rounding to 4
         decimals on its own — the sibling-path shape this codebase keeps paying
         for. They share the helper now, so the floor rule cannot drift apart."""
-        import inspect, re
+        import inspect
+        import re
         from app.scraper import sec_edgar
         src = inspect.getsource(sec_edgar)
         helper = inspect.getsource(sec_edgar._pct_of)

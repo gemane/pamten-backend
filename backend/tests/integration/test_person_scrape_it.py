@@ -152,11 +152,13 @@ class TestWhenItIsNotAPerson:
 class TestThroughEnsure:
     """`/scraper/ensure` has to route a person question to the person path."""
 
-    def test_a_name_with_no_company_reaches_the_person_scrape(self, wikidata, monkeypatch):
+    def test_a_name_with_no_company_reaches_the_person_scrape(self, wikidata, monkeypatch,
+                                                               fake_sources):
         from app.scraper import ondemand
         from app.scraper.scraper_registry import ScraperSpec, register
 
         monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        fake_sources("faux")
         register(ScraperSpec("faux", lambda q, d, c=None: {"status": "no_results", "total": 0},
                              lambda: True, kind="instant"))
 
@@ -206,7 +208,8 @@ class TestWhenTheNameIsNotTheKind:
                             lambda qid, limit=60: [LINKS[0]] if qid == "Q19837" else [])
         return wikidata
 
-    def test_the_company_path_refuses_the_film(self, ambiguous):
+    def test_the_company_path_refuses_the_film(self, ambiguous, fake_sources):
+        fake_sources("wikidata", kind="instant")
         from app.database import db
 
         out = ambiguous.run_scrape("Steve Jobs", depth=0)
