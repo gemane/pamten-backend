@@ -45,8 +45,12 @@ def _owns_property_keys(path: str) -> dict[str, set]:
 #: Editing this dict is deliberate friction: a writer gaining or losing a
 #: property must be acknowledged here, in review, rather than drifting.
 EXPECTED: dict[str, list] = {
-    "app/scraper/runner.py": [
-        {"GENERATED"},        # _upsert_owns (wikidata)
+    # The module split moved both OWNS writers out of runner: the shared one to
+    # graph_writer, the SEC one to sec_writer. Same two sites, new addresses.
+    "app/scraper/graph_writer.py": [
+        {"GENERATED"},        # _upsert_owns (the shared writer)
+    ],
+    "app/scraper/sec_writer.py": [
         {"GENERATED"},        # _upsert_owns_sec
     ],
     "app/scraper/maintenance.py": [
