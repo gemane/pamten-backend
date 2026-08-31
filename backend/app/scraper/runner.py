@@ -207,6 +207,7 @@ def _upsert_entity(
     credibility_score: int = 80,
     lei: str | None = None,                  # P1278 — bridge to a GLEIF node
     sec_cik: str | None = None,              # P5531 — bridge to a SEC EDGAR node
+    website: str | None = None,              # P856 — official site (display only)
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
@@ -265,6 +266,7 @@ def _upsert_entity(
                     e.hq_lng          = COALESCE(e.hq_lng, $hq_lng),
                     e.hq_city         = COALESCE(e.hq_city, $hq_city),
                     e.hq_country      = COALESCE(e.hq_country, $hq_country),
+                    e.website         = COALESCE(e.website, $website),
                     e.name            = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
                     e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END,
                     e.source_id       = COALESCE(e.source_id, $source_id)
@@ -286,6 +288,7 @@ def _upsert_entity(
                 aliases=aliases or [],
                 countries=countries or [], hq_locations=hq_locations or [],
                 hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
+                website=website,
             )
             return _record_touched_entity(entity_id)
 
@@ -304,7 +307,8 @@ def _upsert_entity(
                 is_nominee: $is_nominee,
                 aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
-                hq_city: $hq_city, hq_country: $hq_country
+                hq_city: $hq_city, hq_country: $hq_country,
+                website: $website
             })
             """,
             id=entity_id,
@@ -325,6 +329,7 @@ def _upsert_entity(
             aliases=aliases or [],
             countries=countries or [], hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
+            website=website,
         )
         return _record_touched_entity(entity_id)
 
@@ -460,6 +465,7 @@ def _scrape_node(
         description=data.get("description"),
         wikidata_id=qid,
         employees=data.get("employees"),
+        website=data.get("website"),
         employees_as_of=data.get("employees_as_of"),
         hq_lat=data.get("hq_lat"),
         hq_lng=data.get("hq_lng"),
@@ -946,7 +952,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
 
     # Import here to avoid circular imports and to keep the cold-start fast
     from app.scraper.sec_edgar import (fetch_filer_country, fetch_filer_headquarters,
-                                       scrape_company)
+                                       fetch_filer_website, scrape_company)
 
     log.info("SEC EDGAR runner: starting scrape for %r", company_name)
     data = scrape_company(company_name)
@@ -983,6 +989,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         # Where it is RUN, from the same cached document — kept apart from
         # `country`, which is where it is registered.
         headquarters=fetch_filer_headquarters(data["cik"]) if data.get("cik") else None,
+        website=fetch_filer_website(data["cik"]) if data.get("cik") else None,
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
 

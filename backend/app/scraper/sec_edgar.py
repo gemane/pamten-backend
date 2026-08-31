@@ -294,6 +294,29 @@ def fetch_filer_headquarters(cik: str) -> dict | None:
         return None
 
 
+def sec_website(submissions: dict) -> str | None:
+    """The company's website from the submissions document, or None.
+
+    Two fields exist and filers populate either: `website` (the corporate
+    site) and `investorWebsite` (the IR site, often the same host). The
+    corporate one wins; both pass through the same http(s)-only normalisation
+    as Wikidata's P856 — this string becomes an <a href> in the panel.
+    """
+    from app.scraper.wikidata import normalize_url
+
+    return (normalize_url(submissions.get("website"))
+            or normalize_url(submissions.get("investorWebsite")))
+
+
+def fetch_filer_website(cik: str) -> str | None:
+    """The filer's website from EDGAR, or None if it cannot be determined."""
+    try:
+        return sec_website(_submissions(cik))
+    except Exception as exc:  # noqa: BLE001 - a website is a nicety, not worth aborting a scrape
+        log.warning("SEC EDGAR: website lookup failed for CIK=%s: %s", cik, exc)
+        return None
+
+
 def fetch_filer_country(cik: str) -> str | None:
     """The filer's country from EDGAR, or None if it cannot be determined."""
     try:

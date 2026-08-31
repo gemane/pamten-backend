@@ -526,6 +526,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             lei: str | None = None,
                             country: str | None = None,
                             headquarters: dict | None = None,
+                            website: str | None = None,
                             credibility_score: int = 98) -> str:
     """Find or create an Entity node matched by CIK, exact name, or normalized name.
 
@@ -602,10 +603,12 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                         e.hq_country  = COALESCE(e.hq_country, $hq_country),
                         e.hq_street   = COALESCE(e.hq_street, $hq_street),
                         e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode),
+                        e.website     = COALESCE(e.website, $website),
                         e.aliases     = $aliases,
                         e.search_text = $search_text
                     """,
                     id=entity_id, cik=cik, lei=lei, source_id=source_id, country=country,
+                    website=website,
                     **_hq_params(headquarters),
                     aliases=merged,
                     search_text=_search_text(cur_name, rec["descr"] if rec else None, merged),
@@ -622,9 +625,11 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                         e.hq_city    = COALESCE(e.hq_city, $hq_city),
                         e.hq_country = COALESCE(e.hq_country, $hq_country),
                         e.hq_street   = COALESCE(e.hq_street, $hq_street),
-                        e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode)
+                        e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode),
+                        e.website     = COALESCE(e.website, $website)
                     """,
                     id=entity_id, cik=cik, lei=lei, source_id=source_id, country=country,
+                    website=website,
                     **_hq_params(headquarters),
                 )
             return _record_touched_entity(entity_id)
@@ -641,10 +646,11 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 country: $country, founded: null, revenue: null,
                 description: null, wikidata_id: null,
                 hq_address: $hq_address, hq_city: $hq_city, hq_country: $hq_country,
-                hq_street: $hq_street, hq_postcode: $hq_postcode
+                hq_street: $hq_street, hq_postcode: $hq_postcode,
+                website: $website
             })
             """,
-            id=entity_id, name=name, name_norm=name_norm,
+            id=entity_id, name=name, name_norm=name_norm, website=website,
             cred=credibility_score, type=entity_type, cik=cik, lei=lei, source_id=source_id,
             country=country, **_hq_params(headquarters),
             search_text=_search_text(name, None, aliases), aliases=aliases,

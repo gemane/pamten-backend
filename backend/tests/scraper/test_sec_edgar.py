@@ -1430,3 +1430,28 @@ class TestANegligibleHoldingIsNotZero:
         assert not re.search(r"round\([^)]*/[^)]*\*\s*100,\s*4\)", elsewhere), \
             "a stake is rounded outside _pct_of — the floor rule will drift"
         assert elsewhere.count("_pct_of(") == 3      # the three call sites
+
+
+class TestSecWebsite:
+    def test_the_corporate_site_wins_over_investor_relations(self):
+        from app.scraper.sec_edgar import sec_website
+        assert sec_website({"website": "https://www.tesla.com",
+                            "investorWebsite": "https://ir.tesla.com"}) == "https://www.tesla.com"
+
+    def test_investor_site_is_the_fallback(self):
+        from app.scraper.sec_edgar import sec_website
+        assert sec_website({"website": "", "investorWebsite": "https://ir.tesla.com"}) \
+            == "https://ir.tesla.com"
+
+    def test_junk_is_rejected_like_wikidatas(self):
+        from app.scraper.sec_edgar import sec_website
+        assert sec_website({"website": "tesla.com"}) is None    # no scheme guessing
+        assert sec_website({}) is None
+
+    def test_the_fetch_wrapper_swallows_errors(self):
+        from unittest.mock import patch
+        import httpx
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_submissions",
+                          side_effect=httpx.ConnectError("down")):
+            assert sec_edgar.fetch_filer_website("0001318605") is None
