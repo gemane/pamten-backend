@@ -857,7 +857,8 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
                               "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
 
     from app.scraper.sec_edgar import (fetch_filer_country, fetch_filer_headquarters,
-                                       fetch_filer_holdings, fetch_filer_name)
+                                       fetch_filer_holdings, fetch_filer_name,
+                                       fetch_filer_website)
 
     filer_name = fetch_filer_name(cik)
     if not filer_name:
@@ -868,7 +869,8 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
     filer_id = _upsert_entity_by_name(name=filer_name, entity_type="company",
                                       cik=cik, source_id=source_id,
                                       country=fetch_filer_country(cik),
-                                      headquarters=fetch_filer_headquarters(cik))
+                                      headquarters=fetch_filer_headquarters(cik),
+                                      website=fetch_filer_website(cik))
 
     holdings = fetch_filer_holdings(cik, limit=limit)
     written = closed = 0
@@ -880,7 +882,8 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             name=subject_name, entity_type="company", cik=h.get("subject_cik"),
             source_id=source_id,
             country=fetch_filer_country(h["subject_cik"]) if h.get("subject_cik") else None,
-            headquarters=fetch_filer_headquarters(h["subject_cik"]) if h.get("subject_cik") else None)
+            headquarters=fetch_filer_headquarters(h["subject_cik"]) if h.get("subject_cik") else None,
+            website=fetch_filer_website(h["subject_cik"]) if h.get("subject_cik") else None)
         _upsert_owns_sec(
             owner_id=filer_id, owned_id=subject_id, source_id=source_id,
             ownership_type="minority", file_date=h.get("file_date"),

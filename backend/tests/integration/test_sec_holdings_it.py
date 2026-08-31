@@ -243,3 +243,27 @@ def test_a_live_issuer_side_holding_stays_current(it_db):
     _write_issuer_side(it_db, [_filing()])
     edge = _edge_with_stake(it_db, 7.48)
     assert edge is not None and edge.get("until") is None
+
+
+def _websites(it_db) -> dict:
+    return {r["name"]: r.get("website")
+            for r in it_db.run_sql("SELECT name, website FROM Entity")}
+
+
+def test_the_website_reaches_the_filer_and_its_subjects(it_db):
+    # The submissions document is already fetched (and cached) for the name,
+    # country and headquarters — the website rides along for free, on the
+    # filer AND on every subject with a CIK. First writer wins thereafter.
+    with patch("app.scraper.sec_edgar.fetch_filer_website",
+               side_effect=lambda c: f"https://cik-{c.lstrip('0')}.example.com/"):
+        _run(it_db)
+    sites = _websites(it_db)
+    assert sites["VANGUARD CAPITAL MANAGEMENT LLC"] == "https://cik-2100119.example.com/"
+    assert sites["Hologic Inc"] == "https://cik-859737.example.com/"
+    assert sites["EOG Resources Inc"] == "https://cik-821189.example.com/"
+
+    # A later run with a different answer must not clobber what is stored.
+    with patch("app.scraper.sec_edgar.fetch_filer_website",
+               return_value="https://usurper.example.com/"):
+        _run(it_db)
+    assert _websites(it_db)["Hologic Inc"] == "https://cik-859737.example.com/"
