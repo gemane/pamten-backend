@@ -685,3 +685,40 @@ class TestIdentifierAggregation:
         src = inspect.getsource(_sparql)
         assert "wdt:P1278" in src, "LEI property missing from the core query"
         assert "wdt:P5531" in src, "CIK property missing from the core query"
+
+
+class TestNormalizeUrl:
+    """This string becomes an <a href> in the panel — crowd-edited values get
+    no trust, and rejection beats repair (a guessed scheme asserts something
+    the source did not say)."""
+
+    def test_plain_http_and_https_pass(self):
+        from app.scraper.wikidata import normalize_url
+        assert normalize_url("https://www.apple.com/") == "https://www.apple.com/"
+        assert normalize_url("http://example.test") == "http://example.test"
+
+    def test_whitespace_is_stripped_but_inner_spaces_reject(self):
+        from app.scraper.wikidata import normalize_url
+        assert normalize_url("  https://a.test  ") == "https://a.test"
+        assert normalize_url("https://a b.test") is None
+
+    def test_everything_else_is_rejected_not_repaired(self):
+        from app.scraper.wikidata import normalize_url
+        assert normalize_url("javascript:alert(1)") is None
+        assert normalize_url("apple.com") is None            # no scheme guessing
+        assert normalize_url("ftp://files.test") is None
+        assert normalize_url("") is None
+        assert normalize_url(None) is None
+
+
+class TestWebsiteAggregation:
+    def test_p856_flows_through_normalised(self):
+        row = {**APPLE_ROW, "website": {"value": "https://www.apple.com/"}}
+        assert _aggregate("Q1", [row])["website"] == "https://www.apple.com/"
+
+    def test_a_junk_p856_yields_none_not_a_link(self):
+        row = {**APPLE_ROW, "website": {"value": "javascript:alert(1)"}}
+        assert _aggregate("Q1", [row])["website"] is None
+
+    def test_absent_p856_is_none(self):
+        assert _aggregate("Q1", [APPLE_ROW])["website"] is None

@@ -86,3 +86,46 @@ def test_sec_will_not_hijack_a_node_holding_another_filers_cik(it_db):
         "CREATE (e:Entity {id:'ent-other', name:'Apple', name_normalized:'apple', "
         "type:'company', sec_cik:'9999999999'})")
     assert _upsert_entity_by_name("Apple Computer", cik="0000320193") != "ent-other"
+
+
+def test_the_website_persists_and_the_first_writer_wins(it_db):
+    """website is fill-if-missing across sources — a site rarely changes, and a
+    register value must not be clobbered by a later crowd-edited one."""
+    from app.scraper.runner import _upsert_entity
+
+    eid = _upsert_entity("Site Co", "company", "US", None, None, None, "Q77",
+                         website="https://site.test")
+    row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.website AS w",
+                            {"id": eid})[0]
+    assert row["w"] == "https://site.test"
+
+    _upsert_entity("Site Co", "company", "US", None, None, None, "Q77",
+                   website="https://other.test")
+    row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.website AS w",
+                            {"id": eid})[0]
+    assert row["w"] == "https://site.test"
+
+    # …and the profile payload carries it with no serializer changes.
+    from app.routers.search import get_full_profile
+    assert get_full_profile(eid)["entity"]["website"] == "https://site.test"
+
+
+def test_the_by_name_writer_fills_the_website_on_all_paths(it_db):
+    from app.scraper.graph_writer import _upsert_entity_by_name
+
+    # CREATE branch
+    eid = _upsert_entity_by_name("Fresh Filer Inc", cik="0009999901",
+                                 website="https://fresh.test")
+    w = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.website AS w",
+                          {"id": eid})[0]["w"]
+    assert w == "https://fresh.test"
+
+    # UPDATE branch: fill a gap on an existing node, never clobber
+    it_db.run_command("CREATE (:Entity {id:'bare', name:'Bare Co', "
+                      "name_normalized:'bare co', sec_cik:'0009999902'})")
+    _upsert_entity_by_name("Bare Co", cik="0009999902", website="https://bare.test")
+    w = it_db.run_command("MATCH (e:Entity {id:'bare'}) RETURN e.website AS w")[0]["w"]
+    assert w == "https://bare.test"
+    _upsert_entity_by_name("Bare Co", cik="0009999902", website="https://usurper.test")
+    w = it_db.run_command("MATCH (e:Entity {id:'bare'}) RETURN e.website AS w")[0]["w"]
+    assert w == "https://bare.test"

@@ -313,7 +313,7 @@ def _sparql(qid: str) -> list:
     core = f"""
     SELECT ?itemLabel ?itemDescription ?altLabel ?instance ?countryCode
            ?founded ?revenue ?itemCoord ?hqLabel ?hqCoord ?hqCountryCode
-           ?lei ?cik
+           ?lei ?cik ?website
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item skos:altLabel ?altLabel . FILTER(LANG(?altLabel) = "en") }}
@@ -326,6 +326,9 @@ def _sparql(qid: str) -> list:
       # (Microsoft included), so Wikidata's P1278 is the bridge that exists.
       OPTIONAL {{ ?item wdt:P1278 ?lei }}
       OPTIONAL {{ ?item wdt:P5531 ?cik }}
+      # P856 = official website. Functionally single-valued, so it does not
+      # multiply core rows the way P1128's yearly statements would.
+      OPTIONAL {{ ?item wdt:P856 ?website }}
       OPTIONAL {{ ?item wdt:P17 ?country . ?country wdt:P297 ?countryCode }}
       OPTIONAL {{ ?item wdt:P625 ?itemCoord }}
       OPTIONAL {{
@@ -803,6 +806,23 @@ def normalize_lei(raw: str | None) -> str | None:
     return lei if len(lei) == 20 and lei.isalnum() else None
 
 
+def normalize_url(raw: str | None) -> str | None:
+    """A displayable http(s) URL, or None — crowd-edited values get no trust.
+
+    Same reasoning as the id normalisers above: a wrong value is worse than
+    none. Here the failure mode is sharper still — this string becomes an <a
+    href> in the panel, so anything that is not plainly http/https (a
+    javascript: URI, a bare host, stray markup) is rejected rather than
+    repaired. Guessing a scheme would assert something the source did not say.
+    """
+    if not raw:
+        return None
+    url = raw.strip()
+    if url.lower().startswith(("http://", "https://")) and " " not in url:
+        return url
+    return None
+
+
 def normalize_cik(raw: str | None) -> str | None:
     """A CIK zero-padded to 10 digits, matching how SEC EDGAR reports it.
 
@@ -832,6 +852,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "revenue":     None,
         "lei":         None,   # P1278 — bridges to a GLEIF node's lei_id
         "sec_cik":     None,   # P5531 — bridges to a SEC EDGAR node's sec_cik
+        "website":     None,   # P856 — the company's official site
         "employees":   None,   # latest P1128 value
         "employees_as_of": None,  # year of that value (P585 qualifier)
         "subsidiaries": {},
@@ -876,6 +897,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             result["lei"] = normalize_lei(_v(row, "lei"))
         if result["sec_cik"] is None:
             result["sec_cik"] = normalize_cik(_v(row, "cik"))
+        if result["website"] is None:
+            result["website"] = normalize_url(_v(row, "website"))
 
         # Employees — from the dedicated employees query (its own rows, so read
         # independently of the name block above). Latest value + its as-of year.
