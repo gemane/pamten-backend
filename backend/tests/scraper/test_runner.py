@@ -802,7 +802,7 @@ class TestEntitySourceStamping:
     def test_by_name_stamps_source_id_on_create(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.runner.resolve_entity_id", return_value=None):
+             patch("app.scraper.graph_writer.resolve_entity_id", return_value=None):
             _upsert_entity_by_name(name="Vanguard Group Inc", cik="0000102909",
                                    source_id="SEC-SRC")
         create = self._create_call(session)
@@ -813,7 +813,7 @@ class TestEntitySourceStamping:
     def test_by_name_fills_missing_source_on_update(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.runner.resolve_entity_id", return_value="eid-2"):
+             patch("app.scraper.graph_writer.resolve_entity_id", return_value="eid-2"):
             _upsert_entity_by_name(name="Vanguard Group Inc", cik="0000102909",
                                    source_id="SEC-SRC")
         updates = self._update_calls(session)
@@ -886,7 +886,7 @@ class TestFormerNamesAliases:
     def test_create_sets_aliases_and_search_text(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.runner.resolve_entity_id", return_value=None):
+             patch("app.scraper.graph_writer.resolve_entity_id", return_value=None):
             _upsert_entity_by_name("Meta Platforms, Inc.", cik="1326801",
                                    source_id="sec", former_names=["Facebook Inc"])
         create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
@@ -899,7 +899,7 @@ class TestFormerNamesAliases:
             {"name": "Meta Platforms, Inc.", "aliases": ["Facebook Inc"], "descr": None},
         ])
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.runner.resolve_entity_id", return_value="eid-1"):
+             patch("app.scraper.graph_writer.resolve_entity_id", return_value="eid-1"):
             _upsert_entity_by_name("Meta Platforms, Inc.", cik="1326801", source_id="sec",
                                    former_names=["Facebook Inc", "TheFacebook, Inc."])
         setcall = next(c for c in session.run.call_args_list if "aliases" in c.kwargs)
@@ -908,7 +908,7 @@ class TestFormerNamesAliases:
     def test_no_former_names_leaves_aliases_untouched(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.runner.resolve_entity_id", return_value="eid-1"):
+             patch("app.scraper.graph_writer.resolve_entity_id", return_value="eid-1"):
             _upsert_entity_by_name("Acme Corp", cik="999", source_id="sec")
         assert not any("aliases" in c.kwargs for c in session.run.call_args_list)
 
