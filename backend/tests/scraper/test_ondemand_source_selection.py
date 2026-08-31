@@ -29,6 +29,13 @@ def _setup(monkeypatch, entity, *, enable_oc=False, resolved=None):
     # recorded", which is the state every test here assumes.
     monkeypatch.setattr("app.db.arcadedb.run_sql", lambda *a, **k: [])
 
+    # Registration now demands a catalogue entry per source; the fakes reuse
+    # real names where they exist and get a throwaway entry where they don't.
+    from app.scraper import scraper_registry
+    monkeypatch.setitem(scraper_registry.KNOWN_SOURCES, "gleif",
+                        {"kind": "bulk", "label": "Gleif", "url": "https://example.test",
+                         "credibility": 50, "quality": "community", "description": "test fake"})
+
     def mk(name, kind, depth_aware, enabled=True):
         def run(q, d, c=None):
             calls.append((name, d, c))

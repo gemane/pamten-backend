@@ -104,6 +104,8 @@ def test_scraper_status_includes_wikidata_enabled(client):
 def test_scraper_registry_lists_builtins(client, monkeypatch):
     # the built-ins' enabled() consults the per-source toggle (DB) — stub it here
     monkeypatch.setattr("app.scraper.runner.get_source_enabled", lambda name: True)
+    # the registry's derived enabled() reads its own binding
+    monkeypatch.setattr("app.scraper.scraper_registry.get_source_enabled", lambda name: True)
     r = client.get("/scraper/registry")
     assert r.status_code == 200
     assert [s["name"] for s in r.json()["scrapers"]] == ["wikidata", "sec_edgar", "open_corporates"]
@@ -111,6 +113,8 @@ def test_scraper_registry_lists_builtins(client, monkeypatch):
 
 def test_scraper_source_status_known_and_unknown(client, monkeypatch):
     monkeypatch.setattr("app.scraper.runner.get_source_enabled", lambda name: True)
+    # the registry's derived enabled() reads its own binding
+    monkeypatch.setattr("app.scraper.scraper_registry.get_source_enabled", lambda name: True)
     assert client.get("/scraper/source/wikidata/status").status_code == 200
     assert client.get("/scraper/source/nope/status").status_code == 404   # unknown → 404 before any DB check
 

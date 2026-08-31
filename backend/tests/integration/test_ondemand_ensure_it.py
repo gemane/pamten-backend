@@ -29,7 +29,10 @@ def _instant_source(calls):
     return _with_autodedup(_run), eid
 
 
-def test_ensure_freshness_state_machine(it_db, monkeypatch):
+def test_ensure_freshness_state_machine(it_db, monkeypatch, fake_sources):
+    fake_sources("blind", kind="instant")
+    fake_sources("bulkz", kind="bulk")
+    fake_sources("faux", kind="instant")
     from app.config import settings
     from app.db.arcadedb import run_sql
     from app.scraper import ondemand

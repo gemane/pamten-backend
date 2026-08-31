@@ -291,3 +291,22 @@ def _mock_rate_limit(monkeypatch):
     monkeypatch.setattr(_auth_router, "check_rate_limit", _check)
     monkeypatch.setattr(_auth_router, "record_attempt",   _record)
     monkeypatch.setattr(_auth_router, "clear_attempts",   _clear)
+
+# Registration now demands a KNOWN_SOURCES catalogue entry (the drift-killer:
+# a source without one has no label/credibility for the writers to stamp).
+# Fake specs in tests get throwaway entries via this helper.
+
+
+@pytest.fixture
+def fake_sources(monkeypatch):
+    from app.scraper import scraper_registry
+
+    def add(*names, kind="instant"):
+        for n in names:
+            monkeypatch.setitem(
+                scraper_registry.KNOWN_SOURCES, n,
+                {"kind": kind, "label": n.title(), "url": "https://example.test",
+                 "credibility": 50, "quality": "community",
+                 "description": "test fake"})
+    return add
+

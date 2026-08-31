@@ -14,14 +14,16 @@ def test_builtin_scrapers_are_registered():
     assert get("sec_edgar") is not None and get("nope") is None
 
 
-def test_register_replaces_by_name(monkeypatch):
+def test_register_replaces_by_name(monkeypatch, fake_sources):
+    fake_sources("x")
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
     register(ScraperSpec("x", lambda q, d, c=None: {"v": 1}, lambda: True))
     register(ScraperSpec("x", lambda q, d, c=None: {"v": 2}, lambda: True))
     assert len(registered()) == 1 and get("x").run("", 0) == {"v": 2}
 
 
-def test_run_scrape_all_dispatches_registry(monkeypatch):
+def test_run_scrape_all_dispatches_registry(monkeypatch, fake_sources):
+    fake_sources("good", "off", "bad", "denied")
     from app.config import settings
     from app.scraper.runner import run_scrape_all
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
@@ -50,7 +52,8 @@ def test_run_scrape_all_dispatches_registry(monkeypatch):
     assert out["results"]["denied"] == {"status": "disabled", "detail": "source off"}   # PermissionError → disabled
 
 
-def test_run_scrape_all_hands_the_country_to_each_source(monkeypatch):
+def test_run_scrape_all_hands_the_country_to_each_source(monkeypatch, fake_sources):
+    fake_sources("good")
     """Dropped anywhere between the caller and `spec.run`, the scrape still
     succeeds — with whichever company the source liked best, which is the bug
     the country exists to prevent."""
@@ -66,7 +69,8 @@ def test_run_scrape_all_hands_the_country_to_each_source(monkeypatch):
     assert out["results"]["good"]["c"] == "DE"
 
 
-def test_a_scraper_that_cannot_take_a_country_is_rejected_at_registration(monkeypatch):
+def test_a_scraper_that_cannot_take_a_country_is_rejected_at_registration(monkeypatch, fake_sources):
+    fake_sources("legacy", "modern", "modern2")
     """Not a style rule — a correctness one.
 
     Every dispatcher wraps `spec.run` in `except Exception`, so one source
@@ -89,3 +93,69 @@ def test_a_scraper_that_cannot_take_a_country_is_rejected_at_registration(monkey
     register(ScraperSpec("modern", lambda q, d, c: {"total": 0}, lambda: True))
     register(ScraperSpec("modern2", lambda q, d, c=None: {"total": 0}, lambda: True))
     assert get("modern") and get("modern2")
+
+
+class TestTheSpecIsACompleteDeclaration:
+    """The enrichment: metadata via the catalogue, enabled() derived, and the
+    pieces that used to agree by convention cross-validated at registration."""
+
+    def test_metadata_reads_from_the_catalogue(self):
+        from app.scraper.scraper_registry import get
+        spec = get("sec_edgar")
+        assert spec.label == "SEC EDGAR"
+        assert spec.credibility == 98
+        assert spec.url == "https://www.sec.gov/edgar"
+
+    def test_default_enabled_is_flag_and_toggle(self, monkeypatch, fake_sources):
+        # Pydantic Settings refuses unknown fields, so the probe borrows a real
+        # flag via the settings_flag override — which also exercises it.
+        from unittest.mock import patch
+        from app.config import settings
+        fake_sources("probe")
+        monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", True)
+        register(ScraperSpec("probe", lambda q, d, c=None: {},
+                             settings_flag="SCRAPER_SEC_EDGAR_ENABLED"))
+        spec = get("probe")
+        with patch("app.scraper.scraper_registry.get_source_enabled", return_value=True):
+            assert spec.enabled() is True
+        with patch("app.scraper.scraper_registry.get_source_enabled", return_value=False):
+            assert spec.enabled() is False
+        monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", False)
+        with patch("app.scraper.scraper_registry.get_source_enabled") as toggle:
+            assert spec.enabled() is False
+            assert not toggle.called, "the flag must short-circuit — no DB read when off"
+
+    def test_registration_rejects_a_source_without_a_catalogue_entry(self, monkeypatch):
+        import pytest as _pytest
+        monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        with _pytest.raises(ValueError, match="no KNOWN_SOURCES catalogue entry"):
+            register(ScraperSpec("ghost", lambda q, d, c=None: {}, lambda: True))
+
+    def test_registration_rejects_a_kind_that_disagrees_with_the_catalogue(
+            self, monkeypatch, fake_sources):
+        import pytest as _pytest
+        fake_sources("probe")                                     # catalogue says instant
+        monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        with _pytest.raises(ValueError, match="disagrees with the catalogue"):
+            register(ScraperSpec("probe", lambda q, d, c=None: {}, lambda: True,
+                                 kind="bulk"))
+
+    def test_registration_rejects_a_missing_settings_flag(self, monkeypatch, fake_sources):
+        import pytest as _pytest
+        fake_sources("probe")
+        monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        with _pytest.raises(ValueError, match="Settings has no SCRAPER_PROBE_ENABLED"):
+            register(ScraperSpec("probe", lambda q, d, c=None: {}))   # derived enabled
+
+    def test_a_custom_enabled_needs_no_flag(self, monkeypatch, fake_sources):
+        fake_sources("probe")
+        monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        register(ScraperSpec("probe", lambda q, d, c=None: {}, lambda: True))
+        assert get("probe").enabled() is True
+
+    def test_the_flag_override_is_honoured(self, monkeypatch, fake_sources):
+        # open_corporates' real flag drops the underscore — the convention's one
+        # historical exception, which is why the override exists.
+        spec = get("open_corporates")
+        assert spec.flag_name == "SCRAPER_OPENCORPORATES_ENABLED"
