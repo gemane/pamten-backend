@@ -722,3 +722,20 @@ class TestWebsiteAggregation:
 
     def test_absent_p856_is_none(self):
         assert _aggregate("Q1", [APPLE_ROW])["website"] is None
+
+    def test_among_many_storefronts_the_root_domain_wins(self):
+        # Apple carries 100+ regional P856 values at equal rank; the root
+        # domain is always the shortest. First-seen order must not matter.
+        rows = [{**APPLE_ROW, "website": {"value": u}} for u in (
+            "https://apple.com/za/",
+            "https://apple.com/",
+            "https://apple.com/bh-ar/",
+        )]
+        assert _aggregate("Q1", rows)["website"] == "https://apple.com/"
+
+    def test_a_shorter_but_invalid_url_never_wins(self):
+        rows = [{**APPLE_ROW, "website": {"value": u}} for u in (
+            "https://www.apple.com/",
+            "ftp://a.io/",
+        )]
+        assert _aggregate("Q1", rows)["website"] == "https://www.apple.com/"
