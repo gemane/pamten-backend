@@ -782,6 +782,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
     from app.scraper.sec_edgar import (_cik10, _pct_of, fetch_13f_holders,
                                        fetch_shares_outstanding,
                                        latest_13f_deadline, next_13f_deadline)
+    from app.scraper.sec_writer import mark_13f_stale
 
     entity = resolve_best_entity(company, None)
     if not entity:
@@ -798,22 +799,32 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
                 "detail": "The entity has no SEC CIK yet — run the SEC EDGAR "
                           "scrape (13D/G + Form 4) first."}
 
+    with db.get_session() as session:
+        row = session.run("MATCH (e:Entity {id: $id}) "
+                          "RETURN e.sec_13f_scraped_at AS at",
+                          id=company_id).single()
+    last_run = row.get("at") if row else None
+
     # Quarterly by deadline, not by TTL: 13Fs are due 45 days after quarter
     # end, so a re-run before the next deadline reads the same filings. Fresh
     # means no new deadline has passed since the last run — the day after a
     # deadline the gate opens by itself, however recent the last run was.
-    if not force:
-        with db.get_session() as session:
-            row = session.run("MATCH (e:Entity {id: $id}) "
-                              "RETURN e.sec_13f_scraped_at AS at",
-                              id=company_id).single()
-        last_run = row.get("at") if row else None
-        if last_run:
-            today = datetime.now(timezone.utc).date()
-            if datetime.fromisoformat(last_run).date() >= latest_13f_deadline(today):
-                return {"status": "fresh", "company": company,
-                        "entity_id": company_id, "total": 0, "last_run": last_run,
-                        "next_deadline": next_13f_deadline(today).isoformat()}
+    if not force and last_run:
+        today = datetime.now(timezone.utc).date()
+        if datetime.fromisoformat(last_run).date() >= latest_13f_deadline(today):
+            return {"status": "fresh", "company": company,
+                    "entity_id": company_id, "total": 0, "last_run": last_run,
+                    "next_deadline": next_13f_deadline(today).isoformat()}
+
+    # A refresh reads only what is NEW since the last completed run (plus a
+    # week for stragglers), not the full discovery window: the older filings
+    # were already ingested, and re-reading them cannot change an edge —
+    # newest-per-filer wins regardless. min(), never max(): an explicit
+    # wider window (or 0 = all time) stays what the caller asked for.
+    if last_run:
+        days_since = (datetime.now(timezone.utc)
+                      - datetime.fromisoformat(last_run)).days
+        window_days = min(window_days, days_since + 7)
 
     with record_run("sec-13f", company) as run:
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
@@ -856,6 +867,12 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
                 source_url=h.get("source_url"))
             written += 1
 
+        # Dim what this quarter did not confirm — only when the run actually
+        # ingested a period, so an empty refresh window dims nothing.
+        stale_marked = 0
+        if written and data.get("period"):
+            stale_marked = mark_13f_stale(company_id, data["period"])
+
         # The quarterly gate's date — stamped only on a completed run, so a
         # crashed run never counts as fresh.
         with db.get_session() as session:
@@ -866,7 +883,8 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
         log.info("SEC 13F: %d holder edges for %r (%d/%d filings read)",
                  written, company, data["filings_fetched"], data["filings_total"])
         return {"status": "ok", "company": company, "entity_id": company_id,
-                "total": written, "cusip": data["cusip_seen"],
+                "total": written, "stale_marked": stale_marked,
+                "cusip": data["cusip_seen"],
                 "period": data["period"], "shares_outstanding": outstanding,
                 "filings_fetched": data["filings_fetched"],
                 "filings_total": data["filings_total"]}

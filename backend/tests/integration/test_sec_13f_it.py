@@ -218,3 +218,47 @@ def test_without_a_cik_the_answer_is_run_the_sec_scrape_first(it_db):
     res, fetched, _ = _run(it_db)
     assert res["status"] == "needs_sec_scrape"
     fetched.assert_not_called()
+
+
+OLD_HOLDERS = {**HOLDERS, "period": "2026-03-31",
+               "holders": [dict(h, period="2026-03-31") for h in HOLDERS["holders"]]}
+
+GIGAFUND_ONLY = {**HOLDERS,
+                 "holders": [h for h in HOLDERS["holders"]
+                             if "Gigafund" in h["filer_name"]]}
+
+
+def test_a_filer_missing_from_the_new_quarter_goes_stale_not_closed(it_db):
+    _company(it_db)
+    _run(it_db, holders=OLD_HOLDERS)          # Q1: both filers present
+    res, _, _ = _run(it_db, holders=GIGAFUND_ONLY, force=True)   # Q2: BNP gone
+    assert res["status"] == "ok" and res["stale_marked"] == 1
+    edges = {e["source_url"].split("/")[-2]: e for e in _edges(it_db)}
+    bnp, giga = edges["1166588"], edges["1713833"]
+    assert bnp["stale"] is True,  "the vanished position dims"
+    assert bnp.get("until") is None, "silence is not an exit — never closed"
+    assert not giga.get("stale"), "the refiled position stays bright"
+
+
+def test_a_stale_filer_that_reappears_heals(it_db):
+    _company(it_db)
+    _run(it_db, holders=OLD_HOLDERS)
+    _run(it_db, holders=GIGAFUND_ONLY, force=True)
+    res, _, _ = _run(it_db, holders=HOLDERS, force=True)         # BNP is back
+    assert res["stale_marked"] == 0
+    edges = {e["source_url"].split("/")[-2]: e for e in _edges(it_db)}
+    assert not edges["1166588"].get("stale"), "the upsert clears the flag itself"
+
+
+def test_a_refresh_shrinks_the_fetch_window_to_since_the_last_run(it_db):
+    _company(it_db)
+    _run(it_db)
+    _, fetched, _ = _run(it_db, force=True)
+    window = fetched.call_args.kwargs["window_days"]
+    assert window <= 7, f"a same-day refresh must not re-read the quarter (got {window})"
+
+
+def test_the_first_run_keeps_the_full_discovery_window(it_db):
+    _company(it_db)
+    _, fetched, _ = _run(it_db)
+    assert fetched.call_args.kwargs["window_days"] == 135

@@ -379,3 +379,34 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             sid=source_id, score=credibility_score,
             surl=source_url, sdate=source_date, now=now,
         )
+
+
+def mark_13f_stale(company_id: str, period: str) -> int:
+    """Dim the 13F holder edges the quarter just ingested did not confirm.
+
+    A 13F seller never states an exit — the position simply vanishes from the
+    manager's next filing, and silence is not a statement. So an edge whose
+    ``source_date`` (the latest filing period — ``since`` deliberately keeps
+    the FIRST-seen quarter for the timeline, only source_date moves on
+    refresh) predates the period just read is flagged ``stale`` (dimmed in
+    the panel), never closed: writing ``until`` would assert an end date
+    nobody filed. One direction only — the upsert already sets
+    ``stale = false`` on every edge the new quarter touched, so a filer that
+    reappears heals itself.
+    """
+    with db.get_session() as session:
+        rows = list(session.run(
+            """MATCH (a)-[r:OWNS]->(b:Entity {id: $id})
+               WHERE r.filing_type = '13F' AND r.until IS NULL
+                 AND r.source_date < $period
+                 AND COALESCE(r.stale, false) = false
+               RETURN a.id AS aid""",
+            id=company_id, period=period))
+        for r in rows:
+            session.run(
+                """MATCH (a {id: $a})-[r:OWNS]->(b:Entity {id: $b})
+                   WHERE r.filing_type = '13F' AND r.until IS NULL
+                     AND r.source_date < $period
+                   SET r.stale = true""",
+                a=r["aid"], b=company_id, period=period)
+    return len(rows)
