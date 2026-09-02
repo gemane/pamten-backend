@@ -161,6 +161,42 @@ def sec_edgar_run(
         raise HTTPException(status_code=500, detail="SEC EDGAR scrape failed. Check server logs for details.")
 
 
+@router.post("/sec-13f/run")
+def sec_13f_run(
+    company: str = Query(..., min_length=2, description="Issuer name as known to the graph"),
+    force: bool = Query(False, description="Ignore the quarterly deadline gate and re-read now"),
+    _: dict = Depends(require_contributor),
+):
+    """
+    Institutional holders of one issuer from Form 13F — contributor-only.
+
+    Heavier than it looks: 13Fs are filed by the HOLDERS, so answering "who
+    holds this company" means reading up to ~100 managers' filings, one fetch
+    each. Quarterly by design — filings are due 45 days after quarter end, and
+    a re-run before the next deadline reads the same documents (status
+    "fresh", nothing fetched). Requires the SEC EDGAR scrape to have run
+    first: it stamps the CIK and CUSIP this ingest builds on (409 otherwise).
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true.")
+    from app.scraper.runner import run_sec_13f
+    try:
+        result = run_sec_13f(company, force=force)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
+        logger.exception("SEC 13F scrape failed (company=%r)", company)
+        raise HTTPException(status_code=500,
+            detail="SEC 13F scrape failed. Check server logs for details.")
+    if result["status"] == "needs_sec_scrape":
+        raise HTTPException(status_code=409, detail=result["detail"])
+    return result
+
+
 # ── Run-all endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/run-all")

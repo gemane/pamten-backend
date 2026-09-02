@@ -41,14 +41,14 @@ def _company(it_db, cusip=None):
         f"type:'company', sec_cik:'1181412'{props}}})", {"cu": cusip})
 
 
-def _run(it_db, holders=None, outstanding=13_100_000_000):
+def _run(it_db, holders=None, outstanding=13_100_000_000, force=False):
     with patch("app.scraper.sec_edgar.fetch_13f_holders",
                return_value=holders if holders is not None else HOLDERS) as fetched, \
          patch("app.scraper.sec_edgar.fetch_shares_outstanding",
                return_value=outstanding) as outs, \
          patch.object(runner.settings, "SCRAPER_ENABLED", True), \
          patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
-        res = runner.run_sec_13f("SpaceX")
+        res = runner.run_sec_13f("SpaceX", force=force)
     return res, fetched, outs
 
 
@@ -124,7 +124,7 @@ def test_the_denominator_cik_is_padded(it_db):
 def test_rerun_refreshes_not_duplicates_and_lands_in_the_run_log(it_db):
     _company(it_db)
     _run(it_db)
-    _run(it_db)
+    _run(it_db, force=True)  # the quarterly gate would (rightly) skip this
     n = it_db.run_command(
         "MATCH ()-[r:OWNS]->(:Entity {id:'sx'}) RETURN count(r) AS n")[0]["n"]
     assert n == 2, "a quarterly refresh must update the same edges"
@@ -170,3 +170,51 @@ def test_the_filing_type_reaches_edge_claim_and_sources_panel(it_db):
     rows = get_sources_for_entity("sx")
     sec_rows = [r for r in rows if r.get("filing_type")]
     assert sec_rows and all(r["filing_type"] == "13F" for r in sec_rows)
+
+
+def test_a_rerun_inside_the_quarter_is_fresh_and_fetches_nothing(it_db):
+    _company(it_db)
+    _run(it_db)
+    res, fetched, _ = _run(it_db)
+    assert res["status"] == "fresh"
+    assert res["last_run"] and res["next_deadline"]
+    fetched.assert_not_called()
+    runs = it_db.run_sql("SELECT FROM ScrapeRun WHERE source = 'sec-13f'")
+    assert len(runs) == 1, "a fresh skip is not a run"
+
+
+def test_the_gate_opens_when_a_deadline_has_passed_since_the_last_run(it_db):
+    _company(it_db)
+    _run(it_db)
+    # Age the stamp to before the most recent deadline — a new quarter's
+    # filings exist that this entity has never seen.
+    it_db.run_command(
+        "MATCH (e:Entity {id:'sx'}) SET e.sec_13f_scraped_at = '2020-01-01T00:00:00+00:00'")
+    res, fetched, _ = _run(it_db)
+    assert res["status"] == "ok"
+    fetched.assert_called_once()
+
+
+def test_force_rereads_within_the_quarter(it_db):
+    _company(it_db)
+    _run(it_db)
+    res, fetched, _ = _run(it_db, force=True)
+    assert res["status"] == "ok"
+    fetched.assert_called_once()
+
+
+def test_a_completed_run_stamps_the_gate_date(it_db):
+    _company(it_db)
+    _run(it_db)
+    at = it_db.run_sql("SELECT sec_13f_scraped_at FROM Entity WHERE id = 'sx'")[0]
+    assert at["sec_13f_scraped_at"], "no stamp, no gate"
+
+
+def test_without_a_cik_the_answer_is_run_the_sec_scrape_first(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id:'nocik', name:'Space Exploration Technologies Corp.', "
+        "name_normalized:'space exploration technologies', "
+        "search_text:'Space Exploration Technologies Corp. SpaceX', type:'company'})")
+    res, fetched, _ = _run(it_db)
+    assert res["status"] == "needs_sec_scrape"
+    fetched.assert_not_called()

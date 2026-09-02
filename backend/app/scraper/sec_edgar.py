@@ -294,6 +294,34 @@ def fetch_filer_headquarters(cik: str) -> dict | None:
         return None
 
 
+def latest_13f_deadline(today):
+    """The most recent 13F filing deadline that has already passed.
+
+    Form 13F is due 45 days after each calendar quarter end (Mar 31, Jun 30,
+    Sep 30, Dec 31 → May 15, Aug 14, Nov 14, Feb 14/15). Computed, not
+    hardcoded, so leap years around the December deadline come out right.
+    Inclusive of today: on deadline day the quarter counts as due.
+    """
+    from datetime import date, timedelta
+    deadlines = [date(y, m, d) + timedelta(days=45)
+                 for y in (today.year - 1, today.year)
+                 for m, d in ((3, 31), (6, 30), (9, 30), (12, 31))]
+    return max(d for d in deadlines if d <= today)
+
+
+def next_13f_deadline(today):
+    """The first 13F filing deadline still ahead — when new filings are due.
+
+    The previous year matters: in early January the next deadline is LAST
+    year's December quarter (Dec 31 + 45 days = mid-February).
+    """
+    from datetime import date, timedelta
+    deadlines = [date(y, m, d) + timedelta(days=45)
+                 for y in (today.year - 1, today.year, today.year + 1)
+                 for m, d in ((3, 31), (6, 30), (9, 30), (12, 31))]
+    return min(d for d in deadlines if d > today)
+
+
 def sec_website(submissions: dict) -> str | None:
     """The company's website from the submissions document, or None.
 

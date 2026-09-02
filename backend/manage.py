@@ -383,7 +383,14 @@ def cmd_sec_13f(args):
     settings.SCRAPER_SEC_EDGAR_ENABLED = True
     from app.scraper.runner import run_sec_13f
     result = run_sec_13f(args.company, limit=args.limit,
-                         window_days=args.window_days)
+                         window_days=args.window_days, force=args.force)
+    if result["status"] == "fresh":
+        print(f"13F for {result['company']!r} is current (last run {result['last_run']}); "
+              f"new filings are due by {result['next_deadline']}. --force re-reads anyway.")
+        return
+    if result["status"] == "needs_sec_scrape":
+        print(result["detail"])
+        raise SystemExit(1)
     if result["status"] != "ok":
         print(f"No entity in the graph matches {args.company!r} — "
               f"sec-13f enriches, it does not discover.")
@@ -946,6 +953,8 @@ def _build_parser():
     p_13f.add_argument('company', help='Company name as known to the graph')
     p_13f.add_argument('--limit', type=int, default=100,
                        help='Max 13F filings to read (relevance-ordered; default 100)')
+    p_13f.add_argument('--force', action='store_true',
+                       help='Ignore the quarterly deadline gate and re-read now')
     p_13f.add_argument('--window-days', type=int, default=135,
                        help='Only filings from the last N days — one quarter plus the '
                             '45-day deadline, so only CURRENT positions come in. 0 = all time')
