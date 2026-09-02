@@ -749,7 +749,8 @@ def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> 
 
 
 @_with_autodedup
-def run_sec_13f(company: str, limit: int = 100, window_days: int = 135) -> dict:
+def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
+                force: bool = False) -> dict:
     """Ingest one issuer's institutional holders from Form 13F info tables.
 
     The inverse question to `run_sec_holdings` (what a manager holds): who holds
@@ -778,13 +779,41 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135) -> dict:
 
     from app.routers.search import resolve_best_entity
     from app.scraper.run_log import record_run
-    from app.scraper.sec_edgar import _cik10, _pct_of, fetch_13f_holders, fetch_shares_outstanding
+    from app.scraper.sec_edgar import (_cik10, _pct_of, fetch_13f_holders,
+                                       fetch_shares_outstanding,
+                                       latest_13f_deadline, next_13f_deadline)
 
     entity = resolve_best_entity(company, None)
     if not entity:
         return {"status": "no_results", "company": company, "total": 0, "scraped": []}
     company_id = entity["id"]
     names = [n for n in [entity.get("name"), *(entity.get("aliases") or [])] if n]
+
+    # 13F comes AFTER the schedules scrape, by design: that scrape stamps the
+    # CIK (the denominator lookup needs it) and harvests the CUSIP that lets
+    # info-table rows match exactly instead of by name.
+    if not entity.get("sec_cik"):
+        return {"status": "needs_sec_scrape", "company": company,
+                "entity_id": company_id, "total": 0,
+                "detail": "The entity has no SEC CIK yet — run the SEC EDGAR "
+                          "scrape (13D/G + Form 4) first."}
+
+    # Quarterly by deadline, not by TTL: 13Fs are due 45 days after quarter
+    # end, so a re-run before the next deadline reads the same filings. Fresh
+    # means no new deadline has passed since the last run — the day after a
+    # deadline the gate opens by itself, however recent the last run was.
+    if not force:
+        with db.get_session() as session:
+            row = session.run("MATCH (e:Entity {id: $id}) "
+                              "RETURN e.sec_13f_scraped_at AS at",
+                              id=company_id).single()
+        last_run = row.get("at") if row else None
+        if last_run:
+            today = datetime.now(timezone.utc).date()
+            if datetime.fromisoformat(last_run).date() >= latest_13f_deadline(today):
+                return {"status": "fresh", "company": company,
+                        "entity_id": company_id, "total": 0, "last_run": last_run,
+                        "next_deadline": next_13f_deadline(today).isoformat()}
 
     with record_run("sec-13f", company) as run:
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
@@ -826,6 +855,12 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135) -> dict:
                 filing_type="13F",
                 source_url=h.get("source_url"))
             written += 1
+
+        # The quarterly gate's date — stamped only on a completed run, so a
+        # crashed run never counts as fresh.
+        with db.get_session() as session:
+            session.run("MATCH (e:Entity {id: $id}) SET e.sec_13f_scraped_at = $now",
+                        id=company_id, now=datetime.now(timezone.utc).isoformat())
 
         run["total"] = written
         log.info("SEC 13F: %d holder edges for %r (%d/%d filings read)",

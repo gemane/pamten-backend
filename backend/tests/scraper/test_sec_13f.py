@@ -189,6 +189,35 @@ class TestFetch13FHolders:
         assert out["filings_fetched"] == 15
 
 
+class TestQuarterlyDeadlines:
+    """The gate's calendar: quarter end + 45 days, computed not hardcoded."""
+
+    def test_mid_quarter_the_last_deadline_is_the_previous_quarters(self):
+        from datetime import date
+        from app.scraper.sec_edgar import latest_13f_deadline, next_13f_deadline
+        assert latest_13f_deadline(date(2026, 8, 20)) == date(2026, 8, 14)
+        assert next_13f_deadline(date(2026, 8, 20)) == date(2026, 11, 14)
+
+    def test_deadline_day_itself_counts_as_passed(self):
+        from datetime import date
+        from app.scraper.sec_edgar import latest_13f_deadline, next_13f_deadline
+        assert latest_13f_deadline(date(2026, 8, 14)) == date(2026, 8, 14)
+        assert next_13f_deadline(date(2026, 8, 14)) == date(2026, 11, 14)
+
+    def test_the_year_boundary_reaches_back_to_november(self):
+        # Early January: Sep 30 + 45d = Nov 14 is the last one passed; the
+        # December quarter is due Feb 14 (Dec 31 + 45d).
+        from datetime import date
+        from app.scraper.sec_edgar import latest_13f_deadline, next_13f_deadline
+        assert latest_13f_deadline(date(2026, 1, 5)) == date(2025, 11, 14)
+        assert next_13f_deadline(date(2026, 1, 5)) == date(2026, 2, 14)
+
+    def test_may_15_not_may_14_the_45_days_are_counted_not_assumed(self):
+        from datetime import date
+        from app.scraper.sec_edgar import latest_13f_deadline
+        assert latest_13f_deadline(date(2026, 5, 20)) == date(2026, 5, 15)
+
+
 class TestBackoff:
     def test_a_429_with_retry_after_is_retried_once(self):
         import httpx
