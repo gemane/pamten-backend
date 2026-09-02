@@ -198,6 +198,33 @@ class TestPscFields:
             "links": {"self": "/company/x/.../abc"}})
         assert node_id == "gb-coh:00686734" and chid == "00686734"
 
+    def test_a_delaware_corporate_psc_gets_a_state_register_id(self):
+        # The bridge the country rule can never build: "United States" names 64
+        # registers, but the filer names the STATE, and Delaware names exactly
+        # one. This register_id is what lets the PSC node hard-merge with its
+        # GLEIF twin instead of living as a name-only duplicate.
+        rec = {"company_number": "09533203", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Tesla, Inc.",
+            "identification": {"registration_number": "3903573",
+                               "country_registered": "United States",
+                               "place_registered": "Delaware"},
+            "links": {"self": "/company/09533203/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        mapped = psc_record(rec, "s1", 80)
+        assert mapped.owner_props["register_id"] == "RA000602:3903573"
+
+    def test_a_country_registered_that_names_the_state_still_bridges(self):
+        rec = {"company_number": "09533203", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Tesla, Inc.",
+            "identification": {"registration_number": "3903573",
+                               "country_registered": "Delaware"},
+            "links": {"self": "/company/09533203/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        mapped = psc_record(rec, "s1", 80)
+        assert mapped.owner_props["register_id"] == "RA000602:3903573"
+
     def test_entity_psc_id_foreign_uses_the_slugged_self_link(self):
         node_id, chid = _entity_psc_id({"identification": {
             "registration_number": "999", "country_registered": "Delaware"},

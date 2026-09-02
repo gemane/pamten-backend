@@ -261,11 +261,19 @@ class TestStampRegistration:
         assert params["rid"] == f"{code}:155692169"
         assert params["ch"] is None
 
-    def test_sub_national_keeps_the_number_only(self, fake_db):
-        # "us_de" is Delaware's register, not a US-wide one — the ISO-2 prefix
-        # cannot pick between state namespaces.
+    def test_a_us_state_jurisdiction_becomes_a_register_id(self, fake_db):
+        # "us" alone names 64 registers; "us_de" names exactly one — Delaware's
+        # Division of Corporations, via the curated place map.
         params = self._stamp(fake_db, "us_de", "3112015")
         assert params["number"] == "3112015"
+        assert params["ch"] is None
+        assert params["rid"] == "RA000602:3112015"
+
+    def test_an_unaudited_sub_national_keeps_the_number_only(self, fake_db):
+        # German court registers are per-district and Bavaria's only listed
+        # register is a Foundations Directory — DE is not in the audited set,
+        # so no register_id is minted from a German sub-national code.
+        params = self._stamp(fake_db, "de_by", "HRB12345")
         assert params["ch"] is None and params["rid"] is None
 
     def test_multi_register_country_keeps_the_number_only(self, fake_db):

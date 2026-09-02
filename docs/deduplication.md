@@ -246,9 +246,21 @@ covers the Scottish/Northern-Irish registers RA000587/RA000586 that the
 contribute a `register_id` only when that country has exactly **one** register
 in GLEIF's RA list (~25 countries) — unambiguous by construction; Germany's 177
 per-court registers sharing HRB numbering are exactly why a bare country+number
-key is unsafe. A curated primary-register-per-country map (e.g. FR → Sirene) is
-future work. Existing rows cannot be backfilled (only the ambiguous authority
-*name* was stored historically); a re-import populates them.
+key is unsafe.
+
+**The curated place map** (`register_for_place`, 2026-09-03) extends this one
+level down: "USA" names 64 registers, but a stated *state* names exactly one,
+so a US corporate PSC (`place_registered: "Delaware"`, or a
+`country_registered` that names the state — filers do that) and an
+OpenCorporates `us_de` jurisdiction now contribute
+`register_id = RA000602:{number}` and can hard-merge with their GLEIF twin.
+Two safety layers: only **audited countries** participate (US only so far —
+Bavaria's sole listed register is a Foundations Directory, so the raw
+exactly-one rule would stamp HRB numbers onto a registry that never issued
+them), and four states with sector registries beside the corporate register
+(IL, NY, TX, WA) use hand-picked overrides. FR → Sirene remains future work
+with the Sirene import. Existing rows cannot be backfilled (only the ambiguous
+authority *name* was stored historically); a re-import populates them.
 
 ## Id-less parties — collapsed by name at import
 

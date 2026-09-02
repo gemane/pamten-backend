@@ -80,6 +80,101 @@ def sole_register_for_country(iso2: str | None) -> str | None:
     return _sole_registers().get(iso2.strip().upper()) if iso2 else None
 
 
+# USPS abbreviations → the jurisdiction names GLEIF's RA list uses. Static on
+# purpose: the 50 states + DC are not going anywhere, and the table is what
+# lets an OpenCorporates "us_de" and a PSC "Delaware" land on the same key.
+_US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota",
+    "MS": "Mississippi", "MO": "Missouri", "MT": "Montana", "NE": "Nebraska",
+    "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey",
+    "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon",
+    "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+    "DC": "District Of Columbia",
+}
+_US_STATE_NAMES = {v.casefold(): v for v in _US_STATES.values()}
+
+# The CURATED half of the map: jurisdictions where GLEIF lists several
+# registers and the general corporate register must be picked by hand over the
+# sector registries (insurance, credit unions, charities, trust companies).
+# Verified against the 2024-11-20 RA list; extend only with the same check.
+_PLACE_OVERRIDES = {
+    ("US", "illinois"):   "RA000608",  # Business Services, not the License List
+    ("US", "new york"):   "RA000628",  # Corporation Database, not insurance/charities
+    ("US", "texas"):      "RA000637",  # Corporations Section, not credit unions/trusts
+    ("US", "washington"): "RA000641",  # Corporations Division, not Business Lookup
+}
+
+
+# Countries whose jurisdiction scheme has been AUDITED for this map. The
+# exactly-one rule alone is a trap: Bavaria's only listed register is a
+# Foundations Directory, so a German PSC saying "Bavaria" plus an HRB number
+# would mint a register_id on a sector registry that never issued it. A
+# country joins this set only after checking that its listed jurisdictions
+# are general corporate registers (US: 52 jurisdictions, all Secretary-of-
+# State-class, 4 needing the overrides above).
+_PLACE_COUNTRIES = {"US"}
+
+
+@functools.lru_cache(maxsize=1)
+def _place_registers() -> dict:
+    """(country ISO-2, jurisdiction casefolded) → RA code — exactly-one, audited
+    countries only."""
+    counts: dict = {}
+    for code, entry in _load("gleif_ra.json").items():
+        if not isinstance(entry, dict):
+            continue  # stale flat bundle — map stays empty, feature degrades off
+        for country in entry.get("countries") or []:
+            if country not in _PLACE_COUNTRIES:
+                continue
+            for jur in entry.get("jurisdictions") or []:
+                counts.setdefault((country, jur.casefold()), []).append(code)
+    return {key: codes[0] for key, codes in counts.items() if len(codes) == 1}
+
+
+def register_for_place(iso2: str | None, place: str | None) -> str | None:
+    """A sub-national place name → its RA code, where that is unambiguous.
+
+    The place-level counterpart of `sole_register_for_country`: "USA" names 64
+    registers, but "Delaware" names exactly one — so a source stating the
+    STATE can contribute a register_id even though the country never could.
+    Accepts the forms sources actually use: the jurisdiction name ("Delaware"),
+    "State of X", a trailing country ("Delaware, USA"), or a USPS abbreviation
+    ("DE", the OpenCorporates us_de form). A recognised US state name implies
+    the country when the caller could not resolve one — "Delaware" in a PSC's
+    country_registered field IS the country statement. Curated overrides pick
+    the general corporate register for the four states where GLEIF lists
+    sector registries beside it; everything else must be exactly-one.
+    """
+    norm = " ".join((place or "").replace(",", " ").split())
+    if not norm:
+        return None
+    low = norm.casefold()
+    for prefix in ("state of ", "the state of "):
+        if low.startswith(prefix):
+            low = low[len(prefix):]
+    for suffix in (" usa", " united states", " united states of america", " us"):
+        if low.endswith(suffix):
+            low = low[: -len(suffix)].strip()
+    if len(low) == 2 and low.upper() in _US_STATES:
+        low = _US_STATES[low.upper()].casefold()
+    country = (iso2 or "").strip().upper() or None
+    if country is None and low in _US_STATE_NAMES:
+        country = "US"
+    if country is None:
+        return None
+    return (_PLACE_OVERRIDES.get((country, low))
+            or _place_registers().get((country, low)))
+
+
 def make_register_id(code: str | None, number: str | None) -> str | None:
     """(RA code, register number) → the `register_id` hard identifier, or None.
 

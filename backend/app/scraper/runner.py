@@ -86,14 +86,15 @@ def _stamp_registration(entity_id: str, jurisdiction_code: str | None,
     fetched and thrown away after building the source URL. `gb` becomes
     companies_house_id (the same convention GLEIF and PSC use); other national
     jurisdictions become register_id when the country maps to exactly one
-    register. Sub-national codes ("us_de") keep the number only — state
-    registers are distinct namespaces the ISO-2 prefix cannot pick between.
+    register, and sub-national codes ("us_de") through the curated place map —
+    "us" alone names 64 registers, but the state names exactly one.
 
     COALESCE: this scraper resolves by name, so `entity_id` may be a node
     another source already stamped — a lookup must never overwrite a register's
     own statement of the same fact.
     """
-    from app.scraper.gleif_reference import make_register_id, sole_register_for_country
+    from app.scraper.gleif_reference import (make_register_id, register_for_place,
+                                             sole_register_for_country)
 
     if not jurisdiction_code or not company_number:
         return
@@ -104,6 +105,9 @@ def _stamp_registration(entity_id: str, jurisdiction_code: str | None,
     register_id = None
     if not ch_id and not sub_national:
         register_id = make_register_id(sole_register_for_country(iso2), number)
+    elif not ch_id and sub_national:
+        region = jurisdiction_code.split("_", 1)[1] if "_" in jurisdiction_code else ""
+        register_id = make_register_id(register_for_place(iso2, region), number)
     with db.get_session() as session:
         session.run(
             "MATCH (e:Entity {id: $id}) "

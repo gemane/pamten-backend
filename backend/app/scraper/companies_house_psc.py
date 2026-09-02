@@ -28,7 +28,8 @@ import zipfile
 from dataclasses import dataclass
 from typing import IO
 
-from app.scraper.gleif_reference import make_register_id, sole_register_for_country
+from app.scraper.gleif_reference import (make_register_id, register_for_place,
+                                          sole_register_for_country)
 from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
     _ProgressBar, _rebuild_indexes,
@@ -250,6 +251,16 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         if reg_number:
             iso2 = _iso2_country(ident.get("country_registered"))
             register_id = make_register_id(sole_register_for_country(iso2), reg_number)
+            # Second chance at the PLACE level: "USA" names 64 registers, but
+            # place_registered "Delaware" (or a country_registered that itself
+            # names the state — filers do that) names exactly one. This is the
+            # bridge that lets a US corporate PSC hard-merge with its GLEIF
+            # node, which no country-level rule ever could.
+            if register_id is None:
+                place = ((ident.get("place_registered") or "").strip()
+                         or (ident.get("country_registered") or "").strip())
+                register_id = make_register_id(register_for_place(iso2, place),
+                                               reg_number)
         owner_props = {
             "name": name, "entity_type": "company",
             "country": (ident.get("country_registered") or None),

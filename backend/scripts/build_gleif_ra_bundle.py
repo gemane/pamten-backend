@@ -14,6 +14,7 @@ downloaded path and commit the regenerated bundle:
 Output shape (one entry per RA code):
 
     {"RA000585": {"name": "Companies Register", "countries": ["GB"]}}
+    {"RA000602": {"name": "…", "countries": ["US"], "jurisdictions": ["Delaware"]}}
 
 - ``name`` is the International name of Register, falling back to the
   organisation's international name — the same rule the old flat bundle used,
@@ -57,11 +58,22 @@ def build(rows: list[dict]) -> dict[str, dict]:
         country = (row.get("Country Code") or "").strip().upper()
         if not code or not name:
             continue
-        entry = out.setdefault(code, {"name": name, "countries": []})
+        entry = out.setdefault(code, {"name": name, "countries": [], "jurisdictions": []})
         if country and country not in entry["countries"]:
             entry["countries"].append(country)
+        # The sub-national jurisdiction ("Delaware", "Ontario", …) — kept only
+        # when it names a region rather than repeating the country, because it
+        # is what lets a source that states a US STATE (not just "US")
+        # contribute a register_id. See gleif_reference.register_for_place().
+        jur = (row.get("Jurisdiction (country or region)") or "").strip()
+        if jur and jur.casefold() != (row.get("Country") or "").strip().casefold() \
+                and jur not in entry["jurisdictions"]:
+            entry["jurisdictions"].append(jur)
     for entry in out.values():
         entry["countries"].sort()
+        entry["jurisdictions"].sort()
+        if not entry["jurisdictions"]:
+            del entry["jurisdictions"]
     return dict(sorted(out.items()))
 
 
