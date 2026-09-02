@@ -1,6 +1,6 @@
 """GLEIF reference code-list resolution (bundled ELF + RA lists)."""
 
-from app.scraper.gleif_reference import legal_form_name, registration_authority_name
+from app.scraper.gleif_reference import legal_form_name, registration_authority_name, register_for_place
 
 
 class TestLegalForm:
@@ -93,6 +93,40 @@ class TestMakeRegisterId:
         from app.scraper.gleif_reference import make_register_id
         for code in ("RA777777", "RA888888", "RA999999", "ra999999"):
             assert make_register_id(code, "123") is None
+
+
+class TestRegisterForPlace:
+    """The place-level counterpart of the sole-register rule: "USA" names 64
+    registers, "Delaware" names exactly one."""
+
+    def test_the_state_name_resolves(self):
+        assert register_for_place("US", "Delaware") == "RA000602"
+
+    def test_the_forms_sources_actually_use(self):
+        assert register_for_place("US", "State of Delaware") == "RA000602"
+        assert register_for_place("US", "Delaware, USA") == "RA000602"
+        assert register_for_place("US", "DE") == "RA000602", "the us_de form"
+
+    def test_a_state_name_implies_the_country(self):
+        # A PSC's country_registered saying "Delaware" IS the country statement.
+        assert register_for_place(None, "Delaware") == "RA000602"
+
+    def test_the_curated_overrides_pick_the_corporate_register(self):
+        # Texas lists trust-company and credit-union registries beside the
+        # Corporations Section; the override picks the one companies live in.
+        assert register_for_place("US", "Texas") == "RA000637"
+        assert register_for_place("US", "New York") == "RA000628"
+
+    def test_the_bavaria_trap_stays_shut(self):
+        # Bavaria's only listed register is a Foundations Directory — an HRB
+        # number stamped there would be a false merge key. Unaudited countries
+        # never mint from places.
+        assert register_for_place("DE", "Bavaria") is None
+
+    def test_unknown_places_yield_none(self):
+        assert register_for_place("US", "Atlantis") is None
+        assert register_for_place("US", "") is None
+        assert register_for_place(None, None) is None
 
 
 class TestBundleIntegrity:
