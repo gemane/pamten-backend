@@ -208,6 +208,7 @@ def _upsert_entity(
     lei: str | None = None,                  # P1278 — bridge to a GLEIF node
     sec_cik: str | None = None,              # P5531 — bridge to a SEC EDGAR node
     website: str | None = None,              # P856 — official site (display only)
+    logo_url: str | None = None,             # P154/P18 → direct Commons thumb (display only)
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
@@ -267,6 +268,7 @@ def _upsert_entity(
                     e.hq_city         = COALESCE(e.hq_city, $hq_city),
                     e.hq_country      = COALESCE(e.hq_country, $hq_country),
                     e.website         = COALESCE(e.website, $website),
+                    e.logo_url        = COALESCE(e.logo_url, $logo_url),
                     e.name            = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
                     e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END,
                     e.source_id       = COALESCE(e.source_id, $source_id)
@@ -288,7 +290,7 @@ def _upsert_entity(
                 aliases=aliases or [],
                 countries=countries or [], hq_locations=hq_locations or [],
                 hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
-                website=website,
+                website=website, logo_url=logo_url,
             )
             return _record_touched_entity(entity_id)
 
@@ -308,7 +310,8 @@ def _upsert_entity(
                 aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
                 hq_city: $hq_city, hq_country: $hq_country,
-                website: $website
+                website: $website,
+                logo_url: $logo_url
             })
             """,
             id=entity_id,
@@ -329,7 +332,7 @@ def _upsert_entity(
             aliases=aliases or [],
             countries=countries or [], hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
-            website=website,
+            website=website, logo_url=logo_url,
         )
         return _record_touched_entity(entity_id)
 
@@ -466,6 +469,7 @@ def _scrape_node(
         wikidata_id=qid,
         employees=data.get("employees"),
         website=data.get("website"),
+        logo_url=data.get("logo_url"),
         employees_as_of=data.get("employees_as_of"),
         hq_lat=data.get("hq_lat"),
         hq_lng=data.get("hq_lng"),

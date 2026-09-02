@@ -49,7 +49,9 @@ How to verify:
   3. Run the SPARQL query directly at https://query.wikidata.org/ to inspect raw rows.
 """
 
+import hashlib
 import logging
+from urllib.parse import quote, unquote
 import random
 import re
 import time
@@ -313,7 +315,7 @@ def _sparql(qid: str) -> list:
     core = f"""
     SELECT ?itemLabel ?itemDescription ?altLabel ?instance ?countryCode
            ?founded ?revenue ?itemCoord ?hqLabel ?hqCoord ?hqCountryCode
-           ?lei ?cik ?website
+           ?lei ?cik ?website ?logo ?depiction
     WHERE {{
       BIND(wd:{qid} AS ?item)
       OPTIONAL {{ ?item skos:altLabel ?altLabel . FILTER(LANG(?altLabel) = "en") }}
@@ -339,6 +341,26 @@ def _sparql(qid: str) -> list:
             FILTER(?wsRank != wikibase:DeprecatedRank)
             BIND(IF(?wsRank = wikibase:PreferredRank, 0, 1) AS ?wsOrd)
           }} ORDER BY ASC(?wsOrd) ASC(STRLEN(STR(?website))) LIMIT 1 }}
+      }}
+      # P154 = logo, P18 = image (the depiction fallback for logo-less
+      # companies). CommonsMedia values are multi-valued like P856 — Tesla
+      # carries four logos — so the same at-most-one-row subselect shape,
+      # preferred rank first, then a stable name tiebreak.
+      OPTIONAL {{
+        {{ SELECT ?logo WHERE {{
+            wd:{qid} p:P154 ?lgStmt .
+            ?lgStmt ps:P154 ?logo ; wikibase:rank ?lgRank .
+            FILTER(?lgRank != wikibase:DeprecatedRank)
+            BIND(IF(?lgRank = wikibase:PreferredRank, 0, 1) AS ?lgOrd)
+          }} ORDER BY ASC(?lgOrd) ASC(STR(?logo)) LIMIT 1 }}
+      }}
+      OPTIONAL {{
+        {{ SELECT ?depiction WHERE {{
+            wd:{qid} p:P18 ?dpStmt .
+            ?dpStmt ps:P18 ?depiction ; wikibase:rank ?dpRank .
+            FILTER(?dpRank != wikibase:DeprecatedRank)
+            BIND(IF(?dpRank = wikibase:PreferredRank, 0, 1) AS ?dpOrd)
+          }} ORDER BY ASC(?dpOrd) ASC(STR(?depiction)) LIMIT 1 }}
       }}
       OPTIONAL {{ ?item wdt:P17 ?country . ?country wdt:P297 ?countryCode }}
       OPTIONAL {{ ?item wdt:P625 ?itemCoord }}
@@ -817,6 +839,34 @@ def normalize_lei(raw: str | None) -> str | None:
     return lei if len(lei) == 20 and lei.isalnum() else None
 
 
+def commons_thumb_url(value: str | None, width: int = 250) -> str | None:
+    """A Commons media value → a DIRECT upload.wikimedia.org thumbnail URL.
+
+    Special:FilePath now redirects to thumb.wikimedia.org with tracking
+    parameters, and that hop is blocked or broken on some networks (every
+    company logo rendered as a broken image on mobile, 2026-09-02, while
+    person photos — direct upload URLs from the Wikipedia REST API — loaded
+    fine). The direct URL needs no redirect: the shard is the first two hex
+    digits of the MD5 of the underscored filename, and SVGs get a rendered
+    .png suffix. Width must be one of Wikimedia's thumbnail buckets — 250 is
+    the smallest, anything off-bucket is a 400 since 2026.
+
+    Accepts either a bare filename ("Tesla Motors.svg") or the FilePath IRI
+    SPARQL returns for CommonsMedia values.
+    """
+    if not value:
+        return None
+    name = value.rsplit("/", 1)[-1] if "//" in value else value
+    name = unquote(name).strip().replace(" ", "_")
+    if not name:
+        return None
+    shard = hashlib.md5(name.encode()).hexdigest()  # noqa: S324 - Commons' own path scheme, not security
+    quoted = quote(name)
+    suffix = ".png" if name.lower().endswith((".svg", ".tif", ".tiff")) else ""
+    return (f"https://upload.wikimedia.org/wikipedia/commons/thumb/"
+            f"{shard[0]}/{shard[:2]}/{quoted}/{width}px-{quoted}{suffix}")
+
+
 def normalize_url(raw: str | None) -> str | None:
     """A displayable http(s) URL, or None — crowd-edited values get no trust.
 
@@ -864,6 +914,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "lei":         None,   # P1278 — bridges to a GLEIF node's lei_id
         "sec_cik":     None,   # P5531 — bridges to a SEC EDGAR node's sec_cik
         "website":     None,   # P856 — the company's official site
+        "logo_url":    None,   # P154 (P18 fallback) → direct upload.wikimedia.org thumb
+        "_depiction":  None,   # P18, promoted only when no P154 exists
         "employees":   None,   # latest P1128 value
         "employees_as_of": None,  # year of that value (P585 qualifier)
         "subsidiaries": {},
@@ -916,6 +968,10 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         if candidate := normalize_url(_v(row, "website")):
             if result["website"] is None or len(candidate) < len(result["website"]):
                 result["website"] = candidate
+        if result["logo_url"] is None:
+            result["logo_url"] = commons_thumb_url(_v(row, "logo"))
+        if result["_depiction"] is None:
+            result["_depiction"] = commons_thumb_url(_v(row, "depiction"))
 
         # Employees — from the dedicated employees query (its own rows, so read
         # independently of the name block above). Latest value + its as-of year.
@@ -1079,5 +1135,11 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         o["instances"] = list(o["instances"])
     result["owners"]       = list(result["owners"].values())
     result.pop("headquarters", None)
+
+    # A real logo always beats a depiction; the P18 photo steps in only for
+    # companies that never registered a P154.
+    if result["logo_url"] is None:
+        result["logo_url"] = result["_depiction"]
+    result.pop("_depiction", None)
 
     return result

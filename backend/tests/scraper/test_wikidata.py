@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 
 from app.scraper.wikidata import (
     _v, _qid, _parse_point, _aggregate, _fetch_person_details,
-    search_entity, fetch_company_data,
+    search_entity, fetch_company_data, commons_thumb_url,
 )
 
 
@@ -685,6 +685,64 @@ class TestIdentifierAggregation:
         src = inspect.getsource(_sparql)
         assert "wdt:P1278" in src, "LEI property missing from the core query"
         assert "wdt:P5531" in src, "CIK property missing from the core query"
+
+
+class TestCommonsThumbUrl:
+    """Direct upload.wikimedia.org thumbs — no Special:FilePath redirect, whose
+    new thumb.wikimedia.org hop broke every company logo on mobile."""
+
+    def test_the_md5_shard_and_svg_png_suffix(self):
+        assert commons_thumb_url("Tesla Motors.svg") == (
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/"
+            "b/bd/Tesla_Motors.svg/250px-Tesla_Motors.svg.png")
+
+    def test_the_filepath_iri_sparql_returns_is_accepted(self):
+        assert commons_thumb_url(
+            "http://commons.wikimedia.org/wiki/Special:FilePath/Tesla%20Motors.svg"
+        ) == ("https://upload.wikimedia.org/wikipedia/commons/thumb/"
+              "b/bd/Tesla_Motors.svg/250px-Tesla_Motors.svg.png")
+
+    def test_non_ascii_filenames_shard_on_utf8_bytes(self):
+        # Nestlé: the é must be decoded BEFORE hashing — verified against the
+        # live path b/bf on upload.wikimedia.org.
+        u = commons_thumb_url(
+            "http://commons.wikimedia.org/wiki/Special:FilePath/Nestl%C3%A9%20textlogo.svg")
+        assert "/b/bf/Nestl%C3%A9_textlogo.svg/" in u
+
+    def test_a_photo_keeps_its_own_extension(self):
+        u = commons_thumb_url("Some Building.jpg")
+        assert u.endswith("/250px-Some_Building.jpg") and ".png" not in u
+
+    def test_empty_yields_none(self):
+        assert commons_thumb_url(None) is None
+        assert commons_thumb_url("") is None
+
+
+class TestLogoAggregation:
+    def test_p154_becomes_a_direct_thumb_url(self):
+        row = {**APPLE_ROW, "logo": {"value":
+            "http://commons.wikimedia.org/wiki/Special:FilePath/Apple%20logo%20black.svg"}}
+        out = _aggregate("Q1", [row])
+        assert out["logo_url"] == (
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/"
+            "f/fa/Apple_logo_black.svg/250px-Apple_logo_black.svg.png")
+        assert "_depiction" not in out
+
+    def test_a_depiction_fills_in_only_without_a_logo(self):
+        dep = {"value": "http://commons.wikimedia.org/wiki/Special:FilePath/HQ.jpg"}
+        out = _aggregate("Q1", [{**APPLE_ROW, "depiction": dep}])
+        assert out["logo_url"].endswith("/250px-HQ.jpg")
+
+    def test_a_logo_beats_a_depiction_whatever_the_row_order(self):
+        dep_row = {**APPLE_ROW, "depiction": {"value":
+            "http://commons.wikimedia.org/wiki/Special:FilePath/HQ.jpg"}}
+        logo_row = {**APPLE_ROW, "logo": {"value":
+            "http://commons.wikimedia.org/wiki/Special:FilePath/Logo.svg"}}
+        for rows in ([dep_row, logo_row], [logo_row, dep_row]):
+            assert "Logo.svg" in _aggregate("Q1", rows)["logo_url"]
+
+    def test_absent_media_is_none(self):
+        assert _aggregate("Q1", [APPLE_ROW])["logo_url"] is None
 
 
 class TestNormalizeUrl:

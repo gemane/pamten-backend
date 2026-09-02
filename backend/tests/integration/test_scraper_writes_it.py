@@ -129,3 +129,26 @@ def test_the_by_name_writer_fills_the_website_on_all_paths(it_db):
     _upsert_entity_by_name("Bare Co", cik="0009999902", website="https://usurper.test")
     w = it_db.run_command("MATCH (e:Entity {id:'bare'}) RETURN e.website AS w")[0]["w"]
     assert w == "https://bare.test"
+
+
+def test_the_logo_url_persists_fills_if_missing_and_reaches_the_profile(it_db):
+    """logo_url follows the website's rules: fill-if-missing, display-only,
+    and the generic profile wire carries it with no serializer changes."""
+    from app.scraper.runner import _upsert_entity
+
+    logo = ("https://upload.wikimedia.org/wikipedia/commons/thumb/"
+            "b/bd/Tesla_Motors.svg/250px-Tesla_Motors.svg.png")
+    eid = _upsert_entity("Logo Co", "company", "US", None, None, None, "Q88",
+                         logo_url=logo)
+    row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.logo_url AS l",
+                            {"id": eid})[0]
+    assert row["l"] == logo
+
+    _upsert_entity("Logo Co", "company", "US", None, None, None, "Q88",
+                   logo_url="https://upload.wikimedia.org/usurper.png")
+    row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.logo_url AS l",
+                            {"id": eid})[0]
+    assert row["l"] == logo
+
+    from app.routers.search import get_full_profile
+    assert get_full_profile(eid)["entity"]["logo_url"] == logo
