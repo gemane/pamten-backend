@@ -162,7 +162,7 @@ def _dedupe_source_rows(rows: list[dict]) -> list[dict]:
     return sorted(best.values(), key=lambda x: -(x["credibility_score"] or 0))
 
 
-@router.get("/entity/{entity_id}")
+@router.get("/entity/{entity_id:path}")
 def get_sources_for_entity(entity_id: str):
     """
     Return per-entry provenance for this entity: one row per source reference
@@ -227,7 +227,7 @@ _PERSON_PROVENANCE_QUERIES = (
 )
 
 
-@router.get("/person/{person_id}")
+@router.get("/person/{person_id:path}")
 def get_sources_for_person(person_id: str):
     """
     Return per-entry provenance for this person: one source row per ownership /

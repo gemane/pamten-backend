@@ -277,7 +277,7 @@ def ownership_tree_of(
     return paths[:limit], len(paths) > limit
 
 
-@router.get("/ownership-tree/{entity_id}")
+@router.get("/ownership-tree/{entity_id:path}")
 def get_ownership_tree(
     entity_id: str,
     response: Response,
@@ -331,7 +331,7 @@ def owners_of(entity_id: str, limit: int = OWNERS_DEFAULT_LIMIT) -> tuple[list[d
         return out, truncated
 
 
-@router.get("/owners/{entity_id}")
+@router.get("/owners/{entity_id:path}")
 def get_owners(
     entity_id: str,
     response: Response,
@@ -426,7 +426,7 @@ def ownership_history_of(
     return sorted(events, key=sort_key, reverse=True), truncated
 
 
-@router.get("/history/{entity_id}")
+@router.get("/history/{entity_id:path}")
 def get_ownership_history(
     entity_id: str,
     response: Response,

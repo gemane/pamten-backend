@@ -655,7 +655,25 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
         return dict(record["p"])
 
 
-@router.get("/{person_id}", response_model=PersonResponse)
+@router.get("/")
+def list_persons(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20, ge=1, le=100)):
+    query = """
+        MATCH (p:Person)
+        RETURN p
+        SKIP $skip LIMIT $limit
+    """
+    with db.get_session() as session:
+        result = session.run(query, skip=skip, limit=limit)
+        return [dict(record["p"]) for record in result]
+
+# ── Catch-all by-id routes, LAST on purpose ──────────────────────────────────
+# The {id:path} converter is greedy — it exists because PSC-derived ids carry
+# slashes (chpsc:/company/…), which a plain {id} segment can never match (the
+# ASGI server decodes %2F before routing). Greedy also means any static route
+# registered after these would be shadowed: /kept-separate would parse as an
+# person id. Registration order is the guard, so these stay at the bottom of
+# the file. The parity test lives in tests/integration/test_slash_ids_it.py.
+@router.get("/{person_id:path}", response_model=PersonResponse)
 def get_person(person_id: str):
     query = """
         MATCH (p:Person {id: $id})
@@ -672,21 +690,7 @@ def get_person(person_id: str):
         if not record:
             raise HTTPException(status_code=404, detail="Person not found")
         return dict(record["p"])
-
-
-@router.get("/")
-def list_persons(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20, ge=1, le=100)):
-    query = """
-        MATCH (p:Person)
-        RETURN p
-        SKIP $skip LIMIT $limit
-    """
-    with db.get_session() as session:
-        result = session.run(query, skip=skip, limit=limit)
-        return [dict(record["p"]) for record in result]
-
-
-@router.put("/{person_id}", response_model=PersonResponse)
+@router.put("/{person_id:path}", response_model=PersonResponse)
 def update_person(person_id: str, person: PersonCreate, _: dict = Depends(require_contributor)):
     full_name = f"{person.first_name} {person.last_name}"
     query = """
@@ -716,9 +720,7 @@ def update_person(person_id: str, person: PersonCreate, _: dict = Depends(requir
         if not record:
             raise HTTPException(status_code=404, detail="Person not found")
         return dict(record["p"])
-
-
-@router.delete("/{person_id}")
+@router.delete("/{person_id:path}")
 def delete_person(person_id: str, _: dict = Depends(require_contributor)):
     query = """
         MATCH (p:Person {id: $id})
