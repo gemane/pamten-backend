@@ -303,6 +303,57 @@ def cmd_set_password(args):
     print(f"Password updated for {email}.")
 
 
+def cmd_migrate_psc_ids(args):
+    """Rewrite slash-bearing chpsc ids to the slug-safe form, everywhere they live.
+
+    One-shot cleanup for nodes minted before psc_slug_id existed. The node id
+    changes, every property store that carries node ids follows (Claim, Flag,
+    Suppression, Pin), and a MergedId forwarding row keeps every old link
+    resolving — the same machinery a merge uses. Graph edges never store the
+    id, so they need nothing. Idempotent: the old form starts "chpsc:/", the
+    new one never does.
+    """
+    from app.config import settings
+    if args.confirm_database != settings.ARCADEDB_DATABASE:
+        print(f"refusing: --confirm-database must be {settings.ARCADEDB_DATABASE!r} "
+              f"(the configured database), got {args.confirm_database!r}.")
+        raise SystemExit(2)
+    from app.database import db
+    from app.merged_ids import record_merge
+    from app.scraper.companies_house_psc import psc_slug_id
+    from app.db.arcadedb import run_sql
+
+    migrated = skipped = 0
+    with db.get_session() as session:
+        for label in ("Entity", "Person"):
+            rows = list(session.run(
+                f"MATCH (n:{label}) WHERE n.id STARTS WITH 'chpsc:/' RETURN n.id AS id"))
+            for r in rows:
+                old_id = r["id"]
+                new_id = psc_slug_id(old_id[len("chpsc:"):])
+                clash = session.run(
+                    f"MATCH (n:{label} {{id: $id}}) RETURN n.id AS id LIMIT 1",
+                    id=new_id).single()
+                if clash:
+                    print(f"  ! {old_id} -> {new_id} already exists, skipping")
+                    skipped += 1
+                    continue
+                session.run(f"MATCH (n:{label} {{id: $old}}) SET n.id = $new",
+                            old=old_id, new=new_id)
+                for table, cols in (("Claim", ("from_id", "to_id")),
+                                    ("Flag", ("from_id", "to_id", "node_id")),
+                                    ("Suppression", ("from_id", "to_id")),
+                                    ("Pin", ("from_id", "to_id"))):
+                    for col in cols:
+                        run_sql(f"UPDATE {table} SET {col} = :new WHERE {col} = :old",
+                                {"new": new_id, "old": old_id})
+                record_merge(session, old_id, new_id, kind=label)
+                migrated += 1
+                print(f"  {label}: {old_id}")
+                print(f"       -> {new_id}")
+    print(f"migrated {migrated}, skipped {skipped}.")
+
+
 def cmd_ensure_user(args):
     """Create or update a service account — idempotent, for use after a rebuild.
 
@@ -980,6 +1031,12 @@ def _build_parser():
 
     # ensure-user: put a service account back after a rebuild. Idempotent, so the
     # import scripts can call it unconditionally.
+    p_mig = subparsers.add_parser('migrate-psc-ids',
+        help='Rewrite slash-bearing chpsc node ids to the slug-safe form (one-shot)')
+    p_mig.add_argument('--confirm-database', required=True,
+                       help='Must equal the configured ARCADEDB_DATABASE')
+    p_mig.set_defaults(func=cmd_migrate_psc_ids)
+
     p_eu = subparsers.add_parser('ensure-user',
         help='Create or correct a service account (password from an env var, not argv)')
     p_eu.add_argument('--email', required=True, help='Account to create or correct')
