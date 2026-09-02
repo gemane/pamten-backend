@@ -6,8 +6,7 @@ import zipfile
 
 from app.scraper.companies_house_psc import (
     _band_floor, _birth_date, _control, _ENTITY_KINDS, _entity_psc_id, _iso2_country,
-    _PERSON_KINDS, _psc_address, _psc_name, _SKIP_KINDS, import_ch_psc, psc_record,
-)
+    _PERSON_KINDS, _psc_address, _psc_name, _SKIP_KINDS, import_ch_psc, psc_record, psc_slug_id)
 
 
 class TestPscAddress:
@@ -199,11 +198,27 @@ class TestPscFields:
             "links": {"self": "/company/x/.../abc"}})
         assert node_id == "gb-coh:00686734" and chid == "00686734"
 
-    def test_entity_psc_id_foreign_uses_self_link(self):
+    def test_entity_psc_id_foreign_uses_the_slugged_self_link(self):
         node_id, chid = _entity_psc_id({"identification": {
             "registration_number": "999", "country_registered": "Delaware"},
             "links": {"self": "/company/x/corporate-entity/zzz"}})
-        assert node_id == "chpsc:/company/x/corporate-entity/zzz" and chid is None
+        assert node_id == "chpsc:x:zzz" and chid is None
+
+
+class TestPscSlugId:
+    """Slug-safe on purpose: an id with slashes can never match a path
+    parameter (ASGI decodes %2F before routing), so the old verbatim-link ids
+    made their pages unloadable."""
+
+    def test_the_normal_link_becomes_company_and_notification(self):
+        assert psc_slug_id(
+            "/company/09533203/persons-with-significant-control/"
+            "corporate-entity/louLWFr-OOPqCpCa3K7gR4MK5u4"
+        ) == "chpsc:09533203:louLWFr-OOPqCpCa3K7gR4MK5u4"
+
+    def test_no_slash_survives_even_an_unrecognised_link(self):
+        assert "/" not in psc_slug_id("some/strange/shape")
+        assert "/" not in psc_slug_id("")
 
 
 class TestEveryKindIsAccountedFor:

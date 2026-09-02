@@ -120,6 +120,26 @@ def _birth_date(data: dict) -> str:
     return f"{y:04d}-{m:02d}" if y and m else (f"{y:04d}" if y else "")
 
 
+def psc_slug_id(self_link: str) -> str:
+    """A CH PSC self-link → a slug-safe node id: ``chpsc:{company}:{notification}``.
+
+    The id used to be ``chpsc:{self_link}`` verbatim — slashes included — and an
+    id with slashes can never match a path parameter (the ASGI server decodes
+    %2F before routing), so every such node's page simply failed to load (the
+    second Tesla, 2026-09-03). The link's company number plus its final segment
+    (the notification id, unique within the company) identify the appointment
+    just as well, in two colon-joined slug-safe tokens. The raw link itself
+    still travels separately as provenance (``psc_self_link`` on the edge).
+
+    An unrecognised link shape degrades to colon-for-slash substitution rather
+    than crashing an import over one malformed record.
+    """
+    parts = [seg for seg in (self_link or "").strip().split("/") if seg]
+    if len(parts) >= 3 and parts[0] == "company":
+        return f"chpsc:{parts[1]}:{parts[-1]}"
+    return "chpsc:" + (self_link or "").strip().replace("/", ":")
+
+
 def _entity_psc_id(data: dict) -> tuple[str, str | None]:
     """(node_id, companies_house_id) for a corporate/legal PSC — keyed on its own
     UK company number when it has one, else on the PSC self-link."""
@@ -130,7 +150,7 @@ def _entity_psc_id(data: dict) -> tuple[str, str | None]:
                 or "united kingdom" in country or country in ("uk", "gb")):
         return f"gb-coh:{reg}", reg
     self_link = ((data.get("links") or {}).get("self") or "").strip()
-    return f"chpsc:{self_link}", None
+    return psc_slug_id(self_link), None
 
 
 def _iso2_country(name: str | None) -> str | None:
@@ -203,7 +223,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
 
     if kind in _PERSON_KINDS:
         first, last = parse_full_name(name)
-        owner_id, owner_label = f"chpsc:{self_link}", "Person"
+        owner_id, owner_label = psc_slug_id(self_link), "Person"
         owner_props = {
             "first_name": first, "last_name": last, "full_name": name,
             "search_text": name, "nationality": _nationality(data.get("nationality")),

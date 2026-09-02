@@ -20,6 +20,8 @@ import zipfile
 
 import pytest
 
+from app.scraper.companies_house_psc import psc_slug_id
+
 pytestmark = pytest.mark.integration
 
 SRC = "src-psc"
@@ -157,7 +159,7 @@ class TestWhatTheRefreshDoes:
         _apply(loaded, _b_records())
         link = "/company/00000005/persons-with-significant-control/individual/vanishes"
         assert it_db.run_command("MATCH (p:Person {id:$id}) RETURN p.id AS id",
-                                 {"id": f"chpsc:{link}"}), "the person was deleted"
+                                 {"id": psc_slug_id(link)}), "the person was deleted"
 
         # A Claim is keyed on (kind, from, to, source) — it has never carried the
         # appointment link — so it has to be found through the edge's endpoints.
@@ -166,7 +168,7 @@ class TestWhatTheRefreshDoes:
         # a holding the graph has ended.
         claims = it_db.run_command(
             "MATCH (c:Claim) WHERE c.from_id = $f AND c.to_id = $t RETURN c.until AS until",
-            {"f": f"chpsc:{link}", "t": "gb-coh:00000005"})
+            {"f": psc_slug_id(link), "t": "gb-coh:00000005"})
         assert claims, "the claim was deleted along with the record"
         assert claims[0]["until"] == "2026-07-28", "the claim still asserts a live holding"
 
