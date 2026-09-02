@@ -171,28 +171,6 @@ def get_entities_for_country(
         return [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in result]
 
 
-@router.get("/{entity_id}", response_model=EntityResponse)
-def get_entity(entity_id: str):
-    query = """
-        MATCH (e:Entity {id: $id})
-        RETURN e
-    """
-    with db.get_session() as session:
-        record = session.run(query, id=entity_id).single()
-        if not record:
-            # The id may belong to a node a merge folded away — follow the
-            # forwarding address rather than 404 on a link that used to work.
-            # Only ever on a miss: a live id must not be redirected.
-            merged_into = resolve_current_id(session, entity_id)
-            if merged_into:
-                record = session.run(query, id=merged_into).single()
-        if not record:
-            raise HTTPException(status_code=404, detail="Entity not found")
-        # The response carries the survivor's own id, so a caller can see the
-        # canonical one and update what it stored.
-        return dict(record["e"])
-
-
 @router.get("/")
 def list_entities(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20, ge=1, le=100)):
     query = """
@@ -204,47 +182,6 @@ def list_entities(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20,
         result = session.run(query, skip=skip, limit=limit)
         return [dict(record["e"]) for record in result]
 
-
-@router.put("/{entity_id}", response_model=EntityResponse)
-def update_entity(entity_id: str, entity: EntityCreate, _: dict = Depends(require_contributor)):
-    query = """
-        MATCH (e:Entity {id: $id})
-        SET e += {
-            name: $name,
-            type: $type,
-            country: $country,
-            founded: $founded,
-            revenue: $revenue,
-            description: $description
-        }
-        RETURN e
-    """
-    with db.get_session() as session:
-        result = session.run(query, id=entity_id, **entity.model_dump())
-        record = result.single()
-        if not record:
-            raise HTTPException(status_code=404, detail="Entity not found")
-        return dict(record["e"])
-
-
-@router.delete("/{entity_id}")
-def delete_entity(entity_id: str, _: dict = Depends(require_contributor)):
-    query = """
-        MATCH (e:Entity {id: $id})
-        DETACH DELETE e
-    """
-    with db.get_session() as session:
-        session.run(query, id=entity_id)
-        return {"message": "Entity deleted"}
-
-
-# ── Keep-separate and the merge log ───────────────────────────────────────────
-#
-# The entity twin of the person endpoints in routers/persons.py. Entities had
-# neither, which was backwards: entity merges are the riskier of the two — they
-# run automatically during scraping and destroyed the loser's data until #205 —
-# yet a moderator could not say "these two are different companies", so a
-# rejected candidate came back on every scan, and nothing recorded what merged.
 
 @router.post("/keep-separate")
 def keep_separate(data: KeepSeparateRequest, _: dict = Depends(require_contributor)):
@@ -315,3 +252,69 @@ def merge_log(limit: int = Query(200, ge=1, le=1000), _: dict = Depends(require_
         ]
     entries.sort(key=lambda e: e["at"] or "", reverse=True)
     return {"count": len(entries), "entries": entries[:limit]}
+
+# ── Catch-all by-id routes, LAST on purpose ──────────────────────────────────
+# The {id:path} converter is greedy — it exists because PSC-derived ids carry
+# slashes (chpsc:/company/…), which a plain {id} segment can never match (the
+# ASGI server decodes %2F before routing). Greedy also means any static route
+# registered after these would be shadowed: /kept-separate would parse as an
+# entity id. Registration order is the guard, so these stay at the bottom of
+# the file. The parity test lives in tests/integration/test_slash_ids_it.py.
+@router.get("/{entity_id:path}", response_model=EntityResponse)
+def get_entity(entity_id: str):
+    query = """
+        MATCH (e:Entity {id: $id})
+        RETURN e
+    """
+    with db.get_session() as session:
+        record = session.run(query, id=entity_id).single()
+        if not record:
+            # The id may belong to a node a merge folded away — follow the
+            # forwarding address rather than 404 on a link that used to work.
+            # Only ever on a miss: a live id must not be redirected.
+            merged_into = resolve_current_id(session, entity_id)
+            if merged_into:
+                record = session.run(query, id=merged_into).single()
+        if not record:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        # The response carries the survivor's own id, so a caller can see the
+        # canonical one and update what it stored.
+        return dict(record["e"])
+@router.put("/{entity_id:path}", response_model=EntityResponse)
+def update_entity(entity_id: str, entity: EntityCreate, _: dict = Depends(require_contributor)):
+    query = """
+        MATCH (e:Entity {id: $id})
+        SET e += {
+            name: $name,
+            type: $type,
+            country: $country,
+            founded: $founded,
+            revenue: $revenue,
+            description: $description
+        }
+        RETURN e
+    """
+    with db.get_session() as session:
+        result = session.run(query, id=entity_id, **entity.model_dump())
+        record = result.single()
+        if not record:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        return dict(record["e"])
+@router.delete("/{entity_id:path}")
+def delete_entity(entity_id: str, _: dict = Depends(require_contributor)):
+    query = """
+        MATCH (e:Entity {id: $id})
+        DETACH DELETE e
+    """
+    with db.get_session() as session:
+        session.run(query, id=entity_id)
+        return {"message": "Entity deleted"}
+
+
+# ── Keep-separate and the merge log ───────────────────────────────────────────
+#
+# The entity twin of the person endpoints in routers/persons.py. Entities had
+# neither, which was backwards: entity merges are the riskier of the two — they
+# run automatically during scraping and destroyed the loser's data until #205 —
+# yet a moderator could not say "these two are different companies", so a
+# rejected candidate came back on every scan, and nothing recorded what merged.

@@ -556,7 +556,7 @@ def _pairs(rows, node_key: str, rel_key: str) -> list[dict]:
     return out
 
 
-@router.get("/entity/{entity_id}/full-profile")
+@router.get("/entity/{entity_id:path}/full-profile")
 def get_full_profile(
     entity_id: str,
     limit: Annotated[int, Query(ge=1, le=PROFILE_SECTION_MAX,
@@ -753,7 +753,7 @@ def _dedupe_holdings(rows: list) -> list:
     return sorted(best.values(), key=lambda e: (e["entity"].get("name") or "").lower())
 
 
-@router.get("/person/{person_id}/full-profile")
+@router.get("/person/{person_id:path}/full-profile")
 def get_person_profile(person_id: str):
     """
     Everything about a person in one call: the positions they have held (HAS_ROLE
