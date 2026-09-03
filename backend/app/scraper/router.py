@@ -99,6 +99,28 @@ def scraper_runs(
 
 # ── Wikidata endpoints ────────────────────────────────────────────────────────
 
+@router.get("/health")
+def scraper_health(user: dict | None = Depends(get_current_user_optional)):
+    """Per-source health: last run, last success, failure streaks, and how
+    fresh the bulk datasets are.
+
+    Public for the same reason /runs is — a transparency project should be
+    transparent about its own plumbing. Redacted for the same reason too:
+    ``last_error`` is raw exception text and the import-lock ``holder`` embeds
+    hostname:pid, so both are stripped outside _RUN_DETAIL_ROLES. Key absent,
+    not null, same convention as /runs.
+    """
+    from app.scraper.health import source_health
+
+    health = source_health()
+    if (user or {}).get("role") not in _RUN_DETAIL_ROLES:
+        health["sources"] = [{k: v for k, v in s.items() if k != "last_error"}
+                             for s in health["sources"]]
+        health["import_lock"] = {k: v for k, v in health["import_lock"].items()
+                                 if k != "holder"}
+    return health
+
+
 @router.post("/run")
 def scraper_run(body: ScrapeRequest, _: dict = Depends(require_contributor)):
     """
