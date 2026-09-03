@@ -58,12 +58,21 @@ def backfill_former_registers(paths: list[str]) -> dict:
     snapshot describes the whole world, this database rarely does.
     """
     holdings: dict[str, dict] = {}
+    renorm: list[tuple[str, str]] = []
     for r in run_sql("SELECT id, lei_id, register_id, former_register_ids "
                      "FROM Entity WHERE lei_id IS NOT NULL"):
         d = dict(r)
+        # Compare in CANONICAL form: a full import minted keys before
+        # zero-normalization existed, and against the raw stored value the
+        # entity's own current pair would come back as "history".
+        stored = d.get("register_id")
+        ra, _, num = (stored or "").partition(":")
+        canonical = make_register_id(ra, num) if stored else None
+        if stored and canonical and canonical != stored:
+            renorm.append((d["id"], canonical))
         holdings[(d["lei_id"] or "").upper()] = {
             "id": d["id"],
-            "register_id": d.get("register_id"),
+            "register_id": canonical or stored,
             "former": set(d.get("former_register_ids") or []),
         }
 
@@ -94,5 +103,25 @@ def backfill_former_registers(paths: list[str]) -> dict:
         run_sql("UPDATE Entity SET former_register_ids = :l WHERE id = :id",
                 {"l": sorted(node["former"]), "id": node["id"]})
         counts["backfilled"] += 1
+
+    # Keys minted before zero-normalization existed (a full GLEIF import
+    # stores Tesla's Texas number as RA000637:0805587591; every new mint says
+    # :805587591) would never meet their twins — write back the canonical
+    # forms queued during the read, plus any non-LEI entities' keys.
+    counts["renormalized"] = 0
+    seen = {i for i, _ in renorm}
+    for r in run_sql("SELECT id, register_id FROM Entity "
+                     "WHERE register_id IS NOT NULL"):
+        d = dict(r)
+        if d["id"] in seen:
+            continue
+        ra, _, num = (d["register_id"] or "").partition(":")
+        canonical = make_register_id(ra, num)
+        if canonical and canonical != d["register_id"]:
+            renorm.append((d["id"], canonical))
+    for eid, canonical in renorm:
+        run_sql("UPDATE Entity SET register_id = :rid WHERE id = :id",
+                {"rid": canonical, "id": eid})
+        counts["renormalized"] += 1
     log.info("former-register backfill: %s", counts)
     return counts
