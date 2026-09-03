@@ -257,10 +257,16 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
             # bridge that lets a US corporate PSC hard-merge with its GLEIF
             # node, which no country-level rule ever could.
             if register_id is None:
-                place = ((ident.get("place_registered") or "").strip()
-                         or (ident.get("country_registered") or "").strip())
-                register_id = make_register_id(register_for_place(iso2, place),
-                                               reg_number)
+                # Filers scatter the register across three fields — Tesla's
+                # says legal_authority "Texas", place_registered "N/A". First
+                # field that resolves to a register wins; junk like "N/A"
+                # simply resolves to nothing.
+                for field in ("place_registered", "legal_authority",
+                              "country_registered"):
+                    code = register_for_place(iso2, (ident.get(field) or "").strip())
+                    if code:
+                        register_id = make_register_id(code, reg_number)
+                        break
         owner_props = {
             "name": name, "entity_type": "company",
             "country": (ident.get("country_registered") or None),

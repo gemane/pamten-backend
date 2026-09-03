@@ -1,6 +1,7 @@
 """GLEIF reference code-list resolution (bundled ELF + RA lists)."""
 
-from app.scraper.gleif_reference import legal_form_name, registration_authority_name, register_for_place
+from app.scraper.gleif_reference import (legal_form_name, make_register_id,
+    registration_authority_name, register_for_place)
 
 
 class TestLegalForm:
@@ -93,6 +94,25 @@ class TestMakeRegisterId:
         from app.scraper.gleif_reference import make_register_id
         for code in ("RA777777", "RA888888", "RA999999", "ra999999"):
             assert make_register_id(code, "123") is None
+
+
+class TestZeroInsensitiveNumbers:
+    """Leading zeros are identity in some registers and formatting in others —
+    the audited US states are the ONLY place we say formatting."""
+
+    def test_the_two_texas_spellings_converge(self):
+        # GLEIF publishes 0805587591; the Companies House filer wrote 805587591.
+        assert make_register_id("RA000637", "0805587591") == "RA000637:805587591"
+        assert make_register_id("RA000637", "805587591") == "RA000637:805587591"
+
+    def test_everyone_else_keeps_their_zeros(self):
+        assert make_register_id("RA000585", "07524813") == "RA000585:07524813"
+
+    def test_non_numeric_numbers_are_untouched_even_in_texas(self):
+        assert make_register_id("RA000637", "0X1") == "RA000637:0X1"
+
+    def test_all_zeros_survive_as_zero(self):
+        assert make_register_id("RA000602", "000") == "RA000602:0"
 
 
 class TestRegisterForPlace:

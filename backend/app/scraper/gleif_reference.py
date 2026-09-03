@@ -175,6 +175,16 @@ def register_for_place(iso2: str | None, place: str | None) -> str | None:
             or _place_registers().get((country, low)))
 
 
+@functools.lru_cache(maxsize=1)
+def _zero_insensitive_ras() -> frozenset:
+    """The audited US state registers, where a purely numeric filing number's
+    leading zeros are formatting, not identity: GLEIF publishes Tesla's Texas
+    number as 0805587591, the Companies House filer wrote 805587591, and both
+    name the same registration. Exactly the place-map scope — the same audit
+    that vouched for the registers vouches for their numbering."""
+    return frozenset(_place_registers().values()) | frozenset(_PLACE_OVERRIDES.values())
+
+
 def make_register_id(code: str | None, number: str | None) -> str | None:
     """(RA code, register number) → the `register_id` hard identifier, or None.
 
@@ -183,10 +193,14 @@ def make_register_id(code: str | None, number: str | None) -> str | None:
     - the code is uppercased (it is an enum);
     - ALL whitespace is removed from the number ("HRB 12345" and "HRB12345" are
       the same registration), but case and leading zeros are preserved — both
-      are significant in some registers (Swiss numbers are zero-padded).
+      are significant in some registers (Swiss numbers are zero-padded) — EXCEPT
+      for the audited US state registers, where sources demonstrably disagree
+      on zero-padding of what is a plain integer (see _zero_insensitive_ras).
     """
     ra = (code or "").strip().upper()
     num = "".join((number or "").split())
     if not ra or not num or ra in _EXCLUDED_RA:
         return None
+    if num.isdigit() and ra in _zero_insensitive_ras():
+        num = num.lstrip("0") or "0"
     return f"{ra}:{num}"

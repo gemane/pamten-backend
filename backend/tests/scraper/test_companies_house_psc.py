@@ -225,6 +225,22 @@ class TestPscFields:
         mapped = psc_record(rec, "s1", 80)
         assert mapped.owner_props["register_id"] == "RA000602:3903573"
 
+    def test_the_register_hides_in_legal_authority_teslas_actual_shape(self):
+        # The real 2026 filing: place_registered "N/A", legal_authority
+        # "Texas", the number without GLEIF's leading zero. All three quirks
+        # must land on the same key GLEIF's node carries.
+        rec = {"company_number": "09533203", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Tesla, Inc.",
+            "identification": {"registration_number": "805587591",
+                               "country_registered": "United States",
+                               "legal_authority": "Texas",
+                               "place_registered": "N/A"},
+            "links": {"self": "/company/09533203/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        mapped = psc_record(rec, "s1", 80)
+        assert mapped.owner_props["register_id"] == "RA000637:805587591"
+
     def test_entity_psc_id_foreign_uses_the_slugged_self_link(self):
         node_id, chid = _entity_psc_id({"identification": {
             "registration_number": "999", "country_registered": "Delaware"},

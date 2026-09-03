@@ -119,3 +119,22 @@ def test_the_delta_preserves_the_outgoing_pair(it_db, monkeypatch, tmp_path):
                         "WHERE id = 'lei:TESLA000LEI000000001'")[0]
     assert row["register_id"] == "RA000602:3903573"
     assert row["former_register_ids"] == ["RA000637:0805587591"]
+
+
+def test_the_backfill_renormalizes_mixed_vintage_keys_and_the_twins_merge(it_db, tmp_path):
+    """A full import minted RA000637:0805587591 before zero-normalization; the
+    freshly-minted PSC twin says :805587591. The backfill renormalizes stored
+    keys, and the dedup then sees one key on two nodes."""
+    from app.scraper.register_history import backfill_former_registers
+    from app.scraper.maintenance import deduplicate_entities
+    _tesla(it_db)   # stores the padded RA000637:0805587591
+    it_db.run_command(
+        "CREATE (:Entity {id: 'chpsc:09533203:xyz', name: 'Tesla, Inc.', "
+        "name_normalized: 'tesla', search_text: 'Tesla, Inc.', type: 'company', "
+        "register_id: 'RA000637:805587591'})")
+    counts = backfill_former_registers([_snapshot(tmp_path, [])])
+    assert counts["renormalized"] == 1
+    result = deduplicate_entities(limit=None)
+    assert result["entities_merged"] == 1
+    survivors = it_db.run_sql("SELECT id FROM Entity WHERE name_normalized = 'tesla'")
+    assert [dict(s)["id"] for s in survivors] == ["lei:TESLA000LEI000000001"]
