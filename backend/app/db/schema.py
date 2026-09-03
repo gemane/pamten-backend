@@ -155,6 +155,11 @@ _EDGE_INDEXES: list[tuple[str, str, str]] = [
 #: got String") — the property type is part of the contract, not decoration.
 _PROPERTY_TYPES: dict[tuple[str, str], str] = {
     ("Person", "alias"): "LIST",
+    # Register pairs the entity USED to carry (Tesla was Delaware before
+    # Texas) — recovered from GLEIF snapshot archives and maintained by the
+    # daily delta; joins the hard-id dedup so a source that knew the company
+    # under its previous register can still merge.
+    ("Entity", "former_register_ids"): "LIST",
 }
 
 

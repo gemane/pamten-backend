@@ -303,6 +303,31 @@ def cmd_set_password(args):
     print(f"Password updated for {email}.")
 
 
+def cmd_backfill_former_registers(args):
+    """Recover former register identities from historical GLEIF snapshots.
+
+    Point it at one or more downloaded golden-copy lei2 CSV files (zipped or
+    bare) — GLEIF's archive reaches back to 2018-02-09, and every publish is a
+    complete snapshot, so a handful of yearly samples recovers most moves.
+    Local files only, deliberately: a multi-hundred-MB download must never
+    start as a side effect of a backfill. After it, run deduplicate-entities —
+    the recovered pairs join the hard-id keys.
+    """
+    from app.config import settings
+    if args.confirm_database != settings.ARCADEDB_DATABASE:
+        print(f"refusing: --confirm-database must be {settings.ARCADEDB_DATABASE!r} "
+              f"(the configured database), got {args.confirm_database!r}.")
+        raise SystemExit(2)
+    from app.scraper.register_history import backfill_former_registers
+    counts = backfill_former_registers(args.snapshots)
+    print(f"{counts['snapshots']} snapshot(s), {counts['rows']:,} rows read, "
+          f"{counts['matched']:,} matched entities here, "
+          f"{counts['backfilled']} gained former register ids.")
+    if counts["backfilled"]:
+        print("Now run the entity dedup so the recovered pairs can merge:")
+        print("  POST /scraper/deduplicate-entities  (or the scraper panel)")
+
+
 def cmd_migrate_psc_ids(args):
     """Rewrite slash-bearing chpsc ids to the slug-safe form, everywhere they live.
 
@@ -1031,6 +1056,14 @@ def _build_parser():
 
     # ensure-user: put a service account back after a rebuild. Idempotent, so the
     # import scripts can call it unconditionally.
+    p_bfr = subparsers.add_parser('backfill-former-registers',
+        help='Recover former register ids from historical GLEIF snapshot files')
+    p_bfr.add_argument('snapshots', nargs='+',
+                       help='Golden-copy lei2 CSV files (zip or csv), downloaded beforehand')
+    p_bfr.add_argument('--confirm-database', required=True,
+                       help='Must equal the configured ARCADEDB_DATABASE')
+    p_bfr.set_defaults(func=cmd_backfill_former_registers)
+
     p_mig = subparsers.add_parser('migrate-psc-ids',
         help='Rewrite slash-bearing chpsc node ids to the slug-safe form (one-shot)')
     p_mig.add_argument('--confirm-database', required=True,

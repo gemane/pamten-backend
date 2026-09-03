@@ -262,6 +262,19 @@ them), and four states with sector registries beside the corporate register
 with the Sirene import. Existing rows cannot be backfilled (only the ambiguous
 authority *name* was stored historically); a re-import populates them.
 
+**Former register identities** (`former_register_ids`, 2026-09-03). A register
+pair is a hard id — and it can *move*: Tesla re-registered from Delaware to
+Texas in 2024, so the current golden copy no longer carries the pair a PSC
+filer still states. GLEIF's archive publishes complete snapshots back to
+2018-02-09, so the history is recoverable:
+`manage.py backfill-former-registers <snapshot.csv.zip>` streams any
+historical golden copy and keeps every pair that differs from today's on the
+entity's `former_register_ids` list; the daily delta preserves the outgoing
+pair whenever it applies a registration move. The list joins the hard-id
+dedup: a pair one node *held* and another node *holds* is the same register
+statement made at two times, and `deduplicate_entities` merges on it like any
+other shared identifier.
+
 ## Id-less parties — collapsed by name at import
 
 Not every BODS entity has an identifier. UK PSC files interested parties as

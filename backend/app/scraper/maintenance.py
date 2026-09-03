@@ -1092,6 +1092,26 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
             "needs_review": review, "detail": merged[:100]}
 
 
+def _former_register_groups() -> list[tuple[str, list[str]]]:
+    """(register pair, entity ids) wherever a pair on one node's
+    ``former_register_ids`` matches another node — that node's CURRENT
+    register_id, or another node's former list. Read in Python: the values
+    live in a LIST property, which the grouped-scan SQL cannot key on."""
+    by_val: dict[str, set] = {}
+    for r in run_sql("SELECT id, former_register_ids FROM Entity "
+                     "WHERE former_register_ids IS NOT NULL"):
+        d = dict(r)
+        for v in d.get("former_register_ids") or []:
+            by_val.setdefault(v, set()).add(d["id"])
+    groups = []
+    for val, ids in sorted(by_val.items()):
+        for cur in run_sql("SELECT id FROM Entity WHERE register_id = :v", {"v": val}):
+            ids.add(dict(cur)["id"])
+        if len(ids) >= 2:
+            groups.append((val, sorted(ids)))
+    return groups
+
+
 def deduplicate_entities(limit: int | None = 300) -> dict:
     """
     Merge Entity nodes that share a stable external identifier — the same LEI,
@@ -1120,6 +1140,11 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     dup_keys += [("sec_cik", k) for k in _duplicate_keys("sec_cik")]
     dup_keys += [("wikidata_id", k) for k in _duplicate_keys("wikidata_id")]
     dup_keys += [("register_id", k) for k in _duplicate_keys("register_id")]
+    # History joins the keys: a pair one node HELD and another node HOLDS is
+    # the same register statement made at two times — Tesla's GLEIF node moved
+    # to Texas, the PSC filer still says Delaware. Grouped in Python because
+    # the values live in a LIST property.
+    dup_keys += [("former_register_id", g) for g in _former_register_groups()]
     total = len(dup_keys)
     batch = dup_keys if limit is None else dup_keys[:limit]
 
@@ -1129,12 +1154,22 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
 
     merged: list[dict] = []
     for key_prop, key in batch:
-        members = run_query(
-            f"MATCH (e:Entity) WHERE e.{key_prop} = $key "
-            f"RETURN e.id AS id, e.name AS name, "
-            f"COALESCE(e.name_credibility, 0) AS cred, COALESCE(e.verified, false) AS verified",
-            {"key": key},
-        )
+        if key_prop == "former_register_id":
+            key, member_ids = key
+            members = []
+            for mid in member_ids:
+                members += run_query(
+                    "MATCH (e:Entity) WHERE e.id = $id "
+                    "RETURN e.id AS id, e.name AS name, "
+                    "COALESCE(e.name_credibility, 0) AS cred, "
+                    "COALESCE(e.verified, false) AS verified", {"id": mid})
+        else:
+            members = run_query(
+                f"MATCH (e:Entity) WHERE e.{key_prop} = $key "
+                f"RETURN e.id AS id, e.name AS name, "
+                f"COALESCE(e.name_credibility, 0) AS cred, COALESCE(e.verified, false) AS verified",
+                {"key": key},
+            )
         if len(members) < 2:
             continue
         members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
