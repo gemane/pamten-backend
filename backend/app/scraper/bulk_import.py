@@ -415,7 +415,7 @@ def _legal_form_type(details: str | None) -> str | None:
 def _entity(batch, node_id, name, entity_type, country, founded,
             lei_id, companies_house_id, source_id, credibility_score,
             registered_address=None, source_statement_ids=None,
-            hq_city=None, hq_country=None, hq_address=None):
+            hq_city=None, hq_country=None, hq_address=None, extra=None):
     """Enqueue an Entity upsert (keyed on the stable node id) and return the id.
 
     ``source_statement_ids`` lists every BODS statement (recordId) that declared
@@ -447,6 +447,11 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         props["hq_country"] = hq_country
     if hq_address:
         props["hq_address"] = hq_address
+    # Same escape hatch _owns has always had: fields only one caller states
+    # (the PSC corporate path's registration_number / register_id) ride along
+    # without widening every signature. The mapper computed these for months
+    # while this writer silently dropped them — the sibling-path bug, again.
+    props.update(extra or {})
     batch.entity(node_id, props)
     return node_id
 

@@ -318,7 +318,10 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
                 companies_house_id=props["companies_house_id"],
                 source_id=source_id, credibility_score=credibility_score,
                 registered_address=props["registered_address"], hq_address=props["hq_address"],
-                hq_city=props["hq_city"], hq_country=props["hq_country"])
+                hq_city=props["hq_city"], hq_country=props["hq_country"],
+                extra={"registration_number": props["registration_number"],
+                       "registration_authority": props["registration_authority"],
+                       "register_id": props["register_id"]})
 
     batch.owns(mapped.owner_id, mapped.owner_label, mapped.company_id,
                {**mapped.edge_props, "last_scraped_at": _now_iso()})
