@@ -138,3 +138,26 @@ def test_the_backfill_renormalizes_mixed_vintage_keys_and_the_twins_merge(it_db,
     assert result["entities_merged"] == 1
     survivors = it_db.run_sql("SELECT id FROM Entity WHERE name_normalized = 'tesla'")
     assert [dict(s)["id"] for s in survivors] == ["lei:TESLA000LEI000000001"]
+
+
+def test_the_corporate_psc_write_path_lands_the_register_fields(it_db):
+    """The mapper computed register_id for months while the writer dropped it —
+    this drives the WRITE path, which the mapper unit tests cannot see."""
+    from app.scraper.bulk_import import _BatchWriter
+    from app.scraper.companies_house_psc import _process
+    rec = {"company_number": "09533203", "data": {
+        "kind": "corporate-entity-person-with-significant-control",
+        "name": "Tesla, Inc.",
+        "identification": {"registration_number": "805587591",
+                           "country_registered": "United States",
+                           "legal_authority": "Texas",
+                           "place_registered": "N/A"},
+        "links": {"self": "/company/09533203/persons-with-significant-control/corporate-entity/x"},
+        "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+    batch = _BatchWriter()
+    assert _process(rec, batch, "src1", 80) == "entity"
+    batch.flush()
+    row = it_db.run_sql("SELECT register_id, registration_number, registration_authority "
+                        "FROM Entity WHERE id = 'chpsc:09533203:x'")[0]
+    assert row["register_id"] == "RA000637:805587591"
+    assert row["registration_number"] == "805587591"
