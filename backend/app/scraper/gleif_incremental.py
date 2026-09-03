@@ -329,6 +329,23 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
                     props["active"] = not inactive
                     if inactive:
                         counts["marked_inactive"] += 1
+                    # A registration MOVE is history, not a correction: keep the
+                    # outgoing pair so a source that knew the company under its
+                    # previous register can still hard-merge (the point-read is
+                    # by the unique id index; deltas are thousands, not millions).
+                    new_rid = props.get("register_id")
+                    if new_rid:
+                        cur = run_sql(
+                            "SELECT register_id, former_register_ids FROM Entity "
+                            "WHERE id = :id", {"id": node_id})
+                        if cur:
+                            old_rid = dict(cur[0]).get("register_id")
+                            if old_rid and old_rid != new_rid:
+                                formers = set(dict(cur[0]).get("former_register_ids") or [])
+                                formers.add(old_rid)
+                                formers.discard(new_rid)
+                                props["former_register_ids"] = sorted(formers)
+                                counts["register_moves"] = counts.get("register_moves", 0) + 1
                     batch.entity(node_id, props)
                     counts["updated"] += 1
                 succession.extend(_pairs_from_record(rec))
