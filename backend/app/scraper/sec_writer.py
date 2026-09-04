@@ -261,6 +261,10 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                  since=file_date, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score,
                  filing_type=filing_type)
+    # Claims-only sources assert but do not draw (see sources.edge_writes_suppressed).
+    from app.scraper.sources import edge_writes_suppressed
+    if edge_writes_suppressed(source_id):
+        return None
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = datetime.now(timezone.utc).isoformat()
     # The full schema bag: every OWNS property, None where this filing did not
@@ -343,6 +347,9 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, source_url=source_url, source_date=source_date,
                  credibility_score=credibility_score)
+    from app.scraper.sources import edge_writes_suppressed
+    if edge_writes_suppressed(source_id):
+        return None
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
         existing = session.run(

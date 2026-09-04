@@ -92,7 +92,8 @@ def _ensure_sources():
             session.run(
                 """
                 MERGE (s:ScraperSource {name: $name})
-                ON CREATE SET s.enabled = true, s.description = $desc
+                ON CREATE SET s.enabled = true, s.description = $desc,
+                              s.data_mode = 'full'
                 SET s.kind = $kind
                 """,
                 name=name, desc=meta["description"], kind=meta["kind"],
@@ -115,7 +116,7 @@ def list_sources():
     with db.get_session() as session:
         records = session.run(
             "MATCH (s:ScraperSource) RETURN s.name AS name, s.enabled AS enabled, "
-            "s.description AS description, s.kind AS kind"
+            "s.description AS description, s.kind AS kind, s.data_mode AS data_mode"
         )
         rows = []
         for r in records:
@@ -139,8 +140,116 @@ def list_sources():
                 # DB node (whose description is ON CREATE only).
                 "region": meta.get("region"),
                 "coverage": meta.get("coverage"),
+                # `full` draws edges; `claims_only` records claims and enriches
+                # entities but never draws structure. Null on pre-field rows
+                # reads as full — the mode is an opt-in restriction.
+                "data_mode": r["data_mode"] or "full",
             })
         return rows
+
+
+_DATA_MODES = ("full", "claims_only")
+
+# data_mode per Source-NODE id, cached briefly: the bulk importers consult
+# this once per edge, and a 60-second lag on an admin mode flip is invisible
+# while a per-edge point read at GLEIF scale is not. Same pattern as the
+# stats cache.
+_MODE_CACHE: dict = {"at": 0.0, "by_source_id": {}}
+_MODE_CACHE_TTL = 60.0
+
+
+def _mode_by_source_id() -> dict:
+    """Source-node id → data_mode, for every catalogue source.
+
+    Edges carry the Source NODE's uuid, not the catalogue slug; the bridge is
+    the label (Source.name == KNOWN_SOURCES[slug]["label"]). Unknown labels
+    (a peer's federated source, say) read as full — restriction is opt-in."""
+    import time
+    now = time.monotonic()
+    if now - _MODE_CACHE["at"] < _MODE_CACHE_TTL:
+        return _MODE_CACHE["by_source_id"]
+    by_id: dict = {}
+    try:
+        label_to_mode = {}
+        with db.get_session() as session:
+            for r in session.run("MATCH (s:ScraperSource) RETURN s.name AS name, "
+                                 "s.data_mode AS data_mode"):
+                meta = KNOWN_SOURCES.get(r["name"])
+                if meta:
+                    label_to_mode[meta["label"]] = r["data_mode"] or "full"
+            for r in session.run("MATCH (s:Source) RETURN s.id AS id, s.name AS name"):
+                mode = label_to_mode.get(r["name"])
+                if mode:
+                    by_id[r["id"]] = mode
+    except Exception:  # noqa: BLE001 - fail open, and CACHE the failure:
+        # a mocked suite (or a flaky DB) must produce one failed read per TTL,
+        # not one per edge — repeated failed reads are how the ArcadeDB
+        # brute-force lockout gets triggered from tests.
+        by_id = {}
+    _MODE_CACHE["at"] = now
+    _MODE_CACHE["by_source_id"] = by_id
+    return by_id
+
+
+def edge_writes_suppressed(source_id: str | None) -> bool:
+    """True when the source that owns ``source_id`` is in claims-only mode.
+
+    Consulted by every edge writer AFTER the claim is recorded: a claims-only
+    source may assert (provenance kept, corroboration visible) but not draw
+    structure. Fail-open on any error — a mode lookup must never break a
+    scrape."""
+    if not source_id:
+        return False
+    try:
+        return _mode_by_source_id().get(source_id) == "claims_only"
+    except Exception:  # noqa: BLE001 - never break a write over a mode read
+        return False
+
+
+@router.patch("/{name}/mode")
+def set_source_mode(name: str, mode: str, _: dict = Depends(require_admin)):
+    """Set a source's data mode: ``full`` draws edges, ``claims_only``
+    records claims and enriches entities but never draws structure.
+
+    Does NOT touch existing edges — removing what a source already drew is
+    the explicitly destructive POST /{name}/sweep-edges. Reverting is
+    mode=full plus a re-scrape/re-import."""
+    if name not in KNOWN_SOURCES:
+        raise HTTPException(status_code=404, detail=f"Unknown source: {name}")
+    if mode not in _DATA_MODES:
+        raise HTTPException(status_code=422,
+                            detail=f"mode must be one of {_DATA_MODES}")
+    _ensure_sources()
+    with db.get_session() as session:
+        rec = session.run(
+            "MATCH (s:ScraperSource {name: $name}) SET s.data_mode = $mode "
+            "RETURN s.data_mode AS data_mode",
+            name=name, mode=mode).single()
+        if not rec:
+            raise HTTPException(status_code=404, detail="Source not found")
+    _MODE_CACHE["at"] = 0.0   # a mode flip should not wait out the cache
+    return {"name": name, "data_mode": rec["data_mode"]}
+
+
+@router.post("/{name}/sweep-edges")
+def sweep_source_edges(name: str, confirm: str, _: dict = Depends(require_admin)):
+    """Delete every EDGE this source drew — nodes and claims stay.
+
+    The retro half of claims-only: flipping the mode stops new structure,
+    this removes the old. Destructive, so the wipe-source retype guard,
+    HTTP-shaped: ``confirm`` must equal the source name exactly."""
+    if name not in KNOWN_SOURCES:
+        raise HTTPException(status_code=404, detail=f"Unknown source: {name}")
+    if confirm != name:
+        raise HTTPException(status_code=422,
+                            detail="confirm must equal the source name exactly")
+    from app.scraper.maintenance import wipe_source_edges
+    label = KNOWN_SOURCES[name]["label"]
+    try:
+        result = wipe_source_edges(label)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"name": name, "source": label, **result}
 
 
 @router.patch("/{name}/toggle")

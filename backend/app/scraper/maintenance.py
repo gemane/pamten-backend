@@ -890,6 +890,32 @@ def _batched_delete(where_sql: str, params: dict, batch: int) -> int:
             return total
 
 
+def _source_id_for(source_name: str) -> str:
+    src = run_sql("SELECT id FROM Source WHERE name = :n", {"n": source_name})
+    if not src:
+        known = ", ".join(r["name"] for r in run_sql("SELECT name FROM Source ORDER BY name"))
+        raise ValueError(f"No Source named {source_name!r}. Known sources: {known or '(none)'}")
+    return src[0]["id"]
+
+
+def _delete_source_edges(sid: str, batch: int) -> dict:
+    return {et: _batched_delete(f"DELETE FROM {et} WHERE source_id = :s",
+                               {"s": sid}, batch)
+            for et in _WIPE_EDGE_TYPES}
+
+
+def wipe_source_edges(source_name: str, batch: int = 10000) -> dict:
+    """Delete every EDGE a source drew; its nodes and Claims stay untouched.
+
+    The retro half of claims-only mode: the provenance (claims) and the
+    entities remain, only the drawn structure goes. Exactly wipe_source's
+    step 1, exposed standalone — a full wipe remains the separate, heavier
+    command."""
+    sid = _source_id_for(source_name)
+    return {"source": source_name, "source_id": sid,
+            "edges": _delete_source_edges(sid, batch)}
+
+
 def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = True,
                 id_prefixes: list[str] | None = None) -> dict:
     """Delete one source's contribution to the graph — its edges, then the nodes
@@ -913,17 +939,12 @@ def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = Tr
     slow — run with a direct `--db-url` to ArcadeDB so it isn't cut off by a proxy
     read timeout.
     """
-    src = run_sql("SELECT id FROM Source WHERE name = :n", {"n": source_name})
-    if not src:
-        known = ", ".join(r["name"] for r in run_sql("SELECT name FROM Source ORDER BY name"))
-        raise ValueError(f"No Source named {source_name!r}. Known sources: {known or '(none)'}")
-    sid = src[0]["id"]
+    sid = _source_id_for(source_name)
     out: dict = {"source": source_name, "source_id": sid, "edges": {}, "nodes": {}}
 
     # 1) Edges first — single-source, so this is exact and it orphans the nodes only
     #    this source connected.
-    for et in _WIPE_EDGE_TYPES:
-        out["edges"][et] = _batched_delete(f"DELETE FROM {et} WHERE source_id = :s", {"s": sid}, batch)
+    out["edges"] = _delete_source_edges(sid, batch)
     # 2) The source's own nodes that are now orphaned (degree 0). Shared/corroborated
     #    nodes still carry another source's edge → not orphaned → kept. With known id
     #    prefixes, restrict by an indexed id range (fast); else scan by source_id.
