@@ -14,7 +14,7 @@ import checkpoints. Nothing new is written anywhere.
 from datetime import datetime, timedelta, timezone
 
 from app.scraper.run_log import list_runs
-from app.scraper.sources import KNOWN_SOURCES, get_source_enabled
+from app.scraper.sources import KNOWN_SOURCES
 
 # Run-log source names that are not catalogue sources: pipelines and passes
 # whose runs are still health information. The catalogue's own names label
@@ -26,6 +26,30 @@ _RUNLOG_LABELS = {
     "ch-psc-update": "UK PSC refresh",
     "deduplicate-entities": "Entity dedup",
 }
+
+
+def _source_toggles() -> dict:
+    """DB toggle per catalogue source, in ONE read. The per-name
+    `get_source_enabled` runs `_ensure_sources()` every call - five MERGEs
+    plus a point read per source, ~30 round trips per poll once a panel
+    refreshes every 15 seconds. Health only reads; absent rows read as
+    disabled, same as the per-name helper."""
+    from app.database import db
+    from app.scraper.sources import _ensure_sources
+
+    def read() -> dict:
+        with db.get_session() as session:
+            rows = session.run("MATCH (s:ScraperSource) RETURN s.name AS name, "
+                               "s.enabled AS enabled")
+            return {r["name"]: bool(r["enabled"]) for r in rows}
+
+    toggles = read()
+    if not toggles:
+        # A fresh database has no toggle nodes yet — bootstrap once and
+        # re-read. Every later request stays a single query.
+        _ensure_sources()
+        toggles = read()
+    return toggles
 
 
 def _streak(runs: list[dict]) -> int:
@@ -44,7 +68,8 @@ def _streak(runs: list[dict]) -> int:
     return n
 
 
-def _source_entry(name: str, runs: list[dict], now: datetime) -> dict:
+def _source_entry(name: str, runs: list[dict], now: datetime,
+                  toggles: dict) -> dict:
     meta = KNOWN_SOURCES.get(name)
     entry: dict = {
         "name": name,
@@ -53,7 +78,7 @@ def _source_entry(name: str, runs: list[dict], now: datetime) -> dict:
         "quality": (meta or {}).get("quality"),
         # Only catalogue sources have a toggle; pipelines report null rather
         # than pretending an enabled state they do not have.
-        "enabled": get_source_enabled(name) if meta else None,
+        "enabled": toggles.get(name, False) if meta else None,
         "last_run_at": None, "last_status": None, "last_total": None,
         "last_ok_at": None, "failure_streak": 0, "runs_24h": 0,
     }
@@ -116,8 +141,9 @@ def source_health() -> dict:
 
     # Catalogue sources always appear, run or not; run-log-only pipelines
     # appear when they have runs. Catalogue order first, then by recency.
+    toggles = _source_toggles()
     names = list(KNOWN_SOURCES) + [n for n in by_source if n not in KNOWN_SOURCES]
-    sources = [_source_entry(n, by_source.get(n, []), now) for n in names]
+    sources = [_source_entry(n, by_source.get(n, []), now, toggles) for n in names]
 
     return {"sources": sources, "datasets": _datasets(),
             "import_lock": lock_status()}
