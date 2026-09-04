@@ -423,3 +423,16 @@ affects new writes only — `POST …/sweep-edges` removes what the source
 already drew (nodes and claims stay). Reverting is mode back to `full` plus a
 re-scrape / re-import. Built for the Wikidata quality decision, generic on
 purpose: any source can be demoted the day its quality disappoints.
+
+## Wikidata node hygiene
+
+Wikidata's related-company lists (subsidiaries P355, owners P127, successors
+P1366, predecessors P1365) create a node per entry. A row with no LEI/CIK and
+no existing match would mint an unidentifiable orphan — the depth-2 litter
+that gave Samsung a constellation of id-less soft nodes. The rule
+(`runner._resolve_related_company`): resolve first; write the edge to an
+existing node; else create only if the row carries a hard id (now fetched
+per-item in the relations SPARQL); else **skip** and count it
+(`skipped_unidentified` in the scrape result). People (CEOs, officers, human
+owners) are never gated — Wikidata's coverage of people is a strength and
+person dedup handles them.

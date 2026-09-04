@@ -435,6 +435,27 @@ def _upsert_person(
 
 # ── Recursive scrape ──────────────────────────────────────────────────────────
 
+def _resolve_related_company(rel: dict) -> str | None | bool:
+    """Decide whether a Wikidata-related COMPANY may be written.
+
+    Returns an existing node id (write the edge to it), None (proceed to
+    create — it carries a hard id, so a future source can merge it), or
+    False (SKIP — no existing node, no LEI/CIK, so creating it would mint an
+    unidentifiable orphan that only clutters search and dedup, the litter the
+    depth-2 pass produced for Samsung's subsidiaries).
+
+    People are never routed here — Wikidata's coverage of people is a strength
+    and person dedup handles them; only company nodes are gated."""
+    from app.database import db
+    lei, cik, wd = rel.get("lei"), rel.get("sec_cik"), rel.get("qid")
+    with db.get_session() as session:
+        existing = resolve_entity_id(session, lei_id=lei, sec_cik=cik,
+                                     wikidata_id=wd)
+    if existing:
+        return existing
+    return None if (lei or cik) else False
+
+
 def _scrape_node(
     qid: str,
     depth: int,
@@ -442,7 +463,13 @@ def _scrape_node(
     scraped: list,
     source_id: str,
     parent_entity_id: str | None = None,
+    counts: dict | None = None,
 ):
+    # `counts` accumulates hygiene stats across the recursion (currently just
+    # skipped_unidentified — related companies with no id and no existing node,
+    # not written). Created once by the top call, threaded down.
+    if counts is None:
+        counts = {}
     if qid in visited:
         return
     visited.add(qid)
@@ -502,9 +529,14 @@ def _scrape_node(
     for sub in data.get("subsidiaries", [])[:MAX_SUBSIDIARIES]:
         sub_name = sub.get("name") or sub["qid"]
         sub_type = infer_entity_type(list(sub.get("instances", set())))
-        sub_id = _upsert_entity(
+        gate = _resolve_related_company(sub)
+        if gate is False:
+            counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+            continue
+        sub_id = gate or _upsert_entity(
             name=sub_name,
             entity_type=sub_type,
+            lei=sub.get("lei"), sec_cik=sub.get("sec_cik"),
             # Fetched in one batched query alongside the scrape. Passing None here
             # is what left owner-only companies — BlackRock among them — with no
             # country at all, and so absent from the map. Jurisdiction and
@@ -522,7 +554,7 @@ def _scrape_node(
                      source_url=_wikidata_url(sub["qid"]))
         if depth > 1:
             _scrape_node(sub["qid"], depth - 1, visited, scraped, source_id,
-                         parent_entity_id=entity_id)
+                         parent_entity_id=entity_id, counts=counts)
         elif sub["qid"] not in {s["qid"] for s in scraped}:
             scraped.append({
                 "qid":  sub["qid"],
@@ -593,9 +625,14 @@ def _scrape_node(
                                       source_id=source_id)
             owner_label = "Person"
         else:
-            owner_id = _upsert_entity(
+            gate = _resolve_related_company(owner)
+            if gate is False:
+                counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+                continue
+            owner_id = gate or _upsert_entity(
                 name=owner["label"],
                 entity_type=infer_entity_type(instances),
+                lei=owner.get("lei"), sec_cik=owner.get("sec_cik"),
                 country=owner.get("country"), hq_country=owner.get("hq_country"),
                 founded=None, revenue=None, description=None,
                 wikidata_id=owner["qid"],
@@ -611,20 +648,30 @@ def _scrape_node(
     for succ in data.get("successors", []):
         if not succ.get("name"):
             continue
-        succ_id = _upsert_entity(
+        gate = _resolve_related_company(succ)
+        if gate is False:
+            counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+            continue
+        succ_id = gate or _upsert_entity(
             name=succ["name"], entity_type="company",
             country=None, founded=None, revenue=None, description=None,
-            wikidata_id=succ["qid"], source_id=source_id,
+            wikidata_id=succ["qid"], lei=succ.get("lei"),
+            sec_cik=succ.get("sec_cik"), source_id=source_id,
         )
         _upsert_succession(entity_id, succ_id, source_id, since=succ.get("date"),
                            source_url=_wikidata_url(qid))
     for pred in data.get("predecessors", []):
         if not pred.get("name"):
             continue
-        pred_id = _upsert_entity(
+        gate = _resolve_related_company(pred)
+        if gate is False:
+            counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+            continue
+        pred_id = gate or _upsert_entity(
             name=pred["name"], entity_type="company",
             country=None, founded=None, revenue=None, description=None,
-            wikidata_id=pred["qid"], source_id=source_id,
+            wikidata_id=pred["qid"], lei=pred.get("lei"),
+            sec_cik=pred.get("sec_cik"), source_id=source_id,
         )
         _upsert_succession(pred_id, entity_id, source_id, since=pred.get("date"),
                            source_url=_wikidata_url(qid))
@@ -682,8 +729,9 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
     source_id = _ensure_source(WIKIDATA_SOURCE_NAME, WIKIDATA_SOURCE_URL, WIKIDATA_CREDIBILITY, "knowledge_base")
     scraped: list = []
     visited: set  = set()
+    counts: dict  = {}
 
-    _scrape_node(qid, depth, visited, scraped, source_id)
+    _scrape_node(qid, depth, visited, scraped, source_id, counts=counts)
 
     # Mark the TARGET (the searched company) as on-demand scraped at this depth, so the
     # freshness gate + the depth-2 "deepen" pass can decide correctly next time. Only the
@@ -699,6 +747,7 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
         "entity_id":   target_id,
         "total":       len(scraped),
         "scraped":     scraped,
+        "skipped_unidentified": counts.get("skipped_unidentified", 0),
     }
 
 

@@ -403,21 +403,34 @@ def _sparql(qid: str) -> list:
     """
     # 3. Relations: subsidiaries, parent, owners, succession (replaced-by / replaces).
     relations = f"""
-    SELECT ?subsidiary ?subsidiaryLabel ?subsidiaryInstance ?parent
-           ?owner ?ownerLabel ?ownerInstance
-           ?successor ?successorLabel ?successorDate
-           ?predecessor ?predecessorLabel ?predecessorDate
+    SELECT ?subsidiary ?subsidiaryLabel ?subsidiaryInstance ?subsidiaryLei ?subsidiaryCik ?parent
+           ?owner ?ownerLabel ?ownerInstance ?ownerLei ?ownerCik
+           ?successor ?successorLabel ?successorDate ?successorLei ?successorCik
+           ?predecessor ?predecessorLabel ?predecessorDate ?predecessorLei ?predecessorCik
     WHERE {{
       BIND(wd:{qid} AS ?item)
-      OPTIONAL {{ ?item wdt:P355 ?subsidiary . OPTIONAL {{ ?subsidiary wdt:P31 ?subsidiaryInstance }} }}
+      # Per-related-item hard ids (P1278 LEI / P5531 CIK): the node-hygiene rule
+      # skips creating a related COMPANY that carries neither and does not
+      # already exist, so these are what let an identified subsidiary still flow.
+      OPTIONAL {{ ?item wdt:P355 ?subsidiary .
+                  OPTIONAL {{ ?subsidiary wdt:P31 ?subsidiaryInstance }}
+                  OPTIONAL {{ ?subsidiary wdt:P1278 ?subsidiaryLei }}
+                  OPTIONAL {{ ?subsidiary wdt:P5531 ?subsidiaryCik }} }}
       OPTIONAL {{ ?item wdt:P749 ?parent }}
-      OPTIONAL {{ ?item wdt:P127 ?owner . OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }} }}
+      OPTIONAL {{ ?item wdt:P127 ?owner .
+                  OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }}
+                  OPTIONAL {{ ?owner wdt:P1278 ?ownerLei }}
+                  OPTIONAL {{ ?owner wdt:P5531 ?ownerCik }} }}
       # Succession — read the full statement so the P585 point-in-time qualifier
       # (when the rename/merger took effect) can be attached to the edge.
       OPTIONAL {{ ?item p:P1366 ?succStmt . ?succStmt ps:P1366 ?successor .   # replaced by (this → successor)
-                  OPTIONAL {{ ?succStmt pq:P585 ?successorDate }} }}
+                  OPTIONAL {{ ?succStmt pq:P585 ?successorDate }}
+                  OPTIONAL {{ ?successor wdt:P1278 ?successorLei }}
+                  OPTIONAL {{ ?successor wdt:P5531 ?successorCik }} }}
       OPTIONAL {{ ?item p:P1365 ?predStmt . ?predStmt ps:P1365 ?predecessor . # replaces (predecessor → this)
-                  OPTIONAL {{ ?predStmt pq:P585 ?predecessorDate }} }}
+                  OPTIONAL {{ ?predStmt pq:P585 ?predecessorDate }}
+                  OPTIONAL {{ ?predecessor wdt:P1278 ?predecessorLei }}
+                  OPTIONAL {{ ?predecessor wdt:P5531 ?predecessorCik }} }}
       {_LABEL_SERVICE}
     }}
     """
@@ -1019,6 +1032,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     "qid":       sub_qid,
                     "name":      _label(row, "subsidiaryLabel"),
                     "instances": set(),
+                    "lei":       normalize_lei(_v(row, "subsidiaryLei")),
+                    "sec_cik":   normalize_cik(_v(row, "subsidiaryCik")),
                 }
             if sub_inst := _v(row, "subsidiaryInstance"):
                 result["subsidiaries"][sub_qid]["instances"].add(_qid(sub_inst))
@@ -1034,13 +1049,17 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if succ_qid and succ_qid not in result["successors"]:
                 result["successors"][succ_qid] = {
                     "qid": succ_qid, "name": _label(row, "successorLabel"),
-                    "date": (_v(row, "successorDate") or "")[:10] or None}
+                    "date": (_v(row, "successorDate") or "")[:10] or None,
+                    "lei": normalize_lei(_v(row, "successorLei")),
+                    "sec_cik": normalize_cik(_v(row, "successorCik"))}
         if pred_uri := _v(row, "predecessor"):
             pred_qid = _qid(pred_uri)
             if pred_qid and pred_qid not in result["predecessors"]:
                 result["predecessors"][pred_qid] = {
                     "qid": pred_qid, "name": _label(row, "predecessorLabel"),
-                    "date": (_v(row, "predecessorDate") or "")[:10] or None}
+                    "date": (_v(row, "predecessorDate") or "")[:10] or None,
+                    "lei": normalize_lei(_v(row, "predecessorLei")),
+                    "sec_cik": normalize_cik(_v(row, "predecessorCik"))}
 
         # CEO (keyed by qid+since to capture multiple tenures)
         if ceo_uri := _v(row, "ceo"):
@@ -1086,6 +1105,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     "qid":       owner_qid,
                     "label":     _label(row, "ownerLabel"),
                     "instances": set(),
+                    "lei":       normalize_lei(_v(row, "ownerLei")),
+                    "sec_cik":   normalize_cik(_v(row, "ownerCik")),
                 }
             if owner_inst := _v(row, "ownerInstance"):
                 result["owners"][owner_qid]["instances"].add(_qid(owner_inst))
