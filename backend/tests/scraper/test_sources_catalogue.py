@@ -16,8 +16,17 @@ EXPECTED = {"wikidata", "sec_edgar", "open_corporates", "bods_gleif", "bods_uk_p
 class TestCatalogueMetadata:
     def test_every_source_is_fully_described(self):
         for name, meta in KNOWN_SOURCES.items():
-            for field in ("kind", "label", "url", "credibility", "quality", "description"):
+            for field in ("kind", "label", "url", "credibility", "quality",
+                          "description", "region", "coverage"):
                 assert meta.get(field) not in (None, ""), f"{name} is missing {field}"
+
+    def test_every_source_states_its_region_from_the_known_set(self):
+        # The coverage page renders these as tags; free-form drift would
+        # produce a tag zoo. "200+ jurisdictions" is OpenCorporates' honest
+        # special case.
+        allowed = {"Global", "US", "GB", "200+ jurisdictions"}
+        for name, meta in KNOWN_SOURCES.items():
+            assert meta["region"] in allowed, name
 
     def test_urls_are_absolute_links_to_the_source(self):
         for name, meta in KNOWN_SOURCES.items():
@@ -73,6 +82,8 @@ class TestListSources:
         assert row["url"] == "https://www.sec.gov/edgar"
         assert row["credibility"] == 98
         assert row["quality"] == "statutory"
+        assert row["region"] == "US"
+        assert "13F" in row["coverage"]
 
     def test_lists_every_source_including_the_bulk_ones(self):
         # Both bulk sources are toggled off, yet their data is loaded and in use —
@@ -80,7 +91,8 @@ class TestListSources:
         assert {r["name"] for r in self._rows()} == EXPECTED
 
     @pytest.mark.parametrize("field", ["name", "enabled", "kind", "label", "url",
-                                       "credibility", "quality", "description"])
+                                       "credibility", "quality", "description",
+                                       "region", "coverage"])
     def test_every_row_carries_every_field_the_ui_reads(self, field):
         for row in self._rows():
             assert field in row

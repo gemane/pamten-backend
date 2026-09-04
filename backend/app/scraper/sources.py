@@ -32,6 +32,9 @@ KNOWN_SOURCES = {
         "credibility": 80,
         "quality": "community",
         "description": "Wikidata — structured corporate data via SPARQL",
+        "region": "Global",
+        "coverage": "Descriptions, people, logos and websites for globally notable "
+                    "companies — the soft layer no register carries",
     },
     "sec_edgar": {
         "kind": "instant",
@@ -40,6 +43,9 @@ KNOWN_SOURCES = {
         "credibility": 98,
         "quality": "statutory",
         "description": "SEC EDGAR — legally required US ownership filings (SC 13D/13G, Form 3/4)",
+        "region": "US",
+        "coverage": "Ownership of US-listed companies — 13D/G control stakes, 13F "
+                    "institutional holdings, Form 3/4 insider filings",
     },
     "open_corporates": {
         "kind": "instant",
@@ -48,6 +54,9 @@ KNOWN_SOURCES = {
         "credibility": 85,
         "quality": "aggregated",
         "description": "OpenCorporates — official company registers from 200+ jurisdictions",
+        "region": "200+ jurisdictions",
+        "coverage": "Company registrations and register numbers, looked up on demand "
+                    "for jurisdictions this platform does not read directly",
     },
     "bods_gleif": {
         "kind": "bulk",
@@ -57,6 +66,9 @@ KNOWN_SOURCES = {
         "quality": "official",
         "description": "GLEIF – Global Legal Entity Identifier "
                        "(corporate ownership, worldwide, CC0)",
+        "region": "Global",
+        "coverage": "Legal entities worldwide that hold an LEI, and their accounting "
+                    "consolidation relationships (who consolidates whom)",
     },
     "bods_uk_psc": {
         "kind": "bulk",
@@ -66,6 +78,9 @@ KNOWN_SOURCES = {
         "quality": "statutory",
         "description": "UK People with Significant Control Register "
                        "(beneficial ownership, UK companies, CC0)",
+        "region": "GB",
+        "coverage": "Beneficial owners — the persons and companies with significant "
+                    "control over UK-registered companies",
     },
 }
 
@@ -119,6 +134,11 @@ def list_sources():
                 "url": meta.get("url"),
                 "credibility": meta.get("credibility"),
                 "quality": meta.get("quality"),
+                # What the source is authoritative for, and where — catalogue-
+                # served like label/url, so edits apply without touching the
+                # DB node (whose description is ON CREATE only).
+                "region": meta.get("region"),
+                "coverage": meta.get("coverage"),
             })
         return rows
 

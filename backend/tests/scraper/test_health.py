@@ -16,10 +16,13 @@ NOW = datetime(2026, 9, 3, 12, 0, 0, tzinfo=timezone.utc)
 
 @pytest.fixture(autouse=True)
 def _no_db(monkeypatch):
-    # get_source_enabled reads the ScraperSource toggle — a real DB query. A
+    # _source_toggles reads the ScraperSource nodes — a real DB query. A
     # mocked suite that reaches a real server locks ArcadeDB out (again);
-    # patch at the name health.py actually resolved.
-    monkeypatch.setattr("app.scraper.health.get_source_enabled", lambda name: True)
+    # patch at the name health.py actually resolves.
+    monkeypatch.setattr("app.scraper.health._source_toggles",
+                        lambda: {"wikidata": True, "sec_edgar": True})
+
+TOGGLES = {"wikidata": True, "sec_edgar": True}
 
 
 def run(status, started, total=0, stale=False, error=""):
@@ -44,30 +47,30 @@ class TestStreak:
 
 class TestSourceEntry:
     def test_a_source_that_never_ran_still_appears(self):
-        e = _source_entry("wikidata", [], NOW)
+        e = _source_entry("wikidata", [], NOW, TOGGLES)
         assert e["last_run_at"] is None and e["last_status"] is None
         assert e["failure_streak"] == 0 and e["runs_24h"] == 0
         assert e["label"] == "Wikidata"
 
     def test_a_stuck_running_row_reports_stale_not_running(self):
         rs = [run("running", NOW.isoformat(), stale=True)]
-        assert _source_entry("wikidata", rs, NOW)["last_status"] == "stale"
+        assert _source_entry("wikidata", rs, NOW, TOGGLES)["last_status"] == "stale"
 
     def test_last_ok_reaches_past_newer_failures(self):
         ok_at = (NOW - timedelta(hours=2)).isoformat()
         rs = [run("failed", (NOW - timedelta(hours=1)).isoformat()),
               run("ok", ok_at, total=7)]
-        e = _source_entry("wikidata", rs, NOW)
+        e = _source_entry("wikidata", rs, NOW, TOGGLES)
         assert e["last_ok_at"] == ok_at and e["last_status"] == "failed"
 
     def test_the_24h_window_counts_only_recent_runs(self):
         rs = [run("ok", (NOW - timedelta(hours=1)).isoformat()),
               run("ok", (NOW - timedelta(hours=23)).isoformat()),
               run("ok", (NOW - timedelta(hours=25)).isoformat())]
-        assert _source_entry("wikidata", rs, NOW)["runs_24h"] == 2
+        assert _source_entry("wikidata", rs, NOW, TOGGLES)["runs_24h"] == 2
 
     def test_a_pipeline_name_gets_its_label_and_no_toggle(self):
-        e = _source_entry("sec-13f", [run("ok", NOW.isoformat())], NOW)
+        e = _source_entry("sec-13f", [run("ok", NOW.isoformat())], NOW, TOGGLES)
         assert e["label"] == "SEC 13F holders"
         assert e["enabled"] is None
 
