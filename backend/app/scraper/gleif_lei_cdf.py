@@ -248,6 +248,34 @@ def _founded_date(entity: dict) -> str | None:
     return None
 
 
+def _other_names(entity: dict, legal_name: str) -> list[str]:
+    """Every other name the register publishes for the entity, deduped.
+
+    The bridge for non-Latin jurisdictions: 삼성전자(주) is unfindable by
+    "Samsung" unless the record's own ALTERNATIVE_LANGUAGE_LEGAL_NAME
+    ("SAMSUNG ELECTRONICS CO., LTD") comes along — and before this, it only
+    came along when a Wikidata twin happened to exist. Reads BOTH containers
+    (OtherEntityNames and TransliteratedOtherEntityNames), tolerates the
+    single-dict-instead-of-list shape the JSON uses for one entry, keeps
+    every type (previous legal names are how a renamed company stays
+    findable), and excludes the legal name itself."""
+    out: list[str] = []
+    seen = {(legal_name or "").strip().casefold()}
+    for container, key in (("OtherEntityNames", "OtherEntityName"),
+                           ("TransliteratedOtherEntityNames",
+                            "TransliteratedOtherEntityName")):
+        raw = (entity.get(container) or {}).get(key) or []
+        if isinstance(raw, dict):
+            raw = [raw]
+        for item in raw:
+            name = _v(item) if isinstance(item, dict) else None
+            name = (name or "").strip()
+            if name and name.casefold() not in seen:
+                seen.add(name.casefold())
+                out.append(name)
+    return out
+
+
 def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[str, dict] | None:
     """(node_id, props) for one LEI-CDF record, or None when it lacks an LEI/name.
     `type` is set only when the legal form refines it (fund/foundation/nonprofit)
@@ -258,12 +286,22 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         return None
     entity = rec.get("Entity") or {}
     reg_authority, reg_number, reg_code = _registration(entity)
+    other_names = _other_names(entity, name)
     props: dict = {
         "name": name,
         "name_normalized": normalize_entity_name(name),
         # The register number joins the search tokens (FULL_TEXT is whole-word),
-        # so a company is findable by the id printed on its own paperwork.
-        "search_text": f"{name} {reg_number}" if reg_number else name,
+        # so a company is findable by the id printed on its own paperwork —
+        # and so do the register's OTHER names, which is what makes a company
+        # with a non-Latin legal name findable in Latin at all.
+        "search_text": " ".join(p for p in (name, *other_names,
+                                            reg_number or "") if p),
+        # The register's own other names (alternative-language legal names,
+        # previous names, trading names, transliterations). A separate
+        # property, NOT aliases: the bulk writer overwrites what it sets, and
+        # aliases belong to the Wikidata/SEC writers whose union semantics a
+        # bulk UPSERT cannot honour.
+        "other_names": other_names,
         # Per record, not per source: what this one is worth depends on whether
         # anybody corroborated it (see _validated_credibility).
         "name_credibility": _validated_credibility(rec, credibility_score),

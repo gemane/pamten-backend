@@ -42,6 +42,49 @@ def _rec(lei, name, jurisdiction="US", other_form=None, address=None, created=No
     return out
 
 
+class TestOtherNames:
+    """The register's other names — the bridge that makes a non-Latin legal
+    name findable in Latin without depending on a Wikidata twin."""
+
+    def _props(self, entity_extra):
+        rec = _rec("5493001KJTIIGC8Y1R12", "삼성전자(주)", jurisdiction="KR")
+        rec["Entity"].update(entity_extra)
+        _, props = _entity_props(rec, "src", 92)
+        return props
+
+    def test_the_samsung_case_the_english_legal_name_comes_along(self):
+        props = self._props({"OtherEntityNames": {"OtherEntityName": [
+            {"@type": "ALTERNATIVE_LANGUAGE_LEGAL_NAME", "@xml:lang": "en",
+             "$": "SAMSUNG ELECTRONICS CO., LTD"}]}})
+        assert props["other_names"] == ["SAMSUNG ELECTRONICS CO., LTD"]
+        assert "SAMSUNG ELECTRONICS CO., LTD" in props["search_text"]
+
+    def test_a_single_entry_arrives_as_a_dict_not_a_list(self):
+        # The JSON shape: one entry is a bare dict, several are a list.
+        props = self._props({"OtherEntityNames": {"OtherEntityName":
+            {"@type": "PREVIOUS_LEGAL_NAME", "$": "Old Name GmbH"}}})
+        assert props["other_names"] == ["Old Name GmbH"]
+
+    def test_transliterations_join_from_their_own_container(self):
+        props = self._props({"TransliteratedOtherEntityNames":
+            {"TransliteratedOtherEntityName": [
+                {"@type": "AUTO_ASCII_TRANSLITERATED_LEGAL_NAME",
+                 "$": "samseongjeonja(ju)"}]}})
+        assert props["other_names"] == ["samseongjeonja(ju)"]
+
+    def test_the_legal_name_itself_and_duplicates_are_excluded(self):
+        props = self._props({"OtherEntityNames": {"OtherEntityName": [
+            {"@type": "ALTERNATIVE_LANGUAGE_LEGAL_NAME", "$": "삼성전자(주)"},
+            {"@type": "TRADING_OR_OPERATING_NAME", "$": "Samsung"},
+            {"@type": "PREVIOUS_LEGAL_NAME", "$": "samsung"}]}})
+        assert props["other_names"] == ["Samsung"]
+
+    def test_no_other_names_is_an_empty_list_and_a_plain_search_text(self):
+        props = self._props({})
+        assert props["other_names"] == []
+        assert props["search_text"] == "삼성전자(주)"
+
+
 class TestCountry:
     def test_iso2_and_subdivision(self):
         assert _country({"LegalJurisdiction": _w("US")}) == "US"

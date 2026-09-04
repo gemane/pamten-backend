@@ -160,6 +160,10 @@ _PROPERTY_TYPES: dict[tuple[str, str], str] = {
     # daily delta; joins the hard-id dedup so a source that knew the company
     # under its previous register can still merge.
     ("Entity", "former_register_ids"): "LIST",
+    # The register's own other names for the entity (alternative-language
+    # legal names, previous names, transliterations) — GLEIF-owned, folded
+    # into search_text; separate from the Wikidata/SEC-owned aliases.
+    ("Entity", "other_names"): "LIST",
 }
 
 
