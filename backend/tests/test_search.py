@@ -236,3 +236,58 @@ class TestClassAwareSummary:
         s = _ownership_summary([_owner(44.2), _owner(5.3, "Common Stock")])
         assert s["multi_class"] is False
         assert s["disclosed_pct"] == 49.5
+
+
+class TestAliasAwareRank:
+    """The Samsung case: the register-backed node whose LEGAL name is Korean
+    must win a Latin query through its aliases and the register's other
+    names — and credibility must break match-quality ties."""
+
+    @staticmethod
+    def _key(node, q):
+        from app.routers.search import _rank
+        return _rank(node, q, q.split(), 0, __import__(
+            "app.scraper.mapper", fromlist=["normalize_entity_name"]
+        ).normalize_entity_name(q))
+
+    def test_an_exact_alias_beats_a_name_that_merely_starts_with(self):
+        samsung_kr = {"name": "삼성전자(주)", "name_normalized": "삼성전자(주)",
+                      "aliases": ["Samsung", "Samsung Electronics Co., Ltd."],
+                      "wikidata_id": "Q21121070", "name_credibility": 92}
+        samsung_group = {"name": "Samsung Group", "name_normalized": "samsung group",
+                         "aliases": [], "wikidata_id": "Q20716", "name_credibility": 80}
+        assert self._key(samsung_kr, "samsung") < self._key(samsung_group, "samsung")
+
+    def test_the_registers_other_names_count_like_aliases(self):
+        node = {"name": "삼성전자(주)", "name_normalized": "삼성전자(주)",
+                "other_names": ["SAMSUNG ELECTRONICS CO., LTD"],
+                "name_credibility": 92}
+        plain = {"name": "Samsung Heavy Industries", "name_normalized": "samsung heavy industries",
+                 "name_credibility": 92}
+        assert self._key(node, "samsung electronics") < self._key(plain, "samsung electronics")
+
+    def test_alias_token_coverage_counts_not_just_alias_exactness(self):
+        # A query that is NOT the normalized alias ("samsung ltd") must still
+        # credit the alias's token coverage — this is the case that dies when
+        # aliases only feed the exact-match check.
+        kr = {"name": "삼성전자(주)", "name_normalized": "삼성전자(주)",
+              "aliases": ["Samsung Electronics Co., Ltd"], "name_credibility": 92}
+        group = {"name": "Samsung Group", "name_normalized": "samsung group",
+                 "wikidata_id": "Q20716", "name_credibility": 80}
+        assert self._key(kr, "samsung ltd") < self._key(group, "samsung ltd")
+
+    def test_credibility_breaks_a_tie_after_match_quality_and_notability(self):
+        register = {"name": "Acme Corp", "name_normalized": "acme corp",
+                    "wikidata_id": "Q1", "name_credibility": 92}
+        wiki = {"name": "Acme Corp", "name_normalized": "acme corp",
+                "wikidata_id": "Q2", "name_credibility": 80}
+        assert self._key(register, "acme corp") < self._key(wiki, "acme corp")
+
+    def test_a_better_name_match_still_beats_higher_credibility(self):
+        # Credibility is a TIEBREAK, not a trump: searching "Heineken Vietnam"
+        # must surface the subsidiary however credible the parent is.
+        subsidiary = {"name": "Heineken Vietnam Brewery", "name_normalized": "heineken vietnam brewery",
+                      "name_credibility": 80}
+        parent = {"name": "Heineken Holding", "name_normalized": "heineken holding",
+                  "wikidata_id": "Q1", "name_credibility": 98}
+        assert self._key(subsidiary, "heineken vietnam") < self._key(parent, "heineken vietnam")
