@@ -23,7 +23,7 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
           nn: str | None = None) -> tuple:
     """
     Sort key (all ascending): (exact_norm, -name_token_matches, match_tier,
-    name_len, db_index).
+    notable, -credibility, name_len, db_index).
 
     - exact_norm: 0 when the node's name_normalized equals the normalized query
       (so "BlackRock, Inc." leads for that query, above the many "BLACKROCK …
@@ -37,22 +37,38 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
       subsidiary, not the parent).
     - name_len (tiers 0-2 only) then db_index: keep the FULL_TEXT relevance order
       for weak matches; never tiebreak weak matches on length ("BLG GROUP").
+
+    Aliases and the register's other_names participate as names (2026-09-05):
+    삼성전자(주) carries the alias "Samsung" and the register's own "SAMSUNG
+    ELECTRONICS CO., LTD", and without them it lost every Latin query to
+    whatever soft node had "Samsung" in its display name. The node's best
+    match across name + aliases + other_names decides matches/tier/exact —
+    and where match quality ties, `credibility` (statutory register beats
+    community wiki) breaks it, AFTER notable so curated-vs-raw keeps its
+    existing meaning.
     """
     name = (node.get("name") or "").lower()
     toks = tokens if tokens is not None else q.split()
-    matches = sum(1 for t in toks if t and t in name)
-    exact_norm = 0 if (nn and node.get("name_normalized") == nn) else 1
+    alias_raw = list(node.get("aliases") or []) + list(node.get("other_names") or [])
+    names = [name] + [(a or "").lower() for a in alias_raw if a]
+
+    def _tier(n: str) -> int:
+        if n == q:
+            return 0
+        if n.startswith(q):
+            return 1
+        if q in n:
+            return 2
+        return 3
+
+    matches = max(sum(1 for t in toks if t and t in n) for n in names)
+    exact_norm = 0 if (nn and (node.get("name_normalized") == nn or any(
+        normalize_entity_name(a) == nn for a in alias_raw if a))) else 1
     notable = 0 if node.get("wikidata_id") else 1
-    if name == q:
-        tier = 0
-    elif name.startswith(q):
-        tier = 1
-    elif q in name:
-        tier = 2
-    else:
-        tier = 3
+    tier = min(_tier(n) for n in names)
+    credibility = node.get("name_credibility") or 0
     name_len = len(name) if tier <= 2 else 0
-    return (exact_norm, -matches, tier, notable, name_len, idx)
+    return (exact_norm, -matches, tier, notable, -credibility, name_len, idx)
 
 
 def _entity_candidate_rows(q_lower: str, nn: str | None, country: str | None) -> list[dict]:
