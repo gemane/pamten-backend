@@ -290,6 +290,12 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
         source_url=source_url, source_date=source_date,
         credibility_score=credibility_score,
     )
+    # A claims-only source may assert (the claim above) but not draw —
+    # see sources.edge_writes_suppressed. RELATED_TO/DUAL_LISTED writers are
+    # deliberately ungated: SEC-only paths, gated when a need appears.
+    from app.scraper.sources import edge_writes_suppressed
+    if edge_writes_suppressed(source_id):
+        return None
     with db.get_session() as session:
         exists = session.run(
             f"""
@@ -357,6 +363,12 @@ def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
     record_claim(kind=KIND_SUCCESSION, from_id=predecessor_id, to_id=successor_id,
                  source_id=source_id, since=since, source_url=source_url,
                  source_date=source_date, credibility_score=credibility_score)
+    # A claims-only source may assert (the claim above) but not draw —
+    # see sources.edge_writes_suppressed. RELATED_TO/DUAL_LISTED writers are
+    # deliberately ungated: SEC-only paths, gated when a need appears.
+    from app.scraper.sources import edge_writes_suppressed
+    if edge_writes_suppressed(source_id):
+        return None
     if predecessor_id == successor_id:
         return  # guard against a self-loop from bad data
     now = _now_iso()
@@ -409,6 +421,12 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
                  credibility_score=credibility_score)
+    # A claims-only source may assert (the claim above) but not draw —
+    # see sources.edge_writes_suppressed. RELATED_TO/DUAL_LISTED writers are
+    # deliberately ungated: SEC-only paths, gated when a need appears.
+    from app.scraper.sources import edge_writes_suppressed
+    if edge_writes_suppressed(source_id):
+        return None
     now = _now_iso()
     with db.get_session() as session:
         exists = session.run(

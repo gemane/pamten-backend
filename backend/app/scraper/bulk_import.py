@@ -196,18 +196,27 @@ class _BatchWriter:
         self._persons.append((node_id, props))
         self._bump()
 
+    def _edge_allowed(self, props: dict) -> bool:
+        # Claims-only sources assert but do not draw. Cached per-source in
+        # sources.edge_writes_suppressed, so the per-record cost is a dict hit.
+        from app.scraper.sources import edge_writes_suppressed
+        return not edge_writes_suppressed(props.get("source_id"))
+
     def owns(self, owner_id: str, owner_label: str, owned_id: str, props: dict) -> None:
-        self._edges.append(("OWNS", owner_label, owner_id, "Entity", owned_id, props))
+        if self._edge_allowed(props):
+            self._edges.append(("OWNS", owner_label, owner_id, "Entity", owned_id, props))
         self._claim(KIND_OWNS, owner_id, owned_id, props)
         self._bump()
 
     def role(self, person_id: str, entity_id: str, props: dict) -> None:
-        self._edges.append(("HAS_ROLE", "Person", person_id, "Entity", entity_id, props))
+        if self._edge_allowed(props):
+            self._edges.append(("HAS_ROLE", "Person", person_id, "Entity", entity_id, props))
         self._claim(KIND_ROLE, person_id, entity_id, props)
         self._bump()
 
     def succeeded_by(self, predecessor_id: str, successor_id: str, props: dict) -> None:
-        self._edges.append(("SUCCEEDED_BY", "Entity", predecessor_id, "Entity", successor_id, props))
+        if self._edge_allowed(props):
+            self._edges.append(("SUCCEEDED_BY", "Entity", predecessor_id, "Entity", successor_id, props))
         self._claim(KIND_SUCCESSION, predecessor_id, successor_id, props)
         self._bump()
 

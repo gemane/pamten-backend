@@ -68,7 +68,8 @@ class TestListSources:
     def _rows(self):
         from app.scraper import sources
 
-        records = [{"name": n, "enabled": True, "description": m["description"], "kind": m["kind"]}
+        records = [{"name": n, "enabled": True, "description": m["description"],
+                    "kind": m["kind"], "data_mode": None}   # pre-field rows read as full
                    for n, m in KNOWN_SOURCES.items()]
         session = type("S", (), {"run": lambda self, *a, **k: records})()
         ctx = type("C", (), {"__enter__": lambda s: session, "__exit__": lambda *a: False})()
@@ -83,6 +84,7 @@ class TestListSources:
         assert row["credibility"] == 98
         assert row["quality"] == "statutory"
         assert row["region"] == "US"
+        assert row["data_mode"] == "full", "a null mode reads as full — opt-in restriction"
         assert "13F" in row["coverage"]
 
     def test_lists_every_source_including_the_bulk_ones(self):
@@ -92,7 +94,7 @@ class TestListSources:
 
     @pytest.mark.parametrize("field", ["name", "enabled", "kind", "label", "url",
                                        "credibility", "quality", "description",
-                                       "region", "coverage"])
+                                       "region", "coverage", "data_mode"])
     def test_every_row_carries_every_field_the_ui_reads(self, field):
         for row in self._rows():
             assert field in row

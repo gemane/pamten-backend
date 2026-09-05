@@ -412,3 +412,14 @@ keeps the largest-stake edge per pair, and deletes the rest by `DELETE FROM <rid
 at `GET /scraper/duplicate-edges/count`; collapse at `POST /scraper/deduplicate-edges`.
 The entity profile also dedupes owners/subsidiaries by node id at read time, so the
 UI never shows a node twice even before the DB is cleaned.
+
+## Claims-only sources
+
+A source's `data_mode` (`PATCH /scraper/sources/{name}/mode`) decides whether
+it may *draw*: `full` writes edges as always; `claims_only` records the claim
+(provenance kept, corroboration badges still count it) and enriches entities,
+but never creates OWNS / HAS_ROLE / SUCCEEDED_BY structure. The mode change
+affects new writes only — `POST …/sweep-edges` removes what the source
+already drew (nodes and claims stay). Reverting is mode back to `full` plus a
+re-scrape / re-import. Built for the Wikidata quality decision, generic on
+purpose: any source can be demoted the day its quality disappoints.
