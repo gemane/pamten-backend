@@ -448,10 +448,12 @@ class TestRunScrapeWikidata:
             run_scrape("Apple", depth=99)
         assert scraped_calls[0] == 3
 
-    def test_subsidiaries_are_written_as_owns_edges(self):
+    def test_an_identified_subsidiary_is_written_as_an_owns_edge(self):
+        # It carries an LEI, so the node-hygiene rule lets it through.
         data_with_sub = {
             **self.COMPANY_DATA,
-            "subsidiaries": [{"qid": "Q312", "name": "Apple Records", "instances": []}],
+            "subsidiaries": [{"qid": "Q312", "name": "Apple Records", "instances": [],
+                              "lei": "SUB0000000000000APPL"}],
         }
         owns_calls = []
         with patch.object(settings, "SCRAPER_ENABLED", True), \
@@ -463,6 +465,26 @@ class TestRunScrapeWikidata:
                    side_effect=lambda *a, **kw: owns_calls.append(a)):
             run_scrape("Apple", depth=1)
         assert len(owns_calls) >= 1
+
+    def test_an_unidentified_subsidiary_is_skipped_not_minted(self):
+        # No LEI/CIK and no existing node (mock .single() → None): creating it
+        # would mint an unidentifiable orphan — the depth-2 litter this rule
+        # exists to stop.
+        data_with_sub = {
+            **self.COMPANY_DATA,
+            "subsidiaries": [{"qid": "Q999", "name": "Some Subsidiary Ltd", "instances": []}],
+        }
+        owns_calls, created = [], []
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
+             patch("app.scraper.runner.fetch_company_data", return_value=data_with_sub), \
+             patch("app.scraper.runner.db.get_session", self._ctx()), \
+             patch("app.scraper.runner._upsert_owns",
+                   side_effect=lambda *a, **kw: owns_calls.append(a)):
+            result = run_scrape("Apple", depth=1)
+        assert owns_calls == []
+        assert result["skipped_unidentified"] == 1
 
     def test_ceos_are_written_as_has_role_edges(self):
         data_with_ceo = {
@@ -855,6 +877,7 @@ class TestSuccession:
         }
         calls = []
         with patch("app.scraper.runner.fetch_company_data", return_value=data), \
+             patch("app.scraper.runner._resolve_related_company", return_value=None), \
              patch("app.scraper.runner._upsert_entity",
                    side_effect=lambda **kw: f"id:{kw['wikidata_id']}"), \
              patch("app.scraper.runner._upsert_succession",
@@ -872,6 +895,7 @@ class TestSuccession:
         }
         calls = []
         with patch("app.scraper.runner.fetch_company_data", return_value=data), \
+             patch("app.scraper.runner._resolve_related_company", return_value=None), \
              patch("app.scraper.runner._upsert_entity",
                    side_effect=lambda **kw: f"id:{kw['wikidata_id']}"), \
              patch("app.scraper.runner._upsert_succession",

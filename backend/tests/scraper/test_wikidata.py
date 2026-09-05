@@ -745,6 +745,40 @@ class TestLogoAggregation:
         assert _aggregate("Q1", [APPLE_ROW])["logo_url"] is None
 
 
+class TestRelatedItemIds:
+    """Related companies now carry their own P1278/P5531 — the node-hygiene
+    rule needs them, and before this only the top item had ids."""
+
+    def test_subsidiary_carries_lei_and_cik(self):
+        row = {**APPLE_ROW,
+               "subsidiary": {"value": "http://www.wikidata.org/entity/Q312"},
+               "subsidiaryLabel": {"value": "Apple Records"},
+               "subsidiaryLei": {"value": "SUB0000000000000APPL"},
+               "subsidiaryCik": {"value": "0000320193"}}
+        sub = _aggregate("Q1", [row])["subsidiaries"][0]
+        assert sub["lei"] == "SUB0000000000000APPL"
+        assert sub["sec_cik"] == "0000320193"
+
+    def test_a_subsidiary_without_ids_carries_none(self):
+        row = {**APPLE_ROW,
+               "subsidiary": {"value": "http://www.wikidata.org/entity/Q999"},
+               "subsidiaryLabel": {"value": "Nameless Sub"}}
+        sub = _aggregate("Q1", [row])["subsidiaries"][0]
+        assert sub["lei"] is None and sub["sec_cik"] is None
+
+    def test_owner_and_successor_carry_ids_too(self):
+        row = {**APPLE_ROW,
+               "owner": {"value": "http://www.wikidata.org/entity/Q95"},
+               "ownerLabel": {"value": "Alphabet"},
+               "ownerLei": {"value": "OWN0000000000000ALPH"},
+               "successor": {"value": "http://www.wikidata.org/entity/Q96"},
+               "successorLabel": {"value": "NewCo"},
+               "successorCik": {"value": "0000000096"}}
+        out = _aggregate("Q1", [row])
+        assert out["owners"][0]["lei"] == "OWN0000000000000ALPH"
+        assert out["successors"][0]["sec_cik"] == "0000000096"
+
+
 class TestNormalizeUrl:
     """This string becomes an <a href> in the panel — crowd-edited values get
     no trust, and rejection beats repair (a guessed scheme asserts something
