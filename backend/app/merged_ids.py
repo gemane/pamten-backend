@@ -27,6 +27,67 @@ log = logging.getLogger(__name__)
 _MAX_HOPS = 5
 
 
+# Forwarding map for the IMPORTERS: a merged-away id, resolved to its final
+# survivor. Cached briefly because a bulk import addresses nodes by
+# `lei:{LEI}` millions of times and no merges happen mid-import (auto-dedup
+# runs after); a 60-second lag on a fresh merge is invisible next to that.
+_FWD_CACHE: dict = {"at": 0.0, "map": {}}
+_FWD_TTL = 60.0
+
+
+def _forwarding_map() -> dict:
+    """Every merged-away id → its FINAL survivor (chains pre-resolved).
+
+    Loaded once per TTL from the whole MergedId table (small: one row per
+    historical merge, not per node). Chains are collapsed here so a lookup is
+    a single dict hit — the same terminal `resolve_current_id` reaches by
+    hopping, but importers can't afford a per-node query."""
+    import time
+    from app.db.arcadedb import run_sql
+    now = time.monotonic()
+    if now - _FWD_CACHE["at"] < _FWD_TTL:
+        return _FWD_CACHE["map"]
+    direct: dict = {}
+    try:
+        for r in run_sql("SELECT old_id, new_id FROM MergedId"):
+            d = dict(r)
+            if d.get("old_id") and d.get("new_id"):
+                direct[d["old_id"]] = d["new_id"]
+    except Exception:  # noqa: BLE001 - fail open: no forwarding is safe, and
+        direct = {}   # a cached empty map avoids hammering a flaky DB per node
+    # Collapse chains to the terminal survivor (guarded against cycles).
+    final: dict = {}
+    for old in direct:
+        seen = {old}
+        cur = old
+        for _ in range(_MAX_HOPS):
+            nxt = direct.get(cur)
+            if not nxt or nxt in seen:
+                break
+            cur = nxt
+            seen.add(cur)
+        if cur != old:
+            final[old] = cur
+    _FWD_CACHE["at"] = now
+    _FWD_CACHE["map"] = final
+    return final
+
+
+def canonical_id(node_id: str | None) -> str | None:
+    """The id a node lives under now: the survivor if ``node_id`` was merged
+    away, else ``node_id`` unchanged. For importers that address nodes by a
+    derived id (`lei:{LEI}`) and must not resurrect what a merge folded away."""
+    if not node_id:
+        return node_id
+    return _forwarding_map().get(node_id, node_id)
+
+
+def invalidate_forwarding_cache() -> None:
+    """Drop the cache — call right after a merge so an importer in the same
+    process sees it immediately (the TTL handles cross-process staleness)."""
+    _FWD_CACHE["at"] = 0.0
+
+
 # One definition of the write, used by both entry points below. The person merge
 # runs inside a session; the entity merges in scraper/maintenance.py run through
 # the module-level run_command helper instead.
@@ -58,6 +119,7 @@ def record_merge(session, old_id: str, new_id: str, kind: str = "Entity") -> Non
     # Anything that pointed at the node we just merged away now points onward.
     session.run(_REPOINT_CHAIN, old=p["old"], new=p["new"], now=p["now"])
     session.run(_UPSERT_REDIRECT, **p)
+    invalidate_forwarding_cache()
 
 
 def record_merge_sql(old_id: str, new_id: str, kind: str = "Entity") -> None:
@@ -75,6 +137,7 @@ def record_merge_sql(old_id: str, new_id: str, kind: str = "Entity") -> None:
     try:
         run_command(_REPOINT_CHAIN, {"old": p["old"], "new": p["new"], "now": p["now"]})
         run_command(_UPSERT_REDIRECT, p)
+        invalidate_forwarding_cache()
     except Exception as exc:  # noqa: BLE001
         log.warning("could not record merge redirect %s -> %s: %s", old_id, new_id, exc)
 

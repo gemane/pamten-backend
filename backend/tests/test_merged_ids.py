@@ -86,3 +86,50 @@ class TestRecordMerge:
         record_merge(s, old_id="", new_id="keep")
         record_merge(s, old_id="dup", new_id="")
         assert s.writes == []
+
+
+class TestForwardingMap:
+    """The importers' cached forwarding map — many-into-one and chains, the
+    cases raised when we built the fix: does it hold for several merged ids?"""
+
+    def _load(self, monkeypatch, rows):
+        import app.merged_ids as m
+        m.invalidate_forwarding_cache()
+        monkeypatch.setattr("app.db.arcadedb.run_sql", lambda *a, **k: rows)
+        return m
+
+    def test_several_ids_merged_into_one_survivor(self, monkeypatch):
+        m = self._load(monkeypatch, [
+            {"old_id": "lei:A", "new_id": "keep"},
+            {"old_id": "lei:B", "new_id": "keep"},
+            {"old_id": "chpsc:C", "new_id": "keep"},
+        ])
+        assert m.canonical_id("lei:A") == "keep"
+        assert m.canonical_id("lei:B") == "keep"
+        assert m.canonical_id("chpsc:C") == "keep"
+        assert m.canonical_id("lei:D") == "lei:D"   # never merged → unchanged
+
+    def test_a_chain_collapses_to_the_terminal_survivor(self, monkeypatch):
+        m = self._load(monkeypatch, [
+            {"old_id": "A", "new_id": "B"},
+            {"old_id": "B", "new_id": "C"},
+        ])
+        assert m.canonical_id("A") == "C"   # not the intermediate B
+        assert m.canonical_id("B") == "C"
+
+    def test_a_cycle_is_survived_not_spun(self, monkeypatch):
+        m = self._load(monkeypatch, [
+            {"old_id": "X", "new_id": "Y"},
+            {"old_id": "Y", "new_id": "X"},
+        ])
+        # bails at the cycle rather than looping; the exact terminal is
+        # undefined but the call must return and not hang
+        assert m.canonical_id("X") in ("X", "Y")
+
+    def test_a_failed_load_fails_open_to_no_forwarding(self, monkeypatch):
+        import app.merged_ids as m
+        m.invalidate_forwarding_cache()
+        def boom(*a, **k):
+            raise RuntimeError("db down")
+        monkeypatch.setattr("app.db.arcadedb.run_sql", boom)
+        assert m.canonical_id("lei:A") == "lei:A"   # unchanged, no crash

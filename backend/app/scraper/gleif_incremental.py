@@ -38,6 +38,7 @@ from app.claims import KIND_OWNS, record_claim
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
 from app.scraper.gleif_lei_cdf import _entity_props
 from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei, _relationship_dates
+from app.merged_ids import canonical_id
 from app.scraper.gleif_succession import _iter_lei_records, _pairs_from_record, _v
 
 log = logging.getLogger(__name__)
@@ -95,11 +96,20 @@ def _rr_delta_relationship(rec: dict) -> tuple[str, str, str, str | None, dict] 
 
 # ── idempotent edge primitives (Cypher; nodes must already exist) ─────────────
 
-def _ensure_lei_node(lei: str, source_id: str) -> None:
-    """Ensure a `lei:{LEI}` Entity exists (non-clobbering — never touches name/type,
-    which the entity importer owns)."""
+def _ensure_lei_node(lei: str, source_id: str) -> str:
+    """Ensure the Entity for this LEI exists and return its CURRENT id.
+
+    Non-clobbering (never touches name/type, which the entity importer owns).
+    If `lei:{LEI}` was merged into another node, that survivor already exists —
+    return its id and create nothing, so an edge attaches to the survivor
+    rather than resurrecting the folded-away id (the two-Alphabet re-split)."""
+    node_id = f"lei:{lei}"
+    survivor = canonical_id(node_id)
+    if survivor != node_id:
+        return survivor
     run_sql("UPDATE Entity SET lei_id = :lei, source_id = :src UPSERT WHERE id = :id",
-            {"lei": lei, "src": source_id, "id": f"lei:{lei}"})
+            {"lei": lei, "src": source_id, "id": node_id})
+    return node_id
 
 
 def _existing_consolidation_edge(parent_id: str, child_id: str) -> dict | None:
@@ -190,9 +200,9 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
 def _upsert_owns(parent_lei: str, child_lei: str, marker: str,
                  source_id: str, credibility_score: int, since: str | None = None) -> str:
     """Node-ensuring convenience wrapper (standalone use / tests)."""
-    _ensure_lei_node(parent_lei, source_id)
-    _ensure_lei_node(child_lei, source_id)
-    return _owns_edge_upsert(f"lei:{parent_lei}", f"lei:{child_lei}", child_lei,
+    parent_id = _ensure_lei_node(parent_lei, source_id)
+    child_id = _ensure_lei_node(child_lei, source_id)
+    return _owns_edge_upsert(parent_id, child_id, child_lei,
                              marker, source_id, credibility_score, since)
 
 
@@ -210,7 +220,9 @@ def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str) -> int
 
     Stamping `until` in either case would delete a holding GLEIF still asserts.
     """
-    pid, cid = f"lei:{parent_lei}", f"lei:{child_lei}"
+    # Canonical ids so a closure lands on the merged survivor, not a
+    # folded-away endpoint (the same forwarding the create path follows).
+    pid, cid = canonical_id(f"lei:{parent_lei}"), canonical_id(f"lei:{child_lei}")
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
         "WHERE r.also_ultimate = true AND r.until IS NULL "
@@ -254,9 +266,9 @@ def _succeeded_by_edge(pred_id: str, succ_id: str, source_id: str) -> str:
 
 def _upsert_succeeded_by(pred_lei: str, succ_lei: str, source_id: str) -> str:
     """Node-ensuring convenience wrapper (standalone use / tests)."""
-    _ensure_lei_node(pred_lei, source_id)
-    _ensure_lei_node(succ_lei, source_id)
-    return _succeeded_by_edge(f"lei:{pred_lei}", f"lei:{succ_lei}", source_id)
+    pred_id = _ensure_lei_node(pred_lei, source_id)
+    succ_id = _ensure_lei_node(succ_lei, source_id)
+    return _succeeded_by_edge(pred_id, succ_id, source_id)
 
 
 # ── delta importers ───────────────────────────────────────────────────────────
@@ -420,7 +432,8 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                     log.warning("RR delta record error: %s", exc)
         batch.flush()                      # endpoint nodes exist before edge ops
         for parent, child, marker, since in active:
-            outcome = _owns_edge_upsert(f"lei:{parent}", f"lei:{child}", child, marker,
+            outcome = _owns_edge_upsert(canonical_id(f"lei:{parent}"),
+                                        canonical_id(f"lei:{child}"), child, marker,
                                         source_id, credibility_score, since)
             counts[outcome if outcome in counts else "updated"] += 1
         for parent, child, marker, until in closures:

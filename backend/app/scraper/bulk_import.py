@@ -240,8 +240,21 @@ class _BatchWriter:
     def _flush_nodes(label: str, buf: list) -> None:
         if not buf:
             return
+        # A node whose id was merged away must not be recreated: the survivor
+        # already carries this source's data (folded in at merge time), and a
+        # bulk `SET field = value` would CLOBBER the survivor's own — including
+        # the higher-credibility name the merge deliberately kept. So skip it
+        # rather than redirect-and-overwrite. This is what re-split two Alphabet
+        # nodes: a merge kept the PSC node, the next GLEIF import resurrected
+        # the folded-away `lei:` one. (Genuine field refreshes for a merged
+        # entity are the credibility-aware scrape path's job, not a blunt bulk
+        # write.)
+        from app.merged_ids import canonical_id
         stmts, params = [], {}
-        for k, (node_id, props) in enumerate(buf):
+        k = 0
+        for node_id, props in buf:
+            if canonical_id(node_id) != node_id:
+                continue
             sets = []
             for name, val in props.items():
                 pk = f"{name}__{k}"
@@ -249,7 +262,9 @@ class _BatchWriter:
                 sets.append(f"{name} = :{pk}")
             params[f"id__{k}"] = node_id
             stmts.append(f"UPDATE {label} SET {', '.join(sets)} UPSERT WHERE id = :id__{k};")
-        _flush_script("\n".join(stmts), params)
+            k += 1
+        if stmts:
+            _flush_script("\n".join(stmts), params)
 
     def _flush_claims(self) -> None:
         """UPSERT the buffered claims on their UNIQUE claim_key.
