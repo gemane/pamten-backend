@@ -14,10 +14,10 @@ from app.scraper.sources import edge_writes_suppressed
 
 @pytest.fixture(autouse=True)
 def _fresh_cache():
-    src_mod._MODE_CACHE["at"] = 0.0
+    src_mod._MODE_CACHE["at"] = None
     src_mod._MODE_CACHE["by_source_id"] = {}
     yield
-    src_mod._MODE_CACHE["at"] = 0.0
+    src_mod._MODE_CACHE["at"] = None
     src_mod._MODE_CACHE["by_source_id"] = {}
 
 
@@ -55,6 +55,17 @@ class TestEdgeWritesSuppressed:
             assert edge_writes_suppressed("src-uuid-1") is True
             assert edge_writes_suppressed("src-uuid-2") is False
             assert edge_writes_suppressed(None) is False
+
+    def test_an_empty_cache_on_a_freshly_booted_machine_still_loads(self):
+        # time.monotonic() counts from boot. With the old 0.0 empty-sentinel,
+        # a fresh container (CI, a new Render instance) had now - 0.0 < TTL,
+        # so the EMPTY cache read as fresh and nothing ever loaded for the
+        # first minute of process life — the flake that failed CI twice.
+        with patch.object(src_mod, "_mode_by_source_id", wraps=src_mod._mode_by_source_id), \
+             patch.object(src_mod.db, "get_session", side_effect=RuntimeError("down")) as gs, \
+             patch("time.monotonic", return_value=45.0):
+            src_mod.edge_writes_suppressed("x")
+        assert gs.call_count == 1, "the empty cache must trigger a load, uptime be damned"
 
     def test_a_failed_lookup_fails_open_and_is_cached(self):
         calls = {"n": 0}

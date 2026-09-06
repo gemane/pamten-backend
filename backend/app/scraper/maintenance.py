@@ -1326,6 +1326,12 @@ def migrate_ownership_types() -> dict:
 # Alternate country spellings seen in external data that the canonical
 # _ISO2_COUNTRY map does not carry (matched case-insensitively).
 _COUNTRY_NAME_VARIANTS: dict[str, str] = {
+    # Long-form official names, as annual-report exhibits write them
+    # ("The People's Republic of China" — Vera Bradley's Ex-21).
+    "people's republic of china": "CN",
+    "republic of korea": "KR",
+    "republic of ireland": "IE",
+    "russian federation": "RU",
     "UAE": "AE",
     "South Korea": "KR",
     "Korea, Republic of": "KR",

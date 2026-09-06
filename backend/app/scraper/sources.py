@@ -45,7 +45,8 @@ KNOWN_SOURCES = {
         "description": "SEC EDGAR — legally required US ownership filings (SC 13D/13G, Form 3/4)",
         "region": "US",
         "coverage": "Ownership of US-listed companies — 13D/G control stakes, 13F "
-                    "institutional holdings, Form 3/4 insider filings",
+                    "institutional holdings, Form 3/4 insider filings, Exhibit 21 "
+                    "subsidiary lists",
     },
     "open_corporates": {
         "kind": "instant",
@@ -154,7 +155,12 @@ _DATA_MODES = ("full", "claims_only")
 # this once per edge, and a 60-second lag on an admin mode flip is invisible
 # while a per-edge point read at GLEIF scale is not. Same pattern as the
 # stats cache.
-_MODE_CACHE: dict = {"at": 0.0, "by_source_id": {}}
+# "at" is None when the cache is empty/invalidated — NOT 0.0: time.monotonic()
+# counts from boot, so on a fresh container (CI, a new Render instance) it is
+# small and `now - 0.0 < TTL` reads an empty cache as fresh. That served a
+# stale empty map and made invalidation a no-op for the first minute of
+# process life.
+_MODE_CACHE: dict = {"at": None, "by_source_id": {}}
 _MODE_CACHE_TTL = 60.0
 
 
@@ -166,7 +172,7 @@ def _mode_by_source_id() -> dict:
     (a peer's federated source, say) read as full — restriction is opt-in."""
     import time
     now = time.monotonic()
-    if now - _MODE_CACHE["at"] < _MODE_CACHE_TTL:
+    if _MODE_CACHE["at"] is not None and now - _MODE_CACHE["at"] < _MODE_CACHE_TTL:
         return _MODE_CACHE["by_source_id"]
     by_id: dict = {}
     try:
@@ -227,7 +233,7 @@ def set_source_mode(name: str, mode: str, _: dict = Depends(require_admin)):
             name=name, mode=mode).single()
         if not rec:
             raise HTTPException(status_code=404, detail="Source not found")
-    _MODE_CACHE["at"] = 0.0   # a mode flip should not wait out the cache
+    _MODE_CACHE["at"] = None   # a mode flip should not wait out the cache
     return {"name": name, "data_mode": rec["data_mode"]}
 
 

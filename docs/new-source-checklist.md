@@ -70,6 +70,12 @@ parser. Anything that does not map is either a new property (document it) or noi
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
       Registered/Headquarters switch exists precisely because they differ.
+- [ ] **Keep the finest grain the source states — do not collapse it to the country.**
+      Exhibit 21 states "Florida, USA"; storing only `country: US` threw Florida away, and
+      a subsidiary's panel showed "United States" with no real location (the reported bug).
+      Map to BOTH `country` and `jurisdiction_code` (ISO 3166-2, e.g. `US-FL`) so the panel
+      can show "Registered in: Florida". The UI only names some families (US/CA/GB/AE/KN),
+      so emit codes for those; elsewhere a region is administrative, not a domicile choice.
 - [ ] **Address parts stay separate** (`*_street`, `*_city`, `*_postcode`, `*_country`).
       Geocoding is a structured query; re-parsing an assembled string is guesswork, and
       every country writes an address differently.
@@ -147,7 +153,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Instant sources stamp the target** with `set_scrape_target`, or the freshness gate
       cannot tell a scraped company from an untouched one and will re-scrape forever.
 - [ ] **Wrap the run in `record_run`** so it appears in `GET /scraper/runs`. That log, not
-      the Render logs, is how a failed scrape is noticed.
+      the Render logs, is how a failed scrape is noticed. It yields a **dict** — set
+      `run["status"]`/`run["note"]`/`run["total"]` on it; `run.result = …` is an attribute
+      on a dict and dies at runtime while every mocked test stays green.
 - [ ] **Gate re-runs by the source's own clock, not a TTL.** 13Fs are due 45 days after
       quarter end, so its gate is "has a new deadline passed since the last run" — it
       opens by itself the day after a deadline and never blocks a genuinely new period the
@@ -173,6 +181,27 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       ~6s failing over a dead IPv6 route to sec.gov. `curl` looked fine and will mislead
       you — see the host IPv6 note in the ops docs.
 - [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_edgar._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
+- [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
+      publish the cleanest documents, so a parser probed only on them is probed on the
+      easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space
+      filler column (truthy! read as the jurisdiction of all 62 rows), jurisdictions fused
+      with legal forms ("Kentucky limited liability company"), ALL-CAPS section-header rows,
+      and long-form country names ("The People's Republic of China", curly apostrophe
+      included). Capture the cleanest AND the most hostile payload as unit fixtures. (And
+      check helper table shapes before using them: `_US_STATES` maps code→name; the name
+      lookup is `_US_STATE_NAMES`.)
+- [ ] **Then sweep EVERY eligible company in the dev graph before merging** — the 59-filer
+      Ex-21 sweep found what ten hand-picked probes still missed: tables whose second
+      column is a *location* ("Charlotte, NC" — not a jurisdiction; Bank of America has
+      both columns and only a header row tells them apart), an *ownership percentage*
+      column (a real stake, worth capturing), spacer-column layouts, and an exhibit
+      NUMBERING trap (AB InBev's `dex215.htm` is exhibit 2.15, not 21.5 — filename alone
+      cannot decide; try candidates until one parses, and gate headerless tables on
+      "most jurisdictions actually map" so a securities listing can't masquerade as a
+      subsidiary list). Read tables header-aware — column meaning comes from what the
+      filer CALLS it, not from position. And when a bad early run wrote junk, clean it
+      up in the same session (delete edges, then degree-0 unidentified nodes — via SQL:
+      ArcadeDB Cypher silently ignores `size((b)--())` predicates).
 - [ ] **Trust measured behaviour over documented behaviour.** EDGAR's full-text search
       documents 10 results per page and returns ~100, relevance-ordered where date order
       is needed; GLEIF's thumbnail sizes 400 anything off-bucket. Probe the real API once
@@ -219,6 +248,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Anything that writes gets an integration test against a real ArcadeDB.** The
       mocked suite has passed while the Cypher was broken more than once; dialect and
       result-shape bugs only surface against the real engine.
+- [ ] **Never assert equality on `search_text`.** It has a FULL_TEXT index, so
+      `WHERE search_text = 'Apple Operations…'` behaves as a *token* match and counted
+      three "Apple" rows where one exact row was meant. Count on `name` or an id.
 - [ ] **Mocked suites must not reach a database.** When code under a mocked test grows a
       query, stub `app.db.arcadedb.run_sql` — a suite that quietly hits a real server is
       no longer testing what it claims, and repeated failed auth locks ArcadeDB out.

@@ -806,6 +806,112 @@ def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> 
 
 
 @_with_autodedup
+def run_sec_ex21(company: str, force: bool = False) -> dict:
+    """Ingest one issuer's statutory subsidiary list from its latest annual
+    filing's Exhibit 21 (10-K) or Exhibit 8.1 (20-F).
+
+    The statutory replacement for the role Wikidata's community subsidiary
+    lists played before claims-only: name + jurisdiction per subsidiary,
+    straight from the annual report. Enriches, does not discover — the
+    company must already be in the graph with a CIK (run the SEC EDGAR
+    scrape first, like 13F).
+
+    Honesty rules carried onto the data:
+    - filers list only SIGNIFICANT subsidiaries; absence proves nothing.
+    - the exhibit states existence + jurisdiction, never a stake — edges are
+      ownership_type "controlling" with no invented percentage.
+    - subsidiaries come without hard ids; they are resolved by name first
+      (an existing GLEIF/PSC node wins), created with their registered
+      country otherwise. Legal names + jurisdiction make them better dedup
+      keys than Wikidata's labels ever were.
+
+    Freshness gates on the filing itself: one annual filing = one ingest,
+    re-run refetches only the (cheap) metadata until a NEWER filing appears.
+    `force` re-reads regardless."""
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise PermissionError("SEC EDGAR scraper is disabled. "
+                              "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
+
+    from app.routers.search import resolve_best_entity
+    from app.scraper.run_log import record_run
+    from app.scraper.sec_ex21 import (fetch_subsidiaries, jurisdiction_country,
+                                       jurisdiction_subdivision)
+
+    entity = resolve_best_entity(company, None)
+    if not entity:
+        return {"status": "no_results", "company": company, "total": 0, "scraped": []}
+    company_id = entity["id"]
+    if not entity.get("sec_cik"):
+        return {"status": "needs_sec_scrape", "company": company,
+                "entity_id": company_id, "total": 0,
+                "detail": "The entity has no SEC CIK yet — run the SEC EDGAR "
+                          "scrape (13D/G + Form 4) first."}
+
+    with record_run("sec-ex21", company) as run:
+        source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
+                                   SEC_EDGAR_CREDIBILITY)
+        data = fetch_subsidiaries(entity["sec_cik"])
+        if not data:
+            run["status"], run["note"] = "skipped", "no subsidiary exhibit"
+            return {"status": "no_exhibit", "company": company,
+                    "entity_id": company_id, "total": 0,
+                    "detail": "No subsidiary exhibit in the latest annual filing."}
+
+        # One annual filing = one ingest. The gate key is the exhibit URL (it
+        # embeds the accession), stamped only on a completed run.
+        with db.get_session() as session:
+            row = session.run("MATCH (e:Entity {id: $id}) "
+                              "RETURN e.sec_ex21_ingested AS ingested",
+                              id=company_id).single()
+        if not force and row and row.get("ingested") == data["url"]:
+            run["status"], run["note"] = "skipped", "filing already ingested"
+            return {"status": "fresh", "company": company, "entity_id": company_id,
+                    "total": 0, "filing_date": data["filing_date"],
+                    "detail": "This annual filing is already ingested; a newer "
+                              "one opens the gate by itself. --force re-reads."}
+
+        written, skipped_unmapped = 0, 0
+        scraped: list[dict] = []
+        for sub in data["subsidiaries"]:
+            country = jurisdiction_country(sub["jurisdiction"])
+            if country is None:
+                skipped_unmapped += 1   # counted, not dropped silently
+            # Keep the finer grain the filing stated ("Florida, USA" -> US-FL),
+            # so the panel shows "Registered in: Florida" instead of only the
+            # country. Sparse by nature — US/CA/GB/AE/KN, else None.
+            sub_id = _upsert_entity_by_name(
+                name=sub["name"], entity_type="company",
+                country=country,
+                jurisdiction_code=jurisdiction_subdivision(sub["jurisdiction"]),
+                source_id=source_id)
+            if not sub_id or sub_id == company_id:
+                continue
+            _upsert_owns_sec(
+                owner_id=company_id, owned_id=sub_id, source_id=source_id,
+                ownership_type="controlling",
+                file_date=data["filing_date"],
+                # Some filers state it (Astronics: an Ownership Percentage
+                # column). Stated → stored; absent → None, never invented.
+                stake_percent=sub.get("stake_percent"),
+                filing_type="EX-21" if data["form"] == "10-K" else "EX-8.1",
+                source_url=data["url"])
+            written += 1
+            scraped.append({"id": sub_id, "name": sub["name"],
+                            "type": "company", "country": country})
+
+        with db.get_session() as session:
+            session.run("MATCH (e:Entity {id: $id}) SET e.sec_ex21_ingested = $u",
+                        id=company_id, u=data["url"])
+        run["total"] = written
+        return {"status": "ok", "company": company, "entity_id": company_id,
+                "form": data["form"], "filing_date": data["filing_date"],
+                "total": written, "unmapped_jurisdictions": skipped_unmapped,
+                "scraped": scraped}
+
+
+@_with_autodedup
 def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
                 force: bool = False) -> dict:
     """Ingest one issuer's institutional holders from Form 13F info tables.
