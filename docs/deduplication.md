@@ -436,3 +436,16 @@ per-item in the relations SPARQL); else **skip** and count it
 (`skipped_unidentified` in the scrape result). People (CEOs, officers, human
 owners) are never gated — Wikidata's coverage of people is a strength and
 person dedup handles them.
+
+## Importers follow the merge forwarding
+
+A merge leaves a `MergedId` row (old id → survivor). But the bulk importers
+address entities by a derived id (`lei:{LEI}`), and re-importing one that had
+been merged away recreated it — two "Alphabet Inc." reappeared after a GLEIF
+re-import, because the merge had kept the higher-credibility UK-PSC node and
+the import resurrected the folded-away `lei:` one. `merged_ids.canonical_id`
+(a cached, chain-collapsing forwarding map) now guards the write paths: the
+bulk entity flush **skips** a merged-away id (never clobbering the survivor's
+own name/credibility with the re-import's), and the RR path **redirects** its
+node-ensure and edge endpoints to the survivor. Works for any number of ids
+merged into one survivor and for chains.
