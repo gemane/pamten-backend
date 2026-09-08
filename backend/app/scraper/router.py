@@ -219,6 +219,39 @@ def sec_13f_run(
     return result
 
 
+@router.post("/sec-ex21/run")
+def sec_ex21_run(
+    company: str = Query(..., min_length=2, description="Issuer name as known to the graph"),
+    force: bool = Query(False, description="Re-read even if this annual filing is already ingested"),
+    _: dict = Depends(require_contributor),
+):
+    """Statutory subsidiary list of one issuer from Exhibit 21 — contributor-only.
+
+    The registrant's own name + jurisdiction list from its latest 10-K
+    (Exhibit 21) or 20-F (Exhibit 8.1). Cheap next to 13F — one fetch of the
+    exhibit, not one per holder. One annual filing = one ingest: a re-run
+    before a newer filing appears reads nothing (status "fresh"). Requires the
+    SEC EDGAR scrape to have stamped the CIK first (409 otherwise)."""
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true.")
+    from app.scraper.runner import run_sec_ex21
+    try:
+        result = run_sec_ex21(company, force=force)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
+        logger.exception("SEC Exhibit 21 scrape failed (company=%r)", company)
+        raise HTTPException(status_code=500,
+            detail="SEC Exhibit 21 scrape failed. Check server logs for details.")
+    if result["status"] == "needs_sec_scrape":
+        raise HTTPException(status_code=409, detail=result["detail"])
+    return result
+
+
 # ── Run-all endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/run-all")
