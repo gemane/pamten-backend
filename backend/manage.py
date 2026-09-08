@@ -442,6 +442,38 @@ def _now_iso_manage() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def cmd_sec_ex21(args):
+    """Ingest one issuer's statutory subsidiary list from its annual filing.
+
+    Exhibit 21 of the 10-K (Exhibit 8.1 of a 20-F): the statutory who-owns-what
+    the Wikidata subsidiary lists used to approximate. Significant subsidiaries
+    only — that is the rulebook's own cut, not ours. The company must already
+    be in the graph with a CIK."""
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_SEC_EDGAR_ENABLED = True
+    from app.scraper.runner import run_sec_ex21
+    result = run_sec_ex21(args.company, force=args.force)
+    if result["status"] == "fresh":
+        print(f"Exhibit 21 for {result['company']!r} already ingested "
+              f"(filing of {result['filing_date']}). A newer annual filing opens "
+              f"the gate by itself; --force re-reads now.")
+        return
+    if result["status"] in ("needs_sec_scrape", "no_exhibit"):
+        print(result["detail"])
+        raise SystemExit(1)
+    if result["status"] != "ok":
+        print(f"No entity in the graph matches {args.company!r} — "
+              f"sec-ex21 enriches, it does not discover.")
+        raise SystemExit(1)
+    print(f"{result['total']} subsidiary edges for {result['company']!r} "
+          f"from the {result['form']} filed {result['filing_date']}.")
+    if result.get("unmapped_jurisdictions"):
+        print(f"{result['unmapped_jurisdictions']} jurisdiction(s) could not be "
+              f"mapped to a country code — stored as text only.")
+    print("Note: filers list only SIGNIFICANT subsidiaries; absence proves nothing.")
+
+
 def cmd_sec_13f(args):
     """Ingest one issuer's institutional holders from Form 13F filings.
 
@@ -1024,6 +1056,13 @@ def _build_parser():
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
     # filings), as opposed to a normal scrape which reads filings about a company.
+    p_ex21 = subparsers.add_parser('sec-ex21',
+        help="One issuer's statutory subsidiary list from its 10-K Exhibit 21")
+    p_ex21.add_argument('company', help='Company name as known to the graph')
+    p_ex21.add_argument('--force', action='store_true',
+                        help='Re-read even if this annual filing is already ingested')
+    p_ex21.set_defaults(func=cmd_sec_ex21)
+
     p_13f = subparsers.add_parser('sec-13f',
         help="Institutional holders of one company from Form 13F (the sub-5% view)")
     p_13f.add_argument('company', help='Company name as known to the graph')

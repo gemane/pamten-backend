@@ -2,10 +2,12 @@
 
 ## Overview
 
-The SEC EDGAR scraper collects two types of data for US-listed companies:
+The SEC EDGAR scraper collects three types of data for US-listed companies:
 
 1. **Large shareholders** — investors who filed SC 13D or SC 13G disclosures (>5% ownership)
 2. **Executives and directors** — officers and board members from Form 3/4 insider reports
+3. **Subsidiaries** — the statutory subsidiary list from Exhibit 21 of the 10-K
+   (Exhibit 8.1 of a 20-F), via `manage.py sec-ex21` (manual-first)
 
 No API key is required. All endpoints are public. The SEC requires a descriptive
 `User-Agent` header identifying the application and a contact email.
@@ -595,3 +597,54 @@ to the Wikidata scrape.
 - **Form 3/4 titles change over time.** The scraper reads the most recent
   Form 3/4 per insider, so a person who changed roles (e.g. VP → CEO) will
   show their current title, not their title at a given point in time.
+
+---
+
+## Exhibit 21 — statutory subsidiary lists (`sec_ex21.py`)
+
+Every 10-K carries Exhibit 21 ("Subsidiaries of the registrant"): a name +
+jurisdiction table, the statutory answer to "who does this company own". Foreign
+private issuers file the same table as Exhibit 8.1 of the 20-F. This replaced
+the role Wikidata's community subsidiary lists played before they went
+claims-only.
+
+**Pipeline** (`manage.py sec-ex21 <company>`, `run_sec_ex21` in the runner):
+submissions API → newest 10-K/20-F → filing index → the `ex21*`/`*ex8-1*` HTML
+exhibit → a two-column table parse → resolve-or-create subsidiaries + OWNS
+edges (`filing_type` `EX-21`/`EX-8.1`, `ownership_type: controlling`,
+`since` = filing date, `source_url` = the exhibit itself).
+
+Honesty rules, learned from the real filings:
+
+- **Significant subsidiaries only** — Reg S-K Item 601(b)(21) lets filers omit
+  the rest (Apple lists 19, Alphabet 3). Absence proves nothing; nothing is
+  inferred from it.
+- **No stake is stated, none is invented** — edges carry no `stake_percent`.
+- **Jurisdiction text is kept as filed** ("Delaware, U.S." stays); the ISO-2
+  country is a separate mapped view ("Delaware, U.S."/bare state names → US,
+  country names through the shared `nationality_to_iso2` table). Unmappable
+  jurisdictions store the text with no code and are counted in the run result
+  (`unmapped_jurisdictions`), never guessed.
+- **The finer grain is preserved, not collapsed to the country.** "Florida,
+  USA" becomes both `country: US` AND `jurisdiction_code: US-FL`, so the panel
+  shows "Registered in: Florida" rather than only "United States"
+  (`jurisdiction_subdivision`, ISO 3166-2, for the families the UI can name:
+  US states, CA provinces, GB nations, and the AE/KN emirates/islands GLEIF
+  uses). Sparse by nature — a plain country has no subdivision.
+- **Subsidiaries come without hard ids** — resolved by name first (an existing
+  GLEIF/PSC node wins and gets the edge), created with their registered country
+  otherwise. Legal names + jurisdiction are far better dedup keys than
+  community labels; the scoped auto-dedup runs on the same scrape scope.
+- **One annual filing = one ingest** — the freshness gate keys on the exhibit
+  URL (it embeds the accession), stamped only on a completed run; a newer
+  filing opens the gate by itself, `--force` re-reads now.
+
+Verified against real filers before the parser was written: Apple (19 rows,
+two-column table), Microsoft (8, "United States" spelled out), Alphabet (3,
+bare "Delaware"). The parser reads `<tr>/<td>` rows, drops header/registrant/
+prose rows, strips the significance asterisk, and de-duplicates by casefolded
+name.
+
+**Deferred, deliberately**: the DEF 14A beneficial-ownership table (>5% holders
+incl. non-13F ones, director/officer stakes) is the next EDGAR family — harder
+HTML, planned for a later version.

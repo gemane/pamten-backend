@@ -221,7 +221,7 @@ Imports corporate ownership data via SPARQL. For a company it fetches subsidiari
 - 400 ms delay between requests (Wikidata rate limit)
 
 ### SEC EDGAR
-Imports investor data from SC 13D/13G ownership filings and executive data from Form 3/4 XML. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`.
+Imports investor data from SC 13D/13G ownership filings, executive data from Form 3/4 XML, and statutory subsidiary lists from the 10-K's Exhibit 21 (`manage.py sec-ex21`, manual-first). Controlled by `SCRAPER_SEC_EDGAR_ENABLED`.
 
 **Two directions.** Those filings name the company as the *subject* — who owns it, who its insiders are. An institutional investor has none: Vanguard is privately held and isn't a listed issuer, so scraping it by name finds nothing however often you try. What it has is ~3,400 filings it makes **about others**, so the scraper also reads the filer side and writes `OWNS` edges pointing *out* of the company:
 

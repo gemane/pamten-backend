@@ -14,10 +14,10 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture(autouse=True)
 def _fresh_cache():
-    src_mod._MODE_CACHE["at"] = 0.0
+    src_mod._MODE_CACHE["at"] = None
     src_mod._MODE_CACHE["by_source_id"] = {}
     yield
-    src_mod._MODE_CACHE["at"] = 0.0
+    src_mod._MODE_CACHE["at"] = None
     src_mod._MODE_CACHE["by_source_id"] = {}
 
 
@@ -35,7 +35,7 @@ def _set_mode(it_db, mode):
     it_db.run_command(
         "MERGE (s:ScraperSource {name: 'wikidata'}) SET s.data_mode = $m, "
         "s.enabled = true, s.kind = 'instant'", {"m": mode})
-    src_mod._MODE_CACHE["at"] = 0.0
+    src_mod._MODE_CACHE["at"] = None
 
 
 def test_claims_only_asserts_but_does_not_draw_and_full_restores(it_db):

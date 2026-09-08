@@ -31,7 +31,10 @@ _MAX_HOPS = 5
 # survivor. Cached briefly because a bulk import addresses nodes by
 # `lei:{LEI}` millions of times and no merges happen mid-import (auto-dedup
 # runs after); a 60-second lag on a fresh merge is invisible next to that.
-_FWD_CACHE: dict = {"at": 0.0, "map": {}}
+# "at" None = empty/invalidated. Never 0.0: monotonic() is uptime, so on a
+# fresh container `now - 0.0 < TTL` marks an empty cache fresh and
+# invalidation is a no-op for the first minute of process life.
+_FWD_CACHE: dict = {"at": None, "map": {}}
 _FWD_TTL = 60.0
 
 
@@ -45,7 +48,7 @@ def _forwarding_map() -> dict:
     import time
     from app.db.arcadedb import run_sql
     now = time.monotonic()
-    if now - _FWD_CACHE["at"] < _FWD_TTL:
+    if _FWD_CACHE["at"] is not None and now - _FWD_CACHE["at"] < _FWD_TTL:
         return _FWD_CACHE["map"]
     direct: dict = {}
     try:
@@ -85,7 +88,7 @@ def canonical_id(node_id: str | None) -> str | None:
 def invalidate_forwarding_cache() -> None:
     """Drop the cache — call right after a merge so an importer in the same
     process sees it immediately (the TTL handles cross-process staleness)."""
-    _FWD_CACHE["at"] = 0.0
+    _FWD_CACHE["at"] = None
 
 
 # One definition of the write, used by both entry points below. The person merge
