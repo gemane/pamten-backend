@@ -757,6 +757,37 @@ class TestBeneficialOwnershipVsRealStake:
         assert stake is None
         assert voting == 52.3
 
+    def test_a_lone_custodian_with_all_shared_power_keeps_its_stake(self):
+        # State Street over News Corporation: sole 0, everything shared (held
+        # for client accounts), aggregate 8.6M = 4.7% of class. A lone filer,
+        # so 4.7% is its real stake, not a phantom bloc. This is the bug the
+        # in_group flag fixes — before it, the stake was nulled.
+        from app.scraper.sec_edgar import _split_stake
+        rows = {"sole_voting": 0, "shared_voting": 6878465,
+                "sole_dispositive": 0, "shared_dispositive": 8593355}
+        assert _split_stake(rows, 182981979, 4.7, in_group=False) == (4.7, None)
+
+    def test_the_same_rows_in_a_group_still_lose_the_stake(self):
+        # Identical row shape, but with co-filers → a genuine bloc member whose
+        # reported shares are the whole group's. Must stay null + bloc.
+        from app.scraper.sec_edgar import _split_stake
+        rows = {"sole_voting": 0, "shared_voting": 6878465,
+                "sole_dispositive": 0, "shared_dispositive": 8593355}
+        assert _split_stake(rows, 182981979, 4.7, in_group=True) == (None, 4.7)
+
+    def test_stake_from_person_reads_the_co_filer_count(self):
+        # One reporting person → lone custodian → real stake; two → group.
+        from app.scraper.sec_edgar import _stake_from_person
+        person = {"name": "State Street Corp", "sole_voting": 0,
+                  "shared_voting": 6878465, "sole_dispositive": 0,
+                  "shared_dispositive": 8593355, "aggregate": 8600153,
+                  "percent": 4.7}
+        lone = {"comment_text": "based on a total of 182,981,979 shares "
+                "issued and outstanding", "persons": [person]}
+        assert _stake_from_person(lone, person) == (4.7, None)
+        grouped = {**lone, "persons": [person, {"name": "Co-Filer LLC"}]}
+        assert _stake_from_person(grouped, person) == (None, 4.7)
+
     def test_no_denominator_means_no_invented_stake(self):
         # The bloc is real but unquantifiable per member; keeping the bloc
         # figure as the stake is exactly what produced 109.9%.
@@ -976,10 +1007,13 @@ class TestStakeFromStructuredFilings:
         # therefore 10.0%. `percentOfClass` is often two significant figures,
         # so the stated figure is the better one whenever the filer gives it.
         from app.scraper.sec_edgar import _stake_from_person
-        xml = {"comment_text": "based on a total of 1,250,000 shares issued and outstanding"}
         person = {"name": "X", "sole_voting": 0, "shared_voting": 500000,
                   "sole_dispositive": 100000, "shared_dispositive": 0,
                   "aggregate": 500000, "percent": 50.0}
+        # A group member (co-filer present): its individual 100,000 of a stated
+        # 1,250,000 is 8.0%, and the 50% is the bloc.
+        xml = {"comment_text": "based on a total of 1,250,000 shares issued and outstanding",
+               "persons": [person, {"name": "Co-Filer LLC"}]}
         stake, voting = _stake_from_person(xml, person)
         assert stake == 8.0, "the derived denominator was used despite a stated one"
         assert voting == 50.0
@@ -989,7 +1023,10 @@ class TestStakeFromStructuredFilings:
         person = {"name": "X", "sole_voting": 0, "shared_voting": 1020598157,
                   "sole_dispositive": 159121937, "shared_dispositive": 0,
                   "aggregate": 1020598157, "percent": 51.7}
-        stake, voting = _stake_from_person({"comment_text": ""}, person)
+        # Altria in the AB InBev Voting Agreement — a group member, so its own
+        # 159M is derived against the bloc's total.
+        xml = {"comment_text": "", "persons": [person, {"name": "Co-Filer LLC"}]}
+        stake, voting = _stake_from_person(xml, person)
         assert stake == pytest.approx(8.06, abs=0.01)   # Altria's real holding
         assert voting == 51.7
 
@@ -1387,7 +1424,7 @@ class TestAnExitIsNotAZeroPercentHolding:
         whole 13D model is built on."""
         from app.scraper.sec_edgar import _split_stake
         pct, voting = _split_stake({"sole_dispositive": 0, "shared_voting": 1_020_598_157},
-                                   None, 52.3)
+                                   None, 52.3, in_group=True)
         assert pct is None and voting == 52.3
 
 
