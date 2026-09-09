@@ -1392,7 +1392,13 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 stake_percent=stake,
                 # Form 4 states the holding exactly; until now it decided
                 # whether to write an edge and was then thrown away.
-                shares=shares, filing_type="Form 4",
+                shares=shares,
+                # Stamp the denominator too, so a holding below the percentage
+                # precision floor (a director's 1,139 shares → null stake) can
+                # still be sized and filtered client-side rather than surfacing
+                # under every stake filter as an unquantified owner.
+                shares_outstanding=data.get("shares_outstanding"),
+                filing_type="Form 4",
                 source_url=exec_rec.get("source_url"),
                 owner_label="Person",
             )
@@ -1434,6 +1440,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 file_date=holding.get("source_date"),
                 stake_percent=stake,
                 shares=holding.get("shares_owned"),
+                shares_outstanding=shares_out,
+                filing_type="Form 4",
                 source_url=holding.get("source_url"),
                 owner_label="Person",
             )

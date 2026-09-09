@@ -458,6 +458,36 @@ class TestTheWholeScrapeWritesTheGroup:
         assert rows[0]["sh"] == 3280000, "the exact holding was discarded again"
         assert rows[0]["pct"] == 0.02
 
+    def test_a_form4_holding_carries_the_denominator_for_filtering(self, graph):
+        # A director's below-floor holding (1,139 shares of billions) gets a
+        # null stake_percent, but the edge must carry shares_outstanding so the
+        # UI can size it and the ≥1% stake filter can hide it, instead of
+        # surfacing it as an unquantified owner under every filter.
+        payload_exec = {"name": "GORSKY ALEX", "role": "Director",
+                        "shares_owned": 1139, "stake_percent": None,
+                        "source_date": "2026-02-01",
+                        "source_url": "https://sec.gov/f4-index.htm"}
+        from unittest.mock import patch
+        from app.scraper import runner, sec_edgar
+        payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
+                   "ownership_filings": [], "executives": [payload_exec],
+                   "holdings": [], "former_names": [], "lei": None,
+                   "shares_outstanding": 2_000_000_000}
+        with patch.object(sec_edgar, "scrape_company", return_value=payload), \
+             patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
+             patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+             patch.object(runner, "get_source_enabled", return_value=True), \
+             patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+             patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+            runner.run_scrape_sec_edgar("Anheuser-Busch InBev")
+        rows = graph.run_command(
+            "MATCH (p:Person)-[r:OWNS]->(e:Entity) RETURN r.shares AS sh, "
+            "r.stake_percent AS pct, r.shares_outstanding AS out")
+        assert len(rows) == 1
+        assert rows[0]["sh"] == 1139
+        assert rows[0]["pct"] is None, "below the precision floor — no false percentage"
+        assert rows[0]["out"] == 2_000_000_000, "the denominator must reach the edge"
+
     def test_a_13g_bloc_makes_no_group(self, graph):
         # State Street sharing voting power across its own subsidiaries is not a
         # governance bloc, and modelling it as one would be misleading.
