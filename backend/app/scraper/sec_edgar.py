@@ -798,15 +798,29 @@ def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
     aggregate and there is no bloc, so voting comes back None and nothing
     about the common case changes.
     """
-    return _split_stake(_parse_power_rows(text), _shares_outstanding(text), reported_pct)
+    # Text/HTML path: co-filers aren't known here (the SGML header is fetched
+    # later, only when a bloc is suspected), so stay conservative — treat it as
+    # possibly-in-a-group. Modern filings are XML and go through
+    # `_stake_from_person`, which knows the co-filer count exactly.
+    return _split_stake(_parse_power_rows(text), _shares_outstanding(text),
+                        reported_pct, in_group=True)
 
 
-def _split_stake(rows: dict, total: int | None, reported_pct: float | None) -> tuple:
+def _split_stake(rows: dict, total: int | None, reported_pct: float | None,
+                 in_group: bool = False) -> tuple:
     """The stake/voting split over already-extracted numbers.
 
     Separated from the text parsing so the XML path can reuse the judgement
     without going near a regex; `_own_stake_and_voting` above is now a thin
     wrapper that supplies the numbers from an HTML cover page.
+
+    `in_group` is the fact the power rows alone cannot reveal. A lone
+    institutional custodian (State Street over News Corp) reports sole
+    dispositive 0 and everything "shared" — it holds for client accounts, not
+    as a control bloc — and its aggregate IS its 4.7% beneficial stake. A
+    genuine group member (BRC in the AB InBev Voting Agreement) has the same
+    row shape but reports the WHOLE bloc's shares, which must NOT become its
+    individual stake or members sum past 100%. Only co-filers tell them apart.
     """
     sole_disp = rows.get("sole_dispositive")
     shared_vote = rows.get("shared_voting")
@@ -814,6 +828,13 @@ def _split_stake(rows: dict, total: int | None, reported_pct: float | None) -> t
         return reported_pct, None
     if sole_disp >= shared_vote:
         return reported_pct, None          # no group: the filer holds it all
+
+    if not in_group:
+        # A lone filer with all-shared power is a custodian, not a bloc: its
+        # reported percent of class is its own stake, exactly like the common
+        # case above. Without this, every all-shared custodian (State Street,
+        # and many BlackRock/Vanguard filings) lost its stake to a phantom bloc.
+        return reported_pct, None
 
     if sole_disp == 0:
         # Everything this filer holds, it holds jointly — BRC S.à.r.l. can
@@ -1765,7 +1786,10 @@ def _stake_from_person(xml: dict, person: dict) -> tuple:
         if total:
             log.info("SEC EDGAR: derived %s shares outstanding for %r from %s at %s%%",
                      total, person["name"], person.get("aggregate"), person.get("percent"))
-    return _split_stake(rows, total, person.get("percent"))
+    # More than one reporting person on the cover = a genuine group of co-filers.
+    # A lone filer's all-shared power is custodial, not a control bloc.
+    in_group = len(xml.get("persons") or []) > 1
+    return _split_stake(rows, total, person.get("percent"), in_group=in_group)
 
 
 def _parse_aggregate_from_text(text: str) -> int | None:
