@@ -1241,7 +1241,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             is_individual = False
 
         if is_individual:
-            investor_node_id = _upsert_person_by_name(investor_name, source_id=source_id)
+            investor_node_id = _upsert_person_by_name(investor_name, source_id=source_id,
+                                                      sec_cik=filing.get("investor_cik"))
             scraped.append({"type": "person", "name": investor_name, "role": "investor"})
         else:
             investor_node_id = _upsert_entity_by_name(
@@ -1274,7 +1275,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 m_individual = (m.get("type_code") in _INDIVIDUAL_CODES
                                 if m.get("type_code") else is_person_name(m["name"]))
                 if m_individual:
-                    mid = _upsert_person_by_name(m["name"], source_id=source_id)
+                    mid = _upsert_person_by_name(m["name"], source_id=source_id,
+                                                sec_cik=m.get("cik"))
                     scraped.append({"type": "person", "name": m["name"], "role": "group member"})
                 else:
                     mid = _upsert_entity_by_name(name=m["name"], entity_type="company",
@@ -1396,7 +1398,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             continue
 
-        person_id = _upsert_person_by_name(name, source_id=source_id)
+        person_id = _upsert_person_by_name(name, source_id=source_id,
+                                           sec_cik=exec_rec.get("person_cik"))
         _upsert_role_sec(person_id, target_id, role, source_id,
                          source_url=exec_rec.get("source_url"),
                          source_date=exec_rec.get("source_date"))
