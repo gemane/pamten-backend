@@ -69,6 +69,19 @@ def test_duplicate_scan_confidence(it_db):
     it_db.run_command("MATCH (p:Person {id:'j1'}),(e:Entity{id:'msft'}) CREATE (p)-[:HAS_ROLE {role:'Founder'}]->(e)")
     it_db.run_command("MATCH (p:Person {id:'j2'}),(e:Entity{id:'msft'}) CREATE (p)-[:OWNS {}]->(e)")
 
+    # (K) same SEC CIK, different name spellings, NO shared company → HIGH (hard id).
+    # The CIK is definitive: one filer, however the name is written.
+    it_db.run_command("CREATE (:Person {id:'k1b', full_name:'Timothy D Cook', sec_cik:'0001214156', wikidata_id:'Q7'})")
+    it_db.run_command("CREATE (:Person {id:'k2b', full_name:'Tim Cook', sec_cik:'0001214156'})")
+
+    # (L) IDENTICAL name + same company, no birth date, no CIK → MEDIUM.
+    # This is the father/son trap: cannot tell one person from two relatives.
+    it_db.run_command("CREATE (:Person {id:'l1', full_name:'John Q Public', first_name:'John', last_name:'Public'})")
+    it_db.run_command("CREATE (:Person {id:'l2', full_name:'John Q Public', first_name:'John', last_name:'Public'})")
+    it_db.run_command("CREATE (:Entity {id:'acme', name:'Acme Corp', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'l1'}),(e:Entity{id:'acme'}) CREATE (p)-[:HAS_ROLE {role:'CEO'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'l2'}),(e:Entity{id:'acme'}) CREATE (p)-[:OWNS {}]->(e)")
+
     # a genuinely unique person must NOT be flagged
     it_db.run_command("CREATE (:Person {id:'z1', full_name:'Unique Personne'})")
 
@@ -88,6 +101,15 @@ def test_duplicate_scan_confidence(it_db):
     assert gg["confidence"] == "medium"
     assert "surname" in gg["reason"]
     assert gg["suggested_keep_id"] == "g1"                                # the Wikidata node
+
+    kg = by_members[frozenset(["k1b", "k2b"])]                            # same SEC CIK
+    assert kg["confidence"] == "high"
+    assert "CIK" in kg["reason"]
+    assert kg["suggested_keep_id"] == "k1b"                               # the Wikidata node
+
+    lg = by_members[frozenset(["l1", "l2"])]                              # identical name + company
+    assert lg["confidence"] == "medium", "father/son: identical name is not enough to merge"
+    assert "relative" in lg["reason"]
 
     assert not any({"h1", "h2"} <= set(k) for k in by_members)            # brothers not flagged
     assert not any({"i1", "i2"} <= set(k) for k in by_members)            # no shared company

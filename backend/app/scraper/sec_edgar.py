@@ -1365,6 +1365,10 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
 
     name = _normalize_sec_name(name_elem.text.strip())
     role = _title_to_role(officer_title) if is_officer else "Director"
+    # The reporting owner's own CIK — a hard person key, one per filer across
+    # every filing and spelling. Padded to 10 like every CIK we store.
+    owner_cik_raw = (owner.findtext(".//rptOwnerCik") or "").strip()
+    owner_cik = _cik_int(owner_cik_raw).zfill(10) if owner_cik_raw else None
 
     # Shares held after the reported transaction(s) — the insider's current
     # non-derivative holding. Take the largest value across rows (the total).
@@ -1377,7 +1381,8 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
     shares_owned = max(share_vals) if share_vals else None
 
     return {"name": name, "title": officer_title, "role": role,
-            "shares_owned": shares_owned, "issuer_cik": issuer_cik}
+            "shares_owned": shares_owned, "issuer_cik": issuer_cik,
+            "person_cik": owner_cik}
 
 
 def fetch_executives(cik: str) -> list:

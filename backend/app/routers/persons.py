@@ -133,6 +133,7 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
 
 _PERSON_RETURN = (
     "RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id, "
+    "p.sec_cik AS sec_cik, "
     "p.birth_date AS birth_date, p.birth_place AS birth_place, "
     "p.first_name AS first_name, p.last_name AS last_name, p.alias AS alias"
 )
@@ -140,6 +141,7 @@ _PERSON_RETURN = (
 
 def _person_row(r) -> dict:
     return {"id": r.get("id"), "full_name": r.get("full_name"), "wikidata_id": r.get("wikidata_id"),
+            "sec_cik": r.get("sec_cik"),
             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
             "first_name": r.get("first_name"), "last_name": r.get("last_name"),
             "alias": r.get("alias") or []}
@@ -240,7 +242,10 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
         by_name: dict[tuple, list] = defaultdict(list)
         by_birth: dict[tuple, list] = defaultdict(list)
         by_surname: dict[str, list] = defaultdict(list)
+        by_cik: dict[str, list] = defaultdict(list)
         for p in persons:
+            if p["sec_cik"]:
+                by_cik[p["sec_cik"]].append(p)
             # Index under the full name AND every alias, so a node whose full
             # name is one variant links to one recorded only as another person's
             # alias (SEC "Gates William H Iii" ↔ "Bill Gates" / "William H. Gates III").
@@ -264,7 +269,8 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 _ent_cache[pid] = set(rec.get("ids") or [])
             return _ent_cache[pid]
 
-        def _emit(members: list, base_reason: str, variant: bool = False, match_key: tuple | None = None):
+        def _emit(members: list, base_reason: str, variant: bool = False,
+                  match_key: tuple | None = None, hard_id: bool = False):
             ids = frozenset(m["id"] for m in members)
             if len(ids) < 2 or ids in seen:
                 return
@@ -291,18 +297,51 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             if shared_birth and "birth" not in base_reason:
                 reasons.append("same birth date")
 
+            # keep: prefer a Wikidata node, then most-connected, then shortest name
+            keep_order = sorted(range(len(members)),
+                                key=lambda i: (0 if members[i]["wikidata_id"] else 1,
+                                               -len(ent[i]), len(members[i]["full_name"] or "")))
+
+            # A shared hard id (SEC CIK) is definitive: it identifies one filer
+            # and can never be a father/son coincidence, so it merges regardless
+            # of name, company or birth.
+            if hard_id:
+                groups.append({
+                    "confidence": "high", "likely_distinct": False,
+                    "reason": ", ".join(reasons),
+                    "suggested_keep_id": members[keep_order[0]]["id"],
+                    "members": [{**m, "connected": len(ent[i])} for i, m in enumerate(members)],
+                })
+                return
+
             # Conflicting birth dates on a same-name group ⇒ almost certainly two
             # different people — flag as likely-distinct, don't suggest a merge.
-            likely_distinct = conflict_birth and not (shared_entity or shared_birth)
+            likely_distinct = conflict_birth and not shared_birth
             if variant:
                 # different given names ⇒ needs review even with the shared company,
                 # unless a matching birth date settles it
                 confidence = "high" if shared_birth else "medium"
-            elif shared_entity or shared_birth:
+            elif shared_birth:
                 confidence = "high"
             elif likely_distinct:
                 confidence = "low"
                 reasons.append("but DIFFERENT birth dates — likely distinct people")
+            elif shared_entity:
+                # A shared company corroborates a same-person name variant — EXCEPT
+                # when two members carry the IDENTICAL name, which is exactly how a
+                # father and son look (same name, same company) and the SEC gives no
+                # birth date to tell them apart. An order/spelling variant
+                # ("Warren E Buffett" / "Buffett Warren E") is one person and stays
+                # high; identical strings need a birth date or CIK, so leave them
+                # for review.
+                norm = [_identical_name_key(m["full_name"]) for m in members]
+                identical = len(set(norm)) < len(norm)
+                if identical:
+                    confidence = "medium"
+                    reasons.append("IDENTICAL name + company, but no birth date/CIK "
+                                   "to rule out a relative")
+                else:
+                    confidence = "high"
             else:
                 confidence = "medium" if distinctive else "low"
 
@@ -318,6 +357,11 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 "members": [{**m, "connected": len(ent[i])} for i, m in enumerate(members)],
             })
 
+        # A shared SEC CIK is a hard identifier — the SEC assigns one per filer,
+        # so it is the same person across every spelling and can never conflate a
+        # father and son (who get distinct CIKs). Emitted first, as definitive.
+        for members in by_cik.values():
+            _emit(members, "same SEC CIK", hard_id=True)
         for members in by_birth.values():
             _emit(members, "same birth date + place")
         for nk, members in by_name.items():
@@ -352,6 +396,15 @@ def _all_pairs_dismissed(members: list, dismissed: set) -> bool:
     """True if every pair in the group is marked NOT_DUPLICATE (confirmed distinct)."""
     ids = [m["id"] for m in members]
     return all(frozenset((a, b)) in dismissed for a, b in combinations(ids, 2))
+
+
+def _identical_name_key(full_name: str | None) -> str:
+    """Order-preserving normalized name, to tell an identical name from an
+    order/spelling variant. Lowercased, punctuation dropped, spaces collapsed —
+    so "Warren E. Buffett" and "Warren E Buffett" read identical, but
+    "Buffett Warren E" does not."""
+    import re as _re
+    return _re.sub(r"\s+", " ", _re.sub(r"[^\w\s]", "", (full_name or "").lower())).strip()
 
 
 def deduplicate_high_confidence(apply: bool = True, seed_ids: list[str] | None = None) -> dict:

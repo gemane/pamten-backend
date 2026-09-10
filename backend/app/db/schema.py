@@ -42,6 +42,7 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Person",   "id",              "UNIQUE"),
     ("Person",   "full_name",       "NOTUNIQUE"),
     ("Person",   "wikidata_id",     "NOTUNIQUE"),
+    ("Person",   "sec_cik",         "NOTUNIQUE"),
     # Element-wise over the LIST: `$name IN p.alias` is how the scoped
     # post-scrape dedup finds a node recorded under another of its names.
     # Typed LIST below — declared STRING, ArcadeDB rejects the comparison with

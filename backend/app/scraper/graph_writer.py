@@ -682,37 +682,58 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         return _record_touched_entity(entity_id)
 
 
-def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
+def _upsert_person_by_name(full_name: str, source_id: str | None = None,
+                           sec_cik: str | None = None) -> str:
     """
-    Find or create a Person node matched by full_name.
+    Find or create a Person node matched by SEC CIK, then full_name.
+
+    ``sec_cik`` is the SEC-assigned Central Index Key of a filer — one per
+    person, stable across every Form 3/4/13D/G they file however their name is
+    spelled. It is matched FIRST because it is a hard identifier: it collapses
+    "Timothy D Cook" and "Cook Timothy D" to one node, and it is person-unique,
+    so it never conflates a father and son who share a name and a company (which
+    name matching alone would). Stored fill-if-missing on whichever node wins,
+    so a name-matched node gains the CIK for next time.
 
     SEC EDGAR investor filings use LAST FIRST word order, while Form 3/4
-    executive filings use FIRST LAST order. For two-word names this causes
-    duplicate nodes (e.g. "Brin Sergey" and "Sergey Brin").  We resolve
-    this by also trying the reversed form before creating a new node, and
-    storing whichever form already exists if found.
+    executive filings use FIRST LAST order; the reversed two-word form is tried
+    before creating a new node.
     """
     parts = full_name.strip().split()
     reversed_name = f"{parts[1]} {parts[0]}" if len(parts) == 2 else None
 
     first_name, last_name = parse_full_name(full_name)
     with db.get_session() as session:
-        # 1. Exact match
+        # 0. Hard id: the SEC CIK. A filer is the same person across every
+        #    spelling, and never confusable with a same-named relative.
+        if sec_cik:
+            rec = session.run(
+                "MATCH (p:Person {sec_cik: $cik}) RETURN p.id AS id LIMIT 1",
+                cik=sec_cik).single()
+            if rec:
+                return _record_touched(rec["id"])
+
+        # 1. Exact name — but a CONFLICTING CIK means a different person (a
+        #    father and son share a name; their CIKs differ), so skip a
+        #    name match whose node already has a different CIK. Stamp the CIK
+        #    when the matched node had none.
         rec = session.run(
-            "MATCH (p:Person {full_name: $name}) RETURN p.id AS id LIMIT 1",
+            "MATCH (p:Person {full_name: $name}) RETURN p.id AS id, p.sec_cik AS cik LIMIT 1",
             name=full_name,
         ).single()
-        if rec:
+        if rec and not _cik_conflict(rec.get("cik"), sec_cik):
+            _stamp_person_cik(session, rec["id"], sec_cik)
             return _record_touched(rec["id"])
 
         # 2. Reversed two-word form — catches "Brin Sergey" when "Sergey Brin"
-        #    already exists (or vice-versa)
+        #    already exists (or vice-versa), same CIK-conflict guard.
         if reversed_name:
             rec = session.run(
-                "MATCH (p:Person {full_name: $name}) RETURN p.id AS id LIMIT 1",
+                "MATCH (p:Person {full_name: $name}) RETURN p.id AS id, p.sec_cik AS cik LIMIT 1",
                 name=reversed_name,
             ).single()
-            if rec:
+            if rec and not _cik_conflict(rec.get("cik"), sec_cik):
+                _stamp_person_cik(session, rec["id"], sec_cik)
                 return _record_touched(rec["id"])
 
         person_id = str(uuid.uuid4())
@@ -721,12 +742,28 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None) -> str:
             CREATE (p:Person {
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, nationality: '', description: '',
-                wikidata_id: null, verified: false, source_id: $source_id,
+                wikidata_id: null, sec_cik: $cik, verified: false, source_id: $source_id,
                 alias: [], nationalities: [], search_text: $search_text
             })
             """,
             id=person_id, first=first_name, last=last_name, full=full_name,
+            cik=sec_cik,
             search_text=_person_search_text(full_name, None),
             source_id=source_id,
         )
         return _record_touched(person_id)
+
+
+def _cik_conflict(existing: str | None, incoming: str | None) -> bool:
+    """True when both CIKs are present and differ — a same-name node that is a
+    DIFFERENT filer (a father/son), which a name match must not fold together."""
+    return bool(existing and incoming and existing != incoming)
+
+
+def _stamp_person_cik(session, person_id: str, sec_cik: str | None) -> None:
+    """Fill a person's SEC CIK when it was matched by name and had none yet —
+    COALESCE, so a CIK already recorded is never overwritten."""
+    if not sec_cik:
+        return
+    session.run("MATCH (p:Person {id: $id}) SET p.sec_cik = COALESCE(p.sec_cik, $cik)",
+                id=person_id, cik=sec_cik)
