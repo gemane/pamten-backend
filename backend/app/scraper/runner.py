@@ -25,7 +25,7 @@ from app.claims import record_claim, KIND_ROLE
 from app.scraper.wikidata import (search_entity, search_entity_in_country,
                                   fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
@@ -1234,6 +1234,11 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         is_individual = filing.get("is_individual")
         if is_individual is None:
             is_individual = is_person_name(investor_name)
+        # A legal-entity suffix vetoes a person classification the filing got
+        # wrong (a misread Item 8 code): "Berkshire Hathaway Inc" is a company
+        # however the type field parsed.
+        if is_individual and has_entity_suffix(investor_name):
+            is_individual = False
 
         if is_individual:
             investor_node_id = _upsert_person_by_name(investor_name, source_id=source_id)
@@ -1368,6 +1373,27 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         name = exec_rec.get("name", "").strip()
         role = exec_rec.get("role", "Executive")
         if not name:
+            continue
+
+        # A 10% owner that files Form 4 is an ENTITY, not an officer — Berkshire
+        # Hathaway Inc files Form 4s about the companies it holds. Record its
+        # holding as an entity owner; never mint a Person or a director role for
+        # a company. (The role writers below assume a natural person.)
+        if has_entity_suffix(name):
+            shares = exec_rec.get("shares_owned")
+            if shares and shares > 0:
+                ent_id = _upsert_entity_by_name(name=name, entity_type="company",
+                                                source_id=source_id)
+                stake = exec_rec.get("stake_percent")
+                _upsert_owns_sec(
+                    owner_id=ent_id, owned_id=target_id, source_id=source_id,
+                    ownership_type=(derive_ownership_type(stake) if stake is not None
+                                    else "minority"),
+                    file_date=exec_rec.get("source_date"), stake_percent=stake,
+                    shares=shares, shares_outstanding=data.get("shares_outstanding"),
+                    filing_type="Form 4", source_url=exec_rec.get("source_url"),
+                    owner_label="Entity")
+                scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             continue
 
         person_id = _upsert_person_by_name(name, source_id=source_id)

@@ -458,6 +458,50 @@ class TestTheWholeScrapeWritesTheGroup:
         assert rows[0]["sh"] == 3280000, "the exact holding was discarded again"
         assert rows[0]["pct"] == 0.02
 
+    def test_a_company_form4_filer_is_an_entity_not_a_person(self, graph):
+        # A 10% owner that files Form 4 is a company (Berkshire Hathaway Inc
+        # files about the companies it holds). It must be an Entity owner, never
+        # a Person with a director role.
+        payload_exec = {"name": "Berkshire Hathaway Inc", "role": "Director",
+                        "shares_owned": 5000, "stake_percent": 0.02,
+                        "source_date": "2026-02-01",
+                        "source_url": "https://sec.gov/f4-index.htm"}
+        from unittest.mock import patch
+        from app.scraper import runner, sec_edgar
+        payload = {"name": "Anheuser-Busch InBev", "cik": "0001668717",
+                   "ownership_filings": [], "executives": [payload_exec],
+                   "holdings": [], "former_names": [], "lei": None,
+                   "shares_outstanding": 2_000_000_000}
+        with patch.object(sec_edgar, "scrape_company", return_value=payload), \
+             patch.object(sec_edgar, "fetch_filer_country", return_value=None), \
+             patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+             patch.object(runner, "get_source_enabled", return_value=True), \
+             patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+             patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+            runner.run_scrape_sec_edgar("Anheuser-Busch InBev")
+        assert graph.run_command(
+            "MATCH (p:Person) WHERE p.full_name = 'Berkshire Hathaway Inc' RETURN p") == [], \
+            "a company was minted as a person"
+        owns = graph.run_command(
+            "MATCH (e:Entity {name:'Berkshire Hathaway Inc'})-[r:OWNS]->(:Entity) "
+            "RETURN r.shares AS sh")
+        assert [r["sh"] for r in owns] == [5000], "its holding was recorded as an entity"
+        assert graph.run_command(
+            "MATCH (:Entity {name:'Berkshire Hathaway Inc'})-[r:HAS_ROLE]->() RETURN r") == [], \
+            "a company got a director role"
+
+    def test_a_13g_filer_with_a_corporate_name_is_never_a_person(self, graph):
+        # Even if Item 8 were misread as an individual, a legal-entity suffix
+        # vetoes it — the bug that left Berkshire Hathaway Inc a Person owner.
+        filing = {**self.FILING, "form_type": "SCHEDULE 13G/A",
+                  "investor_name": "Acme Holdings Inc", "is_individual": True,
+                  "investor_cik": "0009999999"}
+        self._scrape(graph, filing)
+        assert graph.run_command(
+            "MATCH (p:Person) WHERE p.full_name = 'Acme Holdings Inc' RETURN p") == []
+        assert graph.run_command(
+            "MATCH (e:Entity) WHERE e.name = 'Acme Holdings Inc' RETURN e") != []
+
     def test_a_form4_holding_carries_the_denominator_for_filtering(self, graph):
         # A director's below-floor holding (1,139 shares of billions) gets a
         # null stake_percent, but the edge must carry shares_outstanding so the
