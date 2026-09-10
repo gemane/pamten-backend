@@ -3,7 +3,7 @@ Tests for mapper.py — pure functions, no mocks needed.
 """
 
 from app.scraper.mapper import (
-    normalize_entity_name, is_person_name, is_nominee_name, derive_ownership_type,
+    normalize_entity_name, is_person_name, is_nominee_name, has_entity_suffix, derive_ownership_type,
 )
 
 
@@ -77,6 +77,21 @@ class TestNormalizeEntityName:
 
     def test_empty_string(self):
         assert normalize_entity_name("") == ""
+
+
+class TestHasEntitySuffix:
+    """A definite company signal, used to veto a wrong person classification."""
+
+    def test_corporate_suffixes(self):
+        assert has_entity_suffix("Berkshire Hathaway Inc") is True
+        assert has_entity_suffix("State Street Corp") is True
+        assert has_entity_suffix("Bridgewater Associates LP") is True
+        assert has_entity_suffix("Bevco Lux S.A.R.L.") is True
+
+    def test_a_natural_person_has_none(self):
+        assert has_entity_suffix("Warren Buffett") is False
+        assert has_entity_suffix("Timothy D Cook") is False
+        assert has_entity_suffix(None) is False
 
 
 class TestIsPersonName:

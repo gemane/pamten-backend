@@ -113,6 +113,16 @@ def parse_full_name(full_name: str) -> tuple:
     return (parts[0], parts[1])
 
 
+def has_entity_suffix(name: str | None) -> bool:
+    """True if the name carries a legal-entity marker (Inc, Corp, LLC, GmbH …).
+
+    A definite "this is a company" signal, unlike is_person_name's positive
+    guess. Used to VETO a person classification a filing got wrong — an entity
+    that files Form 4 as a 10% owner, or a 13G whose Item 8 code was misread,
+    must never be minted as a Person (Berkshire Hathaway Inc was)."""
+    return bool(name and _ENTITY_SUFFIXES.search(name))
+
+
 def is_person_name(name: str) -> bool:
     """
     Heuristic: return True if `name` looks like a natural person rather than
