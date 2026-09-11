@@ -209,8 +209,9 @@ class _BatchWriter:
         self._bump()
 
     def role(self, person_id: str, entity_id: str, props: dict) -> None:
-        if self._edge_allowed(props):
-            self._edges.append(("HAS_ROLE", "Person", person_id, "Entity", entity_id, props))
+        # HAS_ROLE is not gated by claims-only — the mode suppresses ownership
+        # structure, not people (see graph_writer._upsert_role).
+        self._edges.append(("HAS_ROLE", "Person", person_id, "Entity", entity_id, props))
         self._claim(KIND_ROLE, person_id, entity_id, props)
         self._bump()
 

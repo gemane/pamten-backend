@@ -38,6 +38,41 @@ def _set_mode(it_db, mode):
     src_mod._MODE_CACHE["at"] = None
 
 
+def test_claims_only_still_draws_roles_people_are_not_structure(it_db):
+    # The mode distrusts a source's OWNERSHIP structure; people are what the
+    # Wikidata verdict wanted kept. Suppressing HAS_ROLE orphaned every
+    # Wikidata person and starved the person dedup of shared-company
+    # corroboration.
+    from app.scraper.graph_writer import _upsert_person_by_name, _upsert_role
+    _two_companies(it_db)
+    sid = _ensure_source("Wikidata", "https://www.wikidata.org", 80)
+    _set_mode(it_db, "claims_only")
+    pid = _upsert_person_by_name("Test Ceo Person")
+    _upsert_role(pid, "e1", "CEO", sid)
+    assert it_db.run_sql("SELECT count(*) AS n FROM HAS_ROLE")[0]["n"] == 1, \
+        "claims-only must still draw people-roles"
+    _upsert_owns("e1", "e2", sid)
+    assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 0, \
+        "…while ownership structure stays suppressed"
+
+
+def test_the_sweep_keeps_role_edges(it_db, make_token):
+    from app.scraper.graph_writer import _upsert_person_by_name, _upsert_role
+    sid = _ensure_source("Wikidata", "https://www.wikidata.org", 80)
+    _two_companies(it_db, sid)
+    _set_mode(it_db, "full")
+    _upsert_owns("e1", "e2", sid)
+    pid = _upsert_person_by_name("Test Ceo Person")
+    _upsert_role(pid, "e1", "CEO", sid)
+    with TestClient(app) as c:
+        r = c.post("/v1/scraper/sources/wikidata/sweep-edges?confirm=wikidata",
+                   headers={"Authorization": f"Bearer {make_token(role='admin')}"})
+    assert r.status_code == 200
+    assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 0, "structure swept"
+    assert it_db.run_sql("SELECT count(*) AS n FROM HAS_ROLE")[0]["n"] == 1, \
+        "people-roles survive the sweep — they are not structure"
+
+
 def test_claims_only_asserts_but_does_not_draw_and_full_restores(it_db):
     _two_companies(it_db)
     sid = _ensure_source("Wikidata", "https://www.wikidata.org", 80)

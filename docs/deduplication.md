@@ -416,11 +416,15 @@ UI never shows a node twice even before the DB is cleaned.
 ## Claims-only sources
 
 A source's `data_mode` (`PATCH /scraper/sources/{name}/mode`) decides whether
-it may *draw*: `full` writes edges as always; `claims_only` records the claim
-(provenance kept, corroboration badges still count it) and enriches entities,
-but never creates OWNS / HAS_ROLE / SUCCEEDED_BY structure. The mode change
-affects new writes only — `POST …/sweep-edges` removes what the source
-already drew (nodes and claims stay). Reverting is mode back to `full` plus a
+it may *draw ownership structure*: `full` writes edges as always; `claims_only`
+records the claim (provenance kept, corroboration badges still count it) and
+enriches entities, but never creates OWNS / SUCCEEDED_BY structure.
+**HAS_ROLE is deliberately exempt** — the mode distrusts a source's ownership
+claims, not its people, and suppressing roles orphaned every Wikidata person
+(absent from company panels) while starving the person dedup of its
+shared-company corroboration. The mode change affects new writes only —
+`POST …/sweep-edges` removes the structure the source already drew (nodes,
+claims and HAS_ROLE edges stay). Reverting is mode back to `full` plus a
 re-scrape / re-import. Built for the Wikidata quality decision, generic on
 purpose: any source can be demoted the day its quality disappoints.
 

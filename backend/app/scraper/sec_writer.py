@@ -347,9 +347,8 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, source_url=source_url, source_date=source_date,
                  credibility_score=credibility_score)
-    from app.scraper.sources import edge_writes_suppressed
-    if edge_writes_suppressed(source_id):
-        return None
+    # HAS_ROLE is not gated by claims-only — the mode suppresses ownership
+    # structure, not people (see graph_writer._upsert_role).
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
         existing = session.run(
