@@ -283,6 +283,23 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 return
             seen.add(ids)
 
+            # Conflicting SEC CIKs are DEFINITIVE: the SEC assigns one per
+            # filer, so two different CIKs are two different people however
+            # alike the names — the hard father/son backstop that makes the
+            # formatting-variance merges below safe. (A member without a CIK
+            # conflicts with nothing.)
+            present_ciks = [m.get("sec_cik") for m in members if m.get("sec_cik")]
+            if len(set(present_ciks)) >= 2:
+                groups.append({
+                    "confidence": "low", "likely_distinct": True,
+                    "reason": ", ".join([base_reason,
+                                         "but DIFFERENT SEC CIKs — distinct filers"]),
+                    "suggested_keep_id": members[0]["id"],
+                    "members": [{**m, "connected": len(ent[i])}
+                                for i, m in enumerate(members)],
+                })
+                return
+
             # Birth-date signal (place may be missing — BODS/PSC give date only).
             present_dates = [m["birth_date"] for m in members if m["birth_date"]]
             shared_birth   = len(set(present_dates)) == 1 and len(present_dates) >= 2
@@ -328,14 +345,14 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 reasons.append("but DIFFERENT birth dates — likely distinct people")
             elif shared_entity:
                 # A shared company corroborates a same-person name variant — EXCEPT
-                # when two members carry the IDENTICAL name, which is exactly how a
-                # father and son look (same name, same company) and the SEC gives no
-                # birth date to tell them apart. An order/spelling variant
-                # ("Warren E Buffett" / "Buffett Warren E") is one person and stays
-                # high; identical strings need a birth date or CIK, so leave them
-                # for review.
-                norm = [_identical_name_key(m["full_name"]) for m in members]
-                identical = len(set(norm)) < len(norm)
+                # when two members carry the BYTE-IDENTICAL name, which is exactly
+                # how a father and son look (same name, same company) and the SEC
+                # gives no birth date to tell them apart. Formatting variance —
+                # "Monica C. Lozano" / "Monica C Lozano", case, word order — is how
+                # two SOURCES render one person and merges (user decision:
+                # punctuation is formatting, not identity); the conflicting-CIK
+                # blocker above stays the hard father/son backstop.
+                identical = len({m["full_name"] for m in members}) < len(members)
                 if identical:
                     confidence = "medium"
                     reasons.append("IDENTICAL name + company, but no birth date/CIK "
@@ -396,15 +413,6 @@ def _all_pairs_dismissed(members: list, dismissed: set) -> bool:
     """True if every pair in the group is marked NOT_DUPLICATE (confirmed distinct)."""
     ids = [m["id"] for m in members]
     return all(frozenset((a, b)) in dismissed for a, b in combinations(ids, 2))
-
-
-def _identical_name_key(full_name: str | None) -> str:
-    """Order-preserving normalized name, to tell an identical name from an
-    order/spelling variant. Lowercased, punctuation dropped, spaces collapsed —
-    so "Warren E. Buffett" and "Warren E Buffett" read identical, but
-    "Buffett Warren E" does not."""
-    import re as _re
-    return _re.sub(r"\s+", " ", _re.sub(r"[^\w\s]", "", (full_name or "").lower())).strip()
 
 
 def deduplicate_high_confidence(apply: bool = True, seed_ids: list[str] | None = None) -> dict:

@@ -82,6 +82,22 @@ def test_duplicate_scan_confidence(it_db):
     it_db.run_command("MATCH (p:Person {id:'l1'}),(e:Entity{id:'acme'}) CREATE (p)-[:HAS_ROLE {role:'CEO'}]->(e)")
     it_db.run_command("MATCH (p:Person {id:'l2'}),(e:Entity{id:'acme'}) CREATE (p)-[:OWNS {}]->(e)")
 
+    # (M) punctuation-only variance + shared company → HIGH (formatting, not
+    # identity — "C." and "C" are the same; user decision 2026-09-11)
+    it_db.run_command("CREATE (:Person {id:'m1', full_name:'Monica C. Lozano', wikidata_id:'Q11'})")
+    it_db.run_command("CREATE (:Person {id:'m2', full_name:'Monica C Lozano'})")
+    it_db.run_command("CREATE (:Entity {id:'aapl2', name:'Apple', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'m1'}),(e:Entity{id:'aapl2'}) CREATE (p)-[:HAS_ROLE {role:'Director'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'m2'}),(e:Entity{id:'aapl2'}) CREATE (p)-[:OWNS {}]->(e)")
+
+    # (N) same name, same company, but DIFFERENT SEC CIKs → definitively two
+    # people (father/son who both file) — never merged, however alike.
+    it_db.run_command("CREATE (:Person {id:'n1', full_name:'Sam T. Rivers', sec_cik:'0000333333'})")
+    it_db.run_command("CREATE (:Person {id:'n2', full_name:'Sam T Rivers', sec_cik:'0000444444'})")
+    it_db.run_command("CREATE (:Entity {id:'riv', name:'Rivers Corp', type:'company'})")
+    it_db.run_command("MATCH (p:Person {id:'n1'}),(e:Entity{id:'riv'}) CREATE (p)-[:HAS_ROLE {role:'CEO'}]->(e)")
+    it_db.run_command("MATCH (p:Person {id:'n2'}),(e:Entity{id:'riv'}) CREATE (p)-[:OWNS {}]->(e)")
+
     # a genuinely unique person must NOT be flagged
     it_db.run_command("CREATE (:Person {id:'z1', full_name:'Unique Personne'})")
 
@@ -110,6 +126,15 @@ def test_duplicate_scan_confidence(it_db):
     lg = by_members[frozenset(["l1", "l2"])]                              # identical name + company
     assert lg["confidence"] == "medium", "father/son: identical name is not enough to merge"
     assert "relative" in lg["reason"]
+
+    mg = by_members[frozenset(["m1", "m2"])]                              # punctuation-only + company
+    assert mg["confidence"] == "high", "C. and C are the same — formatting merges"
+    assert mg["suggested_keep_id"] == "m1"                                # the Wikidata node
+
+    ng = by_members[frozenset(["n1", "n2"])]                              # conflicting CIKs
+    assert ng["likely_distinct"] is True and ng["confidence"] == "low", \
+        "two SEC CIKs are two people, however alike the names"
+    assert "CIK" in ng["reason"]
 
     assert not any({"h1", "h2"} <= set(k) for k in by_members)            # brothers not flagged
     assert not any({"i1", "i2"} <= set(k) for k in by_members)            # no shared company
