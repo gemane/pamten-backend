@@ -2196,7 +2196,21 @@ def _13f_filings_for(query: str, limit: int,
     by_filer: dict[str, dict] = {}
     total = 0
     for offset in range(0, limit, _13F_PAGE):
-        data = _get(SEARCH_URL, {**params, "from": offset})
+        try:
+            data = _get(SEARCH_URL, {**params, "from": offset})
+        except httpx.HTTPStatusError as exc:
+            # EFTS 500s deterministically on deep pagination for some queries
+            # (SpaceX's page at from=30 fails every time). A failed LATER page
+            # must not sink the holders already read — stop paging and return
+            # what we have; the fetched-vs-total count already tells the caller
+            # this is a sample. A first-page failure still raises: that is
+            # "the search is down", not "the tail is missing".
+            if offset == 0:
+                raise
+            log.warning("SEC EDGAR: 13F search page at offset %d failed (%s) — "
+                        "keeping the %d filings already read", offset, exc,
+                        len(seen_acc))
+            break
         hits = data.get("hits", {}).get("hits", [])
         total = data.get("hits", {}).get("total", {}).get("value", 0)
         if not hits:
