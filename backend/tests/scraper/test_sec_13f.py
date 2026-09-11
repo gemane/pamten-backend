@@ -79,6 +79,42 @@ class TestFetch13FHolders:
         assert h["filer_name"] == "Gigafund Management Company, LLC"
         assert h["source_url"].endswith(f"{GIGA_ACC}-index.htm")
 
+    def test_a_failed_later_page_keeps_the_holders_already_read(self):
+        # EFTS 500s deterministically on deep pagination for some queries
+        # (SpaceX from=30). The tail must not sink the run: page one's holders
+        # survive, the failure just ends pagination.
+        import httpx
+        g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
+                          _giga_docs(), total=95)
+        orig_get = None
+
+        def failing_get(url, params=None):
+            if url == sec_edgar.SEARCH_URL and int((params or {}).get("from", 0)) > 0:
+                req = httpx.Request("GET", url)
+                raise httpx.HTTPStatusError("500", request=req,
+                                            response=httpx.Response(500, request=req))
+            return g.kwargs["side_effect"](url, params)
+
+        with g as gm, t:
+            gm.side_effect = failing_get
+            out = fetch_13f_holders("SpaceX", limit=40,
+                                    known_names=["Space Exploration Technologies Corp."])
+        assert len(out["holders"]) == 1, "page one's holders survived the page-two 500"
+
+    def test_a_failed_FIRST_page_still_raises(self):
+        # "the search is down" is not "the tail is missing" — surface it.
+        import httpx
+        def dead_get(url, params=None):
+            req = httpx.Request("GET", url)
+            raise httpx.HTTPStatusError("500", request=req,
+                                        response=httpx.Response(500, request=req))
+        with patch.object(sec_edgar, "_get", side_effect=dead_get):
+            try:
+                fetch_13f_holders("SpaceX", known_names=["X"])
+                assert False, "should have raised"
+            except httpx.HTTPStatusError:
+                pass
+
     def test_the_period_is_iso_not_edgars_mdy(self):
         g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
                           _giga_docs())
