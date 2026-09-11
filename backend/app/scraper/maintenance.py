@@ -898,13 +898,15 @@ def _source_id_for(source_name: str) -> str:
     return src[0]["id"]
 
 
-def _delete_source_edges(sid: str, batch: int) -> dict:
+def _delete_source_edges(sid: str, batch: int,
+                         edge_types: list[str] | None = None) -> dict:
     return {et: _batched_delete(f"DELETE FROM {et} WHERE source_id = :s",
                                {"s": sid}, batch)
-            for et in _WIPE_EDGE_TYPES}
+            for et in (edge_types or _WIPE_EDGE_TYPES)}
 
 
-def wipe_source_edges(source_name: str, batch: int = 10000) -> dict:
+def wipe_source_edges(source_name: str, batch: int = 10000,
+                      edge_types: list[str] | None = None) -> dict:
     """Delete every EDGE a source drew; its nodes and Claims stay untouched.
 
     The retro half of claims-only mode: the provenance (claims) and the
@@ -913,7 +915,7 @@ def wipe_source_edges(source_name: str, batch: int = 10000) -> dict:
     command."""
     sid = _source_id_for(source_name)
     return {"source": source_name, "source_id": sid,
-            "edges": _delete_source_edges(sid, batch)}
+            "edges": _delete_source_edges(sid, batch, edge_types)}
 
 
 def wipe_source(source_name: str, batch: int = 10000, rebuild_indexes: bool = True,

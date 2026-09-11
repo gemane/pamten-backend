@@ -215,7 +215,8 @@ def edge_writes_suppressed(source_id: str | None) -> bool:
 @router.patch("/{name}/mode")
 def set_source_mode(name: str, mode: str, _: dict = Depends(require_admin)):
     """Set a source's data mode: ``full`` draws edges, ``claims_only``
-    records claims and enriches entities but never draws structure.
+    records claims and enriches entities but never draws OWNERSHIP structure
+    (OWNS/SUCCEEDED_BY). People-roles (HAS_ROLE) are always drawn.
 
     Does NOT touch existing edges — removing what a source already drew is
     the explicitly destructive POST /{name}/sweep-edges. Reverting is
@@ -239,7 +240,8 @@ def set_source_mode(name: str, mode: str, _: dict = Depends(require_admin)):
 
 @router.post("/{name}/sweep-edges")
 def sweep_source_edges(name: str, confirm: str, _: dict = Depends(require_admin)):
-    """Delete every EDGE this source drew — nodes and claims stay.
+    """Delete every ownership-structure edge this source drew — nodes,
+    claims and HAS_ROLE edges stay.
 
     The retro half of claims-only: flipping the mode stops new structure,
     this removes the old. Destructive, so the wipe-source retype guard,
@@ -252,7 +254,10 @@ def sweep_source_edges(name: str, confirm: str, _: dict = Depends(require_admin)
     from app.scraper.maintenance import wipe_source_edges
     label = KNOWN_SOURCES[name]["label"]
     try:
-        result = wipe_source_edges(label)
+        # Ownership STRUCTURE only — HAS_ROLE stays, mirroring what claims-only
+        # suppresses (people are not structure; see graph_writer._upsert_role).
+        result = wipe_source_edges(label, edge_types=[
+            "OWNS", "SUCCEEDED_BY", "RELATED_TO", "DUAL_LISTED_WITH"])
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return {"name": name, "source": label, **result}

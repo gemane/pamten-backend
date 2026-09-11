@@ -421,12 +421,11 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
                  credibility_score=credibility_score)
-    # A claims-only source may assert (the claim above) but not draw —
-    # see sources.edge_writes_suppressed. RELATED_TO/DUAL_LISTED writers are
-    # deliberately ungated: SEC-only paths, gated when a need appears.
-    from app.scraper.sources import edge_writes_suppressed
-    if edge_writes_suppressed(source_id):
-        return None
+    # HAS_ROLE is deliberately NOT gated by claims-only: the mode distrusts a
+    # source's OWNERSHIP structure, and people are exactly what the Wikidata
+    # verdict wanted kept. Suppressing roles orphaned every Wikidata person
+    # (absent from panels) and starved the person dedup of its shared-company
+    # corroboration — Bill Gates and "Gates William H Iii" could never merge.
     now = _now_iso()
     with db.get_session() as session:
         exists = session.run(
