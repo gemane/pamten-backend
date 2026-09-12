@@ -998,9 +998,16 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
         known_cusips = [c for c in (entity.get("cusips") or
                                     ([entity.get("cusip")] if entity.get("cusip") else []))
                         if c]
+        # Filers the graph already knows jump the fetch queue: their filings
+        # are read even when relevance ranks them 4,000th of 5,000.
+        with db.get_session() as session:
+            priority_ciks = {r.get("c") for r in session.run(
+                "MATCH (x:Entity) WHERE x.sec_cik IS NOT NULL RETURN x.sec_cik AS c")
+                if r.get("c")}
         data = fetch_13f_holders(entity.get("name") or company, known_names=names,
                                  cusips=known_cusips or None, limit=limit,
-                                 window_days=window_days)
+                                 window_days=window_days,
+                                 priority_ciks=priority_ciks)
         # Local copy: the second pass below may add filers, and the fetched
         # dict must not be mutated (shared fixtures in tests taught us why).
         holders = list(data["holders"])
@@ -1033,7 +1040,8 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
             second = fetch_13f_holders(entity.get("name") or company,
                                        known_names=names,
                                        cusips=all_cusips, limit=limit,
-                                       window_days=window_days)
+                                       window_days=window_days,
+                                       priority_ciks=priority_ciks)
             have = {h["filer_cik"] for h in holders}
             extra = [h for h in second["holders"] if h["filer_cik"] not in have]
             if extra:

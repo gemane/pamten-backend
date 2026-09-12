@@ -63,6 +63,34 @@ def _giga_docs():
             f"{GIGA_DIR}/primary_doc.xml": (FIX / "13f_gigafund_primary.xml").read_text()}
 
 
+class TestCusipValidation:
+    def test_nine_alphanumerics_or_nothing(self):
+        from app.scraper.sec_edgar import _valid_cusip
+        assert _valid_cusip("58733R102") == "58733R102"
+        assert _valid_cusip(" g92087165 ") == "G92087165"
+        assert _valid_cusip("587733R102") is None    # ten chars — MELI's phantom
+        assert _valid_cusip("58733R10") is None      # eight
+        assert _valid_cusip("58733R1-2") is None     # punctuation
+        assert _valid_cusip(None) is None
+
+
+class TestPriorityFilers:
+    def test_a_known_filer_jumps_the_fetch_queue(self):
+        # 30 discovered filings, fetch budget 2, the graph-known filer ranked
+        # LAST by relevance — it must still be fetched (NVIDIA's single SpaceX
+        # row among a thousand positions ranks near the bottom of 5,000 hits).
+        hits = [_fts_hit(f"000114036{i:d}-26-{i:06d}", str(9000 + i), f"Fund {i}", "2026-08-01")
+                for i in range(29)]
+        hits.append(_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12"))
+        g, t = _serve_13f(hits, _giga_docs(), total=30)
+        with g, t:
+            out = fetch_13f_holders("SpaceX", limit=2,
+                                    known_names=["Space Exploration Technologies Corp."],
+                                    priority_ciks={"0001713833"})
+        assert any(h["filer_cik"] == "1713833" for h in out["holders"]), \
+            "the graph-known filer was fetched despite ranking last"
+
+
 class Test13FIssuerMatching:
     """Row acceptance is stricter than the 13D/G name check: 13F rows come
     from OTHER issuers' tables in the same filing, and the tolerant check
@@ -75,6 +103,18 @@ class Test13FIssuerMatching:
         from app.scraper.sec_edgar import _13f_issuer_matches
         assert _13f_issuer_matches(self.NAMES, "AGILENT TECHNOLOGIES INC") is False
         assert _13f_issuer_matches(self.NAMES, "SEAGATE TECHNOLOGY") is False
+        # The one that poisoned dev: Palantir's cusip got stamped onto SpaceX
+        # because "PALANTIR TECHNOLOGIES INC" passed the loose check and
+        # nearly every fund holds Palantir.
+        assert _13f_issuer_matches(self.NAMES, "PALANTIR TECHNOLOGIES INC") is False
+
+    def test_leading_brand_token_must_be_ours(self):
+        # Issuer names lead with the brand: coinciding LATER tokens are not
+        # identity — MDA SPACE, SIDUS SPACE and STARFIGHTERS SPACE all joined
+        # the union on the word "space" under the majority-only rule.
+        from app.scraper.sec_edgar import _13f_issuer_matches
+        for cand in ("MDA SPACE LTD", "SIDUS SPACE INC", "STARFIGHTERS SPACE INC"):
+            assert _13f_issuer_matches(self.NAMES, cand) is False, cand
 
     def test_abbreviations_of_the_real_name_pass(self):
         from app.scraper.sec_edgar import _13f_issuer_matches
@@ -146,12 +186,24 @@ class TestFetch13FHolders:
         assert out["holders"][0]["period"] == "2026-06-30"   # filed as 06-30-2026
         assert out["period"] == "2026-06-30"
 
-    def test_the_cusip_is_adopted_for_stamping(self):
-        g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
-                          _giga_docs())
+    def test_the_cusip_is_adopted_only_with_corroboration(self):
+        # Adopt-on-first-sight is the exact vector that stamped Palantir's
+        # cusip onto SpaceX: one filer's rows are not an identifier. Three
+        # independent filers labelling the same security are.
+        hits = [_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")]
+        docs = dict(_giga_docs())
+        for i, cik in enumerate(("2000001", "2000002")):
+            acc = f"0009{i}9999-26-00000{i}"
+            hits.append(_fts_hit(acc, cik, f"Corroborator {i}", "2026-08-12"))
+            d = f"{cik}/{acc.replace('-', '')}"
+            docs[f"{d}/index"] = ["informationtable.xml", "primary_doc.xml"]
+            docs[f"{d}/informationtable.xml"] = (FIX / "13f_gigafund_infotable.xml").read_text()
+            docs[f"{d}/primary_doc.xml"] = (FIX / "13f_gigafund_primary.xml").read_text()
+        g, t = _serve_13f(hits, docs, total=3)
         with g, t:
             out = fetch_13f_holders("SpaceX", known_names=["Space Exploration Technologies Corp."])
         assert out["cusip_seen"] == "84615Q103"
+        assert out["cusips_seen"] == ["84615Q103"]
 
     def test_a_near_miss_issuer_name_is_rejected(self):
         # Gigafund's table also holds ANGEL STUDIOS INC; a query about it must
@@ -162,7 +214,7 @@ class TestFetch13FHolders:
             out = fetch_13f_holders("Angel Studios", known_names=["Angel Studios Inc"])
         assert len(out["holders"]) == 1
         assert out["holders"][0]["shares"] == 19459882          # the Angel row
-        assert out["cusip_seen"] == "034948109"
+        assert out["cusip_seen"] is None, "one filer does not name an identifier"
 
     def test_option_rows_are_not_holdings(self):
         """20 of BNP's 21 real SpaceX rows are options — shares UNDERLYING a
@@ -200,17 +252,21 @@ class TestFetch13FHolders:
         assert len(out["holders"]) == 1
         assert out["holders"][0]["shares"] == 171826745
 
-    def test_every_cusip_seen_is_reported_for_the_union_stamp(self):
-        # One issuer, several CUSIPs (SpaceX files under 84615Q103 AND
-        # 69608A108) — the fetch reports all it saw so the caller can stamp
-        # the union and search by every one next run.
+    def test_a_cusip_needs_three_independent_filers_to_join_the_union(self):
+        # Unanimity of ONE is how Palantir's cusip got stamped onto SpaceX: a
+        # single filer's (mis)labelled row must not name an identifier. One
+        # filer → nothing believed; the already-stored cusips always stay.
         g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
                           _giga_docs())
         with g, t:
             out = fetch_13f_holders("SpaceX",
                                     known_names=["Space Exploration Technologies Corp."])
-        assert out["cusips_seen"] == ["84615Q103"]
-        assert out["cusip_seen"] == "84615Q103"
+        assert out["cusips_seen"] == [], "one filer is not corroboration"
+        assert out["cusip_seen"] is None
+        with g, t:
+            out = fetch_13f_holders("SpaceX", cusips=["84615Q103"],
+                                    known_names=["Space Exploration Technologies Corp."])
+        assert out["cusips_seen"] == ["84615Q103"], "stored cusips always stay"
 
     def test_amendments_newest_per_filer_wins(self):
         old_acc = "0001140361-26-000001"
@@ -227,7 +283,12 @@ class TestFetch13FHolders:
         assert out["filings_fetched"] == 1                      # one per filer
         assert out["holders"][0]["source_url"].endswith(f"{GIGA_ACC}-index.htm")
 
-    def test_limit_caps_the_fts_paging(self):
+    def test_limit_caps_the_fetches_while_discovery_sweeps_wider(self):
+        # The OLD contract capped the paging at the limit — which is exactly
+        # how NVIDIA stayed invisible: a mega-filer's row ranks near the
+        # bottom of thousands of relevance-ordered hits. Discovery now sweeps
+        # past the limit (so priority filers can be FOUND); the limit binds on
+        # the documents actually FETCHED.
         hits = [_fts_hit(f"000114036{i}-26-03250{i % 10}", str(1000 + i), f"Filer {i}",
                          "2026-08-01") for i in range(30)]
         docs = {}
@@ -239,9 +300,9 @@ class TestFetch13FHolders:
             out = fetch_13f_holders("X", known_names=["X"], limit=10)
         fts_calls = [c for c in get_mock.call_args_list
                      if c.args[0] == sec_edgar.SEARCH_URL]
-        assert len(fts_calls) == 1                              # 10 // page(10)
+        assert len(fts_calls) >= 2, "discovery pages PAST the fetch limit"
         assert out["filings_total"] == 3000
-        assert out["filings_fetched"] == 10
+        assert out["filings_fetched"] == 10, "the limit binds on fetches"
 
     def test_limit_binds_even_when_a_page_overflows(self):
         # EFTS documents 10 hits a page and has returned 91 in one response —

@@ -2200,11 +2200,17 @@ def _13f_filings_for(queries: list[str], limit: int,
     seen_acc: set[str] = set()
     by_filer: dict[str, dict] = {}
     total = 0
+    # Discovery sweeps WIDER than the fetch limit: EFTS pages carry ~100 hits
+    # (documented 10 — measured, as ever), so surveying thousands of matching
+    # filings costs a handful of requests. WHO gets fetched is decided later,
+    # by priority — relevance ranks a mega-filer's single row near the bottom.
+    discover_cap = max(limit * 5, 1000)
     for query in queries:
       params = {**base_params, "q": f'"{query}"'}
-      if len(seen_acc) >= limit:
+      if len(seen_acc) >= discover_cap:
           break
-      for offset in range(0, limit, _13F_PAGE):
+      offset = 0
+      while offset < discover_cap:
         try:
             data = _get(SEARCH_URL, {**params, "from": offset})
         except httpx.HTTPStatusError as exc:
@@ -2226,10 +2232,7 @@ def _13f_filings_for(queries: list[str], limit: int,
         if not hits:
             break
         for h in hits:
-            # EFTS documents 10 hits a page and sometimes returns far more (a
-            # windowed query has come back with 91 in one response), so the cap
-            # binds HERE, not on the page count — or --limit 100 reads 187.
-            if len(seen_acc) >= limit:
+            if len(seen_acc) >= discover_cap:
                 break
             src = h.get("_source", {})
             accession = (h.get("_id") or "").split(":")[0]
@@ -2243,7 +2246,8 @@ def _13f_filings_for(queries: list[str], limit: int,
             best = by_filer.get(entry["filer_cik"])
             if best is None or entry["file_date"] > best["file_date"]:
                 by_filer[entry["filer_cik"]] = entry
-        if offset + _13F_PAGE >= qtotal or len(seen_acc) >= limit:
+        offset += max(len(hits), _13F_PAGE)
+        if offset >= qtotal or len(seen_acc) >= discover_cap:
             break
     return list(by_filer.values()), total
 
@@ -2281,6 +2285,15 @@ def _13f_documents(filer_cik: str, accession: str) -> tuple[str | None, str | No
     return info, primary
 
 
+def _valid_cusip(raw: str | None) -> str | None:
+    """A CUSIP is EXACTLY nine alphanumerics. MercadoLibre's stored identifier
+    was a ten-character typo from some filer's table (0 filings on EDGAR use
+    it; the real nine-character one appears in 10,000) — malformed values are
+    dropped at the row, like normalize_lei does for LEIs."""
+    c = (raw or "").strip().upper()
+    return c if len(c) == 9 and c.isalnum() else None
+
+
 def _13f_rows(info_xml: str) -> list[dict]:
     """The information table as dicts; share rows only (PRN = debt principal)."""
     try:
@@ -2300,7 +2313,7 @@ def _13f_rows(info_xml: str) -> list[dict]:
         rows.append({
             "issuer":  _xml_child(t, "nameOfIssuer"),
             "class":   _xml_child(t, "titleOfClass"),
-            "cusip":   (_xml_child(t, "cusip") or "").strip().upper() or None,
+            "cusip":   _valid_cusip(_xml_child(t, "cusip")),
             "value":   _xml_num(t, "value"),
             "shares":  _xml_num(t, "sshPrnamt"),
         })
@@ -2333,17 +2346,24 @@ def _13f_issuer_matches(names: list[str], candidate: str | None) -> bool:
                    if t and t not in _GENERIC_NAME_TOKENS]
     if not distinctive:
         return True   # candidate is ALL generic tokens — fall back to similarity
-    # A MAJORITY of the candidate's distinctive tokens must be ours: one
-    # anchored word is not identity ("SPACE CAMP HOLIDAYS" anchors on "space"
-    # and is still not SpaceX), but an abbreviation keeps the majority
-    # ("SPACE EXPLORATION TECHN" → space+exploration known, 2 of 2).
+    # TWO conditions, both learned from real poisonings:
+    # - the FIRST distinctive token must be ours: issuer names lead with the
+    #   brand, so "MDA SPACE" / "SIDUS SPACE" / "PALANTIR TECHNOLOGIES" fail
+    #   here however many later tokens coincide;
+    # - a MAJORITY of distinctive tokens must be ours: one anchored word is
+    #   not identity ("SPACE CAMP HOLIDAYS" leads with space and still
+    #   is not SpaceX). An abbreviation passes both ("SPACE EXPLORATION
+    #   TECHN" → leads with space, 2 of 2 known).
+    if not known(distinctive[0]):
+        return False
     hits = sum(1 for t in distinctive if known(t))
     return hits * 2 >= len(distinctive)
 
 
 def fetch_13f_holders(company_name: str, known_names: list | None = None,
                       cusips: list[str] | None = None, limit: int = 100,
-                      window_days: int = _13F_WINDOW_DAYS) -> dict:
+                      window_days: int = _13F_WINDOW_DAYS,
+                      priority_ciks: set[str] | None = None) -> dict:
     """Institutional holders of one issuer, from Form 13F information tables.
 
     Matching ladder: a known CUSIP matches rows exactly; without one, rows are
@@ -2364,7 +2384,16 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
     # The NAME is always among the queries: it is how brand-new CUSIPs are
     # discovered (a filer using a third identifier still spells some name).
     queries = [*dict.fromkeys([*(cusips or []), company_name])]
-    filings, total = _13f_filings_for(queries, limit, window_days)
+    discovered, total = _13f_filings_for(queries, limit, window_days)
+    # WHO gets fetched: filers the graph already knows come FIRST, whatever
+    # their relevance rank — a mega-filer's single SpaceX row among a thousand
+    # positions ranks near the bottom of 5,000 hits, which is exactly how
+    # NVIDIA and Alphabet stayed invisible at any sane fetch limit. The rest
+    # fill the remaining budget in relevance order.
+    prio = {_cik_int(c).zfill(10) for c in (priority_ciks or set()) if c}
+    ranked = sorted(discovered,
+                    key=lambda f: 0 if _cik_int(f["filer_cik"]).zfill(10) in prio else 1)
+    filings = ranked[:limit]
     known_cusips = set(cusips or [])
     holders: list[dict] = []
     period_seen = None
@@ -2374,6 +2403,7 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
     # class is silently skipped. With no stored CUSIP the whole run matches by
     # name; the most-reported CUSIP is returned for stamping.
     cusip_counts: dict[str, int] = {}
+    cusip_filers: dict[str, set] = {}
     for f in filings:
         info, primary = _13f_documents(f["filer_cik"], f["accession"])
         if not info:
@@ -2400,6 +2430,7 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
                 continue
             if row["cusip"]:
                 cusip_counts[row["cusip"]] = cusip_counts.get(row["cusip"], 0) + 1
+                cusip_filers.setdefault(row["cusip"], set()).add(f["filer_cik"])
             agg = by_class.setdefault(row["class"] or "", {"shares": 0, "value": 0})
             agg["shares"] += row["shares"] or 0
             agg["value"] += row["value"] or 0
@@ -2416,12 +2447,19 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
                 "source_url":  _filing_index_url(f["filer_cik"], f["accession"]),
             })
             period_seen = period_seen or period
-    cusip_seen = (max(cusip_counts, key=cusip_counts.get)
-                  if cusip_counts else (cusips[0] if cusips else None))
+    # A cusip is believed only when INDEPENDENT filers corroborate it: three
+    # distinct managers labelling the same security with the company's name.
+    # One filer's typo (a mislabelled Zebra row) must not join the union —
+    # and unanimity of one is how Palantir's cusip got stamped onto SpaceX.
+    corroborated = {c for c, filers in cusip_filers.items() if len(filers) >= 3}
+    corroborated |= set(cusips or [])          # already-stored ones stay
+    cusip_seen = next(iter(sorted(
+        (c for c in cusip_counts if c in corroborated),
+        key=lambda c: -cusip_counts[c])), (cusips[0] if cusips else None))
     log.info("SEC EDGAR 13F: %d holders of %r from %d filings (%d total on EDGAR)",
              len(holders), company_name, len(filings), total)
     return {"cusip_seen": cusip_seen,
-            "cusips_seen": sorted(cusip_counts),
+            "cusips_seen": sorted(c for c in cusip_counts if c in corroborated),
             "period": period_seen,
             "filings_total": total, "filings_fetched": len(filings),
             "holders": holders}
