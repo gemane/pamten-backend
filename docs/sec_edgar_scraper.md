@@ -8,6 +8,8 @@ The SEC EDGAR scraper collects three types of data for US-listed companies:
 2. **Executives and directors** — officers and board members from Form 3/4 insider reports
 3. **Subsidiaries** — the statutory subsidiary list from Exhibit 21 of the 10-K
    (Exhibit 8.1 of a 20-F), via `manage.py sec-ex21` (manual-first)
+4. **Private-company boards** — related persons from the newest Form D, via
+   `manage.py sec-formd` (manual-first)
 
 No API key is required. All endpoints are public. The SEC requires a descriptive
 `User-Agent` header identifying the application and a contact email.
@@ -648,3 +650,31 @@ name.
 **Deferred, deliberately**: the DEF 14A beneficial-ownership table (>5% holders
 incl. non-13F ones, director/officer stakes) is the next EDGAR family — harder
 HTML, planned for a later version.
+
+---
+
+## Form D — private-company boards (`sec_formd.py`)
+
+Every Reg D raise is notified on Form D, filed by the ISSUER as structured
+XML — the only statutory family that names a private company's board.
+SpaceX's (pre-registration) Form D lists Musk, Shotwell, Gracias, Jurvetson:
+people no 13F or 13D/G could surface for an unregistered issuer, and where VC
+partners' board seats become visible.
+
+`manage.py sec-formd <company>` (`run_sec_formd`): submissions API → newest
+D/D-A → `primary_doc.xml` → related persons → HAS_ROLE edges (Form D's own
+vocabulary: Executive Officer / Director / Promoter), `source_date` = the
+filing date — Form D states NO tenure dates, so the filing's age is the
+honesty marker. The issuer's stated jurisdiction fills `country` +
+`jurisdiction_code` if missing.
+
+Learned from the probe band (10 filings across the size spectrum):
+- fund filings list their **GP LLCs as related persons** with a literal
+  `N/A` first name — the filler is stripped, and corporate names are skipped
+  entirely (the Berkshire rule: a company is never minted as a Person) and
+  counted in `corporate_skipped`;
+- offering amounts are parsed but deliberately NOT written to the graph —
+  a raise is an event, not ownership; a future timeline concept may want it.
+
+One filing = one ingest, keyed on the accession; `--force` re-reads. Older
+Form Ds hold earlier boards — history for a later iteration.

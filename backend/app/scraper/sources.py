@@ -46,7 +46,7 @@ KNOWN_SOURCES = {
         "region": "US",
         "coverage": "Ownership of US-listed companies — 13D/G control stakes, 13F "
                     "institutional holdings, Form 3/4 insider filings, Exhibit 21 "
-                    "subsidiary lists",
+                    "subsidiary lists — and private-company boards from Form D",
     },
     "open_corporates": {
         "kind": "instant",
