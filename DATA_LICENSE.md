@@ -27,7 +27,7 @@ Full licence text: https://opendatacommons.org/licenses/odbl/1-0/
 
 When using Owlgraph data, please attribute as:
 
-> Data from Owlgraph (https://pamten-frontend.onrender.com),
+> Data from Owlgraph (https://dev.owlgraph.org),
 > available under the Open Database Licence (ODbL) v1.0.
 
 ## Data Sources
