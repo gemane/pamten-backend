@@ -2204,7 +2204,10 @@ def _13f_filings_for(queries: list[str], limit: int,
     # (documented 10 — measured, as ever), so surveying thousands of matching
     # filings costs a handful of requests. WHO gets fetched is decided later,
     # by priority — relevance ranks a mega-filer's single row near the bottom.
-    discover_cap = max(limit * 5, 1000)
+    # 2,500 covers a private-company universe COMPLETELY (SpaceX: 1,823
+    # filings — FMR's ranked outside a 1,250 sweep and Fidelity went missing);
+    # a mega-cap's 10,000-hit universe stays a prioritised sample either way.
+    discover_cap = max(limit * 5, 2500)
     for query in queries:
       params = {**base_params, "q": f'"{query}"'}
       if len(seen_acc) >= discover_cap:
