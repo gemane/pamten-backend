@@ -244,6 +244,25 @@ def _upsert_entity(
         )
 
         if entity_id:
+            # search_text / name_normalized must derive from the name that WINS
+            # the credibility contest below, not from the incoming one: Wikidata
+            # enriching a GLEIF company must not evict the legal name from the
+            # search index (SpaceX became findable only as "SpaceX" — the legal
+            # name resolved to News Corp). The losing name still joins
+            # search_text so both spellings stay searchable.
+            rec = session.run(
+                "MATCH (e:Entity {id: $id}) RETURN e.name AS name, "
+                "COALESCE(e.name_credibility, 0) AS cred, e.aliases AS aliases, "
+                "e.description AS descr",
+                id=entity_id).single()
+            if rec and rec.get("name") and rec["cred"] > credibility_score:
+                kept_name = rec["name"]
+                final_aliases = aliases or rec.get("aliases") or []
+                search_text = " ".join(p for p in (
+                    kept_name, name if name != kept_name else "",
+                    description or rec.get("descr") or "",
+                    " ".join(final_aliases)) if p).strip()
+                name_norm = normalize_entity_name(kept_name)
             # lei_id / sec_cik use COALESCE(existing, new): a register (GLEIF/SEC)
             # is authoritative for its own identifier and Wikidata is crowd-edited,
             # so only fill a gap — a clobbered lei_id would re-point a merge key at
