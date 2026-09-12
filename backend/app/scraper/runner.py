@@ -995,6 +995,9 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
         data = fetch_13f_holders(entity.get("name") or company, known_names=names,
                                  cusip=entity.get("cusip"), limit=limit,
                                  window_days=window_days)
+        # Local copy: the second pass below may add filers, and the fetched
+        # dict must not be mutated (shared fixtures in tests taught us why).
+        holders = list(data["holders"])
 
         # The denominator, once per run. Padded: the companyconcept endpoint
         # 404s an unpadded CIK. A company with no XBRL (SpaceX is private)
@@ -1009,9 +1012,26 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
                 session.run("MATCH (e:Entity {id: $id}) "
                             "SET e.cusip = COALESCE(e.cusip, $c)",
                             id=company_id, c=data["cusip_seen"])
+            # The CUSIP was just DISCOVERED, meaning the search above ran by
+            # NAME — an exact phrase that misses every filer who abbreviates
+            # the issuer ("SPACE EXPLORATION TECHN CORP" is how NVIDIA and
+            # Alphabet file SpaceX). The CUSIP matches those rows verbatim, so
+            # search again with it in the same run: without this, the first
+            # ingest of a company is silently missing its biggest holders and
+            # only a --force re-run would find them.
+            second = fetch_13f_holders(entity.get("name") or company,
+                                       known_names=names,
+                                       cusip=data["cusip_seen"], limit=limit,
+                                       window_days=window_days)
+            have = {h["filer_cik"] for h in holders}
+            extra = [h for h in second["holders"] if h["filer_cik"] not in have]
+            if extra:
+                log.info("SEC EDGAR 13F: cusip second pass found %d filers the "
+                         "name search missed", len(extra))
+                holders = [*holders, *extra]
 
         written = 0
-        for h in data["holders"]:
+        for h in holders:
             filer_id = _upsert_entity_by_name(
                 name=h["filer_name"], entity_type="company",
                 cik=h["filer_cik"], source_id=source_id)

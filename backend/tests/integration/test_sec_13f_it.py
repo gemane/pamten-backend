@@ -96,6 +96,41 @@ def test_a_filer_known_from_13g_gets_one_node_not_two(it_db):
     assert n == 1, "the 13F filer must land on the node its CIK already has"
 
 
+def test_first_run_does_a_cusip_second_pass_and_merges_new_filers(it_db):
+    # The first ingest searches by NAME (no cusip stored yet) and misses every
+    # filer who abbreviates the issuer — NVIDIA files SpaceX as "SPACE
+    # EXPLORATION TECHN CORP". Once the run discovers the cusip it must search
+    # AGAIN with it in the same run, or the first ingest silently lacks the
+    # biggest holders.
+    _company(it_db)   # no cusip stored → name search first
+    second = {**HOLDERS, "holders": [
+        HOLDERS["holders"][0],   # overlap: already found by name
+        {"filer_cik": "1045810", "filer_name": "NVIDIA CORP",
+         "shares": 1300000, "value_usd": 222040000, "share_class": "CL A",
+         "period": "2026-06-30",
+         "source_url": "https://www.sec.gov/Archives/edgar/data/1045810/z-index.htm"},
+    ]}
+    with patch("app.scraper.sec_edgar.fetch_13f_holders",
+               side_effect=[HOLDERS, second]) as fetched, \
+         patch("app.scraper.sec_edgar.fetch_shares_outstanding",
+               return_value=13_100_000_000), \
+         patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+         patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+        res = runner.run_sec_13f("SpaceX")
+    assert fetched.call_count == 2, "cusip discovered → second search pass"
+    assert fetched.call_args_list[1].kwargs.get("cusip") == "84615Q103"
+    names = {r["n"] for r in it_db.run_command(
+        "MATCH (a)-[:OWNS]->(:Entity {id:'sx'}) RETURN a.name AS n")}
+    assert "NVIDIA CORP" in names, "the abbreviating filer arrived via the cusip pass"
+    assert res["total"] == 3, "two from the name pass + one new; the overlap not doubled"
+
+
+def test_a_stored_cusip_means_no_second_pass(it_db):
+    _company(it_db, cusip="84615Q103")   # cusip known → first search already used it
+    _, fetched, _ = _run(it_db)
+    assert fetched.call_count == 1
+
+
 def test_the_cusip_is_stamped_fill_if_missing(it_db):
     _company(it_db)
     _run(it_db)
