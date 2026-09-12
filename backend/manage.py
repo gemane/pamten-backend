@@ -1070,7 +1070,7 @@ def _build_parser():
                        help='Max 13F filings to read (relevance-ordered; default 100)')
     p_13f.add_argument('--force', action='store_true',
                        help='Ignore the quarterly deadline gate and re-read now')
-    p_13f.add_argument('--window-days', type=int, default=135,
+    p_13f.add_argument('--window-days', type=int, default=None,
                        help='Only filings from the last N days — one quarter plus the '
                             '45-day deadline, so only CURRENT positions come in. 0 = all time')
     p_13f.set_defaults(func=cmd_sec_13f)

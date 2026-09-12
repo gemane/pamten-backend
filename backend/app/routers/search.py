@@ -484,14 +484,22 @@ PROFILE_SECTION_MAX = 1_000
 _NOT_A_SHORTCUT = "({rel}.shortcut IS NULL OR {rel}.shortcut <> true)"
 
 _NODE_EDGE_SECTIONS = {
+    # Ordered by stake BEFORE the cap: SpaceX has 240+ owner edges against a
+    # 200-row section limit, and an unordered LIMIT sliced by storage order —
+    # which dropped the biggest holders while keeping the tail. Null stakes
+    # (13D/G blocs, below-floor 13F rows) rank after any stated stake; the
+    # client still re-sorts for display, the ORDER here only decides WHO
+    # survives the cap.
     "owners": (
         "MATCH (e:Entity {{id: $id}})<-[owns_r:OWNS]-(owner) WHERE owns_r.until IS NULL "
         "AND " + _NOT_A_SHORTCUT.format(rel="owns_r") + " "
-        "WITH owner, collect(owns_r) AS rels RETURN owner AS node, rels LIMIT {limit}"),
+        "WITH owner, owns_r ORDER BY coalesce(owns_r.stake_percent, -1) DESC LIMIT {limit} "
+        "RETURN owner AS node, collect(owns_r) AS rels"),
     "subsidiaries": (
         "MATCH (e:Entity {{id: $id}})-[sub_r:OWNS]->(subsidiary) WHERE sub_r.until IS NULL "
         "AND " + _NOT_A_SHORTCUT.format(rel="sub_r") + " "
-        "WITH subsidiary, collect(sub_r) AS rels RETURN subsidiary AS node, rels LIMIT {limit}"),
+        "WITH subsidiary, sub_r ORDER BY coalesce(sub_r.stake_percent, -1) DESC LIMIT {limit} "
+        "RETURN subsidiary AS node, collect(sub_r) AS rels"),
     "executives": (
         "MATCH (e:Entity {{id: $id}})<-[role_r:HAS_ROLE]-(p:Person) WHERE role_r.until IS NULL "
         "WITH p, collect(role_r) AS rels RETURN p AS node, rels LIMIT {limit}"),
