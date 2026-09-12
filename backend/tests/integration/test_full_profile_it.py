@@ -174,3 +174,28 @@ def test_ownership_summary_reflects_the_truncated_owner_set(it_db):
     assert len(profile["owners"]) == 1
     assert profile["ownership"]["disclosed_pct"] == pytest.approx(
         profile["owners"][0]["relationship"]["stake_percent"])
+
+
+def test_the_owner_cap_keeps_the_biggest_stakes(it_db):
+    """SpaceX outgrew the 200-row owners cap and the unordered LIMIT dropped
+    the biggest holders while keeping the tail — the cap must slice AFTER a
+    stake ordering, nulls last."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    it_db.run_command("CREATE (:Entity {id:'big', name:'Big Co', name_normalized:'big co', "
+                      "search_text:'Big Co', type:'company'})")
+    for i, stake in enumerate([0.01, 40.0, None, 7.5]):
+        it_db.run_command(
+            f"CREATE (:Entity {{id:'o{i}', name:'Owner {i}', name_normalized:'owner {i}', "
+            f"search_text:'Owner {i}', type:'company'}})")
+        stake_sql = "null" if stake is None else str(stake)
+        it_db.run_command(
+            f"MATCH (a:Entity {{id:'o{i}'}}),(b:Entity {{id:'big'}}) "
+            f"CREATE (a)-[:OWNS {{stake_percent: {stake_sql}}}]->(b)")
+    with TestClient(app) as c:
+        r = c.get("/v1/search/entity/big/full-profile?limit=2")
+    owners = r.json()["owners"]
+    got = sorted(o["relationship"]["stake_percent"] or -1 for o in owners)
+    assert got == [7.5, 40.0], \
+        "the two SURVIVORS of the cap must be the two biggest stakes"
+    assert r.json()["counts"]["owners"] == 4, "the count still says the real total"

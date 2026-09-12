@@ -912,7 +912,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
 
 
 @_with_autodedup
-def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
+def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 force: bool = False) -> dict:
     """Ingest one issuer's institutional holders from Form 13F info tables.
 
@@ -942,7 +942,8 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
 
     from app.routers.search import resolve_best_entity
     from app.scraper.run_log import record_run
-    from app.scraper.sec_edgar import (_cik10, _pct_of, fetch_13f_holders,
+    from app.scraper.sec_edgar import (_13F_WINDOW_DAYS, _cik10, _pct_of,
+                                       fetch_13f_holders,
                                        fetch_shares_outstanding,
                                        latest_13f_deadline, next_13f_deadline)
     from app.scraper.sec_writer import mark_13f_stale
@@ -980,20 +981,25 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
                     "next_deadline": next_13f_deadline(today).isoformat()}
 
     # A refresh reads only what is NEW since the last completed run (plus a
-    # week for stragglers), not the full discovery window: the older filings
-    # were already ingested, and re-reading them cannot change an edge —
-    # newest-per-filer wins regardless. min(), never max(): an explicit
-    # wider window (or 0 = all time) stays what the caller asked for.
-    if last_run:
-        days_since = (datetime.now(timezone.utc)
-                      - datetime.fromisoformat(last_run)).days
-        window_days = min(window_days, days_since + 7)
+    # week for stragglers), not the full discovery window — but ONLY when the
+    # caller left the window to us (None). An explicit window is a request
+    # and wins: shrinking a caller's 135 to 8 days is how the cusip re-read
+    # for SpaceX kept missing NVIDIA's August filing. 0 stays all-time.
+    if window_days is None:
+        window_days = _13F_WINDOW_DAYS
+        if last_run:
+            days_since = (datetime.now(timezone.utc)
+                          - datetime.fromisoformat(last_run)).days
+            window_days = min(window_days, days_since + 7)
 
     with record_run("sec-13f", company) as run:
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
                                    SEC_EDGAR_CREDIBILITY)
+        known_cusips = [c for c in (entity.get("cusips") or
+                                    ([entity.get("cusip")] if entity.get("cusip") else []))
+                        if c]
         data = fetch_13f_holders(entity.get("name") or company, known_names=names,
-                                 cusip=entity.get("cusip"), limit=limit,
+                                 cusips=known_cusips or None, limit=limit,
                                  window_days=window_days)
         # Local copy: the second pass below may add filers, and the fetched
         # dict must not be mutated (shared fixtures in tests taught us why).
@@ -1007,27 +1013,32 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int = 135,
         if entity.get("sec_cik"):
             outstanding = fetch_shares_outstanding(_cik10(entity["sec_cik"]))
 
-        if data["cusip_seen"] and not entity.get("cusip"):
+        # Union-stamp every CUSIP seen: one issuer legitimately circulates
+        # under several (SpaceX: 84615Q103 beside 69608A108 — private-company
+        # CUSIPs have no single authority), and each stored one becomes a
+        # search term next run.
+        all_cusips = sorted({*known_cusips, *(data.get("cusips_seen") or [])})
+        if all_cusips != sorted(known_cusips):
             with db.get_session() as session:
                 session.run("MATCH (e:Entity {id: $id}) "
-                            "SET e.cusip = COALESCE(e.cusip, $c)",
-                            id=company_id, c=data["cusip_seen"])
-            # The CUSIP was just DISCOVERED, meaning the search above ran by
-            # NAME — an exact phrase that misses every filer who abbreviates
-            # the issuer ("SPACE EXPLORATION TECHN CORP" is how NVIDIA and
-            # Alphabet file SpaceX). The CUSIP matches those rows verbatim, so
-            # search again with it in the same run: without this, the first
-            # ingest of a company is silently missing its biggest holders and
-            # only a --force re-run would find them.
+                            "SET e.cusips = $cs, e.cusip = COALESCE(e.cusip, $c)",
+                            id=company_id, cs=all_cusips,
+                            c=data.get("cusip_seen"))
+            # NEW identifiers were just discovered, meaning the search above
+            # missed every filer using them ("SPACE EXPLORATION TECHN CORP" is
+            # how NVIDIA files SpaceX, under a cusip nobody else used). Search
+            # again with the full set in the same run: without this, the first
+            # ingest of a company silently lacks its biggest holders and only
+            # a --force re-run would find them.
             second = fetch_13f_holders(entity.get("name") or company,
                                        known_names=names,
-                                       cusip=data["cusip_seen"], limit=limit,
+                                       cusips=all_cusips, limit=limit,
                                        window_days=window_days)
             have = {h["filer_cik"] for h in holders}
             extra = [h for h in second["holders"] if h["filer_cik"] not in have]
             if extra:
                 log.info("SEC EDGAR 13F: cusip second pass found %d filers the "
-                         "name search missed", len(extra))
+                         "first search missed", len(extra))
                 holders = [*holders, *extra]
 
         written = 0

@@ -63,6 +63,29 @@ def _giga_docs():
             f"{GIGA_DIR}/primary_doc.xml": (FIX / "13f_gigafund_primary.xml").read_text()}
 
 
+class Test13FIssuerMatching:
+    """Row acceptance is stricter than the 13D/G name check: 13F rows come
+    from OTHER issuers' tables in the same filing, and the tolerant check
+    accepted AGILENT for SpaceX on the word "Technologies" alone — which both
+    mis-attributed holdings and poisoned the CUSIP union."""
+
+    NAMES = ["Space Exploration Technologies Corp.", "SpaceX"]
+
+    def test_lookalikes_on_generic_words_are_rejected(self):
+        from app.scraper.sec_edgar import _13f_issuer_matches
+        assert _13f_issuer_matches(self.NAMES, "AGILENT TECHNOLOGIES INC") is False
+        assert _13f_issuer_matches(self.NAMES, "SEAGATE TECHNOLOGY") is False
+
+    def test_abbreviations_of_the_real_name_pass(self):
+        from app.scraper.sec_edgar import _13f_issuer_matches
+        assert _13f_issuer_matches(self.NAMES, "SPACE EXPLORATION TECHN CORP") is True
+        assert _13f_issuer_matches(self.NAMES, "SPACE EXPLORATION TECHNOLOGIES CORP") is True
+
+    def test_no_similarity_no_pass_regardless_of_anchor(self):
+        from app.scraper.sec_edgar import _13f_issuer_matches
+        assert _13f_issuer_matches(self.NAMES, "SPACE CAMP HOLIDAYS LLC") is False
+
+
 class TestFetch13FHolders:
     def test_holders_come_back_with_counts_and_dollars_never_percent(self):
         g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund Management Company, LLC",
@@ -166,13 +189,28 @@ class TestFetch13FHolders:
                                     known_names=["Space Exploration Technologies Corp"])
         assert out["holders"], "the ns1: table parsed to nothing"
 
-    def test_a_known_cusip_matches_exactly_and_skips_name_checks(self):
+    def test_a_known_cusip_matches_rows_whatever_the_name(self):
+        # CUSIP match stands alone: the row is taken even when the query name
+        # matches nothing (the name path stays active BESIDE it, so a second
+        # cusip can still be learned — see the multi-cusip test).
         g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
                           _giga_docs())
         with g, t:
-            out = fetch_13f_holders("whatever name", cusip="84615Q103")
+            out = fetch_13f_holders("whatever name", cusips=["84615Q103"])
         assert len(out["holders"]) == 1
         assert out["holders"][0]["shares"] == 171826745
+
+    def test_every_cusip_seen_is_reported_for_the_union_stamp(self):
+        # One issuer, several CUSIPs (SpaceX files under 84615Q103 AND
+        # 69608A108) — the fetch reports all it saw so the caller can stamp
+        # the union and search by every one next run.
+        g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
+                          _giga_docs())
+        with g, t:
+            out = fetch_13f_holders("SpaceX",
+                                    known_names=["Space Exploration Technologies Corp."])
+        assert out["cusips_seen"] == ["84615Q103"]
+        assert out["cusip_seen"] == "84615Q103"
 
     def test_amendments_newest_per_filer_wins(self):
         old_acc = "0001140361-26-000001"

@@ -2173,9 +2173,14 @@ _13F_PAGE = 10          # EFTS returns 10 document hits per page
 _13F_WINDOW_DAYS = 135
 
 
-def _13f_filings_for(query: str, limit: int,
+def _13f_filings_for(queries: list[str], limit: int,
                      window_days: int = _13F_WINDOW_DAYS) -> tuple[list[dict], int]:
-    """13F filings whose info table mentions `query`, newest-per-filer.
+    """13F filings whose info table mentions ANY of `queries`, newest-per-filer.
+
+    A list because one issuer circulates under several identifiers: SpaceX
+    filers report CUSIPs 84615Q103 and 69608A108 side by side, and NVIDIA
+    abbreviates the name to "SPACE EXPLORATION TECHN CORP" — a single
+    exact-phrase query misses whole classes of filers whichever term it uses.
 
     Full-text search matches the information-table DOCUMENT, so each hit is one
     filing naming the issuer. Hits are relevance-ordered, NOT date-ordered, so
@@ -2187,32 +2192,37 @@ def _13f_filings_for(query: str, limit: int,
     (13F-HR/A) restate the whole table, so per filer only the newest accession
     survives.
     """
-    params: dict = {"q": f'"{query}"', "forms": "13F-HR"}
+    base_params: dict = {"forms": "13F-HR"}
     if window_days:
         start = (datetime.now(timezone.utc) - timedelta(days=window_days)).date()
-        params |= {"dateRange": "custom", "startdt": start.isoformat(),
-                   "enddt": datetime.now(timezone.utc).date().isoformat()}
+        base_params |= {"dateRange": "custom", "startdt": start.isoformat(),
+                        "enddt": datetime.now(timezone.utc).date().isoformat()}
     seen_acc: set[str] = set()
     by_filer: dict[str, dict] = {}
     total = 0
-    for offset in range(0, limit, _13F_PAGE):
+    for query in queries:
+      params = {**base_params, "q": f'"{query}"'}
+      if len(seen_acc) >= limit:
+          break
+      for offset in range(0, limit, _13F_PAGE):
         try:
             data = _get(SEARCH_URL, {**params, "from": offset})
         except httpx.HTTPStatusError as exc:
             # EFTS 500s deterministically on deep pagination for some queries
             # (SpaceX's page at from=30 fails every time). A failed LATER page
-            # must not sink the holders already read — stop paging and return
-            # what we have; the fetched-vs-total count already tells the caller
-            # this is a sample. A first-page failure still raises: that is
-            # "the search is down", not "the tail is missing".
-            if offset == 0:
+            # must not sink the holders already read; and with SEVERAL queries
+            # a failed FIRST page only kills ITS query — the others still run.
+            # "The search is down" is only the verdict when every query's
+            # first page failed and nothing at all was found.
+            if offset == 0 and len(queries) == 1 and not seen_acc:
                 raise
-            log.warning("SEC EDGAR: 13F search page at offset %d failed (%s) — "
-                        "keeping the %d filings already read", offset, exc,
+            log.warning("SEC EDGAR: 13F search %r offset %d failed (%s) — "
+                        "continuing with %d filings", query, offset, exc,
                         len(seen_acc))
             break
         hits = data.get("hits", {}).get("hits", [])
-        total = data.get("hits", {}).get("total", {}).get("value", 0)
+        qtotal = data.get("hits", {}).get("total", {}).get("value", 0)
+        total = max(total, qtotal)
         if not hits:
             break
         for h in hits:
@@ -2233,9 +2243,15 @@ def _13f_filings_for(query: str, limit: int,
             best = by_filer.get(entry["filer_cik"])
             if best is None or entry["file_date"] > best["file_date"]:
                 by_filer[entry["filer_cik"]] = entry
-        if offset + _13F_PAGE >= total or len(seen_acc) >= limit:
+        if offset + _13F_PAGE >= qtotal or len(seen_acc) >= limit:
             break
     return list(by_filer.values()), total
+
+
+def _13f_filings_single(query: str, limit: int,
+                        window_days: int = _13F_WINDOW_DAYS):
+    """Back-compat shim for callers/tests with one term."""
+    return _13f_filings_for([query], limit, window_days)
 
 
 def _13f_documents(filer_cik: str, accession: str) -> tuple[str | None, str | None]:
@@ -2291,8 +2307,42 @@ def _13f_rows(info_xml: str) -> list[dict]:
     return rows
 
 
+_GENERIC_NAME_TOKENS = {"technologies", "technology", "techn", "tech", "corp",
+                        "corporation", "inc", "incorporated", "company", "co",
+                        "holdings", "group", "international", "global", "ltd",
+                        "limited", "the"}
+
+
+def _13f_issuer_matches(names: list[str], candidate: str | None) -> bool:
+    """The row-acceptance check for 13F info tables — stricter than
+    `_issuer_matches`, because these rows come from OTHER issuers' tables in
+    the same filing: the tolerant check accepted "AGILENT TECHNOLOGIES INC"
+    for SpaceX (similarity 0.64, carried entirely by "Technologies"), which
+    both mis-attributed Agilent rows as SpaceX holdings and poisoned the
+    CUSIP union with Agilent's identifier. On top of the similarity, the
+    candidate's first DISTINCTIVE token (skipping generic filler like
+    Technologies/Corp/Inc) must appear among the company's own name tokens —
+    "SPACE" anchors SpaceX; "AGILENT" anchors nothing of ours."""
+    if not candidate or not _issuer_matches(names, candidate):
+        return False
+    own_tokens = {t for n in names for t in re.split(r"[^a-z0-9]+", n.lower()) if t}
+    def known(tok: str) -> bool:
+        return tok in own_tokens or any(o.startswith(tok) or tok.startswith(o)
+                                        for o in own_tokens if len(o) > 3 and len(tok) > 3)
+    distinctive = [t for t in re.split(r"[^a-z0-9]+", candidate.lower())
+                   if t and t not in _GENERIC_NAME_TOKENS]
+    if not distinctive:
+        return True   # candidate is ALL generic tokens — fall back to similarity
+    # A MAJORITY of the candidate's distinctive tokens must be ours: one
+    # anchored word is not identity ("SPACE CAMP HOLIDAYS" anchors on "space"
+    # and is still not SpaceX), but an abbreviation keeps the majority
+    # ("SPACE EXPLORATION TECHN" → space+exploration known, 2 of 2).
+    hits = sum(1 for t in distinctive if known(t))
+    return hits * 2 >= len(distinctive)
+
+
 def fetch_13f_holders(company_name: str, known_names: list | None = None,
-                      cusip: str | None = None, limit: int = 100,
+                      cusips: list[str] | None = None, limit: int = 100,
                       window_days: int = _13F_WINDOW_DAYS) -> dict:
     """Institutional holders of one issuer, from Form 13F information tables.
 
@@ -2311,7 +2361,11 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
     on counts rather than a transcribed number.
     """
     names = known_names or [company_name]
-    filings, total = _13f_filings_for(cusip or company_name, limit, window_days)
+    # The NAME is always among the queries: it is how brand-new CUSIPs are
+    # discovered (a filer using a third identifier still spells some name).
+    queries = [*dict.fromkeys([*(cusips or []), company_name])]
+    filings, total = _13f_filings_for(queries, limit, window_days)
+    known_cusips = set(cusips or [])
     holders: list[dict] = []
     period_seen = None
     # One issuer legitimately has SEVERAL CUSIPs — SpaceX's filers report
@@ -2338,10 +2392,11 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
             manager = re.sub(r"\s*\(CIK[^)]*\)\s*$", "", f["display_name"]).strip()
         by_class: dict[str, dict] = {}
         for row in _13f_rows(info):
-            if cusip:
-                if row["cusip"] != cusip:
-                    continue
-            elif not _issuer_matches(names, row["issuer"]):
+            # A row belongs to the issuer if its CUSIP is one we know OR its
+            # free-text name matches — the name path stays active even with
+            # stored CUSIPs, because that is how the NEXT cusip is learned.
+            if not ((row["cusip"] and row["cusip"] in known_cusips)
+                    or _13f_issuer_matches(names, row["issuer"])):
                 continue
             if row["cusip"]:
                 cusip_counts[row["cusip"]] = cusip_counts.get(row["cusip"], 0) + 1
@@ -2361,11 +2416,13 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
                 "source_url":  _filing_index_url(f["filer_cik"], f["accession"]),
             })
             period_seen = period_seen or period
-    cusip_seen = cusip or (max(cusip_counts, key=cusip_counts.get)
-                           if cusip_counts else None)
+    cusip_seen = (max(cusip_counts, key=cusip_counts.get)
+                  if cusip_counts else (cusips[0] if cusips else None))
     log.info("SEC EDGAR 13F: %d holders of %r from %d filings (%d total on EDGAR)",
              len(holders), company_name, len(filings), total)
-    return {"cusip_seen": cusip_seen, "period": period_seen,
+    return {"cusip_seen": cusip_seen,
+            "cusips_seen": sorted(cusip_counts),
+            "period": period_seen,
             "filings_total": total, "filings_fetched": len(filings),
             "holders": holders}
 
