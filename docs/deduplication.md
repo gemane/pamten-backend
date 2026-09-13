@@ -208,6 +208,31 @@ rows. `GET /persons/merge-log` returns them newest-first.
 
 Two ways the same company becomes multiple `Entity` nodes, with different fixes.
 
+## One seat, two vocabularies — role synonyms
+
+Sources name the same position in their own dialect: Form D says "Director",
+Wikidata's P3320 gives "Board Member", proxy statements write "Member of the
+Board of Directors". Before role writers matched canonically, each spelling
+drew its own HAS_ROLE edge — one seat, two rows, and the position could never
+corroborate itself across sources.
+
+All three role writers (`_upsert_role`, `_upsert_role_sec`, `_upsert_role_oc`)
+now match existing edges through `app.roles.canonical_role`, a deliberately
+conservative synonym map (Director ≡ Board Member; CEO ≡ Chief Executive
+Officer; Chairman ≡ Chairperson — but "Executive Officer" is broader than CEO
+and stays distinct). When a more credible source re-asserts a held position,
+the single edge is **relabelled** with the better word (Wikidata's
+"Board Member" becomes SEC's "Director"); a community re-assertion never
+downgrades a statutory label. Every asserter still shows in the claims table —
+role claims are keyed per canonical position, so the sources panel counts
+"SEC EDGAR + Wikidata" as corroboration of the one seat, while a "CEO" claim
+never corroborates a "Director" row.
+
+Pre-existing synonym duplicates are healed by
+`python manage.py dedupe-role-synonyms [--dry-run]`: per (person, company,
+canonical role) it keeps the most credible open edge, backfills
+since/source_url/source_date from the losers, and deletes the rest.
+
 ## Same identifier, two nodes — `deduplicate_entities`
 
 When the same company arrives from two sources it becomes two nodes that **share a hard

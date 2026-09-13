@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, HTTPException
 from app.config import settings
 from app.database import db
 from app.db.arcadedb import run_sql
+from app.roles import canonical_role
 from app.scraper.mapper import normalize_entity_name
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
@@ -291,7 +292,7 @@ def _corroborations_for(entity_id: str) -> dict[tuple, list[str]]:
     from app.db.arcadedb import run_sql
 
     rows = run_sql(
-        "SELECT from_id, to_id, kind, source_id FROM Claim "
+        "SELECT from_id, to_id, kind, source_id, role FROM Claim "
         "WHERE from_id = :id OR to_id = :id", {"id": entity_id})
     if not rows:
         return {}
@@ -302,6 +303,12 @@ def _corroborations_for(entity_id: str) -> dict[tuple, list[str]]:
         if not name:
             continue
         key = (r["from_id"], r["to_id"], r["kind"])
+        if r["kind"] == "role":
+            # Per POSITION, not per pair: SEC's "Director" and Wikidata's
+            # "CEO" for the same person are different facts and must not
+            # corroborate each other. Canonical, so "Board Member" and
+            # "Director" are one bucket.
+            key = (*key, canonical_role(r.get("role") or ""))
         bucket = out.setdefault(key, [])
         if name not in bucket:      # one source asserting twice is one source
             bucket.append(name)
@@ -317,7 +324,10 @@ def _attach_corroboration(rel: dict, claims: dict[tuple, list[str]],
     table) get 0 and an empty list rather than nothing — absent and unknown are
     different things, and the UI should not have to guess which it is seeing.
     """
-    sources = sorted(claims.get((from_id, to_id, kind), []))
+    key = (from_id, to_id, kind)
+    if kind == "role":
+        key = (*key, canonical_role(rel.get("role") or ""))
+    sources = sorted(claims.get(key, []))
     rel["corroborations"] = len(sources)
     rel["asserted_by"] = sources
     return rel

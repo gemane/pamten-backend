@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.claims import KIND_OWNS, KIND_ROLE, KIND_SUCCESSION, record_claim
+from app.roles import canonical_role
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
@@ -406,6 +407,56 @@ def _upsert_succession(predecessor_id: str, successor_id: str, source_id: str,
         )
 
 
+def _matching_role(session, person_id: str, entity_id: str, role: str,
+                   open_only: bool = True) -> list[dict]:
+    """Existing HAS_ROLE edges asserting the SAME position as `role`.
+
+    Matched on `canonical_role`, so "Director" (Form D) and "Board Member"
+    (Wikidata) are one seat, not two rows. Returns the stored edges' props —
+    the caller updates by the stored label, and may relabel it when the
+    incoming assertion is more credible (the panel shows the best word for
+    the position, and every asserter still shows via the claims table)."""
+    want = canonical_role(role)
+    rows = session.run(
+        """
+        MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+        RETURN r.role AS role, r.since AS since, r.until AS until,
+               r.credibility_score AS cred
+        """,
+        pid=person_id, eid=entity_id)
+    out = []
+    for r in rows:
+        if canonical_role(r.get("role") or "") != want:
+            continue
+        if open_only and r.get("until"):
+            continue
+        out.append({"role": r.get("role"), "since": r.get("since"),
+                    "cred": r.get("cred") or 0})
+    return out
+
+
+def _relabel_if_more_credible(session, person_id: str, entity_id: str,
+                              stored_label: str, new_label: str,
+                              stored_cred: int, new_cred: int,
+                              source_id: str) -> None:
+    """A more credible source naming the same position takes over the label.
+
+    The edge stays ONE edge; only its display word, source and credibility
+    upgrade (Wikidata's "Board Member" becomes SEC's "Director"). Never
+    downgrades — a later community re-assertion leaves a statutory label
+    alone."""
+    if new_cred <= stored_cred or new_label == stored_label:
+        return
+    session.run(
+        """
+        MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+        WHERE r.role = $old
+        SET r.role = $new, r.source_id = $sid, r.credibility_score = $cred
+        """,
+        pid=person_id, eid=entity_id, old=stored_label, new=new_label,
+        sid=source_id, cred=new_cred)
+
+
 def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                  since: str | None = None, until: str | None = None,
                  source_url: str | None = None, credibility_score: int = 80):
@@ -428,18 +479,10 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     # corroboration — Bill Gates and "Gates William H Iii" could never merge.
     now = _now_iso()
     with db.get_session() as session:
-        exists = session.run(
-            """
-            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-            WHERE r.role = $role
-              AND ($since IS NULL OR r.since = $since)
-            RETURN r LIMIT 1
-            """,
-            pid=person_id,
-            eid=entity_id,
-            role=role,
-            since=since,
-        ).single()
+        matches = _matching_role(session, person_id, entity_id, role,
+                                 open_only=False)
+        exists = next((m for m in matches
+                       if since is None or m["since"] == since), None)
         if exists:
             session.run(
                 """
@@ -449,9 +492,12 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                 SET r.last_scraped_at = $now,
                     r.source_url = COALESCE(r.source_url, $surl)
                 """,
-                pid=person_id, eid=entity_id, role=role, since=since, now=now,
-                surl=source_url,
+                pid=person_id, eid=entity_id, role=exists["role"], since=since,
+                now=now, surl=source_url,
             )
+            _relabel_if_more_credible(session, person_id, entity_id,
+                                      exists["role"], role, exists["cred"],
+                                      credibility_score, source_id)
             return
 
         if since:
@@ -459,14 +505,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             # role learning its date, not a second appointment — so fill the
             # blank rather than creating an edge beside it. (The reverse order is
             # handled above: an undated assertion matches a dated edge.)
-            undated = session.run(
-                """
-                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-                WHERE r.role = $role AND r.since IS NULL
-                RETURN r LIMIT 1
-                """,
-                pid=person_id, eid=entity_id, role=role,
-            ).single()
+            undated = next((m for m in matches if m["since"] is None), None)
             if undated:
                 session.run(
                     """
@@ -476,9 +515,12 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                         r.last_scraped_at = $now,
                         r.source_url = COALESCE($surl, r.source_url)
                     """,
-                    pid=person_id, eid=entity_id, role=role, since=since, now=now,
-                    surl=source_url,
+                    pid=person_id, eid=entity_id, role=undated["role"], since=since,
+                    now=now, surl=source_url,
                 )
+                _relabel_if_more_credible(session, person_id, entity_id,
+                                          undated["role"], role, undated["cred"],
+                                          credibility_score, source_id)
                 return
 
         session.run(

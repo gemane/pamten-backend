@@ -442,6 +442,61 @@ def _now_iso_manage() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def cmd_dedupe_role_synonyms(args):
+    """Merge HAS_ROLE edges that name the SAME position in different words.
+
+    Before the writers matched roles canonically, "Director" (SEC) and "Board
+    Member" (Wikidata) each drew an edge — one seat, two rows. For every
+    (person, company, canonical role) with multiple open edges this keeps the
+    most credible one (backfilling since/source_url/source_date from the
+    losers) and deletes the rest. Claims are untouched: every source's
+    assertion stays on record and now corroborates the surviving edge."""
+    from app.database import db as _db
+    from app.roles import canonical_role
+
+    with _db.get_session() as session:
+        rows = list(session.run(
+            "MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity) "
+            "WHERE r.until IS NULL "
+            "RETURN p.id AS pid, e.id AS eid, p.full_name AS person, "
+            "e.name AS company, r.role AS role, r.since AS since, "
+            "r.source_url AS surl, r.source_date AS sdate, "
+            "COALESCE(r.credibility_score, 0) AS cred"))
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault((r.get("pid"), r.get("eid"),
+                           canonical_role(r.get("role") or "")), []).append(r)
+    merged = 0
+    for (pid, eid, _), edges in groups.items():
+        if len(edges) < 2:
+            continue
+        edges.sort(key=lambda x: -x["cred"])
+        winner, losers = edges[0], edges[1:]
+        print(f"  {winner.get('person')} @ {winner.get('company')}: "
+              f"keep {winner.get('role')!r} ({winner['cred']}), drop "
+              f"{[x.get('role') for x in losers]}")
+        merged += 1
+        if args.dry_run:
+            continue
+        with _db.get_session() as session:
+            for lost in losers:
+                session.run(
+                    "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
+                    "WHERE r.role = $role AND r.until IS NULL DELETE r",
+                    pid=pid, eid=eid, role=lost.get("role"))
+                session.run(
+                    "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
+                    "WHERE r.role = $role "
+                    "SET r.since = COALESCE(r.since, $since), "
+                    "    r.source_url = COALESCE(r.source_url, $surl), "
+                    "    r.source_date = COALESCE(r.source_date, $sdate)",
+                    pid=pid, eid=eid, role=winner.get("role"),
+                    since=lost.get("since"), surl=lost.get("surl"),
+                    sdate=lost.get("sdate"))
+    verb = "would merge" if args.dry_run else "merged"
+    print(f"{verb} {merged} duplicated position(s)")
+
+
 def cmd_sec_formd(args):
     """Ingest one issuer's board and officers from its newest SEC Form D.
 
@@ -1084,6 +1139,12 @@ def _build_parser():
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
     # filings), as opposed to a normal scrape which reads filings about a company.
+    p_drs = subparsers.add_parser('dedupe-role-synonyms',
+        help='Merge HAS_ROLE edges naming the same position in different words')
+    p_drs.add_argument('--dry-run', action='store_true',
+                       help='Report what would merge without changing anything')
+    p_drs.set_defaults(func=cmd_dedupe_role_synonyms)
+
     p_formd = subparsers.add_parser('sec-formd',
         help="One issuer's board/officers from its newest SEC Form D (private companies)")
     p_formd.add_argument('company', help='Company name as known to the graph')

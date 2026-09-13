@@ -33,7 +33,8 @@ from app.scraper.graph_writer import (
     # multi-scraper refactor deferred); re-exported here so existing imports and
     # test patch targets — `app.scraper.runner._upsert_owns` and friends — keep
     # working unchanged.
-    _ensure_source, _merge_aliases, _now_iso, _person_search_text,   # noqa: F401
+    _ensure_source, _matching_role, _merge_aliases, _now_iso,        # noqa: F401
+    _person_search_text, _relabel_if_more_credible,                   # noqa: F401
     _upsert_entity_by_name, _upsert_person_by_name,                  # noqa: F401
     _upsert_owns, _upsert_role, _upsert_succession,                  # noqa: F401
 )
@@ -1787,14 +1788,8 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
                  credibility_score=credibility_score)
     now = _now_iso()
     with db.get_session() as session:
-        existing = session.run(
-            """
-            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-            WHERE r.role = $role AND r.until IS NULL
-            RETURN r LIMIT 1
-            """,
-            pid=person_id, eid=entity_id, role=role,
-        ).single()
+        matches = _matching_role(session, person_id, entity_id, role)
+        existing = matches[0] if matches else None
         if existing:
             session.run(
                 """
@@ -1803,9 +1798,12 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
                 SET r.last_scraped_at = $now,
                     r.source_url = COALESCE($surl, r.source_url)
                 """,
-                pid=person_id, eid=entity_id, role=role, now=now,
+                pid=person_id, eid=entity_id, role=existing["role"], now=now,
                 surl=source_url,
             )
+            _relabel_if_more_credible(session, person_id, entity_id,
+                                      existing["role"], role, existing["cred"],
+                                      credibility_score, source_id)
             return
         session.run(
             """

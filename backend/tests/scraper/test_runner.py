@@ -618,15 +618,14 @@ class TestUpsertOwns:
 
 class TestUpsertRole:
     def test_creates_role_edge_when_not_exists(self):
-        # Three statements for a DATED role that is genuinely new: the match, then
-        # the "is there an undated edge for this role to adopt?" lookup, then the
-        # CREATE. The middle one is what stops a person appearing twice on a board
-        # when one scrape knows the start date and the other does not.
-        ctx, session = _make_session_mock(single_returns=[None, None])
+        # Two statements for a role that is genuinely new: ONE fetch of the
+        # pair's existing roles (matched canonically in Python — synonym and
+        # adoption checks share it), then the CREATE.
+        ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24")
-        assert session.run.call_count == 3
-        assert "CREATE" in session.run.call_args_list[2].args[0]
+        assert session.run.call_count == 2
+        assert "CREATE" in session.run.call_args_list[1].args[0]
 
     def test_an_undated_role_needs_no_adoption_lookup(self):
         ctx, session = _make_session_mock(single_returns=[None])
@@ -635,7 +634,9 @@ class TestUpsertRole:
         assert session.run.call_count == 2          # match, then CREATE
 
     def test_refreshes_and_backfills_when_same_role_and_since_exists(self):
-        ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
+        ctx, session = _make_session_mock()
+        session.run.return_value.__iter__.return_value = iter(
+            [{"role": "CEO", "since": "2011-08-24", "until": None, "cred": 80}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_role("p-id", "e-id", "CEO", "src-1", since="2011-08-24",
                          source_url="https://www.wikidata.org/wiki/Q2283")
@@ -664,7 +665,9 @@ class TestUpsertRoleSec:
         assert create_kwargs.get("sdate") == "2024-02-13"
 
     def test_backfills_form4_provenance_when_role_exists(self):
-        ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
+        ctx, session = _make_session_mock()
+        session.run.return_value.__iter__.return_value = iter(
+            [{"role": "Director", "since": None, "until": None, "cred": 98}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_role_sec("p-id", "e-id", "Director", "sec-1",
                              source_url=self.FORM4, source_date="2024-02-13")
