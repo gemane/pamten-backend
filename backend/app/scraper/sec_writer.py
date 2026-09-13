@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from app.claims import KIND_OWNS, KIND_ROLE, record_claim
 from app.database import db
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
-from app.scraper.graph_writer import _now_iso
+from app.scraper.graph_writer import _matching_role, _now_iso, _relabel_if_more_credible
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 
 log = logging.getLogger(__name__)
@@ -351,14 +351,8 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     # structure, not people (see graph_writer._upsert_role).
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
-        existing = session.run(
-            """
-            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-            WHERE r.role = $role AND r.until IS NULL
-            RETURN r LIMIT 1
-            """,
-            pid=person_id, eid=entity_id, role=role,
-        ).single()
+        matches = _matching_role(session, person_id, entity_id, role)
+        existing = matches[0] if matches else None
         if existing:
             session.run(
                 """
@@ -368,9 +362,12 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
                 """,
-                pid=person_id, eid=entity_id, role=role, now=now,
+                pid=person_id, eid=entity_id, role=existing["role"], now=now,
                 surl=source_url, sdate=source_date,
             )
+            _relabel_if_more_credible(session, person_id, entity_id,
+                                      existing["role"], role, existing["cred"],
+                                      credibility_score, source_id)
             return
         session.run(
             """

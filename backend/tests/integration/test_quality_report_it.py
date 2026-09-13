@@ -233,11 +233,14 @@ class TestTheProfileCarriesCorroboration:
         profiled.run_command(
             "MATCH (p:Person {id:'per-1'}), (c {id:'co-b'}) "
             "CREATE (p)-[:HAS_ROLE {role:'CEO', source_id:'src-sec'}]->(c)")
-        for src in ("src-sec", "src-wd"):
+        # Claims carry the role they assert, and the bucket is per canonical
+        # POSITION: the two spellings below must land in the same bucket, and
+        # an unrelated role from a third source must not join it.
+        for src, role in (("src-sec", "CEO"), ("src-wd", "Chief Executive Officer")):
             profiled.run_command(
                 "CREATE (c:Claim {claim_key:$k, kind:'role', from_id:'per-1', "
-                "to_id:'co-b', source_id:$s})",
-                {"k": f"role|per-1|co-b|{src}", "s": src})
+                "to_id:'co-b', source_id:$s, role:$r})",
+                {"k": f"role|per-1|co-b|{src}", "s": src, "r": role})
 
         from app.routers.search import get_full_profile
         prof = get_full_profile("co-b")

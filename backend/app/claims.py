@@ -28,6 +28,8 @@ the claim, so the edge and the evidence cannot drift apart.
 from __future__ import annotations
 
 import hashlib
+
+from app.roles import canonical_role
 import logging
 from datetime import datetime, timezone
 
@@ -41,7 +43,8 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def claim_key(kind: str, from_id: str, to_id: str, source_id: str) -> str:
+def claim_key(kind: str, from_id: str, to_id: str, source_id: str,
+              role_key: str | None = None) -> str:
     """Stable identity for "what this source says about this relationship".
 
     Digested rather than concatenated because the parts are registry data of
@@ -55,7 +58,14 @@ def claim_key(kind: str, from_id: str, to_id: str, source_id: str) -> str:
     each other. Ids come from external registers (`lei:…`, `gb-coh:…`, BODS
     statement ids); we do not get to assume which characters they avoid.
     """
-    parts = (kind, from_id, to_id, source_id)
+    parts = [kind, from_id, to_id, source_id]
+    if role_key:
+        # One claim row PER POSITION for role claims: without this, a source
+        # asserting two roles for the same pair overwrote its own row and only
+        # the last-written role survived — so per-role corroboration could
+        # never be counted. Canonical, so "Director" and "Board Member" are
+        # one position across sources. Owns/succession keys are unchanged.
+        parts.append(role_key)
     raw = "|".join(f"{len(part)}:{part}" for part in parts)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
@@ -88,7 +98,8 @@ def claim_props(
     in here, where it would overwrite on every re-import.
     """
     return {
-        "claim_key": claim_key(kind, from_id, to_id, source_id),
+        "claim_key": claim_key(kind, from_id, to_id, source_id,
+                               role_key=canonical_role(role) if kind == KIND_ROLE and role else None),
         "kind": kind,
         "from_id": from_id,
         "to_id": to_id,
