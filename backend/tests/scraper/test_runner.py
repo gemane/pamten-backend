@@ -540,12 +540,12 @@ class TestUpsertEntity:
         assert session.run.call_count == 4
 
     def test_updates_existing_entity_when_found(self):
-        ctx, session = _make_session_mock(single_returns=[{"id": "existing-uuid"}])
+        ctx, session = _make_session_mock(single_returns=[{"id": "existing-uuid"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
         assert eid == "existing-uuid"
-        # run called twice: MATCH then SET
-        assert session.run.call_count == 2
+        # run called three times: MATCH, the winner-name read, then SET
+        assert session.run.call_count == 3
 
     def test_returns_string_id(self):
         ctx, _ = _make_session_mock()   # all lookups miss → creates a new node
@@ -565,7 +565,7 @@ class TestUpsertEntity:
         assert create.kwargs["search_text"] == "Acme Corp A widget maker Acme ACME Inc"
 
     def test_sets_search_text_on_update(self):
-        ctx, session = _make_session_mock(single_returns=[{"id": "e1"}])
+        ctx, session = _make_session_mock(single_returns=[{"id": "e1"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_entity("Acme", "company", None, None, None, None, "Q1")
         upd = session.run.call_args_list[-1]
@@ -955,7 +955,7 @@ class TestIdentifierBridge:
         # First two lookups (wikidata_id, sec_cik) miss, the lei_id lookup hits the
         # existing GLEIF node — so no second copy of the company is created.
         ctx, session = _make_session_mock(
-            single_returns=[None, None, {"id": "lei:INR2EJN1ERAN0W5ZP974"}])
+            single_returns=[None, None, {"id": "lei:INR2EJN1ERAN0W5ZP974"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
                                  lei="INR2EJN1ERAN0W5ZP974")
@@ -979,7 +979,7 @@ class TestIdentifierBridge:
     def test_update_never_overwrites_an_existing_identifier(self):
         # A register is authoritative for its own id and Wikidata is crowd-edited;
         # clobbering lei_id would re-point a merge key at the wrong company.
-        ctx, session = _make_session_mock(single_returns=[{"id": "existing"}])
+        ctx, session = _make_session_mock(single_returns=[{"id": "existing"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
                            lei="INR2EJN1ERAN0W5ZP974", sec_cik="0000789019")
