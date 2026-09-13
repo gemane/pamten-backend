@@ -931,6 +931,101 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
 
 
 @_with_autodedup
+def run_sec_formd(company: str, force: bool = False) -> dict:
+    """Ingest one issuer's board and officers from its newest SEC Form D.
+
+    The private-company window: Form D is filed by the ISSUER for a Reg D
+    raise and is the only statutory family naming a private company's board
+    (SpaceX's lists Musk, Shotwell, Gracias). Enriches, does not discover —
+    the company needs a CIK, like 13F and Exhibit 21.
+
+    Written: HAS_ROLE per related person (Form D's own vocabulary — Executive
+    Officer / Director / Promoter), source_date = the filing date (Form D
+    states no tenure dates, so the filing's age is the honesty marker); the
+    issuer's jurisdiction of incorporation fills country + jurisdiction_code
+    if missing. Corporate "related persons" (a GP LLC named as an officer)
+    are skipped and counted — a company minted as a Person is the Berkshire
+    bug. One filing = one ingest, keyed on the accession; --force re-reads."""
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise PermissionError("SEC EDGAR scraper is disabled. "
+                              "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
+
+    from app.routers.search import resolve_best_entity
+    from app.scraper.run_log import record_run
+    from app.scraper.sec_ex21 import jurisdiction_country, jurisdiction_subdivision
+    from app.scraper.sec_formd import latest_form_d
+
+    entity = resolve_best_entity(company, None)
+    if not entity:
+        return {"status": "no_results", "company": company, "total": 0, "scraped": []}
+    company_id = entity["id"]
+    if not entity.get("sec_cik"):
+        return {"status": "needs_sec_scrape", "company": company,
+                "entity_id": company_id, "total": 0,
+                "detail": "The entity has no SEC CIK yet — run the SEC EDGAR "
+                          "scrape first."}
+
+    with record_run("sec-formd", company) as run:
+        source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
+                                   SEC_EDGAR_CREDIBILITY)
+        data = latest_form_d(entity["sec_cik"])
+        if not data:
+            run["status"], run["note"] = "skipped", "no Form D on file"
+            return {"status": "no_filing", "company": company,
+                    "entity_id": company_id, "total": 0,
+                    "detail": "No Form D (with XML) on file for this issuer."}
+
+        with db.get_session() as session:
+            row = session.run("MATCH (e:Entity {id: $id}) "
+                              "RETURN e.sec_formd_ingested AS ingested",
+                              id=company_id).single()
+        if not force and row and row.get("ingested") == data["accession"]:
+            run["status"], run["note"] = "skipped", "filing already ingested"
+            return {"status": "fresh", "company": company, "entity_id": company_id,
+                    "total": 0, "filing_date": data["filing_date"],
+                    "detail": "This Form D is already ingested; a newer filing "
+                              "opens the gate by itself. --force re-reads."}
+
+        # Issuer enrichment: the stated jurisdiction, fill-if-missing.
+        juris = data.get("jurisdiction")
+        if juris:
+            with db.get_session() as session:
+                session.run(
+                    "MATCH (e:Entity {id: $id}) "
+                    "SET e.country = COALESCE(e.country, $c), "
+                    "    e.jurisdiction_code = COALESCE(e.jurisdiction_code, $jc)",
+                    id=company_id, c=jurisdiction_country(juris),
+                    jc=jurisdiction_subdivision(juris))
+
+        written, corporate_skipped = 0, 0
+        scraped: list[dict] = []
+        for person in data["persons"]:
+            name = person["name"]
+            if has_entity_suffix(name) or not is_person_name(name):
+                corporate_skipped += 1
+                continue
+            person_id = _upsert_person_by_name(name, source_id=source_id)
+            for role in person["roles"]:
+                _upsert_role_sec(person_id, company_id, role, source_id,
+                                 source_url=data["url"],
+                                 source_date=data["filing_date"])
+                written += 1
+            scraped.append({"type": "person", "name": name,
+                            "role": ", ".join(person["roles"])})
+
+        with db.get_session() as session:
+            session.run("MATCH (e:Entity {id: $id}) SET e.sec_formd_ingested = $a",
+                        id=company_id, a=data["accession"])
+        run["total"] = written
+        return {"status": "ok", "company": company, "entity_id": company_id,
+                "form": data["form"], "filing_date": data["filing_date"],
+                "total": written, "corporate_skipped": corporate_skipped,
+                "scraped": scraped}
+
+
+@_with_autodedup
 def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 force: bool = False) -> dict:
     """Ingest one issuer's institutional holders from Form 13F info tables.

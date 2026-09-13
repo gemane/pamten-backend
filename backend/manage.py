@@ -442,6 +442,34 @@ def _now_iso_manage() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def cmd_sec_formd(args):
+    """Ingest one issuer's board and officers from its newest SEC Form D.
+
+    The private-company window: Form D is issuer-filed for a Reg D raise and
+    is the only statutory family naming a private company's board. The company
+    must already be in the graph with a CIK."""
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_SEC_EDGAR_ENABLED = True
+    from app.scraper.runner import run_sec_formd
+    result = run_sec_formd(args.company, force=args.force)
+    if result["status"] == "fresh":
+        print(f"Form D for {result['company']!r} already ingested "
+              f"(filing of {result['filing_date']}); --force re-reads.")
+        return
+    if result["status"] in ("needs_sec_scrape", "no_filing"):
+        print(result["detail"])
+        raise SystemExit(1)
+    if result["status"] != "ok":
+        print(f"No entity in the graph matches {args.company!r}.")
+        raise SystemExit(1)
+    print(f"{result['total']} role edges for {result['company']!r} "
+          f"from the {result['form']} filed {result['filing_date']}.")
+    if result.get("corporate_skipped"):
+        print(f"{result['corporate_skipped']} corporate related person(s) skipped "
+              f"(GP vehicles are entities, not people).")
+
+
 def cmd_sec_ex21(args):
     """Ingest one issuer's statutory subsidiary list from its annual filing.
 
@@ -1056,6 +1084,13 @@ def _build_parser():
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
     # filings), as opposed to a normal scrape which reads filings about a company.
+    p_formd = subparsers.add_parser('sec-formd',
+        help="One issuer's board/officers from its newest SEC Form D (private companies)")
+    p_formd.add_argument('company', help='Company name as known to the graph')
+    p_formd.add_argument('--force', action='store_true',
+                         help='Re-read even if this filing is already ingested')
+    p_formd.set_defaults(func=cmd_sec_formd)
+
     p_ex21 = subparsers.add_parser('sec-ex21',
         help="One issuer's statutory subsidiary list from its 10-K Exhibit 21")
     p_ex21.add_argument('company', help='Company name as known to the graph')

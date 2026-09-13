@@ -140,6 +140,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       by-id reads follow it; resolve before writing rather than resurrecting the loser.
 - [ ] **One edge per pair.** Re-asserting an existing relationship updates it; it does not
       add a second one.
+- [ ] **Structured "person" fields still carry companies.** Form D's relatedPersonInfo
+      has firstName/lastName — and fund filings put their GP LLC in them, with a literal
+      `N/A` first name. Field structure is not a person guarantee: strip the filler,
+      then apply the entity-suffix veto before minting anyone.
 - [ ] **Classify people with `is_person_name`** and know it is a heuristic. Registers list
       corporate nominees as officers, and `is_nominee` marks holders of record who are not
       beneficial owners.
