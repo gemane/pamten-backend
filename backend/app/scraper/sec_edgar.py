@@ -136,6 +136,17 @@ _RETRY_AFTER_CAP = 30.0
 
 
 def _response(url: str, params: dict | None) -> httpx.Response:
+    # Filings are immutable, so an Archives file is served from the on-disk
+    # cache when SEC_CACHE_DIR is set; searches and listings never are — see
+    # sec_cache.cacheable for the line, and why it is drawn there.
+    from app.config import settings
+    from app.scraper import sec_cache
+    key = sec_cache.cacheable(url, params) if settings.SEC_CACHE_DIR else None
+    if key:
+        cached = sec_cache.read(settings.SEC_CACHE_DIR, key)
+        if cached is not None:
+            return httpx.Response(200, content=cached,
+                                  request=httpx.Request("GET", url))
     r = _get_client().get(url, params=params)
     if r.status_code in _RETRY_STATUSES:
         try:
@@ -145,6 +156,8 @@ def _response(url: str, params: dict | None) -> httpx.Response:
         time.sleep(wait)
         r = _get_client().get(url, params=params)
     r.raise_for_status()
+    if key:
+        sec_cache.write(settings.SEC_CACHE_DIR, key, r.content)
     time.sleep(REQUEST_DELAY)
     return r
 

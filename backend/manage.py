@@ -442,6 +442,19 @@ def _now_iso_manage() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def cmd_sec_cache(args):
+    """Report the on-disk EDGAR filing cache (SEC_CACHE_DIR)."""
+    from app.config import settings
+    from app.scraper import sec_cache
+    if not settings.SEC_CACHE_DIR:
+        print("SEC_CACHE_DIR is not set — the filing cache is off.")
+        raise SystemExit(1)
+    info = sec_cache.summary(settings.SEC_CACHE_DIR)
+    mb = info["bytes"] / 1_048_576
+    print(f"{info['dir']}: {info['files']} file(s) in {info['filings']} filing(s) "
+          f"from {info['filers']} filer(s), {mb:,.1f} MB gzipped on disk")
+
+
 def cmd_dedupe_role_synonyms(args):
     """Merge HAS_ROLE edges that name the SAME position in different words.
 
@@ -1139,6 +1152,11 @@ def _build_parser():
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
     # filings), as opposed to a normal scrape which reads filings about a company.
+    p_sc = subparsers.add_parser('sec-cache',
+        help='On-disk EDGAR filing cache: stats')
+    p_sc.add_argument('action', choices=['stats'])
+    p_sc.set_defaults(func=cmd_sec_cache)
+
     p_drs = subparsers.add_parser('dedupe-role-synonyms',
         help='Merge HAS_ROLE edges naming the same position in different words')
     p_drs.add_argument('--dry-run', action='store_true',

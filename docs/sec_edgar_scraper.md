@@ -678,3 +678,41 @@ Learned from the probe band (10 filings across the size spectrum):
 
 One filing = one ingest, keyed on the accession; `--force` re-reads. Older
 Form Ds hold earlier boards — history for a later iteration.
+
+---
+
+## The filing cache — EDGAR's golden copy (`sec_cache.py`)
+
+A filing is immutable once filed: an accession number never changes content,
+and an amendment is a NEW accession. So
+`https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{file}` is a perfect
+cache key — and every rebuild, `--force` and 13F second pass used to
+re-download exactly those bytes.
+
+With `SEC_CACHE_DIR` set, `_response` (the single funnel every SEC fetch goes
+through) serves an Archives file from `{dir}/{cik}/{accession}/{file}.gz` when
+present and writes it there after a successful fetch (atomic rename, gzip
+level 6, best-effort — a full disk logs a warning, never fails the scrape).
+The cache lives outside the database, so "drop the database and re-import"
+replays from disk: no rate-limit budget, no EFTS 500s, no IPv6 stall.
+
+**Only Archives files are cached — never searches or listings.**
+`sec_cache.cacheable()` is the one place that decides, and it is deliberately
+narrow: `data.sec.gov/submissions` grows as filings arrive, EFTS results
+change, and the daily/full indexes are appended to. Caching any of those is
+how a scraper silently stops seeing new filings — the "SpaceX registered in
+2026 and we never noticed" failure. A URL with query parameters is never
+cached (parameters are what make a request a search).
+
+Sizing: keyed by filing, not by company — a 13F information table is stored
+once however many of our companies it mentions — and only CIK-bearing
+companies ever fetch anything. Expect single-digit GB per year gzipped for
+the whole US reporting universe; anything older can simply be deleted and
+re-fetches on demand. Render's filesystem is ephemeral, so the cache is for
+servers with a disk (dev box, production) — leave the variable unset on
+Render. `manage.py sec-cache stats` reports files, filings, filers and bytes.
+
+Data protection: the cache is another place filings that name people rest
+(Form 4 insiders, Form D related persons). It is recorded in
+`pamten-legal`'s Art. 30 register; suppression lives in the graph writers, so
+a suppressed record is not resurrected by a re-import from cache.

@@ -221,7 +221,7 @@ Imports corporate ownership data via SPARQL. For a company it fetches subsidiari
 - 400 ms delay between requests (Wikidata rate limit)
 
 ### SEC EDGAR
-Imports investor data from SC 13D/13G ownership filings, executive data from Form 3/4 XML, statutory subsidiary lists from the 10-K's Exhibit 21 (`manage.py sec-ex21`), and private-company boards from Form D (`manage.py sec-formd`) — both manual-first. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`.
+Imports investor data from SC 13D/13G ownership filings, executive data from Form 3/4 XML, statutory subsidiary lists from the 10-K's Exhibit 21 (`manage.py sec-ex21`), and private-company boards from Form D (`manage.py sec-formd`) — both manual-first. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`. With `SEC_CACHE_DIR` set, every filing fetched is kept gzipped on disk and served from there on the next rebuild, `--force` or second pass — the EDGAR golden copy (`manage.py sec-cache stats`).
 
 **Two directions.** Those filings name the company as the *subject* — who owns it, who its insiders are. An institutional investor has none: Vanguard is privately held and isn't a listed issuer, so scraping it by name finds nothing however often you try. What it has is ~3,400 filings it makes **about others**, so the scraper also reads the filer side and writes `OWNS` edges pointing *out* of the company:
 
@@ -511,6 +511,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `SCRAPER_ENABLED` | `false` | Master scraper switch (required for any scrape) |
 | `SCRAPER_WIKIDATA_ENABLED` | `true` | Wikidata source switch |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |
+| `SEC_CACHE_DIR` | *(empty)* | On-disk golden copy of EDGAR filings (immutable Archives files only; never searches). Needs a persistent disk — leave unset on Render |
 | `SCRAPER_OPENCORPORATES_ENABLED` | `false` | OpenCorporates source switch |
 | `SCRAPER_BODS_GLEIF_ENABLED` | `false` | GLEIF bulk-import switch (golden-copy CLI importers) |
 | `SCRAPER_BODS_UK_PSC_ENABLED` | `false` | UK Companies House bulk-import switch (`ch-psc` / `ch-company-data`) |
