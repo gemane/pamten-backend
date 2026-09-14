@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     SCRAPER_ENABLED:                  bool = False
     SCRAPER_WIKIDATA_ENABLED:         bool = True
     SCRAPER_SEC_EDGAR_ENABLED:        bool = False
+    # On-disk golden copy of EDGAR filings (immutable Archives files only —
+    # never searches or listings). Empty = off. For servers with a disk; Render's
+    # filesystem is ephemeral, so leave it unset there. See docs/sec_edgar_scraper.md.
+    SEC_CACHE_DIR:                    str  = ""
     SCRAPER_OPENCORPORATES_ENABLED:   bool = False
     SCRAPER_BODS_GLEIF_ENABLED:       bool = False
     SCRAPER_BODS_UK_PSC_ENABLED:      bool = False

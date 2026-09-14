@@ -184,6 +184,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       and on this host that made SEC scraping look broken: every fresh connection spent
       ~6s failing over a dead IPv6 route to sec.gov. `curl` looked fine and will mislead
       you — see the host IPv6 note in the ops docs.
+- [ ] **Cache what is immutable, never what is live.** A filing keyed by accession never
+      changes and can be kept forever (`sec_cache`); a submissions feed, a search result or
+      a daily index grows, and caching it is how a scraper silently stops seeing new records.
+      Decide per URL family, in one function, and test both sides of the line.
 - [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_edgar._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
