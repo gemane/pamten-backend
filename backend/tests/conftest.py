@@ -44,6 +44,13 @@ def scraper_env(monkeypatch):
     """Re-apply test env vars per-test so individual tests can override them."""
     for k, v in _TEST_ENV.items():
         monkeypatch.setenv(k, v)
+    # The dev box's .env configures the real object store and a local filing
+    # cache; the no-network guard below covers httpx only (boto3 does not use
+    # it), so both are switched off here for every test. A test that wants the
+    # store patches settings itself — see tests/test_objectstore_live.py.
+    from app.config import settings
+    monkeypatch.setattr(settings, "OBJECT_STORE_BUCKET", "")
+    monkeypatch.setattr(settings, "SEC_CACHE_DIR", "")
 
 
 # ── No test reaches the internet ──────────────────────────────────────────────
