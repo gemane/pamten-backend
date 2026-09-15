@@ -444,15 +444,25 @@ def _now_iso_manage() -> str:
 
 def cmd_sec_cache(args):
     """Report the on-disk EDGAR filing cache (SEC_CACHE_DIR)."""
+    from app import objectstore
     from app.config import settings
     from app.scraper import sec_cache
-    if not settings.SEC_CACHE_DIR:
-        print("SEC_CACHE_DIR is not set — the filing cache is off.")
+    if not settings.SEC_CACHE_DIR and not objectstore.enabled():
+        print("Neither SEC_CACHE_DIR nor the object store is set — the filing cache is off.")
         raise SystemExit(1)
-    info = sec_cache.summary(settings.SEC_CACHE_DIR)
-    mb = info["bytes"] / 1_048_576
-    print(f"{info['dir']}: {info['files']} file(s) in {info['filings']} filing(s) "
-          f"from {info['filers']} filer(s), {mb:,.1f} MB gzipped on disk")
+    info = sec_cache.summary(settings.SEC_CACHE_DIR or None)
+    if "local" in info:
+        L = info["local"]
+        print(f"local  {L['dir']}: {L['files']} file(s) in {L['filings']} filing(s) "
+              f"from {L['filers']} filer(s), {L['bytes'] / 1_048_576:,.1f} MB gzipped")
+    if "shared" in info:
+        S = info["shared"]
+        tail = f" — {S['error']}" if S.get("error") else ""
+        print(f"shared {settings.OBJECT_STORE_BUCKET}/{S['prefix']}: {S['objects']} object(s), "
+              f"{S['bytes'] / 1_048_576:,.1f} MB{tail}")
+    ses = info["session"]
+    print(f"this process: local {ses['hits']} hit / {ses['misses']} miss / {ses['writes']} written; "
+          f"shared {ses['s3_hits']} hit / {ses['s3_writes']} written")
 
 
 def cmd_dedupe_role_synonyms(args):

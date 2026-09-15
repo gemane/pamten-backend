@@ -139,11 +139,13 @@ def _response(url: str, params: dict | None) -> httpx.Response:
     # Filings are immutable, so an Archives file is served from the on-disk
     # cache when SEC_CACHE_DIR is set; searches and listings never are — see
     # sec_cache.cacheable for the line, and why it is drawn there.
+    from app import objectstore
     from app.config import settings
     from app.scraper import sec_cache
-    key = sec_cache.cacheable(url, params) if settings.SEC_CACHE_DIR else None
+    key = (sec_cache.cacheable(url, params)
+           if (settings.SEC_CACHE_DIR or objectstore.enabled()) else None)
     if key:
-        cached = sec_cache.read(settings.SEC_CACHE_DIR, key)
+        cached = sec_cache.lookup(key)
         if cached is not None:
             return httpx.Response(200, content=cached,
                                   request=httpx.Request("GET", url))
@@ -157,7 +159,7 @@ def _response(url: str, params: dict | None) -> httpx.Response:
         r = _get_client().get(url, params=params)
     r.raise_for_status()
     if key:
-        sec_cache.write(settings.SEC_CACHE_DIR, key, r.content)
+        sec_cache.store(key, r.content)
     time.sleep(REQUEST_DELAY)
     return r
 

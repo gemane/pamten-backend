@@ -689,12 +689,21 @@ and an amendment is a NEW accession. So
 cache key — and every rebuild, `--force` and 13F second pass used to
 re-download exactly those bytes.
 
-With `SEC_CACHE_DIR` set, `_response` (the single funnel every SEC fetch goes
-through) serves an Archives file from `{dir}/{cik}/{accession}/{file}.gz` when
-present and writes it there after a successful fetch (atomic rename, gzip
-level 6, best-effort — a full disk logs a warning, never fails the scrape).
-The cache lives outside the database, so "drop the database and re-import"
-replays from disk: no rate-limit budget, no EFTS 500s, no IPv6 stall.
+`_response` (the single funnel every SEC fetch goes through) serves an
+Archives file from the cache when present and writes it after a successful
+fetch. Two layers, both optional and independent, same `cik/accession/file.gz`
+layout in each:
+
+| layer | setting | where | for |
+|---|---|---|---|
+| local | `SEC_CACHE_DIR` | this machine's disk, gzipped, atomic rename | the fast layer (~1 ms a file) for rebuilds that read thousands of filings |
+| shared | `OBJECT_STORE_*` (prefix `edgar/`) | the project's S3-compatible bucket (`app/objectstore.py`) | one copy visible from every environment — Render has no disk and uses only this; a machine with both backfills local from a shared hit |
+
+Read order local → shared → sec.gov; a fresh fetch writes every layer that is
+on. Measured on a Form D: 10.6 s from sec.gov, 0.15 s from the bucket, 1 ms
+from local disk. Both are best-effort — a full disk or a bucket outage logs a
+warning and the scrape fetches from the source; an undecodable object is a
+miss and gets overwritten.
 
 **Only Archives files are cached — never searches or listings.**
 `sec_cache.cacheable()` is the one place that decides, and it is deliberately
@@ -704,15 +713,15 @@ how a scraper silently stops seeing new filings — the "SpaceX registered in
 2026 and we never noticed" failure. A URL with query parameters is never
 cached (parameters are what make a request a search).
 
-Sizing: keyed by filing, not by company — a 13F information table is stored
-once however many of our companies it mentions — and only CIK-bearing
-companies ever fetch anything. Expect single-digit GB per year gzipped for
-the whole US reporting universe; anything older can simply be deleted and
-re-fetches on demand. Render's filesystem is ephemeral, so the cache is for
-servers with a disk (dev box, production) — leave the variable unset on
-Render. `manage.py sec-cache stats` reports files, filings, filers and bytes.
+Sharing one bucket across dev and prod is safe for exactly this content:
+public, immutable, environment-independent, and never authoritative — losing
+an object costs one re-fetch. Keyed by filing, not by company (a 13F
+information table is stored once however many companies it mentions), and
+only CIK-bearing companies fetch anything, so expect single-digit GB per year
+gzipped for the whole US reporting universe. `manage.py sec-cache stats`
+reports both layers.
 
 Data protection: the cache is another place filings that name people rest
-(Form 4 insiders, Form D related persons). It is recorded in
-`pamten-legal`'s Art. 30 register; suppression lives in the graph writers, so
-a suppressed record is not resurrected by a re-import from cache.
+(Form 4 insiders, Form D related persons). Recorded in `pamten-legal`'s
+Art. 30 register and processors list; suppression lives in the graph writers,
+so a suppressed record is not resurrected by a re-import from cache.
