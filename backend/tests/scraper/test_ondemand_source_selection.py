@@ -77,6 +77,21 @@ def test_absent_runs_all_enabled_instant_sources_never_bulk(monkeypatch):
     assert {c[0]: c[1] for c in calls} == {"wikidata": 1, "sec_edgar": 0}
 
 
+def test_the_answer_says_what_each_source_wrote(monkeypatch):
+    # The refresh summary reports "Wikidata: 2 · SEC EDGAR: 22" from this — and
+    # a source that ran and found nothing stays in the map at zero, which is an
+    # answer, while a source that raised is absent, which is not.
+    calls = _setup(monkeypatch, entity=None)
+    from app.scraper.scraper_registry import _registry, ScraperSpec, register
+    def boom(q, d, c=None):
+        raise RuntimeError("source down")
+    register(ScraperSpec("open_corporates", boom, (lambda: True), kind="instant", depth_aware=False))
+    out = ondemand.ensure_scrape("Acme", depth=1, force=False)
+    assert out["source_totals"] == {"wikidata": 1, "sec_edgar": 1}
+    assert "open_corporates" not in out["source_totals"]
+    assert calls  # the fakes ran
+
+
 def test_enabled_open_corporates_participates(monkeypatch):
     calls = _setup(monkeypatch, entity=None, enable_oc=True)
     ondemand.ensure_scrape("Acme", depth=1, force=False)

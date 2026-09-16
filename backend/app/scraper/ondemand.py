@@ -152,6 +152,9 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
     from app.scraper.run_log import record_run
 
     names_run: list[str] = []
+    # What each source wrote, by name — the number the refresh summary reports.
+    # Zero is kept: "Wikidata ran and found nothing" is an answer too.
+    source_totals: dict[str, int] = {}
     target_id: str | None = None
     for spec in registered():
         if spec.kind != "instant" or not spec.enabled():
@@ -167,9 +170,11 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
                     if res.get("entity_id"):
                         target_id = res["entity_id"]
             names_run.append(spec.name)
+            source_totals[spec.name] = int(run.get("total") or 0)
         except Exception as exc:  # noqa: BLE001 - one source failing mustn't sink the rest
             log.error("on-demand %s scrape failed for %r: %s", spec.name, query, exc)
-    return {"status": "ok", "names_run": names_run, "target_id": target_id}
+    return {"status": "ok", "names_run": names_run, "target_id": target_id,
+            "source_totals": source_totals}
 
 
 def _person_result(person_id: str | None, reason: str, scraped: bool,
@@ -303,6 +308,7 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
     try:
         ran = _run_instant_sources(query, decision, country)
         names_run, target_id = ran["names_run"], ran["target_id"]
+        source_totals = ran.get("source_totals", {})
     finally:
         with _inflight_lock:
             _inflight.discard(key)
@@ -330,4 +336,5 @@ def ensure_scrape(query: str, depth: int = 1, force: bool = False,
         depth_reached = int(profile["entity"].get("scrape_depth") or decision.need_depth)
     return {"scraped": True, "reason": decision.reason, "kind": "entity",
             "entity_id": target_id, "person_id": None,
-            "depth_reached": depth_reached, "sources_run": names_run, "profile": profile}
+            "depth_reached": depth_reached, "sources_run": names_run,
+            "source_totals": source_totals, "profile": profile}
