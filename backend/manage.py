@@ -442,6 +442,18 @@ def _now_iso_manage() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def cmd_geocache_forget(args):
+    """Erase one address from the geocode cache — table AND shared bucket.
+
+    The erasure runbook's step: suppression covers the graph, but the address
+    cache is keyed by the address text and outlives the record; and since the
+    bucket mirror, a deleted row would come back on the next lookup."""
+    from app.scraper import geo_cache
+    r = geo_cache.forget(args.address)
+    print(f"removed {r['rows']} row(s); bucket object "
+          f"{'removed' if r['object'] else 'absent or store off'}")
+
+
 def cmd_sec_cache(args):
     """Report the on-disk EDGAR filing cache (SEC_CACHE_DIR)."""
     from app import objectstore
@@ -1162,6 +1174,11 @@ def _build_parser():
     p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
     # filings), as opposed to a normal scrape which reads filings about a company.
+    p_gf = subparsers.add_parser('geocache-forget',
+        help='Erase one address from the geocode cache (table + shared bucket) — the erasure runbook step')
+    p_gf.add_argument('address', help='The address text exactly as stored (see GeoCache.query)')
+    p_gf.set_defaults(func=cmd_geocache_forget)
+
     p_sc = subparsers.add_parser('sec-cache',
         help='On-disk EDGAR filing cache: stats')
     p_sc.add_argument('action', choices=['stats'])

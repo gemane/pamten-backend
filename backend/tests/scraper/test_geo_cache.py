@@ -26,11 +26,16 @@ def store():
         if "count(g)" in sql:
             if "lat IS NOT NULL" in sql:
                 return [{"n": len([r for r in rows if r.get("lat") is not None])}]
+            if "{query: $q}" in sql:
+                return [{"n": len([r for r in rows if r["query"] == (params or {}).get("q")])}]
             return [{"n": len(rows)}]
         return [r for r in rows if r["query"] == (params or {}).get("q")][:1]
 
     def fake_command(sql, params=None):
         p = params or {}
+        if "DELETE g" in sql:
+            rows[:] = [r for r in rows if r["query"] != p["q"]]
+            return []
         if sql.lstrip().startswith("CREATE"):
             rows.append(dict(p, query=p["q"], lat=p.get("lat"), lng=p.get("lng"),
                              precision=p.get("prec"), checked_at=p.get("now")))
@@ -180,3 +185,89 @@ class TestItIsUsedByTheGeocoder:
         monkeypatch.setattr(geocode, "_get_client", lambda: explode())
 
         assert geocode.geocode_full("Somewhere OSM Lacks") is None
+
+
+# ── the shared layer ────────────────────────────────────────────────────────
+
+from app import objectstore  # noqa: E402
+from app.config import settings  # noqa: E402
+from tests.test_objectstore import FakeS3  # noqa: E402
+
+
+@pytest.fixture
+def shared():
+    s3 = FakeS3()
+    with patch.object(settings, "OBJECT_STORE_BUCKET", "b"), \
+         patch.object(settings, "OBJECT_STORE_ENDPOINT", "e"), \
+         patch.object(objectstore, "_get_client", lambda: s3):
+        yield s3
+
+
+class TestSharedLayer:
+    ADDR = "1 CHURCHILL PLACE, LONDON, E14 5HP, GB"
+
+    def test_a_store_writes_the_bucket_too(self, store, shared):
+        geo_cache.store(self.ADDR, (51.5, -0.01), "exact")
+        key = geo_cache.s3_key(self.ADDR)
+        assert key.startswith("geocode/") and len(key) == len("geocode/") + 64
+        row = __import__("json").loads(shared.objects[key])
+        assert row["query"] == self.ADDR and row["lat"] == 51.5 and row["precision"] == "exact"
+
+    def test_a_table_miss_is_answered_from_the_bucket_and_refills_the_table(self, store, shared):
+        # The rebuild case: the table is empty, the bucket remembers.
+        geo_cache.store(self.ADDR, (51.5, -0.01), "exact")
+        store.clear()
+        assert geo_cache.lookup(self.ADDR) == ((51.5, -0.01), "exact")
+        assert [r["query"] for r in store] == [self.ADDR], "copied back into the table"
+        shared.calls.clear()
+        geo_cache.lookup(self.ADDR)
+        assert not any(c.startswith("get") for c in shared.calls), "second read is local"
+
+    def test_a_cached_miss_survives_the_rebuild_too(self, store, shared):
+        # Misses are the expensive part — 829 of 892 dev addresses — and were
+        # re-asked after every rebuild.
+        geo_cache.store("PO BOX 2271, CAPE TOWN, ZA", None, None)
+        store.clear()
+        assert geo_cache.lookup("PO BOX 2271, CAPE TOWN, ZA") == (None, None)
+
+    def test_a_stale_bucket_miss_is_retried(self, store, shared):
+        old = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+        shared.objects[geo_cache.s3_key(self.ADDR)] = __import__("json").dumps(
+            {"query": self.ADDR, "lat": None, "lng": None, "precision": None, "checked_at": old}).encode()
+        assert geo_cache.lookup(self.ADDR) is None
+        assert store == [], "nothing stale is copied back"
+
+    def test_the_table_wins_when_it_has_an_answer(self, store, shared):
+        geo_cache.store(self.ADDR, (1.0, 1.0), "approx")
+        shared.calls.clear()
+        assert geo_cache.lookup(self.ADDR) == ((1.0, 1.0), "approx")
+        assert shared.calls == [], "no bucket round-trip for a local hit"
+
+    def test_a_digest_collision_or_bad_object_is_ignored(self, store, shared):
+        shared.objects[geo_cache.s3_key(self.ADDR)] = b'{"query": "SOMEWHERE ELSE", "lat": 1, "lng": 1}'
+        assert geo_cache.lookup(self.ADDR) is None
+        shared.objects[geo_cache.s3_key(self.ADDR)] = b"not json"
+        assert geo_cache.lookup(self.ADDR) is None
+
+    def test_off_without_the_store(self, store):
+        with patch.object(settings, "OBJECT_STORE_BUCKET", ""):
+            geo_cache.store(self.ADDR, (1.0, 1.0), "exact")
+            store.clear()
+            assert geo_cache.lookup(self.ADDR) is None
+
+
+class TestForget:
+    ADDR = "12 HOME STREET, SMALLTOWN, GB"
+
+    def test_removes_the_row_and_the_object(self, store, shared):
+        geo_cache.store(self.ADDR, (1.0, 2.0), "exact")
+        assert geo_cache.s3_key(self.ADDR) in shared.objects
+        r = geo_cache.forget(self.ADDR)
+        assert r == {"rows": 1, "object": True}
+        assert geo_cache.s3_key(self.ADDR) not in shared.objects
+        # and it does not come back from the bucket on the next lookup
+        store.clear()
+        assert geo_cache.lookup(self.ADDR) is None
+
+    def test_forgetting_an_unknown_address_is_quiet(self, store, shared):
+        assert geo_cache.forget("NOWHERE") == {"rows": 0, "object": True}

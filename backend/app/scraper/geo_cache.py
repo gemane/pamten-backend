@@ -17,10 +17,20 @@ addresses resolve to nothing — agents' buildings OpenStreetMap has never heard
 of — and re-asking about them on every run is the single most wasteful thing this
 module could do. They are retried after `_MISS_TTL_DAYS`, because OSM does
 improve and a permanent "no" would be a lie.
+
+**A second, shared layer** lives in the project's object store (prefix
+``geocode/``, one small JSON object per address): the table is wiped with every
+database rebuild, and Render's on-demand lookups never saw what this box's
+imports had learned — so every rebuild re-asked Nominatim for all of it, at
+one request a second. Read-through on a table miss (and the table is then
+refilled), write-through on store. Same pattern as the EDGAR filing cache.
 """
+import hashlib
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from app import objectstore
 from app.db.arcadedb import run_query, run_command
 
 log = logging.getLogger(__name__)
@@ -59,8 +69,12 @@ def lookup(query: str) -> tuple[Coord | None, str | None] | None:
         # "not cached" without any special handling.
         raise
     if not rows:
-        return None
-    row = rows[0]
+        return _lookup_shared(query)
+    return _answer(rows[0])
+
+
+def _answer(row: dict) -> tuple[Coord | None, str | None] | None:
+    """A stored row as the caller sees it: a hit, a still-fresh miss, or None."""
     if row.get("lat") is not None and row.get("lng") is not None:
         return (float(row["lat"]), float(row["lng"])), row.get("precision")
 
@@ -76,12 +90,58 @@ def lookup(query: str) -> tuple[Coord | None, str | None] | None:
     return None
 
 
+# ── the shared layer ─────────────────────────────────────────────────────────
+
+#: prefix of the address cache inside the shared bucket
+S3_PREFIX = "geocode/"
+
+
+def s3_key(query: str) -> str:
+    """Addresses carry slashes, commas and every alphabet; the key is a digest."""
+    return S3_PREFIX + hashlib.sha256(query.encode("utf-8")).hexdigest()
+
+
+def _lookup_shared(query: str) -> tuple[Coord | None, str | None] | None:
+    """The bucket's answer for an address the table does not have; a hit (or a
+    fresh miss) is copied back into the table so the next read is local."""
+    if not objectstore.enabled():
+        return None
+    blob = objectstore.get(s3_key(query))
+    if blob is None:
+        return None
+    try:
+        row = json.loads(blob)
+        if row.get("query") != query:
+            return None                    # a digest collision would be a lie
+    except (ValueError, AttributeError):
+        log.warning("geocode cache: undecodable object for %r; ignoring", query[:60])
+        return None
+    answer = _answer(row)
+    if answer is not None:
+        _store_table(query, (row["lat"], row["lng"]) if row.get("lat") is not None else None,
+                     row.get("precision"), row.get("checked_at"))
+    return answer
+
+
+def _store_shared(query: str, lat, lng, precision: str | None, now: str) -> None:
+    objectstore.put(s3_key(query), json.dumps({
+        "query": query, "lat": lat, "lng": lng, "precision": precision, "checked_at": now,
+    }).encode("utf-8"), content_type="application/json")
+
+
 def store(query: str, coord: Coord | None, precision: str | None) -> None:
     """Remember an answer, hit or miss. Best-effort: a cache write must never be
     the reason a geocode fails."""
     if not query:
         return
     now = datetime.now(timezone.utc).isoformat()
+    lat, lng = coord if coord else (None, None)
+    _store_table(query, coord, precision, now)
+    if objectstore.enabled():
+        _store_shared(query, lat, lng, precision, now)
+
+
+def _store_table(query: str, coord: Coord | None, precision: str | None, now: str) -> None:
     lat, lng = coord if coord else (None, None)
     try:
         run_command(
@@ -110,6 +170,24 @@ def store(query: str, coord: Coord | None, precision: str | None) -> None:
         # index. The coordinate is already paid for and still gets written to the
         # entity; only the cache entry is lost.
         log.warning("Geocode cache write failed for %r: %s", query[:60], exc)
+
+
+def forget(query: str) -> dict:
+    """Remove an address from BOTH layers — the erasure runbook's step, because
+    a deleted row would otherwise be restored from the bucket on the next lookup.
+    Returns what was removed."""
+    removed = {"rows": 0, "object": False}
+    if not query:
+        return removed
+    try:
+        before = run_query("MATCH (g:GeoCache {query: $q}) RETURN count(g) AS n", {"q": query})
+        removed["rows"] = int((before[0]["n"] if before else 0) or 0)
+        run_command("MATCH (g:GeoCache {query: $q}) DELETE g", {"q": query})
+    except Exception as exc:  # noqa: BLE001 - report, the object still gets removed
+        log.warning("geocode cache: could not delete row for %r: %s", query[:60], exc)
+    if objectstore.enabled():
+        removed["object"] = objectstore.delete(s3_key(query))
+    return removed
 
 
 def stats() -> dict:
