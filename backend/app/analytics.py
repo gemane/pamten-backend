@@ -27,6 +27,8 @@ junk-injection vector in one.
 import logging
 from datetime import datetime, timezone
 
+from app.weekly import iso_week
+
 log = logging.getLogger(__name__)
 
 #: Every usage event the client may report. Anything else is rejected — see the
@@ -92,6 +94,7 @@ def record_search(query: str, country: str | None, outcome: str) -> None:
     # be counted, find nothing, and still not be the same event as an abandonment.
     zero = 1 if outcome == "zero" else 0
     selected = 1 if outcome == "selected" else 0
+    q, c = (query or "").strip()[:120], (country or "").strip().upper()
     run_sql(
         "UPDATE SearchDemand SET key = :k, query = :q, country = :c, "
         "searches = COALESCE(searches, 0) + 1, "
@@ -99,8 +102,19 @@ def record_search(query: str, country: str | None, outcome: str) -> None:
         "selected = COALESCE(selected, 0) + :sel, "
         "first_seen = COALESCE(first_seen, :now), last_seen = :now "
         "UPSERT WHERE key = :k",
-        {"k": key, "q": (query or "").strip()[:120], "c": (country or "").strip().upper(),
-         "zero": zero, "sel": selected, "now": now},
+        {"k": key, "q": q, "c": c, "zero": zero, "sel": selected, "now": now},
+    )
+    # The same total again, per calendar week — the lifetime row cannot say how
+    # many of its searches happened THIS week, and the digest asks exactly that.
+    # Still a total: no user, no session, no timestamp on any one search.
+    week = iso_week()
+    run_sql(
+        "UPDATE SearchWeek SET key = :k, query = :q, country = :c, week = :w, "
+        "searches = COALESCE(searches, 0) + 1, "
+        "zero_results = COALESCE(zero_results, 0) + :zero, "
+        "selected = COALESCE(selected, 0) + :sel "
+        "UPSERT WHERE key = :k",
+        {"k": f"{key}|{week}", "q": q, "c": c, "w": week, "zero": zero, "sel": selected},
     )
 
 
@@ -133,6 +147,12 @@ def _bump(run_sql, key: str) -> None:
         "UPDATE UsageCounter SET key = :k, count = COALESCE(count, 0) + 1, "
         "first_seen = COALESCE(first_seen, :now), last_seen = :now UPSERT WHERE key = :k",
         {"k": key, "now": now},
+    )
+    week = iso_week()
+    run_sql(
+        "UPDATE UsageWeek SET key = :k, event = :e, week = :w, "
+        "count = COALESCE(count, 0) + 1 UPSERT WHERE key = :k",
+        {"k": f"{key}|{week}", "e": key, "w": week},
     )
 
 
@@ -174,7 +194,8 @@ def prune(days: int = RETENTION_DAYS, dry_run: bool = False) -> dict:
 
     from app.db.arcadedb import run_sql
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = cutoff_dt.isoformat()
     out: dict[str, int] = {}
     for vtype in ("SearchDemand", "UsageCounter", "EndpointStat"):
         rows = run_sql(f"SELECT count(*) AS n FROM {vtype} WHERE last_seen < :cut",
@@ -183,5 +204,14 @@ def prune(days: int = RETENTION_DAYS, dry_run: bool = False) -> dict:
         out[vtype] = n
         if n and not dry_run:
             run_sql(f"DELETE FROM {vtype} WHERE last_seen < :cut", {"cut": cutoff})
+    # The weekly rows carry no last_seen — the week is their date. ISO week ids
+    # sort as strings within a year and across years ("2025-W52" < "2026-W01").
+    cutoff_week = iso_week(cutoff_dt)
+    for vtype in ("SearchWeek", "UsageWeek"):
+        rows = run_sql(f"SELECT count(*) AS n FROM {vtype} WHERE week < :w", {"w": cutoff_week})
+        n = int((rows[0].get("n") if rows else 0) or 0)
+        out[vtype] = n
+        if n and not dry_run:
+            run_sql(f"DELETE FROM {vtype} WHERE week < :w", {"w": cutoff_week})
     out["cutoff"] = cutoff
     return out

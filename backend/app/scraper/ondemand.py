@@ -163,12 +163,13 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
             continue
         run_depth = decision.need_depth if spec.depth_aware else 0
         try:
-            with record_run(spec.name, query) as run:
+            with record_run(spec.name, query, reason=decision.reason) as run:
                 res = spec.run(query, run_depth, country)
                 if isinstance(res, dict):
                     run["total"] = res.get("total", 0) or 0
                     if res.get("entity_id"):
                         target_id = res["entity_id"]
+                        run["entity_id"] = target_id
             names_run.append(spec.name)
             source_totals[spec.name] = int(run.get("total") or 0)
         except Exception as exc:  # noqa: BLE001 - one source failing mustn't sink the rest

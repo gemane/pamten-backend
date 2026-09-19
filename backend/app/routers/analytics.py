@@ -138,6 +138,15 @@ def _page(vtype: str, order_by: str, response: Response, skip: int, limit: int) 
     return out
 
 
+@router.get("/weekly")
+def weekly(week: str | None = Query(None, pattern=r"^\d{4}-W\d{2}$"),
+           _: dict = Depends(require_admin)):
+    """The weekly activity digest — the last completed week unless `week` names
+    one. The same numbers the Monday email carries; aggregates only."""
+    from app.weekly_report import weekly_report
+    return weekly_report(week)
+
+
 @router.get("/searches")
 def list_searches(response: Response,
                   skip: int = Query(0, ge=0, le=100_000),
