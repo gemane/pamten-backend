@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     # has an admin without the "first person to /register becomes admin" race.
     # With ADMIN_EMAIL set, self-registration never grants admin.
     ADMIN_EMAIL:                      str | None = None
+    # Where the weekly activity digest goes (manage.py weekly-report --email);
+    # falls back to ADMIN_EMAIL.
+    REPORT_EMAIL:                     str | None = None
     ADMIN_PASSWORD:                   str | None = None
     # ── Transactional email (verification + password reset) ───────────────────
     # Provider-agnostic sender. EMAIL_BACKEND selects the transport: "smtp" sends

@@ -78,6 +78,28 @@ Note the script is `bin/restore.sh`, not `arcadedb-restore.sh` as some documenta
 **Run a restore drill.** An untested backup is a belief, not a backup — restore last night's
 archive into a scratch database occasionally and count the rows.
 
+## Weekly digest
+
+`python manage.py weekly-report [--week 2026-W38] [--email] [--json]` prints the
+activity digest for the last completed calendar week (Monday–Sunday, UTC):
+searches (per-week counters — how many, top queries, how many found nothing),
+scrapes (runs by source, companies scraped for the **first time** vs
+**refreshed** — told apart by the run's recorded `reason` — records written, SEC
+enrichments, failures), imports (GLEIF/PSC runs), and graph totals with the
+change since the previous stored digest. `--email` sends it to `REPORT_EMAIL`
+(falling back to `ADMIN_EMAIL`) through the configured email backend. Every run
+stores the digest (`WeeklyReport`, one per week) so the next can measure growth.
+Aggregates only: it names companies, never who searched.
+
+Manual-first. To get it every Monday at 06:00 UTC:
+
+```
+0 6 * * 1 /home/administrator/scripts/cron-weekly-report.sh
+```
+
+The wrapper takes a lock and logs to `/home/administrator/data/weekly-report.log`.
+The same numbers are on the Scraper tab (admins) and at `GET /analytics/weekly`.
+
 ## Retention and personal data
 
 Backups contain the personal data in the graph (PSC people: names, birth months, addresses), so

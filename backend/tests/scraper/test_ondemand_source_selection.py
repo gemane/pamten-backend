@@ -12,7 +12,7 @@ from app.scraper.scraper_registry import ScraperSpec, register
 
 
 @contextlib.contextmanager
-def _fake_record_run(source, target):
+def _fake_record_run(source, target, reason=None):
     yield {}
 
 
@@ -82,7 +82,7 @@ def test_the_answer_says_what_each_source_wrote(monkeypatch):
     # a source that ran and found nothing stays in the map at zero, which is an
     # answer, while a source that raised is absent, which is not.
     calls = _setup(monkeypatch, entity=None)
-    from app.scraper.scraper_registry import _registry, ScraperSpec, register
+    from app.scraper.scraper_registry import ScraperSpec, register
     def boom(q, d, c=None):
         raise RuntimeError("source down")
     register(ScraperSpec("open_corporates", boom, (lambda: True), kind="instant", depth_aware=False))

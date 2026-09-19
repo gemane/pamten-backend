@@ -63,6 +63,7 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Peer",     "base_url",        "NOTUNIQUE"),
     ("ScrapeRun", "id",             "UNIQUE"),
     ("ScrapeRun", "started_at",     "NOTUNIQUE"),
+    ("ScrapeRun", "entity_id",      "NOTUNIQUE"),
     # Verification flags (user reports that a node/edge looks wrong).
     ("Flag",      "id",             "UNIQUE"),
     ("Flag",      "status",         "NOTUNIQUE"),
@@ -91,6 +92,14 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("SearchDemand", "key",          "UNIQUE"),
     ("UsageCounter", "key",          "UNIQUE"),
     ("EndpointStat", "key",          "UNIQUE"),
+    # The same counters per calendar week (key = lifetime key + "|2026-W38"),
+    # so the weekly digest can say how many — still totals, nothing per event.
+    ("SearchWeek",   "key",          "UNIQUE"),
+    ("SearchWeek",   "week",         "NOTUNIQUE"),
+    ("UsageWeek",    "key",          "UNIQUE"),
+    ("UsageWeek",    "week",         "NOTUNIQUE"),
+    # One stored digest per week, so the next one can report the change.
+    ("WeeklyReport", "week",         "UNIQUE"),
     # Address -> coordinate cache, so a shared registered-agent building is
     # geocoded once rather than once per company registered there (24 companies
     # share one Wilmington address in the dev graph alone). UNIQUE on the cleaned

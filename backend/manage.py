@@ -239,6 +239,34 @@ def cmd_quality_report(args):
     report = quality_report()
     print(format_report(report) if not args.json else __import__("json").dumps(report, indent=2))
 
+def cmd_weekly_report(args):
+    """The weekly activity digest: searches, scrapes (first vs refreshed),
+    imports, graph growth. Prints it; --email sends it to REPORT_EMAIL (or
+    ADMIN_EMAIL); each run stores the digest so the next can report the change.
+    Manual-first — see docs/operations.md for the Monday cron line."""
+    _apply_direct_db_url(args)
+    import json as _json
+    from app.config import settings
+    from app.weekly_report import (format_report_html, format_report_text,
+                                   store_report, weekly_report)
+    report = weekly_report(args.week)
+    store_report(report)
+    if args.json:
+        print(_json.dumps(report, indent=2))
+    else:
+        print(format_report_text(report), end="")
+    if args.email:
+        to = settings.REPORT_EMAIL or settings.ADMIN_EMAIL
+        if not to:
+            print("no recipient: set REPORT_EMAIL or ADMIN_EMAIL")
+            raise SystemExit(1)
+        from app.notifications.email import get_email_sender
+        report["recipient"] = to          # the footer names who this went to
+        get_email_sender().send(to, f"Owlgraph Report — {report['label']}",
+                                format_report_text(report), format_report_html(report))
+        print(f"sent to {to}")
+
+
 def cmd_prune_analytics(args):
     """Drop usage counters nothing has touched inside the retention window."""
     _apply_direct_db_url(args)
@@ -1158,6 +1186,16 @@ def _build_parser():
     p_qr.set_defaults(func=cmd_quality_report)
 
     # prune-analytics command
+    p_wr = subparsers.add_parser('weekly-report',
+        help='The weekly activity digest (last completed week by default)')
+    p_wr.add_argument('--week', help='ISO week id, e.g. 2026-W38')
+    p_wr.add_argument('--email', action='store_true',
+                      help='Send it to REPORT_EMAIL (or ADMIN_EMAIL)')
+    p_wr.add_argument('--json', action='store_true', help='Print the report as JSON')
+    p_wr.add_argument('--db-url', dest='db_url', default=None,
+                      help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
+    p_wr.set_defaults(func=cmd_weekly_report)
+
     p_prune = subparsers.add_parser('prune-analytics',
                                     help='Delete usage counters untouched within the retention window')
     p_prune.add_argument('--days', type=int, default=365,

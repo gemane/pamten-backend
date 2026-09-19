@@ -89,6 +89,7 @@ Off unless `ANALYTICS_ENABLED` is set.
 | GET | `/analytics/searches` | admin | What was searched for, most-searched first, with `zero_results` — a ranked list of demand the graph cannot answer. Paged (`skip`, `X-Total-Count`) |
 | GET | `/analytics/usage` | admin | Feature counters and clicked result positions |
 | GET | `/analytics/endpoints` | admin | Request counts per route template, status class and latency band |
+| GET | `/analytics/weekly?week=` | admin | The weekly activity digest — the last completed ISO week unless `week` (`2026-W38`) names one: searches (per-week counters), scrapes (first vs refreshed by the run's `reason`, records, failures, SEC enrichments), imports, graph totals with the change since the stored previous digest. Same numbers as the Monday email (`manage.py weekly-report --email`). |
 
 ## Verification flags
 | Method | Path | Auth | Description |
