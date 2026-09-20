@@ -61,6 +61,19 @@ def test_reasserting_a_closed_seat_opens_a_new_spell(it_db, pair):
     assert _roles(it_db) == [("CEO", "1997-09-16", "2011-08-24"), ("CEO", "2026-01-01", None)]
 
 
+def test_a_reassertion_dated_before_the_close_does_not_reopen_the_seat(it_db, pair):
+    # Cook's older Form 4 (filed 2026-08-20) still says CEO after the 8-K
+    # closed the seat on 2026-09-01 — the same spell, not a return. Only a
+    # filing dated after the close opens a new one.
+    _upsert_role_sec("tc", "ap", "CEO", pair, since="2011-08-24")
+    _close_role_sec("tc", "ap", "2026-09-01", role="CEO", source_id=pair)
+    _upsert_role_sec("tc", "ap", "Chief Executive Officer", pair, source_date="2026-08-20")
+    assert _roles(it_db) == [("CEO", "2011-08-24", "2026-09-01")], "no second spell"
+    _upsert_role_sec("tc", "ap", "CEO", pair, source_date="2026-10-15")
+    assert _roles(it_db) == [("CEO", "2011-08-24", "2026-09-01"), ("CEO", None, None)], \
+        "a filing after the close is a return"
+
+
 def test_a_closing_records_the_departure_as_a_claim(it_db, pair):
     _upsert_role_sec("tc", "ap", "CEO", pair)
     _close_role_sec("tc", "ap", "2026-09-01", role="CEO", source_id=pair,

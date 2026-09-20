@@ -1859,6 +1859,20 @@ class TestDeparturesFromEightK:
         out = _departures_in_text("Ms. Doe resigned as a director.", ["Jane Doe"], "2026-03-05")
         assert out and out[0]["until"] == "2026-03-05"
 
+    def test_a_succession_closes_only_the_person_after_the_verb(self):
+        # Both real Apple sentences (2026-01-02 and 2025-12-05). Borders and
+        # Newstead are the successors and must stay open.
+        from app.scraper.sec_edgar import _departures_in_text
+        kondo = "Mr. Borders succeeds Chris Kondo in the role of Principal Accounting Officer."
+        out = _departures_in_text(kondo, ["Ben Borders", "Chris Kondo"], "2026-01-02")
+        assert [(d["name"], d["until"], d["role"]) for d in out] == \
+            [("Chris Kondo", "2026-01-02", "Principal Accounting Officer")]
+        adams = ("Apple announced that Jennifer Newstead will become Apple’s general counsel on "
+                 "March 1, 2026, following a transition of duties from Kate Adams, who has served "
+                 "as Apple’s general counsel since 2017.")
+        out = _departures_in_text(adams, ["Jennifer Newstead", "Katherine L Adams"], "2025-12-05")
+        assert [(d["name"], d["until"]) for d in out] == [("Katherine L Adams", "2026-03-01")]
+
     def test_a_surname_alone_never_matches(self):
         # One 8-K names several people; "Cook" in a sentence about someone else
         # must not close Tim Cook's seat.

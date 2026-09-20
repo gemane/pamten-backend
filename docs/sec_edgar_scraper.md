@@ -635,7 +635,11 @@ statements of a departure exist on EDGAR, and both now close the seat
   Hoffman's "decided not to stand for re-election at the annual meeting" leaves
   him serving until a meeting whose date the text does not give. Where the
   sentence names the seat ("from his role as Chief Executive Officer to Executive
-  Chair"), only that seat closes; Tim Cook keeps his board seat.
+  Chair"), only that seat closes; Tim Cook keeps his board seat. A **succession**
+  names two people — "Mr. Borders succeeds Chris Kondo in the role of Principal
+  Accounting Officer", "following a transition of duties from Kate Adams" — and
+  only the person named *after* the verb is leaving; the successor before it stays
+  open, and the sentence's date (the successor's start) ends the seat.
 
 A closed seat is a new spell if reasserted later: Steve Jobs's two CEO tenures
 are two edges, which is what the timeline exists to show.

@@ -1688,6 +1688,14 @@ _DEPARTURE_RX = re.compile(
     r"\b(?:resign|retir|step(?:ped|s)?\s+down|depart|ceas|terminat|passed\s+away|"
     r"died|death|will\s+leave|leaving|no\s+longer\s+serv|transition\s+from|"
     r"not\s+(?:to\s+)?stand\s+for\s+re-?election)", re.IGNORECASE)
+#: A succession names TWO people: the successor before the verb, the person
+#: leaving after it — "Mr. Borders succeeds Chris Kondo", "a transition of
+#: duties from Kate Adams". Only the name after the verb is a departure, and
+#: the sentence's date (the successor's start) is when the seat ends.
+_SUCCESSION_RX = re.compile(
+    r"\b(?:succeed(?:s|ed)|replac(?:es|ed)|transition\s+of\s+(?:duties|responsibilities)\s+from"
+    r"|assum(?:es|ed)\s+the\s+(?:role|position|duties)\s+(?:of\s+[\w ,]+?\s+)?from)\b",
+    re.IGNORECASE)
 #: A departure already in the past — datable from the sentence's own date.
 _HARD_PAST_RX = re.compile(
     r"\b(?:resigned|retired|passed\s+away|died|was\s+terminated|ceased|"
@@ -1742,15 +1750,18 @@ def _departures_in_text(text: str, names: list[str], filed: str | None) -> list[
     out: dict[tuple, dict] = {}
     patterns = [(n, _name_rx(n)) for n in names]
     for sentence in _SENTENCE_RX.split(text):
-        if not _DEPARTURE_RX.search(sentence):
+        succession = _SUCCESSION_RX.search(sentence)
+        if not succession and not _DEPARTURE_RX.search(sentence):
             continue
+        # In a succession only the person named AFTER the verb is leaving.
+        zone = sentence[succession.end():] if succession else sentence
         for name, rx in patterns:
-            if rx is None or not rx.search(sentence):
+            if rx is None or not rx.search(zone):
                 continue
             eff = _EFFECTIVE_RX.search(sentence)
             if eff:
                 until = _iso_from_words(eff)
-            elif _HARD_PAST_RX.search(sentence):
+            elif succession or _HARD_PAST_RX.search(sentence):
                 d = _DATE_RX.search(sentence)
                 until = _iso_from_words(d) if d else filed
             else:

@@ -355,8 +355,27 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     # structure, not people (see graph_writer._upsert_role).
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
-        matches = _matching_role(session, person_id, entity_id, role)
-        existing = matches[0] if matches else None
+        matches = _matching_role(session, person_id, entity_id, role, open_only=False)
+        open_seats = [m for m in matches if not m.get("until")]
+        existing = open_seats[0] if open_seats else None
+        if not existing:
+            # No open seat — but a CLOSED one that ends after this filing is
+            # the same spell, not a new one. Tim Cook's older Form 4 says CEO;
+            # re-asserted after the 8-K closed the seat on 2026-09-01, it
+            # opened a second CEO spell that the next 8-K read closed again,
+            # once per scrape. A filing dated after the close is a return.
+            asserted = since or source_date or ""
+            for m in matches:
+                if m.get("until") and (m["until"] or "") >= asserted:
+                    session.run(
+                        """
+                        MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                        WHERE r.role = $role AND r.until = $until
+                        SET r.last_scraped_at = $now, r.since = COALESCE(r.since, $since)
+                        """,
+                        pid=person_id, eid=entity_id, role=m["role"], until=m["until"],
+                        now=now, since=since)
+                    return
         if existing:
             session.run(
                 """

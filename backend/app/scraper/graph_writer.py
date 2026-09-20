@@ -431,7 +431,7 @@ def _matching_role(session, person_id: str, entity_id: str, role: str,
         if open_only and r.get("until"):
             continue
         out.append({"role": r.get("role"), "since": r.get("since"),
-                    "cred": r.get("cred") or 0})
+                    "until": r.get("until"), "cred": r.get("cred") or 0})
     return out
 
 
