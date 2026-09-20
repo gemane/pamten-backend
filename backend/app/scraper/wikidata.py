@@ -792,6 +792,20 @@ def _v(row: dict, key: str) -> str | None:
     return row.get(key, {}).get("value")
 
 
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _date(row: dict, key: str) -> str | None:
+    """A time qualifier as YYYY-MM-DD, or None when it is not one.
+
+    Wikidata's "unknown value" is a blank node, which SPARQL returns as
+    `http://www.wikidata.org/.well-known/genid/…` — cut to ten characters that
+    became the start date "http://www" on Jeff Weiner's LinkedIn seat.
+    """
+    raw = (_v(row, key) or "")[:10]
+    return raw if _ISO_DAY.fullmatch(raw) else None
+
+
 #: A bare Q-number, which is what the label service returns when it has no label
 #: in any requested language.
 _BARE_QID = re.compile(r"^Q\d+$")
@@ -1057,15 +1071,15 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if pred_qid and pred_qid not in result["predecessors"]:
                 result["predecessors"][pred_qid] = {
                     "qid": pred_qid, "name": _label(row, "predecessorLabel"),
-                    "date": (_v(row, "predecessorDate") or "")[:10] or None,
+                    "date": _date(row, "predecessorDate"),
                     "lei": normalize_lei(_v(row, "predecessorLei")),
                     "sec_cik": normalize_cik(_v(row, "predecessorCik"))}
 
         # CEO (keyed by qid+since to capture multiple tenures)
         if ceo_uri := _v(row, "ceo"):
             ceo_qid = _qid(ceo_uri)
-            since   = (_v(row, "ceoStart") or "")[:10] or None
-            until   = (_v(row, "ceoEnd")   or "")[:10] or None
+            since   = _date(row, "ceoStart")
+            until   = _date(row, "ceoEnd")
             key     = f"{ceo_qid}|{since}"
             if ceo_qid and key not in result["ceos"]:
                 result["ceos"][key] = {
@@ -1084,8 +1098,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                           ("board", "Board Member")):
             if uri := _v(row, var):
                 pqid = _qid(uri)
-                since = (_v(row, f"{var}Start") or "")[:10] or None
-                until = (_v(row, f"{var}End") or "")[:10] or None
+                since = _date(row, f"{var}Start")
+                until = _date(row, f"{var}End")
                 okey = f"{pqid}|{role}|{since}"
                 if pqid and okey not in result["officers"]:
                     result["officers"][okey] = {

@@ -831,3 +831,14 @@ class TestWebsiteAggregation:
             "ftp://a.io/",
         )]
         assert _aggregate("Q1", rows)["website"] == "https://www.apple.com/"
+
+
+class TestUnknownValueIsNotADate:
+    def test_a_blank_node_start_time_is_dropped_not_truncated(self):
+        # Wikidata's "unknown value" comes back as a genid URI; cut to ten
+        # characters it was stored as the start date "http://www".
+        row = {**APPLE_ROW,
+               "ceoStart": {"value": "http://www.wikidata.org/.well-known/genid/0f3a"},
+               "ceoEnd":   {"value": "2020-06-01T00:00:00Z"}}
+        ceo = _aggregate("Q1", [row])["ceos"][0]
+        assert ceo["since"] is None and ceo["until"] == "2020-06-01"
