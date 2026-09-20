@@ -1551,7 +1551,9 @@ class TestJointFilingCoverPages:
         assert sec_edgar._shares_outstanding(page) is None
         assert sec_edgar._shares_outstanding(self.BOZANO) == 722_766_139
         assert sec_edgar._parse_class_title_from_text(self.BOZANO) == "Common Shares"
-        assert sec_edgar._own_stake_and_voting(page, 10.4, document=self.BOZANO) == (10.4, None)
+        # A 13G, so the two Bozano pages are a family, not a bloc.
+        assert sec_edgar._own_stake_and_voting(page, 10.4, document=self.BOZANO,
+                                               in_group=False) == (10.4, None)
 
     def test_a_lone_filer_document_is_returned_whole(self):
         from app.scraper import sec_edgar
@@ -1594,3 +1596,123 @@ class TestJointFilingCoverPages:
         assert row["shares"] == 66_236_689
         assert row["shares_outstanding"] == 722_766_139
         assert row["share_class"] == "Common Shares"
+
+
+class TestOldCoverPagesWriteZeroInWords:
+    """Pre-2024 covers write zero as "NONE", "-0-" or "—0—", and a filer with
+    nothing in a row sometimes leaves the cell empty. The row parser skipped
+    those and took the next digits it saw — the NEXT ROW'S NUMBER. Berkshire
+    Hathaway's Activision 13G stored 8 shares, Citadel's Tesla 13G 6 shares.
+    Texts are the real covers, condensed.
+    """
+
+    BERKSHIRE = ("5 SOLE VOTING POWER NONE 6 SHARED VOTING POWER 52,717,075 shares of Common Stock "
+                 "7 SOLE DISPOSITIVE POWER NONE 8 SHARED DISPOSITIVE POWER 52,717,075 shares of Common Stock "
+                 "9 AGGREGATE AMOUNT BENEFICIALLY OWNED BY EACH REPORTING PERSON 52,717,075 shares of Common Stock "
+                 "11 PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 9 6.7%")
+    DEER = ("5. SOLE VOTING POWER 3,328,253* 6. SHARED VOTING POWER —0— "
+            "7. SOLE DISPOSITIVE POWER 3,328,253* 8. SHARED DISPOSITIVE POWER —0— "
+            "9. AGGREGATE AMOUNT BENEFICIALLY OWNED BY EACH REPORTING PERSON 3,328,253*")
+    CITADEL = ("5. SOLE VOTING POWER 0 6. SHARED VOTING POWER 7,675,822 shares "
+               "7. SOLE DISPOSITIVE POWER 0 8. SHARED DISPOSITIVE POWER See Row 6 above. "
+               "9. AGGREGATE AMOUNT BENEFICIALLY OWNED BY EACH REPORTING PERSON See Row 6 above.")
+    EMPTY = ("5 SOLE VOTING POWER 6 SHARED VOTING POWER 1,234,567 "
+             "7 SOLE DISPOSITIVE POWER 8 SHARED DISPOSITIVE POWER 1,234,567")
+
+    def test_none_is_zero_not_the_next_rows_number(self):
+        from app.scraper.sec_edgar import _parse_power_rows, _shares_held
+        rows = _parse_power_rows(self.BERKSHIRE)
+        assert rows == {"sole_voting": 0, "shared_voting": 52_717_075,
+                        "sole_dispositive": 0, "shared_dispositive": 52_717_075}
+        assert _shares_held(rows, 52_717_075) == 52_717_075
+
+    def test_dashed_zero_and_the_bozano_number_of_minus_zero_minus(self):
+        from app.scraper.sec_edgar import _parse_power_rows
+        assert _parse_power_rows(self.DEER) == {"sole_voting": 3_328_253, "shared_voting": 0,
+                                                "sole_dispositive": 3_328_253, "shared_dispositive": 0}
+        bozano = "5 SOLE VOTING POWER NUMBER OF -0- SHARES 6 SHARED VOTING POWER BENEFICIALLY OWNED BY 75,133,609"
+        assert _parse_power_rows(bozano) == {"sole_voting": 0, "shared_voting": 75_133_609}
+
+    def test_a_reference_to_another_row_copies_that_row(self):
+        from app.scraper.sec_edgar import _parse_power_rows, _shares_held
+        rows = _parse_power_rows(self.CITADEL)
+        assert rows["shared_dispositive"] == 7_675_822
+        assert _shares_held(rows, None) == 7_675_822
+
+    def test_an_empty_cell_is_absent_not_a_count(self):
+        from app.scraper.sec_edgar import _parse_power_rows
+        assert _parse_power_rows(self.EMPTY) == {"shared_voting": 1_234_567,
+                                                 "shared_dispositive": 1_234_567}
+
+
+class TestThirteenGCoFilersAreAFamilyNotABloc:
+    """Seven of the eleven pre-2024 13G rows on dev read "stake unknown, bloc
+    X%": the text path assumed every filer might be in a group, and a 13G
+    family (Berkshire + Buffett + subsidiaries; Sequoia's four funds) reports
+    sole dispositive 0 exactly like a 13D bloc member. A 13G is passive by
+    definition, so its co-filers never make a bloc; a 13D's still do.
+    """
+
+    def test_the_rule(self):
+        from app.scraper.sec_edgar import _co_filers_form_a_bloc
+        assert _co_filers_form_a_bloc("SC 13D", 3) is True
+        assert _co_filers_form_a_bloc("SCHEDULE 13D/A", 2) is True
+        assert _co_filers_form_a_bloc("SC 13G", 10) is False
+        assert _co_filers_form_a_bloc("SCHEDULE 13G/A", 4) is False
+        assert _co_filers_form_a_bloc("SC 13D", 1) is False
+        assert _co_filers_form_a_bloc("SC 13D", 0) is True, "unknown count stays conservative"
+
+    def test_a_13g_family_member_keeps_its_reported_stake(self):
+        from app.scraper.sec_edgar import _stake_from_person
+        person = {"name": "Berkshire Hathaway Inc", "sole_voting": 0,
+                  "shared_voting": 52_717_075, "sole_dispositive": 0,
+                  "shared_dispositive": 52_717_075, "aggregate": 52_717_075, "percent": 6.7}
+        family = {"comment_text": "", "schedule": "13G",
+                  "persons": [person, {"name": "Warren E. Buffett"}, {"name": "National Indemnity Co"}]}
+        assert _stake_from_person(family, person) == (6.7, None)
+        group = {**family, "schedule": "13D"}
+        assert _stake_from_person(group, person) == (None, 6.7)
+
+    def test_the_parsed_xml_says_which_schedule_it_is(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        assert _parse_13dg_xml(_fixture("13g_vanguard.xml"))["schedule"] == "13G"
+        assert _parse_13dg_xml(_fixture("13ga_wellington.xml"))["schedule"] == "13G"
+
+    def test_end_to_end_berkshire_over_activision(self):
+        # Ten cover pages, zero written as NONE. Stored before: stake None,
+        # "bloc" 6.7%, 8 shares.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13G"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2023-02-14</filing-date>
+            <accession-number>0001193125-23-038333</accession-number>
+          </content></entry>
+        </feed>"""
+        index = ('<span class="companyName">BERKSHIRE HATHAWAY INC (Filed by)</span>'
+                 '<a href="x">CIK=0001067983</a>'
+                 '<table><tr><td><a href="/Archives/edgar/data/718877/d415358dsc13g.htm">d</a></td>'
+                 '<td>SC 13G</td></tr></table>')
+        page = ("CUSIP No. 00507V109 1 NAMES OF REPORTING PERSONS {name} 2 CHECK THE APPROPRIATE BOX "
+                "IF A MEMBER OF A GROUP 4 CITIZENSHIP OR PLACE OF ORGANIZATION Delaware "
+                + TestOldCoverPagesWriteZeroInWords.BERKSHIRE.replace("52,717,075", "{n}").replace("6.7%", "{pct}")
+                + " 12 TYPE OF REPORTING PERSON {code} ")
+        doc = ("Activision Blizzard, Inc. (Name of Issuer) Common Stock, par value $0.000001 "
+               "(Title of Class of Securities) "
+               + page.format(name="Berkshire Hathaway Inc.", n="52,717,075", pct="6.7%", code="HC, CO")
+               + page.format(name="Warren E. Buffett", n="52,717,075", pct="6.7%", code="IN")
+               + page.format(name="National Indemnity Company", n="42,000,000", pct="5.3%", code="IC, CO")
+               + "based on a total of 782,626,000 shares issued and outstanding.")
+        pages = {"https://x.test/i.htm": index,
+                 "https://www.sec.gov/Archives/edgar/data/718877/d415358dsc13g.htm": doc}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Activision Blizzard, Inc.", "718877")
+        assert len(res) == 1
+        row = res[0]
+        assert row["is_individual"] is False
+        assert row["stake_percent"] == 6.7 and row["voting_power_pct"] is None
+        assert row["shares"] == 52_717_075
+        assert row["shares_outstanding"] == 782_626_000

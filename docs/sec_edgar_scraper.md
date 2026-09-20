@@ -372,6 +372,14 @@ three report.
 | sole dispositive = 0 (holds only jointly) | `None` | row 13 |
 | denominator not stated | `None` | row 13 |
 
+"Group member" means **co-filers on a 13D**. A 13G is passive by definition, so
+several reporting persons on one are a fund family or a parent with its
+subsidiaries — Berkshire Hathaway + Buffett + National Indemnity on Activision,
+Sequoia's four funds on LinkedIn — each holding the shares it reports, and the
+filer keeps row 13 as its stake with no bloc (`_co_filers_form_a_bloc`). Before
+this rule the text path assumed every filer might be in a group, and seven of the
+eleven pre-2024 13G rows on dev read "stake unknown, bloc X%".
+
 Two deliberate `None`s. A purely joint holder like BRC — which can dispose of
 nothing alone, its shares sitting in the Stichting it co-owns with EPS — would
 read as "owns nothing" if given 0.0, the opposite of the truth. And keeping the
@@ -420,6 +428,14 @@ Three complications:
    A lone filer's document is returned whole, so the common case is unchanged.
    Co-filers without their own EDGAR filer CIK (Júlio has none — only Cia. Bozano
    is in the SGML `FILED BY` block) are still not written to the graph.
+
+5. **Zero in words, and empty cells** — old covers write a nil row as `NONE`,
+   `-0-` or `—0—`, and some leave the cell empty or say "See Row 6 above". The
+   row parser skipped those and took the next digits it met, which are the *next
+   row's number*: Berkshire's Activision 13G stored 8 shares, Citadel's Tesla 13G
+   6. `_parse_power_rows` now reads the zero words as 0, treats digits that are
+   immediately followed by a row label as an empty cell, and resolves "See Row N"
+   by the label that follows N on that cover (13D and 13G number rows differently).
 
 Winning pattern that handles the first three:
 
