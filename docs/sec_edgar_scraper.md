@@ -607,9 +607,15 @@ transition date; Jennifer Newstead's 2026-03-01.
 are a few a year; `MAX_FORM3_SCAN`) and attaches `since` to the listed person when
 the Form 3 is for the **same seat** as their current one (`canonical_role`). A
 Form 3 for a different seat — VP then, CEO now — dates the wrong thing and is left
-alone. Coverage limit: the submissions index holds the newest ~1,000 filings, so a
-director who joined long ago has no Form 3 in reach and stays undated unless
-Wikidata knows.
+alone. The inline submissions index holds only the newest ~1,000 filings (Microsoft:
+back to August 2020), so while a listed person is still undated the **older index
+pages** (`filings.files`; Microsoft has two, 2008–2020 and 1994–2008, with 58 Form 3s)
+are read too — at most `MAX_OLDER_PAGES` pages and `MAX_OLDER_FORM3` documents,
+Form 3 entries only (`_date_from_older_pages`). Index pages are never cached; the
+Form 3 documents are. That dated Amy Hood (CFO, 2013-05-08) and Alice Jolla
+(2020-07-31); Kathleen Hogan's Form 3 is for a different seat and Brad Smith's
+appointment (2002) predates electronic Form 3s (mid-2003) — nothing in EDGAR
+dates those, only Wikidata can.
 
 One more trap: a Form 3 dates the day the person became **subject to Section 16**,
 which is their appointment only when the company already was. When the company
@@ -664,6 +670,7 @@ are two edges, which is what the timeline exists to show.
 | Submissions JSON for executives | 1 |
 | Form 3/4 XML documents (up to 25 insiders) | up to 25 |
 | Form 3s past the cap, for seat start dates | up to 40 (cached) |
+| Older index pages + their Form 3s, while someone is undated | up to 3 + 60 (documents cached) |
 | 8-Ks with Item 5.02, for departures | up to 12 (cached) |
 | **Total (typical)** | **~40–50** |
 
