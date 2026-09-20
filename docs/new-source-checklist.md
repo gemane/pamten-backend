@@ -120,9 +120,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the audited US registers where sources demonstrably disagree on padding);
       `sole_register_for_country` for country-only statements; `register_for_place` for
       sub-national ones — **audited countries only**: the raw exactly-one rule would have
-      stamped Bavarian HRB numbers onto a Foundations Directory. And read *every* field
-      the source might put the register in: real filings had it in `legal_authority` with
-      `place_registered: "N/A"`.
+      stamped Bavarian HRB numbers onto a Foundations Directory; `register_for_number_format`
+      where the NUMBER's format names the register (Japan lists four registers, but a
+      dashed `0104-01-056795` is a Legal Affairs Bureau company registration number and
+      nothing else — SoftBank Group's PSC record stayed a name-only twin of its LEI node
+      without it). And read *every* field the source might put the register in: real
+      filings had it in `legal_authority` with `place_registered: "N/A"`.
 - [ ] **Registers move; don't fight history.** A current-key mismatch is not evidence of a
       different company — Tesla's Delaware pair lives in `former_register_ids` now, the
       dedup matches held-vs-holds, and a refresh that sees a registration change must

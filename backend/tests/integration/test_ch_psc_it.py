@@ -58,3 +58,53 @@ def test_imports_person_and_corporate_pscs(it_db, tmp_path):
         "MATCH (e:Entity {id:'gb-coh:00686734'})-[o:OWNS]->(c:Entity {companies_house_id:'07434180'}) "
         "RETURN e.name AS name, o.ownership_type AS t")
     assert corp and corp[0]["name"] == "Robert Hitchins Limited" and corp[0]["t"] == "controlling"
+
+
+def test_a_japanese_corporate_psc_merges_with_its_lei_node(it_db, tmp_path):
+    """SoftBank Group's real shape: Japan names four registers and the place
+    field says "Tokyo Stock Exchange", so only the dashed registration number
+    identifies the register — and it is the key GLEIF already put on the
+    company's LEI node. Written with the same register_id, the PSC node is a
+    hard-id twin and the cross-source dedup folds the pair into ONE node — the
+    register's name wins (PSC 97 over GLEIF's 92, the existing survivor rule)
+    — carrying both keys, both names and the UK subsidiary."""
+    from app.scraper.companies_house_psc import import_ch_psc
+    from app.scraper.maintenance import deduplicate_entities
+
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:5493003BZYYYCDIO0R13', name: 'ソフトバンクグループ株式会社', "
+        "name_normalized: 'ソフトバンクグループ株式会社', search_text: 'ソフトバンクグループ株式会社', "
+        "type: 'company', country: 'JP', register_id: 'RA000412:0104-01-056795', "
+        "lei_id: '5493003BZYYYCDIO0R13', name_credibility: 92})")   # what a GLEIF-written node carries
+    lines = [{"company_number": "03115186", "data": {
+        "kind": "corporate-entity-person-with-significant-control",
+        "name": "Softbank Group Corp",
+        "identification": {"registration_number": "0104-01-056795",
+                           "country_registered": "Japan",
+                           "place_registered": "Tokyo Stock Exchange (First Section)",
+                           "legal_authority": "Companies Act"},
+        "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+        "notified_on": "2016-07-01",
+        "links": {"self": "/company/03115186/persons-with-significant-control/corporate-entity/SB"}}}]
+    zpath = tmp_path / "psc-jp.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("psc-snapshot.txt", "\n".join(json.dumps(x) for x in lines))
+
+    result = import_ch_psc(str(zpath), "ukpsc", 97)
+    assert result["entities"] == 1
+    written = it_db.run_command(
+        "MATCH (e:Entity) WHERE e.register_id = 'RA000412:0104-01-056795' "
+        "RETURN e.id AS id ORDER BY e.id")
+    assert len(written) == 2, "the PSC node carries the LEI node's register_id"
+
+    deduplicate_entities()
+    left = it_db.run_command(
+        "MATCH (e:Entity) WHERE e.register_id = 'RA000412:0104-01-056795' "
+        "RETURN e.id AS id, e.lei_id AS lei, e.aliases AS aliases")
+    assert len(left) == 1, "one company"
+    assert left[0]["lei"] == "5493003BZYYYCDIO0R13", "the LEI key survives the merge"
+    assert "ソフトバンクグループ株式会社" in (left[0]["aliases"] or []), "the losing name becomes an alias"
+    owns = it_db.run_command(
+        "MATCH (e:Entity {register_id:'RA000412:0104-01-056795'})-[o:OWNS]->(c:Entity {companies_house_id:'03115186'}) "
+        "RETURN o.stake_percent AS s")
+    assert owns and owns[0]["s"] == 75, "the UK subsidiary hangs off the merged node"

@@ -214,6 +214,22 @@ class TestPscFields:
         mapped = psc_record(rec, "s1", 80)
         assert mapped.owner_props["register_id"] == "RA000602:3903573"
 
+    def test_a_japanese_corporate_psc_gets_the_companies_register_id(self):
+        # SoftBank Group's real record: Japan names four registers, the place
+        # field says "Tokyo Stock Exchange (First Section)" — only the dashed
+        # number identifies the register, and it is the key the LEI node has.
+        rec = {"company_number": "03115186", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Softbank Group Corp",
+            "identification": {"registration_number": "0104-01-056795",
+                               "country_registered": "Japan",
+                               "place_registered": "Tokyo Stock Exchange (First Section)",
+                               "legal_authority": "Companies Act"},
+            "links": {"self": "/company/03115186/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        mapped = psc_record(rec, "s1", 80)
+        assert mapped.owner_props["register_id"] == "RA000412:0104-01-056795"
+
     def test_a_country_registered_that_names_the_state_still_bridges(self):
         rec = {"company_number": "09533203", "data": {
             "kind": "corporate-entity-person-with-significant-control",

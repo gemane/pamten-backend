@@ -176,3 +176,23 @@ class TestBundleIntegrity:
             assert ref.sole_register_for_country("GB") is None
         finally:
             ref._sole_registers.cache_clear()
+
+
+class TestRegisterForNumberFormat:
+    """Japan lists four registers, so neither the country nor a place can name
+    one — but the number's format can: a dashed 0104-01-056795 is a Legal
+    Affairs Bureau company registration number, which GLEIF files under
+    RA000412; the 13-digit corporate number goes under RA001075."""
+
+    def test_a_dashed_japanese_registration_number_names_the_companies_register(self):
+        from app.scraper.gleif_reference import register_for_number_format
+        assert register_for_number_format("JP", "0104-01-056795") == "RA000412"
+        assert register_for_number_format("jp", " 0104-01-056795 ") == "RA000412"
+
+    def test_other_formats_and_countries_stay_unresolved(self):
+        from app.scraper.gleif_reference import register_for_number_format
+        assert register_for_number_format("JP", "9010401056795") is None      # 13-digit corporate number
+        assert register_for_number_format("JP", "0104-01-05679") is None       # wrong length
+        assert register_for_number_format("US", "0104-01-056795") is None
+        assert register_for_number_format(None, "0104-01-056795") is None
+        assert register_for_number_format("JP", "") is None

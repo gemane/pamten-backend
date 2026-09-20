@@ -18,6 +18,7 @@ code → name; `gleif_ra.json` is code → {"name", "countries"} and is regenera
 import functools
 import json
 import logging
+import re
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -173,6 +174,35 @@ def register_for_place(iso2: str | None, place: str | None) -> str | None:
         return None
     return (_PLACE_OVERRIDES.get((country, low))
             or _place_registers().get((country, low)))
+
+
+#: Registers a NUMBER FORMAT identifies where the country alone names several.
+#: Japan lists four RAs, but GLEIF itself files the Legal Affairs Bureau company
+#: registration number (会社法人等番号, "0104-01-056795") under RA000412 and the
+#: 13-digit corporate number (法人番号) under RA001075 — audited on the dev graph:
+#: every dashed number sits under RA000412, none elsewhere. SoftBank Group's PSC
+#: record carried that dashed number and stayed a name-only twin of its LEI node.
+_NUMBER_FORMAT_REGISTERS = (
+    ("JP", re.compile(r"\d{4}-\d{2}-\d{6}"), "RA000412"),
+)
+
+
+def register_for_number_format(iso2: str | None, number: str | None) -> str | None:
+    """The RA code a registration number's FORMAT names, where audited.
+
+    The third way to a `register_id` beside the sole-register country and the
+    place map: for countries whose registers issue distinguishable formats, the
+    number itself says which register issued it. Whitespace-insensitive like
+    `make_register_id`; the format must match the whole number.
+    """
+    country = (iso2 or "").strip().upper()
+    compact = "".join((number or "").split())
+    if not country or not compact:
+        return None
+    for iso, pattern, code in _NUMBER_FORMAT_REGISTERS:
+        if iso == country and pattern.fullmatch(compact):
+            return code
+    return None
 
 
 @functools.lru_cache(maxsize=1)

@@ -28,8 +28,8 @@ import zipfile
 from dataclasses import dataclass
 from typing import IO
 
-from app.scraper.gleif_reference import (make_register_id, register_for_place,
-                                          sole_register_for_country)
+from app.scraper.gleif_reference import (make_register_id, register_for_number_format,
+                                          register_for_place, sole_register_for_country)
 from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
     _ProgressBar, _rebuild_indexes,
@@ -267,6 +267,14 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
                     if code:
                         register_id = make_register_id(code, reg_number)
                         break
+            # Third chance: the NUMBER's format names the register. Japan lists
+            # four registers, but a dashed "0104-01-056795" is a Legal Affairs
+            # Bureau company registration number and nothing else — the key
+            # GLEIF already carries on the company's LEI node.
+            if register_id is None:
+                code = register_for_number_format(iso2, reg_number)
+                if code:
+                    register_id = make_register_id(code, reg_number)
         owner_props = {
             "name": name, "entity_type": "company",
             "country": (ident.get("country_registered") or None),
