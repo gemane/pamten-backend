@@ -144,6 +144,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       has firstName/lastName — and fund filings put their GP LLC in them, with a literal
       `N/A` first name. Field structure is not a person guarantee: strip the filler,
       then apply the entity-suffix veto before minting anyone.
+- [ ] **One document can describe several people.** A joint SC 13D/G has one cover
+      page per reporting person, back to back; a parser that takes the first match
+      reads the first person's type and stake for whoever the filer of record is
+      (Cia. Bozano, a company, became a Person owning Júlio Bozano's 10.4%). Cut the
+      document to the filer's own section before reading per-person fields
+      (`_cover_page_for`), and keep the veto list's legal forms international —
+      `Cia.`/`Companhia`/`Ltda`/`S/A` were missing.
 - [ ] **Classify people with `is_person_name`** and know it is a heuristic. Registers list
       corporate nominees as officers, and `is_nominee` marks holders of record who are not
       beneficial owners.

@@ -804,7 +804,8 @@ def _pct_of(part: float | None, whole: int | float | None) -> float | None:
     return pct
 
 
-def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
+def _own_stake_and_voting(text: str, reported_pct: float | None,
+                          document: str | None = None) -> tuple:
     """Split a 13D/G cover into (own stake %, voting-bloc %).
 
     Returns the filer's OWN holding as the stake and the reported row-13
@@ -812,12 +813,16 @@ def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
     filer is part of a group. For a lone filer sole-dispositive equals the
     aggregate and there is no bloc, so voting comes back None and nothing
     about the common case changes.
+
+    `document` is the whole filing when `text` is one reporting person's cover
+    page of a joint filing: the outstanding-shares footnote sits outside the
+    cover pages.
     """
     # Text/HTML path: co-filers aren't known here (the SGML header is fetched
     # later, only when a bloc is suspected), so stay conservative — treat it as
     # possibly-in-a-group. Modern filings are XML and go through
     # `_stake_from_person`, which knows the co-filer count exactly.
-    return _split_stake(_parse_power_rows(text), _shares_outstanding(text),
+    return _split_stake(_parse_power_rows(text), _shares_outstanding(document or text),
                         reported_pct, in_group=True)
 
 
@@ -1007,6 +1012,50 @@ def _parse_reporter_type_from_text(text: str) -> bool | None:
     if m:
         return m.group(1).upper() in _INDIVIDUAL_CODES
     return None
+
+
+#: The row that opens every reporting person's cover page ("NAME OF REPORTING
+#: PERSON" on a 13G, "NAMES OF REPORTING PERSONS" on a 13D).
+_REPORTING_PERSON_ROW = re.compile(r'names?\s+of\s+reporting\s+persons?', re.IGNORECASE)
+
+
+def _cover_page_for(text: str, filer_name: str | None) -> str:
+    """The cover page belonging to `filer_name` in a joint 13D/G, as plain text.
+
+    A joint filing carries one cover page per reporting person, back to back.
+    Embraer's 2009 13G has Júlio Bozano (IN, 10.4%) on the first page and his
+    holding company Cia. Bozano (CO, 9.2%) on the second. Every field parser
+    above takes the FIRST match in the document, so a filer named on a later
+    page was read with the first page's type code, percentage and share
+    count — Cia. Bozano was minted as a Person owning 10.4%.
+
+    Cut the document at each "Name of Reporting Person" row and hand the
+    parsers the page whose header names the filer. A single-page filing, no
+    filer name, or a header matching no page returns the whole document, so
+    nothing about the common case changes. The shared header (issuer, class
+    title) and the outstanding-shares footnote sit outside the pages and are
+    still read from the whole document.
+    """
+    plain = _plain_text(text)
+    starts = [m.start() for m in _REPORTING_PERSON_ROW.finditer(plain)]
+    if len(starts) < 2 or not filer_name:
+        return plain
+    wanted = _significant_tokens(filer_name)
+    if not wanted:
+        return plain
+    best, best_score = None, (0, 0.0)
+    for start, end in zip(starts, starts[1:] + [len(plain)]):
+        page = plain[start:end]
+        # The name follows the row label; the S.S./I.R.S. line and row 2 come
+        # within ~120 characters, so this is the name plus a little boilerplate.
+        header = _significant_tokens(_REPORTING_PERSON_ROW.sub("", page[:160], count=1))
+        overlap = len(wanted & header)
+        # Most shared tokens wins; the share of the header they cover breaks
+        # ties — "Bozano" alone matches both Bozano pages, "Cia. Bozano" only one.
+        score = (overlap, overlap / len(header) if header else 0.0)
+        if score > best_score:
+            best, best_score = page, score
+    return best if best is not None else plain
 
 
 def _fetch_filing_index(index_url: str) -> tuple[str | None, str | None, str | None]:
@@ -1246,12 +1295,16 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                         "SEC EDGAR: dropping filing by %r — its issuer is %r, not %r",
                         inv["investor_name"], issuer, company_name)
                     continue
-                pct           = _parse_percent_from_text(text)
-                pct, voting    = _own_stake_and_voting(text, pct)
-                is_individual = _parse_reporter_type_from_text(text)
+                # Per-reporter fields come from THIS filer's cover page — a
+                # joint filing has one per reporting person, and the first
+                # page's numbers belong to someone else.
+                cover         = _cover_page_for(text, inv["investor_name"])
+                pct           = _parse_percent_from_text(cover)
+                pct, voting    = _own_stake_and_voting(cover, pct, document=text)
+                is_individual = _parse_reporter_type_from_text(cover)
                 share_class   = _parse_class_title_from_text(text)
-                aggregate     = _parse_aggregate_from_text(text)
-                shares        = _shares_held(_parse_power_rows(text), aggregate)
+                aggregate     = _parse_aggregate_from_text(cover)
+                shares        = _shares_held(_parse_power_rows(cover), aggregate)
                 shares_total  = _shares_outstanding(text)
                 voting_shares = _shares_voted(aggregate, voting)
                 if voting and inv.get("accession"):

@@ -1492,3 +1492,105 @@ class TestSecWebsite:
         with patch.object(sec_edgar, "_submissions",
                           side_effect=httpx.ConnectError("down")):
             assert sec_edgar.fetch_filer_website("0001318605") is None
+
+
+class TestJointFilingCoverPages:
+    """A joint 13D/G carries one cover page per reporting person, and the field
+    parsers take the first match in the document. Embraer's 2009 13G put Júlio
+    Bozano (IN, 10.4%) on page one and his holding company Cia. Bozano (CO,
+    9.2%) on page two; the filer of record is Cia. Bozano, which was therefore
+    minted as a Person owning 10.4%. Text below is the real filing, condensed.
+    """
+
+    BOZANO = (
+        "EMBRAER — EMPRESA BRASILEIRA DE AERONÁUTICA S.A. (Name of Issuer) "
+        "Common Shares (Title of Class of Securities) 29081M102 (CUSIP Number) "
+        "CUSIP No. 29081M102 1 NAME OF REPORTING PERSON Júlio Rafael de Aragão Bozano "
+        "S.S. or I.R.S. Identification No. of Above Person Not Applicable "
+        "2 CHECK THE APPROPRIATE BOX IF A MEMBER OF A GROUP (a) o (b) þ 3 SEC USE ONLY "
+        "4 CITIZENSHIP OR PLACE OF ORGANIZATION Brazil 5 SOLE VOTING POWER -0- "
+        "6 SHARED VOTING POWER 75,133,609 7 SOLE DISPOSITIVE POWER -0- "
+        "8 SHARED DISPOSITIVE POWER 75,133,609 "
+        "9 AGGREGATE AMOUNT BENEFICIALLY OWNED BY EACH REPORTING PERSON 75,133,609 "
+        "11 PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 9 10.4% 12 TYPE OF REPORTING PERSON IN "
+        "2 CUSIP No. 29081M102 1 NAME OF REPORTING PERSON Cia. Bozano "
+        "S.S. or I.R.S. Identification No. of Above Person Not Applicable "
+        "2 CHECK THE APPROPRIATE BOX IF A MEMBER OF A GROUP (a) o (b) þ 3 SEC USE ONLY "
+        "4 CITIZENSHIP OR PLACE OF ORGANIZATION Brazil 5 SOLE VOTING POWER -0- "
+        "6 SHARED VOTING POWER 66,236,689 7 SOLE DISPOSITIVE POWER -0- "
+        "8 SHARED DISPOSITIVE POWER 66,236,689 "
+        "9 AGGREGATE AMOUNT BENEFICIALLY OWNED BY EACH REPORTING PERSON 66,236,689 "
+        "11 PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 9 9.2% 12 TYPE OF REPORTING PERSON CO "
+        "3 Item 1. Item 1(a). Name of Issuer: Embraer — Empresa Brasileira de Aeronáutica S.A. "
+        "Item 2(a). Name of Person(s) Filing: Júlio Rafael de Aragão Bozano Cia. Bozano "
+        "Júlio Rafael de Aragão Bozano owns 99.66% of Cia. Bozano. "
+        "Cia. Bozano is a corporation (sociedade anônima) organized under the laws of Brazil. "
+        "based on a total of 722,766,139 shares issued and outstanding."
+    )
+
+    def test_the_filer_of_record_gets_its_own_page(self):
+        from app.scraper import sec_edgar
+        page = sec_edgar._cover_page_for(self.BOZANO, "Cia. Bozano")
+        assert sec_edgar._parse_reporter_type_from_text(page) is False
+        assert sec_edgar._parse_percent_from_text(page) == 9.2
+        assert sec_edgar._parse_aggregate_from_text(page) == 66_236_689
+        assert sec_edgar._parse_power_rows(page)["shared_dispositive"] == 66_236_689
+
+    def test_the_individual_on_page_one_is_still_read_as_one(self):
+        from app.scraper import sec_edgar
+        page = sec_edgar._cover_page_for(self.BOZANO, "Júlio Rafael de Aragão Bozano")
+        assert sec_edgar._parse_reporter_type_from_text(page) is True
+        assert sec_edgar._parse_percent_from_text(page) == 10.4
+
+    def test_the_shared_header_and_footnote_are_read_from_the_whole_filing(self):
+        # The class title precedes page one and the outstanding-shares footnote
+        # follows the last page; neither belongs to a page, so a filer on an
+        # earlier page would lose the denominator if only its page were read.
+        from app.scraper import sec_edgar
+        page = sec_edgar._cover_page_for(self.BOZANO, "Júlio Rafael de Aragão Bozano")
+        assert sec_edgar._shares_outstanding(page) is None
+        assert sec_edgar._shares_outstanding(self.BOZANO) == 722_766_139
+        assert sec_edgar._parse_class_title_from_text(self.BOZANO) == "Common Shares"
+        assert sec_edgar._own_stake_and_voting(page, 10.4, document=self.BOZANO) == (10.4, None)
+
+    def test_a_lone_filer_document_is_returned_whole(self):
+        from app.scraper import sec_edgar
+        lone = ("Apple Inc (Name of Issuer) NAME OF REPORTING PERSON The Vanguard Group "
+                "PERCENT OF CLASS REPRESENTED BY AMOUNT IN ROW 11 8.1% TYPE OF REPORTING PERSON IA")
+        assert sec_edgar._cover_page_for(lone, "Vanguard Group") == sec_edgar._plain_text(lone)
+        assert sec_edgar._cover_page_for(self.BOZANO, None) == sec_edgar._plain_text(self.BOZANO)
+
+    def test_a_filer_matching_no_page_keeps_the_old_first_page_reading(self):
+        from app.scraper import sec_edgar
+        page = sec_edgar._cover_page_for(self.BOZANO, "Someone Else Entirely")
+        assert page == sec_edgar._plain_text(self.BOZANO)
+        assert sec_edgar._parse_percent_from_text(page) == 10.4
+
+    def test_end_to_end_the_holding_company_is_a_company_with_its_own_stake(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13G"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2009-04-07</filing-date>
+            <accession-number>0000950123-09-006192</accession-number>
+          </content></entry>
+        </feed>"""
+        index = ('<span class="companyName">Cia. Bozano (Filed by)</span>'
+                 '<a href="x">CIK=0001461009</a>'
+                 '<table><tr><td><a href="/Archives/edgar/data/1355444/y01449sc13g.htm">d</a></td>'
+                 '<td>SC 13G</td></tr></table>')
+        pages = {"https://x.test/i.htm": index,
+                 "https://www.sec.gov/Archives/edgar/data/1355444/y01449sc13g.htm": self.BOZANO}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("EMBRAER S.A.", "1355444")
+        assert len(res) == 1
+        row = res[0]
+        assert row["investor_name"] == "Cia. Bozano"
+        assert row["is_individual"] is False
+        assert row["stake_percent"] == 9.2
+        assert row["shares"] == 66_236_689
+        assert row["shares_outstanding"] == 722_766_139
+        assert row["share_class"] == "Common Shares"
