@@ -88,6 +88,22 @@ class TestHasEntitySuffix:
         assert has_entity_suffix("Bridgewater Associates LP") is True
         assert has_entity_suffix("Bevco Lux S.A.R.L.") is True
 
+    def test_portuguese_spanish_and_french_company_forms(self):
+        # Cia. Bozano — Embraer's holding-company shareholder — was minted as a
+        # Person because none of these markers were known.
+        assert has_entity_suffix("Cia. Bozano") is True
+        assert has_entity_suffix("Companhia Siderúrgica Nacional") is True
+        assert has_entity_suffix("Compañía de Minas Buenaventura") is True
+        assert has_entity_suffix("Compagnie de Saint-Gobain") is True
+        assert has_entity_suffix("Bozano Participações Ltda") is True
+        assert has_entity_suffix("Petróleo Brasileiro S/A") is True
+        assert has_entity_suffix("Société Générale") is True
+        assert is_person_name("Cia. Bozano") is False
+
+    def test_a_name_merely_containing_the_letters_is_untouched(self):
+        assert has_entity_suffix("Lucia Garcia") is False
+        assert is_person_name("Lucia Garcia") is True
+
     def test_a_natural_person_has_none(self):
         assert has_entity_suffix("Warren Buffett") is False
         assert has_entity_suffix("Timothy D Cook") is False

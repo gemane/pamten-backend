@@ -753,15 +753,58 @@ def _parse_power_rows(text: str) -> dict:
     """
     plain = _plain_text(text)
     out: dict = {}
+    deferred: dict = {}
     for key, label in _POWER_ROWS.items():
-        m = re.search(label + r'[^0-9\-]{0,40}([\d,]+)', plain, re.IGNORECASE)
+        m = re.search(label + r'(?P<gap>[^0-9]{0,60}?)(?P<val>' + _ZERO_WORDS + r'|[\d,]+)',
+                      plain, re.IGNORECASE)
         if not m:
             continue
+        gap, val = m.group("gap"), m.group("val")
+        if re.search(r'\brow\b', gap, re.IGNORECASE):
+            # "See Row 6 above." — the value lives in another row; copy it
+            # once every row has been read.
+            deferred[key] = int(val) if val.isdigit() else None
+            continue
+        if re.fullmatch(r'\d{1,2}', val) and int(val) >= 5 \
+                and _NEXT_ROW_LABEL.match(plain, m.end()):
+            # An empty cell: the digits are the NEXT row's number ("SOLE VOTING
+            # POWER 6 SHARED VOTING POWER …"). Berkshire's Activision 13G read
+            # as 8 shares this way. Absent, not a count. Rows are numbered 5–13,
+            # so a "0" before the next label is a real zero.
+            continue
+        if re.fullmatch(_ZERO_WORDS, val, re.IGNORECASE):
+            out[key] = 0
+            continue
         try:
-            out[key] = int(m.group(1).replace(",", ""))
+            out[key] = int(val.replace(",", ""))
         except ValueError:
             continue
+    for key, row_no in deferred.items():
+        ref = _row_key(plain, row_no) if row_no else None
+        if ref in out:
+            out[key] = out[ref]
     return out
+
+
+#: How old filings write zero in a power row: "0", "-0-", "—0—", "NONE".
+_ZERO_WORDS = r'(?:none|nil|-\s*0\s*-|[—–]\s*0\s*[—–])'
+
+#: What follows a row NUMBER on the cover — used to tell "6" the next row's
+#: number from "6" a share count. Row 9/10 labels vary, so the list is the
+#: words that open rows 5–13 on both schedules.
+_NEXT_ROW_LABEL = re.compile(
+    r'\.?\s*\(?\s*(?:sole|shared|aggregate|check|percent|type)\b', re.IGNORECASE)
+
+
+def _row_key(plain: str, row_no: int) -> str | None:
+    """Which power row a cover's row number denotes ("6" → shared_voting on a
+    13G, sole_dispositive on a 13D — the two schedules number rows differently,
+    so read the label that follows the number rather than assume)."""
+    m = re.search(rf'(?:^|[\s(]){row_no}\)?\.?\s*\(?\s*((?:sole|shared)\s+(?:voting|dispositive))\s+power',
+                  plain, re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1).lower().replace(" ", "_")
 
 
 def _shares_outstanding(text: str) -> int | None:
@@ -804,7 +847,9 @@ def _pct_of(part: float | None, whole: int | float | None) -> float | None:
     return pct
 
 
-def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
+def _own_stake_and_voting(text: str, reported_pct: float | None,
+                          document: str | None = None,
+                          in_group: bool = True) -> tuple:
     """Split a 13D/G cover into (own stake %, voting-bloc %).
 
     Returns the filer's OWN holding as the stake and the reported row-13
@@ -812,13 +857,33 @@ def _own_stake_and_voting(text: str, reported_pct: float | None) -> tuple:
     filer is part of a group. For a lone filer sole-dispositive equals the
     aggregate and there is no bloc, so voting comes back None and nothing
     about the common case changes.
+
+    `document` is the whole filing when `text` is one reporting person's cover
+    page of a joint filing: the outstanding-shares footnote sits outside the
+    cover pages. `in_group` is what the caller knows about co-filers — see
+    `_co_filers_form_a_bloc`; the default keeps the conservative reading for
+    callers that know nothing.
     """
-    # Text/HTML path: co-filers aren't known here (the SGML header is fetched
-    # later, only when a bloc is suspected), so stay conservative — treat it as
-    # possibly-in-a-group. Modern filings are XML and go through
-    # `_stake_from_person`, which knows the co-filer count exactly.
-    return _split_stake(_parse_power_rows(text), _shares_outstanding(text),
-                        reported_pct, in_group=True)
+    return _split_stake(_parse_power_rows(text), _shares_outstanding(document or text),
+                        reported_pct, in_group=in_group)
+
+
+def _co_filers_form_a_bloc(form_type: str | None, reporting_persons: int) -> bool:
+    """Do this filing's co-filers make the filer a group member?
+
+    Only a 13D with more than one reporting person. A 13G is passive by
+    definition: several reporting persons on one are a fund family or a parent
+    with its subsidiaries (Berkshire Hathaway + Buffett + National Indemnity on
+    Activision, Sequoia's four funds on LinkedIn), each holding the shares it
+    reports — not a governance bloc. Treating them as one nulled the stake of
+    every such filer and showed the family's aggregate as a phantom "bloc".
+    """
+    short = _short_form(form_type) or ""
+    if short.upper().startswith("13G"):
+        return False
+    # 0 = the count is unknown (a cover without the "Name of Reporting Person"
+    # rows): keep the conservative reading, as the text path always did.
+    return reporting_persons != 1
 
 
 def _split_stake(rows: dict, total: int | None, reported_pct: float | None,
@@ -1007,6 +1072,69 @@ def _parse_reporter_type_from_text(text: str) -> bool | None:
     if m:
         return m.group(1).upper() in _INDIVIDUAL_CODES
     return None
+
+
+#: The row that opens every reporting person's cover page ("NAME OF REPORTING
+#: PERSON" on a 13G, "NAMES OF REPORTING PERSONS" on a 13D).
+_REPORTING_PERSON_ROW = re.compile(r'names?\s+of\s+reporting\s+persons?', re.IGNORECASE)
+
+
+def _cover_page_count(text: str) -> int:
+    """How many reporting persons a 13D/G document has — one cover page each.
+    The text path's co-filer count, which the SGML header otherwise supplies
+    only on a second request."""
+    return len(_REPORTING_PERSON_ROW.findall(_plain_text(text)))
+
+
+def _cover_page_for(text: str, filer_name: str | None) -> str:
+    """The cover page belonging to `filer_name` in a joint 13D/G, as plain text.
+
+    A joint filing carries one cover page per reporting person, back to back.
+    Embraer's 2009 13G has Júlio Bozano (IN, 10.4%) on the first page and his
+    holding company Cia. Bozano (CO, 9.2%) on the second. Every field parser
+    above takes the FIRST match in the document, so a filer named on a later
+    page was read with the first page's type code, percentage and share
+    count — Cia. Bozano was minted as a Person owning 10.4%.
+
+    Cut the document at each "Name of Reporting Person" row and hand the
+    parsers the page whose header names the filer. A single-page filing, no
+    filer name, or a header matching no page returns the whole document, so
+    nothing about the common case changes. The shared header (issuer, class
+    title) and the outstanding-shares footnote sit outside the pages and are
+    still read from the whole document.
+    """
+    plain = _plain_text(text)
+    starts = [m.start() for m in _REPORTING_PERSON_ROW.finditer(plain)]
+    if len(starts) < 2 or not filer_name:
+        return plain
+    wanted = _significant_tokens(filer_name)
+    if not wanted:
+        return plain
+    best, best_score = None, (0, 0.0)
+    for start, end in zip(starts, starts[1:] + [len(plain)]):
+        page = plain[start:end]
+        # The name is what follows the row label up to the next row — the
+        # S.S./I.R.S. line, "(see instructions)" or row 2. Nothing after that
+        # may count: a shorter name lets more boilerplate into a fixed window,
+        # which is how "Berkshire Hathaway International Insurance Ltd." outscored
+        # "Berkshire Hathaway Inc." for the filer Berkshire Hathaway Inc.
+        name = _REPORTING_PERSON_ROW.sub("", page[:200], count=1)
+        name = _COVER_NAME_END.split(name, maxsplit=1)[0]
+        header = _significant_tokens(name)
+        overlap = len(wanted & header)
+        # Most shared tokens wins; the share of the name they cover breaks
+        # ties — "Bozano" alone matches both Bozano pages, "Cia. Bozano" only one.
+        score = (overlap, overlap / len(header) if header else 0.0)
+        if score > best_score:
+            best, best_score = page, score
+    return best if best is not None else plain
+
+
+#: What ends the reporting person's name on a cover page.
+_COVER_NAME_END = re.compile(
+    r'\(?\s*see\s+instructions|s\.?\s*s\.?\s+or\s+i\.?\s*r\.?\s*s|i\.?\s*r\.?\s*s\.?\s+identification'
+    r'|\b2\s*[.)]?\s*\(?\s*check\b',
+    re.IGNORECASE)
 
 
 def _fetch_filing_index(index_url: str) -> tuple[str | None, str | None, str | None]:
@@ -1246,12 +1374,17 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                         "SEC EDGAR: dropping filing by %r — its issuer is %r, not %r",
                         inv["investor_name"], issuer, company_name)
                     continue
-                pct           = _parse_percent_from_text(text)
-                pct, voting    = _own_stake_and_voting(text, pct)
-                is_individual = _parse_reporter_type_from_text(text)
+                # Per-reporter fields come from THIS filer's cover page — a
+                # joint filing has one per reporting person, and the first
+                # page's numbers belong to someone else.
+                cover         = _cover_page_for(text, inv["investor_name"])
+                pct           = _parse_percent_from_text(cover)
+                bloc          = _co_filers_form_a_bloc(inv["form_type"], _cover_page_count(text))
+                pct, voting    = _own_stake_and_voting(cover, pct, document=text, in_group=bloc)
+                is_individual = _parse_reporter_type_from_text(cover)
                 share_class   = _parse_class_title_from_text(text)
-                aggregate     = _parse_aggregate_from_text(text)
-                shares        = _shares_held(_parse_power_rows(text), aggregate)
+                aggregate     = _parse_aggregate_from_text(cover)
+                shares        = _shares_held(_parse_power_rows(cover), aggregate)
                 shares_total  = _shares_outstanding(text)
                 voting_shares = _shares_voted(aggregate, voting)
                 if voting and inv.get("accession"):
@@ -1806,9 +1939,11 @@ def _stake_from_person(xml: dict, person: dict) -> tuple:
         if total:
             log.info("SEC EDGAR: derived %s shares outstanding for %r from %s at %s%%",
                      total, person["name"], person.get("aggregate"), person.get("percent"))
-    # More than one reporting person on the cover = a genuine group of co-filers.
-    # A lone filer's all-shared power is custodial, not a control bloc.
-    in_group = len(xml.get("persons") or []) > 1
+    # More than one reporting person on a 13D = a genuine group of co-filers;
+    # a lone filer's all-shared power is custodial, and a 13G's co-filers are
+    # a family, not a bloc. Test dicts without a schedule read as 13D.
+    in_group = _co_filers_form_a_bloc(xml.get("schedule") or "13D",
+                                      len(xml.get("persons") or []))
     return _split_stake(rows, total, person.get("percent"), in_group=in_group)
 
 
@@ -1971,6 +2106,10 @@ def _parse_13dg_xml(raw: str) -> dict | None:
     else:
         return None
 
+    # Which schedule this is, from the layout that matched: a 13G's co-filers
+    # are a fund family, a 13D's a group — see `_co_filers_form_a_bloc`.
+    schedule = "13G" if container.startswith("coverPageHeader") else "13D"
+
     persons = []
     for b in blocks:
         name = _xml_child(b, "reportingPersonName")
@@ -2009,6 +2148,7 @@ def _parse_13dg_xml(raw: str) -> dict | None:
         # shares", and adding those gave the company 115.9% of itself.
         "class_title":  _xml_child(root, "securitiesClassTitle"),
         "persons":      persons,
+        "schedule":     schedule,
         "comment_text": " ".join(comments),
     }
 

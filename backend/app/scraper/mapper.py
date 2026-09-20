@@ -85,9 +85,12 @@ _ENTITY_SUFFIXES = re.compile(
     r"associates|advisors|advisers|securities|financial|"
     r"investment|investments|asset|assets|bank|bancorp|"
     # European legal forms (S.A.R.L., GmbH, S.A., N.V., B.V., etc.)
-    r"sarl|s\.a\.r\.l|gmbh|sa|ag|nv|bv|se|sas|srl|spa|oy|ab|as|aps)\b"
+    r"sarl|s\.a\.r\.l|gmbh|sa|ag|nv|bv|se|sas|srl|spa|oy|ab|as|aps|"
+    # Portuguese / Spanish / French "company" and its abbreviations — Cia. Bozano
+    # (Embraer's holding-company shareholder) was minted as a Person without them
+    r"cia|cía|companhia|compa[nñ][ií]a|compagnie|ltda|sociedad|sociedade|soci[eé]t[eé])\b"
     # dotted abbreviations like S.A.R.L. anywhere in the name
-    r"|s\.a\.r\.l\.|s\.a\.|n\.v\.|b\.v\.|p\.l\.c\."
+    r"|s\.a\.r\.l\.|s\.a\.|n\.v\.|b\.v\.|p\.l\.c\.|\bs/a\b"
     # "L P" / "L.P." / "L. P." — "Limited Partnership" with space or dot between initials
     r"|\bl[.\s]*p\.?\b",
     re.IGNORECASE,
