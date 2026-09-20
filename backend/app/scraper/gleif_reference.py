@@ -182,8 +182,13 @@ def register_for_place(iso2: str | None, place: str | None) -> str | None:
 #: 13-digit corporate number (法人番号) under RA001075 — audited on the dev graph:
 #: every dashed number sits under RA000412, none elsewhere. SoftBank Group's PSC
 #: record carried that dashed number and stayed a name-only twin of its LEI node.
+#: (country, format, RA code, canonical form of a matching number). Switzerland
+#: likewise lists four RAs; a `CHE-105.909.036` UID is the Commercial Register's
+#: form — all 24 Swiss GLEIF nodes on dev carry exactly that shape under
+#: RA000549. Filers write the prefix as "Che-", GLEIF as "CHE-": uppercase it.
 _NUMBER_FORMAT_REGISTERS = (
-    ("JP", re.compile(r"\d{4}-\d{2}-\d{6}"), "RA000412"),
+    ("JP", re.compile(r"\d{4}-\d{2}-\d{6}"), "RA000412", None),
+    ("CH", re.compile(r"CHE-\d{3}\.\d{3}\.\d{3}", re.IGNORECASE), "RA000549", str.upper),
 )
 
 
@@ -195,13 +200,29 @@ def register_for_number_format(iso2: str | None, number: str | None) -> str | No
     number itself says which register issued it. Whitespace-insensitive like
     `make_register_id`; the format must match the whole number.
     """
+    rule = _number_format_rule(iso2, number)
+    return rule[2] if rule else None
+
+
+def canonical_register_number(iso2: str | None, number: str | None) -> str | None:
+    """The number as the register writes it, when a format rule matched — else
+    the number unchanged. `make_register_id` preserves case on purpose (it is
+    significant in some registers); a format rule knows its own register's
+    spelling, so "Che-105.909.036" becomes the "CHE-105.909.036" GLEIF carries."""
+    rule = _number_format_rule(iso2, number)
+    if rule and rule[3]:
+        return rule[3]("".join((number or "").split()))
+    return number
+
+
+def _number_format_rule(iso2: str | None, number: str | None):
     country = (iso2 or "").strip().upper()
     compact = "".join((number or "").split())
     if not country or not compact:
         return None
-    for iso, pattern, code in _NUMBER_FORMAT_REGISTERS:
-        if iso == country and pattern.fullmatch(compact):
-            return code
+    for rule in _NUMBER_FORMAT_REGISTERS:
+        if rule[0] == country and rule[1].fullmatch(compact):
+            return rule
     return None
 
 

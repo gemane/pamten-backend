@@ -108,3 +108,37 @@ def test_a_japanese_corporate_psc_merges_with_its_lei_node(it_db, tmp_path):
         "MATCH (e:Entity {register_id:'RA000412:0104-01-056795'})-[o:OWNS]->(c:Entity {companies_house_id:'03115186'}) "
         "RETURN o.stake_percent AS s")
     assert owns and owns[0]["s"] == 75, "the UK subsidiary hangs off the merged node"
+
+
+def test_an_unpadded_uk_controller_merges_with_its_lei_node(it_db, tmp_path):
+    """Unilever PLC: the PSC filer wrote 41424, GLEIF carries 00041424. Padded
+    on import, the two share companies_house_id and the dedup folds them."""
+    from app.scraper.companies_house_psc import import_ch_psc
+    from app.scraper.maintenance import deduplicate_entities
+
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:549300MKFYEKVRWML317', name: 'UNILEVER PLC', "
+        "name_normalized: 'unilever', search_text: 'UNILEVER PLC', type: 'company', "
+        "country: 'GB', companies_house_id: '00041424', lei_id: '549300MKFYEKVRWML317', "
+        "name_credibility: 92})")
+    lines = [{"company_number": "00017049", "data": {
+        "kind": "corporate-entity-person-with-significant-control",
+        "name": "Unilever Plc",
+        "identification": {"registration_number": "41424", "country_registered": "England"},
+        "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+        "notified_on": "2016-07-01",
+        "links": {"self": "/company/00017049/persons-with-significant-control/corporate-entity/UL"}}}]
+    zpath = tmp_path / "psc-uk.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("psc-snapshot.txt", "\n".join(json.dumps(x) for x in lines))
+
+    import_ch_psc(str(zpath), "ukpsc", 97)
+    assert it_db.run_command("MATCH (e:Entity {id:'gb-coh:00041424'}) RETURN e.country AS c")[0]["c"] == "GB"
+    deduplicate_entities()
+    left = it_db.run_command(
+        "MATCH (e:Entity) WHERE e.companies_house_id = '00041424' RETURN e.id AS id, e.lei_id AS lei")
+    assert len(left) == 1 and left[0]["lei"] == "549300MKFYEKVRWML317"
+    owns = it_db.run_command(
+        "MATCH (e:Entity {companies_house_id:'00041424'})-[o:OWNS]->(c:Entity {companies_house_id:'00017049'}) "
+        "RETURN o.stake_percent AS s")
+    assert owns and owns[0]["s"] == 75

@@ -230,6 +230,43 @@ class TestPscFields:
         mapped = psc_record(rec, "s1", 80)
         assert mapped.owner_props["register_id"] == "RA000412:0104-01-056795"
 
+    def test_a_swiss_corporate_psc_gets_the_commercial_register_id_as_gleif_spells_it(self):
+        # Nestlé S.A.'s real record: "Che-105.909.036" under the canton of Vaud's
+        # register office — the LEI node carries RA000549:CHE-105.909.036.
+        rec = {"company_number": "00462438", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Nestle S.A.",
+            "identification": {"registration_number": "Che-105.909.036",
+                               "country_registered": "Switzerland",
+                               "place_registered": "Office Du Registre Du Commerce Du Canton De Vaud"},
+            "links": {"self": "/company/00462438/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        mapped = psc_record(rec, "s1", 80)
+        assert mapped.owner_props["register_id"] == "RA000549:CHE-105.909.036"
+        assert mapped.owner_props["country"] == "CH", "ISO-2 like every other source"
+
+    def test_a_uk_corporate_psc_number_is_padded_to_companies_house_form(self):
+        # Unilever PLC filed as "41424"; Companies House and GLEIF say 00041424.
+        # The unpadded form minted a second node beside the GLEIF one.
+        rec = {"company_number": "00017049", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Unilever Plc",
+            "identification": {"registration_number": "41424",
+                               "country_registered": "England",
+                               "legal_authority": "Companies Act 2006",
+                               "place_registered": "Companies House"},
+            "links": {"self": "/company/00017049/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        mapped = psc_record(rec, "s1", 80)
+        assert mapped.owner_id == "gb-coh:00041424"
+        assert mapped.owner_props["companies_house_id"] == "00041424"
+        assert mapped.owner_props["registration_number"] == "00041424"
+        assert mapped.owner_props["country"] == "GB", "England is GB, like the GLEIF node"
+        node_id, chid = _entity_psc_id({"identification": {
+            "registration_number": "SC123456", "country_registered": "Scotland"},
+            "links": {"self": "/company/x/.../abc"}})
+        assert node_id == "gb-coh:SC123456", "prefixed numbers are already eight characters"
+
     def test_a_country_registered_that_names_the_state_still_bridges(self):
         rec = {"company_number": "09533203", "data": {
             "kind": "corporate-entity-person-with-significant-control",

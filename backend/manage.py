@@ -372,9 +372,8 @@ def cmd_migrate_psc_ids(args):
               f"(the configured database), got {args.confirm_database!r}.")
         raise SystemExit(2)
     from app.database import db
-    from app.merged_ids import record_merge
+    from app.merged_ids import rename_node_id
     from app.scraper.companies_house_psc import psc_slug_id
-    from app.db.arcadedb import run_sql
 
     migrated = skipped = 0
     with db.get_session() as session:
@@ -384,23 +383,10 @@ def cmd_migrate_psc_ids(args):
             for r in rows:
                 old_id = r["id"]
                 new_id = psc_slug_id(old_id[len("chpsc:"):])
-                clash = session.run(
-                    f"MATCH (n:{label} {{id: $id}}) RETURN n.id AS id LIMIT 1",
-                    id=new_id).single()
-                if clash:
+                if not rename_node_id(session, label, old_id, new_id):
                     print(f"  ! {old_id} -> {new_id} already exists, skipping")
                     skipped += 1
                     continue
-                session.run(f"MATCH (n:{label} {{id: $old}}) SET n.id = $new",
-                            old=old_id, new=new_id)
-                for table, cols in (("Claim", ("from_id", "to_id")),
-                                    ("Flag", ("from_id", "to_id", "node_id")),
-                                    ("Suppression", ("from_id", "to_id")),
-                                    ("Pin", ("from_id", "to_id"))):
-                    for col in cols:
-                        run_sql(f"UPDATE {table} SET {col} = :new WHERE {col} = :old",
-                                {"new": new_id, "old": old_id})
-                record_merge(session, old_id, new_id, kind=label)
                 migrated += 1
                 print(f"  {label}: {old_id}")
                 print(f"       -> {new_id}")

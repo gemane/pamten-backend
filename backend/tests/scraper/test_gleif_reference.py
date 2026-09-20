@@ -196,3 +196,14 @@ class TestRegisterForNumberFormat:
         assert register_for_number_format("US", "0104-01-056795") is None
         assert register_for_number_format(None, "0104-01-056795") is None
         assert register_for_number_format("JP", "") is None
+
+    def test_a_swiss_uid_names_the_commercial_register_in_its_own_spelling(self):
+        # Switzerland lists four registers too; a CHE-ddd.ddd.ddd number is the
+        # Commercial Register's. The PSC filer wrote "Che-", GLEIF writes "CHE-".
+        from app.scraper.gleif_reference import (canonical_register_number,
+                                                 register_for_number_format)
+        assert register_for_number_format("CH", "Che-105.909.036") == "RA000549"
+        assert canonical_register_number("CH", "Che-105.909.036") == "CHE-105.909.036"
+        assert canonical_register_number("JP", "0104-01-056795") == "0104-01-056795"
+        assert canonical_register_number("CH", "not a uid") == "not a uid"
+        assert register_for_number_format("CH", "105.909.036") is None
