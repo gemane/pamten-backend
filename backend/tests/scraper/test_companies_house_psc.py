@@ -273,6 +273,28 @@ class TestPscFields:
             "links": {"self": "/company/x/.../abc"}})
         assert node_id == "gb-coh:SC123456", "prefixed numbers are already eight characters"
 
+    def test_a_dutch_corporate_psc_is_keyed_by_the_audited_general_register(self, monkeypatch):
+        # The Netherlands lists four registers, but the audit says every Dutch
+        # company sits on the KVK — the last resort after country, place and
+        # number-format rules.
+        from app.scraper import gleif_reference
+        monkeypatch.setattr(gleif_reference, "_load", lambda name: {"countries": {"NL": {"code": "RA000463"}}})
+        gleif_reference._general_registers.cache_clear()
+        try:
+            rec = {"company_number": "00000001", "data": {
+                "kind": "corporate-entity-person-with-significant-control",
+                "name": "Unilever N.V.",
+                "identification": {"registration_number": "33129581",
+                                   "country_registered": "Netherlands",
+                                   "place_registered": "Kamer van Koophandel"},
+                "links": {"self": "/company/00000001/persons-with-significant-control/corporate-entity/x"},
+                "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+            mapped = psc_record(rec, "s1", 80)
+            assert mapped.owner_props["register_id"] == "RA000463:33129581"
+            assert mapped.owner_props["country"] == "NL"
+        finally:
+            gleif_reference._general_registers.cache_clear()
+
     def test_a_country_registered_that_names_the_state_still_bridges(self):
         rec = {"company_number": "09533203", "data": {
             "kind": "corporate-entity-person-with-significant-control",

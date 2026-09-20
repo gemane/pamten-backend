@@ -28,7 +28,8 @@ import zipfile
 from dataclasses import dataclass
 from typing import IO
 
-from app.scraper.gleif_reference import (canonical_register_number, make_register_id,
+from app.scraper.gleif_reference import (canonical_register_number,
+                                          general_register_for_country, make_register_id,
                                           register_for_number_format, register_for_place,
                                           sole_register_for_country)
 from app.scraper.bulk_import import (
@@ -286,6 +287,11 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
                 if code:
                     register_id = make_register_id(
                         code, canonical_register_number(iso2, reg_number))
+            # Last: the register the country's companies actually sit on, from
+            # the GLEIF audit (`register_audit`) — the Netherlands lists four
+            # registers, but every Dutch company is on the KVK.
+            if register_id is None:
+                register_id = make_register_id(general_register_for_country(iso2), reg_number)
         # The country as an ISO-2 code like every other source, not the filer's
         # words: "England", "England & Wales" and "United Kingdom" are one GB,
         # and a node reading "Switzerland" beside one reading "CH" looked like

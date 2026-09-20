@@ -124,8 +124,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       where the NUMBER's format names the register (Japan lists four registers, but a
       dashed `0104-01-056795` is a Legal Affairs Bureau company registration number and
       nothing else — SoftBank Group's PSC record stayed a name-only twin of its LEI node
-      without it). And read *every* field the source might put the register in: real
-      filings had it in `legal_authority` with `place_registered: "N/A"`.
+      without it); `general_register_for_country` for the 67 countries where the GLEIF
+      audit (`manage.py audit-registers`, `data/general_registers.json`) shows one
+      register holding ≥ 90% of the country's companies — re-run the audit, never add a
+      country by hand. Mint through `make_register_id` and nothing else: it folds the
+      registers GLEIF keys one national number under (Swiss UID, French SIREN) and fixes
+      one spelling, so keys agree wherever they are minted. And read *every* field the
+      source might put the register in: real filings had it in `legal_authority` with
+      `place_registered: "N/A"`.
 - [ ] **Registers move; don't fight history.** A current-key mismatch is not evidence of a
       different company — Tesla's Delaware pair lives in `former_register_ids` now, the
       dedup matches held-vs-holds, and a refresh that sees a registration change must

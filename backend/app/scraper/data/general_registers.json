@@ -1,0 +1,2959 @@
+{
+ "countries": {
+  "AD": {
+   "code": "RA000004",
+   "records": 316,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000661",
+    0.0918
+   ],
+   "shapes": [
+    "99999",
+    "A-999999-A",
+    "9999"
+   ],
+   "share": 0.9082
+  },
+  "AI": {
+   "code": "RA000006",
+   "records": 313,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999",
+    "A999999999",
+    "9999"
+   ],
+   "share": 1.0
+  },
+  "AT": {
+   "code": "RA000017",
+   "records": 40665,
+   "registers_seen": 9,
+   "runner_up": [
+    "RA000710",
+    0.0422
+   ],
+   "shapes": [
+    "999999A",
+    "99999A",
+    "9999A"
+   ],
+   "share": 0.9462
+  },
+  "BB": {
+   "code": "RA000023",
+   "records": 273,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000809",
+    0.0183
+   ],
+   "shapes": [
+    "99999",
+    "9999",
+    "999"
+   ],
+   "share": 0.9817
+  },
+  "BE": {
+   "code": "RA000025",
+   "records": 64280,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000812",
+    0.0021
+   ],
+   "shapes": [
+    "9999999999",
+    "9999.999.999",
+    "999.999.999"
+   ],
+   "share": 0.9969
+  },
+  "BG": {
+   "code": "RA000065",
+   "records": 5627,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000730",
+    0.022
+   ],
+   "shapes": [
+    "999999999"
+   ],
+   "share": 0.9744
+  },
+  "BH": {
+   "code": "RA000021",
+   "records": 277,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000807",
+    0.0108
+   ],
+   "shapes": [
+    "99999-9",
+    "999999-9",
+    "9999-9"
+   ],
+   "share": 0.9892
+  },
+  "BM": {
+   "code": "RA000028",
+   "records": 2497,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000029",
+    0.0244
+   ],
+   "shapes": [
+    "99999",
+    "999999999",
+    "9999"
+   ],
+   "share": 0.9756
+  },
+  "BS": {
+   "code": "RA000020",
+   "records": 4296,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000806",
+    0.0028
+   ],
+   "shapes": [
+    "999999",
+    "999999A",
+    "99999A"
+   ],
+   "share": 0.9949
+  },
+  "CK": {
+   "code": "RA000152",
+   "records": 230,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000153",
+    0.0217
+   ],
+   "shapes": [
+    "AAA99999/9999",
+    "AAA9999/9999",
+    "AAA999/9999"
+   ],
+   "share": 0.9783
+  },
+  "CN": {
+   "code": "RA000092",
+   "records": 106070,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000847",
+    0.0001
+   ],
+   "shapes": [
+    "99999999999999999A",
+    "999999999999999999",
+    "9999999999999999AA"
+   ],
+   "share": 0.9998
+  },
+  "CR": {
+   "code": "RA000154",
+   "records": 244,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000853",
+    0.0082
+   ],
+   "shapes": [
+    "9-999-999999",
+    "AAAAAAAAAA-9999999-9999",
+    "9999999999"
+   ],
+   "share": 0.9877
+  },
+  "CY": {
+   "code": "RA000161",
+   "records": 14055,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA001052",
+    0.0133
+   ],
+   "shapes": [
+    "ΗΕ 999999",
+    "ΗΕ 99999",
+    "ΗΕ 9999"
+   ],
+   "share": 0.9772
+  },
+  "CZ": {
+   "code": "RA000163",
+   "records": 30043,
+   "registers_seen": 10,
+   "runner_up": [
+    "RA000168",
+    0.011
+   ],
+   "shapes": [
+    "99999999",
+    "999 99 999",
+    "9999999"
+   ],
+   "share": 0.9577
+  },
+  "DK": {
+   "code": "RA000170",
+   "records": 106107,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000171",
+    0.0
+   ],
+   "shapes": [
+    "99999999",
+    "9999",
+    "AA99999999"
+   ],
+   "share": 1.0
+  },
+  "EE": {
+   "code": "RA000181",
+   "records": 29409,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000182",
+    0.0004
+   ],
+   "shapes": [
+    "99999999"
+   ],
+   "share": 0.9996
+  },
+  "EG": {
+   "code": "RA000179",
+   "records": 238,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000870",
+    0.042
+   ],
+   "shapes": [
+    "99999",
+    "999999",
+    "9999"
+   ],
+   "share": 0.9244
+  },
+  "FI": {
+   "code": "RA000188",
+   "records": 58065,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000878",
+    0.0001
+   ],
+   "shapes": [
+    "9999999-9",
+    "99999999"
+   ],
+   "share": 0.9999
+  },
+  "FO": {
+   "code": "RA000185",
+   "records": 470,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000876",
+    0.0064
+   ],
+   "shapes": [
+    "9999",
+    "999",
+    "999999"
+   ],
+   "share": 0.9936
+  },
+  "FR": {
+   "code": "RA000189",
+   "records": 168012,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000192",
+    0.0525
+   ],
+   "shapes": [
+    "999999999",
+    "999 999 999",
+    "99999999999999"
+   ],
+   "share": 0.9475
+  },
+  "GI": {
+   "code": "RA000375",
+   "records": 1969,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000883",
+    0.0076
+   ],
+   "shapes": [
+    "999999",
+    "99999",
+    "999"
+   ],
+   "share": 0.9924
+  },
+  "GR": {
+   "code": "RA000685",
+   "records": 6996,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA000376",
+    0.0527
+   ],
+   "shapes": [
+    "999999999999",
+    "9999999999",
+    "99999999999"
+   ],
+   "share": 0.9194
+  },
+  "HR": {
+   "code": "RA000156",
+   "records": 2680,
+   "registers_seen": 7,
+   "runner_up": [
+    "RA000696",
+    0.0063
+   ],
+   "shapes": [
+    "999999999",
+    "9999999",
+    "99999999999"
+   ],
+   "share": 0.9869
+  },
+  "HU": {
+   "code": "RA000391",
+   "records": 23395,
+   "registers_seen": 11,
+   "runner_up": [
+    "RA000656",
+    0.0282
+   ],
+   "shapes": [
+    "99-99-999999",
+    "9999999999",
+    "99999999-9-99"
+   ],
+   "share": 0.9501
+  },
+  "IE": {
+   "code": "RA000402",
+   "records": 20717,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA000404",
+    0.0287
+   ],
+   "shapes": [
+    "999999",
+    "99999",
+    "AA9999"
+   ],
+   "share": 0.9505
+  },
+  "IL": {
+   "code": "RA000406",
+   "records": 2187,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001045",
+    0.0014
+   ],
+   "shapes": [
+    "999999999"
+   ],
+   "share": 0.9977
+  },
+  "IM": {
+   "code": "RA000405",
+   "records": 2954,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000908",
+    0.001
+   ],
+   "shapes": [
+    "999999A",
+    "99999A",
+    "999A"
+   ],
+   "share": 0.999
+  },
+  "IS": {
+   "code": "RA000393",
+   "records": 5249,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000898",
+    0.001
+   ],
+   "shapes": [
+    "9999999999",
+    "999999-9999"
+   ],
+   "share": 0.999
+  },
+  "IT": {
+   "code": "RA000407",
+   "records": 226899,
+   "registers_seen": 7,
+   "runner_up": [
+    "RA000776",
+    0.0103
+   ],
+   "shapes": [
+    "99999999999",
+    "AA-999999",
+    "AA - 9999999"
+   ],
+   "share": 0.989
+  },
+  "JE": {
+   "code": "RA000414",
+   "records": 8377,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000913",
+    0.0061
+   ],
+   "shapes": [
+    "999999",
+    "99999",
+    "9999"
+   ],
+   "share": 0.9939
+  },
+  "KE": {
+   "code": "RA000417",
+   "records": 269,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000921",
+    0.0297
+   ],
+   "shapes": [
+    "A.99999",
+    "A.999999",
+    "AAA/9999/999999"
+   ],
+   "share": 0.9442
+  },
+  "KN": {
+   "code": "RA000502",
+   "records": 807,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000990",
+    0.0669
+   ],
+   "shapes": [
+    "A 99999",
+    "A99999",
+    "99999"
+   ],
+   "share": 0.9257
+  },
+  "KY": {
+   "code": "RA000086",
+   "records": 22940,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000087",
+    0.041
+   ],
+   "shapes": [
+    "AA-999999",
+    "999999",
+    "AA-99999"
+   ],
+   "share": 0.959
+  },
+  "LI": {
+   "code": "RA000428",
+   "records": 12187,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000548",
+    0.0089
+   ],
+   "shapes": [
+    "AA-9999.999.999-9"
+   ],
+   "share": 0.9853
+  },
+  "LR": {
+   "code": "RA000427",
+   "records": 891,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000935",
+    0.0067
+   ],
+   "shapes": [
+    "A-999999",
+    "A-99999",
+    "A-9999"
+   ],
+   "share": 0.9933
+  },
+  "LT": {
+   "code": "RA000430",
+   "records": 4953,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000431",
+    0.0077
+   ],
+   "shapes": [
+    "999999999"
+   ],
+   "share": 0.9923
+  },
+  "LU": {
+   "code": "RA000432",
+   "records": 31152,
+   "registers_seen": 6,
+   "runner_up": [
+    "RA000433",
+    0.0159
+   ],
+   "shapes": [
+    "A999999",
+    "A99999",
+    "A9999"
+   ],
+   "share": 0.9793
+  },
+  "LV": {
+   "code": "RA000423",
+   "records": 4061,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000424",
+    0.0424
+   ],
+   "shapes": [
+    "99999999999"
+   ],
+   "share": 0.9574
+  },
+  "MC": {
+   "code": "RA000452",
+   "records": 762,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000453",
+    0.0118
+   ],
+   "shapes": [
+    "99A99999",
+    "99AA99999",
+    "9999A99999"
+   ],
+   "share": 0.9869
+  },
+  "MH": {
+   "code": "RA000444",
+   "records": 2827,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000946",
+    0.0014
+   ],
+   "shapes": [
+    "99999",
+    "999999",
+    "9999"
+   ],
+   "share": 0.9986
+  },
+  "MT": {
+   "code": "RA000443",
+   "records": 5040,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000945",
+    0.0073
+   ],
+   "shapes": [
+    "A 99999",
+    "A 999999",
+    "A 9999"
+   ],
+   "share": 0.9881
+  },
+  "MU": {
+   "code": "RA000447",
+   "records": 3601,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000757",
+    0.0058
+   ],
+   "shapes": [
+    "A999999",
+    "A99999",
+    "999999"
+   ],
+   "share": 0.9942
+  },
+  "MX": {
+   "code": "RA000449",
+   "records": 5893,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000703",
+    0.0429
+   ],
+   "shapes": [
+    "AAA999999AA9",
+    "AAA9999999A9",
+    "AAA999999A99"
+   ],
+   "share": 0.9503
+  },
+  "NG": {
+   "code": "RA000469",
+   "records": 941,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000967",
+    0.0032
+   ],
+   "shapes": [
+    "999999",
+    "9999999",
+    "9999"
+   ],
+   "share": 0.9957
+  },
+  "NL": {
+   "code": "RA000463",
+   "records": 186620,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000664",
+    0.0004
+   ],
+   "shapes": [
+    "99999999",
+    "9999999",
+    "999999999"
+   ],
+   "share": 0.9995
+  },
+  "NO": {
+   "code": "RA000472",
+   "records": 63714,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000473",
+    0.0288
+   ],
+   "shapes": [
+    "999 999 999",
+    "999999999"
+   ],
+   "share": 0.9711
+  },
+  "NZ": {
+   "code": "RA000466",
+   "records": 2529,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000749",
+    0.0933
+   ],
+   "shapes": [
+    "9999999999999",
+    "9999999",
+    "999999"
+   ],
+   "share": 0.9043
+  },
+  "OM": {
+   "code": "RA000474",
+   "records": 219,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999"
+   ],
+   "share": 1.0
+  },
+  "PA": {
+   "code": "RA000478",
+   "records": 5984,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001093",
+    0.006
+   ],
+   "shapes": [
+    "999999",
+    "999999999",
+    "99999"
+   ],
+   "share": 0.9938
+  },
+  "PH": {
+   "code": "RA000483",
+   "records": 585,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000760",
+    0.0085
+   ],
+   "shapes": [
+    "AA999999999",
+    "9999999999",
+    "A999999999"
+   ],
+   "share": 0.9897
+  },
+  "PL": {
+   "code": "RA000484",
+   "records": 33579,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000654",
+    0.0708
+   ],
+   "shapes": [
+    "9999999999",
+    "AAA 9999999999",
+    "999999999"
+   ],
+   "share": 0.9285
+  },
+  "PR": {
+   "code": "RA000493",
+   "records": 364,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000745",
+    0.0055
+   ],
+   "shapes": [
+    "999999",
+    "99999",
+    "99"
+   ],
+   "share": 0.9918
+  },
+  "PT": {
+   "code": "RA000487",
+   "records": 16771,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA000489",
+    0.0061
+   ],
+   "shapes": [
+    "999999999",
+    "AA999999999",
+    "AAA/AAAA 999999999"
+   ],
+   "share": 0.9915
+  },
+  "RO": {
+   "code": "RA000497",
+   "records": 8479,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000719",
+    0.0598
+   ],
+   "shapes": [
+    "99999999",
+    "A9999999999999",
+    "A99/9999/9999"
+   ],
+   "share": 0.9384
+  },
+  "RS": {
+   "code": "RA000517",
+   "records": 294,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000518",
+    0.0034
+   ],
+   "shapes": [
+    "99999999",
+    "999999999",
+    "9999999"
+   ],
+   "share": 0.9966
+  },
+  "RU": {
+   "code": "RA000499",
+   "records": 1816,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999999999",
+    "9999999999",
+    "9999"
+   ],
+   "share": 1.0
+  },
+  "SA": {
+   "code": "RA000513",
+   "records": 5489,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000702",
+    0.0055
+   ],
+   "shapes": [
+    "9999999999"
+   ],
+   "share": 0.9945
+  },
+  "SE": {
+   "code": "RA000544",
+   "records": 116393,
+   "registers_seen": 6,
+   "runner_up": [
+    "RA000546",
+    0.0558
+   ],
+   "shapes": [
+    "999999-9999",
+    "9999999999",
+    "99999999-9999"
+   ],
+   "share": 0.9391
+  },
+  "SG": {
+   "code": "RA000523",
+   "records": 11982,
+   "registers_seen": 6,
+   "runner_up": [
+    "RA000524",
+    0.0025
+   ],
+   "shapes": [
+    "999999999A",
+    "A99AA9999A",
+    "99999999A"
+   ],
+   "share": 0.9957
+  },
+  "SI": {
+   "code": "RA000529",
+   "records": 4745,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000997",
+    0.0002
+   ],
+   "shapes": [
+    "9999999999",
+    "99999999"
+   ],
+   "share": 0.9998
+  },
+  "SK": {
+   "code": "RA000526",
+   "records": 7199,
+   "registers_seen": 11,
+   "runner_up": [
+    "RA000671",
+    0.0213
+   ],
+   "shapes": [
+    "99999999",
+    "99 999 999",
+    "9999999"
+   ],
+   "share": 0.9606
+  },
+  "TC": {
+   "code": "RA000563",
+   "records": 261,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AA.999999",
+    "A.99999",
+    "A 99999"
+   ],
+   "share": 1.0
+  },
+  "TH": {
+   "code": "RA000554",
+   "records": 1076,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001014",
+    0.0093
+   ],
+   "shapes": [
+    "9999999999999"
+   ],
+   "share": 0.9898
+  },
+  "TW": {
+   "code": "RA000551",
+   "records": 795,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001009",
+    0.0075
+   ],
+   "shapes": [
+    "99999999",
+    "999999999"
+   ],
+   "share": 0.9925
+  },
+  "VG": {
+   "code": "RA000063",
+   "records": 29706,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000463",
+    0.0
+   ],
+   "shapes": [
+    "9999999",
+    "999999",
+    "99999"
+   ],
+   "share": 1.0
+  },
+  "VN": {
+   "code": "RA000649",
+   "records": 320,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001039",
+    0.0406
+   ],
+   "shapes": [
+    "9999999999"
+   ],
+   "share": 0.9594
+  },
+  "ZA": {
+   "code": "RA000531",
+   "records": 2385,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000782",
+    0.0075
+   ],
+   "shapes": [
+    "9999/999999/99",
+    "A9999999999",
+    "99/999999/99"
+   ],
+   "share": 0.987
+  }
+ },
+ "generated": "2026-09-20",
+ "min_records": 200,
+ "min_share": 0.9,
+ "records_scanned": 3393569,
+ "rejected": {
+  "AE": {
+   "code": "RA000752",
+   "records": 7977,
+   "registers_seen": 32,
+   "runner_up": [
+    "RA000715",
+    0.1483
+   ],
+   "shapes": [
+    "9999999999999999999",
+    "99999999",
+    "9999999999AA9999999"
+   ],
+   "share": 0.2235
+  },
+  "AF": {
+   "code": "RA000001",
+   "records": 9,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000759",
+    0.3333
+   ],
+   "shapes": [
+    "99999",
+    "999999"
+   ],
+   "share": 0.6667
+  },
+  "AG": {
+   "code": "RA000008",
+   "records": 95,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000007",
+    0.1579
+   ],
+   "shapes": [
+    "99999",
+    "999",
+    "9999"
+   ],
+   "share": 0.8421
+  },
+  "AL": {
+   "code": "RA000002",
+   "records": 82,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000793",
+    0.0854
+   ],
+   "shapes": [
+    "A99999999A"
+   ],
+   "share": 0.9146
+  },
+  "AM": {
+   "code": "RA000011",
+   "records": 64,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000801",
+    0.3594
+   ],
+   "shapes": [
+    "999.999.9999999",
+    "99",
+    "999.999.999999"
+   ],
+   "share": 0.6406
+  },
+  "AO": {
+   "code": "RA000005",
+   "records": 63,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000798",
+    0.1905
+   ],
+   "shapes": [
+    "9999999999",
+    "9999.999",
+    "9999.9999"
+   ],
+   "share": 0.7937
+  },
+  "AR": {
+   "code": "RA000009",
+   "records": 767,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000010",
+    0.2503
+   ],
+   "shapes": [
+    "99-99999999-9",
+    "99999999999"
+   ],
+   "share": 0.7379
+  },
+  "AU": {
+   "code": "RA000014",
+   "records": 44264,
+   "registers_seen": 7,
+   "runner_up": [
+    "RA000013",
+    0.2412
+   ],
+   "shapes": [
+    "999 999 999",
+    "999999999",
+    "99999999999"
+   ],
+   "share": 0.7507
+  },
+  "AW": {
+   "code": "RA000012",
+   "records": 50,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000463",
+    0.02
+   ],
+   "shapes": [
+    "A99999.9",
+    "99999",
+    "99999.9"
+   ],
+   "share": 0.98
+  },
+  "AZ": {
+   "code": "RA000019",
+   "records": 65,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000804",
+    0.1077
+   ],
+   "shapes": [
+    "9999999999",
+    "999999999",
+    "9999-A9-999"
+   ],
+   "share": 0.8923
+  },
+  "BA": {
+   "code": "RA000034",
+   "records": 111,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000692",
+    0.1892
+   ],
+   "shapes": [
+    "99-99-9999-99",
+    "9999999999999",
+    "9-99999"
+   ],
+   "share": 0.7838
+  },
+  "BD": {
+   "code": "RA000022",
+   "records": 191,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001110",
+    0.0524
+   ],
+   "shapes": [
+    "A-99999",
+    "A-999999",
+    "A-9999"
+   ],
+   "share": 0.9476
+  },
+  "BF": {
+   "code": "RA000067",
+   "records": 14,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000814",
+    0.3571
+   ],
+   "shapes": [
+    "AAAAA9999A9999",
+    "AA-AAA-99-9999-A99-99999",
+    "AA AAA 9999 A 999"
+   ],
+   "share": 0.6429
+  },
+  "BI": {
+   "code": "RA000068",
+   "records": 3,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999999",
+    "99999"
+   ],
+   "share": 1.0
+  },
+  "BJ": {
+   "code": "RA000027",
+   "records": 6,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AAAA AA/AAA/99 A 9999",
+    "9999999999999",
+    "AAAA AA/AAA/99 A 999"
+   ],
+   "share": 1.0
+  },
+  "BN": {
+   "code": "RA000064",
+   "records": 23,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AA99999999",
+    "AAA/9999",
+    "AAA/AA/9999/99"
+   ],
+   "share": 1.0
+  },
+  "BO": {
+   "code": "RA001062",
+   "records": 40,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000816",
+    0.025
+   ],
+   "shapes": [
+    "9999999999",
+    "999999999",
+    "99999999"
+   ],
+   "share": 0.975
+  },
+  "BQ": {
+   "code": "RA000463",
+   "records": 55,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000032",
+    0.3091
+   ],
+   "shapes": [
+    "99999999"
+   ],
+   "share": 0.6909
+  },
+  "BR": {
+   "code": "RA000681",
+   "records": 3272,
+   "registers_seen": 26,
+   "runner_up": [
+    "RA000059",
+    0.1956
+   ],
+   "shapes": [
+    "99.999.999/9999-99",
+    "AAAA 99.999.999/9999-99"
+   ],
+   "share": 0.6439
+  },
+  "BT": {
+   "code": "RA000030",
+   "records": 11,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "A99999999AAA9999",
+    "A99999999AAA999",
+    "A999999999AAA9999"
+   ],
+   "share": 1.0
+  },
+  "BW": {
+   "code": "RA000035",
+   "records": 39,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000821",
+    0.0513
+   ],
+   "shapes": [
+    "AA99999999999",
+    "AA9999/9999",
+    "AA9999/99999"
+   ],
+   "share": 0.9487
+  },
+  "BY": {
+   "code": "RA000024",
+   "records": 49,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "999999999"
+   ],
+   "share": 1.0
+  },
+  "BZ": {
+   "code": "RA000026",
+   "records": 1025,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000693",
+    0.3951
+   ],
+   "shapes": [
+    "999999",
+    "99999",
+    "999,999"
+   ],
+   "share": 0.6029
+  },
+  "CA": {
+   "code": "RA000079",
+   "records": 41521,
+   "registers_seen": 29,
+   "runner_up": [
+    "RA000081",
+    0.1893
+   ],
+   "shapes": [
+    "9999999",
+    "9999999999",
+    "999999999"
+   ],
+   "share": 0.2913
+  },
+  "CD": {
+   "code": "RA000169",
+   "records": 22,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000851",
+    0.0455
+   ],
+   "shapes": [
+    "AA/AAA/AAAA/99-A-99999",
+    "AA/AAA/AAAA/99-A-9999",
+    "99999"
+   ],
+   "share": 0.9545
+  },
+  "CF": {
+   "code": "RA000088",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AAAA AAAAAA A° AA/AA/9999 A999"
+   ],
+   "share": 1.0
+  },
+  "CG": {
+   "code": "RA000151",
+   "records": 3,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "A999999999999999",
+    "AAAA AA/ AAA/ 99 A 999",
+    "AAAA AA / AAA / 99 A 9999"
+   ],
+   "share": 1.0
+  },
+  "CH": {
+   "code": "RA000548",
+   "records": 22279,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000549",
+    0.4482
+   ],
+   "shapes": [
+    "AAA999999999",
+    "AAA-999.999.999",
+    "999.999.999"
+   ],
+   "share": 0.5516
+  },
+  "CI": {
+   "code": "RA000155",
+   "records": 30,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000814",
+    0.0667
+   ],
+   "shapes": [
+    "AA-AAA-9999-A-99999",
+    "AA-AAA-9999-A-999999",
+    "AA-AAA-99-9999-A99-99999"
+   ],
+   "share": 0.9333
+  },
+  "CL": {
+   "code": "RA000787",
+   "records": 1186,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA000090",
+    0.2099
+   ],
+   "shapes": [
+    "99999999-9",
+    "99999999-A",
+    "99.999.999-9"
+   ],
+   "share": 0.6391
+  },
+  "CM": {
+   "code": "RA000071",
+   "records": 9,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001055",
+    0.2222
+   ],
+   "shapes": [
+    "AA/AAA/9999/A/999",
+    "AA/AAA/9999/A/9999",
+    "99.A.999"
+   ],
+   "share": 0.6667
+  },
+  "CO": {
+   "code": "RA000093",
+   "records": 940,
+   "registers_seen": 29,
+   "runner_up": [
+    "RA000101",
+    0.3117
+   ],
+   "shapes": [
+    "999999999 - 9",
+    "999999999-9",
+    "9999999999"
+   ],
+   "share": 0.4681
+  },
+  "CV": {
+   "code": "RA000069",
+   "records": 11,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000683",
+    0.0909
+   ],
+   "shapes": [
+    "999999999",
+    "999/9999/99/99",
+    "9999/9999/99/99"
+   ],
+   "share": 0.8182
+  },
+  "CW": {
+   "code": "RA000160",
+   "records": 921,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000463",
+    0.1031
+   ],
+   "shapes": [
+    "999999",
+    "99999",
+    "9999"
+   ],
+   "share": 0.8958
+  },
+  "DE": {
+   "code": "RA000304",
+   "records": 216959,
+   "registers_seen": 175,
+   "runner_up": [
+    "RA000217",
+    0.0629
+   ],
+   "shapes": [
+    "AAA 999999",
+    "AAA 99999",
+    "AA 9999"
+   ],
+   "share": 0.0861
+  },
+  "DJ": {
+   "code": "RA000172",
+   "records": 11,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000861",
+    0.4545
+   ],
+   "shapes": [
+    "99999/A/AA",
+    "9999/A/AAAA",
+    "999/A/AA"
+   ],
+   "share": 0.5455
+  },
+  "DM": {
+   "code": "RA000173",
+   "records": 105,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000862",
+    0.0286
+   ],
+   "shapes": [
+    "99999",
+    "9999/AAA99999",
+    "9999/A9999"
+   ],
+   "share": 0.9714
+  },
+  "DO": {
+   "code": "RA000175",
+   "records": 177,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA000174",
+    0.3559
+   ],
+   "shapes": [
+    "99999AA",
+    "9-99-99999-9",
+    "999999AA"
+   ],
+   "share": 0.565
+  },
+  "DZ": {
+   "code": "RA000003",
+   "records": 14,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000794",
+    0.0714
+   ],
+   "shapes": [
+    "99/99-9999999 A 99",
+    "99A9999999",
+    "999999999999999"
+   ],
+   "share": 0.9286
+  },
+  "EC": {
+   "code": "RA000691",
+   "records": 121,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA000178",
+    0.3636
+   ],
+   "shapes": [
+    "9999999999999"
+   ],
+   "share": 0.3636
+  },
+  "ES": {
+   "code": "RA000533",
+   "records": 183697,
+   "registers_seen": 20,
+   "runner_up": [
+    "RA000535",
+    0.0666
+   ],
+   "shapes": [
+    "A-999999-9",
+    "AA-99999-9",
+    "A-99999-9"
+   ],
+   "share": 0.8537
+  },
+  "ET": {
+   "code": "RA000183",
+   "records": 10,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000874",
+    0.2
+   ],
+   "shapes": [
+    "AA/AA/9/9999999/9999",
+    "9999999999",
+    "999/9999"
+   ],
+   "share": 0.8
+  },
+  "FJ": {
+   "code": "RA000187",
+   "records": 40,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999",
+    "9999",
+    "AAAA9999A9999"
+   ],
+   "share": 1.0
+  },
+  "FK": {
+   "code": "RA000184",
+   "records": 12,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999",
+    "9999"
+   ],
+   "share": 1.0
+  },
+  "FM": {
+   "code": "RA000186",
+   "records": 7,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AAA AA 99-99",
+    "AAA AA 999999-99",
+    "AA-999-99"
+   ],
+   "share": 1.0
+  },
+  "GA": {
+   "code": "RA000193",
+   "records": 9,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999A99999",
+    "AA/AAA 9999 A 9999",
+    "AA AAA 9999 A 9999"
+   ],
+   "share": 1.0
+  },
+  "GB": {
+   "code": "RA000585",
+   "records": 141125,
+   "registers_seen": 17,
+   "runner_up": [
+    "RA000589",
+    0.0777
+   ],
+   "shapes": [
+    "99999999",
+    "AA999999",
+    "9999999"
+   ],
+   "share": 0.7826
+  },
+  "GD": {
+   "code": "RA000379",
+   "records": 8,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "A-9999",
+    "999A AA 9999-9999",
+    "AA. 9 AA 9999-9999"
+   ],
+   "share": 1.0
+  },
+  "GE": {
+   "code": "RA000196",
+   "records": 144,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000881",
+    0.0139
+   ],
+   "shapes": [
+    "999999999",
+    "999999999 ",
+    "999999"
+   ],
+   "share": 0.9861
+  },
+  "GG": {
+   "code": "RA000383",
+   "records": 5082,
+   "registers_seen": 6,
+   "runner_up": [
+    "RA000667",
+    0.1183
+   ],
+   "shapes": [
+    "99999",
+    "9999",
+    "999"
+   ],
+   "share": 0.8684
+  },
+  "GH": {
+   "code": "RA000374",
+   "records": 120,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000882",
+    0.0167
+   ],
+   "shapes": [
+    "AA999999999",
+    "A9999999999",
+    "99,999"
+   ],
+   "share": 0.9833
+  },
+  "GL": {
+   "code": "RA000378",
+   "records": 70,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999999"
+   ],
+   "share": 1.0
+  },
+  "GM": {
+   "code": "RA000195",
+   "records": 4,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999",
+    "999/9999",
+    "9999/A99999"
+   ],
+   "share": 1.0
+  },
+  "GN": {
+   "code": "RA000384",
+   "records": 7,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000887",
+    0.4286
+   ],
+   "shapes": [
+    "AAAA/AA-AAA/999.999A/9999",
+    "AAAA/AA-AAA/99999/9999",
+    "AAAA/AA.AAA.9999.A.99999"
+   ],
+   "share": 0.5714
+  },
+  "GT": {
+   "code": "RA000382",
+   "records": 119,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001099",
+    0.3529
+   ],
+   "shapes": [
+    "99999",
+    "999999",
+    "9999999"
+   ],
+   "share": 0.6303
+  },
+  "GY": {
+   "code": "RA000385",
+   "records": 2,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999"
+   ],
+   "share": 1.0
+  },
+  "HK": {
+   "code": "RA000388",
+   "records": 11081,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA000389",
+    0.3077
+   ],
+   "shapes": [
+    "99999999",
+    "A9999999",
+    "9999999"
+   ],
+   "share": 0.68
+  },
+  "HN": {
+   "code": "RA000387",
+   "records": 36,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001106",
+    0.25
+   ],
+   "shapes": [
+    "99999",
+    "9999999",
+    "99999999999999"
+   ],
+   "share": 0.6944
+  },
+  "ID": {
+   "code": "RA000763",
+   "records": 1108,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000400",
+    0.2157
+   ],
+   "shapes": [
+    "9999999999999",
+    "9999999999999999",
+    "99.99.9.99.99999"
+   ],
+   "share": 0.5659
+  },
+  "IN": {
+   "code": "RA000394",
+   "records": 283901,
+   "registers_seen": 17,
+   "runner_up": [
+    "RA000754",
+    0.2873
+   ],
+   "shapes": [
+    "A99999AA9999AAA999999",
+    "AAA-9999",
+    "99AAAAA9999A9AA"
+   ],
+   "share": 0.6515
+  },
+  "IQ": {
+   "code": "RA000401",
+   "records": 46,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000907",
+    0.1087
+   ],
+   "shapes": [
+    "99999",
+    "99-999999999",
+    "999999999-99"
+   ],
+   "share": 0.8913
+  },
+  "IR": {
+   "code": "RA000680",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "999999"
+   ],
+   "share": 1.0
+  },
+  "JM": {
+   "code": "RA000411",
+   "records": 45,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999",
+    "999999",
+    "9999"
+   ],
+   "share": 1.0
+  },
+  "JO": {
+   "code": "RA000415",
+   "records": 132,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000698",
+    0.1061
+   ],
+   "shapes": [
+    "999999999",
+    "99999",
+    "999"
+   ],
+   "share": 0.8939
+  },
+  "JP": {
+   "code": "RA000412",
+   "records": 3861,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA001075",
+    0.1028
+   ],
+   "shapes": [
+    "9999-99-999999",
+    "999999999999",
+    "9999-99-9999999"
+   ],
+   "share": 0.8954
+  },
+  "KG": {
+   "code": "RA000421",
+   "records": 80,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000929",
+    0.1
+   ],
+   "shapes": [
+    "999999-9999-AAA",
+    "999999-9999-ООО",
+    "999999-9999-ЗАО"
+   ],
+   "share": 0.8875
+  },
+  "KH": {
+   "code": "RA000070",
+   "records": 32,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000828",
+    0.0312
+   ],
+   "shapes": [
+    "99999999",
+    "9999999999",
+    "9999A/9999"
+   ],
+   "share": 0.9375
+  },
+  "KI": {
+   "code": "RA000418",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99"
+   ],
+   "share": 1.0
+  },
+  "KM": {
+   "code": "RA000849",
+   "records": 9,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999",
+    "AA99999999",
+    "A99999/AAA"
+   ],
+   "share": 1.0
+  },
+  "KR": {
+   "code": "RA000657",
+   "records": 1754,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000419",
+    0.1807
+   ],
+   "shapes": [
+    "999-99-99999",
+    "9999-999-9999-999"
+   ],
+   "share": 0.8147
+  },
+  "KW": {
+   "code": "RA000420",
+   "records": 178,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000927",
+    0.0169
+   ],
+   "shapes": [
+    "99999",
+    "999999",
+    "9999"
+   ],
+   "share": 0.9775
+  },
+  "KZ": {
+   "code": "RA000416",
+   "records": 297,
+   "registers_seen": 6,
+   "runner_up": [
+    "RA000919",
+    0.2963
+   ],
+   "shapes": [
+    "999999999999"
+   ],
+   "share": 0.4949
+  },
+  "LA": {
+   "code": "RA000422",
+   "records": 17,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000930",
+    0.1176
+   ],
+   "shapes": [
+    "99-99999999",
+    "999999/AAA",
+    "99A-99999999 999 9 (A/9)"
+   ],
+   "share": 0.8824
+  },
+  "LB": {
+   "code": "RA000425",
+   "records": 183,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000933",
+    0.0109
+   ],
+   "shapes": [
+    "9999999",
+    "99999",
+    "9999"
+   ],
+   "share": 0.9781
+  },
+  "LC": {
+   "code": "RA000503",
+   "records": 196,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000504",
+    0.4796
+   ],
+   "shapes": [
+    "9999-99999",
+    "9999/A999",
+    "999999999"
+   ],
+   "share": 0.4847
+  },
+  "LK": {
+   "code": "RA000540",
+   "records": 181,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001005",
+    0.0055
+   ],
+   "shapes": [
+    "AA9999",
+    "AA99999",
+    "AA999"
+   ],
+   "share": 0.9945
+  },
+  "LS": {
+   "code": "RA000426",
+   "records": 2,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "A99/99",
+    "999/999"
+   ],
+   "share": 1.0
+  },
+  "LY": {
+   "code": "RA000936",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999999999999"
+   ],
+   "share": 1.0
+  },
+  "MA": {
+   "code": "RA000457",
+   "records": 175,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001114",
+    0.0343
+   ],
+   "shapes": [
+    "99999",
+    "999999",
+    "999999999999999"
+   ],
+   "share": 0.96
+  },
+  "MD": {
+   "code": "RA000451",
+   "records": 53,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000951",
+    0.0377
+   ],
+   "shapes": [
+    "9999999999999",
+    "99999"
+   ],
+   "share": 0.9245
+  },
+  "ME": {
+   "code": "RA000455",
+   "records": 69,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000954",
+    0.029
+   ],
+   "shapes": [
+    "99999999"
+   ],
+   "share": 0.971
+  },
+  "MG": {
+   "code": "RA000679",
+   "records": 11,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000939",
+    0.0909
+   ],
+   "shapes": [
+    "9999A99999",
+    "9999 A 99999",
+    "9999999999"
+   ],
+   "share": 0.9091
+  },
+  "MK": {
+   "code": "RA000437",
+   "records": 132,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000968",
+    0.0152
+   ],
+   "shapes": [
+    "9999999"
+   ],
+   "share": 0.9773
+  },
+  "ML": {
+   "code": "RA000442",
+   "records": 7,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000814",
+    0.4286
+   ],
+   "shapes": [
+    "99999999999999A",
+    "AA.AAA.9999.A.9999",
+    "AA.AA9.9999.A.9999"
+   ],
+   "share": 0.5714
+  },
+  "MM": {
+   "code": "RA000459",
+   "records": 5,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000958",
+    0.2
+   ],
+   "shapes": [
+    "999999999",
+    "999 AA/9999-9999(AAA)"
+   ],
+   "share": 0.8
+  },
+  "MN": {
+   "code": "RA000454",
+   "records": 49,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000952",
+    0.0612
+   ],
+   "shapes": [
+    "9999999",
+    "9999999999"
+   ],
+   "share": 0.9388
+  },
+  "MO": {
+   "code": "RA000436",
+   "records": 67,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000938",
+    0.1045
+   ],
+   "shapes": [
+    "99999 AA",
+    "99999 (AA)",
+    "99999AA"
+   ],
+   "share": 0.8955
+  },
+  "MP": {
+   "code": "RA000970",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999"
+   ],
+   "share": 1.0
+  },
+  "MR": {
+   "code": "RA000446",
+   "records": 12,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999999",
+    "9999",
+    "9999/99999/AA/9999"
+   ],
+   "share": 1.0
+  },
+  "MV": {
+   "code": "RA000441",
+   "records": 42,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "A-9999/9999",
+    "A99999999",
+    "A-999/9999"
+   ],
+   "share": 1.0
+  },
+  "MW": {
+   "code": "RA000438",
+   "records": 9,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000940",
+    0.1111
+   ],
+   "shapes": [
+    "9999",
+    "99999",
+    "AA999"
+   ],
+   "share": 0.8889
+  },
+  "MY": {
+   "code": "RA000439",
+   "records": 1581,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000941",
+    0.2024
+   ],
+   "shapes": [
+    "999999999999 (999999-A)",
+    "999999999999 (9999999-A)",
+    "999999999999 (99999-A)"
+   ],
+   "share": 0.7913
+  },
+  "MZ": {
+   "code": "RA000458",
+   "records": 20,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000956",
+    0.05
+   ],
+   "shapes": [
+    "999999999",
+    "9999/9999/999",
+    "99999"
+   ],
+   "share": 0.95
+  },
+  "NA": {
+   "code": "RA000460",
+   "records": 64,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000960",
+    0.1719
+   ],
+   "shapes": [
+    "9999/9999",
+    "99/999",
+    "AA/9999/9999"
+   ],
+   "share": 0.8125
+  },
+  "NC": {
+   "code": "RA000192",
+   "records": 98,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000963",
+    0.4082
+   ],
+   "shapes": [
+    "999 999 999",
+    "999999999",
+    "9999999"
+   ],
+   "share": 0.551
+  },
+  "NE": {
+   "code": "RA000468",
+   "records": 5,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AA-AAA-9999-A 999",
+    "AA-AAA-9999-A-999",
+    "AAAA AA-AAA 9999 A 999"
+   ],
+   "share": 1.0
+  },
+  "NI": {
+   "code": "RA000467",
+   "records": 16,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "A9999999999999",
+    "AA99-99-999999",
+    "AA-9A999A9"
+   ],
+   "share": 1.0
+  },
+  "NP": {
+   "code": "RA000462",
+   "records": 38,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "999/999/99",
+    "999999/999/999",
+    "9999/999/999"
+   ],
+   "share": 1.0
+  },
+  "NR": {
+   "code": "RA000961",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "999999999"
+   ],
+   "share": 1.0
+  },
+  "PE": {
+   "code": "RA000689",
+   "records": 567,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000482",
+    0.2257
+   ],
+   "shapes": [
+    "99999999999"
+   ],
+   "share": 0.7707
+  },
+  "PF": {
+   "code": "RA000192",
+   "records": 7,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "999 999 999",
+    "999999999"
+   ],
+   "share": 1.0
+  },
+  "PG": {
+   "code": "RA000479",
+   "records": 15,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9-99999",
+    "9-9999",
+    "9-999999"
+   ],
+   "share": 1.0
+  },
+  "PK": {
+   "code": "RA000475",
+   "records": 118,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001111",
+    0.0847
+   ],
+   "shapes": [
+    "9999999",
+    "A-99999",
+    "99999"
+   ],
+   "share": 0.9153
+  },
+  "PS": {
+   "code": "RA000477",
+   "records": 71,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000974",
+    0.0423
+   ],
+   "shapes": [
+    "999999999",
+    "99999",
+    "AAA9999"
+   ],
+   "share": 0.9296
+  },
+  "PW": {
+   "code": "RA000476",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999999"
+   ],
+   "share": 1.0
+  },
+  "PY": {
+   "code": "RA000480",
+   "records": 164,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA001072",
+    0.1829
+   ],
+   "shapes": [
+    "99999999-9",
+    "99999999",
+    "99999999 - 9"
+   ],
+   "share": 0.7622
+  },
+  "QA": {
+   "code": "RA000494",
+   "records": 298,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000495",
+    0.3087
+   ],
+   "shapes": [
+    "99999",
+    "999999",
+    "9999"
+   ],
+   "share": 0.6577
+  },
+  "RW": {
+   "code": "RA000500",
+   "records": 20,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000986",
+    0.05
+   ],
+   "shapes": [
+    "999999999",
+    "999/99/AAAA"
+   ],
+   "share": 0.95
+  },
+  "SB": {
+   "code": "RA000530",
+   "records": 5,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999999",
+    "9999999",
+    "999999999"
+   ],
+   "share": 1.0
+  },
+  "SC": {
+   "code": "RA000521",
+   "records": 1576,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000520",
+    0.3046
+   ],
+   "shapes": [
+    "999999",
+    "A9999999",
+    "9999999-9"
+   ],
+   "share": 0.6954
+  },
+  "SD": {
+   "code": "RA000541",
+   "records": 13,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001006",
+    0.0769
+   ],
+   "shapes": [
+    "99999",
+    "9999",
+    "99"
+   ],
+   "share": 0.9231
+  },
+  "SL": {
+   "code": "RA000522",
+   "records": 12,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AA999999AAAAA99999",
+    "AAA999999AAAAA9999999",
+    "999/9999"
+   ],
+   "share": 1.0
+  },
+  "SM": {
+   "code": "RA000511",
+   "records": 99,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000993",
+    0.1111
+   ],
+   "shapes": [
+    "AA99999",
+    "99999",
+    "9999"
+   ],
+   "share": 0.8889
+  },
+  "SN": {
+   "code": "RA000515",
+   "records": 22,
+   "registers_seen": 4,
+   "runner_up": [
+    "RA000516",
+    0.1364
+   ],
+   "shapes": [
+    "AA.AAA.9999.A.99999",
+    "AA.AAA.9999.A.9999",
+    "AA-AAA-9999-A-99"
+   ],
+   "share": 0.7273
+  },
+  "SR": {
+   "code": "RA000542",
+   "records": 16,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001007",
+    0.125
+   ],
+   "shapes": [
+    "99999",
+    "9999",
+    "999"
+   ],
+   "share": 0.875
+  },
+  "SS": {
+   "code": "RA000532",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99,999"
+   ],
+   "share": 1.0
+  },
+  "ST": {
+   "code": "RA000512",
+   "records": 9,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000994",
+    0.2222
+   ],
+   "shapes": [
+    "999999999",
+    "999/99999999",
+    "A999999/9999"
+   ],
+   "share": 0.7778
+  },
+  "SV": {
+   "code": "RA000180",
+   "records": 70,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000871",
+    0.0143
+   ],
+   "shapes": [
+    "9999-999999-999-9",
+    "99999999999999",
+    "9999999999"
+   ],
+   "share": 0.9857
+  },
+  "SX": {
+   "code": "RA000525",
+   "records": 19,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999",
+    "9999",
+    "999"
+   ],
+   "share": 1.0
+  },
+  "SZ": {
+   "code": "RA000543",
+   "records": 3,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "A9/99999",
+    "99/9999",
+    "999999999999999"
+   ],
+   "share": 1.0
+  },
+  "TD": {
+   "code": "RA000089",
+   "records": 1,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AA-AAA-99-9999-A99-99999"
+   ],
+   "share": 1.0
+  },
+  "TG": {
+   "code": "RA000556",
+   "records": 14,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000814",
+    0.0714
+   ],
+   "shapes": [
+    "AA-AAA 9999 A 9999",
+    "9999 A 9999",
+    "AA-AAA-99-9999-A99-99999"
+   ],
+   "share": 0.9286
+  },
+  "TJ": {
+   "code": "RA000552",
+   "records": 11,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999999",
+    "999999999"
+   ],
+   "share": 1.0
+  },
+  "TL": {
+   "code": "RA000555",
+   "records": 5,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999"
+   ],
+   "share": 1.0
+  },
+  "TM": {
+   "code": "RA000562",
+   "records": 3,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999999"
+   ],
+   "share": 1.0
+  },
+  "TN": {
+   "code": "RA000758",
+   "records": 135,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001021",
+    0.0222
+   ],
+   "shapes": [
+    "9999999A",
+    "A9999999999"
+   ],
+   "share": 0.9704
+  },
+  "TO": {
+   "code": "RA000557",
+   "records": 4,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "AA9999999",
+    "AA999"
+   ],
+   "share": 1.0
+  },
+  "TR": {
+   "code": "RA000560",
+   "records": 6830,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000561",
+    0.2811
+   ],
+   "shapes": [
+    "9999999999999999",
+    "999999",
+    "999999-9"
+   ],
+   "share": 0.7189
+  },
+  "TT": {
+   "code": "RA000558",
+   "records": 76,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "9999999",
+    "999999",
+    "A9999999999999"
+   ],
+   "share": 1.0
+  },
+  "TZ": {
+   "code": "RA000553",
+   "records": 73,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999",
+    "999999999",
+    "999999"
+   ],
+   "share": 1.0
+  },
+  "UA": {
+   "code": "RA000567",
+   "records": 269,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001027",
+    0.1227
+   ],
+   "shapes": [
+    "99999999"
+   ],
+   "share": 0.8662
+  },
+  "UG": {
+   "code": "RA000566",
+   "records": 80,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000662",
+    0.0625
+   ],
+   "shapes": [
+    "99999999999999",
+    "999999",
+    "99999"
+   ],
+   "share": 0.9375
+  },
+  "US": {
+   "code": "RA000602",
+   "records": 279577,
+   "registers_seen": 67,
+   "runner_up": [
+    "RA000598",
+    0.0564
+   ],
+   "shapes": [
+    "9999999",
+    "99999999",
+    "999999"
+   ],
+   "share": 0.4426
+  },
+  "UY": {
+   "code": "RA000690",
+   "records": 475,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA000645",
+    0.3789
+   ],
+   "shapes": [
+    "999999999999"
+   ],
+   "share": 0.5684
+  },
+  "UZ": {
+   "code": "RA000646",
+   "records": 71,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001036",
+    0.3521
+   ],
+   "shapes": [
+    "9999999",
+    "999999",
+    "99"
+   ],
+   "share": 0.6338
+  },
+  "VC": {
+   "code": "RA000508",
+   "records": 631,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000992",
+    0.1981
+   ],
+   "shapes": [
+    "99999 AAA 9999",
+    "99999 AA 9999",
+    "9999 AAA 9999"
+   ],
+   "share": 0.8019
+  },
+  "VE": {
+   "code": "RA000648",
+   "records": 104,
+   "registers_seen": 5,
+   "runner_up": [
+    "RA001057",
+    0.0769
+   ],
+   "shapes": [
+    "A999999999",
+    "999999",
+    "A-99999999-9"
+   ],
+   "share": 0.8942
+  },
+  "VI": {
+   "code": "RA000565",
+   "records": 44,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001050",
+    0.2273
+   ],
+   "shapes": [
+    "999999",
+    "9-99999-9A",
+    "9999999"
+   ],
+   "share": 0.7727
+  },
+  "VU": {
+   "code": "RA000647",
+   "records": 138,
+   "registers_seen": 1,
+   "runner_up": null,
+   "shapes": [
+    "99999",
+    "999999",
+    "9999"
+   ],
+   "share": 1.0
+  },
+  "WF": {
+   "code": "RA000192",
+   "records": 2,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000650",
+    0.5
+   ],
+   "shapes": [
+    "999 999 999"
+   ],
+   "share": 0.5
+  },
+  "WS": {
+   "code": "RA000510",
+   "records": 550,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000509",
+    0.4491
+   ],
+   "shapes": [
+    "99999",
+    "9999",
+    "A99999"
+   ],
+   "share": 0.5509
+  },
+  "XK": {
+   "code": "RA000519",
+   "records": 40,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA000925",
+    0.025
+   ],
+   "shapes": [
+    "999999999",
+    "99999999",
+    "9999999-9"
+   ],
+   "share": 0.975
+  },
+  "YE": {
+   "code": "RA000651",
+   "records": 23,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001040",
+    0.2609
+   ],
+   "shapes": [
+    "99999",
+    "9999",
+    "99"
+   ],
+   "share": 0.7391
+  },
+  "ZM": {
+   "code": "RA000652",
+   "records": 55,
+   "registers_seen": 2,
+   "runner_up": [
+    "RA001041",
+    0.0182
+   ],
+   "shapes": [
+    "999999999999",
+    "99999",
+    "9999"
+   ],
+   "share": 0.9818
+  },
+  "ZW": {
+   "code": "RA000653",
+   "records": 72,
+   "registers_seen": 3,
+   "runner_up": [
+    "RA001043",
+    0.0278
+   ],
+   "shapes": [
+    "9999/9999",
+    "99999/9999",
+    "9999/99"
+   ],
+   "share": 0.9583
+  }
+ },
+ "source": "gleif-lei2.json.zip"
+}
