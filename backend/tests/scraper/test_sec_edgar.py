@@ -1699,11 +1699,14 @@ class TestThirteenGCoFilersAreAFamilyNotABloc:
                 "IF A MEMBER OF A GROUP 4 CITIZENSHIP OR PLACE OF ORGANIZATION Delaware "
                 + TestOldCoverPagesWriteZeroInWords.BERKSHIRE.replace("52,717,075", "{n}").replace("6.7%", "{pct}")
                 + " 12 TYPE OF REPORTING PERSON {code} ")
+        # The subsidiary "Berkshire Hathaway International Insurance Ltd." shares
+        # both significant tokens with the filer and once outscored the parent.
         doc = ("Activision Blizzard, Inc. (Name of Issuer) Common Stock, par value $0.000001 "
                "(Title of Class of Securities) "
-               + page.format(name="Berkshire Hathaway Inc.", n="52,717,075", pct="6.7%", code="HC, CO")
                + page.format(name="Warren E. Buffett", n="52,717,075", pct="6.7%", code="IN")
+               + page.format(name="Berkshire Hathaway Inc.", n="52,717,075", pct="6.7%", code="HC, CO")
                + page.format(name="National Indemnity Company", n="42,000,000", pct="5.3%", code="IC, CO")
+               + page.format(name="Berkshire Hathaway International Insurance Ltd.", n="368,000", pct="0.1%", code="IC, CO")
                + "based on a total of 782,626,000 shares issued and outstanding.")
         pages = {"https://x.test/i.htm": index,
                  "https://www.sec.gov/Archives/edgar/data/718877/d415358dsc13g.htm": doc}

@@ -1113,16 +1113,28 @@ def _cover_page_for(text: str, filer_name: str | None) -> str:
     best, best_score = None, (0, 0.0)
     for start, end in zip(starts, starts[1:] + [len(plain)]):
         page = plain[start:end]
-        # The name follows the row label; the S.S./I.R.S. line and row 2 come
-        # within ~120 characters, so this is the name plus a little boilerplate.
-        header = _significant_tokens(_REPORTING_PERSON_ROW.sub("", page[:160], count=1))
+        # The name is what follows the row label up to the next row — the
+        # S.S./I.R.S. line, "(see instructions)" or row 2. Nothing after that
+        # may count: a shorter name lets more boilerplate into a fixed window,
+        # which is how "Berkshire Hathaway International Insurance Ltd." outscored
+        # "Berkshire Hathaway Inc." for the filer Berkshire Hathaway Inc.
+        name = _REPORTING_PERSON_ROW.sub("", page[:200], count=1)
+        name = _COVER_NAME_END.split(name, maxsplit=1)[0]
+        header = _significant_tokens(name)
         overlap = len(wanted & header)
-        # Most shared tokens wins; the share of the header they cover breaks
+        # Most shared tokens wins; the share of the name they cover breaks
         # ties — "Bozano" alone matches both Bozano pages, "Cia. Bozano" only one.
         score = (overlap, overlap / len(header) if header else 0.0)
         if score > best_score:
             best, best_score = page, score
     return best if best is not None else plain
+
+
+#: What ends the reporting person's name on a cover page.
+_COVER_NAME_END = re.compile(
+    r'\(?\s*see\s+instructions|s\.?\s*s\.?\s+or\s+i\.?\s*r\.?\s*s|i\.?\s*r\.?\s*s\.?\s+identification'
+    r'|\b2\s*[.)]?\s*\(?\s*check\b',
+    re.IGNORECASE)
 
 
 def _fetch_filing_index(index_url: str) -> tuple[str | None, str | None, str | None]:
