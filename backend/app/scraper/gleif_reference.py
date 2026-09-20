@@ -19,6 +19,7 @@ import functools
 import json
 import logging
 import re
+import unicodedata
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -172,8 +173,18 @@ def register_for_place(iso2: str | None, place: str | None) -> str | None:
         country = "US"
     if country is None:
         return None
-    return (_PLACE_OVERRIDES.get((country, low))
-            or _place_registers().get((country, low)))
+    hit = (_PLACE_OVERRIDES.get((country, low))
+           or _place_registers().get((country, low)))
+    if hit or country != "US":
+        return hit
+    # "Delaware Division Of Corporations", "Sunbiz Florida", "Delaware
+    # Secretary Of State": the state's name inside the filer's words, when
+    # exactly one state is named.
+    padded = f" {low} "
+    named = [st for st in _US_STATE_NAMES if f" {st} " in padded]
+    if len(named) == 1:
+        return _PLACE_OVERRIDES.get((country, named[0])) or _place_registers().get((country, named[0]))
+    return None
 
 
 #: Registers a NUMBER FORMAT identifies where the country alone names several.
@@ -224,6 +235,155 @@ def _number_format_rule(iso2: str | None, number: str | None):
         if rule[0] == country and rule[1].fullmatch(compact):
             return rule
     return None
+
+
+#: Words that name no register on their own — "Commercial Register" is what
+#: 176 German courts are called. A match must carry at least one other word.
+_GENERIC_WORDS = frozenset(
+    "register registry registrar registration registers commercial company companies "
+    "business trade enterprise enterprises office authority national central state "
+    "public general court local federal ministry department division of the and for "
+    "de du des la le les für der die das van het en et y e a".split())
+
+
+def _singular(token: str) -> str:
+    """companies → company, registries → registry, societes → societe: a filer's
+    plural and the list's singular are the same word."""
+    if len(token) > 4 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+#: Connectives that "Securities & Investments Commission" and "Securities and
+#: Investments Commission" differ by — dropped before names are compared.
+_STOP_WORDS = frozenset("and the of for de du des la le les et en van het und der die das y e a".split())
+
+
+def _name_tokens(text: str | None) -> frozenset:
+    folded = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    return frozenset(_singular(t) for t in re.split(r"[^a-z0-9]+", folded.casefold())
+                     if t and t not in _STOP_WORDS)
+
+
+#: What filers write that GLEIF's list does not: abbreviations and the name of
+#: an organisation that runs several registers, resolved to the register a
+#: company (a PSC controller) is on. From a survey of the 87,057 foreign
+#: corporate controllers in the 2026-09 PSC snapshot; each line cites the
+#: phrasing that needed it.
+_REGISTER_ALIASES = {
+    ("JE", "jfsc"): "RA000414",                    # "Jfsc Companies Registry" (1,091)
+    ("JE", "jersey registry"): "RA000414",         # (150)
+    ("JE", "jersey financial services commission"): "RA000414",   # (700) — also names the funds list
+    ("GG", "guernsey registry"): "RA000383",       # (857) runs four registers; companies is the one
+    ("GG", "guernsey register"): "RA000383",       # (114)
+    ("GG", "guernsey companies registry"): "RA000383",   # (84)
+    ("HK", "registrar of companies"): "RA000388",  # "Registrar Of Companies Hong Kong" (22)
+    ("AU", "asic"): "RA000014",                    # (169) runs the companies and the licensees registers
+    ("AU", "australian securities and investments commission"): "RA000014",   # (295 + variants)
+    ("FR", "rcs"): "RA000192",                     # "Rcs Paris" (97), "Rcs Nanterre" (73); folds to Sirene
+    ("LU", "rcs"): "RA000432",                     # "Rcs Luxembourg" (39)
+    ("IE", "cro"): "RA000402",                     # (142)
+    ("SE", "bolagsverket"): "RA000544",
+    ("NL", "kvk"): "RA000463",
+}
+
+
+@functools.lru_cache(maxsize=1)
+def _register_names() -> dict:
+    """country → [(code, name-token-set, is_site)] for every register name and
+    site domain in the bundle — the vocabulary `register_for_name` matches."""
+    out: dict = {}
+    for code, entry in _load("gleif_ra.json").items():
+        if not isinstance(entry, dict):
+            continue
+        aliases = [(_name_tokens(n), "name") for n in entry.get("names") or [entry.get("name") or ""]]
+        site = entry.get("site")
+        if site:
+            aliases.append((_name_tokens(site.split(".")[0]), "site"))   # "kvk" of kvk.nl
+        for country in entry.get("countries") or []:
+            out.setdefault(country, []).extend((code, toks, kind) for toks, kind in aliases if toks)
+    for (country, alias), code in _REGISTER_ALIASES.items():
+        out.setdefault(country, []).append((code, _name_tokens(alias), "alias"))
+    return out
+
+
+@functools.lru_cache(maxsize=None)
+def _country_words(iso2: str) -> frozenset:
+    from app.scraper.bulk_import import _ISO2_COUNTRY
+    words = set(_name_tokens(_ISO2_COUNTRY.get(iso2, ""))) | {iso2.lower()}
+    words |= {_singular(w) for w in _DEMONYMS.get(iso2, ())}
+    return frozenset(words)
+
+
+#: "Swiss Law", "German Company Law", "Companies Act 2014": words that add
+#: nothing to which register is meant.
+_NOISE_WORDS = frozenset("law act code ordinance regulation regulations statute legislation".split())
+
+#: How filers write the country as an adjective — "Swiss Law", "Irish", "Dutch".
+_DEMONYMS = {
+    "CH": ("swiss", "switzerland"), "IE": ("irish",), "NL": ("dutch", "netherland"),
+    "DE": ("german",), "FR": ("french",), "SE": ("swedish",), "JP": ("japanese",),
+    "AU": ("australian",), "LU": ("luxembourgish",), "IT": ("italian",), "ES": ("spanish",),
+    "DK": ("danish",), "NO": ("norwegian",), "FI": ("finnish",), "BE": ("belgian",),
+    "AT": ("austrian",), "US": ("usa", "american", "united", "state"), "CA": ("canadian",),
+    "HK": ("hong", "kong"), "SG": ("singaporean",), "GG": ("guernsey",), "JE": ("jersey",),
+    "GB": ("uk", "british", "britain", "england", "english", "wales", "welsh", "scotland",
+           "scottish", "northern", "ireland", "kingdom"),
+    "IM": ("isle", "man", "manx"), "KY": ("cayman", "island"), "VG": ("british", "virgin", "island", "bvi"),
+    "CY": ("cypriot",), "AE": ("emirate", "uae", "dubai"), "CN": ("chinese", "prc"), "IN": ("indian",),
+}
+
+
+def register_for_name(iso2: str | None, text: str | None) -> str | None:
+    """The register a filer NAMED, where exactly one of the country's registers
+    fits the words — the first thing to try, before any guess by country.
+
+    A PSC record's `place_registered` / `legal_authority` is free text, but it
+    usually is the register's name in the filer's language: "Kamer van
+    Koophandel", "Firmenbuch", "Registre de Commerce et des Sociétés", "CSSF".
+    GLEIF's list carries every register's international and local names, its
+    organisation's names and its site, so the words can be matched — and this
+    keys funds as well as companies, since a filer naming the CSSF gets the
+    CSSF register. Matching, accent- and case-folded, by word sets:
+    the whole name (best), the register's name inside the text, or the text
+    inside the name (an abbreviation — "CSSF" in "CSSF - Supervised Entities").
+    Generic words alone ("Commercial Register" — 176 German courts) never
+    match, and two registers fitting equally well means no answer.
+    """
+    country = (iso2 or "").strip().upper()
+    tokens = _name_tokens(text)
+    if not country or not tokens:
+        return None
+    # "Netherlands", "Swiss", "Irish Law": the country's own name names no
+    # register, and must not ride along as a match of "The Netherlands Chamber
+    # of Commerce". Only country words (plus "law" and the like) → no answer;
+    # the specific remainder is what an abbreviation match must rest on.
+    specific = tokens - _GENERIC_WORDS - _country_words(country) - _NOISE_WORDS
+    scores: dict[str, int] = {}
+    for code, alias, kind in _register_names().get(country, ()):
+        if alias == tokens:
+            score = 4 if kind == "alias" else 3      # a curated alias is deliberate: it wins a tie
+        elif alias <= tokens and kind != "site":
+            score = 2                                # the register's name inside the filer's words
+        elif tokens <= alias and specific:
+            score = 1                                # an abbreviation or a part of the name
+        else:
+            continue
+        scores[code] = max(scores.get(code, 0), score)
+    if not scores:
+        return None
+    best = max(scores.values())
+    winners = [c for c, sc in scores.items() if sc == best]
+    if len(winners) == 1:
+        return winners[0]
+    # One organisation, several registers — Ireland's Companies Registration
+    # Office runs the companies register and the friendly-societies one. The
+    # filer means the register the country's companies are on, when the
+    # audit knows which that is.
+    general = general_register_for_country(country)
+    return general if general in winners else None
 
 
 @functools.lru_cache(maxsize=1)

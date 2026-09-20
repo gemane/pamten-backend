@@ -288,6 +288,37 @@ them), and four states with sector registries beside the corporate register
 with the Sirene import. Existing rows cannot be backfilled (only the ambiguous
 authority *name* was stored historically); a re-import populates them.
 
+**The register the filer named** (`register_for_name`, 2026-09-21) — tried **first**.
+A PSC record's `place_registered` / `legal_authority` is free text, but it usually is
+the register's name in the filer's language: "Kamer van Koophandel", "Firmenbuch",
+"Registre de Commerce et des Sociétés", "CSSF", "Amtsgericht Frankfurt am Main".
+GLEIF's list (re-bundled by `scripts/build_gleif_ra_bundle.py`, now with every
+register's international *and* local names, its organisation's names and its site)
+gives the vocabulary; the words are matched accent- and case-folded, plurals folded,
+connectives dropped — the whole name, the name inside the filer's words, or the
+filer's words inside the name (an abbreviation). Generic words alone ("Commercial
+Register" — 176 German courts) never match; two registers fitting equally well means
+no answer unless one of them is the country's audited general register (Ireland's
+CRO runs the companies register *and* the friendly-societies one). A small curated
+alias table (`_REGISTER_ALIASES`) carries what filers write that the list does not
+— "JFSC", "ASIC", "RCS", "Guernsey Registry" — each line citing the survey count
+that justified it. This is the one rule that needs no guessing, the one that keys a
+**fund** (a filer naming the CSSF gets the CSSF register) and the one that keys a
+**German** company (the court names exactly one register, where the country never
+could). `resolve_register_code` runs the rules in order — named, sole, place,
+format, general — and says which fired.
+
+**Measured on the real snapshot** (`manage.py audit-psc-registers`): of the 84,045
+foreign corporate controllers with a number in the 2026-09 PSC file, **78.1%** now
+get a key — named 27,198 · general 22,539 · place 11,133 · format 2,464 · sole
+2,336 — up from a handful under the country-only rule. What stays unkeyed is what
+should: a bare "Germany" with an HRB number, "Switzerland" with a non-UID number,
+"Hong Kong" alone. The command lists each country's unkeyed phrasings, which is
+where the next aliases come from; the country spellings filers use ("Delaware" as
+the country — 3,000 of them —, "Bvi", "Gbr", "Gb-Eng", "U.K.", "United Kingdon")
+resolve too, and a "Not Specified/Other" country falls back to the register
+fields, so "Companies House" there means GB and the UK key scheme.
+
 **Number-format rules** (`register_for_number_format`, 2026-09-20). Where the
 country names several registers but the *number's format* names one: Japan lists
 four, yet a dashed `0104-01-056795` is the Legal Affairs Bureau company

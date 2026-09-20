@@ -31,6 +31,7 @@ Output shape (one entry per RA code):
 import csv
 import io
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -58,9 +59,23 @@ def build(rows: list[dict]) -> dict[str, dict]:
         country = (row.get("Country Code") or "").strip().upper()
         if not code or not name:
             continue
-        entry = out.setdefault(code, {"name": name, "countries": [], "jurisdictions": []})
+        entry = out.setdefault(code, {"name": name, "countries": [], "jurisdictions": [],
+                                      "names": [], "site": None})
         if country and country not in entry["countries"]:
             entry["countries"].append(country)
+        # Every name the register or its organisation goes by — international
+        # and local, several languages ("In French: …; in German: …") split
+        # apart — plus the site's domain. This is what lets a filer's own
+        # words ("Kamer van Koophandel", "Firmenbuch", "CSSF") name the
+        # register; see gleif_reference.register_for_name().
+        for col in ("International name of Register", "Local name of Register",
+                    "International name of organisation responsible for the Register",
+                    "Local name of organisation responsible for the Register"):
+            for alias in _split_names(row.get(col) or ""):
+                if alias not in entry["names"]:
+                    entry["names"].append(alias)
+        if not entry["site"]:
+            entry["site"] = _domain(row.get("Website") or "")
         # The sub-national jurisdiction ("Delaware", "Ontario", …) — kept only
         # when it names a region rather than repeating the country, because it
         # is what lets a source that states a US STATE (not just "US")
@@ -74,7 +89,26 @@ def build(rows: list[dict]) -> dict[str, dict]:
         entry["jurisdictions"].sort()
         if not entry["jurisdictions"]:
             del entry["jurisdictions"]
+        if not entry["site"]:
+            del entry["site"]
     return dict(sorted(out.items()))
+
+
+def _split_names(raw: str) -> list[str]:
+    """"In French: Registre IDE; in German: UID-Register" → both names, no labels."""
+    out: list[str] = []
+    for part in re.split(r"[;\n]", raw):
+        part = re.sub(r"^\s*in\s+[A-Za-z]+\s*:\s*", "", part.strip(), flags=re.IGNORECASE).strip()
+        if part and part not in out:
+            out.append(part)
+    return out
+
+
+def _domain(url: str) -> str | None:
+    """"https://www.kvk.nl/english" → "kvk.nl"."""
+    host = re.sub(r"^https?://", "", url.strip().lower()).split("/")[0]
+    host = re.sub(r"^www\.", "", host)
+    return host or None
 
 
 def main() -> None:

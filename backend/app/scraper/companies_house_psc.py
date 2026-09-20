@@ -30,8 +30,8 @@ from typing import IO
 
 from app.scraper.gleif_reference import (canonical_register_number,
                                           general_register_for_country, make_register_id,
-                                          register_for_number_format, register_for_place,
-                                          sole_register_for_country)
+                                          register_for_name, register_for_number_format,
+                                          register_for_place, sole_register_for_country)
 from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
     _ProgressBar, _rebuild_indexes,
@@ -148,9 +148,7 @@ def _entity_psc_id(data: dict) -> tuple[str, str | None]:
     UK company number when it has one, else on the PSC self-link."""
     ident = data.get("identification") or {}
     reg = (ident.get("registration_number") or "").strip()
-    country = (ident.get("country_registered") or "").lower()
-    if reg and ("england" in country or "wales" in country or "scotland" in country
-                or "united kingdom" in country or country in ("uk", "gb")):
+    if reg and _psc_country(ident) == "GB":
         # Companies House numbers are eight characters; filers drop the
         # leading zeros ("41424" for Unilever PLC's 00041424), which minted a
         # second node beside the GLEIF one keyed on the padded form.
@@ -161,22 +159,109 @@ def _entity_psc_id(data: dict) -> tuple[str, str | None]:
     return psc_slug_id(self_link), None
 
 
+#: The rules, in the order they are tried — see `resolve_register_code`.
+REGISTER_RULES = ("named", "sole", "place", "format", "general")
+
+
+def resolve_register_code(iso2: str | None, ident: dict, number: str) -> tuple[str | None, str | None]:
+    """Which register a corporate PSC's number belongs to — (RA code, rule).
+
+    1. **named** — the register the filer NAMED in `place_registered` or
+       `legal_authority`: no guessing when the words fit exactly one register
+       of the country, and the only rule that keys a fund (naming the CSSF
+       gets the CSSF register) or a German company (naming the court).
+    2. **sole** — the country has exactly one register in GLEIF's list.
+    3. **place** — a US state named in any field (the audited place map).
+    4. **format** — the number's format names the register (Japan, Switzerland).
+    5. **general** — the register the country's companies sit on ≥ 90% of the
+       time, from the GLEIF audit.
+    Rule 1 needs the filer's words; the rest need only country and number.
+    `manage.py audit-psc-registers` counts what each rule catches.
+    """
+    if iso2 == "GB":
+        # UK controllers are keyed by companies_house_id (gb-coh ids); GB has
+        # no dominant register and Companies House runs three. Naming would
+        # only mis-key — "England And Wales" fits the Charity Commission.
+        return None, None
+    for field in ("place_registered", "legal_authority"):
+        code = register_for_name(iso2, ident.get(field))
+        if code:
+            return code, "named"
+    code = sole_register_for_country(iso2)
+    if code:
+        return code, "sole"
+    # Filers scatter the register across three fields — Tesla's says
+    # legal_authority "Texas", place_registered "N/A"; junk resolves to nothing.
+    for field in ("place_registered", "legal_authority", "country_registered"):
+        code = register_for_place(iso2, (ident.get(field) or "").strip())
+        if code:
+            return code, "place"
+    code = register_for_number_format(iso2, number)
+    if code:
+        return code, "format"
+    code = general_register_for_country(iso2)
+    if code:
+        return code, "general"
+    return None, None
+
+
+def _psc_country(ident: dict) -> str | None:
+    """The ISO-2 country a corporate PSC is registered in.
+
+    `country_registered` first; when that says nothing usable ("Not
+    Specified/Other" — 999 filers), the register fields: a filer who names
+    "Companies House" or "England And Wales" there has said where.
+    """
+    iso2 = _iso2_country(ident.get("country_registered"))
+    if iso2:
+        return iso2
+    for field in ("place_registered", "legal_authority"):
+        text = (ident.get(field) or "").strip()
+        if "companies house" in text.lower():
+            return "GB"
+        iso2 = _iso2_country(text)
+        if iso2:
+            return iso2
+    return None
+
+
+#: What filers write for a country that the shared name table does not carry:
+#: shorthand, codes, subdivisions, one recurring typo. From the PSC survey,
+#: each with its count among foreign controllers.
+_COUNTRY_SPELLINGS = {
+    "usa": "US", "u.s.a.": "US", "u.s.": "US", "united states of america": "US",
+    "british virgin islands": "VG", "bvi": "VG", "virgin islands, british": "VG",   # 1,308 + 311
+    "gbr": "GB", "gb-eng": "GB", "gb-sct": "GB", "gb-wls": "GB", "gb-nir": "GB",     # 949 + 936 + 427
+    "united kingdon": "GB", "u.k.": "GB", "london": "GB",                            # 260 + 206 + 211
+    "the netherlands": "NL", "holland": "NL", "republic of ireland": "IE",         # 347, 296
+    "hong kong sar": "HK", "hong kong, china": "HK", "uae": "AE", "south korea": "KR",
+    "russia": "RU", "czech republic": "CZ", "taiwan": "TW", "macau": "MO",
+}
+
+
 def _iso2_country(name: str | None) -> str | None:
-    """A PSC address ``country`` name → ISO-2 code. Companies House uses UK
+    """A PSC ``country`` name → ISO-2 code. Companies House uses UK
     subdivisions ('England', 'England & Wales', 'Scotland', …) which aren't ISO
-    countries — all map to GB; other names go through the shared name→code table."""
+    countries — all map to GB; a US state named as the country ("Delaware",
+    "Delaware, Usa" — 3,000 filers) is US; other names go through the shared
+    name→code table, then the spellings above."""
     if not name:
         return None
-    n = name.strip().lower()
+    n = " ".join(name.strip().lower().split())
     if n in ("uk", "gb") or any(uk in n for uk in (
             "england", "wales", "scotland", "northern ireland",
             "united kingdom", "great britain")):
         return "GB"
-    if n in ("usa", "u.s.a.", "u.s.", "united states of america"):
-        return "US"      # filers' shorthand the shared table does not carry
+    if n in _COUNTRY_SPELLINGS:
+        return _COUNTRY_SPELLINGS[n]
     from app.scraper.bulk_import import _ISO2_COUNTRY
-    return {v.lower(): k for k, v in _ISO2_COUNTRY.items()}.get(n) or (
-        name.strip().upper() if len(name.strip()) == 2 else None)
+    from app.scraper.gleif_reference import _US_STATE_NAMES
+    hit = {v.lower(): k for k, v in _ISO2_COUNTRY.items()}.get(n)
+    if hit:
+        return hit
+    if n.split(",")[0].strip() in _US_STATE_NAMES:
+        return "US"
+    return name.strip().upper() if len(name.strip()) == 2 else None
 
 
 def _psc_address(addr: dict | None) -> tuple[str | None, str | None, str | None]:
@@ -260,38 +345,10 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         # registers sharing HRB numbering yield None for the same reason.
         register_id = None
         if reg_number:
-            iso2 = _iso2_country(ident.get("country_registered"))
-            register_id = make_register_id(sole_register_for_country(iso2), reg_number)
-            # Second chance at the PLACE level: "USA" names 64 registers, but
-            # place_registered "Delaware" (or a country_registered that itself
-            # names the state — filers do that) names exactly one. This is the
-            # bridge that lets a US corporate PSC hard-merge with its GLEIF
-            # node, which no country-level rule ever could.
-            if register_id is None:
-                # Filers scatter the register across three fields — Tesla's
-                # says legal_authority "Texas", place_registered "N/A". First
-                # field that resolves to a register wins; junk like "N/A"
-                # simply resolves to nothing.
-                for field in ("place_registered", "legal_authority",
-                              "country_registered"):
-                    code = register_for_place(iso2, (ident.get(field) or "").strip())
-                    if code:
-                        register_id = make_register_id(code, reg_number)
-                        break
-            # Third chance: the NUMBER's format names the register. Japan lists
-            # four registers, but a dashed "0104-01-056795" is a Legal Affairs
-            # Bureau company registration number and nothing else — the key
-            # GLEIF already carries on the company's LEI node.
-            if register_id is None:
-                code = register_for_number_format(iso2, reg_number)
-                if code:
-                    register_id = make_register_id(
-                        code, canonical_register_number(iso2, reg_number))
-            # Last: the register the country's companies actually sit on, from
-            # the GLEIF audit (`register_audit`) — the Netherlands lists four
-            # registers, but every Dutch company is on the KVK.
-            if register_id is None:
-                register_id = make_register_id(general_register_for_country(iso2), reg_number)
+            iso2 = _psc_country(ident)
+            code, _rule = resolve_register_code(iso2, ident, reg_number)
+            if code:
+                register_id = make_register_id(code, canonical_register_number(iso2, reg_number))
         # The country as an ISO-2 code like every other source, not the filer's
         # words: "England", "England & Wales" and "United Kingdom" are one GB,
         # and a node reading "Switzerland" beside one reading "CH" looked like
@@ -300,7 +357,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         country_text = (ident.get("country_registered") or "").strip() or None
         owner_props = {
             "name": name, "entity_type": "company",
-            "country": _iso2_country(country_text) or country_text,
+            "country": _psc_country(ident) or country_text,
             "companies_house_id": chid, "registered_address": reg_addr,
             "hq_address": reg_addr, "hq_city": hq_city, "hq_country": hq_country,
             "registration_number": reg_number,

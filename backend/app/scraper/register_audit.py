@@ -135,3 +135,60 @@ def write_audit(result: dict, out_path: str) -> None:
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=1, ensure_ascii=False, sort_keys=True)
         fh.write("\n")
+
+
+def audit_psc_registers(path: str, top: int = 40) -> dict:
+    """What each register rule catches among the FOREIGN corporate controllers
+    of a Companies House PSC snapshot — the measure behind the alias table.
+
+    Per country: controllers with a number, how many each rule keyed (named /
+    sole / place / format / general), how many stayed unkeyed, and the
+    phrasings those unkeyed filers used most — the next aliases to add.
+    """
+    from app.scraper.companies_house_psc import _psc_country, resolve_register_code, REGISTER_RULES
+
+    by_country: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    unkeyed: dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    total = foreign = 0
+    zf = zipfile.ZipFile(path)
+    name = next(n for n in zf.namelist() if n.lower().endswith((".txt", ".json")))
+    with zf.open(name) as fh:
+        for line in fh:
+            if b"corporate-entity" not in line:
+                continue
+            try:
+                data = json.loads(line).get("data") or {}
+            except ValueError:
+                continue
+            if not (data.get("kind") or "").startswith("corporate-entity"):
+                continue
+            total += 1
+            ident = data.get("identification") or {}
+            country_text = (ident.get("country_registered") or "").strip()
+            iso2 = _psc_country(ident)
+            if iso2 == "GB" or (not country_text and not iso2):
+                continue
+            foreign += 1
+            key = iso2 or f"?{country_text[:30]}"
+            number = (ident.get("registration_number") or "").strip()
+            if not number or number.upper() in ("N/A", "NA", "NONE", "-"):
+                by_country[key]["no_number"] += 1
+                continue
+            by_country[key]["with_number"] += 1
+            code, rule = resolve_register_code(iso2, ident, number) if iso2 else (None, None)
+            if rule:
+                by_country[key][rule] += 1
+            else:
+                by_country[key]["unkeyed"] += 1
+                unkeyed[key][(ident.get("place_registered") or "").strip()[:50] or "∅"] += 1
+    countries = {}
+    for c, cnt in sorted(by_country.items(), key=lambda kv: -kv[1]["with_number"])[:top]:
+        countries[c] = {**{r: cnt.get(r, 0) for r in REGISTER_RULES},
+                        "with_number": cnt.get("with_number", 0), "no_number": cnt.get("no_number", 0),
+                        "unkeyed": cnt.get("unkeyed", 0),
+                        "unkeyed_phrasings": unkeyed[c].most_common(6)}
+    keyed = sum(sum(cnt.get(r, 0) for r in REGISTER_RULES) for cnt in by_country.values())
+    with_number = sum(cnt.get("with_number", 0) for cnt in by_country.values())
+    return {"corporate": total, "foreign": foreign, "with_number": with_number, "keyed": keyed,
+            "by_rule": {r: sum(cnt.get(r, 0) for cnt in by_country.values()) for r in REGISTER_RULES},
+            "countries": countries}
