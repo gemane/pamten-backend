@@ -1804,6 +1804,91 @@ class TestRoleDatesFromForm3:
         assert execs[0]["former"] is True and execs[0]["until"] == "2026-03-31"
         assert execs[0]["role"] == "CFO" and execs[0]["since"] is None
 
+    def test_a_form_3_date_shared_by_the_whole_board_is_the_issuers_event(self):
+        # Embraer became subject to Section 16 on 2026-03-18 and every sitting
+        # officer and director filed a Form 3 that day: not their seat dates.
+        execs = self._run(
+            ["3", "3", "3", "3"],
+            [self._xml(f"Person{i} A", form="3", period="2026-03-18", title="Director",
+                       officer="0", director="1", cik=f"{i:07d}") for i in range(3)]
+            + [self._xml("Lima Felipe", form="3", period="2026-04-13", title="CFO", cik="0000099")])
+        assert [e["since"] for e in execs] == [None, None, None, "2026-04-13"], \
+            "the shared date is dropped, the individual one kept"
+
+    def _run_paged(self, recent_forms, recent_docs, pages, dated=None):
+        """Like _run, with older `filings.files` pages: {name: (forms, docs)}."""
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        served, fetched_pages = {}, []
+
+        def index(prefix, forms, docs):
+            n = len(forms)
+            for i, d in enumerate(docs):
+                served[f"{prefix}{i}.xml"] = d
+            return {"form": forms,
+                    "accessionNumber": [f"0000000001-{prefix}-{i:06d}" for i in range(n)],
+                    "primaryDocument": [f"{prefix}{i}.xml" for i in range(n)],
+                    "filingDate": [f"20{prefix}-01-01"] * n}
+        submissions = {"filings": {"recent": index("26", recent_forms, recent_docs),
+                                   "files": [{"name": name} for name in pages]}}
+        older = {name: index(name[:2], *fd) for name, fd in pages.items()}
+
+        def fake_get(url, params=None):
+            name = url.split("/")[-1]
+            if name.startswith("CIK"):
+                return submissions
+            fetched_pages.append(name)
+            return older[name]
+
+        def fake_get_text(url, params=None):
+            return served[url.split("/")[-1]]
+        with patch.object(sec_edgar, "_get", side_effect=fake_get), \
+             patch.object(sec_edgar, "_get_text", side_effect=fake_get_text):
+            return sec_edgar.fetch_executives("320193"), fetched_pages
+
+    def test_a_form_3_on_an_older_page_dates_a_long_serving_officer(self):
+        # Amy Hood: Form 4s in the inline index since 2020, Form 3 (CFO,
+        # 2013-05-08) on the 2008–2020 page.
+        execs, pages = self._run_paged(
+            ["4"], [self._xml("Hood Amy", form="4", title="CFO", cik="0000001")],
+            {"13-page.json": (["3", "4"], [self._xml("Hood Amy", form="3", period="2013-05-08",
+                                                     title="CFO", cik="0000001"),
+                                           self._xml("Hood Amy", form="4", title="CFO", cik="0000001")])})
+        assert execs[0]["since"] == "2013-05-08" and pages == ["13-page.json"]
+
+    def test_older_pages_are_not_read_when_everyone_is_dated(self):
+        execs, pages = self._run_paged(
+            ["3"], [self._xml("Hood Amy", form="3", period="2013-05-08", title="CFO")],
+            {"13-page.json": (["3"], [self._xml("Hood Amy", form="3", period="2005-01-01", title="CFO")])})
+        assert execs[0]["since"] == "2013-05-08" and pages == []
+
+    def test_an_older_form_3_for_another_seat_leaves_the_current_one_undated(self):
+        # Kathleen Hogan: Form 3 as EVP Human Resources (2014); current seat EVP Strategy.
+        execs, pages = self._run_paged(
+            ["4"], [self._xml("Hogan Kathleen", form="4", title="EVP, Strategy", cik="0000002")],
+            {"14-page.json": (["3"], [self._xml("Hogan Kathleen", form="3", period="2014-11-28",
+                                                title="EVP, Human Resources", cik="0000002")])})
+        assert execs[0]["since"] is None and pages == ["14-page.json"]
+
+    def test_reading_stops_once_the_last_person_is_dated(self):
+        # Page one dates Hood; page two is never asked for.
+        execs, fetched = self._run_paged(
+            ["4"], [self._xml("Hood Amy", form="4", title="CFO", cik="0000001")],
+            {"13-page.json": (["3"], [self._xml("Hood Amy", form="3", period="2013-05-08",
+                                                title="CFO", cik="0000001")]),
+             "05-page.json": (["3"], [self._xml("Hood Amy", form="3", period="2005-01-01",
+                                                title="CFO", cik="0000001")])})
+        assert execs[0]["since"] == "2013-05-08" and fetched == ["13-page.json"]
+
+    def test_older_pages_stop_at_the_page_cap(self):
+        from app.scraper import sec_edgar
+        pages = {f"{10 + i}-page.json": (["3"], [self._xml("Nobody Else", form="3",
+                                                             period="2010-01-01", cik="0000099")])
+                 for i in range(sec_edgar.MAX_OLDER_PAGES + 2)}
+        execs, fetched = self._run_paged(
+            ["4"], [self._xml("Hood Amy", form="4", title="CFO", cik="0000001")], pages)
+        assert execs[0]["since"] is None and len(fetched) == sec_edgar.MAX_OLDER_PAGES
+
     def test_form_3s_are_still_read_past_the_insider_cap(self):
         from app.scraper import sec_edgar
         cap = sec_edgar.MAX_FORM4_FETCH

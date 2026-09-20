@@ -1661,9 +1661,102 @@ def fetch_executives(cik: str) -> list:
             known["since"] = result["period_of_report"]
             known["since_url"] = _filing_index_url(cik, accessions[i]) or None
 
+    # The inline index holds the newest ~1,000 filings — for Microsoft, back to
+    # 2020 — so a long-serving officer's Form 3 is on an older page.
+    if any(not e.get("since") and not e.get("former") for e in executives):
+        _date_from_older_pages(cik, submissions, by_person)
+    _drop_issuer_event_dates(executives)
     log.info("SEC EDGAR: found %d executives from Form 3/4 for CIK=%s",
              len(executives), cik)
     return executives
+
+
+MAX_OLDER_PAGES = 3      # older submissions index pages read for Form 3s
+MAX_OLDER_FORM3 = 60     # Form 3 documents opened across them
+
+
+def _date_from_older_pages(cik: str, submissions: dict, by_person: dict) -> int:
+    """Seat start dates for listed people whose Form 3 predates the inline index.
+
+    EDGAR pages the rest of a company's filings as `filings.files` (Microsoft:
+    two pages, 2008–2020 and 1994–2008, holding 58 Form 3s — among them Amy
+    Hood's, CFO since 2013-05-08). Index pages are never cached, so this reads
+    at most `MAX_OLDER_PAGES` of them and only while a listed person is still
+    undated; the Form 3 documents are Archives files and cached forever. Same
+    rules as the inline pass: same seat only, never a "Former …" filing.
+    Returns how many people were dated. Electronic Form 3s begin mid-2003;
+    earlier seats are not in EDGAR at all.
+    """
+    files = (submissions.get("filings", {}) or {}).get("files") or []
+    issuer_cik_int = _cik_int(cik)
+    read = dated = 0
+    for f in files[:MAX_OLDER_PAGES]:
+        if not any(not e.get("since") and not e.get("former") for e in by_person.values()):
+            break
+        try:
+            page = _get(f"{SUBMISSIONS_URL}/{f['name']}")
+        except Exception as exc:  # noqa: BLE001 - dating is best-effort
+            log.warning("SEC EDGAR: older submissions page %s failed: %s", f.get("name"), exc)
+            break
+        forms        = page.get("form",            [])
+        accessions   = page.get("accessionNumber", [])
+        primary_docs = page.get("primaryDocument", [])
+        for i, form in enumerate(forms):
+            if form not in ("3", "3/A"):
+                continue
+            if read >= MAX_OLDER_FORM3:
+                break
+            doc = (primary_docs[i] if i < len(primary_docs) else "").split("/")[-1]
+            acc = (accessions[i] if i < len(accessions) else "").replace("-", "")
+            if not doc or not acc:
+                continue
+            try:
+                xml_text = _get_text(f"{ARCHIVES_URL}/{issuer_cik_int}/{acc}/{doc}")
+            except httpx.HTTPError as exc:
+                log.debug("SEC EDGAR: Form 3 fetch failed: %s", exc)
+                continue
+            read += 1
+            result = _parse_form34_xml(xml_text)
+            if not result or result["former"] or not result.get("period_of_report"):
+                continue
+            if result.get("issuer_cik") and _cik_int(result["issuer_cik"]) != issuer_cik_int:
+                continue
+            known = by_person.get(result.get("person_cik") or result["name"])
+            if known is None or known.get("since") or known.get("former"):
+                continue
+            if canonical_role(result["role"]) != canonical_role(known["role"]):
+                continue
+            known["since"] = result["period_of_report"]
+            known["since_url"] = _filing_index_url(cik, accessions[i]) or None
+            dated += 1
+    if read:
+        log.info("SEC EDGAR: %d Form 3(s) read from older pages for CIK=%s, %d seat(s) dated",
+                 read, cik, dated)
+    return dated
+
+
+#: Form 3s sharing one date from this many people are the ISSUER's event.
+FORM3_CLUSTER = 3
+
+
+def _drop_issuer_event_dates(executives: list[dict]) -> None:
+    """A Form 3 dates the day a person became subject to Section 16 — which
+    is their appointment only when the company already was. When the company
+    itself becomes subject (a listing, a lost foreign-private-issuer status),
+    every sitting officer and director files a Form 3 on the same day:
+    Embraer's whole board carried "since 2026-03-18". A date shared by
+    `FORM3_CLUSTER` or more people is that event, not a seat, and is dropped.
+    """
+    by_date: dict[str, int] = {}
+    for e in executives:
+        if e.get("since"):
+            by_date[e["since"]] = by_date.get(e["since"], 0) + 1
+    clusters = {d for d, n in by_date.items() if n >= FORM3_CLUSTER}
+    for e in executives:
+        if e.get("since") in clusters:
+            log.info("SEC EDGAR: %s Form 3s dated %s — the issuer's event, not %r's seat",
+                     by_date[e["since"]], e["since"], e["name"])
+            e["since"] = None
 
 
 # ── Departures from 8-K Item 5.02 ────────────────────────────────────────────
