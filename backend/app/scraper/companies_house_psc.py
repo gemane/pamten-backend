@@ -171,6 +171,8 @@ def _iso2_country(name: str | None) -> str | None:
             "england", "wales", "scotland", "northern ireland",
             "united kingdom", "great britain")):
         return "GB"
+    if n in ("usa", "u.s.a.", "u.s.", "united states of america"):
+        return "US"      # filers' shorthand the shared table does not carry
     from app.scraper.bulk_import import _ISO2_COUNTRY
     return {v.lower(): k for k, v in _ISO2_COUNTRY.items()}.get(n) or (
         name.strip().upper() if len(name.strip()) == 2 else None)

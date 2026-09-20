@@ -245,6 +245,12 @@ class TestPscFields:
         assert mapped.owner_props["register_id"] == "RA000549:CHE-105.909.036"
         assert mapped.owner_props["country"] == "CH", "ISO-2 like every other source"
 
+    def test_filers_country_shorthand_resolves(self):
+        from app.scraper.companies_house_psc import _iso2_country
+        assert _iso2_country("Usa") == "US" and _iso2_country("U.S.A.") == "US"
+        assert _iso2_country("England And Wales") == "GB" and _iso2_country("Switzerland") == "CH"
+        assert _iso2_country("Korea") is None, "ambiguous: kept as the filer wrote it"
+
     def test_a_uk_corporate_psc_number_is_padded_to_companies_house_form(self):
         # Unilever PLC filed as "41424"; Companies House and GLEIF say 00041424.
         # The unpadded form minted a second node beside the GLEIF one.
