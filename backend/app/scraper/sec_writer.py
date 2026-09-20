@@ -13,6 +13,7 @@ import unicodedata
 import uuid
 from datetime import datetime, timezone
 
+from app.roles import canonical_role
 from app.claims import KIND_OWNS, KIND_ROLE, record_claim
 from app.database import db
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
@@ -336,23 +337,45 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
 
 def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                      source_id: str, source_url: str | None = None,
-                     source_date: str | None = None, credibility_score: int = 98):
+                     source_date: str | None = None, credibility_score: int = 98,
+                     since: str | None = None, until: str | None = None):
     """Create a HAS_ROLE edge attributed to SEC EDGAR if not already present.
 
     Provenance: source_url = the specific Form 3/4 filing document,
     source_date = its filing date. On a re-scrape of an existing edge we refresh
     last_scraped_at and backfill the URL/date (COALESCE keeps existing values
-    when this scrape didn't yield them).
+    when this scrape didn't yield them). `since` is the person's Form 3 date —
+    the day they became an insider in this seat — and backfills an undated
+    edge the same way; it never overwrites a date another source stated.
     """
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, source_url=source_url, source_date=source_date,
-                 credibility_score=credibility_score)
+                 since=since, until=until, credibility_score=credibility_score)
     # HAS_ROLE is not gated by claims-only — the mode suppresses ownership
     # structure, not people (see graph_writer._upsert_role).
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
-        matches = _matching_role(session, person_id, entity_id, role)
-        existing = matches[0] if matches else None
+        matches = _matching_role(session, person_id, entity_id, role, open_only=False)
+        open_seats = [m for m in matches if not m.get("until")]
+        existing = open_seats[0] if open_seats else None
+        if not existing:
+            # No open seat — but a CLOSED one that ends after this filing is
+            # the same spell, not a new one. Tim Cook's older Form 4 says CEO;
+            # re-asserted after the 8-K closed the seat on 2026-09-01, it
+            # opened a second CEO spell that the next 8-K read closed again,
+            # once per scrape. A filing dated after the close is a return.
+            asserted = since or source_date or ""
+            for m in matches:
+                if m.get("until") and (m["until"] or "") >= asserted:
+                    session.run(
+                        """
+                        MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                        WHERE r.role = $role AND r.until = $until
+                        SET r.last_scraped_at = $now, r.since = COALESCE(r.since, $since)
+                        """,
+                        pid=person_id, eid=entity_id, role=m["role"], until=m["until"],
+                        now=now, since=since)
+                    return
         if existing:
             session.run(
                 """
@@ -360,10 +383,11 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                 WHERE r.role = $role AND r.until IS NULL
                 SET r.last_scraped_at = $now,
                     r.source_url  = COALESCE($surl,  r.source_url),
-                    r.source_date = COALESCE($sdate, r.source_date)
+                    r.source_date = COALESCE($sdate, r.source_date),
+                    r.since       = COALESCE(r.since, $since)
                 """,
                 pid=person_id, eid=entity_id, role=existing["role"], now=now,
-                surl=source_url, sdate=source_date,
+                surl=source_url, sdate=source_date, since=since,
             )
             _relabel_if_more_credible(session, person_id, entity_id,
                                       existing["role"], role, existing["cred"],
@@ -373,15 +397,55 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             """
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
             CREATE (p)-[:HAS_ROLE {
-                role: $role, since: null, until: null,
+                role: $role, since: $since, until: $until,
                 source_id: $sid, credibility_score: $score,
                 source_url: $surl, source_date: $sdate, last_scraped_at: $now
             }]->(e)
             """,
-            pid=person_id, eid=entity_id, role=role,
+            pid=person_id, eid=entity_id, role=role, since=since, until=until,
             sid=source_id, score=credibility_score,
             surl=source_url, sdate=source_date, now=now,
         )
+
+
+def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None = None,
+                    source_id: str | None = None, source_url: str | None = None,
+                    source_date: str | None = None, credibility_score: int = 98) -> int:
+    """End the person's open seat(s) at the company on `until`.
+
+    The one statutory statement of a departure: a "Former …" Form 4 or an 8-K
+    Item 5.02 naming the person. With `role`, only that seat is closed (Tim
+    Cook leaves the CEO seat and keeps the board one); without it, every open
+    seat. Never creates a person or a seat — a departure we cannot attach to
+    a listed person is not written. Returns the number of seats closed.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    want = canonical_role(role) if role else None
+    with db.get_session() as session:
+        rows = session.run(
+            """
+            MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+            WHERE r.until IS NULL RETURN r.role AS role
+            """,
+            pid=person_id, eid=entity_id)
+        seats = [r["role"] for r in rows
+                 if want is None or canonical_role(r["role"] or "") == want]
+        for seat in seats:
+            session.run(
+                """
+                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                WHERE r.role = $role AND r.until IS NULL
+                SET r.until = $until, r.last_scraped_at = $now,
+                    r.source_url  = COALESCE($surl,  r.source_url),
+                    r.source_date = COALESCE($sdate, r.source_date)
+                """,
+                pid=person_id, eid=entity_id, role=seat, until=until, now=now,
+                surl=source_url, sdate=source_date)
+    if seats and source_id:
+        record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
+                     role=seats[0], until=until, source_url=source_url,
+                     source_date=source_date, credibility_score=credibility_score)
+    return len(seats)
 
 
 def mark_13f_stale(company_id: str, period: str) -> int:

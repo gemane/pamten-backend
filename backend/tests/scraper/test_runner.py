@@ -122,6 +122,15 @@ class TestPermissionGuards:
 
 # ── run_scrape_sec_edgar ───────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _no_claim_writes(monkeypatch):
+    """The writers record a claim beside every edge through `run_sql`, which
+    the session mock does not cover — so this mocked suite was quietly hitting
+    a real ArcadeDB with the test credentials, the brute-force-lockout path."""
+    import app.db.arcadedb as arcadedb
+    monkeypatch.setattr(arcadedb, "run_sql", lambda *a, **kw: [])
+
+
 class TestRunScrapeSecEdgar:
     """Happy-path and edge-case tests for run_scrape_sec_edgar."""
 
@@ -198,6 +207,91 @@ class TestRunScrapeSecEdgar:
         investors = [r for r in result["scraped"] if r.get("role") == "investor"]
         blackrock = next(r for r in investors if "BlackRock" in r["name"])
         assert blackrock["type"] == "entity"
+
+    def _sec(self, data, **extra):
+        """Patch the SEC scrape and every network lookup around it."""
+        ctx, _ = _make_session_mock()
+        return [patch("app.scraper.runner.get_source_enabled", return_value=True),
+                patch("app.scraper.runner.db.get_session", ctx),
+                patch("app.scraper.sec_edgar.scrape_company", return_value=data),
+                patch("app.scraper.sec_edgar.fetch_departures",
+                      **extra.get("departures", {"return_value": []}))]
+
+    def test_a_form_3_date_reaches_the_role_edge(self):
+        data = {**self.SEC_DATA,
+                "executives": [{"name": "John Ternus", "role": "CEO", "since": "2026-09-01",
+                                "person_cik": "0001"}]}
+        role_calls = []
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.runner._upsert_role_sec",
+                   side_effect=lambda *a, **kw: role_calls.append((a, kw))):
+            run_scrape_sec_edgar("Tesla")
+        assert len(role_calls) == 1 and role_calls[0][1]["since"] == "2026-09-01"
+
+    def test_a_former_filing_closes_the_seat_and_creates_nobody(self):
+        data = {**self.SEC_DATA,
+                "executives": [{"name": "Jane Doe", "role": "CFO", "former": True,
+                                "until": "2026-03-31", "person_cik": "0002",
+                                "source_url": "https://www.sec.gov/f4"}]}
+        closed, minted, roles = [], [], []
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.runner._find_person", return_value="p-jane"), \
+             patch("app.scraper.runner._upsert_person_by_name",
+                   side_effect=lambda name, **kw: minted.append(name) or "p-x"), \
+             patch("app.scraper.runner._upsert_role_sec",
+                   side_effect=lambda *a, **kw: roles.append(a)), \
+             patch("app.scraper.runner._close_role_sec",
+                   side_effect=lambda *a, **kw: closed.append((a, kw)) or 1):
+            result = run_scrape_sec_edgar("Tesla")
+        assert closed and closed[0][0][0] == "p-jane" and closed[0][0][2] == "2026-03-31"
+        assert closed[0][1]["role"] == "CFO"
+        assert "Jane Doe" not in minted and roles == [], "a departure mints no one and opens no seat"
+        assert any(r["role"] == "former CFO" for r in result["scraped"])
+
+    def test_a_former_filing_for_an_unknown_person_writes_nothing(self):
+        data = {**self.SEC_DATA,
+                "executives": [{"name": "Jane Doe", "role": "CFO", "former": True,
+                                "until": "2026-03-31"}]}
+        closed = []
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.runner._find_person", return_value=None), \
+             patch("app.scraper.runner._close_role_sec",
+                   side_effect=lambda *a, **kw: closed.append(a) or 1):
+            run_scrape_sec_edgar("Tesla")
+        assert closed == []
+
+    def test_8k_departures_are_looked_up_for_the_listed_people_and_close_their_seats(self):
+        asked, closed = [], []
+
+        def fake_departures(cik, names, **kw):
+            asked.append((cik, sorted(names)))
+            return [{"name": "Elon Musk", "until": "2026-09-01", "role": "CEO",
+                     "source_url": "https://www.sec.gov/8k", "source_date": "2026-09-02"}]
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=self.SEC_DATA), \
+             patch("app.scraper.sec_edgar.fetch_departures", side_effect=fake_departures), \
+             patch("app.scraper.runner._upsert_person_by_name",
+                   side_effect=lambda name, **kw: "p-" + name.split()[-1].lower()), \
+             patch("app.scraper.runner._upsert_role_sec", return_value=None), \
+             patch("app.scraper.runner._close_role_sec",
+                   side_effect=lambda *a, **kw: closed.append((a, kw)) or 1):
+            result = run_scrape_sec_edgar("Tesla")
+        assert asked == [("0001318605", ["Elon Musk", "Zachary Kirkhorn"])], \
+            "only the people we list are looked for"
+        assert closed == [(("p-musk", closed[0][0][1], "2026-09-01"),
+                           {"role": "CEO", "source_id": closed[0][1]["source_id"],
+                            "source_url": "https://www.sec.gov/8k", "source_date": "2026-09-02"})]
+        assert any(r["role"] == "departed CEO" for r in result["scraped"])
 
     def test_person_investor_classified_as_person(self):
         """Elon Musk (individual) appearing in SC 13G must become a Person node."""

@@ -44,7 +44,7 @@ from app.scraper.sec_writer import (
     _retire_superseded_bloc_edge, _roster_overlap, _rosters_match,               # noqa: F401
     _same_member, _split_member_key,                                             # noqa: F401
     _upsert_group_membership, _upsert_owns_sec,                                  # noqa: F401
-    _upsert_role_sec, _upsert_voting_group,                                      # noqa: F401
+    _upsert_role_sec, _upsert_voting_group, _close_role_sec,                                      # noqa: F401
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.scraper.country_match import matches_requested, country_mismatch
@@ -1291,6 +1291,19 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
     }
 
 
+def _find_person(full_name: str, sec_cik: str | None = None) -> str | None:
+    """An existing Person by SEC CIK, else by exact name — no creation."""
+    with db.get_session() as session:
+        if sec_cik:
+            rows = list(session.run("MATCH (p:Person {sec_cik: $cik}) RETURN p.id AS id LIMIT 1",
+                                    cik=sec_cik))
+            if rows:
+                return rows[0]["id"]
+        rows = list(session.run("MATCH (p:Person {full_name: $name}) RETURN p.id AS id LIMIT 1",
+                                name=full_name))
+        return rows[0]["id"] if rows else None
+
+
 def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.
@@ -1324,8 +1337,9 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         )
 
     # Import here to avoid circular imports and to keep the cold-start fast
-    from app.scraper.sec_edgar import (fetch_filer_country, fetch_filer_headquarters,
-                                       fetch_filer_website, scrape_company)
+    from app.scraper.sec_edgar import (fetch_departures, fetch_filer_country,
+                                       fetch_filer_headquarters, fetch_filer_website,
+                                       scrape_company)
 
     log.info("SEC EDGAR runner: starting scrape for %r", company_name)
     data = scrape_company(company_name)
@@ -1525,6 +1539,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                  f", ended {holding['until']}" if holding.get("until") else "")
 
     # Executives → Person nodes + HAS_ROLE edges
+    role_holders: dict[str, str] = {}      # name → person id, for the departures below
     for exec_rec in data.get("executives", []):
         name = exec_rec.get("name", "").strip()
         role = exec_rec.get("role", "Executive")
@@ -1552,13 +1567,31 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             continue
 
+        if exec_rec.get("former"):
+            # The insider's newest filing says "Former …": close the seat,
+            # for a person we already list — never mint someone to close.
+            person_id = _find_person(name, sec_cik=exec_rec.get("person_cik"))
+            if person_id and exec_rec.get("until"):
+                closed = _close_role_sec(person_id, target_id, exec_rec["until"], role=role,
+                                         source_id=source_id,
+                                         source_url=exec_rec.get("source_url"),
+                                         source_date=exec_rec.get("source_date"))
+                if closed:
+                    scraped.append({"type": "person", "name": name, "role": f"former {role}"})
+                    log.info("SEC EDGAR: closed HAS_ROLE %r → %r (%s, until %s)",
+                             name, data["name"], role, exec_rec["until"])
+            continue
+
         person_id = _upsert_person_by_name(name, source_id=source_id,
                                            sec_cik=exec_rec.get("person_cik"))
         _upsert_role_sec(person_id, target_id, role, source_id,
                          source_url=exec_rec.get("source_url"),
-                         source_date=exec_rec.get("source_date"))
+                         source_date=exec_rec.get("source_date"),
+                         since=exec_rec.get("since"))
+        role_holders[name] = person_id
         scraped.append({"type": "person", "name": name, "role": role})
-        log.info("SEC EDGAR: wrote HAS_ROLE %r → %r (%s)", name, data["name"], role)
+        log.info("SEC EDGAR: wrote HAS_ROLE %r → %r (%s%s)", name, data["name"], role,
+                 f", since {exec_rec['since']}" if exec_rec.get("since") else "")
 
         # Insider (Form 4) holding → OWNS edge, so a founder/exec who holds
         # shares also shows as an owner. stake_percent is set when the issuer's
@@ -1593,6 +1626,30 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     # an ownership edge, read THEIR own Form 4s. This reaches insiders the
     # issuer-side scan misses, e.g. a founder-CEO whose filings are flooded out of
     # the company's recent window (Larry Fink at BlackRock).
+    # Departures — the seats EDGAR never closes on its own. A departing
+    # insider files nothing; the company announces it in an 8-K, Item 5.02.
+    # Read for the people we list (this scan + already on the graph), never to
+    # mint anyone; see sec_edgar.fetch_departures.
+    known = dict(role_holders)
+    with db.get_session() as session:
+        for r in session.run(
+                """MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+                   WHERE r.until IS NULL RETURN DISTINCT p.id AS id, p.full_name AS name""",
+                id=target_id):
+            if r.get("name"):
+                known.setdefault(r["name"], r["id"])
+    if data.get("cik") and known:
+        for dep in fetch_departures(data["cik"], list(known)):
+            closed = _close_role_sec(known[dep["name"]], target_id, dep["until"],
+                                     role=dep.get("role"), source_id=source_id,
+                                     source_url=dep.get("source_url"),
+                                     source_date=dep.get("source_date"))
+            if closed:
+                scraped.append({"type": "person", "name": dep["name"],
+                                "role": f"departed {dep.get('role') or ''}".strip()})
+                log.info("SEC EDGAR: 8-K Item 5.02 closed %d seat(s) of %r at %r (until %s)",
+                         closed, dep["name"], data["name"], dep["until"])
+
     from app.scraper.sec_edgar import fetch_insider_holding
     cik = data.get("cik")
     shares_out = data.get("shares_outstanding")
