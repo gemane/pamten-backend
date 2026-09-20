@@ -78,8 +78,11 @@ class TestMakeRegisterId:
 
     def test_case_and_leading_zeros_are_preserved(self):
         from app.scraper.gleif_reference import make_register_id
-        assert make_register_id("RA000548", "CHE-105.962.823") == "RA000548:CHE-105.962.823"
+        # The Swiss UID keeps its digits (and folds to the Commercial Register —
+        # see TestOneKeyPerNationalNumber); a Companies House number keeps its zeros.
+        assert make_register_id("RA000548", "CHE-105.962.823") == "RA000549:CHE-105.962.823"
         assert make_register_id("RA000585", "00048839") == "RA000585:00048839"
+        assert make_register_id("RA000242", "HRB 86515") == "RA000242:HRB86515"
 
     def test_missing_parts_yield_none(self):
         from app.scraper.gleif_reference import make_register_id
@@ -176,3 +179,84 @@ class TestBundleIntegrity:
             assert ref.sole_register_for_country("GB") is None
         finally:
             ref._sole_registers.cache_clear()
+
+
+class TestRegisterForNumberFormat:
+    """Japan lists four registers, so neither the country nor a place can name
+    one — but the number's format can: a dashed 0104-01-056795 is a Legal
+    Affairs Bureau company registration number, which GLEIF files under
+    RA000412; the 13-digit corporate number goes under RA001075."""
+
+    def test_a_dashed_japanese_registration_number_names_the_companies_register(self):
+        from app.scraper.gleif_reference import register_for_number_format
+        assert register_for_number_format("JP", "0104-01-056795") == "RA000412"
+        assert register_for_number_format("jp", " 0104-01-056795 ") == "RA000412"
+
+    def test_other_formats_and_countries_stay_unresolved(self):
+        from app.scraper.gleif_reference import register_for_number_format
+        assert register_for_number_format("JP", "9010401056795") is None      # 13-digit corporate number
+        assert register_for_number_format("JP", "0104-01-05679") is None       # wrong length
+        assert register_for_number_format("US", "0104-01-056795") is None
+        assert register_for_number_format(None, "0104-01-056795") is None
+        assert register_for_number_format("JP", "") is None
+
+    def test_a_swiss_uid_names_the_commercial_register_in_its_own_spelling(self):
+        # Switzerland lists four registers too; a CHE-ddd.ddd.ddd number is the
+        # Commercial Register's. The PSC filer wrote "Che-", GLEIF writes "CHE-".
+        from app.scraper.gleif_reference import (canonical_register_number,
+                                                 register_for_number_format)
+        assert register_for_number_format("CH", "Che-105.909.036") == "RA000549"
+        assert canonical_register_number("CH", "Che-105.909.036") == "CHE-105.909.036"
+        assert canonical_register_number("JP", "0104-01-056795") == "0104-01-056795"
+        assert canonical_register_number("CH", "not a uid") == "not a uid"
+        assert register_for_number_format("CH", "105.909.036") is None
+
+
+class TestOneKeyPerNationalNumber:
+    """GLEIF keys the same national number under two register codes and two
+    spellings; a key that differs by code or by dots merges nothing."""
+
+    def test_the_swiss_uid_has_one_code_and_one_spelling(self):
+        from app.scraper.gleif_reference import make_register_id
+        assert make_register_id("RA000548", "CHE105909036") == "RA000549:CHE-105.909.036"
+        assert make_register_id("RA000549", "Che-105.909.036") == "RA000549:CHE-105.909.036"
+        assert make_register_id("RA000549", "CHE-105.909.036") == "RA000549:CHE-105.909.036"
+        assert make_register_id("RA000549", "12345") == "RA000549:12345", "a non-UID stays as given"
+
+    def test_the_siren_has_one_code_and_no_spaces(self):
+        from app.scraper.gleif_reference import make_register_id
+        assert make_register_id("RA000192", "542 014 428") == "RA000189:542014428"
+        assert make_register_id("RA000189", "542014428") == "RA000189:542014428"
+
+    def test_the_belgian_kbo_number_loses_its_dots(self):
+        from app.scraper.gleif_reference import make_register_id
+        assert make_register_id("RA000025", "0402.231.383") == "RA000025:0402231383"
+        assert make_register_id("RA000025", "0402231383") == "RA000025:0402231383"
+
+    def test_other_registers_are_untouched(self):
+        from app.scraper.gleif_reference import make_register_id
+        assert make_register_id("RA000585", "07524813") == "RA000585:07524813"
+        assert make_register_id("RA000242", "HRB 86515") == "RA000242:HRB86515"
+
+
+class TestTheShippedGeneralRegisterMap:
+    """`general_registers.json` is data derived by `audit-registers`; these pin
+    what a regenerated file must still say, so a broken run cannot ship."""
+
+    def test_known_entries(self):
+        from app.scraper.gleif_reference import general_register_for_country as g
+        assert g("NL") == "RA000463" and g("SE") == "RA000544" and g("IT") == "RA000407"
+        assert g("DK") == "RA000170" and g("IE") == "RA000402" and g("LU") == "RA000432"
+
+    def test_split_countries_are_absent(self):
+        from app.scraper.gleif_reference import general_register_for_country as g
+        for c in ("DE", "US", "CA", "ES", "GB", "CH", "HK", "AU", "IN"):
+            assert g(c) is None, f"{c} has no dominant register and must not be mapped"
+
+    def test_the_file_carries_its_audit(self):
+        from app.scraper.gleif_reference import _load
+        d = _load("general_registers.json")
+        assert d["min_share"] >= 0.9 and d["min_records"] >= 200
+        assert d["records_scanned"] > 3_000_000
+        for c, e in d["countries"].items():
+            assert e["share"] >= d["min_share"] and e["records"] >= d["min_records"], c

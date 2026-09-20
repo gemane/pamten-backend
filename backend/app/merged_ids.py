@@ -168,3 +168,30 @@ def resolve_current_id(session, old_id: str) -> str | None:
             return None
         seen.add(current)
     return current if current != old_id else None
+
+
+def rename_node_id(session, label: str, old_id: str, new_id: str) -> bool:
+    """Give a node a new id, everywhere the old one lives.
+
+    The node itself, every property store that carries node ids (Claim, Flag,
+    Suppression, Pin), and a MergedId forwarding row so every old link keeps
+    resolving — the same machinery a merge uses. Graph edges never store the
+    id, so they need nothing. Refuses (returns False) when the new id is
+    already taken: that is a merge, not a rename.
+    """
+    from app.db.arcadedb import run_sql
+
+    clash = session.run(f"MATCH (n:{label} {{id: $id}}) RETURN n.id AS id LIMIT 1",
+                        id=new_id).single()
+    if clash:
+        return False
+    session.run(f"MATCH (n:{label} {{id: $old}}) SET n.id = $new", old=old_id, new=new_id)
+    for table, cols in (("Claim", ("from_id", "to_id")),
+                        ("Flag", ("from_id", "to_id", "node_id")),
+                        ("Suppression", ("from_id", "to_id")),
+                        ("Pin", ("from_id", "to_id"))):
+        for col in cols:
+            run_sql(f"UPDATE {table} SET {col} = :new WHERE {col} = :old",
+                    {"new": new_id, "old": old_id})
+    record_merge(session, old_id, new_id, kind=label)
+    return True

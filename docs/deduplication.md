@@ -269,9 +269,10 @@ covers the Scottish/Northern-Irish registers RA000587/RA000586 that the
 `companies_house_id` special case never did). Sources that state only a
 *country* (PSC's `country_registered`, an OpenCorporates jurisdiction)
 contribute a `register_id` only when that country has exactly **one** register
-in GLEIF's RA list (~25 countries) — unambiguous by construction; Germany's 177
+in GLEIF's RA list (25 countries) — unambiguous by construction; Germany's 177
 per-court registers sharing HRB numbering are exactly why a bare country+number
-key is unsafe.
+key is unsafe. Three further rules reach the rest — the place map, the
+number-format rules and the audited general-register map, below.
 
 **The curated place map** (`register_for_place`, 2026-09-03) extends this one
 level down: "USA" names 64 registers, but a stated *state* names exactly one,
@@ -286,6 +287,38 @@ them), and four states with sector registries beside the corporate register
 (IL, NY, TX, WA) use hand-picked overrides. FR → Sirene remains future work
 with the Sirene import. Existing rows cannot be backfilled (only the ambiguous
 authority *name* was stored historically); a re-import populates them.
+
+**Number-format rules** (`register_for_number_format`, 2026-09-20). Where the
+country names several registers but the *number's format* names one: Japan lists
+four, yet a dashed `0104-01-056795` is the Legal Affairs Bureau company
+registration number and nothing else (the 13-digit corporate number is a
+different register). SoftBank Group's PSC record carried that number and stayed a
+name-only twin of its LEI node until this rule.
+
+**The general-register map** (`general_register_for_country`, 2026-09-20). The
+exactly-one rule reaches 25 of 229 countries, because GLEIF's RA table lists
+sector registries — funds, supervisors, pension bodies — beside the corporate
+register: the Netherlands has four entries, and 100% of Dutch GENERAL entities
+sit on the KVK. `manage.py audit-registers` measures this on the full LEI-CDF
+golden copy (3.4M records, GENERAL entities only, funds excluded) and writes
+`app/scraper/data/general_registers.json`: a country is mapped only where one
+register holds ≥ 90% of at least 200 entities — 67 countries — and the file
+carries the audit (share, count, number shapes, runner-up) so every entry can be
+re-checked. Genuinely split countries fail the test and stay out: Germany (176
+per-court registers, 8.6% on the largest), the US (per state — the place map's
+job), Canada, Spain, India, Hong Kong, Australia. It is the PSC importer's last
+resort after the sole-register rule, the place map and the format rules.
+
+**One key per national number.** The audit also showed GLEIF keying one number
+under two codes and two spellings: the Swiss UID sits under the UID register
+(55%) *and* the Commercial Register (45%), as `CHE105909036` and
+`CHE-105.909.036`; the French SIREN under Sirene (95%) and the RCS (5%); the
+Belgian KBO number dotted and undotted. Two keys for one number merge nothing,
+so `make_register_id` folds the codes (UID register → Commercial Register, RCS →
+Sirene) and fixes one spelling per register — every producer (GLEIF importer,
+PSC mapper, OpenCorporates lookups) passes through it, so the keys agree
+wherever they are minted. Hong Kong's CR and Business Registration numbers
+share a shape but are *different* numbers and are deliberately not folded.
 
 **Former register identities** (`former_register_ids`, 2026-09-03). A register
 pair is a hard id — and it can *move*: Tesla re-registered from Delaware to

@@ -28,7 +28,9 @@ import zipfile
 from dataclasses import dataclass
 from typing import IO
 
-from app.scraper.gleif_reference import (make_register_id, register_for_place,
+from app.scraper.gleif_reference import (canonical_register_number,
+                                          general_register_for_country, make_register_id,
+                                          register_for_number_format, register_for_place,
                                           sole_register_for_country)
 from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
@@ -149,6 +151,11 @@ def _entity_psc_id(data: dict) -> tuple[str, str | None]:
     country = (ident.get("country_registered") or "").lower()
     if reg and ("england" in country or "wales" in country or "scotland" in country
                 or "united kingdom" in country or country in ("uk", "gb")):
+        # Companies House numbers are eight characters; filers drop the
+        # leading zeros ("41424" for Unilever PLC's 00041424), which minted a
+        # second node beside the GLEIF one keyed on the padded form.
+        if reg.isdigit() and len(reg) < 8:
+            reg = reg.zfill(8)
         return f"gb-coh:{reg}", reg
     self_link = ((data.get("links") or {}).get("self") or "").strip()
     return psc_slug_id(self_link), None
@@ -165,6 +172,8 @@ def _iso2_country(name: str | None) -> str | None:
             "england", "wales", "scotland", "northern ireland",
             "united kingdom", "great britain")):
         return "GB"
+    if n in ("usa", "u.s.a.", "u.s.", "united states of america"):
+        return "US"      # filers' shorthand the shared table does not carry
     from app.scraper.bulk_import import _ISO2_COUNTRY
     return {v.lower(): k for k, v in _ISO2_COUNTRY.items()}.get(n) or (
         name.strip().upper() if len(name.strip()) == 2 else None)
@@ -240,6 +249,8 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         owner_label, kind_cat = "Entity", "entity"
         ident = data.get("identification") or {}
         reg_number = (ident.get("registration_number") or "").strip() or None
+        if chid and reg_number and chid != reg_number:
+            reg_number = chid        # the padded UK number the id was minted from
         # A foreign parent's register number used to be dropped entirely (only
         # the UK special case in _entity_psc_id kept one). It is stored now, and
         # becomes the register_id hard identifier when the stated country maps
@@ -267,9 +278,29 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
                     if code:
                         register_id = make_register_id(code, reg_number)
                         break
+            # Third chance: the NUMBER's format names the register. Japan lists
+            # four registers, but a dashed "0104-01-056795" is a Legal Affairs
+            # Bureau company registration number and nothing else — the key
+            # GLEIF already carries on the company's LEI node.
+            if register_id is None:
+                code = register_for_number_format(iso2, reg_number)
+                if code:
+                    register_id = make_register_id(
+                        code, canonical_register_number(iso2, reg_number))
+            # Last: the register the country's companies actually sit on, from
+            # the GLEIF audit (`register_audit`) — the Netherlands lists four
+            # registers, but every Dutch company is on the KVK.
+            if register_id is None:
+                register_id = make_register_id(general_register_for_country(iso2), reg_number)
+        # The country as an ISO-2 code like every other source, not the filer's
+        # words: "England", "England & Wales" and "United Kingdom" are one GB,
+        # and a node reading "Switzerland" beside one reading "CH" looked like
+        # two countries. The words stay in registration_authority when the
+        # filer put the register there; an unresolvable name is kept as given.
+        country_text = (ident.get("country_registered") or "").strip() or None
         owner_props = {
             "name": name, "entity_type": "company",
-            "country": (ident.get("country_registered") or None),
+            "country": _iso2_country(country_text) or country_text,
             "companies_house_id": chid, "registered_address": reg_addr,
             "hq_address": reg_addr, "hq_city": hq_city, "hq_country": hq_country,
             "registration_number": reg_number,

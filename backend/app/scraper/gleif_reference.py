@@ -18,6 +18,7 @@ code → name; `gleif_ra.json` is code → {"name", "countries"} and is regenera
 import functools
 import json
 import logging
+import re
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -175,6 +176,83 @@ def register_for_place(iso2: str | None, place: str | None) -> str | None:
             or _place_registers().get((country, low)))
 
 
+#: Registers a NUMBER FORMAT identifies where the country alone names several.
+#: Japan lists four RAs, but GLEIF itself files the Legal Affairs Bureau company
+#: registration number (会社法人等番号, "0104-01-056795") under RA000412 and the
+#: 13-digit corporate number (法人番号) under RA001075 — audited on the dev graph:
+#: every dashed number sits under RA000412, none elsewhere. SoftBank Group's PSC
+#: record carried that dashed number and stayed a name-only twin of its LEI node.
+#: (country, format, RA code, canonical form of a matching number). Switzerland
+#: likewise lists four RAs; a `CHE-105.909.036` UID is the Commercial Register's
+#: form — all 24 Swiss GLEIF nodes on dev carry exactly that shape under
+#: RA000549. Filers write the prefix as "Che-", GLEIF as "CHE-": uppercase it.
+_NUMBER_FORMAT_REGISTERS = (
+    ("JP", re.compile(r"\d{4}-\d{2}-\d{6}"), "RA000412", None),
+    ("CH", re.compile(r"CHE-\d{3}\.\d{3}\.\d{3}", re.IGNORECASE), "RA000549", str.upper),
+)
+
+
+def register_for_number_format(iso2: str | None, number: str | None) -> str | None:
+    """The RA code a registration number's FORMAT names, where audited.
+
+    The third way to a `register_id` beside the sole-register country and the
+    place map: for countries whose registers issue distinguishable formats, the
+    number itself says which register issued it. Whitespace-insensitive like
+    `make_register_id`; the format must match the whole number.
+    """
+    rule = _number_format_rule(iso2, number)
+    return rule[2] if rule else None
+
+
+def canonical_register_number(iso2: str | None, number: str | None) -> str | None:
+    """The number as the register writes it, when a format rule matched — else
+    the number unchanged. `make_register_id` preserves case on purpose (it is
+    significant in some registers); a format rule knows its own register's
+    spelling, so "Che-105.909.036" becomes the "CHE-105.909.036" GLEIF carries."""
+    rule = _number_format_rule(iso2, number)
+    if rule and rule[3]:
+        return rule[3]("".join((number or "").split()))
+    return number
+
+
+def _number_format_rule(iso2: str | None, number: str | None):
+    country = (iso2 or "").strip().upper()
+    compact = "".join((number or "").split())
+    if not country or not compact:
+        return None
+    for rule in _NUMBER_FORMAT_REGISTERS:
+        if rule[0] == country and rule[1].fullmatch(compact):
+            return rule
+    return None
+
+
+@functools.lru_cache(maxsize=1)
+def _general_registers() -> dict:
+    """country ISO-2 → the register GLEIF's own GENERAL entities sit on nearly
+    every time, from `general_registers.json` (see `register_audit`). Absent
+    file or a stale shape → empty map; the feature degrades to the other rules."""
+    try:
+        data = _load("general_registers.json")
+    except Exception:  # noqa: BLE001 - data file optional
+        return {}
+    countries = data.get("countries") if isinstance(data, dict) else None
+    return {c: e["code"] for c, e in (countries or {}).items()
+            if isinstance(e, dict) and e.get("code")}
+
+
+def general_register_for_country(iso2: str | None) -> str | None:
+    """The country's general corporate register, where the audit found one.
+
+    The last resort after the sole-register rule, the place map and the
+    number-format rules: the RA table lists four registers for the
+    Netherlands, but 100% of Dutch GENERAL entities on GLEIF sit on the KVK
+    (RA000463) — the other three are sector registries a company would never
+    file a PSC number from. Countries where no register clearly dominates
+    (Germany per court, the US and Canada per state) are not in the map.
+    """
+    return _general_registers().get(iso2.strip().upper()) if iso2 else None
+
+
 @functools.lru_cache(maxsize=1)
 def _zero_insensitive_ras() -> frozenset:
     """The audited US state registers, where a purely numeric filing number's
@@ -203,4 +281,36 @@ def make_register_id(code: str | None, number: str | None) -> str | None:
         return None
     if num.isdigit() and ra in _zero_insensitive_ras():
         num = num.lstrip("0") or "0"
+    ra = _REGISTER_FOLDS.get(ra, ra)
+    style = _NUMBER_STYLES.get(ra)
+    if style:
+        num = style(num)
     return f"{ra}:{num}"
+
+
+def _swiss_uid(num: str) -> str:
+    """CHE105909036 / Che-105.909.036 → CHE-105.909.036, the UID's official form."""
+    m = re.fullmatch(r"(?i)CHE[-‑]?(\d{3})\.?(\d{3})\.?(\d{3})", num)
+    return f"CHE-{m.group(1)}.{m.group(2)}.{m.group(3)}" if m else num
+
+
+def _digits_only(num: str) -> str:
+    """0402.231.383 → 0402231383: separators are typography, not identity."""
+    return num.replace(".", "") if re.fullmatch(r"[\d.]+", num) else num
+
+
+#: Registers that carry ONE national number under two codes — audited on the
+#: full golden copy (2026-09-20): the Swiss UID sits under the UID register
+#: (RA000548, 55%) and the Commercial Register (RA000549, 45%), written
+#: CHE105909036 and CHE-105.909.036; the French SIREN under Sirene (RA000189,
+#: 95%) and the RCS (RA000192, 5%). Two keys for one number is no key at all,
+#: so both fold to one code — the Commercial Register for Switzerland (the
+#: register of record; what every earlier node carries), Sirene for France.
+_REGISTER_FOLDS = {"RA000548": "RA000549", "RA000192": "RA000189"}
+
+#: One spelling per register where GLEIF itself uses several for one number.
+_NUMBER_STYLES = {
+    "RA000549": _swiss_uid,          # Swiss UID
+    "RA000189": _digits_only,        # SIREN, occasionally "542 014 428"
+    "RA000025": _digits_only,        # Belgian KBO: 0402.231.383 and 0402231383
+}
