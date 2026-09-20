@@ -151,6 +151,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       document to the filer's own section before reading per-person fields
       (`_cover_page_for`), and keep the veto list's legal forms international —
       `Cia.`/`Companhia`/`Ltda`/`S/A` were missing.
+- [ ] **Booleans come in more than one spelling.** EDGAR's Form 3/4 relationship flags
+      are `1` in older filings and `true` in newer ones; reading only `1` silently dropped
+      Apple's new CEO. Accept every spelling the source has ever used, and test with a
+      real recent document, not one written from the schema.
+- [ ] **A source that never states an ending still needs one.** Insiders file nothing when
+      they leave, so a roles list only grows. Close seats only from an explicit statement
+      (a "Former …" Form 4, an 8-K Item 5.02 naming a person we already list) — never from
+      silence, and never by minting the person the statement names.
 - [ ] **Classify people with `is_person_name`** and know it is a heuristic. Registers list
       corporate nominees as officers, and `is_nominee` marks holders of record who are not
       beneficial owners.

@@ -590,7 +590,55 @@ Key fields in Form 3/4 XML:
 ```
 
 Names are stored as `LAST FIRST [MIDDLE]` in all caps. The scraper converts
-them to `First [Middle] Last` in title case.
+them to `First [Middle] Last` in title case. The relationship flags are written
+as `1` by older filings and as `true` by newer ones (Apple's 2026 Form 3 for its
+new CEO) — read both, or the newest insiders vanish.
+
+### When a seat began — Form 3
+
+A Form 4 dates a **trade**; it says nothing about when the person took the seat,
+so the SEC role edges carried no start date at all (204 on dev, none dated by SEC
+itself — the few that had one had borrowed it from Wikidata). A **Form 3** is
+filed within ten days of becoming an insider and its `periodOfReport` is the
+appointment date to the day: John Ternus's Form 3 says 2026-09-01, Apple's stated
+transition date; Jennifer Newstead's 2026-03-01.
+
+`fetch_executives` therefore keeps reading **Form 3s past the insider cap** (they
+are a few a year; `MAX_FORM3_SCAN`) and attaches `since` to the listed person when
+the Form 3 is for the **same seat** as their current one (`canonical_role`). A
+Form 3 for a different seat — VP then, CEO now — dates the wrong thing and is left
+alone. Coverage limit: the submissions index holds the newest ~1,000 filings, so a
+director who joined long ago has no Form 3 in reach and stays undated unless
+Wikidata knows.
+
+### When a seat ended — "Former …" Form 4s and 8-K Item 5.02
+
+A departing insider files nothing, so the roles list only ever grew: every
+executive who had ever filed a Form 4 in the index window stayed "current". Two
+statements of a departure exist on EDGAR, and both now close the seat
+(`_close_role_sec`, `until` on the edge, a claim beside it):
+
+* **A Form 4 whose relationship is "Other: Former Chief Financial Officer".** The
+  insider's newest filing says the seat ended; `periodOfReport` dates it. Rare,
+  but structured and exact.
+* **Form 8-K, Item 5.02** ("Departure of Directors or Certain Officers …"), which a
+  company must file within four business days. The submissions index carries an
+  `items` field per filing, so the 8-Ks that carry Item 5.02 are known **without
+  opening any document**; the newest `MAX_8K_FETCH` are read (Archives files —
+  cached forever). The item text is prose, so it is read **only for names we
+  already list** (this scan plus the people already on the graph) and never to
+  mint anyone. A sentence must name the person (surname plus first name or an
+  honorific — a bare surname never matches) and say a seat ends; the date is the
+  sentence's *effective* date when stated, else — for a departure already in the
+  past ("resigned", "passed away") — the sentence's own date or the filing date.
+  A forward-looking notice with no effective date is **not** closed: Reid
+  Hoffman's "decided not to stand for re-election at the annual meeting" leaves
+  him serving until a meeting whose date the text does not give. Where the
+  sentence names the seat ("from his role as Chief Executive Officer to Executive
+  Chair"), only that seat closes; Tim Cook keeps his board seat.
+
+A closed seat is a new spell if reasserted later: Steve Jobs's two CEO tenures
+are two edges, which is what the timeline exists to show.
 
 ---
 
@@ -604,7 +652,9 @@ them to `First [Middle] Last` in title case.
 | Primary documents for stake % (top 5) | up to 5 |
 | Submissions JSON for executives | 1 |
 | Form 3/4 XML documents (up to 25 insiders) | up to 25 |
-| **Total (typical)** | **~35–40** |
+| Form 3s past the cap, for seat start dates | up to 40 (cached) |
+| 8-Ks with Item 5.02, for departures | up to 12 (cached) |
+| **Total (typical)** | **~40–50** |
 
 At 0.12 s per request this takes roughly 5–8 seconds per company, in addition
 to the Wikidata scrape.
@@ -627,7 +677,11 @@ to the Wikidata scrape.
   limit HTTP request count). The `stake_percent` field will be `null` for those.
 - **Form 3/4 titles change over time.** The scraper reads the most recent
   Form 3/4 per insider, so a person who changed roles (e.g. VP → CEO) will
-  show their current title, not their title at a given point in time.
+  show their current title, not their title at a given point in time — and
+  their `since` only when their Form 3 was for that same seat.
+- **Departures are closed only where EDGAR states them.** A "Former …" Form 4
+  or an 8-K Item 5.02 naming the person; a director who simply stops filing is
+  not closed, because silence is not a statement.
 
 ---
 

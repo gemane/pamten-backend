@@ -1719,3 +1719,185 @@ class TestThirteenGCoFilersAreAFamilyNotABloc:
         assert row["stake_percent"] == 6.7 and row["voting_power_pct"] is None
         assert row["shares"] == 52_717_075
         assert row["shares_outstanding"] == 782_626_000
+class TestRoleDatesFromForm3:
+    """Form 4 dates a trade, not a seat; Form 3 is filed within ten days of
+    becoming an insider and its periodOfReport IS the appointment date (John
+    Ternus: 2026-09-01, Apple's stated transition date). Until now the role
+    edges from SEC carried no start at all — 204 of them on dev, 0 dated by
+    SEC itself.
+    """
+
+    def _xml(self, name, *, form="4", period="2026-04-27", officer="1", director="0",
+             title="", other="", cik="0001234"):
+        other_xml = (f"<isOther>1</isOther><otherText>{other}</otherText>" if other else "")
+        return (f'<?xml version="1.0"?><ownershipDocument><documentType>{form}</documentType>'
+                f'<periodOfReport>{period}</periodOfReport>'
+                f'<issuer><issuerCik>0000320193</issuerCik></issuer>'
+                f'<reportingOwner><reportingOwnerId><rptOwnerCik>{cik}</rptOwnerCik>'
+                f'<rptOwnerName>{name}</rptOwnerName></reportingOwnerId>'
+                f'<reportingOwnerRelationship><isDirector>{director}</isDirector>'
+                f'<isOfficer>{officer}</isOfficer><officerTitle>{title}</officerTitle>'
+                f'{other_xml}</reportingOwnerRelationship></reportingOwner></ownershipDocument>')
+
+    def test_flags_written_as_true_are_read(self):
+        # Apple's 2026 Form 3 for its new CEO: <isDirector>true</isDirector>.
+        out = _parse_form34_xml(self._xml("Ternus John", form="3", period="2026-09-01",
+                                          officer="true", director="true", title="CEO"))
+        assert out and out["role"] == "CEO" and out["document_type"] == "3"
+        assert out["period_of_report"] == "2026-09-01" and out["former"] is False
+
+    def test_a_former_officer_filing_names_the_seat_that_ended(self):
+        out = _parse_form34_xml(self._xml("Doe Jane", officer="0", director="0",
+                                          other="Former Chief Financial Officer",
+                                          period="2026-03-31"))
+        assert out and out["former"] is True and out["role"] == "CFO"
+        assert out["period_of_report"] == "2026-03-31"
+
+    def test_a_pure_investor_is_still_nobody(self):
+        assert _parse_form34_xml(self._xml("Some Fund", officer="0", director="0",
+                                           other="10% owner")) is None
+
+    def _run(self, forms, docs, dates=None):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        n = len(forms)
+        submissions = {"filings": {"recent": {
+            "form": forms,
+            "accessionNumber": [f"0000000001-26-{i:06d}" for i in range(n)],
+            "primaryDocument": [f"d{i}.xml" for i in range(n)],
+            "filingDate": dates or [f"2026-0{9 - i}-01" for i in range(n)],
+        }}}
+        served = {f"d{i}.xml": d for i, d in enumerate(docs)}
+
+        def fake_get_text(url, params=None):
+            return served[url.split("/")[-1]]
+        with patch.object(sec_edgar, "_get", return_value=submissions), \
+             patch.object(sec_edgar, "_get_text", side_effect=fake_get_text):
+            return sec_edgar.fetch_executives("320193")
+
+    def test_the_form_3_behind_a_form_4_dates_the_seat(self):
+        execs = self._run(
+            ["4", "3"],
+            [self._xml("Ternus John", form="4", period="2026-09-10", title="CEO"),
+             self._xml("Ternus John", form="3", period="2026-09-01", title="CEO")])
+        assert len(execs) == 1
+        assert execs[0]["role"] == "CEO" and execs[0]["since"] == "2026-09-01"
+        assert execs[0]["until"] is None
+
+    def test_a_form_3_for_a_different_seat_does_not_date_the_current_one(self):
+        # VP then, CEO now: the Form 3 dates the VP seat, which is not listed.
+        execs = self._run(
+            ["4", "3"],
+            [self._xml("Ternus John", form="4", period="2026-09-10", title="CEO"),
+             self._xml("Ternus John", form="3", period="2021-02-01", title="Vice President")])
+        assert execs[0]["role"] == "CEO" and execs[0]["since"] is None
+
+    def test_a_form_3_as_the_newest_filing_dates_itself(self):
+        execs = self._run(["3"], [self._xml("Newstead Jennifer", form="3", period="2026-03-01",
+                                            title="SVP, GC and Secretary")])
+        assert execs[0]["since"] == "2026-03-01"
+
+    def test_a_former_filing_becomes_a_closing_not_a_seat(self):
+        execs = self._run(["4"], [self._xml("Doe Jane", officer="0", director="0",
+                                            other="Former Chief Financial Officer",
+                                            period="2026-03-31")])
+        assert execs[0]["former"] is True and execs[0]["until"] == "2026-03-31"
+        assert execs[0]["role"] == "CFO" and execs[0]["since"] is None
+
+    def test_form_3s_are_still_read_past_the_insider_cap(self):
+        from app.scraper import sec_edgar
+        cap = sec_edgar.MAX_FORM4_FETCH
+        forms = ["4"] * cap + ["3"]
+        docs = [self._xml(f"Person{i} A", title="Vice President", cik=f"{i:07d}") for i in range(cap)]
+        docs.append(self._xml("Person0 A", form="3", period="2020-01-15", title="Vice President",
+                              cik="0000000"))
+        execs = self._run(forms, docs)
+        assert len(execs) == cap
+        assert execs[0]["since"] == "2020-01-15", "the cap stops new insiders, not their Form 3s"
+
+
+class TestDeparturesFromEightK:
+    """A departing insider files nothing; the company announces it in an 8-K,
+    Item 5.02. The submissions index says which 8-Ks carry the item; the text
+    is prose, read only for names we already list. Both sentences below are
+    the real filings (Apple 2026-04-20, Microsoft 2026-06-05).
+    """
+
+    COOK = ("On April 20, 2026, Apple Inc. (“Apple”) announced that Tim Cook will transition "
+            "from his role as Chief Executive Officer to Executive Chair of Apple’s Board of "
+            "Directors (the “Board”), effective September 1, 2026 (the “Transition Date”). "
+            "On April 17, 2026, the Board appointed John Ternus, Apple’s Senior Vice President "
+            "of Hardware Engineering, as Chief Executive Officer and a member of the Board, in "
+            "each case effective on the Transition Date. Mr. Ternus, 50, joined Apple in 2001.")
+    HOFFMAN = ("(b) On June 2, 2026, Reid Hoffman, a member of the Board of Directors of "
+               "Microsoft Corporation (the “Company”) since 2017, informed the Company of his "
+               "decision not to stand for re-election at the Company’s 2026 annual shareholder "
+               "meeting (the “Annual Meeting”). Mr. Hoffman will continue to serve as a director "
+               "until the Annual Meeting.")
+
+    def test_an_effective_date_closes_the_named_seat(self):
+        from app.scraper.sec_edgar import _departures_in_text
+        out = _departures_in_text(self.COOK, ["Timothy D Cook", "John Ternus"], "2026-04-20")
+        assert out == [{"name": "Timothy D Cook", "until": "2026-09-01", "role": "CEO",
+                        "sentence": out[0]["sentence"]}]
+
+    def test_a_notice_without_a_date_does_not_close_anything(self):
+        # Hoffman still serves until a meeting whose date the text does not give.
+        from app.scraper.sec_edgar import _departures_in_text
+        assert _departures_in_text(self.HOFFMAN, ["Reid Hoffman"], "2026-06-05") == []
+
+    def test_a_past_departure_is_dated_by_its_sentence(self):
+        from app.scraper.sec_edgar import _departures_in_text
+        text = ("On March 3, 2026, Jane Doe resigned as Chief Financial Officer of the Company. "
+                "Mr. Roe passed away on February 1, 2026.")
+        out = _departures_in_text(text, ["Jane Doe", "Richard Roe"], "2026-03-05")
+        assert {(d["name"], d["until"], d["role"]) for d in out} == {
+            ("Jane Doe", "2026-03-03", None), ("Richard Roe", "2026-02-01", None)}
+
+    def test_a_past_departure_without_any_date_takes_the_filing_date(self):
+        from app.scraper.sec_edgar import _departures_in_text
+        out = _departures_in_text("Ms. Doe resigned as a director.", ["Jane Doe"], "2026-03-05")
+        assert out and out[0]["until"] == "2026-03-05"
+
+    def test_a_surname_alone_never_matches(self):
+        # One 8-K names several people; "Cook" in a sentence about someone else
+        # must not close Tim Cook's seat.
+        from app.scraper.sec_edgar import _departures_in_text
+        text = "On May 1, 2026, the Company's head of Cook County operations resigned."
+        assert _departures_in_text(text, ["Timothy D Cook"], "2026-05-02") == []
+
+    def test_the_item_is_cut_out_of_the_whole_filing(self):
+        from app.scraper.sec_edgar import _item_502_text
+        html = ("<p>Item 2.02 Results.</p><p>Item 5.02 Departure of Directors. "
+                + self.COOK + "</p><p>Item 9.01 Exhibits.</p><p>SIGNATURES</p>")
+        text = _item_502_text(html)
+        assert text.startswith("Departure of Directors") and "Exhibits" not in text
+
+    def test_end_to_end_only_8ks_with_item_502_are_opened(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        submissions = {"filings": {"recent": {
+            "form":            ["8-K", "8-K", "10-Q"],
+            "items":           ["5.02", "2.02,9.01", ""],
+            "accessionNumber": ["0000000001-26-000001", "0000000001-26-000002", "0000000001-26-000003"],
+            "primaryDocument": ["a.htm", "b.htm", "c.htm"],
+            "filingDate":      ["2026-04-20", "2026-05-01", "2026-05-02"],
+        }}}
+        opened = []
+
+        def fake_get_text(url, params=None):
+            opened.append(url.split("/")[-1])
+            return "<p>Item 5.02 Departure. " + self.COOK + "</p><p>SIGNATURE</p>"
+        with patch.object(sec_edgar, "_get", return_value=submissions), \
+             patch.object(sec_edgar, "_get_text", side_effect=fake_get_text):
+            out = sec_edgar.fetch_departures("320193", ["Timothy D Cook"])
+        assert opened == ["a.htm"]
+        assert len(out) == 1 and out[0]["until"] == "2026-09-01" and out[0]["role"] == "CEO"
+        assert out[0]["source_date"] == "2026-04-20"
+        assert "0000000001-26-000001" in out[0]["source_url"]
+
+    def test_nobody_to_look_for_costs_no_request(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get", side_effect=AssertionError("must not fetch")):
+            assert sec_edgar.fetch_departures("320193", []) == []

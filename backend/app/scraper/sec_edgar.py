@@ -54,6 +54,7 @@ import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
 
 import httpx
+from app.roles import canonical_role
 from app.scraper.mapper import _ENTITY_SUFFIXES, derive_ownership_type
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ HEADERS = {
 }
 REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s
 MAX_FORM4_FETCH  = 25     # max unique insiders to fetch Form 3/4 for
+MAX_FORM3_SCAN   = 40     # Form 3s read past the insider cap, for seat start dates
+MAX_8K_FETCH     = 12     # newest 8-Ks with Item 5.02 read for departures
 
 HOLDINGS_DEFAULT_LIMIT = 100    # subjects for an explicit holdings run (CLI)
 # Default for a normal company scrape. Cheap where it matters: a filer whose
@@ -1504,15 +1507,28 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
     if rel is None:
         return None
 
-    is_director   = (rel.findtext("isDirector")  or "0").strip() == "1"
-    is_officer    = (rel.findtext("isOfficer")    or "0").strip() == "1"
+    is_director   = _xml_flag(rel, "isDirector")
+    is_officer    = _xml_flag(rel, "isOfficer")
     officer_title = (rel.findtext("officerTitle") or "").strip()
+    other_text    = (rel.findtext("otherText")    or "").strip()
+    document_type = (root.findtext(".//documentType") or "").strip() or None
+    # Form 3: the date the person BECAME an insider — the appointment date.
+    # Form 4: the transaction date, which says nothing about tenure.
+    period        = (root.findtext(".//periodOfReport") or "").strip() or None
 
+    former_role = None
     if not (is_director or is_officer):
-        return None
+        # "Other" with a text like "Former Chief Executive Officer": the
+        # insider's newest filing says the position has ENDED, and it is the
+        # only structured statement of a departure EDGAR has. A pure investor
+        # or 10% owner is still nothing to us.
+        m = _FORMER_TEXT.search(other_text)
+        if not m:
+            return None
+        former_role = _title_to_role(m.group("title").strip()) if m.group("title").strip() else "Officer"
 
     name = _normalize_sec_name(name_elem.text.strip())
-    role = _title_to_role(officer_title) if is_officer else "Director"
+    role = former_role or (_title_to_role(officer_title) if is_officer else "Director")
     # The reporting owner's own CIK — a hard person key, one per filer across
     # every filing and spelling. Padded to 10 like every CIK we store.
     owner_cik_raw = (owner.findtext(".//rptOwnerCik") or "").strip()
@@ -1530,7 +1546,19 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
 
     return {"name": name, "title": officer_title, "role": role,
             "shares_owned": shares_owned, "issuer_cik": issuer_cik,
-            "person_cik": owner_cik}
+            "person_cik": owner_cik, "document_type": document_type,
+            "period_of_report": period, "former": former_role is not None}
+
+
+def _xml_flag(rel, tag: str) -> bool:
+    """A Form 3/4 relationship flag. Older filings write `1`, newer ones
+    `true` — Apple's 2026 Form 3 for its new CEO says `<isDirector>true`,
+    and reading only `1` dropped him."""
+    return (rel.findtext(tag) or "").strip().lower() in ("1", "true")
+
+
+#: Item 5/6 "Other" text on a Form 3/4 that names a position as ended.
+_FORMER_TEXT = re.compile(r"\b(?:former|retired|ex-)\s*(?P<title>[^;,.()]*)", re.IGNORECASE)
 
 
 def fetch_executives(cik: str) -> list:
@@ -1559,19 +1587,28 @@ def fetch_executives(cik: str) -> list:
     primary_docs = recent.get("primaryDocument", [])
     filing_dates = recent.get("filingDate",      [])
 
-    # Collect one filing per unique filer CIK (newest first = most current title)
+    # Collect one filing per unique reporting person (newest first = most
+    # current title), then keep reading the rarer Form 3s further back for
+    # the date each listed person became an insider.
     executives: list[dict] = []
-    seen_names: set[str]   = set()
+    by_person: dict[str, dict] = {}   # person CIK (or name) → their record
     issuer_cik_int = _cik_int(cik)
     scanned  = 0
+    form3_scanned = 0
     SCAN_CAP = MAX_FORM4_FETCH * 2   # bound fetches (many insiders share a filing agent)
 
     # Fetch Form 3/4 filings newest-first and dedupe by the *reporting person* —
     # NOT the accession/filer-CIK prefix, which collapses distinct insiders who
-    # share a filing agent (that missed most of a company's insiders). Stop at
-    # MAX_FORM4_FETCH unique insiders or the scan cap.
+    # share a filing agent (that missed most of a company's insiders). New
+    # insiders stop at MAX_FORM4_FETCH or the scan cap; Form 3s (a few a year)
+    # are still read past that, because a person's Form 3 is usually older
+    # than their newest Form 4 and it is the one filing that dates the seat.
     for i, form in enumerate(forms):
         if form not in ("3", "4", "3/A", "4/A"):
+            continue
+        is_form3 = form.startswith("3")
+        full = len(executives) >= MAX_FORM4_FETCH or scanned >= SCAN_CAP
+        if full and (not is_form3 or form3_scanned >= MAX_FORM3_SCAN):
             continue
         # primaryDocument may be prefixed with an XSLT stylesheet dir
         # (e.g. "xslF345X06/form4.xml") which serves HTML — strip to the raw XML.
@@ -1588,6 +1625,8 @@ def fetch_executives(cik: str) -> list:
             log.debug("SEC EDGAR: Form 3/4 fetch failed: %s", exc)
             continue
         scanned += 1
+        if is_form3:
+            form3_scanned += 1
 
         result = _parse_form34_xml(xml_text)
         # A form about a different issuer is the company filing about a stake it
@@ -1598,19 +1637,180 @@ def fetch_executives(cik: str) -> list:
             log.info("SEC EDGAR: dropping Form 3/4 by %r — issuer CIK %s is not %s",
                      result["name"], result["issuer_cik"], cik)
             continue
-        if result and result["name"] and result["name"] not in seen_names:
-            seen_names.add(result["name"])
+        if not (result and result["name"]):
+            continue
+        key   = result.get("person_cik") or result["name"]
+        known = by_person.get(key)
+        if known is None:
+            if full:
+                continue        # an older Form 3 of someone we did not list
             result["source_url"]  = _filing_index_url(cik, accessions[i]) or None
             result["source_date"] = filing_dates[i] if i < len(filing_dates) else None
+            # The newest filing IS the Form 3: the seat starts on its date. A
+            # "Former …" filing instead closes the seat on its date.
+            result["since"] = result["period_of_report"] if is_form3 and not result["former"] else None
+            result["until"] = result["period_of_report"] if result["former"] else None
             executives.append(result)
+            by_person[key] = result
             log.debug("SEC EDGAR: insider %s (%s)", result["name"], result["role"])
-
-        if len(executives) >= MAX_FORM4_FETCH or scanned >= SCAN_CAP:
-            break
+        elif is_form3 and not result["former"] and not known.get("since") \
+                and canonical_role(result["role"]) == canonical_role(known["role"]):
+            # Their Form 3, older than the Form 4 we listed them from, and for
+            # the same seat: that is when it began. A Form 3 for a different
+            # seat (VP then, CEO now) dates the wrong thing and is left alone.
+            known["since"] = result["period_of_report"]
+            known["since_url"] = _filing_index_url(cik, accessions[i]) or None
 
     log.info("SEC EDGAR: found %d executives from Form 3/4 for CIK=%s",
              len(executives), cik)
     return executives
+
+
+# ── Departures from 8-K Item 5.02 ────────────────────────────────────────────
+#
+# EDGAR has no structured statement that a director or officer LEFT: a
+# departing insider files no form (a "Former …" Form 4 above is the rare
+# exception), so the roles list only ever grew. Item 5.02 of Form 8-K is where
+# a company must announce departures and appointments within four business
+# days. The submissions index says WHICH 8-Ks carry Item 5.02 (`items`), so
+# no document is opened blind; the item text itself is prose, read only for
+# names we already list — never to mint anyone.
+
+_MONTHS = {m: i for i, m in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"), 1)}
+_DATE_RX = re.compile(
+    r"\b(January|February|March|April|May|June|July|August|September|October|"
+    r"November|December)\s+(\d{1,2}),\s+(\d{4})\b")
+_EFFECTIVE_RX = re.compile(r"\beffective\s+(?:as\s+of\s+|on\s+)?" + _DATE_RX.pattern, re.IGNORECASE)
+#: Anything that says a seat ends, however it is phrased.
+_DEPARTURE_RX = re.compile(
+    r"\b(?:resign|retir|step(?:ped|s)?\s+down|depart|ceas|terminat|passed\s+away|"
+    r"died|death|will\s+leave|leaving|no\s+longer\s+serv|transition\s+from|"
+    r"not\s+(?:to\s+)?stand\s+for\s+re-?election)", re.IGNORECASE)
+#: A departure already in the past — datable from the sentence's own date.
+_HARD_PAST_RX = re.compile(
+    r"\b(?:resigned|retired|passed\s+away|died|was\s+terminated|ceased|"
+    r"stepped\s+down|departed)\b", re.IGNORECASE)
+#: "… from his role as Chief Executive Officer to …" — which seat is ending.
+_ROLE_AS_RX = re.compile(
+    r"\b(?:role|position|office|capacity|service|duties)\s+(?:as|of)\s+(?:a\s+|the\s+)?"
+    r"(?:Company['’]s\s+)?(?P<title>[A-Z][A-Za-z&,\- ]{2,60}?)"
+    r"(?=\s+(?:to|and|of\s+the|effective|at|,)|[.;])")
+_ITEM_502_RX = re.compile(r"Item\s*5\.02\.?(?P<text>.*?)(?=Item\s*\d\.\d\d|SIGNATURES?\b)",
+                          re.IGNORECASE | re.DOTALL)
+#: Sentence ends — but not the dot of an honorific ("Mr. Cook").
+_SENTENCE_RX = re.compile(r"(?<!\bMr\.)(?<!\bMs\.)(?<!\bMrs\.)(?<!\bDr\.)(?<=[.!?])\s+(?=[A-Z(“\"])")
+
+
+def _iso_from_words(m) -> str:
+    return f"{int(m.group(3)):04d}-{_MONTHS[m.group(1).lower()]:02d}-{int(m.group(2)):02d}"
+
+
+def _item_502_text(html_text: str) -> str | None:
+    m = _ITEM_502_RX.search(_plain_text(html_text))
+    return m.group("text").strip() if m else None
+
+
+def _name_rx(full_name: str) -> re.Pattern | None:
+    """The person as prose names them: "Tim Cook", "Timothy D. Cook", "Mr. Cook".
+
+    The surname must be there; the first name may be a short form (Tim for
+    Timothy) or replaced by an honorific. A bare surname never matches — one
+    8-K names several people.
+    """
+    parts = [p for p in re.split(r"\s+", full_name.strip()) if p]
+    if len(parts) < 2 or len(parts[-1]) < 3:
+        return None
+    last, first = re.escape(parts[-1]), parts[0].rstrip(".")
+    stem = re.escape(first[:3]) if len(first) >= 3 else re.escape(first)
+    return re.compile(
+        rf"\b(?:(?:Mr|Ms|Mrs|Dr|Messrs)\.?\s+{last}\b|{stem}[\w.]*\s+(?:[A-Z][\w.]*\s+)?{last}\b)")
+
+
+def _departures_in_text(text: str, names: list[str], filed: str | None) -> list[dict]:
+    """Which of `names` the Item 5.02 text says are leaving, and from when.
+
+    A sentence must name the person AND say a seat ends. The end date is the
+    sentence's "effective <date>" when it states one; failing that, a
+    departure already in the past ("resigned", "passed away") is dated by the
+    sentence's own date, or the filing date. A forward-looking notice with no
+    effective date — "decided not to stand for re-election at the annual
+    meeting" — is NOT closed: the person still serves, and the meeting date is
+    not in the text.
+    """
+    out: dict[tuple, dict] = {}
+    patterns = [(n, _name_rx(n)) for n in names]
+    for sentence in _SENTENCE_RX.split(text):
+        if not _DEPARTURE_RX.search(sentence):
+            continue
+        for name, rx in patterns:
+            if rx is None or not rx.search(sentence):
+                continue
+            eff = _EFFECTIVE_RX.search(sentence)
+            if eff:
+                until = _iso_from_words(eff)
+            elif _HARD_PAST_RX.search(sentence):
+                d = _DATE_RX.search(sentence)
+                until = _iso_from_words(d) if d else filed
+            else:
+                continue
+            if not until:
+                continue
+            rm = _ROLE_AS_RX.search(sentence)
+            role = _title_to_role(rm.group("title").strip()) if rm else None
+            out.setdefault((name, role), {"name": name, "until": until, "role": role,
+                                          "sentence": sentence.strip()[:300]})
+    return list(out.values())
+
+
+def fetch_departures(cik: str, names: list[str], limit: int = MAX_8K_FETCH) -> list[dict]:
+    """Departures of the named people from the company's newest 8-Ks with
+    Item 5.02. One submissions read (the index says which 8-Ks qualify), then
+    at most `limit` primary documents — Archives files, so cached forever."""
+    if not names:
+        return []
+    try:
+        submissions = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+    except Exception as exc:  # noqa: BLE001 - a lookup that fails must not fail the scrape
+        log.warning("SEC EDGAR: departures lookup failed for CIK=%s: %s", cik, exc)
+        return []
+    recent       = submissions.get("filings", {}).get("recent", {})
+    forms        = recent.get("form",            [])
+    items        = recent.get("items",           [])
+    accessions   = recent.get("accessionNumber", [])
+    primary_docs = recent.get("primaryDocument", [])
+    filing_dates = recent.get("filingDate",      [])
+    cik_int = _cik_int(cik)
+
+    found: dict[tuple, dict] = {}
+    read = 0
+    for i, form in enumerate(forms):
+        if form not in ("8-K", "8-K/A") or "5.02" not in (items[i] if i < len(items) else ""):
+            continue
+        if read >= limit:
+            break
+        doc = (primary_docs[i] if i < len(primary_docs) else "").split("/")[-1]
+        acc = (accessions[i] if i < len(accessions) else "").replace("-", "")
+        if not doc or not acc:
+            continue
+        try:
+            html_text = _get_text(f"{ARCHIVES_URL}/{cik_int}/{acc}/{doc}")
+        except httpx.HTTPError as exc:
+            log.debug("SEC EDGAR: 8-K fetch failed: %s", exc)
+            continue
+        read += 1
+        text = _item_502_text(html_text)
+        if not text:
+            continue
+        filed = filing_dates[i] if i < len(filing_dates) else None
+        for d in _departures_in_text(text, names, filed):
+            d["source_url"]  = _filing_index_url(cik, accessions[i]) or None
+            d["source_date"] = filed
+            found.setdefault((d["name"], d["role"]), d)     # newest 8-K wins
+    log.info("SEC EDGAR: %d departure(s) in %d 8-K(s) with Item 5.02 for CIK=%s",
+             len(found), read, cik)
+    return list(found.values())
 
 
 def _lookup_person_cik(name: str) -> str | None:
