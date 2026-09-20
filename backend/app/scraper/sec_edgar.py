@@ -1661,9 +1661,34 @@ def fetch_executives(cik: str) -> list:
             known["since"] = result["period_of_report"]
             known["since_url"] = _filing_index_url(cik, accessions[i]) or None
 
+    _drop_issuer_event_dates(executives)
     log.info("SEC EDGAR: found %d executives from Form 3/4 for CIK=%s",
              len(executives), cik)
     return executives
+
+
+#: Form 3s sharing one date from this many people are the ISSUER's event.
+FORM3_CLUSTER = 3
+
+
+def _drop_issuer_event_dates(executives: list[dict]) -> None:
+    """A Form 3 dates the day a person became subject to Section 16 — which
+    is their appointment only when the company already was. When the company
+    itself becomes subject (a listing, a lost foreign-private-issuer status),
+    every sitting officer and director files a Form 3 on the same day:
+    Embraer's whole board carried "since 2026-03-18". A date shared by
+    `FORM3_CLUSTER` or more people is that event, not a seat, and is dropped.
+    """
+    by_date: dict[str, int] = {}
+    for e in executives:
+        if e.get("since"):
+            by_date[e["since"]] = by_date.get(e["since"], 0) + 1
+    clusters = {d for d, n in by_date.items() if n >= FORM3_CLUSTER}
+    for e in executives:
+        if e.get("since") in clusters:
+            log.info("SEC EDGAR: %s Form 3s dated %s — the issuer's event, not %r's seat",
+                     by_date[e["since"]], e["since"], e["name"])
+            e["since"] = None
 
 
 # ── Departures from 8-K Item 5.02 ────────────────────────────────────────────

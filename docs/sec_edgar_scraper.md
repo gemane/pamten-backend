@@ -611,6 +611,13 @@ alone. Coverage limit: the submissions index holds the newest ~1,000 filings, so
 director who joined long ago has no Form 3 in reach and stays undated unless
 Wikidata knows.
 
+One more trap: a Form 3 dates the day the person became **subject to Section 16**,
+which is their appointment only when the company already was. When the company
+itself becomes subject — a listing, a lost foreign-private-issuer status — every
+sitting officer and director files a Form 3 on the same day: Embraer's whole board
+came out as "since 2026-03-18". A Form 3 date shared by `FORM3_CLUSTER` (3) or more
+people is the issuer's event, not a seat, and is dropped (`_drop_issuer_event_dates`).
+
 ### When a seat ended — "Former …" Form 4s and 8-K Item 5.02
 
 A departing insider files nothing, so the roles list only ever grew: every

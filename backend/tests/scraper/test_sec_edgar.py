@@ -1804,6 +1804,17 @@ class TestRoleDatesFromForm3:
         assert execs[0]["former"] is True and execs[0]["until"] == "2026-03-31"
         assert execs[0]["role"] == "CFO" and execs[0]["since"] is None
 
+    def test_a_form_3_date_shared_by_the_whole_board_is_the_issuers_event(self):
+        # Embraer became subject to Section 16 on 2026-03-18 and every sitting
+        # officer and director filed a Form 3 that day: not their seat dates.
+        execs = self._run(
+            ["3", "3", "3", "3"],
+            [self._xml(f"Person{i} A", form="3", period="2026-03-18", title="Director",
+                       officer="0", director="1", cik=f"{i:07d}") for i in range(3)]
+            + [self._xml("Lima Felipe", form="3", period="2026-04-13", title="CFO", cik="0000099")])
+        assert [e["since"] for e in execs] == [None, None, None, "2026-04-13"], \
+            "the shared date is dropped, the individual one kept"
+
     def test_form_3s_are_still_read_past_the_insider_cap(self):
         from app.scraper import sec_edgar
         cap = sec_edgar.MAX_FORM4_FETCH
