@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from app.database import db
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
+from app.db.anchors import label_or_entity
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 from app.merged_ids import record_merge_sql
 
@@ -723,24 +724,27 @@ def mark_stale_ownership(days: int = STALE_AFTER_DAYS) -> dict:
     marked = cleared = 0
     with db.get_session() as session:
         rows = list(session.run(
-            """MATCH (a)-[r:OWNS]->(b)
+            """MATCH (a)-[r:OWNS]->(b:Entity)
                WHERE r.until IS NULL
                  AND COALESCE(r.credibility_score, 0) < $tier
-               RETURN a.id AS aid, b.id AS bid, r.last_scraped_at AS seen,
-                      r.stale AS stale""",
+               RETURN a.id AS aid, labels(a)[0] AS alabel, b.id AS bid,
+                      r.last_scraped_at AS seen, r.stale AS stale""",
             tier=OFFICIAL_TIER_MIN_CREDIBILITY))
         for r in rows:
             is_stale = bool(r["seen"]) and str(r["seen"]) < cutoff \
                 and (r["aid"], r["bid"]) not in vouched
+            # The per-edge write anchors on the owner's own label (it came back
+            # with the scan above): unlabelled, each one would scan every vertex.
+            alabel = label_or_entity(r.get("alabel"))
             if is_stale and not r["stale"]:
                 session.run(
-                    """MATCH (a {id: $a})-[r:OWNS]->(b {id: $b})
+                    f"""MATCH (a:{alabel} {{id: $a}})-[r:OWNS]->(b:Entity {{id: $b}})
                        WHERE r.until IS NULL SET r.stale = true""",
                     a=r["aid"], b=r["bid"])
                 marked += 1
             elif r["stale"] and not is_stale:
                 session.run(
-                    """MATCH (a {id: $a})-[r:OWNS]->(b {id: $b})
+                    f"""MATCH (a:{alabel} {{id: $a}})-[r:OWNS]->(b:Entity {{id: $b}})
                        WHERE r.until IS NULL SET r.stale = false""",
                     a=r["aid"], b=r["bid"])
                 cleared += 1

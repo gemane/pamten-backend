@@ -531,7 +531,8 @@ def test_create_dual_listed_404_when_entity_missing(client, fake_db, make_token)
 
 
 def test_create_owns_persists_provenance(client, fake_db, make_token):
-    fake_db.queue([{"r": {"source_id": "s1"}}])  # CREATE ... RETURN r
+    fake_db.queue([{"id": "a"}],                  # owner label lookup: Entity hit
+                  [{"r": {"source_id": "s1"}}])   # CREATE ... RETURN r
     r = client.post(
         "/relationships/owns",
         json={
@@ -545,16 +546,56 @@ def test_create_owns_persists_provenance(client, fake_db, make_token):
     assert r.status_code == 200
     # The write must carry provenance into the DB layer, including a
     # server-stamped last_scraped_at.
-    _cypher, params = fake_db.calls[-1]
+    cypher, params = fake_db.calls[-1]
     assert params["source_url"] == "https://www.sec.gov/Archives/edgar/data/1/x.htm"
     assert params["source_date"] == "2025-02-14"
     assert params["last_scraped_at"]  # non-empty ISO timestamp
+    # The owner anchor carries the label the lookup found — unlabelled it
+    # scans every vertex type (app/db/anchors.py).
+    assert "MATCH (owner:Entity {id: $owner_id})" in cypher
+    assert "MATCH (owned:Entity {id: $owned_id})" in cypher
+
+
+def test_create_owns_by_a_person_anchors_on_person(client, fake_db, make_token):
+    fake_db.queue([],                             # not an Entity
+                  [{"id": "a"}],                  # a Person
+                  [{"r": {"source_id": "s1"}}])
+    r = client.post(
+        "/relationships/owns",
+        json={"owner_id": "a", "owned_id": "b", "ownership_type": "majority"},
+        headers=auth(make_token, "contributor"),
+    )
+    assert r.status_code == 200
+    assert "MATCH (owner:Person {id: $owner_id})" in fake_db.calls[-1][0]
+
+
+def test_close_owns_anchors_on_the_owners_label(client, fake_db, make_token):
+    fake_db.queue([], [{"id": "a"}], [{"r": {}}])
+    r = client.post(
+        "/relationships/owns/close",
+        params={"owner_id": "a", "owned_id": "b", "until": "2026-01-01"},
+        headers=auth(make_token, "contributor"),
+    )
+    assert r.status_code == 200
+    assert "MATCH (owner:Person {id: $owner_id})-[r:OWNS]->(owned:Entity {id: $owned_id})" \
+        in fake_db.calls[-1][0]
+
+
+def test_close_owns_unknown_owner_is_404_without_a_scan(client, fake_db, make_token):
+    fake_db.queue([], [])
+    r = client.post(
+        "/relationships/owns/close",
+        params={"owner_id": "ghost", "owned_id": "b", "until": "2026-01-01"},
+        headers=auth(make_token, "contributor"),
+    )
+    assert r.status_code == 404
+    assert len(fake_db.calls) == 2      # two indexed lookups, no unlabelled MATCH
 
 
 def test_create_owns_records_the_claim(client, fake_db, make_token):
     """The manual API asserts like any scraper: edge + claim, or the entry
     could never corroborate (or be contradicted by) a scraped one."""
-    fake_db.queue([{"r": {"source_id": "s1"}}])
+    fake_db.queue([{"id": "a"}], [{"r": {"source_id": "s1"}}])
     with patch("app.routers.relationships.record_claim") as rc:
         r = client.post(
             "/relationships/owns",
@@ -574,7 +615,7 @@ def test_create_owns_records_the_claim(client, fake_db, make_token):
 def test_create_owns_without_a_source_records_no_claim(client, fake_db, make_token):
     """A claim is one source's statement; keyed on (kind|from|to|source), an
     unsourced one would collide with every other unsourced claim on the pair."""
-    fake_db.queue([{"r": {}}])
+    fake_db.queue([{"id": "a"}], [{"r": {}}])
     with patch("app.routers.relationships.record_claim") as rc:
         r = client.post(
             "/relationships/owns",

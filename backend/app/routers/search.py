@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, HTTPException
 from app.config import settings
 from app.database import db
 from app.db.arcadedb import run_sql
+from app.db.anchors import label_or_entity
 from app.roles import canonical_role
 from app.scraper.mapper import normalize_entity_name
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
@@ -371,16 +372,21 @@ def _class_key(title: str | None) -> str | None:
     return " | ".join(cleaned) or None
 
 
-def _voting_groups_of(session, node_id: str, hidden: set) -> list[dict]:
+def _voting_groups_of(session, node_id: str, hidden: set, label: str) -> list[dict]:
     """The filing groups a node is a party to.
 
     Needed on every profile, not just an entity's: a bloc's members are as often
     people as companies — AB InBev's includes Lemann, Sicupira and Telles — and
     without this their pages could not show the agreement they vote in.
+
+    `label` is the profile's own kind (Entity or Person). The anchor MUST carry
+    it: unlabelled, `MATCH (m {id})` scans every vertex — >400 s on the full
+    import, and every company profile answered 500 at the timeout because of
+    this one query (see app/db/anchors.py).
     """
     out = []
     for g in session.run(
-            """MATCH (m {id: $id})-[r:RELATED_TO]->(g:Entity)
+            f"""MATCH (m:{label_or_entity(label)} {{id: $id}})-[r:RELATED_TO]->(g:Entity)
                WHERE r.relation = 'group_member'
                RETURN g""", id=node_id):
         node = dict(g["g"])
@@ -724,7 +730,7 @@ def get_full_profile(
         # without it a member's profile has no idea it belongs to a bloc, so
         # centring Altria could never draw the agreement it votes in — the
         # payload simply lacked the fact.
-        voting_groups = _voting_groups_of(session, entity_id, hidden)
+        voting_groups = _voting_groups_of(session, entity_id, hidden, "Entity")
 
         return {
             "entity": dict(record["e"]),
@@ -856,7 +862,7 @@ def get_person_profile(person_id: str):
             "person": dict(record["p"]),
             "positions": positions_out,
             "holdings": holdings_out,
-            "voting_groups": _voting_groups_of(session, person_id, hidden),
+            "voting_groups": _voting_groups_of(session, person_id, hidden, "Person"),
         }
 
 
