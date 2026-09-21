@@ -33,6 +33,7 @@ from typing import IO
 import httpx
 import ijson
 
+from app.db.paging import iter_id_pages
 from app.db.arcadedb import run_command, run_sql
 from app.claims import KIND_OWNS, record_claim
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
@@ -289,22 +290,14 @@ def existing_lei_ids() -> set[str]:
     ``only_existing``.
 
     Loaded once per delta run and held in memory, because the alternative is an
-    existence query per record and a delta carries hundreds of thousands. Paged by
-    @rid for the usual reason: an unpaged select over a full database's millions of
-    entities blows the query heap.
+    existence query per record and a delta carries hundreds of thousands. Paged
+    through the `id` index (`app.db.paging`): the `@rid > last` paging this used
+    to do is a full scan of the Entity type PER PAGE — invisible on the dev
+    subset, hours on the 14M-row full import.
     """
     ids: set[str] = set()
-    last: str | None = None
-    while True:
-        where = "WHERE id LIKE 'lei:%'" + (f" AND @rid > {last}" if last else "")
-        rows = run_sql(f"SELECT @rid AS rid, id FROM Entity {where} "
-                       f"ORDER BY @rid LIMIT {_LEI_ID_PAGE}")
-        if not rows:
-            break
+    for rows in iter_id_pages("Entity", "lei:", page=_LEI_ID_PAGE, columns="id"):
         ids.update(r["id"] for r in rows)
-        last = rows[-1]["rid"]
-        if len(rows) < _LEI_ID_PAGE:
-            break
     return ids
 
 

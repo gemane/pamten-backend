@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from app.database import db
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.db.anchors import label_or_entity
+from app.db.paging import iter_id_pages
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 from app.merged_ids import record_merge_sql
 
@@ -67,40 +68,15 @@ def purge_company(name: str) -> dict:
 #: index range on `id` plus one adjacency expansion — never a scan of OWNS.
 _OWNER_PAGE = 5000
 
-#: Upper bound of every owner page. Ids are ASCII (`lei:`, `gb-coh:`, `chpsc:`,
-#: `wd:`, uuids), so the highest BMP code point sorts after all of them.
-_ID_CEILING = "\uffff"
-
-
-def _owner_page_sql(vtype: str, after: str) -> str:
-    """The page of owners after `after` (exclusive), as an index range read.
-
-    Two things about the shape are load-bearing, both learned on the 34 GB
-    sizing database and invisible on a small one:
-
-    * a lower bound from the FIRST page on — `ORDER BY id LIMIT n` with no
-      predicate is planned as FETCH FROM TYPE, a full scan of the 6.4 GB Entity
-      type, and timed out before one page came back;
-    * an UPPER bound as well — on ArcadeDB 26.7.3 a one-sided ascending range
-      (`id > 'x' ORDER BY id`) over that index died server-side with
-      `NullPointerException: "convertedKeys" is null` on every lower bound,
-      while the two-sided `id > 'x' AND id < '\\uffff'` is a 0.1–0.3 s index
-      read per 5,000 rows. Same plan (FETCH FROM INDEX) either way; the
-      difference is inside the iterator, which is why the plan check in the
-      integration test is necessary but not sufficient.
-    """
-    return (f"SELECT id, @rid AS rid FROM {vtype} "
-            f"WHERE id > '{after}' AND id < '{_ID_CEILING}' "
-            f"ORDER BY id LIMIT {_OWNER_PAGE}")
-
 
 def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
     """Group active OWNS edges by their (owner, target) vertex pair, returning
     {(out_rid, in_rid): [(edge_rid, stake_percent, direct_or_indirect), ...]}.
 
     Walks the OWNERS, not the edges: pages of Entity then Person by their UNIQUE
-    `id` index (`_owner_page_sql` — an index range read, EXPLAIN says `FETCH
-    FROM INDEX`), and expands each page's outgoing OWNS edges from the
+    `id` index (`app.db.paging.iter_id_pages` — a bounded index range per page,
+    ending on an empty page; the module explains why each of those words is
+    load-bearing), and expands each page's outgoing OWNS edges from the
     vertices — adjacency, not a scan. A duplicate is by definition two edges
     from the SAME owner, so grouping page by page loses nothing.
 
@@ -109,21 +85,12 @@ def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
     (7.5 GB of OWNS, ~15M edges, 20,000 per page) each page took 4–13 minutes —
     about 750 full scans, i.e. days. A global server-side GROUP BY is no
     better: it blew the query heap at 700k edges. @out/@in are the endpoint
-    vertex rids; @rid identifies the edge for a precise delete.
-
-    The walk ends on an EMPTY page, never a short one: `LIMIT` counts index
-    entries, stale ones (deleted or re-keyed rows) included, so the first page
-    of the sizing database came back with 3,664 of 5,000 rows and the walk
-    was nowhere near its end.
+    vertex rids; @rid identifies the edge for a precise delete. With the
+    bounded pages the whole walk over 28M owners took 12 min 36 s.
     """
     pairs: dict[tuple, list[tuple]] = {}
     for vtype in ("Entity", "Person"):
-        last = ""
-        pages = 0
-        while True:
-            owners = run_sql(_owner_page_sql(vtype, last))
-            if not owners:
-                break
+        for pages, owners in enumerate(iter_id_pages(vtype, page=_OWNER_PAGE), start=1):
             rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
             rows = run_sql(
                 "SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
@@ -131,8 +98,6 @@ def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
                 "WHERE until IS NULL")
             for r in rows:
                 pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
-            last = owners[-1]["id"].replace("'", "\\'")
-            pages += 1
             if pages % 200 == 0:
                 log.info("OWNS dedup: %s page %d, %d pairs so far", vtype, pages, len(pairs))
     return pairs
