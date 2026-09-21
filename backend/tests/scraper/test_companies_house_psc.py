@@ -172,6 +172,13 @@ class TestBandAndControl:
         stake, voting, otype, _ = _control(["ownership-of-shares-75-to-100-percent"])
         assert stake == 75 and voting is None and otype == "majority"   # derived, not a voting flag
 
+    def test_a_null_in_the_natures_list_is_skipped(self):
+        # 2 of the 15.8M records in the 2026-09 snapshot carry a null there; the
+        # whole record used to be dropped with "NoneType is not iterable".
+        stake, voting, otype, its = _control([None, "ownership-of-shares-75-to-100-percent"])
+        assert stake == 75 and otype == "majority"
+        assert its == ["ownership-of-shares-75-to-100-percent"]
+
     def test_appointment_is_controlling_without_a_stake(self):
         stake, voting, otype, _ = _control(["right-to-appoint-and-remove-directors"])
         assert stake is None and voting is None and otype == "controlling"

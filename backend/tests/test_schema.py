@@ -105,3 +105,50 @@ def test_an_edge_index_does_not_create_a_vertex_type():
     issued = [c.args[0] for c in m.call_args_list]
     assert "CREATE VERTEX TYPE OWNS IF NOT EXISTS" not in issued
     assert "CREATE EDGE TYPE OWNS IF NOT EXISTS" in issued
+
+
+class TestRebuildRecreatesAMissingFulltextIndex:
+    """A bulk load drops the FULL_TEXT index and relies on the schema bootstrap
+    to re-create it; when that bootstrap timed out during the flush (the full
+    PSC load did), REBUILD found nothing and /search stayed dark."""
+
+    def test_not_found_leads_to_create_and_no_second_rebuild(self):
+        issued = []
+
+        def run(sql, *a, **kw):
+            issued.append(sql)
+            if sql.startswith("REBUILD") and "Entity[search_text]" in sql:
+                raise RuntimeError("Index with name 'Entity[search_text]' was not found")
+            return []
+        with patch.object(schema, "run_sql", side_effect=run):
+            res = schema.rebuild_fulltext_indexes(timeout=1)
+        creates = [s for s in issued if s.startswith("CREATE INDEX") and "Entity (search_text)" in s]
+        assert creates, "the missing index is created"
+        assert issued.count("REBUILD INDEX `Entity[search_text]`") == 1, \
+            "the CREATE indexed the rows; a REBUILD after it would do the same work again"
+        assert not any(f["index"] == "Entity[search_text]" for f in res["failed"]), res
+
+    def test_the_hard_path_drops_creates_and_does_not_rebuild_again(self):
+        # 14M entities: the CREATE took 25 min on the sizing box and the
+        # belt-and-braces REBUILD another 25 for the same result.
+        issued = []
+        catalog = [{"name": "Entity[search_text]", "properties": [["search_text"]]}]
+
+        def run(sql, *a, **kw):
+            issued.append(sql)
+            return catalog if sql.startswith("SELECT name, properties FROM schema:indexes") else []
+        with patch.object(schema, "run_sql", side_effect=run):
+            res = schema.rebuild_fulltext_indexes(timeout=1, hard=True)
+        assert any(s.startswith("DROP INDEX") for s in issued)
+        assert any(s.startswith("CREATE INDEX") and "FULL_TEXT" in s for s in issued)
+        assert not any(s.startswith("REBUILD") for s in issued), issued
+        assert not res["failed"]
+
+    def test_other_errors_still_fail_the_index(self):
+        def run(sql, *a, **kw):
+            if sql.startswith("REBUILD") and "Entity[search_text]" in sql:
+                raise RuntimeError("timed out")
+            return []
+        with patch.object(schema, "run_sql", side_effect=run):
+            res = schema.rebuild_fulltext_indexes(timeout=1)
+        assert any(f["index"] == "Entity[search_text]" for f in res["failed"])

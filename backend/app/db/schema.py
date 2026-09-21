@@ -251,10 +251,26 @@ def rebuild_fulltext_indexes(timeout: float = 3600, hard: bool = False) -> dict:
                 for idx in _fulltext_index_names(vtype, prop):
                     run_sql(f"DROP INDEX `{idx}` IF EXISTS", timeout=timeout)
                     log.info("hard rebuild: dropped %s", idx)
-                # CREATE over existing rows reindexes them; REBUILD below is belt-and-braces.
+                # CREATE over existing rows indexes every one of them — that IS
+                # the rebuild. A REBUILD on top re-indexed the same rows a second
+                # time (14M entities: 25 min for the CREATE, 25 more for nothing).
                 run_sql(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT",
                         timeout=timeout)
-            run_sql(f"REBUILD INDEX `{name}`", timeout=timeout)
+                ok.append(name)
+                continue
+            try:
+                run_sql(f"REBUILD INDEX `{name}`", timeout=timeout)
+            except Exception as exc:  # noqa: BLE001
+                if "not found" not in str(exc).lower():
+                    raise
+                # A bulk load drops the FULL_TEXT index and relies on the schema
+                # bootstrap to re-create it; when that bootstrap timed out during
+                # the flush (the full PSC load did), there is nothing to rebuild
+                # — and /search stays dark until someone notices. Create it;
+                # the CREATE indexes the existing rows, so no REBUILD after.
+                log.info("FULL_TEXT index %s is missing — creating it", name)
+                run_sql(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT",
+                        timeout=timeout)
             ok.append(name)
         except Exception as exc:  # noqa: BLE001 - best-effort maintenance
             log.warning("FULL_TEXT rebuild failed (%s): %s", name, exc)

@@ -62,33 +62,51 @@ def purge_company(name: str) -> dict:
     }
 
 
-_OWNS_PAGE = 20000
+#: Owner vertices read per request when collecting OWNS edges. Each page is an
+#: index range on `id` plus one adjacency expansion — never a scan of OWNS.
+_OWNER_PAGE = 5000
 
 
 def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
     """Group active OWNS edges by their (owner, target) vertex pair, returning
     {(out_rid, in_rid): [(edge_rid, stake_percent, direct_or_indirect), ...]}.
 
-    Pages through the edges by @rid ordering and groups in Python, so there's NO
-    server-side GROUP BY — a global `GROUP BY a.id, b.id` over the ~700k OWNS
-    edges blows the dev DB's query heap (OutOfMemoryError). @out/@in are the
-    endpoint vertex rids; @rid identifies the edge for a precise delete.
+    Walks the OWNERS, not the edges: pages of Entity then Person by their UNIQUE
+    `id` index (`WHERE id > $last ORDER BY id` is an index range read, EXPLAIN
+    says `FETCH FROM INDEX`), and expands each page's outgoing OWNS edges from
+    the vertices — adjacency, not a scan. A duplicate is by definition two
+    edges from the SAME owner, so grouping page by page loses nothing.
+
+    It used to page the edges themselves by `@rid`; with no index behind that
+    ORDER BY every page was a full scan of the OWNS type, and on the sizing box
+    (7.5 GB of OWNS, ~15M edges, 20,000 per page) each page took 4–13 minutes —
+    about 750 full scans, i.e. days. A global server-side GROUP BY is no
+    better: it blew the query heap at 700k edges. @out/@in are the endpoint
+    vertex rids; @rid identifies the edge for a precise delete.
     """
     pairs: dict[tuple, list[tuple]] = {}
-    last: str | None = None
-    while True:
-        where = "WHERE until IS NULL" + (f" AND @rid > {last}" if last else "")
-        rows = run_sql(
-            f"SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
-            f"direct_or_indirect AS doi FROM OWNS {where} ORDER BY @rid LIMIT {_OWNS_PAGE}"
-        )
-        if not rows:
-            break
-        for r in rows:
-            pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
-        last = rows[-1]["rid"]
-        if len(rows) < _OWNS_PAGE:
-            break
+    for vtype in ("Entity", "Person"):
+        last: str | None = None
+        pages = 0
+        while True:
+            where = f"WHERE id > '{last}'" if last else ""
+            owners = run_sql(
+                f"SELECT id, @rid AS rid FROM {vtype} {where} ORDER BY id LIMIT {_OWNER_PAGE}")
+            if not owners:
+                break
+            rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
+            rows = run_sql(
+                "SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
+                f"direct_or_indirect AS doi FROM (SELECT expand(outE('OWNS')) FROM [{rids}]) "
+                "WHERE until IS NULL")
+            for r in rows:
+                pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
+            last = owners[-1]["id"].replace("'", "\\'")
+            pages += 1
+            if pages % 200 == 0:
+                log.info("OWNS dedup: %s page %d, %d pairs so far", vtype, pages, len(pairs))
+            if len(owners) < _OWNER_PAGE:
+                break
     return pairs
 
 
@@ -769,12 +787,17 @@ def mark_ownership_shortcuts(limit: int | None = None) -> dict:
 
     ``limit`` bounds the number of PARENTS processed; ``remaining`` reports the rest.
     """
-    direct_edges = run_query(
-        "MATCH (a)-[r:OWNS]->(b) WHERE r.direct_or_indirect = 'direct' "
-        "RETURN a.id AS a, b.id AS b")
-    indirect_edges = run_query(
-        "MATCH (a)-[r:OWNS]->(b) WHERE r.direct_or_indirect = 'indirect' "
-        "RETURN a.id AS a, b.id AS b, r.shortcut AS flag")
+    # Two scans of OWNS, and the only two this pass makes: every flag below
+    # is written by the edge's own @rid (direct record access). The write used
+    # to re-find each edge by `@out.id AND @in.id`, a full OWNS scan per
+    # statement — 500 per batch — and on the 8 GB sizing box (7.5 GB of OWNS)
+    # the server was still executing orphaned batches hours after the client
+    # had timed out on them.
+    direct_edges = run_sql(
+        "SELECT @out.id AS a, @in.id AS b FROM OWNS WHERE direct_or_indirect = 'direct'")
+    indirect_edges = run_sql(
+        "SELECT @rid AS rid, @out.id AS a, @in.id AS b, shortcut AS flag FROM OWNS "
+        "WHERE direct_or_indirect = 'indirect'")
 
     adjacency: dict[str, list[str]] = {}
     for e in direct_edges:
@@ -790,7 +813,7 @@ def mark_ownership_shortcuts(limit: int | None = None) -> dict:
     parents = sorted(by_parent)
     batch = parents if limit is None else parents[:limit]
 
-    pending: list[tuple[str, str, bool]] = []
+    pending: list[tuple[str, bool]] = []       # (edge rid, is a shortcut)
     unchanged = 0
     for pid in batch:
         reachable = _reachable_by_direct(pid, adjacency)
@@ -800,15 +823,16 @@ def mark_ownership_shortcuts(limit: int | None = None) -> dict:
             if was is not None and bool(was) == now:
                 unchanged += 1
                 continue
-            pending.append((pid, target, now))
+            if edge.get("rid"):
+                pending.append((edge["rid"], now))
 
     _write_shortcut_flags(pending)
     result = {
         "parents_total": len(parents),
         "parents_processed": len(batch),
         "remaining": max(0, len(parents) - len(batch)),
-        "marked_redundant": sum(1 for _, _, v in pending if v),
-        "marked_load_bearing": sum(1 for _, _, v in pending if not v),
+        "marked_redundant": sum(1 for _, v in pending if v),
+        "marked_load_bearing": sum(1 for _, v in pending if not v),
         "unchanged": unchanged,
     }
     log.info("Ownership shortcut pass: %s", result)
@@ -829,25 +853,23 @@ def _reachable_by_direct(start: str, adjacency: dict[str, list[str]]) -> set[str
     return seen
 
 
-def _write_shortcut_flags(pending: list[tuple[str, str, bool]]) -> None:
-    """Persist the decided flags, batched — one round-trip per edge would make the
-    pass slower than the traversal it replaced."""
-    for i in range(0, len(pending), _SHORTCUT_WRITE_BATCH):
-        chunk = pending[i:i + _SHORTCUT_WRITE_BATCH]
-        stmts, params = [], {}
-        for k, (parent, target, value) in enumerate(chunk):
-            params[f"p{k}"], params[f"b{k}"], params[f"v{k}"] = parent, target, value
-            # `@out.id` / `@in.id`, NOT `out.id`. On an edge, the unprefixed form
-            # matches zero rows and reports success — verified against a real
-            # ArcadeDB, along with `out IN (SELECT ...)`, which fails the same
-            # silent way. Same trap as the Vanguard succession delete.
-            stmts.append(
-                f"UPDATE OWNS SET shortcut = :v{k} WHERE direct_or_indirect = 'indirect' "
-                f"AND @out.id = :p{k} AND @in.id = :b{k};")
-        try:
-            run_sqlscript("\n".join(stmts), params)
-        except Exception as exc:  # noqa: BLE001 — a failed chunk must not lose the rest
-            log.warning("shortcut flag batch failed (%d edges): %s", len(chunk), exc)
+def _write_shortcut_flags(pending: list[tuple[str, bool]]) -> None:
+    """Persist the decided flags by edge @rid, batched per value.
+
+    `UPDATE [#64:5, #64:7] SET shortcut = true` is direct record access
+    (EXPLAIN: FETCH FROM RIDs) — one statement per `_SHORTCUT_WRITE_BATCH`
+    edges and no scan. Re-finding each edge by `@out.id AND @in.id` was a full
+    scan of the OWNS type per edge; the sizing box was still working through
+    orphaned batches hours after the client had given up on them.
+    """
+    for value in (True, False):
+        rids = [rid for rid, v in pending if v is value]
+        for i in range(0, len(rids), _SHORTCUT_WRITE_BATCH):
+            chunk = rids[i:i + _SHORTCUT_WRITE_BATCH]
+            try:
+                run_sql(f"UPDATE [{', '.join(chunk)}] SET shortcut = {'true' if value else 'false'}")
+            except Exception as exc:  # noqa: BLE001 — a failed chunk must not lose the rest
+                log.warning("shortcut flag batch failed (%d edges): %s", len(chunk), exc)
 
 
 def _duplicate_keys(key_prop: str) -> list[str]:

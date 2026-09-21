@@ -351,6 +351,19 @@ PSC mapper, OpenCorporates lookups) passes through it, so the keys agree
 wherever they are minted. Hong Kong's CR and Business Registration numbers
 share a shape but are *different* numbers and are deliberately not folded.
 
+**Duplicate OWNS edges** (`deduplicate_owns_edges`). `CREATE EDGE` is not
+idempotent, so a re-import doubles edges; every BODS/register import ends with a
+best-effort pass that keeps one edge per (owner, target) pair — the largest stake,
+then the `direct_or_indirect`-flagged one. Since 2026-09-21 the collector walks the
+**owners** by their `id` index (an index range read per page of 5,000 vertices)
+and expands each page's outgoing OWNS edges as adjacency — a duplicate is by
+definition two edges from the same owner, so page-by-page grouping loses nothing.
+It used to page the *edges* by `@rid`, which has no index behind its ORDER BY:
+every page was a full scan of the OWNS type, and on the 8 GB sizing box (7.5 GB
+of OWNS, ~15M edges) each page took 4–13 minutes — days for one pass, blocking the
+finish step. A server-side GROUP BY is no alternative: it blew the query heap at
+700k edges.
+
 **Former register identities** (`former_register_ids`, 2026-09-03). A register
 pair is a hard id — and it can *move*: Tesla re-registered from Delaware to
 Texas in 2024, so the current golden copy no longer carries the pair a PSC
