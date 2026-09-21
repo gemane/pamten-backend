@@ -139,7 +139,7 @@ def test_every_owner_page_is_an_index_read_including_the_first(it_db):
         mp.setattr(maintenance, "run_sql", spy)
         maintenance.count_duplicate_owns_edges()
     pages = [c for c in issued if c.startswith("SELECT id, @rid AS rid FROM")]
-    assert pages and all("WHERE id > '" in c for c in pages), pages
+    assert pages and all("WHERE id > '" in c and "AND id < '" in c for c in pages), pages
     for page in pages:
         plan = it_db.explain_sql(page)
         assert "FETCH FROM INDEX" in plan, (page, plan)
