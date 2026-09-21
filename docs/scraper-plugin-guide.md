@@ -524,6 +524,17 @@ import. `id` indexes are kept (the load needs them). Because `CREATE EDGE` isn't
 idempotent, collapse any duplicate ownership edges afterwards with
 `POST /scraper/deduplicate-edges`.
 
+**The rebuild at the end is slow and must be allowed to be.** ArcadeDB builds an
+index synchronously at ~10–13k rows/s on one core, so on the full import (14M
+rows per type) each of the 15 dropped indexes takes **20–25 minutes** and holds the
+schema lock while it runs. The rebuild issues one `CREATE INDEX` per dropped index
+with a six-hour timeout (`INDEX_BUILD_TIMEOUT`) and carries on past a failure; it
+does NOT go through the API's schema bootstrap, whose 60-second timeout ended the
+first full import's rebuild at its first index (Entity was left with 3 of 11,
+Person with 0 of 4 — and the API's next startup built one of the missing ones
+itself, with the database locked for 25 minutes). Budget **≈ 4–5 hours** for the
+rebuild after a full load, and start the API only when it has finished.
+
 ### Speed behind a proxy (`--db-url`, `--batch-size`)
 
 The **dominant cost of a slow import is a proxy read timeout**, not the DB. dev-db
@@ -551,10 +562,15 @@ the 504-retry churn.
 `/search` relies on a FULL_TEXT index (`CONTAINSTEXT`, instant) instead of scanning
 every row (`toLower(name) CONTAINS` on millions of entities takes ~12s). The importers
 set `search_text` inline, and a **`--bulk-load` run drops the FULL_TEXT indexes for the
-load and `REBUILD`s them afterwards automatically** — maintaining a Lucene index
+load and re-creates them afterwards automatically** — maintaining a Lucene index
 per-insert across millions of rows is slow and, if a load is interrupted, leaves it
-incomplete (`CONTAINSTEXT` then silently returns nothing). So no manual reindex is
-needed after a bulk load.
+incomplete (`CONTAINSTEXT` then silently returns nothing). A `CREATE` over existing
+rows indexes all of them (24.7 min on 14.15M entities), so no `REBUILD` follows it
+— the one that used to merged sub-indexes for more than 1 h 45 min on that data
+and had to be abandoned. A search index the drop somehow missed is left alone: it
+was maintained by every write of the load and is already complete. So no manual
+reindex is needed after a bulk load; `manage.py rebuild-search` is for the
+non-bulk paths below, or for an index you have reason to distrust.
 
 Only needed for rows loaded by other means, or before `search_text` existed:
 
