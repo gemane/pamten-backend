@@ -283,21 +283,105 @@ class TestBulkLoad:
         # only Entity/Person are touched
         assert all(n.startswith("Entity[") or n.startswith("Person[") for n in names)
 
-    def test_rebuild_indexes_repopulates_fulltext(self):
-        """After a bulk load, _rebuild_indexes() must both re-create the LSM indexes
-        (ensure_indexes) AND explicitly REBUILD the FULL_TEXT indexes — CREATE IF NOT
-        EXISTS never backfills a stale search index, so /search would come up empty."""
+    # ── the post-load rebuild: one long CREATE per dropped index, never aborting ──
+    #
+    # The first full import (2026-09-21, 14M rows per type) ended with Entity
+    # holding 3 of its 11 secondary indexes and Person none: the rebuild went
+    # through ensure_indexes(), whose 60 s per-statement timeout fired on the
+    # first 20-minute CREATE and stopped the loop.
+
+    @staticmethod
+    def _run_rebuild(catalog, fail_on=()):
+        """Drive _rebuild_indexes() with a fake run_sql; returns (result, issued)
+        where issued is [(statement, timeout)]."""
         from app.scraper import bulk_import
+        issued: list[tuple[str, float | None]] = []
 
-        with patch("app.db.schema.ensure_indexes",
-                   return_value={"ok": [], "failed": []}) as ens, \
-             patch("app.db.schema.rebuild_fulltext_indexes",
-                   return_value={"ok": ["Entity[search_text]", "Person[search_text]"],
-                                 "failed": []}) as reb:
-            bulk_import._rebuild_indexes()
+        def run_sql(cmd, params=None, timeout=None):
+            issued.append((cmd, timeout))
+            if cmd.startswith("SELECT name FROM schema:indexes"):
+                return [{"name": n} for n in catalog]
+            if any(f in cmd for f in fail_on):
+                raise RuntimeError("timed out")
+            return []
+        with patch("app.db.arcadedb.run_sql", side_effect=run_sql), \
+             patch("app.db.schema.ensure_indexes",
+                   return_value={"ok": [], "failed": []}) as ens:
+            res = bulk_import._rebuild_indexes()
+        return res, issued, ens
 
+    def test_every_dropped_index_is_created_with_the_long_timeout(self):
+        from app.scraper.bulk_import import INDEX_BUILD_TIMEOUT, _bulk_load_secondary_indexes
+
+        res, issued, ens = self._run_rebuild(catalog=["Entity[id]", "Person[id]"])
+        creates = [(c, t) for c, t in issued if c.startswith("CREATE INDEX")]
+        # one CREATE per dropped index — LSM and FULL_TEXT alike
+        assert len(creates) == len(_bulk_load_secondary_indexes())
+        assert all(t == INDEX_BUILD_TIMEOUT for _c, t in creates)
+        assert INDEX_BUILD_TIMEOUT >= 3600           # a 14M-row build is ~25 min
+        assert any("ON Entity (name_normalized) NOTUNIQUE" in c for c, _t in creates)
+        assert any("ON Person (full_name) NOTUNIQUE" in c for c, _t in creates)
+        assert any("ON Entity (search_text) FULL_TEXT" in c for c, _t in creates)
+        assert sorted(res["ok"]) == sorted(_bulk_load_secondary_indexes())
+        assert res["failed"] == []
+        # the property is declared before its index, with the schema's type
+        props = [c for c, _t in issued if c.startswith("CREATE PROPERTY")]
+        assert any("Person.alias IF NOT EXISTS LIST" in c for c in props)
+        # types + the small indexes still go through the bootstrap, after the big ones
         ens.assert_called_once()
-        reb.assert_called_once()
+        assert issued[-1][0].startswith("CREATE INDEX")   # the bootstrap is a mock; ours came first
+
+    def test_a_failed_create_does_not_stop_the_rest(self):
+        """The whole point: a timeout on Entity[name] used to end the rebuild."""
+        from app.scraper.bulk_import import _bulk_load_secondary_indexes
+
+        res, issued, _ens = self._run_rebuild(catalog=[], fail_on=("ON Entity (name)",))
+        creates = [c for c, _t in issued if c.startswith("CREATE INDEX")]
+        assert len(creates) == len(_bulk_load_secondary_indexes())
+        assert [f["index"] for f in res["failed"]] == ["Entity[name]"]
+        assert "Person[full_name]" in res["ok"] and "Entity[search_text]" in res["ok"]
+
+    def test_an_index_still_in_the_catalog_is_not_created_again(self):
+        res, issued, _ens = self._run_rebuild(
+            catalog=["Entity[id]", "Entity[name]", "Entity[name_normalized]"])
+        creates = [c for c, _t in issued if c.startswith("CREATE INDEX")]
+        assert not any("ON Entity (name)" in c for c in creates)
+        assert not any("ON Entity (name_normalized)" in c for c in creates)
+        assert any("ON Entity (wikidata_id)" in c for c in creates)
+        assert "Entity[name]" not in res["ok"]
+
+    def test_a_fulltext_index_still_in_the_catalog_is_left_alone(self):
+        """A live index is maintained by every write of the load, so it is
+        complete; a REBUILD would only repeat the >1 h 45 min sub-index merge."""
+        res, issued, _ens = self._run_rebuild(catalog=["Entity[search_text]"])
+        assert not any(c.startswith("REBUILD INDEX") for c, _t in issued)
+        creates = [c for c, _t in issued if c.startswith("CREATE INDEX")]
+        assert any("ON Person (search_text) FULL_TEXT" in c for c in creates)
+        assert not any("ON Entity (search_text)" in c for c in creates)
+        assert "Entity[search_text]" not in res["ok"]
+
+    def test_no_rebuild_ever_follows_a_create(self):
+        """CREATE already indexed every row; the REBUILD that used to follow
+        merged sub-indexes for >1 h 45 min on 14M rows and was abandoned."""
+        _res, issued, _ens = self._run_rebuild(catalog=[])
+        assert not any(c.startswith("REBUILD INDEX") for c, _t in issued)
+
+    def test_an_unreadable_catalog_still_rebuilds_everything(self):
+        from app.scraper import bulk_import
+        from app.scraper.bulk_import import _bulk_load_secondary_indexes
+        issued: list[str] = []
+
+        def run_sql(cmd, params=None, timeout=None):
+            if cmd.startswith("SELECT name FROM schema:indexes"):
+                raise RuntimeError("timed out")
+            issued.append(cmd)
+            return []
+        with patch("app.db.arcadedb.run_sql", side_effect=run_sql), \
+             patch("app.db.schema.ensure_indexes", return_value={"ok": [], "failed": []}):
+            res = bulk_import._rebuild_indexes()
+        creates = [c for c in issued if c.startswith("CREATE INDEX")]
+        assert len(creates) == len(_bulk_load_secondary_indexes())
+        assert res["failed"] == []
 
     def test_rebuild_fulltext_issues_rebuild_per_index(self):
         from app.db import schema

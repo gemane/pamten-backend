@@ -621,17 +621,96 @@ def _drop_secondary_indexes() -> None:
             log.warning("bulk-load: could not drop index %s: %s", name, exc)
 
 
-def _rebuild_indexes() -> None:
-    from app.db.schema import ensure_indexes, rebuild_fulltext_indexes
-    log.info("bulk-load: rebuilding indexes…")
+# How long one CREATE INDEX may take. ArcadeDB builds an index synchronously —
+# the HTTP call returns when the last row is indexed — at ~10–13k rows/s on one
+# core, so a 14M-row type is 20–25 minutes per index; the default 60 s client
+# timeout is not even close. Generous, because the alternative is what happened on
+# the first full import: the call timed out, the loop stopped, and the run ended
+# with Entity holding 3 of its 11 secondary indexes and Person none of its 4.
+INDEX_BUILD_TIMEOUT = 6 * 3600
+
+
+def _existing_index_names() -> set[str]:
+    """Index names as the server reports them, or an empty set when the catalog
+    cannot be read (then every index is treated as missing and CREATE's
+    IF NOT EXISTS decides)."""
+    from app.db.arcadedb import run_sql
+    try:
+        rows = run_sql("SELECT name FROM schema:indexes")
+    except Exception as exc:  # noqa: BLE001 - best-effort discovery
+        log.warning("bulk-load: could not read the index catalog: %s", exc)
+        return set()
+    return {r.get("name") for r in rows if isinstance(r, dict) and r.get("name")}
+
+
+def _rebuild_indexes() -> dict:
+    """Put back every index the load dropped, one long-running CREATE at a time.
+
+    Each index the bulk load dropped (`_bulk_load_secondary_indexes`) is
+    re-CREATEd with `INDEX_BUILD_TIMEOUT`, and a failure on one moves on to the
+    next — never aborts the loop. `ensure_indexes()` is NOT the tool for this:
+    it issues DDL with the default 60 s timeout and returns at the first one
+    that times out, which on a 14M-row type is the first index. The full import
+    of 2026-09-21 ended that way, missing 12 of 15 indexes, and the API's own
+    startup then built the next one synchronously with the database locked for
+    25 minutes.
+
+    FULL_TEXT: a CREATE over existing rows indexes them (24.7 min on 14.15M
+    entities), so a dropped search index is simply created — no REBUILD after
+    it, whose sub-index merge ran for >1 h 45 min and was abandoned. An index
+    still in the catalog (the drop failed, or this ran twice) is left alone:
+    a live index is maintained by every write, so it is already complete, and
+    a REBUILD would only repeat that merge. `manage.py rebuild-search` exists
+    for one that is suspect.
+
+    Types and the small indexes (every other vertex type) are finished by
+    `ensure_indexes()` afterwards — cheap, they are no-ops or tiny.
+    """
+    from app.db.arcadedb import run_sql
+    from app.db.schema import _FULLTEXT_INDEXES, _INDEXES, _PROPERTY_TYPES, ensure_indexes
+
+    dropped = set(_bulk_load_secondary_indexes())
+    existing = _existing_index_names()
+    ok: list[str] = []
+    failed: list[dict] = []
+
+    def _create(vtype: str, prop: str, kind: str) -> None:
+        ptype = _PROPERTY_TYPES.get((vtype, prop), "STRING")
+        run_sql(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS {ptype}",
+                timeout=INDEX_BUILD_TIMEOUT)
+        run_sql(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}",
+                timeout=INDEX_BUILD_TIMEOUT)
+
+    log.info("bulk-load: rebuilding %d dropped indexes (each may take minutes)…",
+             len(dropped))
+    for vtype, prop, kind in _INDEXES:
+        name = f"{vtype}[{prop}]"
+        if name not in dropped or name in existing:
+            continue
+        try:
+            _create(vtype, prop, kind)
+            ok.append(name)
+            log.info("bulk-load: index %s rebuilt", name)
+        except Exception as exc:  # noqa: BLE001 - one failure must not stop the rest
+            log.warning("bulk-load: index %s NOT rebuilt: %s", name, exc)
+            failed.append({"index": name, "error": str(exc)})
+    for vtype, prop in _FULLTEXT_INDEXES:
+        name = f"{vtype}[{prop}]"
+        if name not in dropped or name in existing:
+            continue
+        try:
+            _create(vtype, prop, "FULL_TEXT")
+            ok.append(name)
+            log.info("bulk-load: FULL_TEXT index %s rebuilt", name)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("bulk-load: FULL_TEXT index %s NOT rebuilt: %s", name, exc)
+            failed.append({"index": name, "error": str(exc)})
+
     res = ensure_indexes()
-    log.info("bulk-load: index rebuild — %d applied, %d failed",
+    log.info("bulk-load: index rebuild — %d rebuilt, %d failed; schema bootstrap "
+             "%d applied, %d failed", len(ok), len(failed),
              len(res.get("ok", [])), len(res.get("failed", [])))
-    # ensure_indexes() only re-CREATEs the FULL_TEXT indexes (a no-op if they already
-    # exist → never backfills), so REBUILD them explicitly to fully repopulate /search.
-    ft = rebuild_fulltext_indexes()
-    log.info("bulk-load: FULL_TEXT rebuild — %d ok, %d failed",
-             len(ft.get("ok", [])), len(ft.get("failed", [])))
+    return {"ok": ok, "failed": failed, "schema": res}
 
 
 # ── Core import engine ────────────────────────────────────────────────────────
