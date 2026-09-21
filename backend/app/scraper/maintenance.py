@@ -787,12 +787,17 @@ def mark_ownership_shortcuts(limit: int | None = None) -> dict:
 
     ``limit`` bounds the number of PARENTS processed; ``remaining`` reports the rest.
     """
-    direct_edges = run_query(
-        "MATCH (a)-[r:OWNS]->(b) WHERE r.direct_or_indirect = 'direct' "
-        "RETURN a.id AS a, b.id AS b")
-    indirect_edges = run_query(
-        "MATCH (a)-[r:OWNS]->(b) WHERE r.direct_or_indirect = 'indirect' "
-        "RETURN a.id AS a, b.id AS b, r.shortcut AS flag")
+    # Two scans of OWNS, and the only two this pass makes: every flag below
+    # is written by the edge's own @rid (direct record access). The write used
+    # to re-find each edge by `@out.id AND @in.id`, a full OWNS scan per
+    # statement — 500 per batch — and on the 8 GB sizing box (7.5 GB of OWNS)
+    # the server was still executing orphaned batches hours after the client
+    # had timed out on them.
+    direct_edges = run_sql(
+        "SELECT @out.id AS a, @in.id AS b FROM OWNS WHERE direct_or_indirect = 'direct'")
+    indirect_edges = run_sql(
+        "SELECT @rid AS rid, @out.id AS a, @in.id AS b, shortcut AS flag FROM OWNS "
+        "WHERE direct_or_indirect = 'indirect'")
 
     adjacency: dict[str, list[str]] = {}
     for e in direct_edges:
@@ -808,7 +813,7 @@ def mark_ownership_shortcuts(limit: int | None = None) -> dict:
     parents = sorted(by_parent)
     batch = parents if limit is None else parents[:limit]
 
-    pending: list[tuple[str, str, bool]] = []
+    pending: list[tuple[str, bool]] = []       # (edge rid, is a shortcut)
     unchanged = 0
     for pid in batch:
         reachable = _reachable_by_direct(pid, adjacency)
@@ -818,15 +823,16 @@ def mark_ownership_shortcuts(limit: int | None = None) -> dict:
             if was is not None and bool(was) == now:
                 unchanged += 1
                 continue
-            pending.append((pid, target, now))
+            if edge.get("rid"):
+                pending.append((edge["rid"], now))
 
     _write_shortcut_flags(pending)
     result = {
         "parents_total": len(parents),
         "parents_processed": len(batch),
         "remaining": max(0, len(parents) - len(batch)),
-        "marked_redundant": sum(1 for _, _, v in pending if v),
-        "marked_load_bearing": sum(1 for _, _, v in pending if not v),
+        "marked_redundant": sum(1 for _, v in pending if v),
+        "marked_load_bearing": sum(1 for _, v in pending if not v),
         "unchanged": unchanged,
     }
     log.info("Ownership shortcut pass: %s", result)
@@ -847,25 +853,23 @@ def _reachable_by_direct(start: str, adjacency: dict[str, list[str]]) -> set[str
     return seen
 
 
-def _write_shortcut_flags(pending: list[tuple[str, str, bool]]) -> None:
-    """Persist the decided flags, batched — one round-trip per edge would make the
-    pass slower than the traversal it replaced."""
-    for i in range(0, len(pending), _SHORTCUT_WRITE_BATCH):
-        chunk = pending[i:i + _SHORTCUT_WRITE_BATCH]
-        stmts, params = [], {}
-        for k, (parent, target, value) in enumerate(chunk):
-            params[f"p{k}"], params[f"b{k}"], params[f"v{k}"] = parent, target, value
-            # `@out.id` / `@in.id`, NOT `out.id`. On an edge, the unprefixed form
-            # matches zero rows and reports success — verified against a real
-            # ArcadeDB, along with `out IN (SELECT ...)`, which fails the same
-            # silent way. Same trap as the Vanguard succession delete.
-            stmts.append(
-                f"UPDATE OWNS SET shortcut = :v{k} WHERE direct_or_indirect = 'indirect' "
-                f"AND @out.id = :p{k} AND @in.id = :b{k};")
-        try:
-            run_sqlscript("\n".join(stmts), params)
-        except Exception as exc:  # noqa: BLE001 — a failed chunk must not lose the rest
-            log.warning("shortcut flag batch failed (%d edges): %s", len(chunk), exc)
+def _write_shortcut_flags(pending: list[tuple[str, bool]]) -> None:
+    """Persist the decided flags by edge @rid, batched per value.
+
+    `UPDATE [#64:5, #64:7] SET shortcut = true` is direct record access
+    (EXPLAIN: FETCH FROM RIDs) — one statement per `_SHORTCUT_WRITE_BATCH`
+    edges and no scan. Re-finding each edge by `@out.id AND @in.id` was a full
+    scan of the OWNS type per edge; the sizing box was still working through
+    orphaned batches hours after the client had given up on them.
+    """
+    for value in (True, False):
+        rids = [rid for rid, v in pending if v is value]
+        for i in range(0, len(rids), _SHORTCUT_WRITE_BATCH):
+            chunk = rids[i:i + _SHORTCUT_WRITE_BATCH]
+            try:
+                run_sql(f"UPDATE [{', '.join(chunk)}] SET shortcut = {'true' if value else 'false'}")
+            except Exception as exc:  # noqa: BLE001 — a failed chunk must not lose the rest
+                log.warning("shortcut flag batch failed (%d edges): %s", len(chunk), exc)
 
 
 def _duplicate_keys(key_prop: str) -> list[str]:
