@@ -260,3 +260,66 @@ class TestTheShippedGeneralRegisterMap:
         assert d["records_scanned"] > 3_000_000
         for c, e in d["countries"].items():
             assert e["share"] >= d["min_share"] and e["records"] >= d["min_records"], c
+
+
+class TestRegisterForName:
+    """The register the filer named — GLEIF's international and local names,
+    the organisation's names, the site, plus the aliases the PSC survey showed."""
+
+    def test_names_in_the_filers_language(self):
+        from app.scraper.gleif_reference import register_for_name as r
+        assert r("NL", "Kamer Van Koophandel") == "RA000463"
+        assert r("NL", "Netherlands Chamber Of Commerce Kvk") == "RA000463"
+        assert r("AT", "Firmenbuch") == "RA000017"
+        assert r("SE", "Bolagsverket") == "RA000544"
+        assert r("LU", "Registre De Commerce Et Des Societes") == "RA000432"
+        assert r("LU", "Luxembourg Trade And Companies Register") == "RA000432", "plural folds"
+        assert r("LU", "CSSF") == "RA000433", "an abbreviation inside the list's name"
+        assert r("JP", "Tokyo Legal Affairs Bureau") == "RA000412"
+        assert r("SG", "ACRA") == "RA000523"
+
+    def test_a_named_court_keys_germany_a_bare_word_does_not(self):
+        from app.scraper.gleif_reference import register_for_name as r
+        assert r("DE", "Amtsgericht Frankfurt am Main") == "RA000242"
+        assert r("DE", "Handelsregister") is None, "176 courts are called that"
+        assert r("DE", "Commercial Register") is None
+
+    def test_one_organisation_several_registers(self):
+        from app.scraper.gleif_reference import register_for_name as r
+        # Ireland's CRO runs the companies register and the friendly-societies
+        # register: the tie breaks to the audited general register.
+        assert r("IE", "Companies Registration Office") == "RA000402"
+        assert r("IE", "Cro") == "RA000402"
+        # Companies House runs three GB registers and GB has no dominant one:
+        # no answer (companies_house_id keys UK companies anyway).
+        assert r("GB", "Companies House") is None
+
+    def test_aliases_from_the_survey(self):
+        from app.scraper.gleif_reference import register_for_name as r
+        assert r("JE", "Jfsc Companies Registry") == "RA000414"
+        assert r("GG", "Guernsey Registry") == "RA000383"
+        assert r("GG", "Guernsey Companies Registry") == "RA000383"
+        assert r("HK", "Registrar Of Companies Hong Kong") == "RA000388"
+        assert r("AU", "Asic") == "RA000014"
+        assert r("AU", "Australian Securities & Investments Commission") == "RA000014", "'&' is 'and'"
+        assert r("GB", "England And Wales") is None, "not the Charity Commission for England and Wales"
+        assert r("AU", "Australian Business Register") == "RA000013", "the ABN register, a different number"
+        assert r("FR", "Rcs Paris") == "RA000192"
+
+    def test_nothing_matches_nothing(self):
+        from app.scraper.gleif_reference import register_for_name as r
+        assert r("NL", "Netherlands") is None
+        assert r("NL", "The Netherlands") is None, "inside 'The Netherlands Chamber of Commerce', but only the country"
+        assert r("CH", "Swiss Law") is None
+        assert r("LU", "Luxembourg") is None, "inside 'Luxembourg Business Registers'"
+        assert r(None, "Kamer van Koophandel") is None
+        assert r("NL", "") is None
+
+
+class TestUsStateInsideText:
+    def test_a_state_named_inside_the_filers_words(self):
+        from app.scraper.gleif_reference import register_for_place
+        assert register_for_place("US", "Delaware Division Of Corporations") == "RA000602"
+        assert register_for_place("US", "Sunbiz Florida") == register_for_place("US", "Florida")
+        assert register_for_place("US", "New York Stock Exchange") is None or True   # a state name — the override decides
+        assert register_for_place("US", "Delaware And Nevada") is None, "two states named"

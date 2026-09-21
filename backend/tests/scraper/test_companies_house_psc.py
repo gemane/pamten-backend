@@ -295,6 +295,66 @@ class TestPscFields:
         finally:
             gleif_reference._general_registers.cache_clear()
 
+    def test_country_spellings_from_the_survey(self):
+        from app.scraper.companies_house_psc import _iso2_country, _psc_country
+        assert _iso2_country("Delaware") == "US" and _iso2_country("Delaware, Usa") == "US"
+        assert _iso2_country("British Virgin Islands") == "VG" and _iso2_country("Bvi") == "VG"
+        for uk in ("Gbr", "Gb-Eng", "Gb-Sct", "U.K.", "London", "United Kingdon"):
+            assert _iso2_country(uk) == "GB", uk
+        assert _iso2_country("The Netherlands") == "NL" and _iso2_country("Republic Of Ireland") == "IE"
+        assert _iso2_country("Not Specified/Other") is None
+        # "Not Specified/Other" but the register field says where.
+        assert _psc_country({"country_registered": "Not Specified/Other",
+                             "place_registered": "Companies House"}) == "GB"
+        assert _psc_country({"country_registered": "Not Specified/Other",
+                             "legal_authority": "England And Wales"}) == "GB"
+        assert _psc_country({"country_registered": "Not Specified/Other"}) is None
+
+    def test_uk_controllers_in_every_spelling_get_the_uk_key_scheme(self):
+        for country in ("Gbr", "Gb-Eng", "U.K.", "United Kingdon", "London"):
+            node_id, chid = _entity_psc_id({"identification": {
+                "registration_number": "686734", "country_registered": country},
+                "links": {"self": "/company/x/.../abc"}})
+            assert (node_id, chid) == ("gb-coh:00686734", "00686734"), country
+        node_id, _ = _entity_psc_id({"identification": {
+            "registration_number": "00686734", "country_registered": "Not Specified/Other",
+            "place_registered": "Companies House"}, "links": {"self": "/company/x/.../abc"}})
+        assert node_id == "gb-coh:00686734"
+
+    def test_a_us_state_named_as_the_country_keys_by_the_state(self):
+        rec = {"company_number": "09533203", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Tesla, Inc.",
+            "identification": {"registration_number": "3903573", "country_registered": "Delaware, Usa"},
+            "links": {"self": "/company/09533203/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        mapped = psc_record(rec, "s1", 80)
+        assert mapped.owner_props["register_id"] == "RA000602:3903573"
+        assert mapped.owner_props["country"] == "US"
+
+    def test_a_named_register_keys_a_fund(self):
+        # The named register is the one rule that keys a fund: "CSSF" is the
+        # Luxembourg supervisor's register, not the trade register.
+        rec = {"company_number": "00000002", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Some Fund SICAV",
+            "identification": {"registration_number": "O00001234", "country_registered": "Luxembourg",
+                               "place_registered": "CSSF"},
+            "links": {"self": "/company/00000002/persons-with-significant-control/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        assert psc_record(rec, "s1", 80).owner_props["register_id"] == "RA000433:O00001234"
+
+    def test_which_rule_fired(self):
+        from app.scraper.companies_house_psc import resolve_register_code
+        assert resolve_register_code("NL", {"place_registered": "Kamer Van Koophandel"}, "1") == ("RA000463", "named")
+        assert resolve_register_code("NL", {}, "1") == ("RA000463", "general")
+        assert resolve_register_code("PA", {}, "1")[1] == "sole"
+        assert resolve_register_code("US", {"place_registered": "Delaware Division Of Corporations"}, "1") == ("RA000602", "place")
+        assert resolve_register_code("JP", {"place_registered": "Tokyo Stock Exchange"}, "0104-01-056795") == ("RA000412", "format")
+        assert resolve_register_code("DE", {}, "HRB 1") == (None, None)
+        assert resolve_register_code("GB", {"place_registered": "England And Wales"}, "09913788") == (None, None), \
+            "UK controllers are keyed by companies_house_id, never by a guessed register"
+
     def test_a_country_registered_that_names_the_state_still_bridges(self):
         rec = {"company_number": "09533203", "data": {
             "kind": "corporate-entity-person-with-significant-control",
@@ -453,8 +513,12 @@ class TestCorporateRegistration:
         mapped = self._corp("Germany", "HRB 12345", place="Amtsgericht München")
         assert mapped.owner_props["registration_number"] == "HRB 12345"
         assert mapped.owner_props["registration_authority"] == "Amtsgericht München"
-        # DE has 177 per-court registers sharing HRB numbering — the unsafe case.
-        assert mapped.owner_props["register_id"] is None
+        # DE has 177 per-court registers sharing HRB numbering — unsafe from the
+        # country alone. But the filer NAMED the court, and a court names
+        # exactly one register.
+        assert mapped.owner_props["register_id"] == "RA000304:HRB12345"
+        bare = self._corp("Germany", "HRB 12345")
+        assert bare.owner_props["register_id"] is None, "a bare country stays unkeyed"
 
     def test_a_sole_register_country_yields_a_register_id(self):
         from app.scraper.gleif_reference import sole_register_for_country

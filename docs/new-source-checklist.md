@@ -115,6 +115,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       shipped, and needed a routing workaround plus a data migration).
 - [ ] **Match on a hard identifier when the source has one.** Shared LEI/CIK/CH number is
       proof; a shared name is a hint.
+- [ ] **When the source NAMES the register, use the name before any guess.**
+      `register_for_name` matches the filer's words against every name GLEIF lists for the
+      country's registers (local names, organisation names, sites) — it keys funds and
+      German companies, which no country rule can. Measure a source's phrasings before
+      adding aliases: `manage.py audit-psc-registers` is the model — coverage per rule and
+      the unkeyed phrasings per country, each alias line citing its count.
 - [ ] **A stated register is a hard identifier — mint it through `gleif_reference`.**
       `make_register_id(code, number)` (placeholder RAs excluded, zero-normalization for
       the audited US registers where sources demonstrably disagree on padding);

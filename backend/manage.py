@@ -196,6 +196,20 @@ def cmd_audit_registers(args):
             print(f"  {c}: {e['code']} {e['share']:.1%} of {e['records']:,}, {e['registers_seen']} registers")
 
 
+def cmd_audit_psc_registers(args):
+    """Coverage of the register rules over a real PSC snapshot, per country,
+    with the phrasings the unkeyed controllers used — the next aliases."""
+    from app.scraper.register_audit import audit_psc_registers
+    res = audit_psc_registers(args.file, top=args.top)
+    print(f"corporate controllers {res['corporate']:,}; foreign {res['foreign']:,}; "
+          f"with a number {res['with_number']:,}; keyed {res['keyed']:,} "
+          f"({res['keyed'] / max(res['with_number'], 1):.1%}) by rule {res['by_rule']}")
+    print(f"{'country':8} {'number':>7} {'named':>6} {'sole':>5} {'place':>6} {'format':>6} {'general':>7} {'unkeyed':>7}  unkeyed phrasings")
+    for c, e in res["countries"].items():
+        print(f"{c:8} {e['with_number']:>7,} {e['named']:>6,} {e['sole']:>5,} {e['place']:>6,} "
+              f"{e['format']:>6,} {e['general']:>7,} {e['unkeyed']:>7,}  {e['unkeyed_phrasings'][:4]}")
+
+
 def cmd_mark_shortcuts(args):
     """Flag GLEIF ultimate-parent OWNS edges that duplicate a path the graph already
     draws, so the renderer can omit them. Run after every import: a delta that retires
@@ -996,6 +1010,13 @@ def _build_parser():
     p_ar.add_argument('--min-records', type=int, default=200,
                       help='Minimum GENERAL entities a country needs to be mapped')
     p_ar.set_defaults(func=cmd_audit_registers)
+
+    p_apr = subparsers.add_parser('audit-psc-registers',
+        help='Measure, on a Companies House PSC snapshot, which register rule keys each '
+             'foreign corporate controller — and the phrasings the unkeyed ones used')
+    p_apr.add_argument('--file', required=True, help='PSC snapshot (.zip)')
+    p_apr.add_argument('--top', type=int, default=40, help='Countries to list')
+    p_apr.set_defaults(func=cmd_audit_psc_registers)
 
     # mark-shortcuts command (flag redundant ultimate-parent edges for the renderer)
     p_ms = subparsers.add_parser('mark-shortcuts',
