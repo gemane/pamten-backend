@@ -69,26 +69,27 @@ def purge_company(name: str) -> dict:
 _OWNER_PAGE = 5000
 
 
-def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
-    """Group active OWNS edges by their (owner, target) vertex pair, returning
-    {(out_rid, in_rid): [(edge_rid, stake_percent, direct_or_indirect), ...]}.
+def _owns_pairs_by_page():
+    """Yield, per page of owners, the active OWNS edges grouped by (owner,
+    target) vertex pair: {(out_rid, in_rid): [(edge_rid, stake_percent,
+    direct_or_indirect), ...]}.
 
     Walks the OWNERS, not the edges: pages of Entity then Person by their UNIQUE
     `id` index (`app.db.paging.iter_id_pages` — a bounded index range per page,
     ending on an empty page; the module explains why each of those words is
     load-bearing), and expands each page's outgoing OWNS edges from the
     vertices — adjacency, not a scan. A duplicate is by definition two edges
-    from the SAME owner, so grouping page by page loses nothing.
+    from the SAME owner, so grouping page by page loses nothing — and it is
+    the only way that fits: the pairs of the full import (15.1M edges) held
+    in one dict were 1.34 GB at 2.56M pairs, on their way past the 8 GB box.
 
     It used to page the edges themselves by `@rid`; with no index behind that
     ORDER BY every page was a full scan of the OWNS type, and on the sizing box
     (7.5 GB of OWNS, ~15M edges, 20,000 per page) each page took 4–13 minutes —
     about 750 full scans, i.e. days. A global server-side GROUP BY is no
     better: it blew the query heap at 700k edges. @out/@in are the endpoint
-    vertex rids; @rid identifies the edge for a precise delete. With the
-    bounded pages the whole walk over 28M owners took 12 min 36 s.
+    vertex rids; @rid identifies the edge for a precise delete.
     """
-    pairs: dict[tuple, list[tuple]] = {}
     for vtype in ("Entity", "Person"):
         for pages, owners in enumerate(iter_id_pages(vtype, page=_OWNER_PAGE), start=1):
             rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
@@ -96,32 +97,37 @@ def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
                 "SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
                 f"direct_or_indirect AS doi FROM (SELECT expand(outE('OWNS')) FROM [{rids}]) "
                 "WHERE until IS NULL")
+            pairs: dict[tuple, list[tuple]] = {}
             for r in rows:
                 pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
             if pages % 200 == 0:
-                log.info("OWNS dedup: %s page %d, %d pairs so far", vtype, pages, len(pairs))
-    return pairs
+                log.info("OWNS dedup: %s page %d", vtype, pages)
+            yield pairs
 
 
 def count_duplicate_owns_edges() -> dict:
     """Report duplicate active OWNS edges without changing anything — a
     duplicate is a second+ edge between the same (owner, target) pair (e.g. from
-    a multi-interest BODS relationship statement). Admin/observability."""
-    pairs = _owns_pairs_with_rids()
-    dup_pairs = sum(1 for v in pairs.values() if len(v) > 1)
-    redundant = sum(len(v) - 1 for v in pairs.values() if len(v) > 1)
+    a multi-interest BODS relationship statement). Admin/observability.
+    Streams the walk; only the four counters live across pages."""
+    active = distinct = dup_pairs = redundant = 0
+    for pairs in _owns_pairs_by_page():
+        distinct += len(pairs)
+        for v in pairs.values():
+            active += len(v)
+            if len(v) > 1:
+                dup_pairs += 1
+                redundant += len(v) - 1
     return {
-        "active_edges": sum(len(v) for v in pairs.values()),
-        "distinct_pairs": len(pairs),
+        "active_edges": active,
+        "distinct_pairs": distinct,
         "duplicate_pairs": dup_pairs,
         "redundant_edges": redundant,
     }
 
 
-def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
-    """
-    For every (owner → target) pair with more than one active OWNS edge, keep one
-    and delete the rest by @rid. Admin only.
+def _losers(edges: list[tuple]) -> list[str]:
+    """The edge rids to delete from one pair's edges, i.e. all but the survivor.
 
     Survivor priority: largest stake first, then — among edges with an equal/absent
     stake — the one carrying a `direct_or_indirect` marker, and finally a `direct`
@@ -135,38 +141,50 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     as indirect, and the graph then hides it as an ownership shortcut — the company
     disappears despite a perfectly good direct edge. Without this the winner was
     whichever came first in @rid order.
+    """
+    edges_sorted = sorted(
+        edges,
+        key=lambda e: (e[1] if e[1] is not None else -1,
+                       1 if e[2] else 0,
+                       1 if e[2] == "direct" else 0),
+        reverse=True,
+    )
+    return [rid for rid, _, _ in edges_sorted[1:]]
+
+
+def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
+    """
+    For every (owner → target) pair with more than one active OWNS edge, keep one
+    and delete the rest by @rid (`_losers` picks the survivor). Admin only.
 
     Deleting by @rid preserves the kept edge's full provenance (unlike a
     delete-all-then-recreate, which drops properties), and the delete is batched
     in one sqlscript per `batch_size` edges so each request stays under the DB
-    proxy timeout.
+    proxy timeout. The walk streams: losers are deleted as pages come in, so
+    nothing but counters and the current batch is held across the graph.
     """
-    pairs = _owns_pairs_with_rids()
-    to_delete: list[str] = []
-    dup_pairs = 0
-    for edges in pairs.values():
-        if len(edges) < 2:
-            continue
-        dup_pairs += 1
-        # keep the largest stake (None treated as -1); tie-break on having a
-        # direct_or_indirect marker, then on that marker being 'direct'; delete the rest
-        edges_sorted = sorted(
-            edges,
-            key=lambda e: (e[1] if e[1] is not None else -1,
-                           1 if e[2] else 0,
-                           1 if e[2] == "direct" else 0),
-            reverse=True,
-        )
-        to_delete.extend(rid for rid, _, _ in edges_sorted[1:])
-
+    pending: list[str] = []
     deleted = 0
-    for i in range(0, len(to_delete), batch_size):
-        chunk = to_delete[i:i + batch_size]
-        # `DELETE FROM <rid>` is direct record access; `DELETE FROM OWNS WHERE
-        # @rid = <rid>` scans the whole (700k-edge) type per statement instead.
-        run_sqlscript(";".join(f"DELETE FROM {rid}" for rid in chunk))
-        deleted += len(chunk)
+    dup_pairs = 0
 
+    def flush() -> None:
+        nonlocal deleted
+        while pending:
+            chunk, pending[:] = pending[:batch_size], pending[batch_size:]
+            # `DELETE FROM <rid>` is direct record access; `DELETE FROM OWNS WHERE
+            # @rid = <rid>` scans the whole edge type per statement instead.
+            run_sqlscript(";".join(f"DELETE FROM {rid}" for rid in chunk))
+            deleted += len(chunk)
+
+    for pairs in _owns_pairs_by_page():
+        for edges in pairs.values():
+            if len(edges) < 2:
+                continue
+            dup_pairs += 1
+            pending.extend(_losers(edges))
+        if len(pending) >= batch_size:
+            flush()
+    flush()
     return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs}
 
 
