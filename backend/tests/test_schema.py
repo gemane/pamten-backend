@@ -46,6 +46,8 @@ def test_is_idempotent_all_ddl_uses_if_not_exists():
     # INDEX all use IF NOT EXISTS, so a re-run (startup, bulk-load rebuild) logs
     # no "already exists" failures. For PROPERTY it must sit BEFORE the type.
     for s in issued:
+        if not s.startswith("CREATE"):
+            continue                      # the two catalog reads are not DDL
         assert "IF NOT EXISTS" in s, s
         if s.startswith("CREATE PROPERTY"):
             # The type follows IF NOT EXISTS; it is STRING unless _PROPERTY_TYPES
@@ -152,3 +154,59 @@ class TestRebuildRecreatesAMissingFulltextIndex:
         with patch.object(schema, "run_sql", side_effect=run):
             res = schema.rebuild_fulltext_indexes(timeout=1)
         assert any(f["index"] == "Entity[search_text]" for f in res["failed"])
+
+
+class TestStartupIssuesNoDdlWhenTheSchemaIsComplete:
+    """Even `IF NOT EXISTS` takes the schema lock; on the sizing box thirty of
+    them queued behind an hour-long index compaction at API startup and every
+    request waited behind them. The catalog is read first, DDL only for gaps."""
+
+    @staticmethod
+    def _catalog(types, indexes):
+        def run(sql, *a, **kw):
+            if sql == "SELECT name FROM schema:types":
+                return [{"name": t} for t in types]
+            if sql == "SELECT name FROM schema:indexes":
+                return [{"name": i} for i in indexes]
+            return []
+        return run
+
+    def test_a_complete_schema_issues_nothing(self):
+        types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
+        indexes = ({f"{t}[{p}]" for t, p, _ in schema._INDEXES}
+                   | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES}
+                   | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES})
+        with _run(self._catalog(types, indexes)) as m:
+            res = schema.ensure_indexes()
+        issued = [c.args[0] for c in m.call_args_list]
+        assert not any(s.startswith("CREATE") for s in issued), issued
+        assert res.get("complete") is True and res["failed"] == []
+
+    def test_only_the_missing_index_is_created(self):
+        types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
+        indexes = ({f"{t}[{p}]" for t, p, _ in schema._INDEXES}
+                   | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES}
+                   | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}) - {"Entity[search_text]"}
+        with _run(self._catalog(types, indexes)) as m:
+            schema.ensure_indexes()
+        creates = [c.args[0] for c in m.call_args_list if c.args[0].startswith("CREATE")]
+        assert creates == ["CREATE PROPERTY Entity.search_text IF NOT EXISTS STRING",
+                           "CREATE INDEX IF NOT EXISTS ON Entity (search_text) FULL_TEXT"]
+
+    def test_an_unreadable_catalog_falls_back_to_the_full_ddl(self):
+        def run(sql, *a, **kw):
+            if sql.startswith("SELECT name FROM schema:"):
+                raise RuntimeError("no such type schema:types")
+            return []
+        with _run(run) as m:
+            res = schema.ensure_indexes()
+        issued = [c.args[0] for c in m.call_args_list]
+        assert "CREATE VERTEX TYPE Entity IF NOT EXISTS" in issued
+        assert res["skipped"] is False
+
+    def test_an_unreachable_server_still_skips(self):
+        def run(sql, *a, **kw):
+            raise ConnectionError("ArcadeDB unreachable: timed out")
+        with _run(run):
+            res = schema.ensure_indexes()
+        assert res["skipped"] is True

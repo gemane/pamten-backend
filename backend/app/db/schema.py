@@ -180,13 +180,35 @@ _PROPERTY_TYPES: dict[tuple[str, str], str] = {
 }
 
 
-def _statements() -> list[str]:
+def _statements(existing: tuple[set, set] | None = None) -> list[str]:
+    """The DDL the schema needs — all of it, or only what `existing` lacks.
+
+    `existing` is (type names, index names) as the server reports them. Even an
+    `IF NOT EXISTS` statement takes the exclusive schema lock, and on a large
+    database that lock is held for an hour at a time by an index compaction:
+    the API's startup used to issue thirty of them, each timing out on the
+    client but queuing on the server, and every request — searches, profiles
+    — waited behind that queue. With the catalog in hand a complete schema
+    means no DDL at all.
+    """
+    types, indexes = existing if existing else (None, None)
+
+    def has_type(name: str) -> bool:
+        return types is not None and name in types
+
+    def has_index(vtype: str, prop: str) -> bool:
+        return indexes is not None and f"{vtype}[{prop}]" in indexes
+
     stmts: list[str] = []
     for vtype in sorted({t for t, _, _ in _INDEXES}):
-        stmts.append(f"CREATE VERTEX TYPE {vtype} IF NOT EXISTS")
+        if not has_type(vtype):
+            stmts.append(f"CREATE VERTEX TYPE {vtype} IF NOT EXISTS")
     for etype in _EDGE_TYPES:
-        stmts.append(f"CREATE EDGE TYPE {etype} IF NOT EXISTS")
+        if not has_type(etype):
+            stmts.append(f"CREATE EDGE TYPE {etype} IF NOT EXISTS")
     for vtype, prop, kind in _INDEXES:
+        if has_index(vtype, prop):
+            continue
         # `IF NOT EXISTS` goes BEFORE the type in ArcadeDB SQL — makes the DDL
         # idempotent so re-runs (startup, bulk-load index rebuild) don't log a
         # "property already exists" failure for every property.
@@ -194,12 +216,27 @@ def _statements() -> list[str]:
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS {ptype}")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) {kind}")
     for etype, prop, kind in _EDGE_INDEXES:
+        if has_index(etype, prop):
+            continue
         stmts.append(f"CREATE PROPERTY {etype}.{prop} IF NOT EXISTS STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {etype} ({prop}) {kind}")
     for vtype, prop in _FULLTEXT_INDEXES:
+        if has_index(vtype, prop):
+            continue
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT")
     return stmts
+
+
+def _existing_schema() -> tuple[set, set] | None:
+    """(type names, index names) from the server's catalog, or None when it
+    cannot be read — then the full idempotent DDL runs, as it always did."""
+    types = run_sql("SELECT name FROM schema:types")
+    indexes = run_sql("SELECT name FROM schema:indexes")
+    if not isinstance(types, list) or not isinstance(indexes, list):
+        return None
+    return ({r.get("name") for r in types if isinstance(r, dict)},
+            {r.get("name") for r in indexes if isinstance(r, dict)})
 
 
 def _fulltext_index_names(vtype: str, prop: str) -> list[str]:
@@ -286,7 +323,19 @@ def ensure_indexes() -> dict:
     """
     ok: list[str] = []
     failed: list[dict] = []
-    for stmt in _statements():
+    try:
+        existing = _existing_schema()
+    except ConnectionError as exc:
+        log.warning("Schema bootstrap skipped — ArcadeDB unreachable: %s", exc)
+        return {"ok": ok, "failed": failed, "skipped": True}
+    except Exception as exc:  # noqa: BLE001 - catalog unreadable: fall back to full DDL
+        log.warning("Schema catalog unreadable (%s) — issuing the full DDL", exc)
+        existing = None
+    stmts = _statements(existing)
+    if existing is not None and not stmts:
+        log.info("Schema complete — no DDL issued")
+        return {"ok": ok, "failed": failed, "skipped": False, "complete": True}
+    for stmt in stmts:
         try:
             run_sql(stmt)
             ok.append(stmt)
