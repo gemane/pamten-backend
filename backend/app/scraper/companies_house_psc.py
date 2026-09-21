@@ -77,6 +77,8 @@ def _control(natures: list[str] | None) -> tuple:
     stake = voting = None
     controlling = False
     for nat in natures:
+        if not nat:
+            continue        # 2 of 15.8M records carry a null in the list
         if "ownership-of-shares" in nat:
             stake = _max_pct(stake, _band_floor(nat))
         elif "voting-rights" in nat:
@@ -90,7 +92,7 @@ def _control(natures: list[str] | None) -> tuple:
         otype = derive_ownership_type(stake)
     else:
         otype = "minority"
-    return stake, voting, otype, sorted(set(natures))
+    return stake, voting, otype, sorted(n for n in set(natures) if n)
 
 
 def _psc_name(data: dict) -> str | None:

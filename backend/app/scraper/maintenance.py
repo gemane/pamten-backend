@@ -62,33 +62,51 @@ def purge_company(name: str) -> dict:
     }
 
 
-_OWNS_PAGE = 20000
+#: Owner vertices read per request when collecting OWNS edges. Each page is an
+#: index range on `id` plus one adjacency expansion — never a scan of OWNS.
+_OWNER_PAGE = 5000
 
 
 def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
     """Group active OWNS edges by their (owner, target) vertex pair, returning
     {(out_rid, in_rid): [(edge_rid, stake_percent, direct_or_indirect), ...]}.
 
-    Pages through the edges by @rid ordering and groups in Python, so there's NO
-    server-side GROUP BY — a global `GROUP BY a.id, b.id` over the ~700k OWNS
-    edges blows the dev DB's query heap (OutOfMemoryError). @out/@in are the
-    endpoint vertex rids; @rid identifies the edge for a precise delete.
+    Walks the OWNERS, not the edges: pages of Entity then Person by their UNIQUE
+    `id` index (`WHERE id > $last ORDER BY id` is an index range read, EXPLAIN
+    says `FETCH FROM INDEX`), and expands each page's outgoing OWNS edges from
+    the vertices — adjacency, not a scan. A duplicate is by definition two
+    edges from the SAME owner, so grouping page by page loses nothing.
+
+    It used to page the edges themselves by `@rid`; with no index behind that
+    ORDER BY every page was a full scan of the OWNS type, and on the sizing box
+    (7.5 GB of OWNS, ~15M edges, 20,000 per page) each page took 4–13 minutes —
+    about 750 full scans, i.e. days. A global server-side GROUP BY is no
+    better: it blew the query heap at 700k edges. @out/@in are the endpoint
+    vertex rids; @rid identifies the edge for a precise delete.
     """
     pairs: dict[tuple, list[tuple]] = {}
-    last: str | None = None
-    while True:
-        where = "WHERE until IS NULL" + (f" AND @rid > {last}" if last else "")
-        rows = run_sql(
-            f"SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
-            f"direct_or_indirect AS doi FROM OWNS {where} ORDER BY @rid LIMIT {_OWNS_PAGE}"
-        )
-        if not rows:
-            break
-        for r in rows:
-            pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
-        last = rows[-1]["rid"]
-        if len(rows) < _OWNS_PAGE:
-            break
+    for vtype in ("Entity", "Person"):
+        last: str | None = None
+        pages = 0
+        while True:
+            where = f"WHERE id > '{last}'" if last else ""
+            owners = run_sql(
+                f"SELECT id, @rid AS rid FROM {vtype} {where} ORDER BY id LIMIT {_OWNER_PAGE}")
+            if not owners:
+                break
+            rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
+            rows = run_sql(
+                "SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
+                f"direct_or_indirect AS doi FROM (SELECT expand(outE('OWNS')) FROM [{rids}]) "
+                "WHERE until IS NULL")
+            for r in rows:
+                pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
+            last = owners[-1]["id"].replace("'", "\\'")
+            pages += 1
+            if pages % 200 == 0:
+                log.info("OWNS dedup: %s page %d, %d pairs so far", vtype, pages, len(pairs))
+            if len(owners) < _OWNER_PAGE:
+                break
     return pairs
 
 

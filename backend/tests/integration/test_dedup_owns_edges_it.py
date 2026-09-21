@@ -94,3 +94,26 @@ def test_dedup_keeps_direct_over_indirect_whichever_came_first(it_db, order):
     rows = it_db.run_query(
         "MATCH (p:Entity{id:'p'})-[r:OWNS]->(c:Entity{id:'c'}) RETURN r.direct_or_indirect AS d")
     assert [r["d"] for r in rows] == ["direct"]
+
+
+def test_collection_walks_owners_of_both_kinds_page_by_page(it_db, monkeypatch):
+    """The collector pages OWNERS by their id index and expands adjacency — no
+    scan of OWNS. With a page of 2 it must cross page boundaries for Entity and
+    Person alike, skip owners without edges, and survive an id with a quote."""
+    from app.scraper import maintenance
+    monkeypatch.setattr(maintenance, "_OWNER_PAGE", 2)
+    for x in ("e1", "e2", "e3", "o'brien", "t"):
+        it_db.run_command(f"CREATE (:Entity {{id:\"{x}\"}})")
+    for p in ("p1", "p2", "p3"):
+        it_db.run_command(f"CREATE (:Person {{id:'{p}', full_name:'{p}'}})")
+    # e1→t twice, o'brien→t twice, p2→t twice, p3→t once; e2, e3, p1 own nothing
+    for owner, label, n in (("e1", "Entity", 2), ("o'brien", "Entity", 2), ("p2", "Person", 2), ("p3", "Person", 1)):
+        for _ in range(n):
+            it_db.run_command(f"MATCH (a:{label} {{id:\"{owner}\"}}),(t:Entity {{id:'t'}}) "
+                              "CREATE (a)-[:OWNS{until:null}]->(t)")
+    c = maintenance.count_duplicate_owns_edges()
+    assert c["active_edges"] == 7 and c["distinct_pairs"] == 4
+    assert c["duplicate_pairs"] == 3 and c["redundant_edges"] == 3
+    res = maintenance.deduplicate_owns_edges()
+    assert res["duplicates_removed"] == 3
+    assert maintenance.count_duplicate_owns_edges()["redundant_edges"] == 0

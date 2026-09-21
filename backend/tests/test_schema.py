@@ -105,3 +105,33 @@ def test_an_edge_index_does_not_create_a_vertex_type():
     issued = [c.args[0] for c in m.call_args_list]
     assert "CREATE VERTEX TYPE OWNS IF NOT EXISTS" not in issued
     assert "CREATE EDGE TYPE OWNS IF NOT EXISTS" in issued
+
+
+class TestRebuildRecreatesAMissingFulltextIndex:
+    """A bulk load drops the FULL_TEXT index and relies on the schema bootstrap
+    to re-create it; when that bootstrap timed out during the flush (the full
+    PSC load did), REBUILD found nothing and /search stayed dark."""
+
+    def test_not_found_leads_to_create_then_rebuild(self):
+        issued = []
+
+        def run(sql, *a, **kw):
+            issued.append(sql)
+            if sql.startswith("REBUILD") and "Entity[search_text]" in sql and issued.count(sql) == 1:
+                raise RuntimeError("Index with name 'Entity[search_text]' was not found")
+            return []
+        with patch.object(schema, "run_sql", side_effect=run):
+            res = schema.rebuild_fulltext_indexes(timeout=1)
+        creates = [s for s in issued if s.startswith("CREATE INDEX") and "Entity (search_text)" in s]
+        assert creates, "the missing index is created"
+        assert issued.count("REBUILD INDEX `Entity[search_text]`") == 2, "rebuilt after creating"
+        assert "Entity[search_text]" in res.get("ok", res.get("rebuilt", [])) or not res.get("failed"), res
+
+    def test_other_errors_still_fail_the_index(self):
+        def run(sql, *a, **kw):
+            if sql.startswith("REBUILD") and "Entity[search_text]" in sql:
+                raise RuntimeError("timed out")
+            return []
+        with patch.object(schema, "run_sql", side_effect=run):
+            res = schema.rebuild_fulltext_indexes(timeout=1)
+        assert any(f["index"] == "Entity[search_text]" for f in res["failed"])
