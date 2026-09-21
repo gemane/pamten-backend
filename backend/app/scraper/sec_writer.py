@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from app.roles import canonical_role
 from app.claims import KIND_OWNS, KIND_ROLE, record_claim
 from app.database import db
+from app.db.anchors import label_or_entity
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.scraper.graph_writer import _matching_role, _now_iso, _relabel_if_more_credible
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
@@ -467,11 +468,13 @@ def mark_13f_stale(company_id: str, period: str) -> int:
                WHERE r.filing_type = '13F' AND r.until IS NULL
                  AND r.source_date < $period
                  AND COALESCE(r.stale, false) = false
-               RETURN a.id AS aid""",
+               RETURN a.id AS aid, labels(a)[0] AS alabel""",
             id=company_id, period=period))
         for r in rows:
+            # Labelled anchor — a filer may be a fund (Entity) or a person, and
+            # the label came back with the row; unlabelled it scans every vertex.
             session.run(
-                """MATCH (a {id: $a})-[r:OWNS]->(b:Entity {id: $b})
+                f"""MATCH (a:{label_or_entity(r.get("alabel"))} {{id: $a}})-[r:OWNS]->(b:Entity {{id: $b}})
                    WHERE r.filing_type = '13F' AND r.until IS NULL
                      AND r.source_date < $period
                    SET r.stale = true""",

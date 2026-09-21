@@ -43,6 +43,7 @@ from app.auth.dependencies import require_admin, require_contributor
 from app.config import settings
 from app.claims import KIND_OWNS, record_claim
 from app.database import db
+from app.db.anchors import label_or_entity
 from app.entity_resolution import resolve_entity_id
 from app.models.federation import PeerCreate
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
@@ -379,7 +380,8 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
                 counts["persons"] += 1
         for o in data.get("ownerships", []):
             owner, owned = o.get("owner") or {}, o.get("owned") or {}
-            oid = (_upsert_person(session, owner, source_id) if owner.get("kind") == "person"
+            owner_label = "Person" if owner.get("kind") == "person" else "Entity"
+            oid = (_upsert_person(session, owner, source_id) if owner_label == "Person"
                    else _upsert_entity(session, owner, source_id, credibility))
             tid = _upsert_entity(session, owned, source_id, credibility)
             if not oid or not tid:
@@ -400,8 +402,11 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
             # broke mark_stale_ownership twice over: COALESCE(cred, 0) read a
             # federated edge as community-tier, and a null last_scraped_at
             # meant it could never be judged stale either.
+            # Both anchors labelled — the snapshot says which kind the owner is,
+            # and an unlabelled pair scans every vertex per edge (app/db/anchors.py).
             session.run(
-                "MATCH (a {id:$oid}), (b {id:$tid}) MERGE (a)-[r:OWNS]->(b) "
+                f"MATCH (a:{label_or_entity(owner_label)} {{id:$oid}}), (b:Entity {{id:$tid}}) "
+                "MERGE (a)-[r:OWNS]->(b) "
                 "SET r.stake_percent = COALESCE(r.stake_percent, $stake), "
                 "    r.ownership_type = $otype, "
                 "    r.source_id = $sid, "

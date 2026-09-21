@@ -10,6 +10,7 @@ from app.models.relationship import (
     DualListedCreate,
 )
 from app.database import db
+from app.db.anchors import node_label
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 from app.claims import KIND_OWNS, record_claim
@@ -53,11 +54,13 @@ def _now_iso() -> str:
 
 @router.post("/owns")
 def create_owns_relationship(data: OwnsRelationshipCreate, _: dict = Depends(require_contributor)):
-    # Works for both Person->Entity and Entity->Entity
+    # Works for both Person->Entity and Entity->Entity — which is why the owner's
+    # label is looked up first: an unlabelled anchor scans every vertex type
+    # (minutes on the full import; see app/db/anchors.py).
     query = """
-        MATCH (owner {id: $owner_id})
-        MATCH (owned:Entity {id: $owned_id})
-        CREATE (owner)-[r:OWNS {
+        MATCH (owner:{label} {{id: $owner_id}})
+        MATCH (owned:Entity {{id: $owned_id}})
+        CREATE (owner)-[r:OWNS {{
             stake_percent: $stake_percent,
             ownership_type: $ownership_type,
             since: $since,
@@ -68,12 +71,16 @@ def create_owns_relationship(data: OwnsRelationshipCreate, _: dict = Depends(req
             source_url: $source_url,
             source_date: $source_date,
             last_scraped_at: $last_scraped_at
-        }]->(owned)
+        }}]->(owned)
         RETURN r
     """
 
     with db.get_session() as session:
-        result = session.run(query, last_scraped_at=_now_iso(), **data.model_dump())
+        label = node_label(data.owner_id, session)
+        if not label:
+            raise HTTPException(status_code=404, detail="Owner or Entity not found")
+        result = session.run(query.format(label=label),
+                             last_scraped_at=_now_iso(), **data.model_dump())
         if not result.single():
             raise HTTPException(status_code=404, detail="Owner or Entity not found")
     # A manual assertion is still an assertion: without the claim, an edge
@@ -93,14 +100,17 @@ def create_owns_relationship(data: OwnsRelationshipCreate, _: dict = Depends(req
 def close_owns_relationship(owner_id: str, owned_id: str, until: str, _: dict = Depends(require_contributor)):
     # When ownership ends, set the until date (becomes historical)
     query = """
-        MATCH (owner {id: $owner_id})-[r:OWNS]->(owned:Entity {id: $owned_id})
+        MATCH (owner:{label} {{id: $owner_id}})-[r:OWNS]->(owned:Entity {{id: $owned_id}})
         WHERE r.until IS NULL
         SET r.until = $until
         RETURN r
     """
 
     with db.get_session() as session:
-        result = session.run(query,
+        label = node_label(owner_id, session)
+        if not label:
+            raise HTTPException(status_code=404, detail="Active relationship not found")
+        result = session.run(query.format(label=label),
             owner_id=owner_id,
             owned_id=owned_id,
             until=until

@@ -3,6 +3,7 @@ active OWNS edges. Extracted from the scraper router; behaviour unchanged.
 """
 import re as _re
 from app.db.arcadedb import run_query, run_command
+from app.db.anchors import label_or_entity
 from app.scraper.names import _person_name_variants, _entity_name_variants, _is_reordering
 
 
@@ -28,7 +29,7 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
     # ── Find the company node ──────────────────────────────────────────────────
     if entity_id:
         company_rows = run_query(
-            "MATCH (c {id: $id}) RETURN c.id AS id, c.name AS name LIMIT 1",
+            "MATCH (c:Entity {id: $id}) RETURN c.id AS id, c.name AS name LIMIT 1",
             {"id": entity_id},
         )
     else:
@@ -68,12 +69,14 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
         name_norm_the = normalize_entity_name(name_no_the)
 
         # ── Find active OWNS edge owner → company ──────────────────────────
+        # Anchored on the labelled company; the owner is reached over the edge
+        # and its label comes back with it, so the two writes below can name it.
         match_rows = run_query(
-            """MATCH (n)-[r:OWNS]->(c {id: $cid})
+            """MATCH (n)-[r:OWNS]->(c:Entity {id: $cid})
                WHERE r.until IS NULL
                  AND (n.full_name IN $variants OR n.name IN $variants
                       OR n.name_normalized IN $norms)
-               RETURN n.id AS oid,
+               RETURN n.id AS oid, labels(n)[0] AS olabel,
                       coalesce(n.full_name, n.name) AS matched_name,
                       r.stake_percent   AS stake,
                       r.file_date       AS file_date,
@@ -90,6 +93,7 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
 
         row          = match_rows[0]
         oid          = row["oid"]
+        olabel       = label_or_entity(row.get("olabel"))
         matched_name = row["matched_name"]
 
         # ── Auto-correct reversed DB names to proxy form ──────────────────
@@ -97,7 +101,7 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
         name_corrected = False
         if matched_name and _is_reordering(name, matched_name):
             run_command(
-                """MATCH (n {id: $oid})
+                f"""MATCH (n:{olabel} {{id: $oid}})
                    SET n.full_name = $proxy_name""",
                 {"oid": oid, "proxy_name": name},
             )
@@ -117,7 +121,7 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
         # the one property we came to set cannot lose the others, so the class of bug
         # goes away rather than being patched.
         run_command(
-            """MATCH (n {id: $oid})-[r:OWNS]->(c {id: $cid})
+            f"""MATCH (n:{olabel} {{id: $oid}})-[r:OWNS]->(c:Entity {{id: $cid}})
                WHERE r.until IS NULL
                SET r.voting_power_pct = $pct,
                    r.ownership_type   = $otype""",

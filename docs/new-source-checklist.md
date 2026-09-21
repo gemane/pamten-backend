@@ -244,6 +244,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Bulk imports take the import lock** (`ImportState key='import-lock'`) so two
       dataset loads cannot interleave, and batch their writes — the dev database sits
       behind a 60-second proxy timeout.
+- [ ] **Every Cypher anchor by id names its label** — `(n:Entity {id: $id})`, never
+      `(n {id: $id})`. Without the label ArcadeDB cannot use the per-type id index and
+      scans every vertex type: invisible on the dev graph, >400 s on the full import
+      (28M vertices), where one such anchor in the profile's voting-groups query turned
+      every company page into a timeout. When you do not know whether an id is a
+      company or a person, ask `app.db.anchors.node_label()` (two indexed reads) or
+      carry `labels(n)[0]` back from the read that found the node. A source-scanning
+      test (`tests/test_cypher_anchors.py`) fails the suite on any unlabelled anchor.
 
 ## 6. Failing safely
 
