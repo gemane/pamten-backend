@@ -132,7 +132,12 @@ class TestRebuildRecreatesAMissingFulltextIndex:
         # 14M entities: the CREATE took 25 min on the sizing box and the
         # belt-and-braces REBUILD another 25 for the same result.
         issued = []
-        with patch.object(schema, "run_sql", side_effect=lambda sql, *a, **kw: issued.append(sql) or []):
+        catalog = [{"name": "Entity[search_text]", "properties": [["search_text"]]}]
+
+        def run(sql, *a, **kw):
+            issued.append(sql)
+            return catalog if sql.startswith("SELECT name, properties FROM schema:indexes") else []
+        with patch.object(schema, "run_sql", side_effect=run):
             res = schema.rebuild_fulltext_indexes(timeout=1, hard=True)
         assert any(s.startswith("DROP INDEX") for s in issued)
         assert any(s.startswith("CREATE INDEX") and "FULL_TEXT" in s for s in issued)

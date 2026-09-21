@@ -333,10 +333,12 @@ class TestBulkLoad:
             res = schema.rebuild_fulltext_indexes(hard=True)
 
         assert res["failed"] == []
-        # every FULL_TEXT index (physical + logical) dropped, then re-created, then rebuilt
+        # every FULL_TEXT index (physical + logical) dropped, then re-created — and
+        # NOT rebuilt on top: the CREATE indexed every row already (25 min on 14M
+        # entities; the REBUILD that used to follow re-did exactly that work)
         assert "DROP INDEX `Entity_0_999` IF EXISTS" in issued
         assert "DROP INDEX `Entity[search_text]` IF EXISTS" in issued
         assert "DROP INDEX `Person_0_888` IF EXISTS" in issued
         assert "DROP INDEX `Entity_0_111` IF EXISTS" not in issued   # wrong property, untouched
         assert "CREATE INDEX IF NOT EXISTS ON Entity (search_text) FULL_TEXT" in issued
-        assert "REBUILD INDEX `Entity[search_text]`" in issued
+        assert "REBUILD INDEX `Entity[search_text]`" not in issued
