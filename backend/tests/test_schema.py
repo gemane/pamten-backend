@@ -112,20 +112,32 @@ class TestRebuildRecreatesAMissingFulltextIndex:
     to re-create it; when that bootstrap timed out during the flush (the full
     PSC load did), REBUILD found nothing and /search stayed dark."""
 
-    def test_not_found_leads_to_create_then_rebuild(self):
+    def test_not_found_leads_to_create_and_no_second_rebuild(self):
         issued = []
 
         def run(sql, *a, **kw):
             issued.append(sql)
-            if sql.startswith("REBUILD") and "Entity[search_text]" in sql and issued.count(sql) == 1:
+            if sql.startswith("REBUILD") and "Entity[search_text]" in sql:
                 raise RuntimeError("Index with name 'Entity[search_text]' was not found")
             return []
         with patch.object(schema, "run_sql", side_effect=run):
             res = schema.rebuild_fulltext_indexes(timeout=1)
         creates = [s for s in issued if s.startswith("CREATE INDEX") and "Entity (search_text)" in s]
         assert creates, "the missing index is created"
-        assert issued.count("REBUILD INDEX `Entity[search_text]`") == 2, "rebuilt after creating"
-        assert "Entity[search_text]" in res.get("ok", res.get("rebuilt", [])) or not res.get("failed"), res
+        assert issued.count("REBUILD INDEX `Entity[search_text]`") == 1, \
+            "the CREATE indexed the rows; a REBUILD after it would do the same work again"
+        assert not any(f["index"] == "Entity[search_text]" for f in res["failed"]), res
+
+    def test_the_hard_path_drops_creates_and_does_not_rebuild_again(self):
+        # 14M entities: the CREATE took 25 min on the sizing box and the
+        # belt-and-braces REBUILD another 25 for the same result.
+        issued = []
+        with patch.object(schema, "run_sql", side_effect=lambda sql, *a, **kw: issued.append(sql) or []):
+            res = schema.rebuild_fulltext_indexes(timeout=1, hard=True)
+        assert any(s.startswith("DROP INDEX") for s in issued)
+        assert any(s.startswith("CREATE INDEX") and "FULL_TEXT" in s for s in issued)
+        assert not any(s.startswith("REBUILD") for s in issued), issued
+        assert not res["failed"]
 
     def test_other_errors_still_fail_the_index(self):
         def run(sql, *a, **kw):
