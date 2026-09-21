@@ -117,3 +117,30 @@ def test_collection_walks_owners_of_both_kinds_page_by_page(it_db, monkeypatch):
     res = maintenance.deduplicate_owns_edges()
     assert res["duplicates_removed"] == 3
     assert maintenance.count_duplicate_owns_edges()["redundant_edges"] == 0
+
+
+def test_every_owner_page_is_an_index_read_including_the_first(it_db):
+    """On the sizing box the FIRST page — `ORDER BY id LIMIT n` with no
+    predicate — was planned as a full scan of the 6.4 GB Entity type and hit the
+    60 s timeout before one page came back; only the later pages, which carry
+    `WHERE id > last`, were index reads. The pager must say `WHERE id > ''` from
+    the start. Checked against the real planner, since only it decides."""
+    from app.scraper import maintenance
+
+    issued: list[str] = []
+    real_run_sql = maintenance.run_sql
+
+    def spy(cmd, *a, **k):
+        issued.append(cmd)
+        return real_run_sql(cmd, *a, **k)
+
+    it_db.run_command("CREATE (:Entity {id:'a'})")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(maintenance, "run_sql", spy)
+        maintenance.count_duplicate_owns_edges()
+    pages = [c for c in issued if c.startswith("SELECT id, @rid AS rid FROM")]
+    assert pages and all("WHERE id > '" in c for c in pages), pages
+    for page in pages:
+        plan = it_db.explain_sql(page)
+        assert "FETCH FROM INDEX" in plan, (page, plan)
+        assert "FETCH FROM TYPE" not in plan, (page, plan)

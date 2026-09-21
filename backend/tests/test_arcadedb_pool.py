@@ -73,3 +73,25 @@ def test_post_maps_request_error_to_connection_error():
     with patch.object(arcadedb, "_get_client", return_value=_fake_client(raise_exc=exc)):
         with pytest.raises(ConnectionError):
             arcadedb.run_query("MATCH (n) RETURN n")
+
+
+def test_explain_sql_returns_the_plan_text_not_the_empty_result():
+    """EXPLAIN answers with an empty `result` and the plan under `explain`;
+    the plain helpers drop it, this one is for tests that pin a query to its
+    index (`FETCH FROM INDEX` vs `FETCH FROM TYPE`)."""
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"result": [], "explain": "+ FETCH FROM INDEX Entity[id] ()\n  id > ''"}
+    fake = _fake_client(resp)
+    with patch.object(arcadedb, "_get_client", return_value=fake):
+        plan = arcadedb.explain_sql("SELECT id FROM Entity WHERE id > '' ORDER BY id")
+    assert plan.startswith("+ FETCH FROM INDEX")
+    body = fake.post.call_args.kwargs["json"]
+    assert body["language"] == "sql"
+    assert body["command"].startswith("EXPLAIN SELECT id FROM Entity")
+
+
+def test_a_response_without_a_result_key_is_an_empty_list():
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = {"user": "root"}
+    with patch.object(arcadedb, "_get_client", return_value=_fake_client(resp)):
+        assert arcadedb.run_sql("CREATE VERTEX TYPE X") == []

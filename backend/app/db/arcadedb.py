@@ -57,6 +57,12 @@ _MAX_RETRIES = 4
 
 def _post(endpoint: str, statement: str, params: dict, language: str = "cypher",
           timeout: float | None = None) -> list[dict]:
+    return _post_raw(endpoint, statement, params, language, timeout).get("result", [])
+
+
+def _post_raw(endpoint: str, statement: str, params: dict, language: str = "cypher",
+              timeout: float | None = None) -> dict:
+    """The whole response body — `result` plus, for EXPLAIN, the plan text."""
     url  = f"{settings.ARCADEDB_URL}/api/v1/{endpoint}/{settings.ARCADEDB_DATABASE}"
     body = {"language": language, "command": statement, "params": params}
     # A per-request read/write timeout override (default = the client's 60s). Long
@@ -72,7 +78,7 @@ def _post(endpoint: str, statement: str, params: dict, language: str = "cypher",
             raise ConnectionError(f"ArcadeDB unreachable: {exc}") from exc
 
         if resp.status_code in (200, 201):
-            return resp.json().get("result", [])
+            return resp.json()
 
         # ArcadeDB MVCC conflict: retry with exponential backoff (0.1 → 0.8 s)
         if resp.status_code == 503 and "ConcurrentModificationException" in resp.text and attempt < _MAX_RETRIES:
@@ -101,6 +107,14 @@ def run_sql(command: str, params: dict | None = None, timeout: float | None = No
     `timeout` (seconds) overrides the client's default read/write timeout for slow
     maintenance commands such as `REBUILD INDEX *`."""
     return _post("command", command, params or {}, language="sql", timeout=timeout)
+
+
+def explain_sql(command: str, params: dict | None = None) -> str:
+    """The query plan ArcadeDB would use for an SQL statement, as its pretty
+    text (`FETCH FROM INDEX …` / `FETCH FROM TYPE …`). For tests that pin a
+    query to the index it must use — the planner, not the author, decides."""
+    body = _post_raw("command", f"EXPLAIN {command}", params or {}, language="sql")
+    return body.get("explain") or ""
 
 
 def run_sqlscript(script: str, params: dict | None = None) -> list[dict]:

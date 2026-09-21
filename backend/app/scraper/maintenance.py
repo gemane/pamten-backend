@@ -90,9 +90,13 @@ def _owns_pairs_with_rids() -> dict[tuple, list[tuple]]:
         last: str | None = None
         pages = 0
         while True:
-            where = f"WHERE id > '{last}'" if last else ""
+            # The FIRST page needs the WHERE too: `ORDER BY id LIMIT n` without a
+            # predicate is planned as FETCH FROM TYPE (a full scan — 6.4 GB of
+            # Entity on the sizing box, and the 60 s timeout before a single page
+            # came back), while `WHERE id > ''` is FETCH FROM INDEX from the start.
             owners = run_sql(
-                f"SELECT id, @rid AS rid FROM {vtype} {where} ORDER BY id LIMIT {_OWNER_PAGE}")
+                f"SELECT id, @rid AS rid FROM {vtype} WHERE id > '{last or ''}' "
+                f"ORDER BY id LIMIT {_OWNER_PAGE}")
             if not owners:
                 break
             rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
