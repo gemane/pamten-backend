@@ -258,6 +258,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       company or a person, ask `app.db.anchors.node_label()` (two indexed reads) or
       carry `labels(n)[0]` back from the read that found the node. A source-scanning
       test (`tests/test_cypher_anchors.py`) fails the suite on any unlabelled anchor.
+- [ ] **Walk a big type through `app.db.paging.iter_id_pages`, never by `@rid > last`
+      or `SKIP`.** Both of those are a full scan per page — fine on the dev subset,
+      hours on 14M rows. The pager reads bounded ranges of the `id` index (a lower
+      AND an upper bound on every page: ArcadeDB 26.7.3 crashes on a one-sided
+      ascending range over a big index) and stops only on an empty page (LIMIT counts
+      stale index entries, so a short page is not the last one). Measured: 28M
+      vertices in 12 min. Pin any new query's plan with `explain_sql()` in an
+      integration test — `FETCH FROM INDEX`, never `FETCH FROM TYPE`.
 
 ## 6. Failing safely
 

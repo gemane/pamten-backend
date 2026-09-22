@@ -123,12 +123,14 @@ def test_every_owner_page_is_an_index_read_including_the_first(it_db):
     """On the sizing box the FIRST page — `ORDER BY id LIMIT n` with no
     predicate — was planned as a full scan of the 6.4 GB Entity type and hit the
     60 s timeout before one page came back; only the later pages, which carry
-    `WHERE id > last`, were index reads. The pager must say `WHERE id > ''` from
-    the start. Checked against the real planner, since only it decides."""
+    `WHERE id > last`, were index reads. Every page must be a two-sided range
+    from the start (see app/db/paging.py). Checked against the real planner,
+    since only it decides."""
+    from app.db import paging
     from app.scraper import maintenance
 
     issued: list[str] = []
-    real_run_sql = maintenance.run_sql
+    real_run_sql = paging.run_sql
 
     def spy(cmd, *a, **k):
         issued.append(cmd)
@@ -136,7 +138,7 @@ def test_every_owner_page_is_an_index_read_including_the_first(it_db):
 
     it_db.run_command("CREATE (:Entity {id:'a'})")
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(maintenance, "run_sql", spy)
+        mp.setattr(paging, "run_sql", spy)
         maintenance.count_duplicate_owns_edges()
     pages = [c for c in issued if c.startswith("SELECT id, @rid AS rid FROM")]
     assert pages and all("WHERE id > '" in c and "AND id < '" in c for c in pages), pages

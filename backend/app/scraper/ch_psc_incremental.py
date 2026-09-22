@@ -58,6 +58,7 @@ from datetime import date, datetime
 from hashlib import blake2b
 from typing import IO, Iterator
 
+from app.db.paging import iter_id_pages
 from app.db.arcadedb import run_command, run_sql
 from app.claims import KIND_OWNS
 from app.scraper.bulk_import import (
@@ -360,21 +361,13 @@ def existing_company_ids() -> set[str]:
     """Every `gb-coh:` Entity id in the graph — the gate for `only_existing`.
 
     Companies, not persons: a PSC person node exists only because of a PSC edge, so
-    the controlled company is the thing to ask about. Paged by @rid for the reason
-    `existing_lei_ids` is — an unpaged select over millions blows the query heap.
+    the controlled company is the thing to ask about. Paged through the `id` index
+    (`app.db.paging`) for the reason `existing_lei_ids` is: `@rid > last` paging
+    scans the whole type per page.
     """
     ids: set[str] = set()
-    last: str | None = None
-    while True:
-        where = "WHERE id LIKE 'gb-coh:%'" + (f" AND @rid > {last}" if last else "")
-        rows = run_sql(f"SELECT @rid AS rid, id FROM Entity {where} "
-                       f"ORDER BY @rid LIMIT {_LEI_ID_PAGE}")
-        if not rows:
-            break
+    for rows in iter_id_pages("Entity", "gb-coh:", page=_LEI_ID_PAGE, columns="id"):
         ids.update(r["id"] for r in rows)
-        last = rows[-1]["rid"]
-        if len(rows) < _LEI_ID_PAGE:
-            break
     return ids
 
 
