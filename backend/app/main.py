@@ -8,6 +8,7 @@ from threading import Lock
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app import analytics
+from app.version import APP_VERSION
 from app.config import settings
 from app.db.arcadedb import close_client
 from app.db.schema import ensure_indexes
@@ -90,7 +91,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     description="A platform for mapping corporate ownership hierarchies worldwide.",
-    version="0.1.0",
+    version=APP_VERSION,
     debug=settings.DEBUG,
     lifespan=lifespan,
 )
@@ -186,7 +187,7 @@ def root():
     return {
         "message": "Owlgraph Ownership Platform API",
         "status": "running",
-        "version": "0.1.0",
+        "version": APP_VERSION,
         "docs": "/docs",
         "licence": {
             "code": "MIT",

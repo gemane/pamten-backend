@@ -1,0 +1,103 @@
+name: Release
+
+# A release is a git tag on main: `v1.2.3` (see docs/operations.md, "Releases").
+# The tag is the ONLY place the version number lives. This workflow turns it into
+# a versioned API image and a GitHub release with notes; production then pulls
+# exactly that image by its version (docker compose), so deploying and rolling
+# back are both "pick a tag".
+#
+# The web app and the Android app are released from pamten-frontend with the SAME
+# tag, so one number describes what users run.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write     # create the GitHub release
+  packages: write     # push the image to GHCR
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/pamten-backend
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # the release notes and the main-ancestry check need history
+
+      # Semantic versioning is load-bearing: the minimum-app-version switch compares
+      # versions numerically and the Android build number is derived from them.
+      - name: Tag is vMAJOR.MINOR.PATCH
+        run: |
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$TAG' is not a release tag (expected v1.2.3)"; exit 1
+          fi
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      # Releases come from main only: develop is what dev runs, main is what was
+      # verified there. A tag on a feature branch must not become a release.
+      - name: Tagged commit is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG ($GITHUB_SHA) is not on main"; exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Unit tests
+        env:
+          ARCADEDB_URL: http://localhost:2480
+          ARCADEDB_USERNAME: test
+          ARCADEDB_PASSWORD: test
+          ARCADEDB_DATABASE: test
+          SECRET_KEY: test-secret-key-for-ci-not-for-production-use-32-plus-chars
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          python -m pytest tests --ignore=tests/integration -q
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image
+        run: |
+          docker build backend \
+            --build-arg APP_VERSION="$VERSION" \
+            --build-arg GIT_COMMIT="$GITHUB_SHA" \
+            --label org.opencontainers.image.version="$VERSION" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
+            -t "$IMAGE:$VERSION"
+
+      # Prove the number made it into the image before anything is published.
+      - name: Image reports its version
+        run: |
+          got=$(docker run --rm "$IMAGE:$VERSION" python -c "from app.version import APP_VERSION; print(APP_VERSION)")
+          echo "image says $got"
+          test "$got" = "$VERSION"
+
+      # Only the version tag — no `latest`. Production names the version it runs,
+      # so what is deployed is always readable from the compose file.
+      - name: Push the image
+        run: docker push "$IMAGE:$VERSION"
+
+      - name: GitHub release with notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Notes = the squash-merged PR titles since the previous release tag.
+          prev=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
+          gh release create "$TAG" --verify-tag --generate-notes --title "$TAG" \
+            ${prev:+--notes-start-tag "$prev"} \
+            --notes "API image: \`$IMAGE:$VERSION\`"
