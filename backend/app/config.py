@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 
 INSECURE_DEFAULT_SECRET_KEY = "change-me-in-production-use-a-long-random-string"
@@ -141,9 +141,7 @@ class Settings(BaseSettings):
     GEOCODING_CONTACT:                str   = ""
     GEOCODING_MIN_INTERVAL:           float = 1.0
 
-    class Config:
-        env_file = ".env"
-        extra    = "ignore"
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @model_validator(mode="after")
     def _require_secret_key_override_in_production(self) -> "Settings":
