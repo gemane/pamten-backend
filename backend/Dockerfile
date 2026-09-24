@@ -1,4 +1,6 @@
-FROM python:3.11-slim
+# The same Python as CI and local development — the lock (requirements.txt) is
+# resolved for it. Only the runtime lock: the test/lint tools stay out of the image.
+FROM python:3.13-slim
 
 WORKDIR /app
 

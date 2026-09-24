@@ -1,0 +1,9 @@
+# Test and lint tools — CI and local development only, never in the production image.
+# Locked in requirements-dev.txt against the runtime lock, so tests run against
+# exactly the versions that ship:
+#   pip-compile --strip-extras requirements-dev.in
+-c requirements.txt
+-r requirements.in
+pytest               # MIT
+pytest-asyncio       # Apache-2.0
+ruff                 # MIT

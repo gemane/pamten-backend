@@ -21,21 +21,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
       - name: Install dependencies
-        run: cd backend && pip install -r requirements.txt
+        run: cd backend && pip install -r requirements-dev.txt
 
       - name: Run tests
         run: cd backend && python -m pytest tests/ -v --tb=short
@@ -81,13 +81,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Install dependencies
-        run: cd backend && pip install -r requirements.txt
+        run: cd backend && pip install -r requirements-dev.txt
 
       - name: Wait for ArcadeDB to be ready
         run: |
@@ -108,13 +108,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Install ruff
-        run: pip install ruff==0.4.4
+        run: pip install "$(grep -E '^ruff==' backend/requirements-dev.txt)"
 
       - name: Run ruff
         run: ruff check backend/app --select E,F,W --ignore E501
