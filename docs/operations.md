@@ -3,6 +3,27 @@
 Running the database day to day: backups, getting one back, and the service
 account a rebuild takes with it.
 
+## Releases & versions
+
+One product version for the API, the web app and the Android app, in semantic
+versioning, **from the git tag only** — `app/version.py` reads `APP_VERSION`, which the
+release build passes in; every other build reports `0.0.0-dev` (+ the commit on Render).
+
+- **Release = tag `vX.Y.Z` on `main`**, with the same number in pamten-frontend
+  (`~/scripts/release.sh X.Y.Z` does both). `.github/workflows/release.yml` checks the
+  tag format and that the commit is on `main`, runs the unit tests, builds the image
+  with the version baked in, proves the image reports it, pushes
+  `ghcr.io/<owner>/pamten-backend:X.Y.Z` (never `latest`) and creates the GitHub
+  release with notes from the merged PRs since the previous tag.
+- **Production runs a named version**: the compose file says `pamten-backend:X.Y.Z`,
+  so what is deployed is readable from it, and a rollback is the previous number.
+- **Order on release day:** API first — it must keep serving the previous app — then
+  the web app, then the Android rollout. Raise the minimum app version only when an
+  old app would really break.
+- **Schema changes go in a maintenance window, not at startup** — on a large database
+  DDL takes the schema lock (see the sizing notes in the hosting plan).
+- Hotfix: fix on develop → fast-forward main → tag the next patch version.
+
 ## Backups
 
 ```bash
