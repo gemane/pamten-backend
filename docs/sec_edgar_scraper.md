@@ -784,6 +784,10 @@ back from the newest.
 - **The run stops at the first gap** — a year the name is missing, or an exhibit
   that cannot be read (early plain-text ones). Filers may omit insignificant
   subsidiaries, so a gap proves nothing; stopping there keeps the bound true.
+- **On the pair's one edge**, whichever source holds its answer: a subsidiary
+  the UK register also records keeps the register's stake and gains the bound.
+  The subsidiaries come from SEC's Exhibit 21/8.1 **claims**, not the edge's
+  filing type, and a pair no list ever named is never dated.
 - **Only earlier, never later:** a `since` that is already earlier (a stated start,
   a previous run) is kept. A subsidiary listed only in the newest filing gets that
   year-end — "since 2026 or earlier" is true too (newly acquired, or newly

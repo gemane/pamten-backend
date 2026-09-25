@@ -20,6 +20,7 @@ from app.db.anchors import label_or_entity
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.scraper.graph_writer import _matching_role, _now_iso, _relabel_if_more_credible
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
+from app.scraper.owns_merge import ANSWER_FIELDS, SINCE_FIELDS, combine_since, outranks
 
 log = logging.getLogger(__name__)
 
@@ -248,6 +249,10 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     the id lookups use the index — a label-less two-node match full-scans every
     node (~14s on 3M) per edge.
 
+    One active edge per pair: when another source already drew this pair, SEC
+    takes over that edge (``_share_owns_edge``, rules in
+    ``app.scraper.owns_merge``) instead of drawing its own beside it.
+
     ``until`` records a holding that has already ended — a 13D/13G filer that
     later amended to 0% has dropped below the 5% threshold, so the stake is
     history rather than a current position. An active edge for the same pair is
@@ -338,6 +343,18 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 vusd=value_usd, ftype=filing_type,
             )
             return
+        # Another source already holds this pair: take over ITS edge rather than
+        # drawing a second one beside it (see app.scraper.owns_merge).
+        shared = session.run(
+            f"""
+            MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+            WHERE r.until IS NULL RETURN r LIMIT 1
+            """,
+            oid=owner_id, nid=owned_id,
+        ).single()
+        if shared:
+            _share_owns_edge(session, owner_label, owner_id, owned_id, shared["r"], bag, now)
+            return
         session.run(
             f"""
             MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
@@ -347,27 +364,69 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         )
 
 
+def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,
+                     current, bag: dict, now: str) -> None:
+    """Apply an SEC assertion to the pair's active edge that another source drew.
+
+    The answer (stake, source, link, end date…) is taken over only when SEC
+    outranks the source holding it — a stated stake first, then credibility —
+    and then as a unit; the start date is combined (earliest wins, a lower bound
+    keeps its label); freshness moves when SEC is at least as credible, the same
+    rule as the generic writer. The claim was recorded before this is reached,
+    so SEC's own answer is never lost when the edge keeps another's.
+    """
+    held = {f: current.get(f) for f in (*ANSWER_FIELDS, *SINCE_FIELDS)}
+    sets: dict = {}
+    takeover = outranks(bag, held)
+    if takeover:
+        sets.update({f: bag.get(f) for f in ANSWER_FIELDS})
+    since = combine_since(held, bag)
+    sets.update({f: v for f, v in since.items() if v != held.get(f)})
+    if takeover or int(bag.get("credibility_score") or 0) >= int(held.get("credibility_score") or 0):
+        sets.update(last_scraped_at=now, stale=False)
+    if not sets:
+        return
+    assignments = ", ".join(f"r.{f} = $v_{f}" for f in sets)
+    session.run(
+        f"""
+        MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+        WHERE r.until IS NULL SET {assignments}
+        """,
+        oid=owner_id, nid=owned_id, **{f"v_{f}": v for f, v in sets.items()},
+    )
+
+
 def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: str | None) -> bool:
     """Date a subsidiary-list edge by its oldest listing: "owned since at least".
 
-    Only on an ACTIVE Exhibit 21/8.1 edge, and only ever EARLIER: a `since` that
-    is already earlier (a stated start, or an older listing found before) is
-    kept. Sets ``since_basis = "first_listed"`` so a reader can tell a lower
+    On the pair's ACTIVE edge, whichever source holds its answer — one edge per
+    pair, and the start date is combined across sources (``owns_merge``) — and
+    only ever EARLIER: a `since` that is already earlier (a stated start, or an
+    older listing found before) is kept, and a stated start on the same day
+    beats the bound. Sets ``since_basis = "first_listed"`` so a reader can tell a lower
     bound from a stated start, and ``since_source_url`` to the filing that
     proves it. The claim for the same pair and filing type moves with it.
     Returns whether the edge changed.
+
+    Only for a pair an annual list actually names — an Exhibit 21/8.1 CLAIM, not
+    the edge's own filing type, since the shared edge may carry another source's
+    answer (a PSC stake outranks a list that states none).
     """
+    from app.db.arcadedb import run_sql
+    listed = run_sql(
+        "SELECT count(*) AS n FROM Claim WHERE from_id = :o AND to_id = :n AND kind = 'owns' "
+        "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1')", {"o": owner_id, "n": owned_id})
+    if not (listed and listed[0].get("n")):
+        return False
     with db.get_session() as session:
         rec = session.run(
             """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
-               WHERE r.until IS NULL AND (r.filing_type = 'EX-21' OR r.filing_type = 'EX-8.1')
-                 AND (r.since IS NULL OR r.since > $since)
+               WHERE r.until IS NULL AND (r.since IS NULL OR r.since > $since)
                SET r.since = $since, r.since_basis = 'first_listed', r.since_source_url = $url
                RETURN count(r) AS n""",
             o=owner_id, n=owned_id, since=since, url=source_url).single()
     changed = bool(rec and rec.get("n"))
     if changed:
-        from app.db.arcadedb import run_sql
         run_sql("UPDATE Claim SET since = :since, since_basis = 'first_listed', "
                 "since_source_url = :url WHERE kind = 'owns' AND from_id = :o AND to_id = :n "
                 "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1') "

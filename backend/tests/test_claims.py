@@ -88,6 +88,14 @@ class TestBestClaim:
         weak_with_pct = claim("blog",  cred=20, stake=42.0)
         assert best_claim([weak_with_pct, strong_no_pct])["source_id"] == "gleif"
 
+    def test_among_registers_a_stated_stake_beats_a_silent_list(self):
+        """The UK register's 75% over SEC's Exhibit 21, which names the
+        subsidiary with no number — the rule the shared edge follows too
+        (app.scraper.owns_merge)."""
+        ex21 = claim("sec", cred=98, stake=None)
+        psc = claim("ch-psc", cred=97, stake=75.0)
+        assert best_claim([ex21, psc])["source_id"] == "ch-psc"
+
     def test_missing_credibility_is_treated_as_zero_not_an_error(self):
         assert best_claim([{"source_id": "x"}, claim("y", cred=1)])["source_id"] == "y"
 
