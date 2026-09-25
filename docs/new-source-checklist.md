@@ -184,6 +184,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `record_claim` for the per-source assertion — that is what makes a conflict
       inspectable later instead of a mystery.
 - [ ] **`credibility_score` is written on the edge**, not assumed from the source name.
+- [ ] **A list is not a start date.** A document that lists holdings *as of* a date (an
+      Exhibit 21, a 13F, a register snapshot) gives an as-of `source_date`, never a
+      `since`: storing the filing date as the start made News Corp's FY2026 Exhibit 21
+      "acquire" 200 subsidiaries in 2026. Where older lists exist, their unbroken run
+      gives a lower bound — store it with `since_basis` saying so.
 - [ ] **Instant sources stamp the target** with `set_scrape_target`, or the freshness gate
       cannot tell a scraped company from an untouched one and will re-scrape forever.
 - [ ] **Wrap the run in `record_run`** so it appears in `GET /scraper/runs`. That log, not

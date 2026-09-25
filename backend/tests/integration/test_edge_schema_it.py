@@ -34,6 +34,7 @@ _SAMPLE = {
     "ultimate_since": "2017-01-01", "ultimate_until": None,
     "value_usd": 12345678.9, "file_date": "2025-02-07",
     "filing_type": "13G/A",
+    "since_basis": "first_listed", "since_source_url": "https://sec.example.test/ex21-2014",
     "role": "CEO", "relation": "group_member",
 }
 

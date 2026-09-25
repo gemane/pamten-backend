@@ -90,6 +90,8 @@ def claim_props(
     shares_outstanding: int | None = None,
     voting_shares: int | None = None,
     filing_type: str | None = None,
+    since_basis: str | None = None,
+    since_source_url: str | None = None,
 ) -> dict:
     """The property bag for one claim, ready to UPSERT on `claim_key`.
 
@@ -123,6 +125,11 @@ def claim_props(
         # The record KIND behind the assertion — the Sources panel shows it as
         # "SEC EDGAR · 13F", which tells a reader whose rulebook to read.
         "filing_type": filing_type,
+        # How `since` is known when it is not the stated start: "first_listed" =
+        # the oldest annual subsidiary list naming it, a lower bound — without
+        # this a claim's since would read as the start of the holding.
+        "since_basis": since_basis,
+        "since_source_url": since_source_url,
         "last_seen_at": now_iso(),
     }
 

@@ -619,6 +619,23 @@ def cmd_sec_formd(args):
               f"(GP vehicles are entities, not people).")
 
 
+def cmd_sec_ex21_history(args):
+    """Date an issuer's Exhibit 21 subsidiaries by their oldest unbroken listing
+    in earlier annual filings: a lower bound, marked as such."""
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_SEC_EDGAR_ENABLED = True
+    from app.scraper.runner import run_sec_ex21_history
+    r = run_sec_ex21_history(args.company, max_filings=args.max_filings)
+    if r["status"] != "ok":
+        print(r.get("detail") or f"{r['status']} for {args.company!r}")
+        raise SystemExit(1)
+    print(f"{r['total']} of {r['subsidiaries']} subsidiaries of {r['company']!r} dated "
+          f"'owned since at least' (earliest {r['earliest_dated'] or '—'}), from "
+          f"{r['readable']} readable of {r['filings']} annual filings back to "
+          f"{r['oldest_filing']}; {r['unmatched']} named differently in the exhibit.")
+
+
 def cmd_sec_ex21(args):
     """Ingest one issuer's statutory subsidiary list from its annual filing.
 
@@ -1300,6 +1317,14 @@ def _build_parser():
     p_ex21.add_argument('--force', action='store_true',
                         help='Re-read even if this annual filing is already ingested')
     p_ex21.set_defaults(func=cmd_sec_ex21)
+
+    p_ex21h = subparsers.add_parser('sec-ex21-history',
+        help="Date an issuer's subsidiaries by their oldest listing in earlier 10-K Exhibit 21s "
+             "(\"owned since at least\")")
+    p_ex21h.add_argument('company', help='Company name as known to the graph')
+    p_ex21h.add_argument('--max-filings', type=int, default=None,
+                         help='Annual filings to read, newest first (default 25; ~2 requests each)')
+    p_ex21h.set_defaults(func=cmd_sec_ex21_history)
 
     p_13f = subparsers.add_parser('sec-13f',
         help="Institutional holders of one company from Form 13F (the sub-5%% view)")

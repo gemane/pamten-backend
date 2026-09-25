@@ -933,6 +933,75 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 "scraped": scraped}
 
 
+def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
+    """Date an issuer's subsidiary edges by their OLDEST listing: "owned since
+    at least".
+
+    An Exhibit 21 says what is held at year-end, never since when, so the
+    subsidiary edges it writes are undated. Reading the company's older annual
+    filings (back to ~2001) gives each current subsidiary the first year of its
+    unbroken run of listings — dated by the fiscal year-end that list
+    describes: a lower bound that is still true (see
+    ``sec_ex21.earliest_listing``). A subsidiary listed only this year gets
+    this year's year-end: "since 2026 or earlier" is true too. Only moves a
+    start date EARLIER, never later.
+
+    Enriches, does not discover: the company needs a CIK and its Exhibit 21
+    edges (run ``sec-ex21`` first). About two EDGAR requests per annual filing.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise PermissionError("SEC EDGAR scraper is disabled. "
+                              "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
+    from app.routers.search import resolve_best_entity
+    from app.scraper.run_log import record_run
+    from app.scraper.sec_ex21 import (HISTORY_MAX_FILINGS, earliest_listing,
+                                       fetch_subsidiary_history)
+    from app.scraper.sec_writer import set_since_lower_bound
+
+    entity = resolve_best_entity(company, None)
+    if not entity:
+        return {"status": "no_results", "company": company, "total": 0}
+    company_id = entity["id"]
+    if not entity.get("sec_cik"):
+        return {"status": "needs_sec_scrape", "company": company, "entity_id": company_id,
+                "total": 0, "detail": "The entity has no SEC CIK yet — run the SEC EDGAR "
+                                      "scrape first."}
+    with db.get_session() as session:
+        edges = list(session.run(
+            """MATCH (c:Entity {id: $id})-[r:OWNS]->(s:Entity)
+               WHERE r.until IS NULL AND (r.filing_type = 'EX-21' OR r.filing_type = 'EX-8.1')
+               RETURN s.id AS sid, s.name AS name""", id=company_id))
+    if not edges:
+        return {"status": "no_subsidiaries", "company": company, "entity_id": company_id,
+                "total": 0, "detail": "No Exhibit 21 subsidiaries in the graph yet — run "
+                                      "sec-ex21 first."}
+
+    with record_run("sec-ex21-history", company) as run:
+        history = fetch_subsidiary_history(entity["sec_cik"], max_filings or HISTORY_MAX_FILINGS)
+        read = [h for h in history if h["names"] is not None]
+        if not read:
+            run["status"], run["note"] = "failed", "no readable annual subsidiary list"
+            return {"status": "no_history", "company": company, "entity_id": company_id,
+                    "total": 0, "filings": len(history)}
+        dated = unmatched = 0
+        oldest = None
+        for e in edges:
+            found = earliest_listing(history, e["name"] or "")
+            if not found:
+                unmatched += 1          # named differently in the exhibit than in the graph
+                continue
+            if set_since_lower_bound(company_id, e["sid"], found["as_of"], found["url"]):
+                dated += 1
+                oldest = min(oldest or found["as_of"], found["as_of"])
+        run["total"] = dated
+        return {"status": "ok", "company": company, "entity_id": company_id,
+                "total": dated, "subsidiaries": len(edges), "unmatched": unmatched,
+                "filings": len(history), "readable": len(read),
+                "oldest_filing": read[-1]["filing_date"], "earliest_dated": oldest}
+
+
 @_with_autodedup
 def run_sec_formd(company: str, force: bool = False) -> dict:
     """Ingest one issuer's board and officers from its newest SEC Form D.

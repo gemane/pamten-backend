@@ -24,7 +24,7 @@ import logging
 import re
 from html.parser import HTMLParser
 
-from app.scraper.sec_edgar import _cik10, _get, _get_text, _iso_date
+from app.scraper.sec_edgar import SUBMISSIONS_URL, _cik10, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
 
@@ -37,49 +37,86 @@ _EXHIBIT_PATTERNS = (re.compile(r"ex[-._]?21", re.I),
                      re.compile(r"ex[-._]?8[-._]?1", re.I))
 
 
-def annual_exhibit_candidates(cik: str) -> list[dict]:
-    """Candidate subsidiary-exhibit files from the newest 10-K/20-F.
+#: How far back the subsidiary history reads: one annual filing per year, two
+#: requests each (the filing index and the exhibit; exhibits are Archives files
+#: and cached forever). Electronic exhibits in HTML start around 2001.
+HISTORY_MAX_FILINGS = 25
+#: Older submission pages opened for filings beyond the inline "recent" list.
+HISTORY_MAX_OLDER_PAGES = 3
 
-    A list, not one file: exhibit numbering is ambiguous by filename alone —
-    AB InBev's `dex215.htm` is exhibit 2.15 (securities descriptions), not
-    21.5, and only parsing tells them apart. For a 20-F the ex-8 patterns
-    are tried first (that is where its subsidiary list lives), for a 10-K
-    the ex-21 ones. A 404 on the submissions API (a stale CIK on an old
-    filer) is "no filings", not an error."""
+_EX21_NAMES = (re.compile(r"ex[-._]?21", re.I), re.compile(r"exhibit[-._]?21", re.I),
+               re.compile(r"subsidiar", re.I))
+_EX8_NAMES = (re.compile(r"ex[-._]?8[-._]?1", re.I), re.compile(r"dex8", re.I),
+              re.compile(r"subsidiar", re.I))
+
+
+def annual_filings(cik: str, include_older: bool = False) -> list[tuple[str, str, str, str]]:
+    """(form, accession, filing date, report date) of the 10-K/20-F filings,
+    newest first. The report date is the fiscal year-end the filing covers —
+    what its subsidiary list is "as of" ("" when EDGAR does not give one).
+
+    The inline "recent" list only, unless ``include_older`` — then also up to
+    ``HISTORY_MAX_OLDER_PAGES`` of the older pages EDGAR splits long histories
+    into. A 404 on the submissions API (a stale CIK on an old filer) is "no
+    filings", not an error."""
     try:
         subs = _get(f"https://data.sec.gov/submissions/CIK{_cik10(cik)}.json")
     except Exception as exc:  # noqa: BLE001 - stale CIKs 404; treat as absent
         log.info("submissions unavailable for CIK %s: %s", cik, exc)
         return []
-    recent = (subs.get("filings") or {}).get("recent") or {}
-    rows = zip(recent.get("form") or [], recent.get("accessionNumber") or [],
-               recent.get("filingDate") or [])
-    ex21 = [re.compile(r"ex[-._]?21", re.I), re.compile(r"exhibit[-._]?21", re.I),
-            re.compile(r"subsidiar", re.I)]
-    ex8 = [re.compile(r"ex[-._]?8[-._]?1", re.I), re.compile(r"dex8", re.I),
-           re.compile(r"subsidiar", re.I)]
-    for form, accession, filed in rows:
-        if form not in _ANNUAL_FORMS:
-            continue
-        acc = accession.replace("-", "")
-        base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}"
-        index = _get(f"{base}/index.json")
-        names = [it.get("name") or ""
-                 for it in (index.get("directory") or {}).get("item") or []]
-        patterns = ex8 + ex21 if form == "20-F" else ex21 + ex8
-        out, seen = [], set()
-        for pat in patterns:
-            for name in names:
-                if name in seen or not name.lower().endswith((".htm", ".html")):
-                    continue
-                if pat.search(name):
-                    seen.add(name)
-                    out.append({"url": f"{base}/{name}", "form": form,
-                                "filing_date": _iso_date(filed),
-                                "accession": accession})
-        # the newest annual filing decides; do not walk back to older years
-        return out
-    return []
+    pages = [(subs.get("filings") or {}).get("recent") or {}]
+    if include_older:
+        for f in ((subs.get("filings") or {}).get("files") or [])[:HISTORY_MAX_OLDER_PAGES]:
+            try:
+                pages.append(_get(f"{SUBMISSIONS_URL}/{f['name']}"))
+            except Exception as exc:  # noqa: BLE001 - history is best-effort
+                log.warning("older submissions page %s failed: %s", f.get("name"), exc)
+                break
+    out: list[tuple[str, str, str, str]] = []
+    for page in pages:
+        forms = page.get("form") or []
+        periods = page.get("reportDate") or [""] * len(forms)
+        for form, accession, filed, period in zip(forms, page.get("accessionNumber") or [],
+                                                  page.get("filingDate") or [], periods):
+            if form in _ANNUAL_FORMS:
+                out.append((form, accession, filed, period or ""))
+    out.sort(key=lambda r: r[2], reverse=True)
+    return out
+
+
+def exhibit_candidates(cik: str, form: str, accession: str, filed: str,
+                       period: str = "") -> list[dict]:
+    """Candidate subsidiary-exhibit files of ONE annual filing.
+
+    A list, not one file: exhibit numbering is ambiguous by filename alone —
+    AB InBev's `dex215.htm` is exhibit 2.15 (securities descriptions), not
+    21.5, and only parsing tells them apart. For a 20-F the ex-8 patterns
+    are tried first (that is where its subsidiary list lives), for a 10-K
+    the ex-21 ones."""
+    acc = accession.replace("-", "")
+    base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}"
+    index = _get(f"{base}/index.json")
+    names = [it.get("name") or "" for it in (index.get("directory") or {}).get("item") or []]
+    patterns = _EX8_NAMES + _EX21_NAMES if form == "20-F" else _EX21_NAMES + _EX8_NAMES
+    out, seen = [], set()
+    for pat in patterns:
+        for name in names:
+            if name in seen or not name.lower().endswith((".htm", ".html")):
+                continue
+            if pat.search(name):
+                seen.add(name)
+                out.append({"url": f"{base}/{name}", "form": form,
+                            "filing_date": _iso_date(filed), "accession": accession,
+                            "period": _iso_date(period) if period else None})
+    return out
+
+
+def annual_exhibit_candidates(cik: str) -> list[dict]:
+    """Candidate subsidiary-exhibit files from the NEWEST 10-K/20-F — the
+    newest annual filing decides; this does not walk back to older years
+    (``fetch_subsidiary_history`` does)."""
+    filings = annual_filings(cik)
+    return exhibit_candidates(cik, *filings[0]) if filings else []
 
 
 class _TableTextParser(HTMLParser):
@@ -411,3 +448,63 @@ def fetch_subsidiaries(cik: str) -> dict | None:
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
                  meta["url"])
     return None
+
+
+def _parse_first(candidates: list[dict]) -> tuple[list[dict], dict] | None:
+    """The first candidate exhibit that parses to subsidiaries, with its meta."""
+    for meta in candidates:
+        subs = parse_exhibit(_get_text(meta["url"]))
+        if subs:
+            return subs, meta
+        log.info("candidate %s parsed to zero subsidiaries — trying the next", meta["url"])
+    return None
+
+
+def fetch_subsidiary_history(cik: str, max_filings: int = HISTORY_MAX_FILINGS) -> list[dict]:
+    """The subsidiary lists of the company's annual filings, newest first.
+
+    [{"as_of", "filing_date", "form", "url", "names": {normalised names}}] —
+    ``as_of`` is the fiscal year-end the list describes (the filing date when
+    EDGAR gives no report date); ``names`` is
+    None for a filing whose exhibit could not be read (an old plain-text one, a
+    missing exhibit). ``earliest_listing`` treats that as a gap, so a year we
+    cannot read never extends a subsidiary's history."""
+    from app.scraper.mapper import normalize_entity_name
+    out: list[dict] = []
+    for form, accession, filed, period in annual_filings(cik, include_older=True)[:max_filings]:
+        as_of = _iso_date(period) if period else _iso_date(filed)
+        try:
+            got = _parse_first(exhibit_candidates(cik, form, accession, filed, period))
+        except Exception as exc:  # noqa: BLE001 - one bad year is a gap, not a failure
+            log.warning("annual filing %s: exhibit unreadable: %s", accession, exc)
+            got = None
+        if got:
+            subs, meta = got
+            names = {normalize_entity_name(sub["name"]) or sub["name"].lower() for sub in subs}
+            out.append({"as_of": as_of, "filing_date": meta["filing_date"], "form": form,
+                        "url": meta["url"], "names": names})
+        else:
+            out.append({"as_of": as_of, "filing_date": _iso_date(filed), "form": form,
+                        "url": None, "names": None})
+    return out
+
+
+def earliest_listing(history: list[dict], name: str) -> dict | None:
+    """The oldest filing in the UNBROKEN run of annual lists naming ``name``,
+    counting back from the newest — {"as_of", "filing_date", "url"} — or None
+    when the newest list does not name it. ``as_of`` (that list's fiscal
+    year-end) is the lower bound: held then, possibly longer.
+
+    The run stops at the first year the name is missing or the list could not
+    be read. Filers may leave out insignificant subsidiaries (Reg S-K Item
+    601(b)(21)), so a gap proves nothing either way; stopping there keeps the
+    result a LOWER bound that is still true: the company held the subsidiary
+    at least since that filing, possibly longer."""
+    from app.scraper.mapper import normalize_entity_name
+    key = normalize_entity_name(name) or (name or "").lower()
+    found = None
+    for entry in history:
+        if not entry["names"] or key not in entry["names"]:
+            break
+        found = {"as_of": entry["as_of"], "filing_date": entry["filing_date"], "url": entry["url"]}
+    return found
