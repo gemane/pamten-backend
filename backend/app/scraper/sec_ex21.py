@@ -50,8 +50,10 @@ _EX8_NAMES = (re.compile(r"ex[-._]?8[-._]?1", re.I), re.compile(r"dex8", re.I),
               re.compile(r"subsidiar", re.I))
 
 
-def annual_filings(cik: str, include_older: bool = False) -> list[tuple[str, str, str]]:
-    """(form, accession, filing date) of the 10-K/20-F filings, newest first.
+def annual_filings(cik: str, include_older: bool = False) -> list[tuple[str, str, str, str]]:
+    """(form, accession, filing date, report date) of the 10-K/20-F filings,
+    newest first. The report date is the fiscal year-end the filing covers —
+    what its subsidiary list is "as of" ("" when EDGAR does not give one).
 
     The inline "recent" list only, unless ``include_older`` — then also up to
     ``HISTORY_MAX_OLDER_PAGES`` of the older pages EDGAR splits long histories
@@ -70,17 +72,20 @@ def annual_filings(cik: str, include_older: bool = False) -> list[tuple[str, str
             except Exception as exc:  # noqa: BLE001 - history is best-effort
                 log.warning("older submissions page %s failed: %s", f.get("name"), exc)
                 break
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str]] = []
     for page in pages:
-        for form, accession, filed in zip(page.get("form") or [], page.get("accessionNumber") or [],
-                                          page.get("filingDate") or []):
+        forms = page.get("form") or []
+        periods = page.get("reportDate") or [""] * len(forms)
+        for form, accession, filed, period in zip(forms, page.get("accessionNumber") or [],
+                                                  page.get("filingDate") or [], periods):
             if form in _ANNUAL_FORMS:
-                out.append((form, accession, filed))
+                out.append((form, accession, filed, period or ""))
     out.sort(key=lambda r: r[2], reverse=True)
     return out
 
 
-def exhibit_candidates(cik: str, form: str, accession: str, filed: str) -> list[dict]:
+def exhibit_candidates(cik: str, form: str, accession: str, filed: str,
+                       period: str = "") -> list[dict]:
     """Candidate subsidiary-exhibit files of ONE annual filing.
 
     A list, not one file: exhibit numbering is ambiguous by filename alone —
@@ -101,7 +106,8 @@ def exhibit_candidates(cik: str, form: str, accession: str, filed: str) -> list[
             if pat.search(name):
                 seen.add(name)
                 out.append({"url": f"{base}/{name}", "form": form,
-                            "filing_date": _iso_date(filed), "accession": accession})
+                            "filing_date": _iso_date(filed), "accession": accession,
+                            "period": _iso_date(period) if period else None})
     return out
 
 
@@ -457,32 +463,37 @@ def _parse_first(candidates: list[dict]) -> tuple[list[dict], dict] | None:
 def fetch_subsidiary_history(cik: str, max_filings: int = HISTORY_MAX_FILINGS) -> list[dict]:
     """The subsidiary lists of the company's annual filings, newest first.
 
-    [{"filing_date", "form", "url", "names": {normalised names}}] — ``names`` is
+    [{"as_of", "filing_date", "form", "url", "names": {normalised names}}] —
+    ``as_of`` is the fiscal year-end the list describes (the filing date when
+    EDGAR gives no report date); ``names`` is
     None for a filing whose exhibit could not be read (an old plain-text one, a
     missing exhibit). ``earliest_listing`` treats that as a gap, so a year we
     cannot read never extends a subsidiary's history."""
     from app.scraper.mapper import normalize_entity_name
     out: list[dict] = []
-    for form, accession, filed in annual_filings(cik, include_older=True)[:max_filings]:
+    for form, accession, filed, period in annual_filings(cik, include_older=True)[:max_filings]:
+        as_of = _iso_date(period) if period else _iso_date(filed)
         try:
-            got = _parse_first(exhibit_candidates(cik, form, accession, filed))
+            got = _parse_first(exhibit_candidates(cik, form, accession, filed, period))
         except Exception as exc:  # noqa: BLE001 - one bad year is a gap, not a failure
             log.warning("annual filing %s: exhibit unreadable: %s", accession, exc)
             got = None
         if got:
             subs, meta = got
             names = {normalize_entity_name(sub["name"]) or sub["name"].lower() for sub in subs}
-            out.append({"filing_date": meta["filing_date"], "form": form,
+            out.append({"as_of": as_of, "filing_date": meta["filing_date"], "form": form,
                         "url": meta["url"], "names": names})
         else:
-            out.append({"filing_date": _iso_date(filed), "form": form, "url": None, "names": None})
+            out.append({"as_of": as_of, "filing_date": _iso_date(filed), "form": form,
+                        "url": None, "names": None})
     return out
 
 
 def earliest_listing(history: list[dict], name: str) -> dict | None:
     """The oldest filing in the UNBROKEN run of annual lists naming ``name``,
-    counting back from the newest — {"filing_date", "url"} — or None when the
-    newest list does not name it.
+    counting back from the newest — {"as_of", "filing_date", "url"} — or None
+    when the newest list does not name it. ``as_of`` (that list's fiscal
+    year-end) is the lower bound: held then, possibly longer.
 
     The run stops at the first year the name is missing or the list could not
     be read. Filers may leave out insignificant subsidiaries (Reg S-K Item
@@ -495,5 +506,5 @@ def earliest_listing(history: list[dict], name: str) -> dict | None:
     for entry in history:
         if not entry["names"] or key not in entry["names"]:
             break
-        found = {"filing_date": entry["filing_date"], "url": entry["url"]}
+        found = {"as_of": entry["as_of"], "filing_date": entry["filing_date"], "url": entry["url"]}
     return found

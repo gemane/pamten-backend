@@ -78,7 +78,9 @@ class TestTheWriter:
 def _history():
     from app.scraper.mapper import normalize_entity_name as n
     def entry(d, names):
-        return {"filing_date": d, "form": "10-K", "url": f"https://www.sec.gov/{d}.htm",
+        # News Corp's fiscal year ends in June; each list is as of that year-end
+        return {"as_of": d[:4] + "-06-30", "filing_date": d, "form": "10-K",
+                "url": f"https://www.sec.gov/{d}.htm",
                 "names": None if names is None else {n(x) for x in names}}
     return [entry("2026-08-07", ["Dow Jones & Company, Inc.", "HarperCollins Publishers L.L.C.",
                                  "Storyful Limited", "Earlier Start Ltd"]),
@@ -100,15 +102,18 @@ class TestTheRunner:
              patch("app.scraper.sec_ex21.fetch_subsidiary_history", return_value=_history()):
             res = runner.run_sec_ex21_history("News Corp")
         assert res["status"] == "ok"
-        # Dow Jones listed back to 2024 (then an unreadable year), HarperCollins
-        # to 2025; Storyful only this year → nothing to add; the earlier start
-        # stays; the 13F and the closed edge are not Exhibit 21 subsidiaries.
-        assert _edge(it_db, "dj")["since"] == "2024-08-08"
-        assert _edge(it_db, "hc")["since"] == "2025-08-08"
-        assert _edge(it_db, "st")["since"] is None
+        # Dated by the fiscal year-end of the oldest list in the unbroken run:
+        # Dow Jones back to FY2024 (then an unreadable year), HarperCollins to
+        # FY2025, Storyful listed only this year → this year's year-end ("since
+        # 2026 or earlier" is true too). The earlier start stays; the 13F and
+        # the closed edge are not Exhibit 21 subsidiaries.
+        assert _edge(it_db, "dj")["since"] == "2024-06-30"
+        assert _edge(it_db, "hc")["since"] == "2025-06-30"
+        assert _edge(it_db, "st") == {"since": "2026-06-30", "basis": "first_listed",
+                                      "url": "https://www.sec.gov/2026-08-07.htm"}
         assert _edge(it_db, "old")["since"] == "2001-01-01"
-        assert res["total"] == 2 and res["subsidiaries"] == 4 and res["unmatched"] == 0
-        assert res["readable"] == 3 and res["earliest_dated"] == "2024-08-08"
+        assert res["total"] == 3 and res["subsidiaries"] == 4 and res["unmatched"] == 0
+        assert res["readable"] == 3 and res["earliest_dated"] == "2024-06-30"
 
     def test_the_timeline_says_it_is_a_lower_bound(self, it_db):
         from app.routers.relationships import ownership_history_of

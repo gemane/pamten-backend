@@ -761,17 +761,22 @@ One exhibit dates nothing: it lists what is held at year-end. The company's
 (`run_sec_ex21_history`) reads its 10-K/20-F exhibits newest first — the inline
 submissions list plus up to three older pages, 25 filings by default, about two
 EDGAR requests each — and gives every current Exhibit 21/8.1 subsidiary the
-**oldest filing of its unbroken run of listings**, counting back from the newest.
+**fiscal year-end of the oldest list in its unbroken run of listings**, counting
+back from the newest.
 
-- **A lower bound, and marked as one:** `since` = that filing's date,
+- **A lower bound, and marked as one:** `since` = that list's fiscal year-end
+  (EDGAR's report date; the filing date only where none is given),
   `since_basis = "first_listed"`, `since_source_url` = the filing. The timeline
-  says "owned since at least". The subsidiary may well be older.
+  says "since 2014 or earlier". The year-end, not the filing date: a list is as of
+  the year-end, and a December-year company files in the next calendar year — its
+  FY2025 list, filed in February 2026, proves the holding at 2025-12-31.
 - **The run stops at the first gap** — a year the name is missing, or an exhibit
   that cannot be read (early plain-text ones). Filers may omit insignificant
   subsidiaries, so a gap proves nothing; stopping there keeps the bound true.
 - **Only earlier, never later:** a `since` that is already earlier (a stated start,
-  a previous run) is kept; a subsidiary listed only in the newest filing gains
-  nothing over undated and is left alone. The claim for the pair moves with the edge.
+  a previous run) is kept. A subsidiary listed only in the newest filing gets that
+  year-end — "since 2026 or earlier" is true too (newly acquired, or newly
+  significant enough to list). The claim for the pair moves with the edge.
 - Names are compared normalised ("Dow Jones & Company, Inc." = "DOW JONES &
   COMPANY INC"); a subsidiary the graph knows under another spelling (a GLEIF
   name) is counted as `unmatched` and stays undated.

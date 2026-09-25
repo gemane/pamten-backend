@@ -938,10 +938,11 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
     An Exhibit 21 says what is held at year-end, never since when, so the
     subsidiary edges it writes are undated. Reading the company's older annual
     filings (back to ~2001) gives each current subsidiary the first year of its
-    unbroken run of listings — a lower bound that is still true (see
-    ``sec_ex21.earliest_listing``). Only moves a start date EARLIER, never
-    later, and only on edges whose oldest listing predates the newest filing
-    (a subsidiary new this year gains nothing over "undated").
+    unbroken run of listings — dated by the fiscal year-end that list
+    describes: a lower bound that is still true (see
+    ``sec_ex21.earliest_listing``). A subsidiary listed only this year gets
+    this year's year-end: "since 2026 or earlier" is true too. Only moves a
+    start date EARLIER, never later.
 
     Enriches, does not discover: the company needs a CIK and its Exhibit 21
     edges (run ``sec-ex21`` first). About two EDGAR requests per annual filing.
@@ -982,7 +983,6 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
             run["status"], run["note"] = "failed", "no readable annual subsidiary list"
             return {"status": "no_history", "company": company, "entity_id": company_id,
                     "total": 0, "filings": len(history)}
-        newest = read[0]["filing_date"]
         dated = unmatched = 0
         oldest = None
         for e in edges:
@@ -990,11 +990,9 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
             if not found:
                 unmatched += 1          # named differently in the exhibit than in the graph
                 continue
-            if found["filing_date"] >= newest:
-                continue                # listed only in the newest filing: nothing to add
-            if set_since_lower_bound(company_id, e["sid"], found["filing_date"], found["url"]):
+            if set_since_lower_bound(company_id, e["sid"], found["as_of"], found["url"]):
                 dated += 1
-                oldest = min(oldest or found["filing_date"], found["filing_date"])
+                oldest = min(oldest or found["as_of"], found["as_of"])
         run["total"] = dated
         return {"status": "ok", "company": company, "entity_id": company_id,
                 "total": dated, "subsidiaries": len(edges), "unmatched": unmatched,

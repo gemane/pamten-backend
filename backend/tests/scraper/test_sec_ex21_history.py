@@ -10,7 +10,7 @@ def _hist(*years_and_names):
     """History entries newest first: (filing_date, names as the exhibit spells
     them, or None for an unreadable year) — normalised the way the fetcher does."""
     from app.scraper.mapper import normalize_entity_name
-    return [{"filing_date": d, "url": f"https://www.sec.gov/{d}.htm",
+    return [{"as_of": d, "filing_date": d, "url": f"https://www.sec.gov/{d}.htm",
              "names": None if names is None else {normalize_entity_name(x) for x in names}}
             for d, names in years_and_names]
 
@@ -45,6 +45,14 @@ class TestEarliestListing:
         h = _hist(("2026-08-07", {"Dow Jones & Company, Inc."}), ("2019-08-13", {"Dow Jones & Company, Inc."}))
         assert earliest_listing(h, "DOW JONES & COMPANY INC")["filing_date"] == "2019-08-13"
 
+    def test_the_bound_is_the_fiscal_year_end_the_list_describes(self):
+        """A December-year company files in the NEXT calendar year: its FY2025
+        list, filed 2026-02, proves the subsidiary was held at 2025-12-31."""
+        h = [{"as_of": "2025-12-31", "filing_date": "2026-02-20", "url": "u1", "names": {"storyful"}},
+             {"as_of": "2024-12-31", "filing_date": "2025-02-21", "url": "u2", "names": {"storyful"}}]
+        got = earliest_listing(h, "Storyful")
+        assert got["as_of"] == "2024-12-31" and got["filing_date"] == "2025-02-21"
+
     def test_the_proof_url_comes_with_the_date(self):
         h = _hist(("2026-08-07", {"Storyful"}), ("2020-08-11", {"Storyful"}))
         assert earliest_listing(h, "Storyful")["url"] == "https://www.sec.gov/2020-08-11.htm"
@@ -53,10 +61,11 @@ class TestEarliestListing:
 class TestAnnualFilings:
     SUBS = {"filings": {"recent": {"form": ["10-K", "8-K", "10-K/A", "10-K"],
                                    "accessionNumber": ["a1", "a2", "a3", "a4"],
-                                   "filingDate": ["2026-08-07", "2026-05-01", "2025-09-01", "2025-08-08"]},
+                                   "filingDate": ["2026-08-07", "2026-05-01", "2025-09-01", "2025-08-08"],
+                                   "reportDate": ["2026-06-30", "", "2025-06-30", "2025-06-30"]},
                         "files": [{"name": "CIK0001564708-submissions-001.json"}]}}
     OLDER = {"form": ["10-K", "4"], "accessionNumber": ["a5", "a6"],
-             "filingDate": ["2014-08-14", "2014-02-01"]}
+             "filingDate": ["2014-08-14", "2014-02-01"]}          # an old page without reportDate
 
     def _get(self, url):
         return self.OLDER if url.endswith("-001.json") else self.SUBS
@@ -64,12 +73,14 @@ class TestAnnualFilings:
     def test_newest_first_annual_forms_only(self):
         with patch.object(sec_ex21, "_get", side_effect=self._get):
             got = sec_ex21.annual_filings("1564708")
-        assert [a for _, a, _ in got] == ["a1", "a4"]            # 10-K/A and 8-K left out
+        assert [a for _, a, _, _ in got] == ["a1", "a4"]         # 10-K/A and 8-K left out
+        assert got[0][3] == "2026-06-30"                          # the fiscal year-end it covers
 
     def test_older_pages_only_when_asked(self):
         with patch.object(sec_ex21, "_get", side_effect=self._get):
             got = sec_ex21.annual_filings("1564708", include_older=True)
-        assert [a for _, a, _ in got] == ["a1", "a4", "a5"]
+        assert [a for _, a, _, _ in got] == ["a1", "a4", "a5"]
+        assert got[2][3] == ""                                    # no report date given → empty
 
     def test_a_dead_cik_is_no_filings(self):
         with patch.object(sec_ex21, "_get", side_effect=RuntimeError("404")):
@@ -78,9 +89,10 @@ class TestAnnualFilings:
 
 class TestFetchHistory:
     def test_one_entry_per_filing_and_an_unreadable_one_marked(self):
-        filings = [("10-K", "a1", "2026-08-07"), ("10-K", "a2", "2025-08-08"), ("10-K", "a3", "2002-09-01")]
+        filings = [("10-K", "a1", "2026-08-07", "2026-06-30"), ("10-K", "a2", "2025-08-08", "2025-06-30"),
+                   ("10-K", "a3", "2002-09-01", "")]
 
-        def candidates(cik, form, acc, filed):
+        def candidates(cik, form, acc, filed, period=""):
             return [] if acc == "a3" else [{"url": f"https://x/{acc}.htm", "form": form,
                                             "filing_date": filed, "accession": acc}]
         with patch.object(sec_ex21, "annual_filings", return_value=filings), \
@@ -90,10 +102,12 @@ class TestFetchHistory:
                           return_value=[{"name": "Dow Jones & Company, Inc.", "jurisdiction": "Delaware"}]):
             h = sec_ex21.fetch_subsidiary_history("1564708")
         assert [e["filing_date"] for e in h] == ["2026-08-07", "2025-08-08", "2002-09-01"]
+        # as_of = the fiscal year-end the list describes; the filing date without one
+        assert [e["as_of"] for e in h] == ["2026-06-30", "2025-06-30", "2002-09-01"]
         assert h[0]["names"] and h[2]["names"] is None and h[2]["url"] is None
 
     def test_max_filings_caps_the_walk(self):
-        filings = [("10-K", f"a{i}", f"20{26 - i:02d}-08-01") for i in range(10)]
+        filings = [("10-K", f"a{i}", f"20{26 - i:02d}-08-01", f"20{26 - i:02d}-06-30") for i in range(10)]
         with patch.object(sec_ex21, "annual_filings", return_value=filings), \
              patch.object(sec_ex21, "exhibit_candidates", return_value=[]) as cand:
             h = sec_ex21.fetch_subsidiary_history("1", max_filings=3)
