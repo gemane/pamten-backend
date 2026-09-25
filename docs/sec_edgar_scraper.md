@@ -715,7 +715,17 @@ claims-only.
 submissions API → newest 10-K/20-F → filing index → the `ex21*`/`*ex8-1*` HTML
 exhibit → a two-column table parse → resolve-or-create subsidiaries + OWNS
 edges (`filing_type` `EX-21`/`EX-8.1`, `ownership_type: controlling`,
-`since` = filing date, `source_url` = the exhibit itself).
+`source_date` = filing date, **no `since`**, `source_url` = the exhibit itself).
+
+**An exhibit is a list as of a date, not a record of acquisitions.** It says which
+subsidiaries the company holds at fiscal year-end, never since when; storing the
+filing date as `since` made News Corp's FY2026 exhibit date all 200 of its
+subsidiaries 2026 in the timeline. The writer's `filing_dates_the_stake=False`
+keeps the date as the as-of `source_date` only; the same applies to 13F (a
+quarter-end snapshot). A 13D/13G, due within days of crossing 5%, still dates its
+stake. Edges written before this are repaired by
+`manage.py clear-snapshot-since [--apply]`, which clears a `since` only where it
+equals the `source_date` (the signature of the invented date).
 
 Honesty rules, learned from the real filings:
 
