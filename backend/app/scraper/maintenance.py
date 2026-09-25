@@ -14,6 +14,8 @@ from app.db.anchors import label_or_entity
 from app.db.paging import iter_id_pages
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 from app.merged_ids import record_merge_sql
+from app.scraper.edge_schema import OWNS_PROPS
+from app.scraper.owns_merge import fold as _fold_edges
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +74,7 @@ _OWNER_PAGE = 5000
 def _owns_pairs_by_page():
     """Yield, per page of owners, the active OWNS edges grouped by (owner,
     target) vertex pair: {(out_rid, in_rid): [(edge_rid, stake_percent,
-    direct_or_indirect), ...]}.
+    direct_or_indirect, source_id), ...]}.
 
     Walks the OWNERS, not the edges: pages of Entity then Person by their UNIQUE
     `id` index (`app.db.paging.iter_id_pages` — a bounded index range per page,
@@ -95,11 +97,12 @@ def _owns_pairs_by_page():
             rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
             rows = run_sql(
                 "SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
-                f"direct_or_indirect AS doi FROM (SELECT expand(outE('OWNS')) FROM [{rids}]) "
-                "WHERE until IS NULL")
+                "direct_or_indirect AS doi, source_id AS src "
+                f"FROM (SELECT expand(outE('OWNS')) FROM [{rids}]) WHERE until IS NULL")
             pairs: dict[tuple, list[tuple]] = {}
             for r in rows:
-                pairs.setdefault((r["o"], r["i"]), []).append((r["rid"], r.get("st"), r.get("doi")))
+                pairs.setdefault((r["o"], r["i"]), []).append(
+                    (r["rid"], r.get("st"), r.get("doi"), r.get("src")))
             if pages % 200 == 0:
                 log.info("OWNS dedup: %s page %d", vtype, pages)
             yield pairs
@@ -149,13 +152,53 @@ def _losers(edges: list[tuple]) -> list[str]:
                        1 if e[2] == "direct" else 0),
         reverse=True,
     )
-    return [rid for rid, _, _ in edges_sorted[1:]]
+    return [e[0] for e in edges_sorted[1:]]
+
+
+def _fold_into_survivors(groups: list[tuple[str, list[str]]]) -> int:
+    """Before a cross-source pair's extra edges are deleted, fold what they said
+    into the survivor (``app.scraper.owns_merge.fold``): the highest-ranked
+    source's answer, the earliest start date, the other source's structure.
+
+    Only groups whose edges come from more than one source reach this — a pure
+    re-import double carries nothing its twin does not. Without the fold the
+    delete was the loss: after every GLEIF import the SEC edge beside GLEIF's
+    went, taking its "listed since 2013" and its filing link with it, for the
+    next SEC scrape to draw again. Returns the number of survivors changed.
+    """
+    rids = [rid for survivor, losers in groups for rid in (survivor, *losers)]
+    if not rids:
+        return 0
+    cols = ", ".join(OWNS_PROPS)
+    props = {}
+    for i in range(0, len(rids), 500):
+        for r in run_sql(f"SELECT @rid AS rid, {cols} FROM [{', '.join(rids[i:i + 500])}]"):
+            props[r["rid"]] = r
+    stmts, params = [], {}
+    for survivor, losers in groups:
+        edges = [props[rid] for rid in (survivor, *losers) if rid in props]
+        if survivor not in props:
+            continue
+        sets = _fold_edges(edges, props[survivor])
+        if not sets:
+            continue
+        k = len(stmts)
+        params.update({f"f{k}_{f}": v for f, v in sets.items()})
+        stmts.append(f"UPDATE {survivor} SET "
+                     + ", ".join(f"{f} = :f{k}_{f}" for f in sets))
+    if stmts:
+        run_sqlscript(";".join(stmts), params)
+    return len(stmts)
 
 
 def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     """
     For every (owner → target) pair with more than one active OWNS edge, keep one
     and delete the rest by @rid (`_losers` picks the survivor). Admin only.
+
+    When the edges come from different sources, what they said is first folded
+    into the survivor (`_fold_into_survivors`) — one edge per pair carries every
+    source's contribution, not whichever edge happened to survive.
 
     Deleting by @rid preserves the kept edge's full provenance (unlike a
     delete-all-then-recreate, which drops properties), and the delete is batched
@@ -166,6 +209,7 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     pending: list[str] = []
     deleted = 0
     dup_pairs = 0
+    folded = 0
 
     def flush() -> None:
         nonlocal deleted
@@ -177,15 +221,23 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
             deleted += len(chunk)
 
     for pairs in _owns_pairs_by_page():
+        cross_source: list[tuple[str, list[str]]] = []
         for edges in pairs.values():
             if len(edges) < 2:
                 continue
             dup_pairs += 1
-            pending.extend(_losers(edges))
+            losers = _losers(edges)
+            if len({e[3] for e in edges}) > 1:
+                survivor = next(e[0] for e in edges if e[0] not in losers)
+                cross_source.append((survivor, losers))
+            pending.extend(losers)
+        # Folded BEFORE the losers are deleted: an interrupted run then leaves
+        # a survivor that already carries everything, never a loss.
+        folded += _fold_into_survivors(cross_source)
         if len(pending) >= batch_size:
             flush()
     flush()
-    return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs}
+    return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs, "survivors_folded": folded}
 
 
 # ── Cross-source duplicate detection (same company, different identifiers) ─────
@@ -682,11 +734,9 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
 
     return migrated
 
-#: The credibility floor of the official tier. GLEIF (92), UK PSC (97) and SEC
-#: EDGAR (98) sit above it; Wikidata (80) and OpenCorporates (85) below. Tier by
-#: score rather than by source name, so a new source lands in the right tier by
-#: setting its credibility honestly instead of by editing lists here.
-OFFICIAL_TIER_MIN_CREDIBILITY = 90
+#: The credibility floor of the official tier — defined with the edge-sharing
+#: rule that also ranks by it (app.scraper.owns_merge).
+from app.scraper.owns_merge import OFFICIAL_TIER_MIN_CREDIBILITY  # noqa: E402
 
 #: How long a community-tier ownership assertion stays current without anybody
 #: re-confirming it. Six months: Wikidata has no retirement signal at all — a

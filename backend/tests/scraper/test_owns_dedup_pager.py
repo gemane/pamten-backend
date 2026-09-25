@@ -107,7 +107,7 @@ def test_losers_are_deleted_as_pages_come_in_not_after_the_walk():
     _, _, deletes, order, res = _drive([[{"id": "a", "rid": "#1:0"}, {"id": "b", "rid": "#1:1"}],
                                         [{"id": "c", "rid": "#1:2"}], [], []],
                                        deduplicate_owns_edges, batch_size=1, edges_for=_edges_by_page)
-    assert res == {"duplicates_removed": 2, "pairs_cleaned": 2}
+    assert res == {"duplicates_removed": 2, "pairs_cleaned": 2, "survivors_folded": 0}
     # the survivor is the larger stake (#9:1) and the direct-flagged twin (#9:4)
     assert deletes == ["DELETE FROM #9:2", "DELETE FROM #9:3"]
     assert order.index("delete") < order.index("page", order.index("expand") + 1)
