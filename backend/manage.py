@@ -1285,7 +1285,7 @@ def _build_parser():
     p_ex21.set_defaults(func=cmd_sec_ex21)
 
     p_13f = subparsers.add_parser('sec-13f',
-        help="Institutional holders of one company from Form 13F (the sub-5% view)")
+        help="Institutional holders of one company from Form 13F (the sub-5%% view)")
     p_13f.add_argument('company', help='Company name as known to the graph')
     p_13f.add_argument('--limit', type=int, default=100,
                        help='Max 13F filings to read (relevance-ordered; default 100)')

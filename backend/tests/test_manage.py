@@ -395,3 +395,16 @@ def test_ensure_user_takes_the_password_from_the_environment_only(monkeypatch):
     opts = {o for a in p._subparsers._group_actions[0].choices["ensure-user"]._actions
             for o in a.option_strings}
     assert "--password" not in opts
+
+
+def test_every_help_text_renders():
+    """argparse %-formats help strings, so a bare '%' ("the sub-5% view") crashes
+    `manage.py --help` for everyone while each command's own --help still works —
+    exactly how it went unnoticed. Render the top level and every subcommand."""
+    import argparse
+    import manage
+    parser = manage._build_parser()
+    assert "gleif-update" in parser.format_help()
+    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    for name, sub in subparsers.choices.items():
+        assert sub.format_help(), name
