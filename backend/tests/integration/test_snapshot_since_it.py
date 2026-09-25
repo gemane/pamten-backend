@@ -46,22 +46,25 @@ class TestTheWriter:
 
 class TestTheRepair:
     def _seed(self, it_db):
-        _companies(it_db, "nc", "s1", "s2", "s3", "f1")
+        _companies(it_db, "nc", "s1", "s2", "s3", "s4", "f1")
         rows = [
-            ("nc", "s1", "EX-21", "2026-08-07", "2026-08-07"),   # invented → cleared
-            ("nc", "s2", "EX-21", "2014-08-14", "2026-08-07"),   # a real earlier start → kept
-            ("f1", "s3", "13F", "2026-06-30", "2026-06-30"),     # invented → cleared
-            ("f1", "nc", "SC 13D", "2026-03-02", "2026-03-02"),  # a 13D dates its stake → kept
+            ("nc", "s1", "EX-21", "2026-08-07", "2026-08-07", None),            # invented → cleared
+            ("nc", "s2", "EX-21", "2014-08-14", "2026-08-07", None),            # a real earlier start → kept
+            ("f1", "s3", "13F", "2026-06-30", "2026-06-30", None),              # invented → cleared
+            ("f1", "nc", "SC 13D", "2026-03-02", "2026-03-02", None),           # a 13D dates its stake → kept
+            ("nc", "s4", "EX-21", "2026-08-07", "2026-08-07", "first_listed"),  # a marked lower bound → kept
         ]
-        for a, b, ft, since, asof in rows:
+        for a, b, ft, since, asof, basis in rows:
             it_db.run_command(
                 "MATCH (x:Entity {id:$a}), (y:Entity {id:$b}) "
-                "CREATE (x)-[:OWNS {filing_type:$ft, since:$since, source_date:$asof}]->(y)",
-                {"a": a, "b": b, "ft": ft, "since": since, "asof": asof})
+                "CREATE (x)-[:OWNS {filing_type:$ft, since:$since, source_date:$asof, "
+                "since_basis:$basis}]->(y)",
+                {"a": a, "b": b, "ft": ft, "since": since, "asof": asof, "basis": basis})
             it_db.run_sql(
                 "INSERT INTO Claim SET claim_key = :k, kind = 'owns', from_id = :a, to_id = :b, "
-                "filing_type = :ft, since = :since, source_date = :asof",
-                {"k": f"owns|{a}|{b}", "a": a, "b": b, "ft": ft, "since": since, "asof": asof})
+                "filing_type = :ft, since = :since, source_date = :asof, since_basis = :basis",
+                {"k": f"owns|{a}|{b}", "a": a, "b": b, "ft": ft, "since": since, "asof": asof,
+                 "basis": basis})
 
     def test_dry_run_counts_and_changes_nothing(self, it_db):
         from app.scraper.maintenance import clear_snapshot_since
@@ -78,8 +81,10 @@ class TestTheRepair:
         assert _edge(it_db, "nc", "s2")["since"] == "2014-08-14"
         assert _edge(it_db, "f1", "s3")["since"] is None
         assert _edge(it_db, "f1", "nc")["since"] == "2026-03-02"
+        assert _edge(it_db, "nc", "s4")["since"] == "2026-08-07"     # marked: never cleared
         claims = {r["to_id"]: r.get("since") for r in
                   it_db.run_sql("SELECT to_id, since FROM Claim WHERE kind = 'owns'")}
-        assert claims == {"s1": None, "s2": "2014-08-14", "s3": None, "nc": "2026-03-02"}
+        assert claims == {"s1": None, "s2": "2014-08-14", "s3": None, "nc": "2026-03-02",
+                          "s4": "2026-08-07"}
         # running it again finds nothing
         assert clear_snapshot_since() == {"edges": 0, "claims": 0, "applied": False}

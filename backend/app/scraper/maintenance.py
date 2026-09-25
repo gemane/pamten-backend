@@ -712,12 +712,17 @@ def clear_snapshot_since(apply: bool = False) -> dict:
 
     Only a ``since`` that EQUALS the edge's ``source_date`` is cleared: that is
     the signature of the invented date. A start date that came from somewhere
-    real (a later backfill from older filings) differs from it and is kept.
+    real differs from it and is kept — and one marked with ``since_basis`` (a
+    deliberate lower bound from older filings) is kept even when it is equal.
     The same rule applies to the per-source claims. Dry-run by default.
     """
     types = "[" + ", ".join(f"'{t}'" for t in SNAPSHOT_FILING_TYPES) + "]"
+    # `since_basis` marks a start date derived on purpose (the oldest Exhibit 21
+    # listing, a lower bound) — never an invented one, even where it happens to
+    # equal the source date, so it is never cleared.
     where = (f"filing_type IN {types} AND since IS NOT NULL "
-             "AND source_date IS NOT NULL AND since = source_date")
+             "AND source_date IS NOT NULL AND since = source_date "
+             "AND since_basis IS NULL")
     edges = run_sql(f"SELECT count(*) AS n FROM OWNS WHERE {where}")[0].get("n", 0)
     claims = run_sql(f"SELECT count(*) AS n FROM Claim WHERE kind = 'owns' AND {where}")[0].get("n", 0)
     if apply and edges:

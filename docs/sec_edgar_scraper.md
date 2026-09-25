@@ -725,7 +725,8 @@ keeps the date as the as-of `source_date` only; the same applies to 13F (a
 quarter-end snapshot). A 13D/13G, due within days of crossing 5%, still dates its
 stake. Edges written before this are repaired by
 `manage.py clear-snapshot-since [--apply]`, which clears a `since` only where it
-equals the `source_date` (the signature of the invented date).
+equals the `source_date` (the signature of the invented date) and is not marked with
+`since_basis` (a deliberate lower bound from older filings is never cleared).
 
 Honesty rules, learned from the real filings:
 
