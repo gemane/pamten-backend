@@ -88,9 +88,38 @@ single, fast, current-best answer — and the claims sit beside it as the eviden
   as their edge writes), federation imports (credibility = the peer's configured
   trust), and the manual API (skipped when the request names no `source_id` — a
   claim is one source's statement, and unsourced claims would all share a key).
-- **Which claim wins**: highest `credibility_score`, ties broken by the most
-  recent `source_date` (`best_claim` in [`app/claims.py`](../backend/app/claims.py)).
-  A credible "owns, amount undisclosed" deliberately beats a weak source's number.
+- **Which claim wins**: the official tier (credibility ≥ 90), then a stated
+  stake, then `credibility_score`, ties broken by the most recent `source_date`
+  (`best_claim` in [`app/claims.py`](../backend/app/claims.py)). A register's
+  "owns, amount undisclosed" deliberately beats a community source's number; among
+  registers a stated stake beats a list that states none (the UK PSC's 75% over
+  SEC's Exhibit 21).
+
+### One edge per pair, whichever sources assert it
+
+The pair's single active edge carries **every** source's contribution; the
+incremental writers share it rather than drawing one each
+([`app/scraper/owns_merge.py`](../backend/app/scraper/owns_merge.py)). Until
+2026-09 each writer found only the edge it had drawn itself — SEC by `source_id`,
+GLEIF by its marker, UK PSC by its appointment link — so a second source drew a
+second edge: 129 pairs on the dev DB (128 GLEIF + SEC Exhibit 21), News Corp's
+timeline listing Dow Jones twice, and the dedup after every GLEIF import deleting
+the SEC edge (its "listed since 2013" with it) for the next SEC scrape to redraw.
+
+| Part of the edge | Rule |
+|---|---|
+| **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
+| **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A lower bound (`first_listed`) keeps its label ("since 2013 or earlier"); a stated start on or before it replaces it |
+| **Structure** — `direct_or_indirect`, `also_ultimate`, `ultimate_*`, `interest_types`, `psc_self_link` | Stays on the edge whoever holds the answer |
+
+A source that does not outrank the holder still records its claim, and does not
+close or reopen the edge: GLEIF retiring a relationship SEC still lists, or a PSC
+record vanishing from an edge an SEC 13D took over, closes only that source's
+claim. A **ceased** PSC appointment keeps its own closed edge — history, not the
+current holding. The generic writer (Wikidata, OpenCorporates) always shared the
+pair's edge and never takes the answer over; those sources sit below the official
+tier anyway. Bulk imports still `CREATE` blindly, and the post-import dedup now
+**folds** a cross-source pair into its survivor before deleting the rest.
 - **Read** by the Sources panel via `to_id` — everything asserted *about* an
   entity. Claims about the subsidiaries it owns carry `from_id` = that entity and
   are never selected, so the panel cannot flood with one row per subsidiary.
@@ -391,7 +420,9 @@ by **pair**, not by marker, so an ultimate-parent record for a folded pair updat
 that edge instead of creating a parallel one. Retiring one of a folded edge's two
 relationships does not close the edge — the other still stands, so the edge either
 drops `also_ultimate` (the ultimate link ended) or reverts to `indirect` with its
-own period (the direct holding ended).
+own period (the direct holding ended). With no RR edge for the pair it **adopts**
+another source's active edge (counted `adopted`) — see *One edge per pair,
+whichever sources assert it* above.
 
 Once the full copy is loaded, `manage.py gleif-update` applies GLEIF's published
 **delta files** for all three sections — entities, relationships and reporting

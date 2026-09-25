@@ -354,7 +354,12 @@ share a shape but are *different* numbers and are deliberately not folded.
 **Duplicate OWNS edges** (`deduplicate_owns_edges`). `CREATE EDGE` is not
 idempotent, so a re-import doubles edges; every BODS/register import ends with a
 best-effort pass that keeps one edge per (owner, target) pair — the largest stake,
-then the `direct_or_indirect`-flagged one. Since 2026-09-21 the collector walks the
+then the `direct_or_indirect`-flagged one. When the pair's edges come from
+**different sources** (GLEIF beside SEC, say), what they said is folded into the
+survivor first (`owns_merge.fold`: the higher-ranked source's answer, the earliest
+start date, the other's marker or PSC link) — before 2026-09 the delete was the
+loss, taking SEC's "listed since" date with it after every GLEIF import. The result
+counts these as `survivors_folded`. Since 2026-09-21 the collector walks the
 **owners** by their `id` index (an index range read per page of 5,000 vertices)
 and expands each page's outgoing OWNS edges as adjacency — a duplicate is by
 definition two edges from the same owner, so page-by-page grouping loses nothing.
@@ -508,8 +513,8 @@ interest, so **one import** created duplicate edges (fixed at the source — it 
 collapses interests to one edge per `ownership_type`, keeping the largest stake).
 
 To clean existing duplicates, `maintenance.deduplicate_owns_edges` pages active OWNS
-edges by `@rid`, groups by (`@out`, `@in`) **in Python** (a global `GROUP BY` OOMs),
-keeps the largest-stake edge per pair, and deletes the rest by `DELETE FROM <rid>`
+edges by owner (see above), groups by (`@out`, `@in`) **in Python** (a global `GROUP BY` OOMs),
+keeps the largest-stake edge per pair (folding a cross-source pair into it), and deletes the rest by `DELETE FROM <rid>`
 (direct record access — `WHERE @rid = …` scans the whole edge type). Read-only count
 at `GET /scraper/duplicate-edges/count`; collapse at `POST /scraper/deduplicate-edges`.
 The entity profile also dedupes owners/subsidiaries by node id at read time, so the

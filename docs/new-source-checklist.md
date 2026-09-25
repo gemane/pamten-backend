@@ -184,6 +184,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `record_claim` for the per-source assertion — that is what makes a conflict
       inspectable later instead of a mystery.
 - [ ] **`credibility_score` is written on the edge**, not assumed from the source name.
+- [ ] **Share the pair's edge; never look up only your own.** Find the pair's active
+      OWNS edge whoever drew it, and apply `app/scraper/owns_merge.py`: take the answer
+      over only when you `outrank` its holder, combine `since`, keep the other source's
+      structure, and never close or reopen an edge another source holds. Matching
+      "my own edge" (by `source_id`, a marker, a record link) drew a second edge
+      beside every pair another source had — 129 on dev, each deleted by the next
+      dedup and redrawn by the next scrape.
 - [ ] **A list is not a start date.** A document that lists holdings *as of* a date (an
       Exhibit 21, a 13F, a register snapshot) gives an as-of `source_date`, never a
       `since`: storing the filing date as the start made News Corp's FY2026 Exhibit 21
