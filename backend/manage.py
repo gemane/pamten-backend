@@ -268,6 +268,15 @@ def cmd_mark_stale(args):
     print(f"Marked {res['marked']} stale, cleared {res['cleared']} "
           f"(of {res['community_edges']} community-tier edges; cutoff {res['cutoff'][:10]})")
 
+def cmd_clear_snapshot_since(args):
+    """Remove the start date list-style SEC filings (Exhibit 21/8.1, 13F) used to
+    invent from their filing date. Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.scraper.maintenance import clear_snapshot_since
+    res = clear_snapshot_since(apply=args.apply)
+    verb = "Cleared" if res["applied"] else "Would clear (dry run — add --apply)"
+    print(f"{verb}: since on {res['edges']} OWNS edges and {res['claims']} claims")
+
 def cmd_quality_report(args):
     """Data quality as numbers — run before and after any change to the source mix."""
     _apply_direct_db_url(args)
@@ -1218,6 +1227,14 @@ def _build_parser():
     p_ms.add_argument('--db-url',
                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_ms.set_defaults(func=cmd_mark_stale)
+
+    # clear-snapshot-since command (one-off heal after the writer fix)
+    p_css = subparsers.add_parser('clear-snapshot-since',
+                                  help='Remove the start date Exhibit 21/8.1 and 13F edges got from their filing date (they list holdings as of a date, not since when). Dry run unless --apply')
+    p_css.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_css.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_css.set_defaults(func=cmd_clear_snapshot_since)
 
     # quality-report command
     p_qr = subparsers.add_parser('quality-report',

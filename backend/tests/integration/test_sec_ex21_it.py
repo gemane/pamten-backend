@@ -47,8 +47,8 @@ def test_writes_subsidiaries_with_provenance_and_reads_them_back(it_db):
     rows = it_db.run_command(
         "MATCH (a:Entity {id:'apple'})-[r:OWNS]->(b:Entity) "
         "RETURN b.name AS name, b.country AS country, r.filing_type AS ft, "
-        "r.ownership_type AS ot, r.since AS since, r.source_url AS url, "
-        "r.stake_percent AS stake")
+        "r.ownership_type AS ot, r.since AS since, r.source_date AS asof, "
+        "r.source_url AS url, r.stake_percent AS stake")
     got = {dict(r)["name"]: dict(r) for r in rows}
     assert set(got) == {"Apple Operations International Limited",
                         "Braeburn Capital, Inc.", "Apple Ruritania GmbH",
@@ -57,7 +57,10 @@ def test_writes_subsidiaries_with_provenance_and_reads_them_back(it_db):
     assert ie["country"] == "IE"
     assert ie["ft"] == "EX-21"
     assert ie["ot"] == "controlling"
-    assert ie["since"] == "2025-10-31"
+    # A subsidiary LIST says what is held as of the filing, not since when:
+    # the date is the as-of/source date and no start date is invented.
+    assert ie["since"] is None
+    assert ie["asof"] == "2025-10-31"
     assert "a10-kexhibit21" in ie["url"]
     assert ie["stake"] is None, "the exhibit states no stake; none is invented"
     assert got["Braeburn Capital, Inc."]["country"] == "US"

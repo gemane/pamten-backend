@@ -916,6 +916,8 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 # column). Stated → stored; absent → None, never invented.
                 stake_percent=sub.get("stake_percent"),
                 filing_type="EX-21" if data["form"] == "10-K" else "EX-8.1",
+                # A subsidiary LIST: held as of the filing, not acquired then.
+                filing_dates_the_stake=False,
                 source_url=data["url"])
             written += 1
             scraped.append({"id": sub_id, "name": sub["name"],
@@ -1181,6 +1183,8 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 shares=h["shares"], shares_outstanding=outstanding,
                 share_class=h.get("share_class"), value_usd=h.get("value_usd"),
                 filing_type="13F",
+                # A quarter-end snapshot: held at the period end, not bought then.
+                filing_dates_the_stake=False,
                 source_url=h.get("source_url"))
             written += 1
 

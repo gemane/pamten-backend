@@ -696,6 +696,42 @@ OFFICIAL_TIER_MIN_CREDIBILITY = 90
 STALE_AFTER_DAYS = 180
 
 
+#: SEC filings that LIST holdings as of a date rather than record when one began
+#: (see ``_upsert_owns_sec(filing_dates_the_stake=False)``).
+SNAPSHOT_FILING_TYPES = ("EX-21", "EX-8.1", "13F")
+
+
+def clear_snapshot_since(apply: bool = False) -> dict:
+    """Remove the start date the SEC writer used to invent for list-style filings.
+
+    Until the writer learned ``filing_dates_the_stake``, an Exhibit 21/8.1
+    subsidiary list or a 13F report stored its filing (or period) date as the
+    holding's ``since`` — News Corp's FY2026 Exhibit 21 dated all 200 of its
+    subsidiaries 2026. A re-scrape does not touch ``since``, so the stored ones
+    stay wrong until this runs.
+
+    Only a ``since`` that EQUALS the edge's ``source_date`` is cleared: that is
+    the signature of the invented date. A start date that came from somewhere
+    real differs from it and is kept — and one marked with ``since_basis`` (a
+    deliberate lower bound from older filings) is kept even when it is equal.
+    The same rule applies to the per-source claims. Dry-run by default.
+    """
+    types = "[" + ", ".join(f"'{t}'" for t in SNAPSHOT_FILING_TYPES) + "]"
+    # `since_basis` marks a start date derived on purpose (the oldest Exhibit 21
+    # listing, a lower bound) — never an invented one, even where it happens to
+    # equal the source date, so it is never cleared.
+    where = (f"filing_type IN {types} AND since IS NOT NULL "
+             "AND source_date IS NOT NULL AND since = source_date "
+             "AND since_basis IS NULL")
+    edges = run_sql(f"SELECT count(*) AS n FROM OWNS WHERE {where}")[0].get("n", 0)
+    claims = run_sql(f"SELECT count(*) AS n FROM Claim WHERE kind = 'owns' AND {where}")[0].get("n", 0)
+    if apply and edges:
+        run_sql(f"UPDATE OWNS SET since = null WHERE {where}", timeout=600)
+    if apply and claims:
+        run_sql(f"UPDATE Claim SET since = null WHERE kind = 'owns' AND {where}", timeout=600)
+    return {"edges": edges, "claims": claims, "applied": bool(apply)}
+
+
 def mark_stale_ownership(days: int = STALE_AFTER_DAYS) -> dict:
     """Mark community-tier OWNS edges nothing has confirmed in `days` as stale.
 

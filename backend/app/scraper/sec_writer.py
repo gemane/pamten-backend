@@ -226,8 +226,18 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      shares_outstanding: int | None = None,
                      voting_shares: int | None = None,
                      value_usd: float | None = None,
-                     filing_type: str | None = None):
+                     filing_type: str | None = None,
+                     filing_dates_the_stake: bool = True):
     """Create or update an OWNS edge with SEC EDGAR attribution.
+
+    ``filing_dates_the_stake``: whether ``file_date`` says when the holding
+    BEGAN. True for 13D/13G, which are due within days of crossing 5%. False
+    for the list-style filings — an Exhibit 21/8.1 subsidiary list and a 13F
+    quarterly holdings report state what is held AS OF a date, not since when:
+    News Corp's FY2026 Exhibit 21 made all 200 of its subsidiaries look
+    "acquired in 2026". Then the date is kept as the source/as-of date only
+    and ``since`` stays empty (the timeline shows the holding as undated)
+    until a real start date is known.
 
     Provenance stamped per-entry: source_url = the specific SEC filing document,
     source_date = the filing date, last_scraped_at = now. On a re-scrape of an
@@ -255,12 +265,13 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     "and the issuer resolved to the same node", owner_id, stake_percent)
         return
     ownership_type = coherent_ownership_type(stake_percent, ownership_type)
+    since = file_date if filing_dates_the_stake else None
     record_claim(kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
                  stake_percent=stake_percent, ownership_type=ownership_type,
                  voting_power_pct=voting_power_pct,
                  share_class=share_class, shares=shares,
                  shares_outstanding=shares_outstanding, voting_shares=voting_shares,
-                 since=file_date, until=until, source_url=source_url,
+                 since=since, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score,
                  filing_type=filing_type)
     # Claims-only sources assert but do not draw (see sources.edge_writes_suppressed).
@@ -274,7 +285,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     # can never carry a property the merges do not know, and vice versa.
     bag = owns_props(
         stake_percent=stake_percent, voting_power_pct=voting_power_pct,
-        ownership_type=ownership_type, since=file_date, until=until,
+        ownership_type=ownership_type, since=since, until=until,
         source_id=source_id, credibility_score=credibility_score,
         source_url=source_url, source_date=file_date, last_scraped_at=now,
         share_class=share_class, shares=shares,
