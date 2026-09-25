@@ -21,9 +21,11 @@ with a UNIQUE index, so a source re-asserting the same relationship updates its
 own claim rather than accumulating a new row on every import. That is what makes
 re-imports safe here even though the edges themselves still need a dedup pass.
 
-Which claim wins is decided by `best_claim`: highest credibility, then most
-recent source_date. Writers apply that to the edge in the same call that records
-the claim, so the edge and the evidence cannot drift apart.
+Which claim wins is decided by `best_claim`: the official tier, then a stated
+stake, then credibility, then the most recent source_date — the same order in
+which the incremental writers let one source's answer take over the pair's one
+shared edge (`app.scraper.owns_merge`, which on a tie keeps the source already
+holding it rather than the newest).
 """
 from __future__ import annotations
 
@@ -199,14 +201,16 @@ def _rank(claim: dict) -> tuple:
 def best_claim(claims: list[dict]) -> dict | None:
     """The claim whose values the edge should carry.
 
-    Highest credibility wins, ties broken by the most recent source_date. Note
-    this deliberately does *not* prefer the claim with a stake percentage over
-    one without: a more credible source saying "owns, amount undisclosed" is a
-    better description of what is known than a less credible source's number.
+    Ranked as `owns_merge.answer_rank` ranks a shared edge's answer — official
+    tier, then a stated stake, then credibility — with ties broken by the most
+    recent source_date. So a community source's number never beats a register
+    saying "owns, amount undisclosed"; but among registers a stake beats a
+    subsidiary list that states none (the UK PSC's 75% over SEC's Exhibit 21).
     """
     if not claims:
         return None
-    return max(claims, key=_rank)
+    from app.scraper.owns_merge import answer_rank
+    return max(claims, key=lambda c: (answer_rank(c), str(c.get("source_date") or "")))
 
 
 def edge_values_from(claims: list[dict]) -> dict:
