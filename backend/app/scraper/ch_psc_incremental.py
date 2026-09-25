@@ -65,6 +65,7 @@ from app.scraper.bulk_import import (
     _BatchWriter, _flush_script, _loads, _now_iso, _ProgressBar,
 )
 from app.scraper.companies_house_psc import psc_record
+from app.scraper.owns_merge import combine_since, outranks
 
 log = logging.getLogger(__name__)
 
@@ -455,18 +456,36 @@ class _PscEdgeWriter:
         now = _now_iso()
         for k, m in enumerate(batch):
             props = {**m.edge_props, "last_scraped_at": now, "until_reason": None}
+            # PSC states no direct/indirect marker; writing its None would wipe
+            # the one GLEIF put on a pair both sources share.
+            if props.get("direct_or_indirect") is None:
+                props.pop("direct_or_indirect", None)
+            since = props.pop("since", None)
             sets = []
             for name, value in props.items():
                 pk = f"{name}__{k}"
                 params[pk] = value
                 sets.append(f"{name} = :{pk}")
+            # The start date is combined across sources (app.scraper.owns_merge):
+            # an earlier "listed since" lower bound SEC put on the shared edge
+            # stays; otherwise the register's own date is written as before.
+            params[f"since__{k}"] = since
+            keep = f"since_basis = 'first_listed' AND (:since__{k} IS NULL OR since < :since__{k})"
+            sets += [f"since_basis = CASE WHEN {keep} THEN since_basis ELSE null END",
+                     f"since_source_url = CASE WHEN {keep} THEN since_source_url ELSE null END",
+                     f"since = CASE WHEN {keep} THEN since ELSE :since__{k} END"]
             params[f"link__{k}"] = m.self_link
+            params[f"src__{k}"] = m.edge_props.get("source_id")
             # Written unconditionally, never COALESCEd: a snapshot record is the
             # whole current truth about that appointment, so a correction that
             # removes `ceased_on` has to reopen the edge. GLEIF coalesces because
             # its delta records are partial statements; copying that here would
             # leave a corrected PSC closed forever.
-            stmts.append(f"UPDATE OWNS SET {', '.join(sets)} WHERE psc_self_link = :link__{k};")
+            # Only while PSC holds the edge's answer: a source that outranked it
+            # and took the shared edge over (an SEC 13D stake) is not overwritten
+            # back every night. PSC's claim below is written regardless.
+            stmts.append(f"UPDATE OWNS SET {', '.join(sets)} WHERE psc_self_link = :link__{k} "
+                         f"AND (source_id = :src__{k} OR source_id IS NULL);")
             stmts.append(_claim_stmt(k, m, params, now))
         _flush_script("\n".join(stmts), params)
         self.counts["updated"] += len(batch)
@@ -485,6 +504,43 @@ class _PscEdgeWriter:
             self._flush_updates([mapped])
             self.counts["updated"] -= 1      # counted as adopted, not as an update
             return
+        # Another source already drew this pair (SEC, GLEIF): one active edge per
+        # pair, so share it (app.scraper.owns_merge). PSC takes its answer over
+        # when it outranks — a stated stake beats a subsidiary list that states
+        # none — and otherwise records its claim and its start date only. A
+        # CEASED appointment is history, not the current holding: it keeps its
+        # own closed edge below.
+        shared = None if mapped.edge_props.get("until") else run_command(
+            f"MATCH (a:{mapped.owner_label} {{id:$o}})-[r:OWNS]->(b:Entity {{id:$c}}) "
+            "WHERE r.until IS NULL RETURN r.stake_percent AS stake_percent, "
+            "r.credibility_score AS credibility_score, r.since AS since, "
+            "r.since_basis AS since_basis, r.since_source_url AS since_source_url LIMIT 1",
+            {"o": mapped.owner_id, "c": mapped.company_id})
+        if shared and outranks(mapped.edge_props, shared[0]):
+            # Link and source together: the update below writes only an edge
+            # whose answer PSC holds, and from here on this one's is.
+            run_command(
+                f"MATCH (a:{mapped.owner_label} {{id:$o}})-[r:OWNS]->(b:Entity {{id:$c}}) "
+                "WHERE r.until IS NULL SET r.psc_self_link = $link, r.source_id = $src",
+                {"o": mapped.owner_id, "c": mapped.company_id, "link": mapped.self_link,
+                 "src": mapped.edge_props.get("source_id")})
+            self.counts["adopted"] += 1
+            self._flush_updates([mapped])
+            self.counts["updated"] -= 1
+            return
+        if shared:
+            claim_params: dict = {}
+            _flush_script(_claim_stmt(0, mapped, claim_params, _now_iso()), claim_params)
+            since = combine_since(shared[0], {"since": mapped.edge_props.get("since")})
+            if since["since"] != shared[0].get("since"):
+                run_command(
+                    f"MATCH (a:{mapped.owner_label} {{id:$o}})-[r:OWNS]->(b:Entity {{id:$c}}) "
+                    "WHERE r.until IS NULL SET r.since = $s, r.since_basis = $b, "
+                    "r.since_source_url = $u",
+                    {"o": mapped.owner_id, "c": mapped.company_id, "s": since["since"],
+                     "b": since["since_basis"], "u": since["since_source_url"]})
+            self.counts["claim_only"] = self.counts.get("claim_only", 0) + 1
+            return
         cparams: dict = {}
         _flush_script(_claim_stmt(0, mapped, cparams, _now_iso()), cparams)
         props = {**mapped.edge_props, "last_scraped_at": _now_iso()}
@@ -496,7 +552,8 @@ class _PscEdgeWriter:
         self.counts["created"] += 1
 
 
-def close_vanished(links: list[str], until: str, chunk: int = _PROBE_CHUNK) -> int:
+def close_vanished(links: list[str], until: str, chunk: int = _PROBE_CHUNK,
+                   source_id: str | None = None) -> int:
     """Close edges whose snapshot record disappeared.
 
     Not a cessation: Companies House gives no date and states no reason, so this is
@@ -509,6 +566,10 @@ def close_vanished(links: list[str], until: str, chunk: int = _PROBE_CHUNK) -> i
 
     Nothing is deleted. The edge, the Person and the Claim all survive — deleting
     would also destroy the provenance of what the register once said.
+
+    With ``source_id`` (PSC's), an edge whose answer another source holds stays
+    open — the pair's one edge is shared, and that source still asserts it — and
+    only PSC's own claim is closed, never the other source's.
     """
     closed = 0
     for i in range(0, len(links), chunk):
@@ -518,9 +579,11 @@ def close_vanished(links: list[str], until: str, chunk: int = _PROBE_CHUNK) -> i
             params[f"l__{k}"] = link
             params[f"u__{k}"] = until
             params[f"n__{k}"] = _now_iso()
+            own = f" AND (source_id = :s__{k} OR source_id IS NULL)" if source_id else ""
+            params[f"s__{k}"] = source_id
             stmts.append(
                 f"UPDATE OWNS SET until = :u__{k}, until_reason = 'withdrawn', "
-                f"last_scraped_at = :n__{k} WHERE psc_self_link = :l__{k} AND until IS NULL;")
+                f"last_scraped_at = :n__{k} WHERE psc_self_link = :l__{k} AND until IS NULL{own};")
         _flush_script("\n".join(stmts), params)
         # The Claim carries the same assertion and would otherwise still say the
         # holding is live — a close path that only touches the edge leaves the
@@ -539,7 +602,7 @@ def close_vanished(links: list[str], until: str, chunk: int = _PROBE_CHUNK) -> i
             cstmts, cparams = [], {}
             for k, e in enumerate(endpoints):
                 cparams.update({f"cf__{k}": e["from_id"], f"ct__{k}": e["to_id"],
-                                f"cs__{k}": e.get("source_id"), f"cu__{k}": until,
+                                f"cs__{k}": source_id or e.get("source_id"), f"cu__{k}": until,
                                 f"ck__{k}": KIND_OWNS})
                 cstmts.append(
                     f"UPDATE Claim SET until = :cu__{k} WHERE from_id = :cf__{k} "
@@ -646,7 +709,8 @@ def apply_diff(filepath: str, diff: DiffResult, source_id: str, credibility_scor
     counts.update(edges.counts)
 
     if diff.vanished:
-        counts["closed"] = close_vanished(diff.vanished, until_date, chunk=batch_size)
+        counts["closed"] = close_vanished(diff.vanished, until_date, chunk=batch_size,
+                                          source_id=source_id)
     bar.finish(f"{counts['touched']:,} applied, {counts['created']:,} created, "
                f"{counts['updated']:,} updated, {counts['closed']:,} closed"
                + (f", {counts['not_here']:,} not in this database" if known is not None else ""))
