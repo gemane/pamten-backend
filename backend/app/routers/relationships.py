@@ -382,6 +382,9 @@ def ownership_history_of(
                 "kind":          "ownership_in",
                 "party":         dict(rec["owner"]),
                 "since":         rec["r"].get("since"),
+                # "first_listed": since is a LOWER bound (oldest annual subsidiary
+                # list naming it), not the start of the holding
+                "since_basis":   rec["r"].get("since_basis"),
                 "until":         rec["r"].get("until"),
                 "active":        rec["r"].get("until") is None,
                 "stake_percent": rec["r"].get("stake_percent"),
@@ -403,6 +406,9 @@ def ownership_history_of(
                 "kind":          "ownership_out",
                 "party":         dict(rec["owned"]),
                 "since":         rec["r"].get("since"),
+                # "first_listed": since is a LOWER bound (oldest annual subsidiary
+                # list naming it), not the start of the holding
+                "since_basis":   rec["r"].get("since_basis"),
                 "until":         rec["r"].get("until"),
                 "active":        rec["r"].get("until") is None,
                 "stake_percent": rec["r"].get("stake_percent"),

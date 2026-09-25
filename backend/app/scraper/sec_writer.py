@@ -336,6 +336,35 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         )
 
 
+def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: str | None) -> bool:
+    """Date a subsidiary-list edge by its oldest listing: "owned since at least".
+
+    Only on an ACTIVE Exhibit 21/8.1 edge, and only ever EARLIER: a `since` that
+    is already earlier (a stated start, or an older listing found before) is
+    kept. Sets ``since_basis = "first_listed"`` so a reader can tell a lower
+    bound from a stated start, and ``since_source_url`` to the filing that
+    proves it. The claim for the same pair and filing type moves with it.
+    Returns whether the edge changed.
+    """
+    with db.get_session() as session:
+        rec = session.run(
+            """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+               WHERE r.until IS NULL AND (r.filing_type = 'EX-21' OR r.filing_type = 'EX-8.1')
+                 AND (r.since IS NULL OR r.since > $since)
+               SET r.since = $since, r.since_basis = 'first_listed', r.since_source_url = $url
+               RETURN count(r) AS n""",
+            o=owner_id, n=owned_id, since=since, url=source_url).single()
+    changed = bool(rec and rec.get("n"))
+    if changed:
+        from app.db.arcadedb import run_sql
+        run_sql("UPDATE Claim SET since = :since, since_basis = 'first_listed', "
+                "since_source_url = :url WHERE kind = 'owns' AND from_id = :o AND to_id = :n "
+                "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1') "
+                "AND (since IS NULL OR since > :since)",
+                {"since": since, "url": source_url, "o": owner_id, "n": owned_id})
+    return changed
+
+
 def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                      source_id: str, source_url: str | None = None,
                      source_date: str | None = None, credibility_score: int = 98,

@@ -56,6 +56,12 @@ OWNS_PROPS: tuple = (
     # which is what a reader needs to judge it (a 13G is a >5% event filing,
     # a 13F a quarterly snapshot). Unset where there is no filing (Wikidata).
     "filing_type",
+    # How `since` is known, when it is not the start of the holding itself:
+    # "first_listed" = the oldest annual subsidiary list (Exhibit 21/8.1) in an
+    # unbroken run naming it — a LOWER bound ("owned since at least"). Unset
+    # when `since` is the stated start. `since_source_url` is that filing.
+    "since_basis",
+    "since_source_url",
 )
 
 ROLE_PROPS: tuple = (
