@@ -968,11 +968,18 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
         return {"status": "needs_sec_scrape", "company": company, "entity_id": company_id,
                 "total": 0, "detail": "The entity has no SEC CIK yet — run the SEC EDGAR "
                                       "scrape first."}
+    # The subsidiaries SEC's lists name, found by their CLAIMS: the pair's one
+    # shared edge may carry another source's answer and filing type (a PSC
+    # stake outranks a list that states none — app.scraper.owns_merge).
+    from app.db.arcadedb import run_sql
+    listed = {r["to_id"] for r in run_sql(
+        "SELECT to_id FROM Claim WHERE from_id = :id AND kind = 'owns' "
+        "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1')", {"id": company_id})}
     with db.get_session() as session:
-        edges = list(session.run(
-            """MATCH (c:Entity {id: $id})-[r:OWNS]->(s:Entity)
-               WHERE r.until IS NULL AND (r.filing_type = 'EX-21' OR r.filing_type = 'EX-8.1')
-               RETURN s.id AS sid, s.name AS name""", id=company_id))
+        edges = [e for e in session.run(
+            """MATCH (c:Entity {id: $id})-[r:OWNS]->(s:Entity) WHERE r.until IS NULL
+               RETURN s.id AS sid, s.name AS name""", id=company_id)
+                 if e.get("sid") in listed]
     if not edges:
         return {"status": "no_subsidiaries", "company": company, "entity_id": company_id,
                 "total": 0, "detail": "No Exhibit 21 subsidiaries in the graph yet — run "
