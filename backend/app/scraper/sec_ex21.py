@@ -184,71 +184,162 @@ _H_OWNERSHIP = re.compile(r"ownership|percent|%|owned|interest", re.I)
 _H_NOT_JURISDICTION = re.compile(r"location|address|city", re.I)
 
 _PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%\s*$")
+# Under a column the filer CALLS ownership, a bare "100" is a percentage too
+# (Lincoln National writes the column without the sign).
+_BARE_PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%?\s*$")
+# Chubb's cell for a jointly held company: "66.66% 33.33% (Chubb Bermuda
+# Insurance Ltd.)" — the first figure is the listed parent's share, each
+# further "share (holder)" pair a co-holder. Also "99.99%0.01% (…)", no space.
+_CO_OWNER = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%\s*\(([^()]+)\)")
+_FIRST_PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%")
 
 
 def _find_header(table: list[list[str]]) -> dict | None:
-    """Column indexes from a header row in the table's first few rows."""
+    """Column indexes from a header row in the table's first few rows.
+
+    A header that names the jurisdiction (and maybe the ownership) column but
+    not the name column still counts — Eversource's header is just "State of
+    Incorporation", Lincoln's "Organized Under Law of: | Ownership" — with the
+    name column inferred as the first column left of it that the rows fill.
+    A cell that IS a place ("United States of America" contains "state") is a
+    subsidiary's row, never the header above it.
+    """
     for row in table[:5]:
         name_i = jur_i = own_i = None
         for i, cell in enumerate(row):
             if not cell:
                 continue
             if jur_i is None and _H_JURISDICTION.search(cell) \
-                    and not _H_NOT_JURISDICTION.search(cell):
+                    and not _H_NOT_JURISDICTION.search(cell) \
+                    and jurisdiction_country(cell) is None:
                 jur_i = i
             elif own_i is None and _H_OWNERSHIP.search(cell):
                 own_i = i
             elif name_i is None and _H_NAME.search(cell):
                 name_i = i
+        if jur_i is not None and name_i is None:
+            below = [r for r in table if r is not row]
+            for i in range(jur_i):
+                if sum(1 for r in below if i < len(r) and r[i]) >= max(1, len(below) // 2):
+                    name_i = i
+                    break
         if name_i is not None and jur_i is not None:
             return {"name": name_i, "jurisdiction": jur_i, "ownership": own_i,
                     "header_row": row}
     return None
 
 
+def _section_header(row: list[str]) -> dict | None:
+    """A header row met in the MIDDLE of a table (Inter & Co opens a second
+    section "Subsidiary of Banco Inter S.A. | Jurisdiction | …"), held to a
+    stricter test than the table's first rows: its name cell must be a LABEL.
+    "Acme Company | State of Delaware" has header words in both cells and is a
+    subsidiary all the same."""
+    header = _find_header([row])
+    if header is None:
+        return None
+    name_cell = row[header["name"]] if header["name"] < len(row) else ""
+    return header if _NOISE.match(name_cell) else None
+
+
+def _ownership_cell(cell: str) -> tuple[float | None, list[dict]]:
+    """(stake of the listed parent, co-holders) from a cell in a column the
+    filer HEADS as ownership — which is why a bare number counts here."""
+    if not cell:
+        return None, []
+    co = [{"name": n.strip(), "stake_percent": float(p)} for p, n in _CO_OWNER.findall(cell)]
+    if co:
+        first = _FIRST_PERCENT.match(cell)
+        return (float(first.group(1)) if first else None), co
+    if m := _BARE_PERCENT.match(cell):
+        value = float(m.group(1))
+        return (value if value <= 100 else None), []
+    return None, []
+
+
+# Footnote marks glued to a name — Tenet's "USPI Holding Company, Inc.1",
+# Eversource's "NSTAR Electric Company (2) (3)", NYT's "NE Media Group, Inc.2"
+# — and an inline stake, "The New York Times Building LLC (58%)".
+_FOOTNOTE_TAIL = re.compile(r"(\s*\(\d{1,2}\)|(?<=[.)])\d{1,2}|\s*\*+)+$")
+_INLINE_STAKE = re.compile(r"\s*\((\d{1,3}(?:\.\d+)?)\s*%\)\s*$")
+
+
+def _clean_name(name: str) -> tuple[str, float | None]:
+    """(name without footnote marks, a stake stated inline in the name)."""
+    stake = None
+    if m := _INLINE_STAKE.search(name):
+        stake = float(m.group(1))
+        name = name[:m.start()]
+    return _FOOTNOTE_TAIL.sub("", name).strip(), stake
+
+
 # Header/footer rows and the registrant's own line are not subsidiaries.
 _NOISE = re.compile(
-    r"^(subsidiaries|name|entity|jurisdiction|state|country|list of|exhibit|"
+    r"^(subsidiar(?:y|ies)|name|entity|jurisdiction|state|country|list of|exhibit|"
     r"significant|(?:in)?directly[- ]|partially[- ]|wholly[- ]owned|\*+$)", re.I)
 
 
 def parse_exhibit(html: str) -> list[dict]:
-    """[{name, jurisdiction, stake_percent?}] from an Ex-21/Ex-8.1 page.
+    """[{name, jurisdiction, stake_percent?, co_owners?}] from an Ex-21/Ex-8.1
+    page.
 
     Per table: a header row naming the columns wins (that is how Bank of
     America's Location column is told apart from its Jurisdiction one, and
     how Astronics' Ownership Percentage column becomes a real stake). A
     table with a header that names NO jurisdiction-ish column is a different
     kind of table (AB InBev's securities listings) and is skipped whole.
-    Only a headerless table falls back to the first-two-columns heuristic.
+    A headerless table inherits the previous table's header when its rows
+    fit it — one list split over printed pages: Chubb's ownership column was
+    lost on ten of its eleven pages — and is then held to the content gate
+    below like any heuristic table; otherwise it falls back to the
+    first-two-columns heuristic.
+
+    Percentages are read wherever a filer puts them: an ownership column
+    (with or without the % sign), inline in the name ("… LLC (58%)"), and a
+    cell naming co-holders ("66.66% 33.33% (Chubb Bermuda Insurance Ltd.)"),
+    which yields `co_owners` with their shares. The listed name is what the
+    writer resolves; nothing here says who is above whom — a filer's layout
+    is not read as structure.
 
     Jurisdiction text is kept as filed; the ISO mapping is the writer's
     separate, lossy view of it."""
     parser = _TableTextParser()
     parser.feed(html)
     out, seen = [], set()
+    carried: dict | None = None
     for table in parser.tables:
         header = _find_header(table)
         if header is None and any(any(c) for r in table[:5] for c in r
                                   if _H_NOT_JURISDICTION.search(c or "")):
             continue   # a labelled table that is about locations, not registration
+        inherited = False
+        if header is None and carried is not None:
+            need = max(i for i in (carried["name"], carried["jurisdiction"],
+                                   carried["ownership"]) if i is not None) + 1
+            if sum(1 for r in table if len(r) >= need) >= len(table) / 2:
+                header = {**carried, "header_row": None}
+                inherited = True
+        elif header is not None:
+            carried = header
         table_rows: list[dict] = []
         for row in table:
+            stake, co_owners = None, []
             if header is not None:
                 if row is header["header_row"]:
+                    continue
+                if (again := _section_header(row)) is not None:
+                    header = carried = again      # a new section's columns
                     continue
                 name = row[header["name"]] if header["name"] < len(row) else ""
                 jurisdiction = (row[header["jurisdiction"]]
                                 if header["jurisdiction"] < len(row) else "")
-                stake = None
                 if header["ownership"] is not None and header["ownership"] < len(row):
-                    if m := _PERCENT.match(row[header["ownership"]] or ""):
-                        stake = float(m.group(1))
+                    stake, co_owners = _ownership_cell(row[header["ownership"]] or "")
             else:
                 cells = [c for c in row if c]
                 if len(cells) < 2:
                     continue
-                name, jurisdiction, stake = cells[0], cells[1], None
+                name, jurisdiction = cells[0], cells[1]
                 if _PERCENT.match(jurisdiction):
                     # a percent is a stake, not a place — try the next cell
                     stake = float(_PERCENT.match(jurisdiction).group(1))
@@ -260,16 +351,23 @@ def parse_exhibit(html: str) -> list[dict]:
             # a jurisdiction is short; a long second column means prose
             if len(jurisdiction) > 60 or len(name) < 2:
                 continue
-            entry = {"name": name.rstrip("*").strip(),
-                     "jurisdiction": jurisdiction}
+            name, inline_stake = _clean_name(name)
+            if not name:
+                continue
+            entry = {"name": name, "jurisdiction": jurisdiction}
+            if stake is None:
+                stake = inline_stake
             if stake is not None:
                 entry["stake_percent"] = stake
+            if co_owners:
+                entry["co_owners"] = co_owners
             table_rows.append(entry)
-        # Table-level sanity for HEADERLESS tables: a real subsidiary table's
-        # jurisdictions overwhelmingly map to countries; a securities listing's
-        # ("Trading symbol", "New York Stock Exchange") map not at all. A
-        # named header earns trust; a heuristic table must earn it by content.
-        if header is None and table_rows:
+        # Table-level sanity for HEADERLESS (or header-inheriting) tables: a
+        # real subsidiary table's jurisdictions overwhelmingly map to
+        # countries; a securities listing's ("Trading symbol", "New York
+        # Stock Exchange") map not at all. A named header earns trust; a
+        # heuristic table must earn it by content.
+        if (header is None or inherited) and table_rows:
             mapped = sum(1 for e in table_rows
                          if jurisdiction_country(e["jurisdiction"]) is not None)
             if mapped < len(table_rows) / 2:
@@ -310,6 +408,11 @@ _LEGAL_FORM_TAIL = re.compile(
     r"partnership|entity|trust|llc|l\.?l\.?p\.?|l\.?p\.?|inc\.?)$", re.I)
 
 
+def _is_us_state_code(code: str) -> bool:
+    from app.scraper.gleif_reference import _US_STATES
+    return code in _US_STATES
+
+
 def jurisdiction_country(jurisdiction: str | None) -> str | None:
     """ISO-2 country for a filed jurisdiction, or None when unmappable.
 
@@ -335,6 +438,8 @@ def jurisdiction_country(jurisdiction: str | None) -> str | None:
         return "CA"
     if low in _EXTRA_PLACES:
         return _EXTRA_PLACES[low]
+    if re.fullmatch(r"[A-Z]{2}", cleaned) and _is_us_state_code(cleaned):
+        return "US"                              # Eversource: "CT", "DE" (Delaware, not Germany)
     if cleaned.casefold() in _US_STATE_NAMES:   # bare "Delaware" — filers vary
         return "US"
     if code := nationality_to_iso2(cleaned):
@@ -398,6 +503,8 @@ def jurisdiction_subdivision(jurisdiction: str | None) -> str | None:
     cleaned = (jurisdiction or "").strip().replace("\u2019", "'")
     if not cleaned:
         return None
+    if re.fullmatch(r"[A-Z]{2}", cleaned) and _is_us_state_code(cleaned):
+        return f"US-{cleaned}"                   # a bare state code (Eversource)
     # peel a US/Canada country suffix or parenthetical to expose the state/province
     # "Florida, USA" / "Delaware, U.S." -> "Florida"; "USA (Delaware)" -> "Delaware"
     core = _US_SUFFIX.sub("", cleaned).strip().strip(",").strip()
