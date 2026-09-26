@@ -191,6 +191,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       "my own edge" (by `source_id`, a marker, a record link) drew a second edge
       beside every pair another source had — 129 on dev, each deleted by the next
       dedup and redrawn by the next scrape.
+- [ ] **A printed page is not a table.** A filing tool splits one list into one
+      HTML table per page, and only the first carries the header row — Chubb's
+      ownership column was silently lost on ten of eleven pages. Carry a header
+      over to the header-less tables that follow it, and keep a content check so
+      a different table does not inherit it. A header word inside a value
+      ("United States" contains "state", "ERICO Global Company" contains
+      "Company") is not a header: a cell that maps to a place is data.
 - [ ] **A list is not a start date.** A document that lists holdings *as of* a date (an
       Exhibit 21, a 13F, a register snapshot) gives an as-of `source_date`, never a
       `since`: storing the filing date as the start made News Corp's FY2026 Exhibit 21
