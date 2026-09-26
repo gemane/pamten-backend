@@ -733,7 +733,33 @@ Honesty rules, learned from the real filings:
 - **Significant subsidiaries only** — Reg S-K Item 601(b)(21) lets filers omit
   the rest (Apple lists 19, Alphabet 3). Absence proves nothing; nothing is
   inferred from it.
-- **No stake is stated, none is invented** — edges carry no `stake_percent`.
+- **No stake is stated, none is invented** — most edges carry no `stake_percent`.
+  Where a filer does state one it is read, wherever it is put (checked on a
+  62-filer sample, 2026-09-26): an ownership column with or without the `%`
+  sign (Astronics, Lincoln National), inline in the name ("The New York Times
+  Building LLC (58%)"), and a cell naming **co-holders** — Chubb's "66.66%
+  33.33% (Chubb Bermuda Insurance Ltd.)" draws the listed holding at 66.66% and
+  a second OWNS edge from the co-holder at 33.33%, when the co-holder is itself
+  on the list or is the filer ("12.01% (Chubb Limited)" becomes the filer's own
+  stake). A co-holder's name is resolved only among the listed subsidiaries,
+  never in the wider graph. The run result counts `co_owner_edges`.
+- **One list, many printed pages.** Chubb's exhibit is eleven tables with a
+  header row on the first only; the ownership column was lost on the other ten.
+  A header-less table now inherits the previous table's columns when its rows
+  fit them, and is then held to the same content check as any header-less
+  table (its jurisdictions must map to countries), so a securities table after
+  the list does not inherit. A header naming only the jurisdiction column
+  (Eversource: "State of Incorporation"; Lincoln: a blank first cell) infers
+  the name column from the rows — 6 of Eversource's 40 subsidiaries used to
+  survive. Bare two-letter state codes ("CT", "DE") are US states, not
+  countries. Footnote marks glued to names ("USPI Holding Company, Inc.1",
+  "NSTAR Electric Company (2) (3)") are stripped.
+- **The filer's layout is not read as structure.** About 1 in 8 filers draws
+  the group tree by indentation or by "Subsidiaries of X" headings (Chubb,
+  Eversource, NYT, Tenet's USPI section); the same signals appear where there
+  is no tree (BlackRock's uniform hanging indent, Clearway's heading repeated
+  on every page). Decided 2026-09-26: too fragile to build on — every listed
+  subsidiary hangs off the filer, and only GLEIF/PSC supply depth.
 - **Jurisdiction text is kept as filed** ("Delaware, U.S." stays); the ISO-2
   country is a separate mapped view ("Delaware, U.S."/bare state names → US,
   country names through the shared `nationality_to_iso2` table). Unmappable

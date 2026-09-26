@@ -119,3 +119,49 @@ def test_no_cik_asks_for_the_sec_scrape_first(it_db):
     assert result["status"] == "needs_sec_scrape"
     n = it_db.run_command("MATCH ()-[r:OWNS]->() RETURN count(r) AS n")
     assert dict(n[0])["n"] == 0, "nothing written before the record is judged"
+
+
+# ── Co-holders a percentage cell names ────────────────────────────────────────
+
+CHUBB_DATA = {
+    "subsidiaries": [
+        {"name": "Chubb Tempest Reinsurance Ltd.", "jurisdiction": "Bermuda", "stake_percent": 100.0},
+        {"name": "Chubb Bermuda Insurance Ltd.", "jurisdiction": "Bermuda", "stake_percent": 100.0},
+        # "66.66% 33.33% (Chubb Bermuda Insurance Ltd.)"
+        {"name": "Oasis Investments Ltd.", "jurisdiction": "Bermuda", "stake_percent": 66.66,
+         "co_owners": [{"name": "Chubb Bermuda Insurance Ltd.", "stake_percent": 33.33}]},
+        # "87.99% 12.01% (Chubb Limited)" — the co-holder is the filer itself
+        {"name": "Chubb INA Holdings LLC", "jurisdiction": "USA (Delaware)", "stake_percent": 87.99,
+         "co_owners": [{"name": "Chubb Limited", "stake_percent": 12.01}]},
+        # a co-holder the list does not carry: no edge, nothing looked up
+        {"name": "Chubb Seguros Chile S.A.", "jurisdiction": "Chile", "stake_percent": 99.0,
+         "co_owners": [{"name": "Some Stranger Holdings", "stake_percent": 1.0}]},
+    ],
+    "form": "10-K", "filing_date": "2026-02-26",
+    "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000012/cb-20251231xex211.htm",
+}
+
+
+def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id: 'chubb', name: 'CHUBB LIMITED', name_normalized: 'chubb', "
+        "search_text: 'CHUBB LIMITED', type: 'company', sec_cik: '0000896159'})")
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=CHUBB_DATA):
+        result = runner.run_sec_ex21("Chubb")
+    assert result["status"] == "ok"
+    assert result["total"] == 5 and result["co_owner_edges"] == 1
+
+    rows = it_db.run_command(
+        "MATCH (a:Entity)-[r:OWNS]->(b:Entity) "
+        "RETURN a.name AS owner, b.name AS owned, r.stake_percent AS stake, r.filing_type AS ft")
+    edges = {(r["owner"], r["owned"]): (r.get("stake"), r.get("ft")) for r in rows}
+    # the listed holding at its stated share…
+    assert edges[("CHUBB LIMITED", "Oasis Investments Ltd.")] == (66.66, "EX-21")
+    # …and the co-holder's edge, from the listed subsidiary, at its share
+    assert edges[("Chubb Bermuda Insurance Ltd.", "Oasis Investments Ltd.")] == (33.33, "EX-21")
+    # a co-holder that is the filer becomes the filer's own stake
+    assert edges[("CHUBB LIMITED", "Chubb INA Holdings LLC")][0] == 12.01
+    # an unlisted co-holder draws nothing and creates nobody
+    assert not any(o == "Some Stranger Holdings" for o, _ in edges)
+    assert it_db.run_command("MATCH (e:Entity) WHERE e.name CONTAINS 'Stranger' RETURN count(e) AS n")[0]["n"] == 0
+    assert len(edges) == 6

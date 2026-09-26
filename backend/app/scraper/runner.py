@@ -13,6 +13,7 @@ All entry points:
 """
 
 import os
+import re
 import uuid
 import logging
 import zipfile
@@ -826,6 +827,14 @@ def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> 
 
 
 @_with_autodedup
+def _same_filer(a: str | None, b: str | None) -> bool:
+    """The filer under another spelling ("Chubb Limited" vs "CHUBB LIMITED",
+    "Inter & Co, Inc." vs "Inter&Co, Inc"): legal forms and punctuation dropped."""
+    from app.scraper.mapper import normalize_entity_name
+    def key(x): return re.sub(r"[^a-z0-9]", "", normalize_entity_name(x))
+    return bool(a and b) and key(a) == key(b)
+
+
 def run_sec_ex21(company: str, force: bool = False) -> dict:
     """Ingest one issuer's statutory subsidiary list from its latest annual
     filing's Exhibit 21 (10-K) or Exhibit 8.1 (20-F).
@@ -838,8 +847,15 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
 
     Honesty rules carried onto the data:
     - filers list only SIGNIFICANT subsidiaries; absence proves nothing.
-    - the exhibit states existence + jurisdiction, never a stake — edges are
-      ownership_type "controlling" with no invented percentage.
+    - the exhibit states existence + jurisdiction, rarely a stake — edges are
+      ownership_type "controlling" with no invented percentage; a stated one
+      (an ownership column, "(58%)" in the name) is stored. A cell naming
+      co-holders ("66.66% 33.33% (Chubb Bermuda Insurance Ltd.)") draws each
+      co-holder's stake too, when the co-holder is itself on the list or is
+      the filer — a name is never looked up in the wider graph for this.
+    - the filer's LAYOUT (indentation, section headings) is not read as
+      group structure: too fragile to build on. Every subsidiary hangs off
+      the filer.
     - subsidiaries come without hard ids; they are resolved by name first
       (an existing GLEIF/PSC node wins), created with their registered
       country otherwise. Legal names + jurisdiction make them better dedup
@@ -892,8 +908,14 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                     "detail": "This annual filing is already ingested; a newer "
                               "one opens the gate by itself. --force re-reads."}
 
-        written, skipped_unmapped = 0, 0
+        written, skipped_unmapped, co_owner_edges = 0, 0, 0
         scraped: list[dict] = []
+        filing_type = "EX-21" if data["form"] == "10-K" else "EX-8.1"
+        # Nodes first, edges second: a co-holder a cell names is resolved
+        # among the LISTED subsidiaries (by the name as filed) or as the filer
+        # itself — never looked up in the wider graph, where a name alone
+        # could land on a stranger.
+        ids: dict[str, str] = {}
         for sub in data["subsidiaries"]:
             country = jurisdiction_country(sub["jurisdiction"])
             if country is None:
@@ -908,29 +930,48 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 source_id=source_id)
             if not sub_id or sub_id == company_id:
                 continue
-            _upsert_owns_sec(
-                owner_id=company_id, owned_id=sub_id, source_id=source_id,
-                ownership_type="controlling",
-                file_date=data["filing_date"],
-                # Some filers state it (Astronics: an Ownership Percentage
-                # column). Stated → stored; absent → None, never invented.
-                stake_percent=sub.get("stake_percent"),
-                filing_type="EX-21" if data["form"] == "10-K" else "EX-8.1",
-                # A subsidiary LIST: held as of the filing, not acquired then.
-                filing_dates_the_stake=False,
-                source_url=data["url"])
-            written += 1
+            ids[sub["name"].casefold()] = sub_id
             scraped.append({"id": sub_id, "name": sub["name"],
                             "type": "company", "country": country})
+
+        def owns(owner_id: str, sub_id: str, stake: float | None) -> None:
+            _upsert_owns_sec(
+                owner_id=owner_id, owned_id=sub_id, source_id=source_id,
+                ownership_type="controlling", file_date=data["filing_date"],
+                # Some filers state it (Astronics: an Ownership Percentage
+                # column). Stated → stored; absent → None, never invented.
+                stake_percent=stake, filing_type=filing_type,
+                # A subsidiary LIST: held as of the filing, not acquired then.
+                filing_dates_the_stake=False, source_url=data["url"])
+
+        for sub in data["subsidiaries"]:
+            sub_id = ids.get(sub["name"].casefold())
+            if not sub_id:
+                continue
+            stake = sub.get("stake_percent")
+            for co in sub.get("co_owners") or []:
+                co_id = ids.get(co["name"].casefold())
+                if co_id is None and _same_filer(co["name"], entity.get("name")):
+                    # "87.99% 12.01% (Chubb Limited)": the filer holds the rest
+                    stake = co["stake_percent"]
+                    continue
+                if not co_id or co_id == sub_id:
+                    continue
+                owns(co_id, sub_id, co["stake_percent"])
+                co_owner_edges += 1
+            owns(company_id, sub_id, stake)
+            written += 1
 
         with db.get_session() as session:
             session.run("MATCH (e:Entity {id: $id}) SET e.sec_ex21_ingested = $u",
                         id=company_id, u=data["url"])
         run["total"] = written
+        if co_owner_edges:
+            run["note"] = f"{co_owner_edges} co-holder edges"
         return {"status": "ok", "company": company, "entity_id": company_id,
                 "form": data["form"], "filing_date": data["filing_date"],
                 "total": written, "unmapped_jurisdictions": skipped_unmapped,
-                "scraped": scraped}
+                "co_owner_edges": co_owner_edges, "scraped": scraped}
 
 
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
