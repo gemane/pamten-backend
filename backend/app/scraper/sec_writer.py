@@ -327,7 +327,12 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             # values when this scrape didn't yield a URL). The stake and its
             # type move together: a re-read that corrects one corrects both
             # (a 0.0000003% co-holder written as "controlling" stayed so
-            # through every re-read while this only reset the stake). When `until` is given
+            # through every re-read while this only reset the stake).
+            #
+            # ArcadeDB applies SET assignments in order, each seeing the
+            # previous ones: the basis must be written BEFORE the marker, or
+            # its condition sees the marker just set and leaves the basis
+            # empty — an inferred marker that then reads as a stated one. When `until` is given
             # the same statement closes the edge, so a holding that has since
             # been exited stops showing as current.
             session.run(
@@ -348,12 +353,12 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.filing_type      = COALESCE($ftype, r.filing_type),
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date),
-                    r.direct_or_indirect = CASE WHEN $doi IS NOT NULL AND
-                                                     (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
-                                                THEN $doi ELSE r.direct_or_indirect END,
                     r.structure_basis    = CASE WHEN $doi IS NOT NULL AND
                                                      (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
-                                                THEN $sbasis ELSE r.structure_basis END
+                                                THEN $sbasis ELSE r.structure_basis END,
+                    r.direct_or_indirect = CASE WHEN $doi IS NOT NULL AND
+                                                     (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
+                                                THEN $doi ELSE r.direct_or_indirect END
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
                 surl=source_url, sdate=file_date, until=until,

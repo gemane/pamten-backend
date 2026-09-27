@@ -337,3 +337,15 @@ class TestInferredMarkers:
         [edge] = _edges(it_db, "nc", "dj")
         assert edge["direct_or_indirect"] == "direct"
         assert it_db.run_command("MATCH ()-[r:OWNS]->() RETURN r.structure_basis AS b")[0].get("b") is None
+
+    def test_a_re_read_marks_an_existing_sec_edge_with_its_basis(self, it_db):
+        # The own-path UPDATE sets the marker and its basis in one SET; the
+        # basis went missing when it was assigned after the marker.
+        from app.scraper.sec_writer import _upsert_owns_sec
+        _nodes(it_db, "nc", "dj")
+        _sec_ex21()                                                    # flat read: no marker
+        _upsert_owns_sec("nc", "dj", "sec", "controlling", "2026-08-07", None,
+                         filing_type="EX-21", filing_dates_the_stake=False,
+                         direct_or_indirect="direct", structure_basis="ex21_indent")
+        row = it_db.run_command("MATCH ()-[r:OWNS]->() RETURN r.direct_or_indirect AS m, r.structure_basis AS b")[0]
+        assert (row["m"], row["b"]) == ("direct", "ex21_indent")
