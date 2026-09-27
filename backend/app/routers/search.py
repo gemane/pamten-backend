@@ -462,7 +462,13 @@ def _ownership_summary(owners: list[dict]) -> dict:
 # Per-section caps for the profile. Each section is its own query, so these bound
 # the payload additively; before the split one entity's page could inline every
 # subsidiary it had (236 of them, ~197 KB, measured on the dev database).
-PROFILE_SECTION_LIMIT = 200
+#
+# TEMPORARY (2026-09-27): 900, up from 200, while the cut-off is being looked at.
+# With no stated stakes the cap drops rows in storage order, so News Corp's panel
+# and graph showed 200 of 300 subsidiaries and none of its 33 Dow Jones companies
+# — with no sign anything was missing. The proper answer (a visible cut, a
+# "show all", or paging) is still open; Tenet (1,160) exceeds even this.
+PROFILE_SECTION_LIMIT = 900
 PROFILE_SECTION_MAX = 1_000
 
 # One query per section, each anchored on the indexed Entity id.
