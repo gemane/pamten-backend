@@ -94,6 +94,7 @@ def claim_props(
     filing_type: str | None = None,
     since_basis: str | None = None,
     since_source_url: str | None = None,
+    structure_basis: str | None = None,
 ) -> dict:
     """The property bag for one claim, ready to UPSERT on `claim_key`.
 
@@ -132,6 +133,8 @@ def claim_props(
         # this a claim's since would read as the start of the holding.
         "since_basis": since_basis,
         "since_source_url": since_source_url,
+        # The layout evidence behind an inferred tree position (see edge_schema).
+        "structure_basis": structure_basis,
         "last_seen_at": now_iso(),
     }
 
@@ -250,10 +253,15 @@ def migrate_claims(dead_id: str, keep_id: str) -> int:
     for end in ("from_id", "to_id"):
         rows = run_sql(f"SELECT FROM Claim WHERE {end} = :d", {"d": dead_id})
         for r in rows:
+            # Every claim field, not a hand-kept subset: the list lagged the
+            # claim (share counts, filing type, the since basis) and a merge
+            # silently dropped them from the survivor's claims.
             props = {k: r.get(k) for k in (
                 "kind", "from_id", "to_id", "source_id", "stake_percent",
                 "voting_power_pct", "ownership_type", "role", "since", "until",
                 "source_url", "source_date", "credibility_score", "last_seen_at",
+                "share_class", "shares", "shares_outstanding", "voting_shares",
+                "filing_type", "since_basis", "since_source_url", "structure_basis",
             )}
             props[end] = keep_id
             props["claim_key"] = claim_key(props["kind"], props["from_id"],

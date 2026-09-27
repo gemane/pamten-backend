@@ -308,3 +308,44 @@ def test_the_timeline_lists_a_shared_pair_once(it_db):
     _sec_ex21()
     events, _ = ownership_history_of("nc", 100)
     assert [e["party"]["id"] for e in events if e["kind"] == "ownership_out"] == ["dj"]
+
+
+class TestInferredMarkers:
+    def test_gleif_does_not_take_an_ex21_layout_marker_for_its_own(self, it_db):
+        from app.scraper.gleif_incremental import _owns_edge_upsert
+        from app.scraper.sec_writer import _upsert_owns_sec
+        _nodes(it_db, "nc", "dj")
+        _upsert_owns_sec("nc", "dj", "sec", "controlling", "2026-08-07", None,
+                         filing_type="EX-21", filing_dates_the_stake=False,
+                         direct_or_indirect="direct", structure_basis="ex21_indent")
+        # RR states the pair as ULTIMATE: with an inferred 'direct' marker on the
+        # edge this must be an adoption (a stated marker replaces the inferred
+        # one), not a fold that invents also_ultimate
+        assert _owns_edge_upsert("nc", "dj", "LEI0000000000000DJ00", "indirect", "gleif", 92, None) == "adopted"
+        row = it_db.run_command(
+            "MATCH (:Entity {id:'nc'})-[r:OWNS]->(:Entity {id:'dj'}) RETURN r.direct_or_indirect AS m, "
+            "r.structure_basis AS b, r.also_ultimate AS au, r.source_id AS src")[0]
+        assert (row["m"], row.get("b"), row.get("au"), row["src"]) == ("indirect", None, None, "sec")
+
+    def test_sec_never_overwrites_a_stated_marker_with_an_inferred_one(self, it_db):
+        from app.scraper.sec_writer import _upsert_owns_sec
+        _nodes(it_db, "nc", "dj")
+        _gleif_edge(it_db)                                             # stated 'direct', no basis
+        _upsert_owns_sec("nc", "dj", "sec", "controlling", "2026-08-07", None,
+                         filing_type="EX-21", filing_dates_the_stake=False,
+                         direct_or_indirect="direct", structure_basis="ex21_heading")
+        [edge] = _edges(it_db, "nc", "dj")
+        assert edge["direct_or_indirect"] == "direct"
+        assert it_db.run_command("MATCH ()-[r:OWNS]->() RETURN r.structure_basis AS b")[0].get("b") is None
+
+    def test_a_re_read_marks_an_existing_sec_edge_with_its_basis(self, it_db):
+        # The own-path UPDATE sets the marker and its basis in one SET; the
+        # basis went missing when it was assigned after the marker.
+        from app.scraper.sec_writer import _upsert_owns_sec
+        _nodes(it_db, "nc", "dj")
+        _sec_ex21()                                                    # flat read: no marker
+        _upsert_owns_sec("nc", "dj", "sec", "controlling", "2026-08-07", None,
+                         filing_type="EX-21", filing_dates_the_stake=False,
+                         direct_or_indirect="direct", structure_basis="ex21_indent")
+        row = it_db.run_command("MATCH ()-[r:OWNS]->() RETURN r.direct_or_indirect AS m, r.structure_basis AS b")[0]
+        assert (row["m"], row["b"]) == ("direct", "ex21_indent")

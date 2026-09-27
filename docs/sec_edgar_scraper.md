@@ -757,12 +757,37 @@ Honesty rules, learned from the real filings:
   survive. Bare two-letter state codes ("CT", "DE") are US states, not
   countries. Footnote marks glued to names ("USPI Holding Company, Inc.1",
   "NSTAR Electric Company (2) (3)") are stripped.
-- **The filer's layout is not read as structure.** About 1 in 8 filers draws
-  the group tree by indentation or by "Subsidiaries of X" headings (Chubb,
-  Eversource, NYT, Tenet's USPI section); the same signals appear where there
-  is no tree (BlackRock's uniform hanging indent, Clearway's heading repeated
-  on every page). Decided 2026-09-26: too fragile to build on — every listed
-  subsidiary hangs off the filer, and only GLEIF/PSC supply depth.
+- **The tree the filer draws, and only then (2026-09-27).** About 1 in 8
+  filers shows the group structure: an **indentation tree** (Chubb, seven
+  levels; Eversource; NYT; LanzaTech; JPMorgan in part — drawn with CSS
+  padding or runs of `&nbsp;`) or a **"Subsidiaries of X" heading** between
+  tables or as a header cell (Tenet: 813 of 1,162 under "Consolidated
+  Subsidiaries of USPI Holding Company, Inc."; Inter & Co: "Subsidiary of
+  Banco Inter S.A."). Each subsidiary is then drawn **under that parent**
+  (`direct_or_indirect: direct`, `structure_basis: ex21_indent` /
+  `ex21_heading`, stake from its row) and **not under the filer**: a
+  filer→subsidiary edge an earlier flat read drew is withdrawn
+  (`sec_writer.detach_owns_sec` — SEC's claim goes; the edge goes only if it
+  was SEC's alone, otherwise it is re-answered from the other source's claim).
+  This was a deliberate choice over keeping the filer's line as an "indirect"
+  holding: the panel's "Held indirectly" group was a compromise. Counted as
+  `nested` and `detached` in the run result; `sec-ex21-history` walks the tree
+  and dates each (holder, subsidiary) pair.
+  - Only an unambiguous tree counts: at least two indentation levels, at
+    least three indented rows, not every row indented, every indented row
+    with a less-indented row above it, a stray indent far beyond its
+    neighbours treated as noise. The look-alikes stay flat: BlackRock's
+    uniform hanging indent (one level), Clearway's "SUBSIDIARIES OF CLEARWAY
+    ENERGY, INC." repeated on every page (it names the filer), Chevron's
+    "…CORPORATION1" (a footnote), "Subsidiaries of the Registrants". A parent
+    the list does not itself carry (Altaba's "Subsidiaries of Yahoo! Inc.") is
+    ignored and counted as `unresolved_parents` — a name is never resolved in
+    the wider graph.
+  - A marker GLEIF **stated** (no `structure_basis`) is never overwritten by
+    one inferred from layout; the GLEIF delta recognises its own edges by the
+    absence of a basis.
+  - Flat lists (DaVita, Tesla, Occidental, News Corp, NOV — most filers) say
+    nothing about depth and get no marker; only GLEIF/PSC supply their depth.
 - **Jurisdiction text is kept as filed** ("Delaware, U.S." stays); the ISO-2
   country is a separate mapped view ("Delaware, U.S."/bare state names → US,
   country names through the shared `nationality_to_iso2` table). Unmappable

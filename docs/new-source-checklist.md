@@ -198,6 +198,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       a different table does not inherit it. A header word inside a value
       ("United States" contains "state", "ERICO Global Company" contains
       "Company") is not a header: a cell that maps to a place is data.
+- [ ] **Layout is data only when it is unambiguous.** Exhibit 21 filers draw the
+      group tree by indentation or "Subsidiaries of X" headings — and the same
+      signals appear where there is no tree (a uniform hanging indent, a page
+      heading repeated on every page, a heading naming the filer). Read a tree
+      only under strict acceptance rules with a flat fallback, stamp the basis on
+      what you inferred (`structure_basis`), and test on a real sample: 62 exhibits
+      found every shape above.
 - [ ] **A list is not a start date.** A document that lists holdings *as of* a date (an
       Exhibit 21, a 13F, a register snapshot) gives an as-of `source_date`, never a
       `since`: storing the filing date as the start made News Corp's FY2026 Exhibit 21

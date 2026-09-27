@@ -853,9 +853,14 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
       co-holders ("66.66% 33.33% (Chubb Bermuda Insurance Ltd.)") draws each
       co-holder's stake too, when the co-holder is itself on the list or is
       the filer — a name is never looked up in the wider graph for this.
-    - the filer's LAYOUT (indentation, section headings) is not read as
-      group structure: too fragile to build on. Every subsidiary hangs off
-      the filer.
+    - where the filer SHOWS the group tree — an indentation tree (Chubb,
+      Eversource, NYT), a "Subsidiaries of X" heading (Tenet's USPI section)
+      — the subsidiary is drawn under that parent, marked direct with the
+      layout basis, and NOT under the filer: a filer→subsidiary edge an
+      earlier flat read drew is withdrawn (`detach_owns_sec`) rather than
+      kept as an "indirect" holding. A parent the list does not itself name
+      (Altaba's "Yahoo! Inc.") is ignored and counted. A flat list says
+      nothing about depth and gets no marker.
     - subsidiaries come without hard ids; they are resolved by name first
       (an existing GLEIF/PSC node wins), created with their registered
       country otherwise. Legal names + jurisdiction make them better dedup
@@ -874,6 +879,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
     from app.scraper.run_log import record_run
     from app.scraper.sec_ex21 import (fetch_subsidiaries, jurisdiction_country,
                                        jurisdiction_subdivision)
+    from app.scraper.sec_writer import detach_owns_sec
 
     entity = resolve_best_entity(company, None)
     if not entity:
@@ -888,7 +894,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
     with record_run("sec-ex21", company) as run:
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
                                    SEC_EDGAR_CREDIBILITY)
-        data = fetch_subsidiaries(entity["sec_cik"])
+        data = fetch_subsidiaries(entity["sec_cik"], registrant=entity.get("name"))
         if not data:
             run["status"], run["note"] = "skipped", "no subsidiary exhibit"
             return {"status": "no_exhibit", "company": company,
@@ -909,8 +915,10 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                               "one opens the gate by itself. --force re-reads."}
 
         written, skipped_unmapped, co_owner_edges = 0, 0, 0
+        nested = unresolved_parents = detached = 0
         scraped: list[dict] = []
         filing_type = "EX-21" if data["form"] == "10-K" else "EX-8.1"
+        basis_of = {"indent": "ex21_indent", "heading": "ex21_heading"}
         # Nodes first, edges second: a co-holder a cell names is resolved
         # among the LISTED subsidiaries (by the name as filed) or as the filer
         # itself — never looked up in the wider graph, where a name alone
@@ -935,7 +943,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                             "type": "company", "country": country})
 
         def owns(owner_id: str, sub_id: str, stake: float | None,
-                 ownership_type: str | None = "controlling") -> None:
+                 ownership_type: str | None = "controlling", **structure) -> None:
             _upsert_owns_sec(
                 owner_id=owner_id, owned_id=sub_id, source_id=source_id,
                 ownership_type=ownership_type, file_date=data["filing_date"],
@@ -943,40 +951,68 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 # column). Stated → stored; absent → None, never invented.
                 stake_percent=stake, filing_type=filing_type,
                 # A subsidiary LIST: held as of the filing, not acquired then.
-                filing_dates_the_stake=False, source_url=data["url"])
+                filing_dates_the_stake=False, source_url=data["url"], **structure)
 
         for sub in data["subsidiaries"]:
             sub_id = ids.get(sub["name"].casefold())
             if not sub_id:
                 continue
             stake = sub.get("stake_percent")
+            basis = basis_of.get(sub.get("parent_basis") or "")
+            parent_id = ids.get((sub.get("parent") or "").casefold())
+            # Who the listed holding hangs off: the intermediate parent the
+            # layout shows, else the filer. A parent the list does not carry
+            # is not resolved elsewhere — the filer stays the holder.
+            holder = parent_id if parent_id and parent_id != sub_id else company_id
+            if sub.get("parent") and holder == company_id:
+                unresolved_parents += 1
+            # The layout's marker: a resolved parent, or a row the tree puts
+            # straight under the filer. A row whose named parent the list does
+            # not carry is under SOMEONE else — not direct under the filer.
+            structure = ({"direct_or_indirect": "direct", "structure_basis": basis}
+                         if basis and (holder != company_id or not sub.get("parent")) else {})
             for co in sub.get("co_owners") or []:
                 co_id = ids.get(co["name"].casefold())
                 if co_id is None and _same_filer(co["name"], entity.get("name")):
-                    # "87.99% 12.01% (Chubb Limited)": the filer holds the rest
-                    stake = co["stake_percent"]
-                    continue
+                    co_id = company_id
                 if not co_id or co_id == sub_id:
+                    continue
+                if co_id == holder:
+                    if holder == company_id:
+                        # "87.99% 12.01% (Chubb Limited)" in a FLAT list: the
+                        # first share is an unlisted holder's; the filer's own
+                        # line carries the share the cell gives the filer
+                        stake = co["stake_percent"]
                     continue
                 # A co-holder is whatever its share makes it — the 0.0000003%
                 # nominal second shareholder Mexican law requires is a
                 # minority holder, not a controlling one. The writer derives
                 # the type from the stake when none is given.
-                owns(co_id, sub_id, co["stake_percent"], ownership_type=None)
+                owns(co_id, sub_id, co["stake_percent"], ownership_type=None,
+                     direct_or_indirect="direct", structure_basis="ex21_stated")
                 co_owner_edges += 1
-            owns(company_id, sub_id, stake)
+            owns(holder, sub_id, stake, **structure)
             written += 1
+            if holder != company_id:
+                nested += 1
+                if detach_owns_sec(company_id, sub_id, source_id) != "none":
+                    detached += 1
 
         with db.get_session() as session:
             session.run("MATCH (e:Entity {id: $id}) SET e.sec_ex21_ingested = $u",
                         id=company_id, u=data["url"])
         run["total"] = written
-        if co_owner_edges:
-            run["note"] = f"{co_owner_edges} co-holder edges"
+        notes = [f"{nested} under an intermediate parent" if nested else "",
+                 f"{co_owner_edges} co-holder edges" if co_owner_edges else "",
+                 f"{detached} filer edges withdrawn" if detached else ""]
+        if any(notes):
+            run["note"] = ", ".join(n for n in notes if n)
         return {"status": "ok", "company": company, "entity_id": company_id,
                 "form": data["form"], "filing_date": data["filing_date"],
                 "total": written, "unmapped_jurisdictions": skipped_unmapped,
-                "co_owner_edges": co_owner_edges, "scraped": scraped}
+                "nested": nested, "unresolved_parents": unresolved_parents,
+                "detached": detached, "co_owner_edges": co_owner_edges,
+                "scraped": scraped}
 
 
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
@@ -1016,16 +1052,27 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
                                       "scrape first."}
     # The subsidiaries SEC's lists name, found by their CLAIMS: the pair's one
     # shared edge may carry another source's answer and filing type (a PSC
-    # stake outranks a list that states none — app.scraper.owns_merge).
+    # stake outranks a list that states none — app.scraper.owns_merge). The
+    # exhibit may have drawn a TREE, so this walks it: every active edge whose
+    # pair an Exhibit 21 claim backs, from the filer down, each dated as
+    # (its holder, the subsidiary).
     from app.db.arcadedb import run_sql
-    listed = {r["to_id"] for r in run_sql(
-        "SELECT to_id FROM Claim WHERE from_id = :id AND kind = 'owns' "
-        "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1')", {"id": company_id})}
-    with db.get_session() as session:
-        edges = [e for e in session.run(
-            """MATCH (c:Entity {id: $id})-[r:OWNS]->(s:Entity) WHERE r.until IS NULL
-               RETURN s.id AS sid, s.name AS name""", id=company_id)
-                 if e.get("sid") in listed]
+    edges: list[dict] = []
+    seen, frontier = {company_id}, [company_id]
+    while frontier:
+        owner = frontier.pop()
+        listed = {r["to_id"] for r in run_sql(
+            "SELECT to_id FROM Claim WHERE from_id = :id AND kind = 'owns' "
+            "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1')", {"id": owner})}
+        with db.get_session() as session:
+            rows = list(session.run(
+                """MATCH (c:Entity {id: $id})-[r:OWNS]->(s:Entity) WHERE r.until IS NULL
+                   RETURN s.id AS sid, s.name AS name""", id=owner))
+        for e in rows:
+            if e.get("sid") in listed and e["sid"] not in seen:
+                seen.add(e["sid"])
+                frontier.append(e["sid"])
+                edges.append({"owner": owner, "sid": e["sid"], "name": e.get("name")})
     if not edges:
         return {"status": "no_subsidiaries", "company": company, "entity_id": company_id,
                 "total": 0, "detail": "No Exhibit 21 subsidiaries in the graph yet — run "
@@ -1045,7 +1092,7 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
             if not found:
                 unmatched += 1          # named differently in the exhibit than in the graph
                 continue
-            if set_since_lower_bound(company_id, e["sid"], found["as_of"], found["url"]):
+            if set_since_lower_bound(e["owner"], e["sid"], found["as_of"], found["url"]):
                 dated += 1
                 oldest = min(oldest or found["as_of"], found["as_of"])
         run["total"] = dated

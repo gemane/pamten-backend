@@ -78,7 +78,17 @@ class TestFold:
         psc = dict(PSC, since="2016-04-06")
         sec = dict(SEC_EX21, direct_or_indirect="direct", since=None)
         out = fold([psc, sec], psc)
-        assert out == {"direct_or_indirect": "direct"}
+        assert out == {"direct_or_indirect": "direct", "structure_basis": None}
+
+    def test_an_inferred_marker_brings_its_basis_and_a_stated_one_none(self):
+        # SEC's Exhibit 21 writer infers a marker from the filer's layout and
+        # says so; GLEIF states one. The pair must stay paired when copied.
+        psc = dict(PSC)
+        sec = dict(SEC_EX21, direct_or_indirect="direct", structure_basis="ex21_indent")
+        assert fold([psc, sec], psc) == {"direct_or_indirect": "direct",
+                                         "structure_basis": "ex21_indent"}
+        gleif = dict(GLEIF)
+        assert "structure_basis" not in fold([gleif, sec], gleif)   # GLEIF's stated marker stays
 
     def test_nothing_to_do_for_edges_that_agree(self):
         a = dict(GLEIF, since="2020-01-01")

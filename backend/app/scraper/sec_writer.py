@@ -228,7 +228,9 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      voting_shares: int | None = None,
                      value_usd: float | None = None,
                      filing_type: str | None = None,
-                     filing_dates_the_stake: bool = True):
+                     filing_dates_the_stake: bool = True,
+                     direct_or_indirect: str | None = None,
+                     structure_basis: str | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     ``filing_dates_the_stake``: whether ``file_date`` says when the holding
@@ -252,6 +254,12 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     One active edge per pair: when another source already drew this pair, SEC
     takes over that edge (``_share_owns_edge``, rules in
     ``app.scraper.owns_merge``) instead of drawing its own beside it.
+
+    ``direct_or_indirect`` / ``structure_basis``: where the filer SHOWED the
+    subsidiary's place in the group (an Exhibit 21 indentation tree or a
+    "Subsidiaries of X" heading — `sec_ex21.parse_exhibit`), the marker is
+    written with its basis. A marker GLEIF stated (no basis) is never
+    overwritten by one inferred from layout.
 
     ``until`` records a holding that has already ended — a 13D/13G filer that
     later amended to 0% has dropped below the 5% threshold, so the stake is
@@ -278,7 +286,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                  shares_outstanding=shares_outstanding, voting_shares=voting_shares,
                  since=since, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score,
-                 filing_type=filing_type)
+                 filing_type=filing_type, structure_basis=structure_basis)
     # Claims-only sources assert but do not draw (see sources.edge_writes_suppressed).
     from app.scraper.sources import edge_writes_suppressed
     if edge_writes_suppressed(source_id):
@@ -296,6 +304,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         share_class=share_class, shares=shares,
         shares_outstanding=shares_outstanding, voting_shares=voting_shares,
         value_usd=value_usd, filing_type=filing_type,
+        direct_or_indirect=direct_or_indirect, structure_basis=structure_basis,
         stale=False,
     )
     create_clause = edge_create_clause(OWNS_PROPS)
@@ -318,7 +327,12 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             # values when this scrape didn't yield a URL). The stake and its
             # type move together: a re-read that corrects one corrects both
             # (a 0.0000003% co-holder written as "controlling" stayed so
-            # through every re-read while this only reset the stake). When `until` is given
+            # through every re-read while this only reset the stake).
+            #
+            # ArcadeDB applies SET assignments in order, each seeing the
+            # previous ones: the basis must be written BEFORE the marker, or
+            # its condition sees the marker just set and leaves the basis
+            # empty — an inferred marker that then reads as a stated one. When `until` is given
             # the same statement closes the edge, so a holding that has since
             # been exited stops showing as current.
             session.run(
@@ -338,7 +352,13 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.value_usd        = COALESCE($vusd, r.value_usd),
                     r.filing_type      = COALESCE($ftype, r.filing_type),
                     r.source_url  = COALESCE($surl,  r.source_url),
-                    r.source_date = COALESCE($sdate, r.source_date)
+                    r.source_date = COALESCE($sdate, r.source_date),
+                    r.structure_basis    = CASE WHEN $doi IS NOT NULL AND
+                                                     (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
+                                                THEN $sbasis ELSE r.structure_basis END,
+                    r.direct_or_indirect = CASE WHEN $doi IS NOT NULL AND
+                                                     (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
+                                                THEN $doi ELSE r.direct_or_indirect END
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
                 surl=source_url, sdate=file_date, until=until,
@@ -346,6 +366,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 vote=voting_power_pct, sclass=share_class,
                 shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
                 vusd=value_usd, ftype=filing_type,
+                doi=direct_or_indirect, sbasis=structure_basis,
             )
             return
         # Another source already holds this pair: take over ITS edge rather than
@@ -387,6 +408,10 @@ def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,
         sets.update({f: bag.get(f) for f in ANSWER_FIELDS})
     since = combine_since(held, bag)
     sets.update({f: v for f, v in since.items() if v != held.get(f)})
+    if bag.get("direct_or_indirect") and (
+            current.get("direct_or_indirect") is None or current.get("structure_basis")):
+        sets.update(direct_or_indirect=bag["direct_or_indirect"],
+                    structure_basis=bag.get("structure_basis"))
     if takeover or int(bag.get("credibility_score") or 0) >= int(held.get("credibility_score") or 0):
         sets.update(last_scraped_at=now, stale=False)
     if not sets:
@@ -399,6 +424,48 @@ def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,
         """,
         oid=owner_id, nid=owned_id, **{f"v_{f}": v for f, v in sets.items()},
     )
+
+
+def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
+    """Withdraw SEC's assertion that ``owner`` holds ``owned`` directly — an
+    Exhibit 21 re-read that now places the subsidiary under an intermediate
+    parent, where an earlier flat read had hung it off the filer.
+
+    SEC's claim for the pair goes. The edge goes only if it is SEC's alone;
+    an edge another source also claims (GLEIF's ultimate-parent link, say)
+    stays and is re-answered from that source's claim, so it never keeps
+    citing SEC for a fact SEC withdrew. Returns "deleted", "reassigned" or
+    "none" (nothing SEC's to withdraw).
+    """
+    from app.claims import KIND_OWNS, claim_key, claims_for, edge_values_from
+    from app.db.arcadedb import run_sql
+    from app.scraper.owns_merge import ANSWER_FIELDS
+    run_sql("DELETE FROM Claim WHERE claim_key = :k",
+            {"k": claim_key(KIND_OWNS, owner_id, owned_id, source_id)})
+    with db.get_session() as session:
+        edge = session.run(
+            """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+               WHERE r.until IS NULL AND r.source_id = $sid RETURN r LIMIT 1""",
+            o=owner_id, n=owned_id, sid=source_id).single()
+        if not edge:
+            return "none"
+        others = [c for c in claims_for(owner_id, owned_id, KIND_OWNS) if c.get("source_id") != source_id]
+        if not others:
+            session.run(
+                """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+                   WHERE r.until IS NULL AND r.source_id = $sid DELETE r""",
+                o=owner_id, n=owned_id, sid=source_id)
+            return "deleted"
+        values = {f: v for f, v in edge_values_from(others).items() if f in ANSWER_FIELDS}
+        values.update(since_basis=None, since_source_url=None)
+        if edge["r"].get("structure_basis"):
+            values.update(direct_or_indirect=None, structure_basis=None)
+        assignments = ", ".join(f"r.{f} = $v_{f}" for f in values)
+        session.run(
+            f"""MATCH (a:Entity {{id: $o}})-[r:OWNS]->(b:Entity {{id: $n}})
+                WHERE r.until IS NULL AND r.source_id = $sid SET {assignments}""",
+            o=owner_id, n=owned_id, sid=source_id, **{f"v_{f}": v for f, v in values.items()})
+        return "reassigned"
 
 
 def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: str | None) -> bool:
