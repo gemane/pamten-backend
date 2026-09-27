@@ -24,6 +24,7 @@ import logging
 import re
 from html.parser import HTMLParser
 
+from app.scraper.mapper import normalize_entity_name
 from app.scraper.sec_edgar import SUBMISSIONS_URL, _cik10, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
@@ -119,17 +120,56 @@ def annual_exhibit_candidates(cik: str) -> list[dict]:
     return exhibit_candidates(cik, *filings[0]) if filings else []
 
 
+class _Row(list):
+    """One table row's cell texts, plus what its LAYOUT said: how far its first
+    text was indented. Filers draw the group tree with indentation (Chubb,
+    Eversource, NYT), and a plain list of strings threw that away."""
+    __slots__ = ("indent",)
+
+    def __init__(self, cells=(), indent: float = 0.0):
+        super().__init__(cells)
+        self.indent = indent
+
+
+# CSS lengths a filer uses to push a name to the right. Points; other units
+# converted approximately — only the ORDER of indents matters, never the value.
+_CSS_INDENT = re.compile(
+    r"(padding-left|margin-left|text-indent)\s*:\s*(-?[\d.]+)\s*(pt|px|in|em|%)?", re.I)
+_PT_PER_UNIT = {"pt": 1.0, "px": 0.75, "in": 72.0, "em": 12.0, "%": 5.0}
+#: one leading non-breaking space ≈ this many points of indent
+_NBSP_PT = 3.0
+
+
+def _css_indent(attrs) -> float:
+    style = dict(attrs).get("style") or ""
+    return sum(float(v) * _PT_PER_UNIT.get((u or "pt").lower(), 1.0)
+               for _, v, u in _CSS_INDENT.findall(style) if float(v) > 0)
+
+
 class _TableTextParser(HTMLParser):
-    """Tables of rows of cell texts. Per-TABLE grouping matters: an exhibit
-    can hold several tables (cover blocks, direct + indirect sections), and
-    each carries its own header row naming its columns."""
+    """Tables of rows of cell texts, in document order with the free text
+    between them. Per-TABLE grouping matters: an exhibit can hold several
+    tables (cover blocks, direct + indirect sections, one per printed page),
+    and each carries its own header row naming its columns — or none, when
+    the page break fell inside one list (Chubb: eleven tables, one header).
+
+    ``sequence`` interleaves ("table", rows) and ("text", str): the headings
+    BETWEEN tables are where Tenet says "Consolidated Subsidiaries of USPI
+    Holding Company, Inc." — a parent the rows below never name themselves.
+    Each row records the indentation of its first text (CSS on the cell or
+    on anything inside it before the text, plus leading non-breaking spaces),
+    which is how a filer draws the tree."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.tables: list[list[list[str]]] = []
-        self._table: list[list[str]] | None = None
+        self.tables: list[list[_Row]] = []
+        self.sequence: list[tuple[str, object]] = []
+        self._table: list[_Row] | None = None
         self._row: list[str] | None = None
         self._cell: list[str] | None = None
+        self._cell_indent = 0.0
+        self._row_indent: float | None = None      # of the first non-empty cell
+        self._free: list[str] = []                  # text outside any table
 
     @property
     def rows(self) -> list[list[str]]:   # flattened view (tests, debugging)
@@ -137,41 +177,69 @@ class _TableTextParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         if tag == "table":
+            self._flush_free()
             self._table = []
         elif tag == "tr":
             self._row = []
+            self._row_indent = None
         elif tag in ("td", "th") and self._row is not None:
             self._cell = []
+            self._cell_indent = _css_indent(attrs)
+        elif self._cell is not None and not "".join(self._cell).strip():
+            # a block or span wrapping the text can carry the indent instead
+            self._cell_indent += _css_indent(attrs)
+        elif self._table is None and tag in ("p", "div", "br", "hr"):
+            self._flush_free()
 
     def handle_endtag(self, tag):
         if tag in ("td", "th") and self._cell is not None and self._row is not None:
+            raw = "".join(self._cell)
             # Zero-width characters first: Texas Roadhouse's exhibit has a
             # whole filler column of U+200B, which is truthy and was taken as
             # the jurisdiction of all 62 subsidiaries.
-            text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", "".join(self._cell))
-            text = re.sub(r"\s+", " ", text).strip()
+            raw = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", raw)
+            text = re.sub(r"\s+", " ", raw).strip()
+            if text and self._row_indent is None:
+                lead = len(raw) - len(raw.lstrip())
+                self._row_indent = self._cell_indent + lead * _NBSP_PT
             self._row.append(text)
             self._cell = None
         elif tag == "tr" and self._row is not None:
             if any(self._row):
-                (self._table if self._table is not None else
-                 self._orphan()).append(self._row)
+                row = _Row(self._row, self._row_indent or 0.0)
+                (self._table if self._table is not None else self._orphan()).append(row)
             self._row = None
         elif tag == "table" and self._table is not None:
             if self._table:
                 self.tables.append(self._table)
+                self.sequence.append(("table", self._table))
             self._table = None
+        elif self._table is None and tag in ("p", "div", "li", "h1", "h2", "h3", "h4"):
+            self._flush_free()
 
     def _orphan(self) -> list:
         # rows outside any <table> (malformed HTML) — collect as one table
         if not self.tables or self.tables[-1] is not self.__dict__.setdefault(
                 "_orphans", []):
             self.tables.append(self.__dict__["_orphans"])
+            self.sequence.append(("table", self.__dict__["_orphans"]))
         return self.__dict__["_orphans"]
+
+    def _flush_free(self) -> None:
+        text = re.sub(r"\s+", " ", "".join(self._free)).strip()
+        self._free = []
+        if text:
+            self.sequence.append(("text", text))
 
     def handle_data(self, data):
         if self._cell is not None:
             self._cell.append(data)
+        elif self._table is None and self._row is None:
+            self._free.append(data)
+
+    def close(self):
+        super().close()
+        self._flush_free()
 
 
 # Header detection: which column is which, by what the filer CALLS it.
@@ -192,6 +260,14 @@ _BARE_PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%?\s*$")
 # further "share (holder)" pair a co-holder. Also "99.99%0.01% (…)", no space.
 _CO_OWNER = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%\s*\(([^()]+)\)")
 _FIRST_PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%")
+
+# "Subsidiaries of USPI Holding Company, Inc." — a heading (or a header cell)
+# that names the parent of the rows under it. "…of the Registrant/Company"
+# names nobody in particular and resets to the filer.
+_PARENT_HEADING = re.compile(
+    r"^(?:consolidated |direct |indirect |wholly[- ]owned |significant )*"
+    r"subsidiar(?:y|ies) of (.+?)\s*:?$", re.I)
+_GENERIC_PARENT = re.compile(r"^(the )?(registrants?|compan(y|ies)|parent|issuer)\b", re.I)
 
 
 def _find_header(table: list[list[str]]) -> dict | None:
@@ -242,6 +318,90 @@ def _section_header(row: list[str]) -> dict | None:
     return header if _NOISE.match(name_cell) else None
 
 
+def _same_company(a: str | None, b: str | None) -> bool:
+    """Same filer under a different spelling: "Inter & Co, Inc." / "Inter&Co,
+    Inc" / "NEWS CORPORATION" vs "News Corp". Legal forms and punctuation
+    dropped — a name's letters are what survives every filer's typesetting."""
+    def key(x): return re.sub(r"[^a-z0-9]", "", normalize_entity_name(x))
+    return bool(a and b) and key(a) == key(b)
+
+
+def _named_parent(text: str, registrant: str | None = None) -> str | None:
+    """"Subsidiaries of X" → X; None for a generic X ("the Registrant"), the
+    filer itself (Clearway heads every printed page "SUBSIDIARIES OF CLEARWAY
+    ENERGY, INC." — that is the filer, not an intermediate) or no match."""
+    m = _PARENT_HEADING.match(text.strip())
+    if not m:
+        return None
+    who, _ = _clean_name(m.group(1).strip().rstrip(":").strip())
+    who = re.sub(r"(?<=[A-Za-z.)])\d{1,2}$", "", who)                 # "…CORPORATION1": a footnote
+    # "Subsidiaries of X at December 31, 2025" names X
+    who = re.split(r"\s+(?:as of|as at|at|on)\s+\w+\s+\d", who, maxsplit=1)[0].strip()
+    if not who or _GENERIC_PARENT.match(who) or len(who) > 100 or _same_company(who, registrant):
+        return None
+    return who
+
+
+def _header_parent(header: dict, registrant: str | None) -> str | None:
+    """The parent a header cell names: Inter & Co heads a section
+    "Subsidiary of Banco Inter S.A." — that cell IS the name column header."""
+    row = header.get("header_row") or []
+    cell = row[header["name"]] if header["name"] < len(row) else ""
+    return _named_parent(cell, registrant)
+
+
+#: Indents closer than this (points) are the same level — filers' nbsp runs
+#: and CSS paddings are not pixel-exact from row to row.
+_LEVEL_STEP = 4.0
+#: An indent this far beyond the previous row is a stray style, not a level.
+_INDENT_OUTLIER = 60.0
+
+
+def _assign_indent_parents(entries: list[dict], registrant: str | None = None) -> int:
+    """Parent each entry by the nearest less-indented entry above it, when the
+    exhibit draws a tree that way. Returns how many entries got a parent.
+
+    Only an unambiguous tree counts: at least three indented rows (relative
+    to the smallest indent, so a list indented uniformly — BlackRock's
+    hanging indent — has none and stays flat) and every indented row with a
+    less-indented row above it. A stray indent far beyond its neighbours is
+    treated as noise. Levels are indents bucketed by `_LEVEL_STEP`.
+
+    A row whose parent is the filer's own line (Chubb and NYT list themselves
+    at the root) keeps `parent_basis` but no `parent`: the layout says it
+    hangs directly off the filer.
+    """
+    if len(entries) < 4:
+        return 0
+    base = min(e["_indent"] for e in entries)
+    levels = []
+    prev = 0.0
+    for e in entries:
+        rel = e["_indent"] - base
+        if rel - prev > _INDENT_OUTLIER:
+            rel = prev
+        levels.append(round(rel / _LEVEL_STEP))
+        prev = rel
+    if sum(1 for lv in levels if lv > 0) < 3:
+        return 0
+    stack: list[tuple[int, dict]] = []
+    assigned = 0
+    for e, lv in zip(entries, levels):
+        while stack and stack[-1][0] >= lv:
+            stack.pop()
+        if lv > 0:
+            if not stack:
+                return 0            # an indented row with nothing above it
+            above = stack[-1][1]["name"]
+            e["parent"] = None if _same_company(above, registrant) else above
+            e["parent_basis"] = "indent"
+            assigned += 1
+        elif _same_company(e["name"], registrant):
+            e["parent_basis"] = "indent"        # the root: the filer's own line
+        stack.append((lv, e))
+    return assigned
+
+
 def _ownership_cell(cell: str) -> tuple[float | None, list[dict]]:
     """(stake of the listed parent, co-holders) from a cell in a column the
     filer HEADS as ownership — which is why a bare number counts here."""
@@ -279,9 +439,11 @@ _NOISE = re.compile(
     r"significant|(?:in)?directly[- ]|partially[- ]|wholly[- ]owned|\*+$)", re.I)
 
 
-def parse_exhibit(html: str) -> list[dict]:
-    """[{name, jurisdiction, stake_percent?, co_owners?}] from an Ex-21/Ex-8.1
-    page.
+def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
+    """[{name, jurisdiction, stake_percent?, co_owners?, parent?,
+    parent_basis?}] from an Ex-21/Ex-8.1 page. ``registrant`` is the filer's
+    name, so a heading or root row naming the filer itself is not taken for
+    an intermediate parent.
 
     Per table: a header row naming the columns wins (that is how Bank of
     America's Location column is told apart from its Jurisdiction one, and
@@ -297,17 +459,33 @@ def parse_exhibit(html: str) -> list[dict]:
     Percentages are read wherever a filer puts them: an ownership column
     (with or without the % sign), inline in the name ("… LLC (58%)"), and a
     cell naming co-holders ("66.66% 33.33% (Chubb Bermuda Insurance Ltd.)"),
-    which yields `co_owners` with their shares. The listed name is what the
-    writer resolves; nothing here says who is above whom — a filer's layout
-    is not read as structure.
+    which yields `co_owners` with their shares.
+
+    Structure, where the filer shows it, and only then:
+    - a heading between tables or a header cell naming a parent
+      ("Consolidated Subsidiaries of USPI Holding Company, Inc.") parents
+      the rows under it (`parent_basis: "heading"`);
+    - a consistent indentation tree parents each row by the nearest
+      less-indented row above (`parent_basis: "indent"`, the more specific
+      of the two where both apply).
+    `parent` is the listed name; resolving it to a node is the writer's job.
+    `parent_basis` without a `parent` means the layout puts the row directly
+    under the filer.
 
     Jurisdiction text is kept as filed; the ISO mapping is the writer's
     separate, lossy view of it."""
     parser = _TableTextParser()
     parser.feed(html)
+    parser.close()
     out, seen = [], set()
     carried: dict | None = None
-    for table in parser.tables:
+    section_parent: str | None = None
+    for kind, item in parser.sequence:
+        if kind == "text":
+            if _PARENT_HEADING.match(item.strip()):
+                section_parent = _named_parent(item, registrant)
+            continue
+        table = item
         header = _find_header(table)
         if header is None and any(any(c) for r in table[:5] for c in r
                                   if _H_NOT_JURISDICTION.search(c or "")):
@@ -321,6 +499,7 @@ def parse_exhibit(html: str) -> list[dict]:
                 inherited = True
         elif header is not None:
             carried = header
+        table_parent = _header_parent(header, registrant) if header and header["header_row"] else None
         table_rows: list[dict] = []
         for row in table:
             stake, co_owners = None, []
@@ -329,6 +508,7 @@ def parse_exhibit(html: str) -> list[dict]:
                     continue
                 if (again := _section_header(row)) is not None:
                     header = carried = again      # a new section's columns
+                    table_parent = _header_parent(again, registrant)
                     continue
                 name = row[header["name"]] if header["name"] < len(row) else ""
                 jurisdiction = (row[header["jurisdiction"]]
@@ -354,13 +534,17 @@ def parse_exhibit(html: str) -> list[dict]:
             name, inline_stake = _clean_name(name)
             if not name:
                 continue
-            entry = {"name": name, "jurisdiction": jurisdiction}
+            entry = {"name": name, "jurisdiction": jurisdiction,
+                     "_indent": getattr(row, "indent", 0.0)}
             if stake is None:
                 stake = inline_stake
             if stake is not None:
                 entry["stake_percent"] = stake
             if co_owners:
                 entry["co_owners"] = co_owners
+            parent = table_parent or section_parent
+            if parent and not _same_company(parent, entry["name"]):
+                entry["parent"], entry["parent_basis"] = parent, "heading"
             table_rows.append(entry)
         # Table-level sanity for HEADERLESS (or header-inheriting) tables: a
         # real subsidiary table's jurisdictions overwhelmingly map to
@@ -378,6 +562,11 @@ def parse_exhibit(html: str) -> list[dict]:
                 continue
             seen.add(key)
             out.append(entry)
+    # The indentation tree is exhibit-wide (a page break must not cut it) and
+    # more specific than a section heading, so it wins where both apply.
+    _assign_indent_parents(out, registrant)
+    for entry in out:
+        del entry["_indent"]
     return out
 
 
@@ -541,14 +730,14 @@ def jurisdiction_subdivision(jurisdiction: str | None) -> str | None:
     return None
 
 
-def fetch_subsidiaries(cik: str) -> dict | None:
+def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
     """The latest annual filing's subsidiary list for a CIK, with provenance.
 
     Tries each candidate exhibit until one parses to subsidiaries — filename
     numbering is ambiguous (ex215 = 2.15 or 21.5), so the content decides.
     {"subsidiaries": [...], "form", "filing_date", "url"} or None."""
     for meta in annual_exhibit_candidates(cik):
-        subs = parse_exhibit(_get_text(meta["url"]))
+        subs = parse_exhibit(_get_text(meta["url"]), registrant)
         if subs:
             return {"subsidiaries": subs, "form": meta["form"],
                     "filing_date": meta["filing_date"], "url": meta["url"]}

@@ -1,27 +1,132 @@
-"""Percentages an Exhibit 21 states, wherever the filer puts them.
+"""What an Exhibit 21 states beyond names: percentages, wherever the filer
+puts them, and the group tree, where the filer draws one.
 
 Fixtures are verbatim exhibits (or trimmed excerpts) as filed on EDGAR, picked
-from a 62-filer sample: Chubb (every stake stated, co-holders named, one list
-split over eleven printed pages with the header on the first only), Lincoln
-National (a bare-number ownership column under a blank header row), Eversource
-(a header naming only the jurisdiction column, two-letter state codes — 6 of 40
-rows used to survive), NYT (a stake inline in the name).
-
-The filer's LAYOUT — indentation, section headings — is deliberately not read
-as group structure; these tests pin that the parser stays flat.
+from a 62-filer sample for the shapes that exist in the wild: an indentation
+tree drawn with non-breaking spaces (NYT), with CSS padding (Eversource,
+LanzaTech), a tree that also states every stake and names co-holders (Chubb —
+one list split over eleven printed pages, header on the first only), a heading
+naming an intermediate parent between tables (Tenet's USPI section), a header
+cell naming one inside a table (Inter & Co), a bare-number ownership column
+under a blank header row (Lincoln National); and the look-alikes that must stay
+flat: a uniform hanging indent (BlackRock) and a page heading repeated on every
+page (Clearway).
 """
 from pathlib import Path
 
 import pytest
 
-from app.scraper.sec_ex21 import (_clean_name, jurisdiction_country,
+from app.scraper.sec_ex21 import (_clean_name, _named_parent, jurisdiction_country,
                                   jurisdiction_subdivision, parse_exhibit)
 
 FIX = Path(__file__).parent / "fixtures"
 
 
-def _load(name: str) -> list[dict]:
-    return parse_exhibit((FIX / name).read_text(errors="replace"))
+def _load(name: str, registrant: str | None = None) -> list[dict]:
+    return parse_exhibit((FIX / name).read_text(errors="replace"), registrant)
+
+
+def _tree(subs: list[dict]) -> dict[str, str | None]:
+    return {s["name"]: s.get("parent") for s in subs if s.get("parent_basis")}
+
+
+class TestIndentationTrees:
+    def test_nbsp_indented_rows_hang_off_the_row_above(self):
+        tree = _tree(_load("nyt_ex21.htm", "The New York Times Company"))
+        assert tree["Midtown Insurance Company"] == "NYT Capital, LLC"
+        assert tree["International Media Concepts, Inc."] == "NYT Shared Service Center, Inc."
+        assert tree["New York Times Limited"] == "NYT International LLC"
+        # the filer's own root line makes its children direct holdings, not orphans
+        assert tree["NYT Capital, LLC"] is None
+
+    def test_css_padded_rows_form_a_three_level_tree(self):
+        tree = _tree(_load("eversource_ex21.htm", "Eversource Energy"))
+        assert tree["Aquarion Water Company"] == "Aquarion Company"
+        assert tree["Abenaki Water Co., Inc."] == "Aquarion Water Company"
+        assert tree["Harbor Electric Energy Company"] == "NSTAR Electric Company"
+        assert "Aquarion Company" not in tree            # unindented: no parent
+
+    def test_the_tree_survives_a_page_break(self):
+        # Eversource's list is two tables; the second's first rows are indented
+        # under the last unindented row of the first.
+        tree = _tree(_load("eversource_ex21.htm", "Eversource Energy"))
+        assert tree["Hopkinton LNG Corp."] == "Yankee Energy System, Inc."
+
+    def test_lanzatech(self):
+        tree = _tree(_load("lanzatech_ex21.htm", "LanzaTech Global, Inc."))
+        assert tree["LanzaTech China Ltd."] == "LanzaTech Hong Kong Limited"
+        assert tree["LanzaJet, Inc."] == "LanzaTech, Inc."
+
+    def test_chubb_parents_and_stakes_together(self):
+        by = {s["name"]: s for s in _load("chubb_ex21_excerpt.htm", "Chubb Limited")}
+        assert by["Oasis Investments Ltd."]["parent"] == "Chubb Tempest Reinsurance Ltd."
+        assert by["Chubb Bermuda Insurance Ltd."]["parent"] == "Chubb Group Management and Holdings Ltd."
+        assert by["Chubb Insurance (Switzerland) Limited"]["parent"] is None   # under the filer's root line
+        assert by["Chubb Insurance (Switzerland) Limited"]["parent_basis"] == "indent"
+
+    def test_a_uniform_hanging_indent_is_not_a_tree(self):
+        subs = _load("blackrock_ex21_excerpt.htm", "BlackRock, Inc.")
+        assert len(subs) == 10
+        assert not any(s.get("parent") or s.get("parent_basis") for s in subs)
+
+    def test_a_short_list_is_never_a_tree(self):
+        html = ("<table><tr><td>A Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;B Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;C Ltd</td><td>Ireland</td></tr></table>")
+        assert not any(s.get("parent") for s in parse_exhibit(html))
+
+    def test_fewer_than_three_indented_rows_is_not_a_tree(self):
+        html = ("<table><tr><td>A Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;B Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>C Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;D Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>E Ltd</td><td>Ireland</td></tr></table>")
+        assert not any(s.get("parent") for s in parse_exhibit(html))
+
+    def test_an_indented_first_row_means_no_tree(self):
+        html = ("<table>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;A Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>B Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;C Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;D Ltd</td><td>Ireland</td></tr>"
+                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;E Ltd</td><td>Ireland</td></tr></table>")
+        assert not any(s.get("parent") for s in parse_exhibit(html))
+
+    def test_a_stray_far_indent_is_noise_not_a_level(self):
+        rows = [("A Ltd", 0), ("B Ltd", 4), ("C Ltd", 4), ("D Ltd", 200), ("E Ltd", 4), ("F Ltd", 0)]
+        html = "<table>" + "".join(
+            f'<tr><td style="padding-left:{i}pt">{n}</td><td>Ireland</td></tr>' for n, i in rows) + "</table>"
+        assert _tree(parse_exhibit(html))["D Ltd"] == "A Ltd"        # not "C Ltd"
+
+
+class TestHeadings:
+    def test_a_heading_between_tables_parents_the_rows_below_it(self):
+        by = {s["name"]: s for s in _load("tenet_ex21_excerpt.htm", "Tenet Healthcare Corporation")}
+        assert by["Advanced Ambulatory Surgical Care, L.P."]["parent"] == "USPI Holding Company, Inc."
+        assert by["Advanced Ambulatory Surgical Care, L.P."]["parent_basis"] == "heading"
+        assert "parent" not in by["601 N 30th Street I, L.L.C."]
+        assert "USPI Holding Company, Inc." in by, "the footnote digit is stripped from the name"
+
+    def test_a_header_cell_inside_the_table_opens_a_section(self):
+        by = {s["name"]: s.get("parent") for s in _load("inter_ex81.htm", "Inter & Co, Inc.")}
+        assert by["Banco Inter S.A."] is None                   # "Subsidiary of Inter&Co, Inc" = the filer
+        assert by["Inter Asset Gestão de Recursos Ltda"] == "Banco Inter S.A."
+
+    def test_a_heading_naming_the_filer_parents_nobody(self):
+        subs = _load("clearway_ex21_excerpt.htm", "Clearway Energy, Inc.")
+        assert len(subs) == 8 and not any(s.get("parent") for s in subs)
+
+    @pytest.mark.parametrize("text, registrant, expected", [
+        ("Subsidiaries of the Registrant", None, None),
+        ("Subsidiaries of the Registrants as of February 17, 2026 (1)", None, None),
+        ("SUBSIDIARIES OF CHEVRON CORPORATION1", "Chevron Corp", None),
+        ("Subsidiaries of X Holdings at December 31, 2025", "Y", "X Holdings"),
+        ("Consolidated Subsidiaries of USPI Holding Company, Inc.", "Tenet", "USPI Holding Company, Inc."),
+        ("Subsidiary of Banco Inter S.A.", "Inter & Co, Inc.", "Banco Inter S.A."),
+        ("Name of Subsidiary", None, None),
+    ])
+    def test_named_parent(self, text, registrant, expected):
+        assert _named_parent(text, registrant) == expected
 
 
 class TestOwnershipColumns:
@@ -32,8 +137,8 @@ class TestOwnershipColumns:
         assert by["ABR Reinsurance Capital Holdings Ltd."]["stake_percent"] == 19.1483
         assert by["Oasis Investments 2 Ltd."]["stake_percent"] == 66.66
         # everything but the filer's own "Publicly held" line carries a stake
-        assert len(subs) == 47
-        assert sum(1 for s in subs if "stake_percent" in s) == 46
+        assert len(subs) == 76
+        assert sum(1 for s in subs if "stake_percent" in s) == 75
 
     def test_co_holders_are_read_with_their_shares(self):
         by = {s["name"]: s for s in _load("chubb_ex21_excerpt.htm")}
@@ -134,16 +239,9 @@ class TestHeadersWithoutANameColumn:
         assert [s["name"] for s in parse_exhibit(html)] == ["Alpha Ltd"]
 
 
-class TestLayoutIsNotStructure:
-    def test_indentation_and_headings_produce_no_parents(self):
-        html = ("<p>Subsidiaries of Holding Co.:</p>"
-                "<table><tr><td>Holding Co.</td><td>Ireland</td></tr>"
-                "<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;Child Ltd</td><td>Ireland</td></tr>"
-                "<tr><td style=\"padding-left:20pt\">Grandchild Ltd</td><td>Ireland</td></tr></table>")
-        subs = parse_exhibit(html)
-        assert [s["name"] for s in subs] == ["Holding Co.", "Child Ltd", "Grandchild Ltd"]
-        assert not any("parent" in s for s in subs)
-
+class TestFlatListsStayFlat:
     def test_the_flat_lists_parse_as_before(self):
-        assert len(_load("apple_ex21.htm")) == 19
-        assert len(_load("texasroadhouse_ex21.htm")) == 60
+        subs = _load("apple_ex21.htm", "Apple Inc.")
+        assert len(subs) == 19 and not any(s.get("parent") or s.get("parent_basis") for s in subs)
+        subs = _load("texasroadhouse_ex21.htm", "Texas Roadhouse, Inc.")
+        assert len(subs) == 60 and not any(s.get("parent") or s.get("parent_basis") for s in subs)
