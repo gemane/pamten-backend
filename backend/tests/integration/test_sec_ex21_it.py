@@ -182,3 +182,102 @@ def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=CHUBB_DATA):
         runner.run_sec_ex21("Chubb", force=True)
     assert read()[1][("AFIA Finance Corporation", "Chubb Seguros México S.A.")] == "minority"
+
+
+# ── The tree the filer draws ──────────────────────────────────────────────────
+
+def _tree_data(**over):
+    return {**{
+        "subsidiaries": [
+            {"name": "Aquarion Company", "jurisdiction": "Delaware", "parent_basis": "indent"},
+            {"name": "Aquarion Water Company", "jurisdiction": "Connecticut",
+             "parent": "Aquarion Company", "parent_basis": "indent"},
+            {"name": "Abenaki Water Co., Inc.", "jurisdiction": "New Hampshire",
+             "parent": "Aquarion Water Company", "parent_basis": "indent", "stake_percent": 100.0},
+            {"name": "HWP Company", "jurisdiction": "Massachusetts", "parent_basis": "indent"},
+            # a parent the list does not carry: stays under the filer, counted
+            {"name": "Orphan Holdings LLC", "jurisdiction": "Delaware",
+             "parent": "Yahoo! Inc.", "parent_basis": "heading"},
+        ],
+        "form": "10-K", "filing_date": "2026-02-17",
+        "url": "https://www.sec.gov/Archives/edgar/data/72741/000007274126000010/a2025-ex21.htm",
+    }, **over}
+
+
+def _eversource(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id: 'es', name: 'Eversource Energy', name_normalized: 'eversource energy', "
+        "search_text: 'Eversource Energy', type: 'company', sec_cik: '0000072741'})")
+
+
+def _owns(it_db):
+    rows = it_db.run_command(
+        "MATCH (a:Entity)-[r:OWNS]->(b:Entity) WHERE r.until IS NULL RETURN a.id AS o, b.name AS s, "
+        "r.direct_or_indirect AS doi, r.structure_basis AS sb, r.source_id AS src, r.stake_percent AS stake")
+    return {(r["o"], r["s"]): (r.get("doi"), r.get("sb"), r.get("src"), r.get("stake")) for r in rows}
+
+
+def test_a_drawn_tree_puts_each_subsidiary_under_its_parent_not_the_filer(it_db):
+    _eversource(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=_tree_data()):
+        result = runner.run_sec_ex21("Eversource")
+    assert result["status"] == "ok"
+    assert (result["total"], result["nested"], result["unresolved_parents"], result["detached"]) == (5, 2, 1, 0)
+    edges = _owns(it_db)
+    aq = it_db.run_command("MATCH (e:Entity {name: 'Aquarion Company'}) RETURN e.id AS id")[0]["id"]
+    aw = it_db.run_command("MATCH (e:Entity {name: 'Aquarion Water Company'}) RETURN e.id AS id")[0]["id"]
+    assert edges[("es", "Aquarion Company")][:2] == ("direct", "ex21_indent")
+    assert edges[(aq, "Aquarion Water Company")][:2] == ("direct", "ex21_indent")
+    assert edges[(aw, "Abenaki Water Co., Inc.")] [:2] == ("direct", "ex21_indent")
+    assert edges[(aw, "Abenaki Water Co., Inc.")][3] == 100.0      # the row's stake is the parent's
+    assert ("es", "Aquarion Water Company") not in edges           # NOT also under the filer
+    assert ("es", "Abenaki Water Co., Inc.") not in edges
+    assert edges[("es", "Orphan Holdings LLC")][:2] == (None, None)   # unresolved parent: flat, unmarked
+    assert edges[("es", "HWP Company")][:2] == ("direct", "ex21_indent")
+
+
+def test_a_re_read_that_finds_the_tree_withdraws_the_flat_filer_edges(it_db):
+    _eversource(it_db)
+    flat = _tree_data(subsidiaries=[{k: v for k, v in s.items() if k not in ("parent", "parent_basis")}
+                                    for s in _tree_data()["subsidiaries"]])
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=flat):
+        runner.run_sec_ex21("Eversource")
+    assert ("es", "Abenaki Water Co., Inc.") in _owns(it_db)
+    # GLEIF also states the filer's ultimate-parent link to one of them — on
+    # the pair's one shared edge, as the delta writes it
+    from app.scraper.gleif_incremental import _owns_edge_upsert
+    aw = it_db.run_command("MATCH (e:Entity {name: 'Aquarion Water Company'}) RETURN e.id AS id")[0]["id"]
+    assert _owns_edge_upsert("es", aw, "LEI0000000000000AW00", "indirect", "gleif", 92, None) == "adopted"
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=_tree_data()):
+        result = runner.run_sec_ex21("Eversource", force=True)
+    assert result["detached"] == 2
+    edges = _owns(it_db)
+    assert ("es", "Abenaki Water Co., Inc.") not in edges           # SEC's alone: deleted
+    # GLEIF's link stays, and no longer cites SEC for anything
+    assert edges[("es", "Aquarion Water Company")] == ("indirect", None, "gleif", None)
+    claims = {r["source_id"] for r in it_db.run_sql(
+        "SELECT source_id FROM Claim WHERE from_id = 'es' AND to_id IN "
+        "(SELECT id FROM Entity WHERE name IN ['Aquarion Water Company', 'Abenaki Water Co., Inc.'])")}
+    assert claims == {"gleif"}
+
+
+def test_the_history_walks_the_tree(it_db):
+    from app.scraper.mapper import normalize_entity_name as n
+    _eversource(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=_tree_data()):
+        runner.run_sec_ex21("Eversource")
+    history = [{"as_of": "2025-12-31", "filing_date": "2026-02-17", "form": "10-K",
+                "url": "https://www.sec.gov/2026.htm",
+                "names": {n("Aquarion Company"), n("Aquarion Water Company"), n("Abenaki Water Co., Inc.")}},
+               {"as_of": "2019-12-31", "filing_date": "2020-02-17", "form": "10-K",
+                "url": "https://www.sec.gov/2020.htm",
+                "names": {n("Aquarion Company"), n("Aquarion Water Company"), n("Abenaki Water Co., Inc.")}}]
+    with patch("app.routers.search.resolve_best_entity", return_value={"id": "es", "sec_cik": "0000072741"}), \
+         patch("app.scraper.sec_ex21.fetch_subsidiary_history", return_value=history):
+        res = runner.run_sec_ex21_history("Eversource")
+    assert res["status"] == "ok" and res["total"] == 3
+    since = {r["s"]: r["since"] for r in it_db.run_command(
+        "MATCH (a:Entity)-[r:OWNS]->(b:Entity) WHERE r.until IS NULL RETURN b.name AS s, r.since AS since")}
+    # the nested edges (holder → subsidiary) are dated, not only the filer's
+    assert since["Aquarion Water Company"] == "2019-12-31"
+    assert since["Abenaki Water Co., Inc."] == "2019-12-31"
