@@ -934,10 +934,11 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
             scraped.append({"id": sub_id, "name": sub["name"],
                             "type": "company", "country": country})
 
-        def owns(owner_id: str, sub_id: str, stake: float | None) -> None:
+        def owns(owner_id: str, sub_id: str, stake: float | None,
+                 ownership_type: str | None = "controlling") -> None:
             _upsert_owns_sec(
                 owner_id=owner_id, owned_id=sub_id, source_id=source_id,
-                ownership_type="controlling", file_date=data["filing_date"],
+                ownership_type=ownership_type, file_date=data["filing_date"],
                 # Some filers state it (Astronics: an Ownership Percentage
                 # column). Stated → stored; absent → None, never invented.
                 stake_percent=stake, filing_type=filing_type,
@@ -957,7 +958,11 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                     continue
                 if not co_id or co_id == sub_id:
                     continue
-                owns(co_id, sub_id, co["stake_percent"])
+                # A co-holder is whatever its share makes it — the 0.0000003%
+                # nominal second shareholder Mexican law requires is a
+                # minority holder, not a controlling one. The writer derives
+                # the type from the stake when none is given.
+                owns(co_id, sub_id, co["stake_percent"], ownership_type=None)
                 co_owner_edges += 1
             owns(company_id, sub_id, stake)
             written += 1

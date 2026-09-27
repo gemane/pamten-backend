@@ -315,7 +315,10 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         if existing:
             # Refresh last_scraped_at and backfill the specific record URL/date
             # onto edges created before provenance (COALESCE keeps existing
-            # values when this scrape didn't yield a URL). When `until` is given
+            # values when this scrape didn't yield a URL). The stake and its
+            # type move together: a re-read that corrects one corrects both
+            # (a 0.0000003% co-holder written as "controlling" stayed so
+            # through every re-read while this only reset the stake). When `until` is given
             # the same statement closes the edge, so a holding that has since
             # been exited stops showing as current.
             session.run(
@@ -326,6 +329,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.until       = $until,
                     r.stale       = false,
                     r.stake_percent    = $stake,
+                    r.ownership_type   = $otype,
                     r.voting_power_pct = $vote,
                     r.share_class      = $sclass,
                     r.shares           = COALESCE($shares, r.shares),
@@ -338,7 +342,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 """,
                 oid=owner_id, nid=owned_id, sid=source_id, now=now,
                 surl=source_url, sdate=file_date, until=until,
-                stake=stake_percent, vote=voting_power_pct, sclass=share_class,
+                stake=stake_percent, otype=ownership_type,
+                vote=voting_power_pct, sclass=share_class,
                 shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
                 vusd=value_usd, ftype=filing_type,
             )

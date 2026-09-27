@@ -136,6 +136,10 @@ CHUBB_DATA = {
         # a co-holder the list does not carry: no edge, nothing looked up
         {"name": "Chubb Seguros Chile S.A.", "jurisdiction": "Chile", "stake_percent": 99.0,
          "co_owners": [{"name": "Some Stranger Holdings", "stake_percent": 1.0}]},
+        # the nominal second shareholder Mexican law requires
+        {"name": "AFIA Finance Corporation", "jurisdiction": "USA (Delaware)", "stake_percent": 100.0},
+        {"name": "Chubb Seguros México S.A.", "jurisdiction": "Mexico", "stake_percent": 99.9999996,
+         "co_owners": [{"name": "AFIA Finance Corporation", "stake_percent": 0.0000003}]},
     ],
     "form": "10-K", "filing_date": "2026-02-26",
     "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000012/cb-20251231xex211.htm",
@@ -149,12 +153,15 @@ def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=CHUBB_DATA):
         result = runner.run_sec_ex21("Chubb")
     assert result["status"] == "ok"
-    assert result["total"] == 5 and result["co_owner_edges"] == 1
+    assert result["total"] == 7 and result["co_owner_edges"] == 2
 
-    rows = it_db.run_command(
-        "MATCH (a:Entity)-[r:OWNS]->(b:Entity) "
-        "RETURN a.name AS owner, b.name AS owned, r.stake_percent AS stake, r.filing_type AS ft")
-    edges = {(r["owner"], r["owned"]): (r.get("stake"), r.get("ft")) for r in rows}
+    def read():
+        rows = it_db.run_command(
+            "MATCH (a:Entity)-[r:OWNS]->(b:Entity) RETURN a.name AS owner, b.name AS owned, "
+            "r.stake_percent AS stake, r.filing_type AS ft, r.ownership_type AS ot")
+        return {(r["owner"], r["owned"]): (r.get("stake"), r.get("ft")) for r in rows}, \
+               {(r["owner"], r["owned"]): r.get("ot") for r in rows}
+    edges, types = read()
     # the listed holding at its stated share…
     assert edges[("CHUBB LIMITED", "Oasis Investments Ltd.")] == (66.66, "EX-21")
     # …and the co-holder's edge, from the listed subsidiary, at its share
@@ -164,4 +171,14 @@ def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
     # an unlisted co-holder draws nothing and creates nobody
     assert not any(o == "Some Stranger Holdings" for o, _ in edges)
     assert it_db.run_command("MATCH (e:Entity) WHERE e.name CONTAINS 'Stranger' RETURN count(e) AS n")[0]["n"] == 0
-    assert len(edges) == 6
+    assert len(edges) == 9
+    # a co-holder is typed by its share, not "controlling" like a listed subsidiary
+    assert types[("AFIA Finance Corporation", "Chubb Seguros México S.A.")] == "minority"
+    assert types[("Chubb Bermuda Insurance Ltd.", "Oasis Investments Ltd.")] == "controlling"   # 33.33%
+    assert types[("CHUBB LIMITED", "Chubb Seguros México S.A.")] == "controlling"
+    # a re-read corrects the type on the existing edge, not only the stake
+    it_db.run_command("MATCH ()-[r:OWNS]->(:Entity {name: 'Chubb Seguros México S.A.'}) "
+                      "SET r.ownership_type = 'controlling'")
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=CHUBB_DATA):
+        runner.run_sec_ex21("Chubb", force=True)
+    assert read()[1][("AFIA Finance Corporation", "Chubb Seguros México S.A.")] == "minority"

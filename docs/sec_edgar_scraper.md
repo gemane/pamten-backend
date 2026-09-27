@@ -742,7 +742,10 @@ Honesty rules, learned from the real filings:
   a second OWNS edge from the co-holder at 33.33%, when the co-holder is itself
   on the list or is the filer ("12.01% (Chubb Limited)" becomes the filer's own
   stake). A co-holder's name is resolved only among the listed subsidiaries,
-  never in the wider graph. The run result counts `co_owner_edges`.
+  never in the wider graph, and a co-holder's edge is typed by its share (the
+  0.0000003% nominal second shareholder Mexican law requires is `minority`,
+  not `controlling` like a listed subsidiary). The run result counts
+  `co_owner_edges`.
 - **One list, many printed pages.** Chubb's exhibit is eleven tables with a
   header row on the first only; the ownership column was lost on the other ten.
   A header-less table now inherits the previous table's columns when its rows
