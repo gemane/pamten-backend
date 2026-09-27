@@ -62,6 +62,12 @@ OWNS_PROPS: tuple = (
     # when `since` is the stated start. `since_source_url` is that filing.
     "since_basis",
     "since_source_url",
+    # How the edge's PLACE in the tree is known when a source showed it by
+    # layout rather than stating it: "ex21_indent" (the filer indented the
+    # subsidiary under another), "ex21_heading" (it sits under a "Subsidiaries
+    # of X" heading). Unset for GLEIF's stated direct/ultimate markers — which
+    # is how the GLEIF delta tells its own markers from an inferred one.
+    "structure_basis",
 )
 
 ROLE_PROPS: tuple = (

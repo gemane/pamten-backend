@@ -123,8 +123,10 @@ def _existing_consolidation_edge(parent_id: str, child_id: str) -> dict | None:
     marker would miss it and create a second, parallel edge — re-introducing the
     duplicates the fold removed, a few thousand per delta.
 
-    An edge carrying a ``direct_or_indirect`` marker is RR's own (only RR sets
-    one), closed or not — a closed one is reopened. Failing that, the pair's
+    An edge carrying a ``direct_or_indirect`` marker with no ``structure_basis``
+    is RR's own (a STATED marker; SEC's Exhibit 21 writer sets one inferred from
+    the filer's layout, with its basis), closed or not — a closed one is
+    reopened. Failing that, the pair's
     ACTIVE edge from another source (SEC, a PSC register, …) is returned with
     ``marker`` None, for the caller to share rather than draw a second edge
     beside it: one active edge per pair, whoever drew it
@@ -133,16 +135,20 @@ def _existing_consolidation_edge(parent_id: str, child_id: str) -> dict | None:
     fields = ("RETURN r.direct_or_indirect AS marker, r.since AS since, "
               "r.since_basis AS since_basis, r.since_source_url AS since_source_url, "
               "r.source_id AS source_id, r.credibility_score AS credibility_score, "
-              "r.stake_percent AS stake_percent LIMIT 1")
+              "r.stake_percent AS stake_percent, r.structure_basis AS structure_basis LIMIT 1")
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
-        "WHERE r.direct_or_indirect IS NOT NULL " + fields,
+        "WHERE r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL " + fields,
         {"p": parent_id, "c": child_id})
     if not rows:
         rows = run_command(
             "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
             "WHERE r.until IS NULL " + fields,
             {"p": parent_id, "c": child_id})
+        if rows and rows[0].get("structure_basis"):
+            # a marker SEC inferred from a filer's layout is not RR's: the
+            # edge is adopted and the inferred marker replaced by the stated one
+            rows[0]["marker"] = None
     return rows[0] if rows else None
 
 
@@ -205,11 +211,12 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
         sets["last_scraped_at"] = now
 
     if existing["marker"] is None or existing["marker"] == marker:
-        where = ("r.direct_or_indirect = $m" if existing["marker"] else
-                 "r.until IS NULL AND r.direct_or_indirect IS NULL")
+        where = ("r.direct_or_indirect = $m AND r.structure_basis IS NULL" if existing["marker"] else
+                 "r.until IS NULL AND (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)")
         if existing["marker"] is None:
-            # Another source's edge: RR's marker and interest go onto it.
-            sets.update(direct_or_indirect=marker)
+            # Another source's edge: RR's marker and interest go onto it — a
+            # STATED marker, replacing any the SEC writer inferred from layout.
+            sets.update(direct_or_indirect=marker, structure_basis=None)
         sets.update(combine_since(existing, {"since": since}))
         extra = (", r.interest_types = coalesce(r.interest_types, $it)"
                  if existing["marker"] is None else "")
@@ -229,7 +236,7 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
                 ultimate_since=other_since if other_since and other_since != kept_since else None)
     sets.update(combine_since({"since": kept_since},
                               existing if existing.get("since_basis") else None))
-    _set_owns(parent_id, child_id, "r.direct_or_indirect IS NOT NULL", sets)
+    _set_owns(parent_id, child_id, "r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL", sets)
     return "folded"
 
 
@@ -297,7 +304,7 @@ def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str,
 
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
-        "WHERE r.direct_or_indirect = $m "
+        "WHERE r.direct_or_indirect = $m AND r.structure_basis IS NULL "
         + ("AND (r.source_id = $src OR r.source_id IS NULL) " if source_id else "")
         + "SET r.until = $until RETURN count(r) AS n",
         {"p": pid, "c": cid, "m": marker, "until": until, "src": source_id})

@@ -36,7 +36,9 @@ module is the rule for how two assertions share that edge:
 
 * **Structure** one source contributes — GLEIF's direct/indirect marker and
   ultimate-parent fields, the PSC appointment link — stays on the edge whoever
-  holds the answer (``STRUCTURAL_FIELDS``).
+  holds the answer (``STRUCTURAL_FIELDS``). A direct/indirect marker inferred
+  from a filer's layout (SEC Exhibit 21) carries ``structure_basis``; a stated
+  one has none, and is never replaced by an inferred one.
 """
 from __future__ import annotations
 
@@ -122,9 +124,13 @@ def fold(edges: list[dict], survivor: dict) -> dict:
         out.update(since)
     for f in STRUCTURAL_FIELDS:
         if survivor.get(f) is None:
-            value = next((e.get(f) for e in edges if e.get(f) is not None), None)
-            if value is not None:
-                out[f] = value
+            donor = next((e for e in edges if e.get(f) is not None), None)
+            if donor is not None:
+                out[f] = donor[f]
+                if f == "direct_or_indirect":
+                    # a marker inferred from a filer's layout carries its
+                    # basis; a stated one (GLEIF) has none — keep them paired
+                    out["structure_basis"] = donor.get("structure_basis")
     seen = [e.get("last_scraped_at") for e in edges if e.get("last_scraped_at")]
     if seen and max(seen) != survivor.get("last_scraped_at"):
         out["last_scraped_at"] = max(seen)
