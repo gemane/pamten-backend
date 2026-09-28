@@ -74,7 +74,7 @@ _OWNER_PAGE = 5000
 def _owns_pairs_by_page():
     """Yield, per page of owners, the active OWNS edges grouped by (owner,
     target) vertex pair: {(out_rid, in_rid): [(edge_rid, stake_percent,
-    direct_or_indirect, source_id), ...]}.
+    direct_or_indirect, source_id, shortcut), ...]}.
 
     Walks the OWNERS, not the edges: pages of Entity then Person by their UNIQUE
     `id` index (`app.db.paging.iter_id_pages` — a bounded index range per page,
@@ -97,15 +97,40 @@ def _owns_pairs_by_page():
             rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
             rows = run_sql(
                 "SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
-                "direct_or_indirect AS doi, source_id AS src "
+                "direct_or_indirect AS doi, source_id AS src, shortcut AS sc "
                 f"FROM (SELECT expand(outE('OWNS')) FROM [{rids}]) WHERE until IS NULL")
             pairs: dict[tuple, list[tuple]] = {}
             for r in rows:
                 pairs.setdefault((r["o"], r["i"]), []).append(
-                    (r["rid"], r.get("st"), r.get("doi"), r.get("src")))
+                    (r["rid"], r.get("st"), r.get("doi"), r.get("src"), r.get("sc")))
             if pages % 200 == 0:
                 log.info("OWNS dedup: %s page %d", vtype, pages)
             yield pairs
+
+
+def largest_owners(threshold: int) -> list[dict]:
+    """Owners with more than ``threshold`` distinct current subsidiaries —
+    counted as the profile counts them (active edges, proven shortcuts left
+    out), so the number matches the panel. Streams the same owner walk as the
+    dedup; only the few owners over the line are kept.
+
+    For the weekly digest: the groups the profile cap cuts, and the ones to
+    look at for a split into their real tree."""
+    found: list[dict] = []
+    for pairs in _owns_pairs_by_page():
+        per_owner: dict[str, set] = {}
+        for (o, i), edges in pairs.items():
+            if any(e[4] is not True for e in edges):
+                per_owner.setdefault(o, set()).add(i)
+        found += [{"rid": o, "subsidiaries": len(s)} for o, s in per_owner.items() if len(s) > threshold]
+    if not found:
+        return []
+    names = {r["rid"]: r for r in run_sql(
+        "SELECT @rid AS rid, id, name, full_name FROM [" + ", ".join(f["rid"] for f in found) + "]")}
+    out = [{"id": names.get(f["rid"], {}).get("id"),
+            "name": names.get(f["rid"], {}).get("name") or names.get(f["rid"], {}).get("full_name"),
+            "subsidiaries": f["subsidiaries"]} for f in found]
+    return sorted(out, key=lambda x: -x["subsidiaries"])
 
 
 def count_duplicate_owns_edges() -> dict:

@@ -121,6 +121,13 @@ Manual-first. To get it every Monday at 06:00 UTC:
 The wrapper takes a lock and logs to `/home/administrator/data/weekly-report.log`.
 The same numbers are on the Scraper tab (admins) and at `GET /analytics/weekly`.
 
+The Graph section also lists **groups with more than 500 direct subsidiaries**
+(`LARGE_GROUP_THRESHOLD`), largest first — the ones the profile's section cap
+(900 since 2026-09-27, temporarily) cuts or nearly cuts, and the ones to look at
+one by one for a split into their real tree. Counted as the profile counts
+(active edges, proven shortcuts excluded), on the same streaming owner walk as
+the OWNS dedup, so it is cheap on the dev subset and one pass on a full import.
+
 ## Retention and personal data
 
 Backups contain the personal data in the graph (PSC people: names, birth months, addresses), so
