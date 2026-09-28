@@ -49,7 +49,10 @@ REPORT = {
     "imports": {"gleif-update": {"runs": 7, "ok": 7, "failed": 0, "skipped": 0, "records": 184}},
     "graph": {"totals": {"companies": 6773, "people": 385, "relationships": 7638, "roles": 440, "claims": 8198},
               "new_relationships": {"owns": 12}, "since": "2026-W37",
-              "delta": {"companies": 5, "people": -1, "relationships": 300, "roles": 9, "claims": 12}},
+              "delta": {"companies": 5, "people": -1, "relationships": 300, "roles": 9, "claims": 12},
+              "large_groups": [{"id": "tenet", "name": "TENET HEALTHCARE CORPORATION", "subsidiaries": 1162},
+                               {"id": "davita", "name": "DAVITA INC.", "subsidiaries": 735}],
+              "large_group_threshold": 500},
 }
 
 
@@ -90,6 +93,13 @@ class TestRendering:
         assert "gleif-update: 7 runs" in t
         assert "companies           6,773 (+5)" in t and "people                385 (-1)" in t
         assert "first asserted this week: owns 12" in t
+        assert "groups with more than 500 direct subsidiaries (2):" in t
+        assert "     1,162  TENET HEALTHCARE CORPORATION\n       735  DAVITA INC.\n" in t
+
+    def test_a_week_without_large_groups_has_no_such_section(self):
+        r = {**REPORT, "graph": {**REPORT["graph"], "large_groups": []}}
+        assert "direct subsidiaries" not in format_report_text(r)
+        assert "direct subsidiaries" not in format_report_html(r)
 
     def test_a_first_week_has_no_delta(self):
         r = {**REPORT, "graph": {**REPORT["graph"], "since": None, "delta": None}}
@@ -112,6 +122,8 @@ class TestRendering:
         assert "&lt;b&gt;" in h and "a&lt;b" in h and "<script" not in h
         assert "Owlgraph Report — week 38" in h and "2026-09-14 to 2026-09-20" in h
         assert "Internal; not for redistribution." in h
+        assert "Groups with more than 500 direct subsidiaries (2)" in h
+        assert "TENET HEALTHCARE CORPORATION" in h and "1,162" in h
 
     def test_the_footer_names_the_recipient_when_sent(self):
         h = format_report_html({**REPORT, "recipient": "ops@example.com"})

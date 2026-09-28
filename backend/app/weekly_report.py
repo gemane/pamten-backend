@@ -33,6 +33,11 @@ IMPORT_SOURCES = frozenset({"gleif-update", "ch-psc-update"})
 SEC_ENRICHMENTS = frozenset({"sec-13f", "sec-ex21", "sec-formd"})
 
 TOP_N = 10
+#: Owners with more distinct subsidiaries than this are listed in the digest —
+#: the groups the profile's section cap (900) cuts or nearly cuts, and the ones
+#: to look at one by one for a split into their real tree (most are flat
+#: Exhibit 21 lists: DaVita 735, Occidental 417).
+LARGE_GROUP_THRESHOLD = 500
 
 
 def _rows(sql: str, params: dict | None = None) -> list[dict]:
@@ -172,6 +177,16 @@ def _graph_totals() -> dict:
     return out
 
 
+def _large_groups() -> list[dict]:
+    """[{id, name, subsidiaries}] over the threshold, largest first."""
+    from app.scraper.maintenance import largest_owners
+    try:
+        return largest_owners(LARGE_GROUP_THRESHOLD)
+    except Exception as exc:  # noqa: BLE001 - the digest must not fail on one section
+        log.warning("weekly report: large groups unavailable: %s", exc)
+        return []
+
+
 def _new_relationships(week: str) -> dict:
     start, end = week_bounds(week)
     out: dict[str, int] = {}
@@ -213,7 +228,9 @@ def weekly_report(week: str | None = None) -> dict:
         "scrapes": _scrapes(runs),
         "imports": _imports(runs),
         "graph": {"totals": totals, "new_relationships": _new_relationships(week),
-                  "since": prev["week"] if prev else None, "delta": delta},
+                  "since": prev["week"] if prev else None, "delta": delta,
+                  "large_groups": _large_groups(),
+                  "large_group_threshold": LARGE_GROUP_THRESHOLD},
     }
 
 
@@ -279,6 +296,10 @@ def format_report_text(r: dict) -> str:
     if g["new_relationships"]:
         lines.append("  first asserted this week: " +
                      ", ".join(f"{k} {v:,}" for k, v in sorted(g["new_relationships"].items())))
+    if g.get("large_groups"):
+        lines.append(f"  groups with more than {g.get('large_group_threshold', LARGE_GROUP_THRESHOLD)} "
+                     f"direct subsidiaries ({len(g['large_groups'])}):")
+        lines += [f"    {x['subsidiaries']:>6,}  {x['name']}" for x in g["large_groups"]]
     lines += ["", "Automated weekly report from the Owlgraph backend for the operator's records"
               + (f", sent to {r['recipient']}" if r.get("recipient") else "") + ".",
               "Aggregates only — companies are named, people who searched are not. "
@@ -424,6 +445,15 @@ def format_report_html(r: dict) -> str:
     if g["new_relationships"]:
         out.append(f"<div style='font-size:12px;{muted}margin-top:8px'>first asserted this week: " +
                    ", ".join(f"{e(k)} {v:,}" for k, v in sorted(g["new_relationships"].items())) + "</div>")
+    if g.get("large_groups"):
+        # the groups the profile cap cuts, and the ones to look at for a split
+        out.append(f"<div style='font-size:11px;letter-spacing:.04em;text-transform:uppercase;{muted}margin-top:12px'>"
+                   f"Groups with more than {g.get('large_group_threshold', LARGE_GROUP_THRESHOLD)} direct subsidiaries "
+                   f"({len(g['large_groups'])})</div>"
+                   "<table role='presentation' cellpadding='0' cellspacing='0' style='font-size:13px;margin-top:4px'>"
+                   + "".join(f"<tr><td style='{tdn}padding-left:0'>{x['subsidiaries']:,}</td>"
+                             f"<td style='{td}'>{e(x['name'] or '')}</td></tr>" for x in g["large_groups"])
+                   + "</table>")
     out.append("</div>")
     out.append(f"<div style='font-size:11px;{muted}line-height:1.5'>"
                "Automated weekly report from the Owlgraph backend for the operator's records"

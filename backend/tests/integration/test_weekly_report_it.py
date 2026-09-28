@@ -131,3 +131,33 @@ class TestEndpoint:
             assert c.get("/v1/analytics/weekly", params={"week": "nope"}).status_code == 422
         finally:
             app.dependency_overrides.pop(require_admin, None)
+
+
+class TestLargeGroups:
+    def test_owners_over_the_threshold_are_listed_largest_first(self, it_db, monkeypatch):
+        """Counted as the profile counts: active edges, proven shortcuts left out."""
+        from app import weekly_report as wr
+        from app.scraper.maintenance import largest_owners
+        monkeypatch.setattr(wr, "LARGE_GROUP_THRESHOLD", 2)
+        for o in ("big", "bigger", "small"):
+            run_sql("CREATE VERTEX Entity SET id = :id, name = :n", {"id": o, "n": o.upper()})
+        for o, n in (("big", 3), ("bigger", 4), ("small", 2)):
+            for k in range(n):
+                run_sql("CREATE VERTEX Entity SET id = :id, name = :id", {"id": f"{o}-{k}"})
+                run_sql("CREATE EDGE OWNS FROM (SELECT FROM Entity WHERE id = :o) "
+                        "TO (SELECT FROM Entity WHERE id = :s) SET until = null", {"o": o, "s": f"{o}-{k}"})
+        # a closed edge and a proven shortcut do not count; a doubled pair counts once
+        run_sql("CREATE VERTEX Entity SET id = 'big-x', name = 'big-x'")
+        run_sql("CREATE EDGE OWNS FROM (SELECT FROM Entity WHERE id = 'big') TO (SELECT FROM Entity WHERE id = 'big-x') "
+                "SET until = '2020-01-01'")
+        run_sql("CREATE VERTEX Entity SET id = 'big-y', name = 'big-y'")
+        run_sql("CREATE EDGE OWNS FROM (SELECT FROM Entity WHERE id = 'big') TO (SELECT FROM Entity WHERE id = 'big-y') "
+                "SET shortcut = true")
+        run_sql("CREATE EDGE OWNS FROM (SELECT FROM Entity WHERE id = 'big') TO (SELECT FROM Entity WHERE id = 'big-0') "
+                "SET until = null")
+        assert largest_owners(2) == [{"id": "bigger", "name": "BIGGER", "subsidiaries": 4},
+                                     {"id": "big", "name": "BIG", "subsidiaries": 3}]
+        g = weekly_report(THIS)["graph"]
+        assert [x["name"] for x in g["large_groups"]] == ["BIGGER", "BIG"]
+        assert g["large_group_threshold"] == 2
+        assert largest_owners(4) == []
