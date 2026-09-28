@@ -5,7 +5,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from threading import Lock
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from app import analytics
 from app.version import APP_VERSION
@@ -198,6 +198,28 @@ def root():
     }
 
 
+#: seconds the health probe waits for the database — an uptime checker
+#: times out at ~10 s, and a hung database must read as down, not as slow
+HEALTH_DB_TIMEOUT = 4.0
+
+
 @app.get("/health", tags=["Health"])
-def health_check():
-    return {"status": "ok"}
+def health_check(response: Response):
+    """Can the API serve? One cheap query against the database decides.
+
+    A process that is up but cannot reach ArcadeDB used to answer 200 here,
+    so Render's check, the compose healthcheck and an outside uptime check all
+    said "fine" while every real request failed. Now: 200 with the version
+    when the database answers, 503 with `database: unreachable` when it does
+    not — and the probe is bounded, so a hung database makes this slow-then-
+    503, never a hang. Unversioned on purpose (see `/app-version`): the URL a
+    load balancer or uptime check points at must never move.
+    """
+    from app.db.arcadedb import run_sql
+    try:
+        run_sql("SELECT count(*) AS n FROM schema:types", timeout=HEALTH_DB_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - any failure is the answer, not an error
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "degraded", "version": APP_VERSION,
+                "database": "unreachable", "detail": type(exc).__name__}
+    return {"status": "ok", "version": APP_VERSION, "database": "ok"}

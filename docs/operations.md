@@ -128,6 +128,33 @@ one by one for a split into their real tree. Counted as the profile counts
 (active edges, proven shortcuts excluded), on the same streaming owner walk as
 the OWNS dedup, so it is cheap on the dev subset and one pass on a full import.
 
+## Monitoring
+
+Built in layers, from the box outwards (decided 2026-09-28; the outer layers are
+still to set up on the production box):
+
+1. **`GET /health` is honest.** It runs one query against ArcadeDB (bounded at
+   4 s) and answers `200 {status: ok, version, database: ok}` or
+   `503 {status: degraded, database: unreachable}`. A process that is up but
+   cannot reach the database is not healthy. Unversioned, so the URL an uptime
+   check points at never moves.
+2. **Compose healthchecks** (`deploy/docker-compose.yml`): `arcadedb` on
+   `/api/v1/ready`, `api` on `/health`, `caddy` on `/health` through the proxy;
+   `restart: unless-stopped`; logs capped per container. `docker compose ps`
+   shows `(healthy)` or not. Self-healing, but blind to the box itself being down.
+3. **A dead man's switch per cron job.** Every wrapper in `~/scripts` calls
+   `owlgraph_watch <job>` (`lib.sh`): a ping at start, a ping on success,
+   `/fail` on any non-zero exit. The checker alerts when a run fails **or when
+   the next ping does not arrive** — the case a log can never report. URLs live
+   in `~/.config/owlgraph/healthchecks.env` (`HC_GLEIF_UPDATE=…`, `HC_BACKUP=…`,
+   `HC_WEEKLY_REPORT=…`, `HC_PRUNE_ANALYTICS=…`); no file means no pings, and a
+   ping failure never fails the job. Healthchecks.io, or its open-source
+   self-hosted twin on the dev box, is the intended checker.
+4. **Still to do:** an outside uptime check on `https://…/health` (Uptime Kuma
+   on the dev box), a disk-space cron, and `manage.py alerts` — a daily mail,
+   only when there is something: failed or stale imports in the last 24 h,
+   newest backup or offsite copy older than 26 h.
+
 ## Retention and personal data
 
 Backups contain the personal data in the graph (PSC people: names, birth months, addresses), so

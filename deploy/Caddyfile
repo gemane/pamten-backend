@@ -1,0 +1,26 @@
+# Owlgraph production — TLS, the web app, and the API behind one origin.
+# The web app is built with PROD_API_URL = https://{$DOMAIN}, so the browser
+# talks to the same origin and Caddy routes by path: the API's paths go to
+# uvicorn, everything else is the static app (a client-side router, so unknown
+# paths fall back to index.html).
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	@api path /v1/* /health /app-version /docs /redoc /openapi.json
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
