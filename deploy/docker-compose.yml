@@ -1,0 +1,92 @@
+# Owlgraph production — one box, Docker Compose. See deploy/README.md.
+#
+#   caddy (TLS, serves the built web app)  ->  api (uvicorn)  ->  arcadedb
+#
+# Every image is pinned to a version from .env — nothing here says `latest`.
+# arcadedb is NOT published to the host: only the api reaches it, on the
+# compose network. Each service has a healthcheck, so `docker compose ps`
+# says whether the thing actually answers, and a service that stops answering
+# is restarted. Logs are capped per container — unbounded json-file logs are
+# the usual way a small disk fills up.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+services:
+  arcadedb:
+    image: arcadedata/arcadedb:${ARCADEDB_VERSION:?set ARCADEDB_VERSION in .env}
+    restart: unless-stopped
+    environment:
+      # The root password (letters + digits + a symbol, or ArcadeDB refuses it).
+      # Do not use ':' in it — a password containing ':' cannot authenticate
+      # over HTTP (ArcadeDB issue #7783).
+      JAVA_OPTS: >-
+        -Darcadedb.server.rootPassword=${ARCADEDB_ROOT_PASSWORD:?set ARCADEDB_ROOT_PASSWORD in .env}
+        -Darcadedb.server.defaultDatabases=${ARCADEDB_DATABASE:-owlgraph}[root]
+        -Xms${ARCADEDB_HEAP:-8g} -Xmx${ARCADEDB_HEAP:-8g}
+    volumes:
+      # databases/ and backups/ live under one path so `manage.py
+      # backup-database` (which asks the SERVER to write the archive) lands in
+      # a directory the host can see: ${ARCADEDB_DATA}/backups/<database>/
+      - ${ARCADEDB_DATA:?set ARCADEDB_DATA in .env}:/home/arcadedb
+    healthcheck:
+      # the image is Alpine with wget, no curl
+      test: ["CMD-SHELL", "wget -qO- http://localhost:2480/api/v1/ready >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging: *logging
+
+  api:
+    image: ghcr.io/${GITHUB_OWNER:?set GITHUB_OWNER in .env}/pamten-backend:${APP_VERSION:?set APP_VERSION in .env}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ARCADEDB_URL: http://arcadedb:2480
+      ARCADEDB_USERNAME: root
+      ARCADEDB_PASSWORD: ${ARCADEDB_ROOT_PASSWORD}
+      ARCADEDB_DATABASE: ${ARCADEDB_DATABASE:-owlgraph}
+    depends_on:
+      arcadedb:
+        condition: service_healthy
+    healthcheck:
+      # /health runs one query against the database and answers 503 when it
+      # cannot — so this is "the API can serve", not "the process is up".
+      # python:slim has no curl; the stdlib is enough.
+      test: ["CMD", "python", "-c",
+             "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 30s
+    logging: *logging
+
+  caddy:
+    image: caddy:${CADDY_VERSION:-2.10}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${WEB_DIR:?set WEB_DIR in .env}:/srv/www:ro     # the unpacked owlgraph-web-X.Y.Z.tar.gz
+      - caddy_data:/data                                 # certificates
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -46,7 +46,10 @@ def test_the_api_test_client_still_works(client):
     why that entry needs a test of its own: the database is reachable by two
     routes, so removing the allow-list alone leaves the DB tests passing and only
     this one failing."""
-    assert client.get("/health").status_code == 200
+    # `/` answers without touching the database; `/health` probes it and would
+    # read the guard's refusal as "database unreachable" (503), which is right.
+    assert client.get("/").status_code == 200
+    assert client.get("/health").status_code == 503
 
 
 @pytest.mark.allow_network

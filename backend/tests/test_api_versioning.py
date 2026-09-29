@@ -57,7 +57,9 @@ def test_legacy_paths_are_hidden_from_the_schema(client):
 
 
 def test_health_is_not_served_under_v1(client):
-    assert client.get("/health").status_code == 200
+    from unittest.mock import patch
+    with patch("app.db.arcadedb.run_sql", return_value=[{"n": 1}]):
+        assert client.get("/health").status_code == 200
     assert client.get("/v1/health").status_code == 404
 
 
