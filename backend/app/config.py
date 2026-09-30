@@ -103,6 +103,15 @@ class Settings(BaseSettings):
     # Where the weekly activity digest goes (manage.py weekly-report --email);
     # falls back to ADMIN_EMAIL.
     REPORT_EMAIL:                     str | None = None
+    # `manage.py alerts` (see app/alerts.py). Empty = that check is skipped.
+    ALERT_HEALTH_URL:                 str  = ""           # e.g. https://owlgraph.example/health — the outside check
+    ALERT_DISK_PATHS:                 str  = "/"          # comma-separated mount points to watch
+    ALERT_DISK_WARN_PCT:              int  = 85
+    ALERT_DISK_CRIT_PCT:              int  = 95
+    ALERT_BACKUP_MARKER:              str  = ""           # written by backup-database.sh, e.g. /home/administrator/data/backup.last
+    ALERT_BACKUP_MAX_AGE_HOURS:       int  = 26
+    ALERT_BACKUP_EXPECT_OFFSITE:      bool = True
+    ALERT_STATE_FILE:                 str  = "~/data/alerts-state.json"   # the health check's last state
     ADMIN_PASSWORD:                   str | None = None
     # ── Transactional email (verification + password reset) ───────────────────
     # Provider-agnostic sender. EMAIL_BACKEND selects the transport: "smtp" sends

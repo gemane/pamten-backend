@@ -150,10 +150,35 @@ still to set up on the production box):
    `HC_WEEKLY_REPORT=…`, `HC_PRUNE_ANALYTICS=…`); no file means no pings, and a
    ping failure never fails the job. Healthchecks.io, or its open-source
    self-hosted twin on the dev box, is the intended checker.
-4. **Still to do:** an outside uptime check on `https://…/health` (Uptime Kuma
-   on the dev box), a disk-space cron, and `manage.py alerts` — a daily mail,
-   only when there is something: failed or stale imports in the last 24 h,
-   newest backup or offsite copy older than 26 h.
+4. **`manage.py alerts`** — what is wrong right now, mailed only when there is
+   something (`--email`, to `REPORT_EMAIL` / `ADMIN_EMAIL`). Four checks, each
+   skipped when its setting is empty:
+   - `imports`: an import run that failed in the last 24 h, or a run stuck
+     `running` past the run log's stale threshold;
+   - `backup`: the marker `backup-database.sh` writes after verify + offsite
+     copy (`ALERT_BACKUP_MARKER`, e.g. `/home/administrator/data/backup.last`)
+     older than `ALERT_BACKUP_MAX_AGE_HOURS` (26), missing, or not copied
+     offsite (`ALERT_BACKUP_EXPECT_OFFSITE`);
+   - `disk`: `ALERT_DISK_PATHS` (comma-separated mount points) above
+     `ALERT_DISK_WARN_PCT` (85) / `ALERT_DISK_CRIT_PCT` (95);
+   - `health`: `GET ALERT_HEALTH_URL` — the **outside** check when run on the
+     dev box against production. Reported on change only (down, then
+     recovered), remembered in `ALERT_STATE_FILE`, so a five-minute cron does
+     not mail every five minutes.
+
+   It exits 0 whenever the checks ran — an alert is an answer, not a failure;
+   the checks crashing is what the dead man's switch on the wrapper reports.
+   Manual-first; the intended cron lines (`cron-alerts.sh` in `~/scripts`
+   takes the same arguments):
+
+   ```cron
+   */5 * * * * /home/administrator/scripts/cron-alerts.sh --only health --email
+   0 7 * * *   /home/administrator/scripts/cron-alerts.sh --email
+   ```
+
+   The first line is the uptime check from outside the production box; the
+   second the daily "anything wrong?" mail. Both need `--email`, or they only
+   print.
 
 ## Retention and personal data
 
