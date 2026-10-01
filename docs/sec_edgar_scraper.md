@@ -838,6 +838,14 @@ back from the newest.
 - **The run stops at the first gap** — a year the name is missing, or an exhibit
   that cannot be read (early plain-text ones). Filers may omit insignificant
   subsidiaries, so a gap proves nothing; stopping there keeps the bound true.
+- **"First listed 2025" where the history can say so:** when the list for the
+  year before was read, does not name the company, and no older list does
+  either, `since_basis = "newly_listed"` instead. The readers show it as "first
+  listed 2025" and time travel hides it before that year. Not when an even
+  OLDER list names it (dropped and back — on News Corp's 14 lists that is 37 of
+  the 181 subsidiaries missing from the year before), nor when the list before
+  is unreadable or there is none: those stay `first_listed`, "or earlier". A
+  re-run rewrites the basis on the same date when it now knows more.
 - **On the pair's one edge**, whichever source holds its answer: a subsidiary
   the UK register also records keeps the register's stake and gains the bound.
   The subsidiaries come from SEC's Exhibit 21/8.1 **claims**, not the edge's

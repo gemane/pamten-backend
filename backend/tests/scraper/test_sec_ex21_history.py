@@ -53,6 +53,25 @@ class TestEarliestListing:
         got = earliest_listing(h, "Storyful")
         assert got["as_of"] == "2024-12-31" and got["filing_date"] == "2025-02-21"
 
+    def test_newly_listed_when_the_list_before_was_read_and_no_older_one_names_it(self):
+        h = _hist(("2026-08-07", {"Storyful", "Dow Jones"}), ("2025-08-08", {"Storyful", "Dow Jones"}),
+                  ("2024-08-08", {"Dow Jones"}), ("2023-08-10", {"Dow Jones"}))
+        got = earliest_listing(h, "Storyful")
+        assert (got["filing_date"], got["basis"]) == ("2025-08-08", "newly_listed")
+
+    def test_first_listed_when_the_history_cannot_say_what_was_before(self):
+        # the run reaches the oldest list: nothing older to check
+        h = _hist(("2026-08-07", {"Dow Jones"}), ("2025-08-08", {"Dow Jones"}))
+        assert earliest_listing(h, "Dow Jones")["basis"] == "first_listed"
+        # the list before could not be read
+        h = _hist(("2026-08-07", {"Storyful"}), ("2025-08-08", None), ("2024-08-08", {"Other Co"}))
+        assert earliest_listing(h, "Storyful")["basis"] == "first_listed"
+        # dropped and back: an OLDER list names it, so the gap was not a start
+        h = _hist(("2026-08-07", {"Storyful"}), ("2025-08-08", {"Storyful"}),
+                  ("2024-08-08", {"Other Co"}), ("2023-08-10", None), ("2022-08-10", {"Storyful"}))
+        got = earliest_listing(h, "Storyful")
+        assert (got["filing_date"], got["basis"]) == ("2025-08-08", "first_listed")
+
     def test_the_proof_url_comes_with_the_date(self):
         h = _hist(("2026-08-07", {"Storyful"}), ("2020-08-11", {"Storyful"}))
         assert earliest_listing(h, "Storyful")["url"] == "https://www.sec.gov/2020-08-11.htm"

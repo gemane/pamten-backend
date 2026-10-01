@@ -785,11 +785,27 @@ def fetch_subsidiary_history(cik: str, max_filings: int = HISTORY_MAX_FILINGS) -
     return out
 
 
+#: `since_basis` values for a start date read off the annual lists (see
+#: `earliest_listing`). Neither is a stated start.
+FIRST_LISTED, NEWLY_LISTED = "first_listed", "newly_listed"
+
+
 def earliest_listing(history: list[dict], name: str) -> dict | None:
     """The oldest filing in the UNBROKEN run of annual lists naming ``name``,
-    counting back from the newest — {"as_of", "filing_date", "url"} — or None
-    when the newest list does not name it. ``as_of`` (that list's fiscal
-    year-end) is the lower bound: held then, possibly longer.
+    counting back from the newest — {"as_of", "filing_date", "url", "basis"} —
+    or None when the newest list does not name it. ``as_of`` (that list's
+    fiscal year-end) is the lower bound: held then, possibly longer.
+
+    ``basis`` says how much the history knows about the time BEFORE the run:
+
+    * ``"newly_listed"`` — the list for the year before was read, does not name
+      the company, and neither does any older list we could read: it first
+      appears here. Shown as "first listed 2025".
+    * ``"first_listed"`` — nothing to say: the run reaches the oldest list, or
+      the list before it could not be read, or an even OLDER list names the
+      company (dropped and back: on News Corp's 14 lists that is 37 of the 181
+      subsidiaries missing from the year before — one in five). Shown as
+      "since 2025 or earlier".
 
     The run stops at the first year the name is missing or the list could not
     be read. Filers may leave out insignificant subsidiaries (Reg S-K Item
@@ -798,9 +814,15 @@ def earliest_listing(history: list[dict], name: str) -> dict | None:
     at least since that filing, possibly longer."""
     from app.scraper.mapper import normalize_entity_name
     key = normalize_entity_name(name) or (name or "").lower()
-    found = None
-    for entry in history:
+    found, stopped = None, None
+    for i, entry in enumerate(history):
         if not entry["names"] or key not in entry["names"]:
+            stopped = i
             break
         found = {"as_of": entry["as_of"], "filing_date": entry["filing_date"], "url": entry["url"]}
+    if found is None:
+        return None
+    absent_before = (stopped is not None and history[stopped]["names"] is not None
+                     and not any(e["names"] and key in e["names"] for e in history[stopped + 1:]))
+    found["basis"] = NEWLY_LISTED if absent_before else FIRST_LISTED
     return found

@@ -1085,19 +1085,21 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
             run["status"], run["note"] = "failed", "no readable annual subsidiary list"
             return {"status": "no_history", "company": company, "entity_id": company_id,
                     "total": 0, "filings": len(history)}
-        dated = unmatched = 0
+        dated = unmatched = newly = 0
         oldest = None
         for e in edges:
             found = earliest_listing(history, e["name"] or "")
             if not found:
                 unmatched += 1          # named differently in the exhibit than in the graph
                 continue
-            if set_since_lower_bound(e["owner"], e["sid"], found["as_of"], found["url"]):
+            newly += found["basis"] == "newly_listed"
+            if set_since_lower_bound(e["owner"], e["sid"], found["as_of"], found["url"], found["basis"]):
                 dated += 1
                 oldest = min(oldest or found["as_of"], found["as_of"])
         run["total"] = dated
         return {"status": "ok", "company": company, "entity_id": company_id,
                 "total": dated, "subsidiaries": len(edges), "unmatched": unmatched,
+                "newly_listed": newly,
                 "filings": len(history), "readable": len(read),
                 "oldest_filing": read[-1]["filing_date"], "earliest_dated": oldest}
 

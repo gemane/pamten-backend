@@ -468,17 +468,22 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
         return "reassigned"
 
 
-def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: str | None) -> bool:
+def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: str | None,
+                          basis: str = "first_listed") -> bool:
     """Date a subsidiary-list edge by its oldest listing: "owned since at least".
 
     On the pair's ACTIVE edge, whichever source holds its answer — one edge per
     pair, and the start date is combined across sources (``owns_merge``) — and
     only ever EARLIER: a `since` that is already earlier (a stated start, or an
     older listing found before) is kept, and a stated start on the same day
-    beats the bound. Sets ``since_basis = "first_listed"`` so a reader can tell a lower
-    bound from a stated start, and ``since_source_url`` to the filing that
-    proves it. The claim for the same pair and filing type moves with it.
-    Returns whether the edge changed.
+    beats the bound. Sets ``since_basis`` so a reader can tell a date read off
+    the lists from a stated start — ``"first_listed"`` ("since 2013 or
+    earlier") or ``"newly_listed"`` ("first listed 2025": the list before does
+    not name it, see ``sec_ex21.earliest_listing``) — and ``since_source_url``
+    to the filing that proves it. The same date with the OTHER listing basis
+    is rewritten too (a re-read that now knows more); a stated start never is.
+    The claim for the same pair and filing type moves with it. Returns whether
+    the edge changed.
 
     Only for a pair an annual list actually names — an Exhibit 21/8.1 CLAIM, not
     the edge's own filing type, since the shared edge may carry another source's
@@ -493,17 +498,19 @@ def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: 
     with db.get_session() as session:
         rec = session.run(
             """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
-               WHERE r.until IS NULL AND (r.since IS NULL OR r.since > $since)
-               SET r.since = $since, r.since_basis = 'first_listed', r.since_source_url = $url
+               WHERE r.until IS NULL AND (r.since IS NULL OR r.since > $since
+                  OR (r.since = $since AND r.since_basis IS NOT NULL AND r.since_basis <> $basis))
+               SET r.since = $since, r.since_basis = $basis, r.since_source_url = $url
                RETURN count(r) AS n""",
-            o=owner_id, n=owned_id, since=since, url=source_url).single()
+            o=owner_id, n=owned_id, since=since, url=source_url, basis=basis).single()
     changed = bool(rec and rec.get("n"))
     if changed:
-        run_sql("UPDATE Claim SET since = :since, since_basis = 'first_listed', "
+        run_sql("UPDATE Claim SET since = :since, since_basis = :basis, "
                 "since_source_url = :url WHERE kind = 'owns' AND from_id = :o AND to_id = :n "
                 "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1') "
-                "AND (since IS NULL OR since > :since)",
-                {"since": since, "url": source_url, "o": owner_id, "n": owned_id})
+                "AND (since IS NULL OR since > :since "
+                "OR (since = :since AND since_basis IS NOT NULL AND since_basis <> :basis))",
+                {"since": since, "url": source_url, "o": owner_id, "n": owned_id, "basis": basis})
     return changed
 
 
