@@ -67,6 +67,25 @@ class TestTheWriter:
         assert set_since_lower_bound("nc", "old", "2014-08-14", None) is False
         assert _edge(it_db, "old") == {"since": "2001-01-01", "basis": None, "url": None}
 
+    def test_writes_the_basis_and_rewrites_it_when_a_re_read_knows_more(self, it_db):
+        from app.scraper.sec_writer import set_since_lower_bound
+        _seed(it_db)
+        assert set_since_lower_bound("nc", "dj", "2025-06-30", "u", "newly_listed") is True
+        assert _edge(it_db, "dj")["basis"] == "newly_listed"
+        assert _claim(it_db, "dj")["since_basis"] == "newly_listed"
+        # the same date and basis again: nothing to do
+        assert set_since_lower_bound("nc", "dj", "2025-06-30", "u", "newly_listed") is False
+        # an older list turned up naming it: the same date is only a lower bound again
+        assert set_since_lower_bound("nc", "dj", "2025-06-30", "u", "first_listed") is True
+        assert _edge(it_db, "dj")["basis"] == "first_listed"
+        assert _claim(it_db, "dj")["since_basis"] == "first_listed"
+
+    def test_a_stated_start_on_the_same_day_is_never_relabelled(self, it_db):
+        from app.scraper.sec_writer import set_since_lower_bound
+        _seed(it_db)
+        assert set_since_lower_bound("nc", "old", "2001-01-01", "u", "newly_listed") is False
+        assert _edge(it_db, "old") == {"since": "2001-01-01", "basis": None, "url": None}
+
     def test_leaves_closed_and_non_list_edges_alone(self, it_db):
         from app.scraper.sec_writer import set_since_lower_bound
         _seed(it_db)
@@ -107,11 +126,16 @@ class TestTheRunner:
         # FY2025, Storyful listed only this year → this year's year-end ("since
         # 2026 or earlier" is true too). The earlier start stays; the 13F and
         # the closed edge are not Exhibit 21 subsidiaries.
-        assert _edge(it_db, "dj")["since"] == "2024-06-30"
-        assert _edge(it_db, "hc")["since"] == "2025-06-30"
-        assert _edge(it_db, "st") == {"since": "2026-06-30", "basis": "first_listed",
+        # What the history knows about BEFORE: Dow Jones' run ends at an
+        # unreadable year → a lower bound; for HarperCollins and Storyful the
+        # list before was read and does not name them → first listed that year.
+        assert (_edge(it_db, "dj")["since"], _edge(it_db, "dj")["basis"]) == ("2024-06-30", "first_listed")
+        assert (_edge(it_db, "hc")["since"], _edge(it_db, "hc")["basis"]) == ("2025-06-30", "newly_listed")
+        assert _edge(it_db, "st") == {"since": "2026-06-30", "basis": "newly_listed",
                                       "url": "https://www.sec.gov/2026-08-07.htm"}
-        assert _edge(it_db, "old")["since"] == "2001-01-01"
+        assert _claim(it_db, "st")["since_basis"] == "newly_listed"
+        assert _edge(it_db, "old") == {"since": "2001-01-01", "basis": None, "url": None}
+        assert res["newly_listed"] == 3            # incl. the one whose earlier stated start stays
         assert res["total"] == 3 and res["subsidiaries"] == 4 and res["unmatched"] == 0
         assert res["readable"] == 3 and res["earliest_dated"] == "2024-06-30"
 

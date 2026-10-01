@@ -29,10 +29,11 @@ module is the rule for how two assertions share that edge:
   ranks claims the same way).
 
 * **The start date** is combined, not taken from the answer's source: the
-  earliest date any source gives (``combine_since``). A lower bound
-  (``since_basis = "first_listed"``: the oldest Exhibit 21 naming the
-  subsidiary) keeps its label, so the edge reads "since 2013 or earlier"; a
-  stated start on or before it replaces it.
+  earliest date any source gives (``combine_since``). A date read off the
+  annual lists keeps its label (``since_basis``): ``"first_listed"`` — the
+  oldest Exhibit 21 naming the subsidiary, "since 2013 or earlier" — or
+  ``"newly_listed"`` — the list before did not name it, "first listed 2025".
+  A stated start on or before it replaces it.
 
 * **Structure** one source contributes — GLEIF's direct/indirect marker and
   ultimate-parent fields, the PSC appointment link — stays on the edge whoever

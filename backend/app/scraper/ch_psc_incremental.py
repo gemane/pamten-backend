@@ -470,7 +470,7 @@ class _PscEdgeWriter:
             # an earlier "listed since" lower bound SEC put on the shared edge
             # stays; otherwise the register's own date is written as before.
             params[f"since__{k}"] = since
-            keep = f"since_basis = 'first_listed' AND (:since__{k} IS NULL OR since < :since__{k})"
+            keep = f"since_basis IS NOT NULL AND (:since__{k} IS NULL OR since < :since__{k})"
             sets += [f"since_basis = CASE WHEN {keep} THEN since_basis ELSE null END",
                      f"since_source_url = CASE WHEN {keep} THEN since_source_url ELSE null END",
                      f"since = CASE WHEN {keep} THEN since ELSE :since__{k} END"]

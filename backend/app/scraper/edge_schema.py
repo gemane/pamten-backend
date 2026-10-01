@@ -58,8 +58,10 @@ OWNS_PROPS: tuple = (
     "filing_type",
     # How `since` is known, when it is not the start of the holding itself:
     # "first_listed" = the oldest annual subsidiary list (Exhibit 21/8.1) in an
-    # unbroken run naming it — a LOWER bound ("owned since at least"). Unset
-    # when `since` is the stated start. `since_source_url` is that filing.
+    # unbroken run naming it — a LOWER bound ("owned since at least");
+    # "newly_listed" = the same, and the list for the year before does not name
+    # it, nor any older one ("first listed 2025"). Unset when `since` is the
+    # stated start. `since_source_url` is that filing.
     "since_basis",
     "since_source_url",
     # How the edge's PLACE in the tree is known when a source showed it by
