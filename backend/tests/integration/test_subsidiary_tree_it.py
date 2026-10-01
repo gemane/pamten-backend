@@ -146,8 +146,11 @@ def test_the_tree_as_of_a_day(it_db):
     _owns(it_db, "old", "under-old", since="2011-01-01")
     _owns(it_db, "top", "new", since="2021-05-01")
     _owns(it_db, "top", "bound", since="2023-06-30", since_basis="first_listed")
+    _company(it_db, "newly")
+    _owns(it_db, "top", "newly", since="2023-06-30", since_basis="newly_listed")   # the 2022 list does not name it
     ids = lambda t: {n["entity"]["id"] for n in t["nodes"]}
-    assert ids(subsidiary_tree_of("top")) == {"new", "bound"}
+    assert ids(subsidiary_tree_of("top")) == {"new", "bound", "newly"}
     assert ids(subsidiary_tree_of("top", as_of="2015-12-31")) == {"old", "under-old", "bound"}
     assert ids(subsidiary_tree_of("top", as_of="2018-03-31")) == {"bound"}          # until == day: ended
     assert ids(subsidiary_tree_of("top", as_of="2021-12-31")) == {"new", "bound"}
+    assert ids(subsidiary_tree_of("top", as_of="2023-12-31")) == {"new", "bound", "newly"}

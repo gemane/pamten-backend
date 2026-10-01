@@ -121,3 +121,18 @@ def test_roles_follow_the_same_rule(it_db):
     assert on_the_day == {"p-new"}             # the seat ending that day is over, the new one started
     before = {e["person"]["id"] for e in get_full_profile("nc", as_of="2011-08-23")["executives"]}
     assert before == {"p-left"}
+
+
+def test_a_first_listing_hides_before_its_year_a_lower_bound_never_does(it_db):
+    """`newly_listed` — the list for the year before does not name it — counts
+    as a start; `first_listed` stays a lower bound that never excludes."""
+    _company(it_db, "nc", "News Corp")
+    for sid in ("newly", "bound"):
+        _company(it_db, sid)
+    _owns(it_db, "nc", "newly", since="2025-06-30", since_basis="newly_listed", stake_percent=50.0)
+    _owns(it_db, "nc", "bound", since="2025-06-30", since_basis="first_listed", stake_percent=40.0)
+    assert _subs(get_full_profile("nc")) == {"newly", "bound"}
+    assert _subs(get_full_profile("nc", as_of="2024-12-31")) == {"bound"}
+    assert _subs(get_full_profile("nc", as_of="2025-06-29")) == {"bound"}
+    assert _subs(get_full_profile("nc", as_of="2025-06-30")) == {"newly", "bound"}
+    assert get_full_profile("nc", as_of="2024-12-31")["counts"]["subsidiaries"] == 1

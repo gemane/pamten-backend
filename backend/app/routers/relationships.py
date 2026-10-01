@@ -352,7 +352,7 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES,
         if not frontier:
             break
         in_force = ("until IS NULL" if as_of is None else
-                    "(since IS NULL OR since_basis IS NOT NULL OR since <= :as_of) "
+                    "(since IS NULL OR since_basis = 'first_listed' OR since <= :as_of) "
                     "AND (until IS NULL OR until > :as_of)")
         rows = run_sql(
             "SELECT *, @out AS o, @in AS i FROM "

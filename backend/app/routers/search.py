@@ -514,12 +514,15 @@ def _active_clause(rel: str, as_of: str | None) -> str:
     edge. A `first_listed` `since` is a LOWER bound — the oldest subsidiary list
     naming the company, which may well have held it earlier — so it never
     excludes; the client shows such an edge dimmed before that date rather than
-    hiding what may have existed. `until <= as_of` means ended by the date
+    hiding what may have existed. A `newly_listed` one excludes like a stated
+    start: the list for the year before was read and does not name the company,
+    nor any older one ("first listed 2025") — not proof of a start, but the
+    filings' own answer, and the product decision is to hide it before then. `until <= as_of` means ended by the date
     (`until_reason` 'withdrawn' always comes with an `until`). ISO strings
     compare as dates; a partial "2023-04-00" sorts where April 2023 belongs."""
     if as_of is None:
         return f"{rel}.until IS NULL"
-    return (f"({rel}.since IS NULL OR {rel}.since_basis IS NOT NULL OR {rel}.since <= $as_of) "
+    return (f"({rel}.since IS NULL OR {rel}.since_basis = 'first_listed' OR {rel}.since <= $as_of) "
             f"AND ({rel}.until IS NULL OR {rel}.until > $as_of)")
 
 
