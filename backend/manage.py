@@ -312,6 +312,34 @@ def cmd_weekly_report(args):
         print(f"sent to {to}")
 
 
+def cmd_alerts(args):
+    """What is wrong right now: failed/stale imports, a stale or missing backup,
+    disk nearly full, /health down (on change). Prints the list; --email mails it
+    to REPORT_EMAIL (or ADMIN_EMAIL) only when there is something. Exits 0 when
+    the checks ran — an alert is an answer, not a failure. Manual-first; the
+    cron lines are in docs/operations.md (Monitoring)."""
+    _apply_direct_db_url(args)
+    from datetime import datetime, timezone
+    from app.alerts import CHECKS, collect, format_text, subject
+    from app.config import settings
+    only = {c.strip() for c in args.only.split(",")} if args.only else None
+    if only and not only <= set(CHECKS):
+        print(f"unknown check(s) {sorted(only - set(CHECKS))}; choose from {', '.join(CHECKS)}")
+        raise SystemExit(2)
+    now = datetime.now(timezone.utc)
+    alerts = collect(only, now)
+    text = format_text(alerts, now)
+    print(text, end="")
+    if args.email and alerts:
+        to = settings.REPORT_EMAIL or settings.ADMIN_EMAIL
+        if not to:
+            print("no recipient: set REPORT_EMAIL or ADMIN_EMAIL")
+            raise SystemExit(2)
+        from app.notifications.email import get_email_sender
+        get_email_sender().send(to, subject(alerts), text)
+        print(f"sent to {to}")
+
+
 def cmd_prune_analytics(args):
     """Drop usage counters nothing has touched inside the retention window."""
     _apply_direct_db_url(args)
@@ -1271,6 +1299,13 @@ def _build_parser():
     p_wr.add_argument('--db-url', dest='db_url', default=None,
                       help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
     p_wr.set_defaults(func=cmd_weekly_report)
+
+    p_al = subparsers.add_parser('alerts', help='What is wrong right now: failed/stale imports, stale backup, '
+                                         'disk nearly full, /health down (see docs/operations.md)')
+    p_al.add_argument('--only', help='Comma-separated subset of checks: imports,backup,disk,health')
+    p_al.add_argument('--email', action='store_true', help='Mail the alerts (only when there are any)')
+    p_al.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_al.set_defaults(func=cmd_alerts)
 
     p_prune = subparsers.add_parser('prune-analytics',
                                     help='Delete usage counters untouched within the retention window')
