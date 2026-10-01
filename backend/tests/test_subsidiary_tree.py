@@ -17,7 +17,15 @@ def test_the_tree_comes_back_with_the_truncation_header(client):
         r = client.get("/relationships/subsidiary-tree/lei:ABC", params={"max_nodes": 50})
     assert r.status_code == 200 and r.json() == tree
     assert r.headers["X-Result-Truncated"] == "true"
-    walk.assert_called_once_with("lei:ABC", 50)
+    walk.assert_called_once_with("lei:ABC", 50, None)
+
+
+def test_the_day_is_passed_through_and_validated(client):
+    tree = {"root_id": "e1", "nodes": [], "edges": [], "truncated": False}
+    with patch("app.routers.relationships.subsidiary_tree_of", return_value=tree) as walk:
+        assert client.get("/relationships/subsidiary-tree/e1", params={"as_of": "2019-12-31"}).status_code == 200
+    walk.assert_called_once_with("e1", 2000, "2019-12-31")
+    assert client.get("/relationships/subsidiary-tree/e1", params={"as_of": "2019"}).status_code == 422
 
 
 def test_the_node_cap_is_bounded(client):
