@@ -304,6 +304,96 @@ def get_ownership_tree(
     return paths
 
 
+#: The whole tree below one company, as distinct nodes rather than paths. Tenet
+#: Healthcare has 1,161 (two levels), Chubb 256 over nine; the cap is on NODES.
+SUBTREE_DEFAULT_NODES, SUBTREE_MAX_NODES, SUBTREE_MAX_DEPTH = 2_000, 5_000, 12
+
+
+def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES) -> dict | None:
+    """Every company below this one, level by level — the tree the graph draws
+    and the panel indents. None when the entity does not exist.
+
+    `{root_id, nodes: [{entity, parent_id, depth}], edges: [{from_id, to_id,
+    depth, relationship}], truncated}`. `nodes` is in breadth-first order and
+    names ONE parent per company (the first holder found, the largest stake
+    among a level's holders) so a list can indent it; `edges` carries every
+    holding, so the graph still draws a co-holder's line.
+
+    A walk, not a path query: `ownership_tree_of` returns PATHS, whose number
+    grows exponentially with depth and repeats every shared prefix. Here each
+    level is one adjacency expansion from the previous level's vertices by rid
+    (the shape the OWNS dedup uses — never a scan), so nine levels of Chubb
+    are nine round-trips. Current edges only, proven shortcuts left out — the
+    same rule as the profile, so the tree and the panel agree; suppressed
+    nodes and edges are dropped and not walked through; pins apply. A company
+    reached twice (two holders, or a cycle) is a node once.
+    """
+    from app.db.arcadedb import run_sql
+    root = run_sql("SELECT @rid AS rid FROM Entity WHERE id = :id", {"id": entity_id})
+    if not root:
+        return None
+    with db.get_session() as session:
+        sup = load_keys(session)
+        hidden = load_suppressed_nodes(session)
+        pins = load_pins(session)
+    seen: dict[str, str] = {root[0]["rid"]: entity_id}      # vertex rid -> id
+    frontier = [root[0]["rid"]]
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    truncated = False
+    for depth in range(1, SUBTREE_MAX_DEPTH + 1):
+        if not frontier:
+            break
+        rows = run_sql(
+            "SELECT *, @out AS o, @in AS i FROM "
+            f"(SELECT expand(outE('OWNS')) FROM [{', '.join(frontier)}]) "
+            "WHERE until IS NULL AND (shortcut IS NULL OR shortcut <> true)")
+        new_rids = sorted({r["i"] for r in rows} - set(seen))
+        children = {r["@rid"]: r for r in run_sql(
+            f"SELECT FROM [{', '.join(new_rids)}]")} if new_rids else {}
+        # the largest stake first, so the parent a list shows is the main holder
+        rows.sort(key=lambda r: -(r.get("stake_percent") or -1))
+        frontier = []
+        for r in rows:
+            parent_id = seen.get(r["o"])
+            child = children.get(r["i"])
+            child_id = (child or {}).get("id") or seen.get(r["i"])
+            if not parent_id or not child_id or child_id == parent_id:
+                continue
+            if child_id in hidden or is_suppressed(sup, "owns", parent_id, child_id):
+                continue
+            if r["i"] not in seen:
+                if len(nodes) >= max_nodes:
+                    truncated = True
+                    continue
+                seen[r["i"]] = child_id
+                frontier.append(r["i"])
+                nodes.append({"entity": _strip_meta(child), "parent_id": parent_id, "depth": depth})
+            edges.append({"from_id": parent_id, "to_id": child_id, "depth": depth,
+                          "relationship": apply_pin(pins, parent_id, child_id, _strip_meta(
+                              {k: v for k, v in r.items() if k not in ("o", "i")}))})
+    else:
+        truncated = truncated or bool(frontier)
+    return {"root_id": entity_id, "nodes": nodes, "edges": edges, "truncated": truncated}
+
+
+@router.get("/subsidiary-tree/{entity_id:path}")
+def get_subsidiary_tree(
+    entity_id: str,
+    response: Response,
+    max_nodes: Annotated[int, Query(ge=1, le=SUBTREE_MAX_NODES,
+                                    description="Max companies in the tree. X-Result-Truncated "
+                                                "says whether more exist.")] = SUBTREE_DEFAULT_NODES,
+):
+    """Every company below this one, all levels: distinct nodes (each with one
+    parent and its depth) and every holding between them."""
+    tree = subsidiary_tree_of(entity_id, max_nodes)
+    if tree is None:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    _mark_truncated(response, tree["truncated"])
+    return tree
+
+
 def owners_of(entity_id: str, limit: int = OWNERS_DEFAULT_LIMIT) -> tuple[list[dict], bool]:
     """Who owns this entity right now. Returns (owners, truncated).
 
