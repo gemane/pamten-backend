@@ -64,3 +64,74 @@ def test_a_leaf_has_an_empty_tree_and_a_missing_company_none(it_db):
     _seed(it_db)
     assert subsidiary_tree_of("leaf1") == {"root_id": "leaf1", "nodes": [], "edges": [], "truncated": False}
     assert subsidiary_tree_of("nope") is None
+
+
+def test_a_company_hangs_under_its_deepest_holder_not_the_flat_list(it_db):
+    """Microsoft's flat Exhibit 21 names Activision's subsidiaries beside
+    Activision; GLEIF puts them under it. The deeper statement places them."""
+    for e in ("ms", "act", "king", "candy", "linkedin"):
+        _company(it_db, e)
+    _owns(it_db, "ms", "act")
+    _owns(it_db, "ms", "king")            # the flat list
+    _owns(it_db, "ms", "candy")           # the flat list
+    _owns(it_db, "ms", "linkedin")
+    _owns(it_db, "act", "king")           # the specific holder
+    _owns(it_db, "king", "candy")         # …and one further down
+    tree = subsidiary_tree_of("ms")
+    by = {n["entity"]["id"]: (n["parent_id"], n["depth"]) for n in tree["nodes"]}
+    assert by == {"act": ("ms", 1), "linkedin": ("ms", 1), "king": ("act", 2), "candy": ("king", 3)}
+    # every holding is still an edge, each at its holder's level
+    assert sorted((e["from_id"], e["to_id"], e["depth"]) for e in tree["edges"]) == [
+        ("act", "king", 2), ("king", "candy", 3), ("ms", "act", 1), ("ms", "candy", 1),
+        ("ms", "king", 1), ("ms", "linkedin", 1)]
+
+
+def test_a_cross_holding_never_detaches_a_branch(it_db):
+    for e in ("top", "a", "b"):
+        _company(it_db, e)
+    _owns(it_db, "top", "a", stake_percent=100.0)
+    _owns(it_db, "top", "b", stake_percent=100.0)
+    _owns(it_db, "a", "b", stake_percent=10.0)
+    _owns(it_db, "b", "a", stake_percent=10.0)      # a and b hold each other
+    tree = subsidiary_tree_of("top")
+    by = {n["entity"]["id"]: (n["parent_id"], n["depth"]) for n in tree["nodes"]}
+    # the 100 % holder places both; the 10 % cross-holdings are edges, not parents
+    assert by == {"a": ("top", 1), "b": ("top", 1)}
+    assert len(tree["edges"]) == 4
+
+
+def test_a_cross_holding_between_equals_never_detaches_a_branch(it_db):
+    for e in ("top", "a", "b"):
+        _company(it_db, e)
+    _owns(it_db, "top", "a")
+    _owns(it_db, "top", "b")
+    _owns(it_db, "a", "b")
+    _owns(it_db, "b", "a")                          # no stakes stated anywhere: the deeper holder wins…
+    tree = subsidiary_tree_of("top")
+    by = {n["entity"]["id"]: (n["parent_id"], n["depth"]) for n in tree["nodes"]}
+    # …for one of them; the other stays on the root, so it is still a tree
+    assert sorted(by.values()) in ([("a", 2), ("top", 1)], [("b", 2), ("top", 1)])
+
+
+def test_at_the_same_depth_the_larger_stake_is_the_parent(it_db):
+    for e in ("top", "a", "b", "shared"):
+        _company(it_db, e)
+    _owns(it_db, "top", "a", stake_percent=100.0)
+    _owns(it_db, "top", "b", stake_percent=100.0)
+    _owns(it_db, "a", "shared", stake_percent=10.9)
+    _owns(it_db, "b", "shared", stake_percent=79.7)
+    tree = subsidiary_tree_of("top")
+    assert {n["entity"]["id"]: n["parent_id"] for n in tree["nodes"]}["shared"] == "b"
+
+
+def test_the_largest_holder_places_a_company_even_when_a_small_one_sits_deeper(it_db):
+    for e in ("top", "big", "x", "y", "small", "co"):
+        _company(it_db, e)
+    _owns(it_db, "top", "big")
+    _owns(it_db, "top", "x")
+    _owns(it_db, "x", "y")
+    _owns(it_db, "y", "small")
+    _owns(it_db, "big", "co", stake_percent=99.9)
+    _owns(it_db, "small", "co", stake_percent=0.1)
+    tree = subsidiary_tree_of("top")
+    assert {n["entity"]["id"]: n["parent_id"] for n in tree["nodes"]}["co"] == "big"

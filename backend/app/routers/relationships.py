@@ -314,10 +314,11 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES) -
     and the panel indents. None when the entity does not exist.
 
     `{root_id, nodes: [{entity, parent_id, depth}], edges: [{from_id, to_id,
-    depth, relationship}], truncated}`. `nodes` is in breadth-first order and
-    names ONE parent per company (the first holder found, the largest stake
-    among a level's holders) so a list can indent it; `edges` carries every
-    holding, so the graph still draws a co-holder's line.
+    depth, relationship}], truncated}`. `nodes` names ONE parent per company
+    so a list can indent it and a graph can place it: its DEEPEST holder in
+    the tree between holders of equal stake, the largest holder otherwise
+    (`_placing_parents`). `edges`
+    carries every holding, so the graph can still draw a co-holder's line.
 
     A walk, not a path query: `ownership_tree_of` returns PATHS, whose number
     grows exponentially with depth and repeats every shared prefix. Here each
@@ -374,7 +375,72 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES) -
                               {k: v for k, v in r.items() if k not in ("o", "i")}))})
     else:
         truncated = truncated or bool(frontier)
+    _placing_parents(entity_id, nodes, edges)
     return {"root_id": entity_id, "nodes": nodes, "edges": edges, "truncated": truncated}
+
+
+def _placing_parents(root_id: str, nodes: list[dict], edges: list[dict]) -> None:
+    """Name the ONE holder that places each company: its largest and, between
+    equals, its deepest. In place.
+
+    The walk finds a company at its SHALLOWEST level. But a filer's flat
+    subsidiary list names everything it controls at any depth: Microsoft's
+    Exhibit 21 lists Activision's subsidiaries beside Activision, while GLEIF
+    says they sit under Activision. Shallowest-first hung them off Microsoft,
+    and Activision's own lines to them ran across the whole picture. The more
+    specific statement is the deeper one, so a company goes under the holder
+    furthest from the root — its depth is the longest path to it.
+
+    That holds between EQUALS — neither of those two states a stake. Where
+    stakes are stated the largest holder places the company: Chubb's 99.9 %
+    holding company, not the affiliate with 0.1 % that happens to sit deeper
+    (which left the company without a visible line under the ≥1 % filter).
+    A holder is never chosen if it is the company's own descendant, so a
+    cross-holding cannot detach a branch from the root. Edge depths follow
+    their holder.
+    (The frontend's tree layout applies the same rule: `utils/treeLayout.ts`.)
+    """
+    parent = {n["entity"]["id"]: n["parent_id"] for n in nodes}
+    depth = {root_id: 0, **{n["entity"]["id"]: n["depth"] for n in nodes}}
+
+    def pct(e: dict) -> float:
+        # No stated percentage (a consolidation parent, a filer's subsidiary
+        # list) counts as control when holders compete to place a company.
+        v = (e.get("relationship") or {}).get("stake_percent")
+        return float(v) if isinstance(v, (int, float)) else 50.0
+
+    stake = {e["to_id"]: pct(e) for e in edges if parent.get(e["to_id"]) == e["from_id"]}
+
+    def is_ancestor(candidate: str, of: str) -> bool:
+        seen = set()
+        while of in parent and of not in seen:
+            seen.add(of)
+            of = parent[of]
+            if of == candidate:
+                return True
+        return False
+
+    changed, rounds = True, 0
+    while changed and rounds <= len(nodes) + 1:
+        changed, rounds = False, rounds + 1
+        for e in edges:
+            holder, held = e["from_id"], e["to_id"]
+            if held == root_id or held not in parent or holder not in depth:
+                continue
+            d = depth[holder] + 1
+            if parent[held] == holder:          # its parent moved down: it follows
+                if d != depth[held]:
+                    depth[held], changed = d, True
+                continue
+            cur = stake.get(held, 50.0)
+            better = pct(e) > cur or (pct(e) == cur and d > depth[held])
+            if better and not is_ancestor(held, holder):
+                parent[held], depth[held], stake[held] = holder, d, pct(e)
+                changed = True
+    for n in nodes:
+        n["parent_id"], n["depth"] = parent[n["entity"]["id"]], depth[n["entity"]["id"]]
+    for e in edges:
+        e["depth"] = depth.get(e["from_id"], 0) + 1
 
 
 @router.get("/subsidiary-tree/{entity_id:path}")
