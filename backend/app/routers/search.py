@@ -505,6 +505,27 @@ PROFILE_SECTION_MAX = 1_000
 # direct edges; NULL means unproven and is always kept.
 _NOT_A_SHORTCUT = "({rel}.shortcut IS NULL OR {rel}.shortcut <> true)"
 
+
+def _active_clause(rel: str, as_of: str | None) -> str:
+    """Which edges count as "in force": open-ended ones in the present; as of a
+    date, the ones started by it and not ended by it.
+
+    A stated start (`since` with no `since_basis`) after the date excludes the
+    edge. A `first_listed` `since` is a LOWER bound — the oldest subsidiary list
+    naming the company, which may well have held it earlier — so it never
+    excludes; the client shows such an edge dimmed before that date rather than
+    hiding what may have existed. `until <= as_of` means ended by the date
+    (`until_reason` 'withdrawn' always comes with an `until`). ISO strings
+    compare as dates; a partial "2023-04-00" sorts where April 2023 belongs."""
+    if as_of is None:
+        return f"{rel}.until IS NULL"
+    return (f"({rel}.since IS NULL OR {rel}.since_basis IS NOT NULL OR {rel}.since <= $as_of) "
+            f"AND ({rel}.until IS NULL OR {rel}.until > $as_of)")
+
+
+#: the edge alias each dated section uses in `_NODE_EDGE_SECTIONS`
+_SECTION_REL = {"owners": "owns_r", "subsidiaries": "sub_r", "executives": "role_r"}
+
 _NODE_EDGE_SECTIONS = {
     # Ordered by stake BEFORE the cap: SpaceX has 240+ owner edges against a
     # 200-row section limit, and an unordered LIMIT sliced by storage order —
@@ -513,17 +534,17 @@ _NODE_EDGE_SECTIONS = {
     # client still re-sorts for display, the ORDER here only decides WHO
     # survives the cap.
     "owners": (
-        "MATCH (e:Entity {{id: $id}})<-[owns_r:OWNS]-(owner) WHERE owns_r.until IS NULL "
+        "MATCH (e:Entity {{id: $id}})<-[owns_r:OWNS]-(owner) WHERE {active} "
         "AND " + _NOT_A_SHORTCUT.format(rel="owns_r") + " "
         "WITH owner, owns_r ORDER BY coalesce(owns_r.stake_percent, -1) DESC LIMIT {limit} "
         "RETURN owner AS node, collect(owns_r) AS rels"),
     "subsidiaries": (
-        "MATCH (e:Entity {{id: $id}})-[sub_r:OWNS]->(subsidiary) WHERE sub_r.until IS NULL "
+        "MATCH (e:Entity {{id: $id}})-[sub_r:OWNS]->(subsidiary) WHERE {active} "
         "AND " + _NOT_A_SHORTCUT.format(rel="sub_r") + " "
         "WITH subsidiary, sub_r ORDER BY coalesce(sub_r.stake_percent, -1) DESC LIMIT {limit} "
         "RETURN subsidiary AS node, collect(sub_r) AS rels"),
     "executives": (
-        "MATCH (e:Entity {{id: $id}})<-[role_r:HAS_ROLE]-(p:Person) WHERE role_r.until IS NULL "
+        "MATCH (e:Entity {{id: $id}})<-[role_r:HAS_ROLE]-(p:Person) WHERE {active} "
         "WITH p, collect(role_r) AS rels RETURN p AS node, rels LIMIT {limit}"),
     "succeeded_by": (
         "MATCH (e:Entity {{id: $id}})-[succ_r:SUCCEEDED_BY]->(succ:Entity) "
@@ -550,29 +571,38 @@ _NODE_EDGE_SECTIONS = {
 # follow the edge outward or inward. The unanchored inbound form measured 589 ms
 # against 15 ms.
 _SECTION_COUNTS = {
-    "owners": ("MATCH (e:Entity {id: $id})<-[r:OWNS]-(owner) WHERE r.until IS NULL "
+    "owners": ("MATCH (e:Entity {{id: $id}})<-[r:OWNS]-(owner) WHERE {active} "
                "AND " + _NOT_A_SHORTCUT.format(rel="r") + " "
                "RETURN count(DISTINCT owner) AS n"),
-    "subsidiaries": ("MATCH (e:Entity {id: $id})-[r:OWNS]->(sub) WHERE r.until IS NULL "
+    "subsidiaries": ("MATCH (e:Entity {{id: $id}})-[r:OWNS]->(sub) WHERE {active} "
                      "AND " + _NOT_A_SHORTCUT.format(rel="r") + " "
                      "RETURN count(DISTINCT sub) AS n"),
-    "executives": ("MATCH (e:Entity {id: $id})<-[r:HAS_ROLE]-(p:Person) WHERE r.until IS NULL "
+    "executives": ("MATCH (e:Entity {{id: $id}})<-[r:HAS_ROLE]-(p:Person) WHERE {active} "
                    "RETURN count(DISTINCT p) AS n"),
-    "dual_listed": ("MATCH (e:Entity {id: $id})-[:DUAL_LISTED_WITH]->(d:Entity) "
+    "dual_listed": ("MATCH (e:Entity {{id: $id}})-[:DUAL_LISTED_WITH]->(d:Entity) "
                     "RETURN count(DISTINCT d) AS n"),
-    "succeeded_by": ("MATCH (e:Entity {id: $id})-[:SUCCEEDED_BY]->(s:Entity) "
+    "succeeded_by": ("MATCH (e:Entity {{id: $id}})-[:SUCCEEDED_BY]->(s:Entity) "
                      "RETURN count(DISTINCT s) AS n"),
-    "replaces": ("MATCH (e:Entity {id: $id})<-[:SUCCEEDED_BY]-(pr:Entity) "
+    "replaces": ("MATCH (e:Entity {{id: $id}})<-[:SUCCEEDED_BY]-(pr:Entity) "
                  "RETURN count(DISTINCT pr) AS n"),
 }
 
 
-def _section_counts(session, entity_id: str) -> dict:
-    """True size of each section, whatever the row limit returned."""
+def _as_of_params(entity_id: str, as_of: str | None) -> dict:
+    """`$as_of` is bound only when a date was asked for — the present-day
+    queries do not mention it, and an unused bound parameter is not something
+    to hand ArcadeDB on every profile read."""
+    return {"id": entity_id, **({"as_of": as_of} if as_of else {})}
+
+
+def _section_counts(session, entity_id: str, as_of: str | None = None) -> dict:
+    """True size of each section, whatever the row limit returned — as of the
+    same date as the sections, so "shown N of M" compares like with like."""
     out = {}
     for name, cypher in _SECTION_COUNTS.items():
         try:
-            rec = session.run(cypher, id=entity_id).single()
+            rec = session.run(cypher.format(active=_active_clause("r", as_of)),
+                              **_as_of_params(entity_id, as_of if name in _SECTION_REL else None)).single()
             out[name] = int(rec["n"]) if rec and rec["n"] is not None else 0
         except Exception:  # noqa: BLE001 — a missing count must not lose the profile
             out[name] = None
@@ -607,6 +637,10 @@ def get_full_profile(
     entity_id: str,
     limit: Annotated[int, Query(ge=1, le=PROFILE_SECTION_MAX,
                                 description="Max rows per section (owners, subsidiaries, …).")] = PROFILE_SECTION_LIMIT,
+    as_of: Annotated[str | None, Query(
+        pattern=r"^\d{4}-\d{2}-\d{2}$", max_length=10,
+        description="Show owners, subsidiaries and executives as they stood on this date "
+                    "(ISO, inclusive) — the time-travel view. Omitted: the present.")] = None,
 ):
     # HQ lives on the Entity itself (hq_locations / hq_city / hq_country /
     # hq_lat / hq_lng). The Location vertex it used to be read from was a
@@ -627,7 +661,9 @@ def get_full_profile(
             raise HTTPException(status_code=404, detail="Entity not found")
 
         grouped = {
-            name: list(session.run(sql.format(limit=limit), id=entity_id))
+            name: list(session.run(
+                sql.format(limit=limit, active=_active_clause(_SECTION_REL.get(name, "r"), as_of)),
+                **_as_of_params(entity_id, as_of if name in _SECTION_REL else None)))
             for name, sql in _NODE_EDGE_SECTIONS.items()
         }
         plain = {
@@ -635,7 +671,7 @@ def get_full_profile(
             for name, sql in _NODE_ONLY_SECTIONS.items()
         }
 
-        counts = _section_counts(session, entity_id)
+        counts = _section_counts(session, entity_id, as_of)
 
         # Same keys the single-query version produced, so the post-processing
         # below is unchanged.
