@@ -309,7 +309,8 @@ def get_ownership_tree(
 SUBTREE_DEFAULT_NODES, SUBTREE_MAX_NODES, SUBTREE_MAX_DEPTH = 2_000, 5_000, 12
 
 
-def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES) -> dict | None:
+def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES,
+                       as_of: str | None = None) -> dict | None:
     """Every company below this one, level by level — the tree the graph draws
     and the panel indents. None when the entity does not exist.
 
@@ -328,6 +329,11 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES) -
     same rule as the profile, so the tree and the panel agree; suppressed
     nodes and edges are dropped and not walked through; pins apply. A company
     reached twice (two holders, or a cycle) is a node once.
+
+    ``as_of`` (YYYY-MM-DD) walks the tree as it stood on that day — the same
+    rule as the profile's (`search._active_clause`): a stated start after the
+    day or an end on/before it excludes an edge, a `first_listed` lower bound
+    never does.
     """
     from app.db.arcadedb import run_sql
     root = run_sql("SELECT @rid AS rid FROM Entity WHERE id = :id", {"id": entity_id})
@@ -345,10 +351,14 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES) -
     for depth in range(1, SUBTREE_MAX_DEPTH + 1):
         if not frontier:
             break
+        in_force = ("until IS NULL" if as_of is None else
+                    "(since IS NULL OR since_basis = 'first_listed' OR since <= :as_of) "
+                    "AND (until IS NULL OR until > :as_of)")
         rows = run_sql(
             "SELECT *, @out AS o, @in AS i FROM "
             f"(SELECT expand(outE('OWNS')) FROM [{', '.join(frontier)}]) "
-            "WHERE until IS NULL AND (shortcut IS NULL OR shortcut <> true)")
+            f"WHERE {in_force} AND (shortcut IS NULL OR shortcut <> true)",
+            {"as_of": as_of} if as_of else None)
         new_rids = sorted({r["i"] for r in rows} - set(seen))
         children = {r["@rid"]: r for r in run_sql(
             f"SELECT FROM [{', '.join(new_rids)}]")} if new_rids else {}
@@ -450,10 +460,13 @@ def get_subsidiary_tree(
     max_nodes: Annotated[int, Query(ge=1, le=SUBTREE_MAX_NODES,
                                     description="Max companies in the tree. X-Result-Truncated "
                                                 "says whether more exist.")] = SUBTREE_DEFAULT_NODES,
+    as_of: Annotated[str | None, Query(
+        pattern=r"^\d{4}-\d{2}-\d{2}$", max_length=10,
+        description="The tree as it stood on this date (ISO, inclusive). Omitted: the present.")] = None,
 ):
     """Every company below this one, all levels: distinct nodes (each with one
     parent and its depth) and every holding between them."""
-    tree = subsidiary_tree_of(entity_id, max_nodes)
+    tree = subsidiary_tree_of(entity_id, max_nodes, as_of)
     if tree is None:
         raise HTTPException(status_code=404, detail="Entity not found")
     _mark_truncated(response, tree["truncated"])
