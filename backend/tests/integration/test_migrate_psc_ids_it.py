@@ -20,8 +20,10 @@ def test_migrate_psc_ids_rewrites_the_node_its_claims_and_leaves_forwarding(it_d
     it_db.run_command(
         "CREATE (:Entity {id: $id, name: 'Old Style Ltd', name_normalized: 'old style', "
         "search_text: 'Old Style Ltd', type: 'company'})", {"id": old})
-    it_db.run_sql("INSERT INTO Claim SET claim_key = 'k1', kind = 'owns', "
-                  "from_id = :f, to_id = 'gb-coh:07882791'", {"f": old})
+    from app.claims import claim_key
+    it_db.run_sql("INSERT INTO Claim SET claim_key = :k, kind = 'owns', from_id = :f, "
+                  "to_id = 'gb-coh:07882791', source_id = 'ch-psc', stake_percent = 75.0",
+                  {"f": old, "k": claim_key("owns", old, "gb-coh:07882791", "ch-psc")})
 
     manage.cmd_migrate_psc_ids(Namespace(confirm_database=settings.ARCADEDB_DATABASE))
 
@@ -30,8 +32,11 @@ def test_migrate_psc_ids_rewrites_the_node_its_claims_and_leaves_forwarding(it_d
                              {"id": new})[0]["n"] == "Old Style Ltd"
     assert not it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e",
                                  {"id": old})
-    claim = it_db.run_sql("SELECT from_id FROM Claim WHERE claim_key = 'k1'")[0]
-    assert claim["from_id"] == new
+    # the claim follows the node AND is re-keyed for its new id (a claim left
+    # under its old key is not found by the next import, which writes a second)
+    [claim] = it_db.run_sql("SELECT from_id, claim_key, stake_percent FROM Claim")
+    assert claim["from_id"] == new and claim["stake_percent"] == 75.0
+    assert claim["claim_key"] == claim_key("owns", new, "gb-coh:07882791", "ch-psc")
     with db.get_session() as session:
         assert resolve_current_id(session, old) == new
 

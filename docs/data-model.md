@@ -76,7 +76,7 @@ single, fast, current-best answer — and the claims sit beside it as the eviden
 (:Claim {kind:'owns', from_id, to_id, stake_percent: 75, source_id:'ch-psc'})
 ```
 
-- **Keyed** on `claim_key` = digest of (kind, from_id, to_id, source_id), UNIQUE.
+- **Keyed** on `claim_key` = digest of (kind, from_id, to_id, source_id — and, for a role, the canonical role), UNIQUE.
   A source re-asserting the same relationship updates its own row, so re-imports
   are idempotent here even though the edges still need a dedup pass. The parts
   are length-prefixed before hashing, so an id containing the separator cannot

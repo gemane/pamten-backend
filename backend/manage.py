@@ -564,6 +564,20 @@ def cmd_sec_cache(args):
           f"shared {ses['s3_hits']} hit / {ses['s3_writes']} written")
 
 
+def cmd_heal_claim_keys(args):
+    """Re-key claims whose key does not match their content, folding the
+    doubles that came of it (see `app.claims.heal_claim_keys`). One-off repair
+    after two fixed bugs (merge re-keyed role claims without the role; an id
+    rename did not re-key at all). `--dry-run` only counts."""
+    from app.claims import heal_claim_keys
+    res = heal_claim_keys(dry_run=args.dry_run)
+    verb = "would re-key" if args.dry_run else "re-keyed"
+    print(f"{res['claims']} claims read; {res['stale']} with a stale key"
+          + ("" if args.dry_run else f": {res['moved']} moved in place, {res['folded']} folded into "
+             "the correctly keyed claim for the same assertion")
+          + f" ({verb}).")
+
+
 def cmd_dedupe_role_synonyms(args):
     """Merge HAS_ROLE edges that name the SAME position in different words.
 
@@ -1360,6 +1374,12 @@ def _build_parser():
     p_ex21h.add_argument('--max-filings', type=int, default=None,
                          help='Annual filings to read, newest first (default 25; ~2 requests each)')
     p_ex21h.set_defaults(func=cmd_sec_ex21_history)
+
+    p_hck = subparsers.add_parser('heal-claim-keys',
+        help="Re-key claims whose key does not match their content and fold the doubles "
+             "(one-off repair; --dry-run only counts)")
+    p_hck.add_argument('--dry-run', action='store_true', help='Count stale keys, change nothing')
+    p_hck.set_defaults(func=cmd_heal_claim_keys)
 
     p_13f = subparsers.add_parser('sec-13f',
         help="Institutional holders of one company from Form 13F (the sub-5%% view)")
