@@ -139,6 +139,24 @@ def claim_props(
     }
 
 
+# A start date read off the annual subsidiary lists (`since_basis` set — see
+# `sec_ex21.earliest_listing`) is written by the history run, not by the scrape
+# of the list itself, which states no start. A re-scrape rewrites the whole
+# claim; without this it wrote "no start date" over the listing date — an
+# Exhibit 21 re-read wiped 148 of News Corp's claims while their edges kept the
+# date. So: a write that brings NO start leaves a listing date alone; one that
+# brings a start replaces it as before.
+#
+# The order of the three assignments does not matter: when the date is kept
+# `since_basis` is kept too, so each CASE sees the same stored value either way.
+_KEEP = ":since IS NULL AND :since_basis IS NULL AND since_basis IS NOT NULL"
+_LISTING_DATE_KEPT = {
+    "since": f"since = CASE WHEN {_KEEP} THEN since ELSE :since END",
+    "since_source_url": f"since_source_url = CASE WHEN {_KEEP} THEN since_source_url ELSE :since_source_url END",
+    "since_basis": f"since_basis = CASE WHEN {_KEEP} THEN since_basis ELSE :since_basis END",
+}
+
+
 def record_claim(**kwargs) -> None:
     """Write one claim, for the incremental scrapers (bulk imports batch instead).
 
@@ -154,7 +172,7 @@ def record_claim(**kwargs) -> None:
     props = claim_props(**kwargs)
     if not props["source_id"]:
         return
-    sets = ", ".join(f"{name} = :{name}" for name in props)
+    sets = ", ".join(_LISTING_DATE_KEPT.get(name, f"{name} = :{name}") for name in props)
     try:
         run_sql(
             f"UPDATE Claim SET {sets}, first_seen_at = COALESCE(first_seen_at, :last_seen_at) "
