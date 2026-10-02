@@ -482,8 +482,9 @@ def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: 
     not name it, see ``sec_ex21.earliest_listing``) — and ``since_source_url``
     to the filing that proves it. The same date with the OTHER listing basis
     is rewritten too (a re-read that now knows more); a stated start never is.
-    The claim for the same pair and filing type moves with it. Returns whether
-    the edge changed.
+    The claim for the same pair and filing type is dated by the same rule, on
+    its own — also when the edge is already right. Returns whether the edge
+    changed.
 
     Only for a pair an annual list actually names — an Exhibit 21/8.1 CLAIM, not
     the edge's own filing type, since the shared edge may carry another source's
@@ -504,13 +505,15 @@ def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: 
                RETURN count(r) AS n""",
             o=owner_id, n=owned_id, since=since, url=source_url, basis=basis).single()
     changed = bool(rec and rec.get("n"))
-    if changed:
-        run_sql("UPDATE Claim SET since = :since, since_basis = :basis, "
-                "since_source_url = :url WHERE kind = 'owns' AND from_id = :o AND to_id = :n "
-                "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1') "
-                "AND (since IS NULL OR since > :since "
-                "OR (since = :since AND since_basis IS NOT NULL AND since_basis <> :basis))",
-                {"since": since, "url": source_url, "o": owner_id, "n": owned_id, "basis": basis})
+    # The claim by its own guard, whether or not the edge moved: a claim that
+    # lost its date while the edge kept it (see `claims._LISTING_DATE_KEPT`) is
+    # repaired by the next run instead of staying undated for good.
+    run_sql("UPDATE Claim SET since = :since, since_basis = :basis, "
+            "since_source_url = :url WHERE kind = 'owns' AND from_id = :o AND to_id = :n "
+            "AND (filing_type = 'EX-21' OR filing_type = 'EX-8.1') "
+            "AND (since IS NULL OR since > :since "
+            "OR (since = :since AND since_basis IS NOT NULL AND since_basis <> :basis))",
+            {"since": since, "url": source_url, "o": owner_id, "n": owned_id, "basis": basis})
     return changed
 
 

@@ -153,3 +153,71 @@ class TestTheRunner:
         owned_by = [e for e in ownership_history_of("dj", 100)[0] if e["kind"] == "ownership_in"]
         assert [(e["party"]["id"], e["since"], e["since_basis"]) for e in owned_by] == \
             [("nc", "2014-08-14", "first_listed")]
+
+
+class TestTheClaimKeepsItsListingDate:
+    """A re-read of the list rewrites the whole claim and states no start. It
+    wiped the listing date from 148 of News Corp's claims while their edges kept
+    it, and the history run did not put it back because the edge had not moved."""
+
+    def _claim_of(self, it_db, to_id):
+        r = it_db.run_sql("SELECT since, since_basis, since_source_url, source_date FROM Claim "
+                          "WHERE from_id = 'nc' AND to_id = :t AND source_id = 'sec'", {"t": to_id})[0]
+        return {k: r.get(k) for k in ("since", "since_basis", "since_source_url", "source_date")}
+
+    def _scrape(self, to_id, **over):
+        """What the Exhibit 21 scrape records for a subsidiary: no start date."""
+        from app.claims import KIND_OWNS, record_claim
+        record_claim(**{**dict(kind=KIND_OWNS, from_id="nc", to_id=to_id, source_id="sec",
+                               filing_type="EX-21", source_date="2026-08-07"), **over})
+
+    def test_a_re_read_that_states_no_start_leaves_the_listing_date(self, it_db):
+        from app.scraper.sec_writer import set_since_lower_bound
+        it_db.run_command("CREATE (:Entity {id:'nc', name:'News Corp'})")
+        it_db.run_command("CREATE (:Entity {id:'dj', name:'Dow Jones'})")
+        it_db.run_command("MATCH (a:Entity {id:'nc'}), (b:Entity {id:'dj'}) CREATE (a)-[:OWNS "
+                          "{filing_type:'EX-21', source_id:'sec', source_date:'2026-08-07'}]->(b)")
+        self._scrape("dj")
+        assert self._claim_of(it_db, "dj")["since"] is None
+        assert set_since_lower_bound("nc", "dj", "2013-06-30", "https://sec.example.test/2013", "first_listed")
+        dated = {"since": "2013-06-30", "since_basis": "first_listed",
+                 "since_source_url": "https://sec.example.test/2013"}
+        assert {k: v for k, v in self._claim_of(it_db, "dj").items() if k != "source_date"} == dated
+
+        self._scrape("dj", source_date="2027-08-06")                      # next year's list, re-read
+        after = self._claim_of(it_db, "dj")
+        assert {k: v for k, v in after.items() if k != "source_date"} == dated
+        assert after["source_date"] == "2027-08-06"                       # the rest of the claim IS rewritten
+
+    def test_a_write_that_states_a_start_replaces_the_listing_date(self, it_db):
+        from app.scraper.sec_writer import set_since_lower_bound
+        it_db.run_command("CREATE (:Entity {id:'nc', name:'News Corp'})")
+        it_db.run_command("CREATE (:Entity {id:'dj', name:'Dow Jones'})")
+        it_db.run_command("MATCH (a:Entity {id:'nc'}), (b:Entity {id:'dj'}) CREATE (a)-[:OWNS "
+                          "{filing_type:'EX-21', source_id:'sec'}]->(b)")
+        self._scrape("dj")
+        set_since_lower_bound("nc", "dj", "2013-06-30", "u", "first_listed")
+        self._scrape("dj", since="2010-01-01")                            # the source now states a start
+        assert {k: v for k, v in self._claim_of(it_db, "dj").items() if k != "source_date"} == {
+            "since": "2010-01-01", "since_basis": None, "since_source_url": None}
+
+    def test_a_stated_start_is_still_cleared_by_a_write_without_one(self, it_db):
+        """Only a LISTING date is kept; a stated start the source no longer gives goes, as before."""
+        it_db.run_command("CREATE (:Entity {id:'nc', name:'News Corp'})")
+        self._scrape("x", since="2019-01-01")
+        assert self._claim_of(it_db, "x")["since"] == "2019-01-01"
+        self._scrape("x")
+        assert self._claim_of(it_db, "x")["since"] is None
+
+    def test_the_history_run_repairs_a_claim_whose_edge_is_already_right(self, it_db):
+        from app.scraper.sec_writer import set_since_lower_bound
+        it_db.run_command("CREATE (:Entity {id:'nc', name:'News Corp'})")
+        it_db.run_command("CREATE (:Entity {id:'dj', name:'Dow Jones'})")
+        # the state found on dev: the edge dated, its claim not
+        it_db.run_command("MATCH (a:Entity {id:'nc'}), (b:Entity {id:'dj'}) CREATE (a)-[:OWNS "
+                          "{filing_type:'EX-21', source_id:'sec', since:'2013-06-30', "
+                          "since_basis:'first_listed', since_source_url:'u'}]->(b)")
+        self._scrape("dj")
+        assert set_since_lower_bound("nc", "dj", "2013-06-30", "u", "first_listed") is False   # edge unchanged
+        assert {k: v for k, v in self._claim_of(it_db, "dj").items() if k != "source_date"} == {
+            "since": "2013-06-30", "since_basis": "first_listed", "since_source_url": "u"}

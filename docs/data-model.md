@@ -109,7 +109,7 @@ the SEC edge (its "listed since 2013" with it) for the next SEC scrape to redraw
 | Part of the edge | Rule |
 |---|---|
 | **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
-| **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A date read off the annual lists keeps its label: `first_listed` ("since 2013 or earlier") or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it |
+| **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A date read off the annual lists keeps its label: `first_listed` ("since 2013 or earlier") or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it. The source's **claim** carries the same listing date and keeps it when the list is re-read (a re-scrape rewrites the claim and states no start; it used to wipe the date) |
 | **Structure** — `direct_or_indirect` (+ `structure_basis`), `also_ultimate`, `ultimate_*`, `interest_types`, `psc_self_link` | Stays on the edge whoever holds the answer; an inferred marker travels with its basis, a stated one never gains one |
 
 A source that does not outrank the holder still records its claim, and does not
