@@ -186,8 +186,12 @@ def rename_node_id(session, label: str, old_id: str, new_id: str) -> bool:
     if clash:
         return False
     session.run(f"MATCH (n:{label} {{id: $old}}) SET n.id = $new", old=old_id, new=new_id)
-    for table, cols in (("Claim", ("from_id", "to_id")),
-                        ("Flag", ("from_id", "to_id", "node_id")),
+    # Claims are keyed by a hash of their endpoints, so they are re-keyed, not
+    # just re-pointed: the plain UPDATE left the old key on the renamed claim,
+    # and the next scrape wrote a second claim for the same assertion.
+    from app.claims import migrate_claims
+    migrate_claims(old_id, new_id)
+    for table, cols in (("Flag", ("from_id", "to_id", "node_id")),
                         ("Suppression", ("from_id", "to_id")),
                         ("Pin", ("from_id", "to_id"))):
         for col in cols:

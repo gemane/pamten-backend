@@ -252,14 +252,70 @@ def edge_values_from(claims: list[dict]) -> dict:
     }
 
 
-def migrate_claims(dead_id: str, keep_id: str) -> int:
-    """Re-point the claims of a merged-away node at its survivor.
+def key_for(claim: dict, *, from_id: str | None = None, to_id: str | None = None) -> str:
+    """The key a stored claim SHOULD have — what `claim_props` would give it.
 
-    A claim's key is a hash of (kind | from | to | source), so this cannot be a
-    simple UPDATE: rewriting an endpoint changes the key. Each claim is re-keyed
-    against the survivor and UPSERTed — an existing claim the survivor already
-    holds for the same (kind, pair, source) wins, because it describes the same
-    assertion — and the old rows are deleted.
+    The one place a stored claim is re-keyed from: a ROLE claim's key includes
+    its canonical role ("CEO" and "Director" on the same seat are two claims),
+    and the merge re-keyed without it — collapsing a person's roles at a company
+    into one claim, which the next scrape then doubled.
+    """
+    kind, role = claim.get("kind"), claim.get("role")
+    # `or ""`: a row some old path wrote without a source still gets A key — a
+    # merge must not fail on it
+    return claim_key(kind or "", from_id or claim.get("from_id") or "", to_id or claim.get("to_id") or "",
+                     claim.get("source_id") or "",
+                     role_key=canonical_role(role) if kind == KIND_ROLE and role else None)
+
+
+def rekey_claim(claim: dict, *, from_id: str | None = None, to_id: str | None = None) -> str:
+    """Give a stored claim the key its content calls for, optionally with a new
+    endpoint. Returns "unchanged", "moved" or "folded".
+
+    * **moved** — re-keyed in place: every field stays, `first_seen_at` too.
+    * **folded** — a claim with that key already exists: they are the same
+      assertion (same kind, pair, source, role), so one row remains. The one
+      seen LAST is the source's current statement and is kept; `first_seen_at`
+      becomes the earlier of the two, and a listing date (`since_basis`) the
+      kept one lacks is carried over.
+    """
+    from app.db.arcadedb import run_sql
+
+    old_key = claim["claim_key"]
+    f, t = from_id or claim["from_id"], to_id or claim["to_id"]
+    new_key = key_for(claim, from_id=f, to_id=t)
+    if new_key == old_key and (f, t) == (claim["from_id"], claim["to_id"]):
+        return "unchanged"
+    twin = run_sql("SELECT FROM Claim WHERE claim_key = :k", {"k": new_key}) if new_key != old_key else []
+    if not twin:
+        run_sql("UPDATE Claim SET from_id = :f, to_id = :t, claim_key = :new WHERE claim_key = :old",
+                {"f": f, "t": t, "new": new_key, "old": old_key})
+        return "moved"
+
+    twin = twin[0]
+    seen = lambda c: str(c.get("last_seen_at") or "")                       # noqa: E731
+    kept, other = (claim, twin) if seen(claim) > seen(twin) else (twin, claim)
+    props = {k: v for k, v in kept.items() if not k.startswith("@")}
+    props.update(from_id=f, to_id=t, claim_key=new_key)
+    firsts = [c.get("first_seen_at") for c in (claim, twin) if c.get("first_seen_at")]
+    props["first_seen_at"] = min(firsts) if firsts else None
+    if not props.get("since") and other.get("since_basis"):
+        props.update({k: other.get(k) for k in ("since", "since_basis", "since_source_url")})
+    # the stale row first: the UNIQUE key is free for nobody else, but two rows
+    # for one assertion must never be what a crash leaves behind twice over
+    run_sql("DELETE FROM Claim WHERE claim_key = :old", {"old": old_key})
+    sets = ", ".join(f"{k} = :{k}" for k in props)
+    run_sql(f"UPDATE Claim SET {sets} WHERE claim_key = :claim_key", props)
+    return "folded"
+
+
+def migrate_claims(dead_id: str, keep_id: str) -> int:
+    """Re-point the claims of a merged-away (or renamed) node at its survivor.
+
+    A claim's key is a hash of (kind | from | to | source | role), so rewriting
+    an endpoint changes the key: each claim is re-keyed (`rekey_claim`) — moved
+    in place, or folded into the claim the survivor already holds for the same
+    assertion.
 
     Without this, every merge orphaned the dead node's claims: the surviving
     edges existed, `claims_for()` found nothing for them, and the merged
@@ -269,24 +325,40 @@ def migrate_claims(dead_id: str, keep_id: str) -> int:
 
     moved = 0
     for end in ("from_id", "to_id"):
-        rows = run_sql(f"SELECT FROM Claim WHERE {end} = :d", {"d": dead_id})
-        for r in rows:
-            # Every claim field, not a hand-kept subset: the list lagged the
-            # claim (share counts, filing type, the since basis) and a merge
-            # silently dropped them from the survivor's claims.
-            props = {k: r.get(k) for k in (
-                "kind", "from_id", "to_id", "source_id", "stake_percent",
-                "voting_power_pct", "ownership_type", "role", "since", "until",
-                "source_url", "source_date", "credibility_score", "last_seen_at",
-                "share_class", "shares", "shares_outstanding", "voting_shares",
-                "filing_type", "since_basis", "since_source_url", "structure_basis",
-            )}
-            props[end] = keep_id
-            props["claim_key"] = claim_key(props["kind"], props["from_id"],
-                                           props["to_id"], props["source_id"])
-            sets = ", ".join(f"{k} = :{k}" for k in props)
-            run_sql(f"UPDATE Claim SET {sets} UPSERT WHERE claim_key = :claim_key",
-                    props)
+        for r in run_sql(f"SELECT FROM Claim WHERE {end} = :d", {"d": dead_id}):
+            rekey_claim(r, **{end: keep_id})
             moved += 1
-        run_sql(f"DELETE FROM Claim WHERE {end} = :d", {"d": dead_id})
     return moved
+
+
+def heal_claim_keys(dry_run: bool = False, page: int = 2000) -> dict:
+    """Re-key every claim whose key does not match its own content.
+
+    Two paths left such claims behind (both fixed): a merge re-keyed ROLE
+    claims without the role, and an id rename re-pointed claims without
+    re-keying them at all. Either way the next scrape wrote a correctly keyed
+    claim beside the stale one — the same assertion, stored twice.
+
+    Walks the type through its UNIQUE `claim_key` index, two-sided range per
+    page (`app.db.paging`: the only walk that survives a full-size database).
+    Keys are sha1 hex, so the space ends below "g". A re-keyed claim may be
+    met again further on; it is then "unchanged".
+    """
+    from app.db.arcadedb import run_sql
+
+    out = {"claims": 0, "stale": 0, "moved": 0, "folded": 0}
+    after = ""
+    while True:
+        rows = run_sql(f"SELECT FROM Claim WHERE claim_key > '{after}' AND claim_key < 'g' "
+                       f"ORDER BY claim_key LIMIT {int(page)}")
+        if not rows:
+            return out
+        for r in rows:
+            after = max(after, r["claim_key"])
+            out["claims"] += 1
+            if key_for(r) == r["claim_key"]:
+                continue
+            out["stale"] += 1
+            if dry_run:
+                continue
+            out[rekey_claim(r)] += 1

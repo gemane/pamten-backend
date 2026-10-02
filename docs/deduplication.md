@@ -158,9 +158,9 @@ Medium/low and father/son cases are left for a human, deliberately.
    `wikipedia_url`) fill only where the kept person is blank.
 3. **Alias** — the dup's `full_name` and aliases become aliases of the kept
    person, so it stays findable (and feeds Signal 1 on the next scan).
-4. **Migrate claims** — `claim_key` hashes (kind|from|to|source), so claims do
-   **not** follow the edges by themselves; `migrate_claims` re-keys them onto the
-   survivor. Left out, they point at a deleted node and the survivor's Sources
+4. **Migrate claims** — `claim_key` hashes (kind|from|to|source, and for a
+   role the canonical role), so claims do **not** follow the edges by
+   themselves; `migrate_claims` re-keys them onto the survivor. Left out, they point at a deleted node and the survivor's Sources
    panel loses that evidence (six were stranded the first time the fixed
    auto-dedup ran on dev).
 5. **Log + delete** — write a `MergeLog` row and a `MergedId` forwarding row,
@@ -428,9 +428,20 @@ every property is asserted to survive both merge paths, so a future field is
 covered the day it is added.
 
 **Claims follow the survivor too.** A claim's key hashes its endpoints, so
-`migrate_claims` re-keys and UPSERTs rather than updating; without it every
-merge orphaned the dead node's claims and the merged company showed as
-uncorroborated.
+`migrate_claims` re-keys each one (`claims.rekey_claim`): moved in place with
+everything it had, or — when the survivor already holds a claim for the same
+assertion — folded into it (the one seen last is kept, with the earlier
+`first_seen_at`). Without it every merge orphaned the dead node's claims and the
+merged company showed as uncorroborated. An **id rename**
+(`merged_ids.rename_node_id`) goes through the same step.
+
+One key rule, one place (`claims.key_for`): a role claim's key includes its
+canonical role. The merge once re-keyed without it — a person's roles at a
+company collapsed into one claim and the next scrape doubled them — and the
+rename did not re-key at all. `python manage.py heal-claim-keys [--dry-run]`
+repairs what those left behind: every claim whose key does not match its own
+content is re-keyed, and folded where the correctly keyed claim already exists
+(dev: 343 stale keys of 8,678 claims, 119 assertions stored twice).
 
 ## Design note: country-aware legal-form stripping (not built)
 
