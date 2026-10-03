@@ -375,3 +375,17 @@ class TestTheRoute:
         monkeypatch.setattr(route, "build_workbook", missing)
         from app.main import app
         assert TestClient(app).get("/v1/export/entity/nope").status_code == 404
+
+
+class TestCors:
+    def test_the_file_name_is_readable_across_origins(self):
+        """The browser may only read a response header CORS names: without
+        Content-Disposition on that list the client falls back to a generic
+        name for every export. The middleware is configured at import from
+        the settings, so its configuration is what is checked."""
+        from fastapi.middleware.cors import CORSMiddleware
+        from app.main import app
+        cors = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
+        exposed = {h.lower() for h in cors.kwargs["expose_headers"]}
+        assert "content-disposition" in exposed
+        assert "x-result-truncated" in exposed            # the ones that were there stay
