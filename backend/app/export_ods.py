@@ -11,11 +11,15 @@ say what the panel says — only all of it.
 
 Written with the standard library: an .ods is a zip of a few XML files, and
 plain tables need little of the format. (odfpy would have done it, but it is
-dual-licensed Apache/GPL and the licence guard rightly refuses anything that
-names GPL.) The essentials for LibreOffice AND Excel's importer: `mimetype`
-first and STORED, a manifest naming every part, `office:version` on each
-document, typed cells — a number is a number, a percentage a percentage, a
-date a date — so the sheet can be sorted and summed.
+dual-licensed Apache/GPL; usable under Apache, but the project's licence guard
+cannot tell an OR from an AND in classifiers and refuses to guess.) The
+essentials for LibreOffice AND Excel's importer: `mimetype` first and STORED,
+a manifest naming every part, `office:version` on each document, typed cells
+— a number is a number, a percentage a percentage, a date a date — so the
+sheet can be sorted and summed, AND a data style on every date and percentage
+cell saying how to show it: typed alone, Excel showed a date as 43830. Then
+what makes it a sheet rather than a CSV in a grid: columns as wide as their
+longest entry, a shaded bold header row, frozen, with filter buttons.
 """
 from __future__ import annotations
 
@@ -52,7 +56,9 @@ _ISO_YEAR = re.compile(r"^\d{4}$")
 
 
 def _cell_xml(v: Cell, header: bool = False) -> str:
-    """One `<table:table-cell>` with its type, value and display text."""
+    """One `<table:table-cell>` with its type, value, display text — and the
+    cell style that says how to SHOW it. The type alone is not enough: with no
+    date style Excel's importer showed a date as its serial number, 43830."""
     style = ' table:style-name="head"' if header else ""
     if v is None or v == "":
         return f"<table:table-cell{style}/>"
@@ -60,13 +66,16 @@ def _cell_xml(v: Cell, header: bool = False) -> str:
         return (f'<table:table-cell{style} office:value-type="boolean" office:boolean-value="{str(v).lower()}">'
                 f"<text:p>{str(v).lower()}</text:p></table:table-cell>")
     if isinstance(v, Pct):
-        return (f'<table:table-cell{style} office:value-type="percentage" office:value="{_plain(v.value / 100)}">'
-                f"<text:p>{_num(v.value)} %</text:p></table:table-cell>")
+        # two decimals for a stake; four where that would show "0.00 %"
+        fine = 0 < abs(v.value) < 0.01
+        return (f'<table:table-cell table:style-name="{"pct4" if fine else "pct"}" office:value-type="percentage" '
+                f'office:value="{_plain(v.value / 100)}">'
+                f"<text:p>{_num(v.value, 4 if fine else 2)} %</text:p></table:table-cell>")
     if isinstance(v, (int, float)):
         return (f'<table:table-cell{style} office:value-type="float" office:value="{_plain(v)}">'
                 f"<text:p>{_num(v)}</text:p></table:table-cell>")
     if isinstance(v, date):
-        return (f'<table:table-cell{style} office:value-type="date" office:date-value="{v.isoformat()}">'
+        return (f'<table:table-cell table:style-name="date" office:value-type="date" office:date-value="{v.isoformat()}">'
                 f"<text:p>{v.isoformat()}</text:p></table:table-cell>")
     if isinstance(v, Link):
         text = escape(v.text or v.url)
@@ -90,12 +99,12 @@ def _plain(v: float | int) -> str:
     return f"{v:.12f}".rstrip("0").rstrip(".") if isinstance(v, float) and not v.is_integer() else str(int(v))
 
 
-def _num(v: float | int) -> str:
+def _num(v: float | int, decimals: int = 4) -> str:
     if isinstance(v, bool):
         return str(v)
     if isinstance(v, int) or float(v).is_integer():
         return str(int(v))
-    return f"{v:.4f}".rstrip("0").rstrip(".")
+    return f"{v:.{decimals}f}".rstrip("0").rstrip(".")
 
 
 # ── The document ──────────────────────────────────────────────────────────
@@ -115,6 +124,7 @@ _NS = ('xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
        'xmlns:xlink="http://www.w3.org/1999/xlink" '
        'xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" '
        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+       'xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" '
        'office:version="1.2"')
 
 
@@ -124,14 +134,104 @@ def _sheet_name(name: str) -> str:
     return re.sub(r"[\[\]*?:/\\]", " ", name).strip()[:31] or "Sheet"
 
 
-def _table_xml(sheet: Sheet) -> str:
-    rows = [f"<table:table-row>{''.join(_cell_xml(c, header=True) for c in sheet.columns)}</table:table-row>"]
+#: a column's width from its longest text: per character, plus room; bounded
+_CM_PER_CHAR, _CM_PAD, _CM_MIN, _CM_MAX = 0.19, 0.5, 1.6, 12.0
+
+
+def _shown(v: Cell) -> str:
+    """What a cell shows, for measuring its column."""
+    if v is None:
+        return ""
+    if isinstance(v, Pct):
+        return f"{_num(v.value)} %"
+    if isinstance(v, Link):
+        return v.text or v.url
+    if isinstance(v, date):
+        return v.isoformat()
+    return str(v)
+
+
+def column_widths(sheet: Sheet) -> list[float]:
+    """Each column wide enough for its longest entry (the header included),
+    in cm, within bounds — a sheet of default-width columns with every name
+    cut off reads like a CSV dropped into a grid."""
+    longest = [len(c) for c in sheet.columns]
+    for row in sheet.rows:
+        for i, v in enumerate(row[:len(longest)]):
+            longest[i] = max(longest[i], len(_shown(v)))
+    return [round(min(_CM_MAX, max(_CM_MIN, n * _CM_PER_CHAR + _CM_PAD)), 2) for n in longest]
+
+
+def _col_letter(i: int) -> str:
+    out = ""
+    i += 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        out = chr(65 + r) + out
+    return out
+
+
+def _table_xml(sheet: Sheet, index: int) -> str:
+    name = _sheet_name(sheet.name)
+    cols = "".join(f'<table:table-column table:style-name="co{index}-{i}" table:default-cell-style-name="Default"/>'
+                   for i in range(max(1, len(sheet.columns))))
+    rows = [f'<table:table-row table:style-name="rowhead">'
+            f"{''.join(_cell_xml(c, header=True) for c in sheet.columns)}</table:table-row>"]
     for row in sheet.rows:
         cells = list(row) + [None] * (len(sheet.columns) - len(row))
         rows.append(f"<table:table-row>{''.join(_cell_xml(c) for c in cells)}</table:table-row>")
-    return (f"<table:table table:name={quoteattr(_sheet_name(sheet.name))}>"
-            f'<table:table-column table:number-columns-repeated="{max(1, len(sheet.columns))}" table:default-cell-style-name="Default"/>'
-            f"{''.join(rows)}</table:table>")
+    return f"<table:table table:name={quoteattr(name)}>{cols}{''.join(rows)}</table:table>"
+
+
+def _column_styles(sheets: list[Sheet]) -> str:
+    out = []
+    for t, sheet in enumerate(sheets):
+        for i, w in enumerate(column_widths(sheet)):
+            out.append(f'<style:style style:name="co{t}-{i}" style:family="table-column">'
+                       f'<style:table-column-properties style:column-width="{w}cm"/></style:style>')
+    return "".join(out)
+
+
+def _filter_ranges(sheets: list[Sheet]) -> str:
+    """Filter buttons on every header (`table:database-range`): a sheet of
+    300 subsidiaries is there to be filtered by country or stake."""
+    out = []
+    for sheet in sheets:
+        if not sheet.columns:
+            continue
+        name = _sheet_name(sheet.name)
+        last = f"{_col_letter(len(sheet.columns) - 1)}{len(sheet.rows) + 1}"
+        out.append(f'<table:database-range table:name={quoteattr("filter_" + name)} '
+                   f'table:target-range-address={quoteattr(f"{name}.A1:{name}.{last}")} '
+                   'table:display-filter-buttons="true"/>')
+    return f"<table:database-ranges>{''.join(out)}</table:database-ranges>" if out else ""
+
+
+def _settings_xml(sheets: list[Sheet]) -> str:
+    """The header row frozen on every sheet (LibreOffice reads this; Excel's
+    importer ignores settings, and loses nothing by it)."""
+    per_table = "".join(
+        f'<config:config-item-map-entry config:name={quoteattr(_sheet_name(s.name))}>'
+        '<config:config-item config:name="HorizontalSplitMode" config:type="short">0</config:config-item>'
+        '<config:config-item config:name="VerticalSplitMode" config:type="short">2</config:config-item>'
+        '<config:config-item config:name="HorizontalSplitPosition" config:type="int">0</config:config-item>'
+        '<config:config-item config:name="VerticalSplitPosition" config:type="int">1</config:config-item>'
+        '<config:config-item config:name="ActiveSplitRange" config:type="short">2</config:config-item>'
+        '<config:config-item config:name="PositionTop" config:type="int">0</config:config-item>'
+        '<config:config-item config:name="PositionBottom" config:type="int">1</config:config-item>'
+        "</config:config-item-map-entry>"
+        for s in sheets)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<office:document-settings xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+        'xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0" office:version="1.2">'
+        "<office:settings><config:config-item-set config:name=\"ooo:view-settings\">"
+        '<config:config-item-map-indexed config:name="Views"><config:config-item-map-entry>'
+        '<config:config-item config:name="ViewId" config:type="string">view1</config:config-item>'
+        f'<config:config-item-map-named config:name="Tables">{per_table}</config:config-item-map-named>'
+        "</config:config-item-map-entry></config:config-item-map-indexed>"
+        "</config:config-item-set></office:settings></office:document-settings>"
+    )
 
 
 def ods_bytes(sheets: Iterable[Sheet], title: str = "") -> bytes:
@@ -141,11 +241,26 @@ def ods_bytes(sheets: Iterable[Sheet], title: str = "") -> bytes:
         '<?xml version="1.0" encoding="UTF-8"?>'
         f"<office:document-content {_NS}>"
         "<office:automatic-styles>"
+        # how a date and a percentage are SHOWN: ISO date; two or four decimals
+        '<number:date-style style:name="N-date"><number:year number:style="long"/><number:text>-</number:text>'
+        '<number:month number:style="long"/><number:text>-</number:text><number:day number:style="long"/></number:date-style>'
+        '<number:percentage-style style:name="N-pct"><number:number number:decimal-places="2" number:min-integer-digits="1"/>'
+        "<number:text> %</number:text></number:percentage-style>"
+        '<number:percentage-style style:name="N-pct4"><number:number number:decimal-places="4" number:min-integer-digits="1"/>'
+        "<number:text> %</number:text></number:percentage-style>"
+        '<style:style style:name="date" style:family="table-cell" style:data-style-name="N-date"/>'
+        '<style:style style:name="pct" style:family="table-cell" style:data-style-name="N-pct"/>'
+        '<style:style style:name="pct4" style:family="table-cell" style:data-style-name="N-pct4"/>'
         '<style:style style:name="head" style:family="table-cell">'
+        '<style:table-cell-properties fo:background-color="#e8edf5" fo:border-bottom="0.5pt solid #9aa5b8"/>'
         '<style:text-properties fo:font-weight="bold"/></style:style>'
-        "</office:automatic-styles>"
+        '<style:style style:name="rowhead" style:family="table-row">'
+        '<style:table-row-properties style:row-height="0.6cm" style:use-optimal-row-height="false"/></style:style>'
+        + _column_styles(sheets)
+        + "</office:automatic-styles>"
         "<office:body><office:spreadsheet>"
-        + "".join(_table_xml(s) for s in sheets)
+        + "".join(_table_xml(s, i) for i, s in enumerate(sheets))
+        + _filter_ranges(sheets)
         + "</office:spreadsheet></office:body></office:document-content>"
     )
     styles = (
@@ -169,6 +284,7 @@ def ods_bytes(sheets: Iterable[Sheet], title: str = "") -> bytes:
         '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>'
         '<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>'
         '<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>'
+        '<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>'
         "</manifest:manifest>"
     )
     buf = io.BytesIO()
@@ -176,7 +292,7 @@ def ods_bytes(sheets: Iterable[Sheet], title: str = "") -> bytes:
         # the mimetype first and uncompressed: that is how a reader sniffs the format
         z.writestr(zipfile.ZipInfo("mimetype"), MIME, compress_type=zipfile.ZIP_STORED)
         for name, data in (("content.xml", content), ("styles.xml", styles), ("meta.xml", meta),
-                           ("META-INF/manifest.xml", manifest)):
+                           ("settings.xml", _settings_xml(sheets)), ("META-INF/manifest.xml", manifest)):
             z.writestr(name, data.encode("utf-8"), compress_type=zipfile.ZIP_DEFLATED)
     return buf.getvalue()
 

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app import export_ods as mod
 from app.export_ods import (MIME, ExportOptions, Link, Pct, Sheet, build_workbook,
-                            keeps_stake, ods_bytes)
+                            column_widths, keeps_stake, ods_bytes)
 from app.routers.relationships import SUBTREE_MAX_NODES
 
 NS = {"table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
@@ -45,13 +45,13 @@ class TestTheFile:
         assert z.getinfo("mimetype").compress_type == zipfile.ZIP_STORED
         assert z.read("mimetype") == MIME.encode()
         manifest = z.read("META-INF/manifest.xml").decode()
-        for part in ("content.xml", "styles.xml", "meta.xml"):
+        for part in ("content.xml", "styles.xml", "meta.xml", "settings.xml"):
             assert part in names and f'manifest:full-path="{part}"' in manifest
         assert f'manifest:full-path="/" manifest:version="1.2" manifest:media-type="{MIME}"' in manifest
 
     def test_every_part_is_well_formed_xml_with_the_format_version(self):
         z = zipfile.ZipFile(io.BytesIO(ods_bytes([Sheet("A", ["x"], [["<&>"]])], title="T & co")))
-        for part in ("content.xml", "styles.xml", "meta.xml", "META-INF/manifest.xml"):
+        for part in ("content.xml", "styles.xml", "meta.xml", "settings.xml", "META-INF/manifest.xml"):
             root = ET.fromstring(z.read(part))
             if part != "META-INF/manifest.xml":
                 assert root.get(f"{{{NS['office']}}}version") == "1.2"
@@ -68,20 +68,72 @@ class TestTheFile:
         assert 'style:name="head"' in zipfile.ZipFile(io.BytesIO(data)).read("content.xml").decode()
         assert 'fo:font-weight="bold"' in zipfile.ZipFile(io.BytesIO(data)).read("content.xml").decode()
 
+    def test_the_header_is_shaded_and_bold_the_row_frozen_with_filter_buttons(self):
+        data = ods_bytes([Sheet("Owners", ["Owner", "Stake"], [["A", Pct(7.3)], ["B", Pct(1)]]), Sheet("Roles", ["Person"], [])])
+        z = zipfile.ZipFile(io.BytesIO(data))
+        content = z.read("content.xml").decode()
+        assert 'fo:background-color="#e8edf5"' in content and 'fo:font-weight="bold"' in content
+        # filter buttons over each sheet's whole range
+        assert 'table:target-range-address="Owners.A1:Owners.B3" table:display-filter-buttons="true"' in content
+        assert 'table:target-range-address="Roles.A1:Roles.A1" table:display-filter-buttons="true"' in content
+        settings = z.read("settings.xml").decode()
+        for name in ("Owners", "Roles"):
+            assert f'config:name="{name}"' in settings
+        assert settings.count('config:name="VerticalSplitPosition" config:type="int">1<') == 2
+
     def test_a_sheet_name_is_made_legal_for_both_readers(self):
         s = sheets_of(ods_bytes([Sheet("A/B:C*D?[E]\\F", ["x"], []), Sheet("x" * 40, ["x"], []), Sheet("  ", ["x"], [])]))
         assert list(s) == ["A B C D  E  F", "x" * 31, "Sheet"]
+
+
+class TestColumnWidths:
+    def test_each_column_as_wide_as_its_longest_entry_within_bounds(self):
+        sheet = Sheet("S", ["Owner", "Ownership type", "x"], [["A very long company name indeed", Pct(7.3), None],
+                                                              ["B", Pct(100), "y" * 400]])
+        w = column_widths(sheet)
+        assert w[0] == round(len("A very long company name indeed") * 0.19 + 0.5, 2)
+        assert w[1] == round(len("Ownership type") * 0.19 + 0.5, 2)   # the header is the longest
+        assert w[2] == 12.0                                            # capped
+        assert column_widths(Sheet("S", ["x"], []))[0] == 1.6        # the floor
+
+    def test_the_widths_are_written_as_column_styles(self):
+        data = ods_bytes([Sheet("A", ["Owner"], [["Some company"]]), Sheet("B", ["x", "yy"], [])])
+        content = zipfile.ZipFile(io.BytesIO(data)).read("content.xml").decode()
+        assert '<style:style style:name="co0-0" style:family="table-column">' in content
+        assert f'style:column-width="{round(12 * 0.19 + 0.5, 2)}cm"' in content
+        assert '<table:table-column table:style-name="co1-1"' in content
 
 
 class TestCells:
     def cell(self, v):
         return sheets_of(ods_bytes([Sheet("S", ["c"], [[v]])]))["S"][1][0]
 
+    def cell_style(self, v):
+        root = ET.fromstring(zipfile.ZipFile(io.BytesIO(ods_bytes([Sheet("S", ["c"], [[v]])]))).read("content.xml"))
+        cells = list(root.iter(f"{{{NS['table']}}}table-cell"))
+        return cells[1].get(f"{{{NS['table']}}}style-name")
+
+    def test_a_date_and_a_percentage_carry_a_display_style_the_rest_none(self):
+        # typed alone, Excel's importer showed a date as its serial number
+        assert self.cell_style(date(2019, 12, 31)) == "date"
+        assert self.cell_style("2019-12-31") == "date"
+        assert self.cell_style(Pct(7.3)) == "pct"
+        assert self.cell_style(Pct(0.0064)) == "pct4"                # two decimals would show 0.00 %
+        assert self.cell_style(Pct(0)) == "pct"
+        assert self.cell_style(42) is None and self.cell_style("text") is None
+        content = zipfile.ZipFile(io.BytesIO(ods_bytes([Sheet("S", ["c"], [[Pct(1)]])]))).read("content.xml").decode()
+        assert '<style:style style:name="date" style:family="table-cell" style:data-style-name="N-date"/>' in content
+        assert '<number:date-style style:name="N-date">' in content
+        assert '<number:percentage-style style:name="N-pct"><number:number number:decimal-places="2"' in content
+        assert '<number:percentage-style style:name="N-pct4"><number:number number:decimal-places="4"' in content
+
     def test_a_number_is_a_number_a_percentage_a_percentage_a_date_a_date(self):
         assert self.cell(42) == ("float", "42")
         assert self.cell(2.5) == ("float", "2.5")
         assert self.cell(Pct(7.3)) == ("percentage", "7.3 %")
         assert self.cell(Pct(100)) == ("percentage", "100 %")
+        assert self.cell(Pct(0.0064)) == ("percentage", "0.0064 %")
+        assert self.cell(Pct(7.123456)) == ("percentage", "7.12 %")
         assert self.cell(date(2019, 12, 31)) == ("date", "2019-12-31")
         assert self.cell(True) == ("boolean", "true")
 
