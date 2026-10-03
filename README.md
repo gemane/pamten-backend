@@ -86,8 +86,13 @@ pip install -r requirements-dev.txt && python -m pytest tests   # then the integ
 ```
 
 `tests/test_dependency_licences.py` checks every locked package against the allowed
-licences (MIT, Apache 2.0, BSD, ISC, PSF, MPL 2.0) on each run. The production image
-installs only `requirements.txt` — pytest and ruff do not ship.
+licences (MIT, Apache 2.0, BSD, ISC, PSF, MPL 2.0) on each run. A package offered under
+**several** licences at the licensee's choice (odfpy: GPL-2.0-or-later *or* Apache-2.0)
+is fine under the permissive one, but its metadata cannot say "or", so the check refuses
+it until it is recorded in that file's `DUAL_LICENSED` — the licence taken, where the
+offer is stated, who checked it when; the licence taken must itself be allowed and the
+package must be in the lock. The production image installs only `requirements.txt` —
+pytest and ruff do not ship.
 
 Create a `.env` file with your credentials:
 
