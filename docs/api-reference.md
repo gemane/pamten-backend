@@ -64,6 +64,11 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
 | GET | `/search/geographic` | Entities grouped by country for map view |
 
+## Export
+| Method | Path | Description |
+|---|---|---|
+| GET | `/export/entity/{id}` | **A company as an OpenDocument spreadsheet** (`.ods`, `Content-Disposition: attachment`), one sheet per chapter: **Overview** (the company's facts, the true section counts, the export date, the filters in force, the live graph's link), **Owners**, **Subsidiaries**, **Roles**, **Timeline** (the history endpoint's events), **Sources** (the provenance endpoint's rows) and **Claims** (every recorded assertion about the company and its holdings — which source said what, when). Built from the same readers as the profile, the tree and the history, so the sheets say what the panel says — but **every row**, not the profile's per-page cap. Typed cells: stakes are percentages, dates are dates, numbers numbers, URLs links. `as_of=YYYY-MM-DD` as on the profile; `all_levels=true` lists the whole tree below the company (`/subsidiary-tree`'s cap, flagged in the Overview when hit) with **Level** and **Parent** columns instead of the direct list; `min_stake=N` (+ `min_stake_exclusive=true` for strictly above) leaves out holdings whose *stated* stake is below N % — an unstated stake always stays, the graph's own rule; `link=https://…` is written into the Overview. 404 for an unknown company; merged ids are followed. Written with the standard library (odfpy is dual-licensed with the GPL). |
+
 ## Stats
 | Method | Path | Description |
 |---|---|---|

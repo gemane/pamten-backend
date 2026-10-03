@@ -60,6 +60,9 @@ class TestRecording:
     def test_a_usage_event_is_recorded(self, client, recorded):
         assert _post(client, kind="usage", event="export.csv").status_code == 204
         assert ("usage", "export.csv") in recorded
+        # the spreadsheet export that replaced the CSV in the client; the old name stays for released clients
+        assert _post(client, kind="usage", event="export.ods").status_code == 204
+        assert ("usage", "export.ods") in recorded
 
 
 class TestWhatIsRefused:
