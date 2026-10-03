@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 #: Every usage event the client may report. Anything else is rejected — see the
 #: module docstring on why the key space is closed.
 USAGE_EVENTS = frozenset({
-    "export.png", "export.csv", "share.link",
+    "export.png", "export.csv", "export.ods", "share.link",
     "map.basis.jurisdiction", "map.basis.hq", "map.drill",
     "panel.timeline", "graph.expand", "graph.filter.stake",
     "scrape.requested",

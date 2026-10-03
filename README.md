@@ -156,7 +156,9 @@ Nodes (`Entity`, `Person`, `Source`, `Claim`, `MergeLog`, `Peer`, `ScrapeRun`,
 ## API
 
 The full REST reference — Auth, Entities, Persons (incl. deduplication), Search,
-Sources, Relationships, Scraper, Federation, and maintenance/advanced endpoints —
+Export (a company as an `.ods` spreadsheet, one sheet per chapter — see
+[`docs/api-reference.md#export`](docs/api-reference.md#export)), Sources,
+Relationships, Scraper, Federation, and maintenance/advanced endpoints —
 lives in **[`docs/api-reference.md`](docs/api-reference.md)**. An interactive
 version is served at `/docs` (Swagger) and `/redoc` on a running instance.
 
@@ -444,7 +446,7 @@ Three keyed counter types, in the database alongside `ImportState` and `GeoCache
 | type | key | counts |
 |---|---|---|
 | `SearchDemand` | normalised query + ISO-2 country | searches, zero-result searches, searches where a result was taken |
-| `UsageCounter` | an allow-listed event name (`export.csv`, `map.basis.hq`, `result.rank.3`) | occurrences |
+| `UsageCounter` | an allow-listed event name (`export.ods`, `map.basis.hq`, `result.rank.3`) | occurrences |
 | `EndpointStat` | `METHOD route_template status_class` + latency bucket | requests |
 
 **No row can be tied to a person.** No user id, no account link, no session id, no

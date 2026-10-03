@@ -15,7 +15,7 @@ from app.db.schema import ensure_indexes
 from app.scraper.geocode import close_client as close_geocode_client
 from app.scraper.sec_edgar import close_client as close_sec_client
 from app.routers import (entities, persons, relationships, search, sources, federation,
-                         flags, stats, app_version, analytics as analytics_router)
+                         flags, stats, app_version, export, analytics as analytics_router)
 from app.scraper import router as scraper_router
 from app.scraper import sources as scraper_sources
 from app.auth import router as auth_router
@@ -108,7 +108,8 @@ app.add_middleware(
     # Response headers are invisible to browser JS unless named here. The graph
     # endpoints report truncation this way (see routers/relationships.py) rather
     # than in the body, which would break already-released clients.
-    expose_headers=["X-Result-Truncated", "X-Total-Count"],
+    # …and the export names its file in Content-Disposition.
+    expose_headers=["X-Result-Truncated", "X-Total-Count", "Content-Disposition"],
 )
 
 
@@ -168,6 +169,7 @@ _ROUTERS = [
     scraper_sources.router,
     auth_router.router,
     app_version.router,
+    export.router,
 ]
 
 # Federation is on hold (see routers/federation.py). Leaving it unmounted rather
