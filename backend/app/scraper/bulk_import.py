@@ -186,6 +186,8 @@ class _BatchWriter:
             ownership_type=props.get("ownership_type"),
             role=props.get("role"),
             since=props.get("since"), until=props.get("until"),
+            # how the start is known — a lower bound must not read as stated
+            since_basis=props.get("since_basis"),
             source_url=props.get("source_url"), source_date=props.get("source_date"),
             credibility_score=props.get("credibility_score") or 80,
             filing_type=props.get("filing_type"),
