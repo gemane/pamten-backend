@@ -1371,7 +1371,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                              ("sole_voting", "shared_voting",
                               "sole_dispositive", "shared_dispositive")
                              if person.get(k) is not None}
-            shares        = _shares_held(rows, person.get("aggregate"))
+            # alone or in a bloc decides what the shared rows are (see _shares_held)
+            alone         = not _co_filers_form_a_bloc(xml.get("schedule") or "13D",
+                                                       len(xml.get("persons") or []))
+            shares        = _shares_held(rows, person.get("aggregate"), in_group=not alone)
             shares_total  = (_shares_outstanding(xml.get("comment_text") or "")
                              or _derive_total(person.get("aggregate"), person.get("percent")))
             voting_shares = _shares_voted(person.get("aggregate"), voting)
@@ -1403,7 +1406,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 share_class   = _parse_class_title_from_text(text)
                 event_date    = _parse_event_date_from_text(text)
                 aggregate     = _parse_aggregate_from_text(cover)
-                shares        = _shares_held(_parse_power_rows(cover), aggregate)
+                shares        = _shares_held(_parse_power_rows(cover), aggregate, in_group=bloc)
                 shares_total  = _shares_outstanding(text)
                 voting_shares = _shares_voted(aggregate, voting)
                 if voting and inv.get("accession"):
@@ -1574,6 +1577,15 @@ def _restate_against_newest_denominator(filings: list[dict]) -> None:
         date, total = newest[k]
         old = f.get("shares_outstanding")
         if (f.get("file_date") or "") >= date or not old or total == old:
+            continue
+        # Only a count that IS the filed percentage may be divided again: if
+        # shares / its own total is not the stake it filed, the count is not
+        # the holding (a part of it, another unit) and a new total would
+        # turn that mismatch into a confidently wrong stake.
+        own = f["shares"] / old * 100
+        if abs(own - f["stake_percent"]) > max(0.15, 0.05 * f["stake_percent"]):
+            log.info("SEC EDGAR: %r's count is %.4g%% of its total but it filed %s%%; not restating",
+                     f.get("investor_name"), own, f["stake_percent"])
             continue
         if max(total, old) / min(total, old) > _DENOMINATOR_DRIFT:
             log.info("SEC EDGAR: %r's total moved %s → %s; not restating across a split",
@@ -2398,7 +2410,7 @@ def _shares_voted(aggregate: int | None, voting_pct: float | None) -> int | None
     return aggregate if voting_pct is not None else None
 
 
-def _shares_held(rows: dict, aggregate: int | None) -> int | None:
+def _shares_held(rows: dict, aggregate: int | None, in_group: bool = True) -> int | None:
     """How many shares this filer actually holds, as a count.
 
     The count is the fact the filing states; the percentage is a division we
@@ -2409,12 +2421,21 @@ def _shares_held(rows: dict, aggregate: int | None) -> int | None:
     Dispositive power, not voting: what the filer can sell is what it owns.
     Sole where it has any, otherwise the shares it disposes of jointly (BRC can
     sell nothing alone, but the Stichting it co-owns holds 771,096,582), and the
-    reported aggregate only when neither row is given.
+    reported aggregate only when neither row is given. That is the rule for a
+    member of a bloc (`in_group`), whose shared rows are the group's; a filer
+    alone holds both rows — sole and shared together.
     """
     sole = rows.get("sole_dispositive")
+    shared = rows.get("shared_dispositive")
+    if not in_group and (sole or shared):
+        # A filer alone disposes jointly with nobody in a bloc — its shared
+        # power is over shares it holds through subsidiaries or trusts. Both
+        # rows are its holding: SoftBank's Alibaba 13G/A has 3,788,048 sole and
+        # 627,002,296 shared (its subsidiaries), and the sole figure alone made
+        # a 3.3 % holder a 0.02 % one wherever the count was divided again.
+        return (sole or 0) + (shared or 0)
     if sole:
         return sole
-    shared = rows.get("shared_dispositive")
     if shared:
         return shared
     return aggregate

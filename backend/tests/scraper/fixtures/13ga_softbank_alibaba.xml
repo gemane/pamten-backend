@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SoftBank Group Corp.'s Schedule 13G/A on Alibaba Group Holding, event 2025-03-31, accession
+     0000950170-25-071825 (primary_doc.xml), trimmed after the reporting person. One reporting
+     person; sole dispositive 3,788,048, shared dispositive 627,002,296 (held through
+     subsidiaries), aggregate 630,790,344 = 3.3%. -->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13g" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <headerData>
+    <submissionType>SCHEDULE 13G/A</submissionType>
+    <filerInfo>
+      <filer>
+        <filerCredentials>
+          <cik>0001065521</cik>
+          <ccc>XXXXXXXX</ccc>
+        </filerCredentials>
+      </filer>
+      <liveTestFlag>LIVE</liveTestFlag>
+
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <coverPageHeader>
+      <amendmentNo>11</amendmentNo>
+      <securitiesClassTitle>Ordinary shares, par value US$0.000003125 per share</securitiesClassTitle>
+      <eventDateRequiresFilingThisStatement>03/31/2025</eventDateRequiresFilingThisStatement>
+      <issuerInfo>
+        <issuerCik>0001577552</issuerCik>
+        <issuerName>Alibaba Group Holding Limited</issuerName>
+        <issuerCusip>01609W102</issuerCusip>
+        <issuerPrincipalExecutiveOfficeAddress>
+          <street1 xmlns="http://www.sec.gov/edgar/common">26/F Tower One, Times Square</street1>
+          <street2 xmlns="http://www.sec.gov/edgar/common">1 Matheson Street, Causeway Bay</street2>
+          <city xmlns="http://www.sec.gov/edgar/common">Hong Kong</city>
+          <stateOrCountry xmlns="http://www.sec.gov/edgar/common">K3</stateOrCountry>
+          <zipCode xmlns="http://www.sec.gov/edgar/common">00000</zipCode>
+        </issuerPrincipalExecutiveOfficeAddress>
+      </issuerInfo>
+      <designateRulesPursuantThisScheduleFiled>
+        <designateRulePursuantThisScheduleFiled>Rule 13d-1(d)</designateRulePursuantThisScheduleFiled>
+      </designateRulesPursuantThisScheduleFiled>
+    </coverPageHeader>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>SoftBank Group Corp.</reportingPersonName>
+      <citizenshipOrOrganization>M0</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>3788048</soleVotingPower>
+        <sharedVotingPower>627002296</sharedVotingPower>
+        <soleDispositivePower>3788048</soleDispositivePower>
+        <sharedDispositivePower>627002296</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>630790344</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>3.3</classPercent>
+      <typeOfReportingPerson>CO</typeOfReportingPerson>
+      <comments>
+(1)	See the description of ownership by subsidiaries of the Reporting Person in Item 4.
+(2)	Percent of class is based on 18,998,287,724 ordinary shares of the Issuer ("Ordinary Shares") outstanding, as of March 31, 2025.</comments>
+    </coverPageHeaderReportingPersonDetails>
+<!-- trimmed: the remaining cover fields, items and signature -->
+</formData></edgarSubmission>

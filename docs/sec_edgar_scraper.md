@@ -176,7 +176,10 @@ comes from — so the panel can say the count is 2020's and the total 2026's. A 
 must be amended for any change of 1 % or more, which is why an unamended count
 still stands. Left alone: a bloc-only row (no stake of its own), an ended
 holding, another share class, and a total that moved more than 2× — a split
-makes an old count meaningless. Classes are compared by `_class_key`, which reads
+makes an old count meaningless. And only a count that *is* the filed stake is
+divided again: when `shares ÷` its own total is not the percentage the filer
+stated (beyond rounding — 5 % of it, at least 0.15 points), the count is not the
+holding, and a new total would turn that mismatch into a confidently wrong stake. Classes are compared by `_class_key`, which reads
 "Ordinary Shares … and American Depositary Shares, each of which represents one
 (1) Ordinary Share" as the ordinary shares it is.
 
@@ -184,7 +187,11 @@ makes an old count meaningless. Classes are compared by `_class_key`, which read
 what it owns. Sole where it has any, else the shares it disposes of jointly (BRC
 can sell nothing alone, but the Stichting it co-owns holds 771,096,582 — a real
 number where `stake_percent` must say `None`), and the reported aggregate only
-when neither row is given. Zero is not a holding: absent stays absent, because a
+when neither row is given. That is the rule for a **member of a bloc**, whose
+shared rows are the group's. A filer **alone** holds both rows: SoftBank's
+Alibaba 13G/A has 3,788,048 sole and 627,002,296 shared (through its
+subsidiaries) — 630,790,344, its 3.3 %; the sole row alone made it 0.02 %
+wherever the count was divided again. Zero is not a holding: absent stays absent, because a
 nil position and an unstated one are different facts.
 
 Form 3/4 states an insider's holding exactly, and that count is now kept too —

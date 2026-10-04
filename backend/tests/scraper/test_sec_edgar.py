@@ -2190,3 +2190,114 @@ class TestDateOfEvent:
         with patch.object(sec_edgar, "_fetch_13dg_xml", return_value=xml):
             parsed = sec_edgar._parse_holding_filing("0000102909", "0000000000-26-000001")
         assert parsed["event_date"] == "2026-03-31"
+
+
+class TestALoneFilersHoldingIsBothRows:
+    """SoftBank's 13G/A on Alibaba: 3,788,048 shares it can sell alone and
+    627,002,296 it sells through its subsidiaries — 630,790,344, 3.3 %. The
+    count kept only the sole row, which made SoftBank a 0.02 % holder as soon
+    as the count was divided again (the newest-denominator restatement)."""
+
+    def test_the_real_filing(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml, _shares_held, _stake_from_person
+        d = _parse_13dg_xml(_fixture("13ga_softbank_alibaba.xml"))
+        assert len(d["persons"]) == 1 and d["schedule"] == "13G"
+        p = d["persons"][0]
+        rows = {k: p[k] for k in ("sole_voting", "shared_voting", "sole_dispositive",
+                                  "shared_dispositive") if p.get(k) is not None}
+        assert _shares_held(rows, p["aggregate"], in_group=False) == 630_790_344
+        stake, voting = _stake_from_person(d, p)
+        assert stake == 3.3 and voting is None
+
+    def test_alone_both_rows_in_a_bloc_the_old_rule(self):
+        from app.scraper.sec_edgar import _shares_held
+        rows = {"sole_dispositive": 100, "shared_dispositive": 900}
+        assert _shares_held(rows, 1000, in_group=False) == 1000
+        assert _shares_held(rows, 1000, in_group=True) == 100        # a member's shared rows are the group's
+        # Altria alone: nothing shared to add
+        assert _shares_held({"sole_dispositive": 159121937, "shared_dispositive": 0},
+                            1020598157, in_group=False) == 159121937
+        # nothing stated: still the aggregate, still not zero
+        assert _shares_held({}, 5000, in_group=False) == 5000
+        assert _shares_held({"sole_dispositive": 0, "shared_dispositive": 0}, None, in_group=False) is None
+
+    def test_the_scrape_result_carries_the_whole_holding(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SCHEDULE 13G/A"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2025-05-15</filing-date>
+            <accession-number>0000950170-25-071825</accession-number>
+          </content></entry>
+        </feed>"""
+        url = ("https://www.sec.gov/Archives/edgar/data/1577552/"
+               "000095017025071825/primary_doc.xml")
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=_serve(atom, {url: _fixture("13ga_softbank_alibaba.xml")})), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Alibaba Group Holding Ltd", "0001577552")
+        assert res and res[0]["shares"] == 630_790_344
+        assert res[0]["stake_percent"] == 3.3
+
+
+class TestRestatementNeedsACountThatIsTheStake:
+    def test_a_count_that_is_not_the_filed_stake_is_not_divided_again(self):
+        # the old SoftBank row: 3.3 % filed, a count that is 0.02 % of its total
+        from app.scraper.sec_edgar import _restate_against_newest_denominator
+        fs = [{"investor_name": "Newer Filer", "file_date": "2026-05-15", "stake_percent": 6.0,
+               "shares": 1_200_000_000, "shares_outstanding": 20_000_000_000,
+               "share_class": "Ordinary shares", "until": None, "form_type": "SCHEDULE 13G"},
+              {"investor_name": "Softbank Group Corp", "file_date": "2025-05-15", "stake_percent": 3.3,
+               "shares": 3_788_048, "shares_outstanding": 19_114_858_909,
+               "share_class": "Ordinary shares", "until": None, "form_type": "SCHEDULE 13G/A"}]
+        _restate_against_newest_denominator(fs)
+        assert fs[1]["stake_percent"] == 3.3 and fs[1]["denominator_date"] is None
+        # the same row with its whole holding is restated
+        fs[1]["shares"] = 630_790_344
+        _restate_against_newest_denominator(fs)
+        assert fs[1]["stake_percent"] == pytest.approx(3.154, abs=0.001)
+        assert fs[1]["denominator_date"] == "2026-05-15"
+
+    def test_rounding_in_the_filed_percentage_is_no_mismatch(self):
+        # Bevco: 102,862,718 / 1,730,242,027 = 5.945 %, filed as "5.9"
+        from app.scraper.sec_edgar import _restate_against_newest_denominator
+        fs = [{"investor_name": "New", "file_date": "2026-05-15", "stake_percent": None,
+               "voting_power_pct": 52.3, "shares": 1, "shares_outstanding": 1972133054,
+               "share_class": "Ordinary Shares", "until": None, "form_type": "SCHEDULE 13D/A"},
+              {"investor_name": "Bevco", "file_date": "2020-03-10", "stake_percent": 5.9,
+               "shares": 102862718, "shares_outstanding": 1730242027,
+               "share_class": "Ordinary Shares", "until": None, "form_type": "SC 13D/A"}]
+        _restate_against_newest_denominator(fs)
+        assert fs[1]["denominator_date"] == "2026-05-15"
+
+    def test_an_html_group_member_keeps_the_bloc_rule(self):
+        # Two cover pages on a 13D = a bloc: the member's shared rows are the
+        # group's, so its count is its sole row, not sole + shared.
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13D/A"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2019-03-01</filing-date>
+            <accession-number>0000000000-19-000001</accession-number>
+          </content></entry>
+        </feed>"""
+        index = ('<span class="companyName">Member Holdings (Filed by)</span> '
+                 '<a href="x">CIK=0000000111</a>'
+                 '<table><tr><td><a href="/Archives/edgar/data/1/d.htm">doc</a>'
+                 '</td><td>SC 13D/A</td></tr></table>')
+        page = ("Name of Reporting Persons {n} Sole Voting Power 0 Shared Voting Power 900,000 "
+                "Sole Dispositive Power 100,000 Shared Dispositive Power 50,000 "
+                "Aggregate Amount Beneficially Owned 900,000 "
+                "Percent of Class Represented by Amount in Row 11 9.0% ")
+        doc = ("Example Issuer Inc (Name of Issuer) based on a total of 10,000,000 shares issued "
+               "and outstanding. " + page.format(n="Member Holdings") + page.format(n="Other Member"))
+        pages = {None: atom, "https://x.test/i.htm": index,
+                 "https://www.sec.gov/Archives/edgar/data/1/d.htm": doc}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Example Issuer Inc", "0000000222")
+        assert res and res[0]["shares"] == 100_000
