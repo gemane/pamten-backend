@@ -82,3 +82,22 @@ def test_the_heal_merges_existing_synonym_duplicates(it_db, pair):
     assert len(rows) == 1
     assert rows[0]["role"] == "Director"
     assert rows[0]["since"] == "2002-05-06", "the loser's date backfills the winner"
+
+
+def test_the_heal_takes_the_earliest_start_and_spares_a_closed_spell(it_db, pair):
+    # The winner's later start used to win (COALESCE kept it), and the backfill
+    # matched a closed spell of the same role too — giving it a start after
+    # its end, which time travel then shows in no year at all.
+    from types import SimpleNamespace
+    import manage
+    for props in ("{role: 'Director', since: '2015-01-01', credibility_score: 98}",
+                  "{role: 'Board Member', since: '2002-05-06', credibility_score: 80}",
+                  "{role: 'Director', until: '2001-01-01', credibility_score: 98}"):
+        it_db.run_command("MATCH (p:Person {id:'pm'}), (e:Entity {id:'sx'}) "
+                          f"CREATE (p)-[:HAS_ROLE {props}]->(e)")
+    manage.cmd_dedupe_role_synonyms(SimpleNamespace(dry_run=False))
+    rows = it_db.run_command(
+        "MATCH (:Person {id:'pm'})-[r:HAS_ROLE]->(:Entity {id:'sx'}) "
+        "RETURN r.role AS role, r.since AS since, r.until AS until")
+    assert sorted(((r["role"], r.get("since") or "", r.get("until") or "") for r in rows)) == [
+        ("Director", "", "2001-01-01"), ("Director", "2002-05-06", "")]

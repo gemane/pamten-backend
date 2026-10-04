@@ -53,11 +53,10 @@ EXPECTED: dict[str, list] = {
     "app/scraper/sec_writer.py": [
         {"GENERATED"},        # _upsert_owns_sec
     ],
-    "app/scraper/maintenance.py": [
-        {"GENERATED"},        # entity merge, outgoing
-        {"GENERATED"},        # entity merge, incoming
-        {"GENERATED"},        # person merge
-    ],
+    # The merges recreate edges through one helper, `_carry_edge`, whose CREATE
+    # takes the edge kind as a parameter — no literal `[:OWNS {` left for the
+    # extractor; `test_the_merge_helper_writes_the_whole_schema` pins it instead.
+    "app/scraper/maintenance.py": [],
     "app/scraper/gleif_incremental.py": [
         # The delta CREATE: consolidation facts only — GLEIF states no stakes.
         # ownership_type is a literal 'controlling', which the extractor cannot
@@ -160,3 +159,17 @@ def test_claim_props_knows_every_fact_a_claim_should_record():
     missing = factual - claim_fields
     assert not missing, (f"claim_props lacks {sorted(missing)} — a claim that "
                          f"cannot record these cannot be rechecked")
+
+
+def test_the_merge_helper_writes_the_whole_schema():
+    """The merges' one recreate site writes every property of the schema tuple
+    it is given, and every OWNS call hands it OWNS_PROPS."""
+    import inspect
+    from app.scraper import maintenance
+    src = inspect.getsource(maintenance._carry_edge)
+    assert "edge_create_clause(props)" in src and "edge_params(e, props)" in src
+    text = (BACKEND / "app/scraper/maintenance.py").read_text()
+    calls = re.findall(r'_carry_edge\("OWNS", (\w+)', text)
+    assert calls and set(calls) == {"OWNS_PROPS"}
+    persons = (BACKEND / "app/routers/persons.py").read_text()
+    assert re.findall(r'_carry_edge\("OWNS", (\w+)', persons) == ["OWNS_PROPS"]
