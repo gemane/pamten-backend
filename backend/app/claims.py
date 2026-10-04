@@ -91,6 +91,7 @@ def claim_props(
     shares: int | None = None,
     shares_outstanding: int | None = None,
     denominator_date: str | None = None,
+    event_date: str | None = None,
     voting_shares: int | None = None,
     filing_type: str | None = None,
     since_basis: str | None = None,
@@ -127,6 +128,8 @@ def claim_props(
         "shares_outstanding": shares_outstanding,
         # where that total comes from when it is newer than the claim's filing
         "denominator_date": denominator_date,
+        # the day the filing states the position as of (13D/G date of event)
+        "event_date": event_date,
         "voting_shares": voting_shares,
         # The record KIND behind the assertion — the Sources panel shows it as
         # "SEC EDGAR · 13F", which tells a reader whose rulebook to read.

@@ -156,6 +156,16 @@ Bevco's holding has not changed since 2020; it reads 5.9% only because it is
 divided by a five-year-old total. Against the current one it is 5.23%. Without
 the counts that is invisible — the two percentages look equally current.
 
+**The date of event.** Each cover states the day its numbers were true — 13D
+`dateOfEvent`, 13G `eventDateRequiresFilingThisStatement` (a quarter-end for
+the passive filers), "(Date of Event Which Requires Filing of this Statement)"
+on the old HTML covers — and the filing date (`source_date`) is when it was
+said, often weeks later. It is stored as `event_date` on every 13D/G edge (the
+holder's, a voting group's, a filer's own holdings), replaced by each newer
+filing and cleared when one states none; an unreadable date is `None`, never a
+guess. Only the latest amendment is kept, so the count has an as-of day but no
+history — time travel shows a past year with today's stake.
+
 **So older holdings are restated** (`_restate_against_newest_denominator`, at the
 end of `fetch_ownership_filings`). Among the schedules about one issuer, the
 newest stated total per share class wins (BRC's May 2026 13D/A: 1,972,133,054),

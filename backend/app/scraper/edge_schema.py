@@ -48,6 +48,10 @@ OWNS_PROPS: tuple = (
     # stated total (sec_edgar._restate_against_newest_denominator). Unset when
     # the total is the holder's own filing's.
     "denominator_date",
+    # The day the filing states the position as of — a 13D/G cover's "date of
+    # event". The count and the percentage are true AS OF this day; the filing
+    # date (source_date) is when it was said, often weeks later.
+    "event_date",
     "voting_shares",
     "stale",
     "shortcut",

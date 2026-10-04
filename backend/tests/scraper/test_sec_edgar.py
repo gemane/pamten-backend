@@ -834,6 +834,31 @@ class TestBeneficialOwnershipVsRealStake:
         assert res[0]["stake_percent"] == pytest.approx(8.05, abs=0.01)
         assert res[0]["voting_power_pct"] == 51.7
 
+    def test_the_date_of_event_reaches_the_scrape_result(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SC 13D/A"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2024-09-27</filing-date>
+            <accession-number>0001193125-24-230346</accession-number>
+          </content></entry>
+        </feed>"""
+        index = ('<span class="companyName">Altria Group, Inc. (Filed by)'
+                 '</span> <a href="x">CIK=0000764180</a>'
+                 '<table><tr><td><a href="/Archives/edgar/data/1/d.htm">doc</a>'
+                 '</td><td>SC 13D/A</td></tr></table>')
+        doc = ("Anheuser-Busch InBev SA/NV (Name of Issuer) September 25, 2024 "
+               "(Date of Event Which Requires Filing of this Statement) " + self.ALTRIA)
+        pages = {None: atom, "https://x.test/i.htm": index,
+                 "https://www.sec.gov/Archives/edgar/data/1/d.htm": doc}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Anheuser-Busch InBev", "1668717")
+        assert res[0]["event_date"] == "2024-09-25"
+        assert res[0]["file_date"] == "2024-09-27"          # said two days later
+
 
 def _fixture(name: str) -> str:
     """A real filing, trimmed to what the parser reads.
@@ -1425,6 +1450,8 @@ class TestAnExitIsNotAZeroPercentHolding:
         assert len(res) == 1
         assert res[0]["stake_percent"] == 10.84
         assert res[0]["until"] == "2026-03-26"
+        # the structured branch carries the cover's date of event too
+        assert res[0]["event_date"] == "2025-12-31"
 
     def test_the_exit_is_scoped_to_the_cik_that_filed_it(self):
         """The realignment moved holdings from the parent to a subsidiary that
@@ -2121,3 +2148,45 @@ class TestNewestDenominator:
         bevco = next(f for f in fs if f["investor_name"].startswith("Bevco"))
         assert bevco["denominator_date"] == "2026-05-15"
         assert bevco["shares_outstanding"] == 1972133054
+
+
+class TestDateOfEvent:
+    """The day a cover states the position as of. The count and the
+    percentage are true on that day; the filing date is when it was said."""
+
+    def test_both_written_forms(self):
+        from app.scraper.sec_edgar import _event_date
+        assert _event_date("02/07/2025") == "2025-02-07"
+        assert _event_date("3/1/2020") == "2020-03-01"
+        assert _event_date("March 10, 2020") == "2020-03-10"
+        assert _event_date("Sept. 3 2019") is None                 # not a month we read: no guess
+        assert _event_date("Sep. 3, 2019") is None
+        assert _event_date("September 3 2019") == "2019-09-03"
+
+    def test_nothing_is_guessed(self):
+        from app.scraper.sec_edgar import _event_date
+        for bad in (None, "", "02/30/2025", "2025-02-07", "13/01/2025", "Q1 2025"):
+            assert _event_date(bad) is None
+
+    def test_the_structured_schedules_carry_it(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        assert _parse_13dg_xml(_fixture("13d_altria_abinbev.xml"))["event_date"] == "2025-02-07"
+        # a 13G names it differently, and for a passive filer it is a quarter-end
+        assert _parse_13dg_xml(_fixture("13g_vanguard.xml"))["event_date"] == "2026-03-31"
+
+    def test_an_html_cover_carries_it(self):
+        from app.scraper.sec_edgar import _parse_event_date_from_text
+        cover = ("<p>Ordinary Shares, without nominal value</p><p>(Title of Class of Securities)</p>"
+                 "<p>March&nbsp;10, 2020</p><p>(Date of Event Which Requires Filing of this Statement)</p>")
+        assert _parse_event_date_from_text(cover) == "2020-03-10"
+        assert _parse_event_date_from_text("12/31/2019 (Date of Event which Requires Filing "
+                                           "of this Statement)") == "2019-12-31"
+        assert _parse_event_date_from_text("no cover here") is None
+
+    def test_the_filer_side_holding_carries_it(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        xml = sec_edgar._parse_13dg_xml(_fixture("13g_vanguard.xml"))
+        with patch.object(sec_edgar, "_fetch_13dg_xml", return_value=xml):
+            parsed = sec_edgar._parse_holding_filing("0000102909", "0000000000-26-000001")
+        assert parsed["event_date"] == "2026-03-31"

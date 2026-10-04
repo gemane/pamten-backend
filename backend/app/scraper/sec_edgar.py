@@ -1354,6 +1354,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         shares        = None
         shares_total  = None
         voting_shares = None
+        event_date    = None
         group_members: list[dict] = []
 
         if inv.get("xml"):
@@ -1365,6 +1366,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 continue
             pct, voting   = _stake_from_person(xml, person)
             share_class   = xml.get("class_title")
+            event_date    = xml.get("event_date")
             rows          = {k: person[k] for k in
                              ("sole_voting", "shared_voting",
                               "sole_dispositive", "shared_dispositive")
@@ -1399,6 +1401,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 pct, voting    = _own_stake_and_voting(cover, pct, document=text, in_group=bloc)
                 is_individual = _parse_reporter_type_from_text(cover)
                 share_class   = _parse_class_title_from_text(text)
+                event_date    = _parse_event_date_from_text(text)
                 aggregate     = _parse_aggregate_from_text(cover)
                 shares        = _shares_held(_parse_power_rows(cover), aggregate)
                 shares_total  = _shares_outstanding(text)
@@ -1459,6 +1462,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # and redone: a stake is `shares / shares_outstanding`.
             "shares":           shares,
             "shares_outstanding": shares_total,
+            # The day the count and the percentage were as stated (the
+            # cover's date of event) — what they are "as of".
+            "event_date":       event_date,
             # The bloc's own count. Belongs to the group, repeated by every
             # member — never summed, exactly like voting_power_pct.
             "voting_shares":    voting_shares,
@@ -1478,6 +1484,39 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
     _restate_against_newest_denominator(results)
     log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)
     return results
+
+
+_MONTHS = {m: i for i, m in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"), 1)}
+
+
+def _event_date(value: str | None) -> str | None:
+    """A cover's date of event as ISO `YYYY-MM-DD`: "02/07/2025" (the
+    structured schedules) or "March 10, 2020" (the old HTML covers). None for
+    anything else — a date we cannot read is not a date we may guess."""
+    v = (value or "").strip()
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", v)
+    if m:
+        month, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.fullmatch(r"([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})", v)
+        if not m or m.group(1).lower() not in _MONTHS:
+            return None
+        month, day, year = _MONTHS[m.group(1).lower()], int(m.group(2)), int(m.group(3))
+    try:
+        return datetime(year, month, day).date().isoformat()
+    except ValueError:
+        return None
+
+
+def _parse_event_date_from_text(text: str) -> str | None:
+    """The date printed above "(Date of Event Which Requires Filing of this
+    Statement)" on an HTML cover page."""
+    plain = _plain_text(text)
+    m = re.search(r"([A-Za-z]+\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{4})\s*\(?\s*"
+                  r"Date\s+of\s+Event\s+which\s+Requires", plain, re.IGNORECASE)
+    return _event_date(m.group(1)) if m else None
 
 
 def _class_key(title: str | None) -> str:
@@ -2534,6 +2573,11 @@ def _parse_13dg_xml(raw: str) -> dict | None:
         # "Series A/B/Dividend Preferred" beside 9.7% of "CPOs and Global D
         # shares", and adding those gave the company 115.9% of itself.
         "class_title":  _xml_child(root, "securitiesClassTitle"),
+        # The day the position was as stated — 13D "dateOfEvent", 13G
+        # "eventDateRequiresFilingThisStatement" (a quarter-end for the
+        # passive filers). Not the filing date, which can be weeks later.
+        "event_date":   _event_date(_xml_child(root, "dateOfEvent")
+                                    or _xml_child(root, "eventDateRequiresFilingThisStatement")),
         "persons":      persons,
         "schedule":     schedule,
         "comment_text": " ".join(comments),
@@ -2567,6 +2611,7 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
         "subject_name": xml["issuer_name"],
         "percent":      percent,
         "accession":    accession,
+        "event_date":   xml.get("event_date"),
     }
 
 
@@ -3098,6 +3143,7 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             "subject_name":  parsed["subject_name"],
             "stake_percent": parsed["percent"],
             "file_date":     filing["date"],
+            "event_date":    parsed.get("event_date"),
             "form_type":     filing["form"],
             "filing_type":   _short_form(filing["form"]),
             "until":         closed_since.get(sid),

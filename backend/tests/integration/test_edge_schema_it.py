@@ -29,7 +29,7 @@ _SAMPLE = {
     "interest_types": ["ownership-of-shares-25-to-50-percent"],
     "direct_or_indirect": "direct", "psc_self_link": "/company/1/psc/2",
     "share_class": "Ordinary Shares", "shares": 159121937,
-    "shares_outstanding": 1975847422, "denominator_date": "2026-05-15",
+    "shares_outstanding": 1975847422, "denominator_date": "2026-05-15", "event_date": "2025-02-05",
     "voting_shares": 1020598157,
     "stale": False, "shortcut": False, "also_ultimate": True,
     "ultimate_since": "2017-01-01", "ultimate_until": None,
