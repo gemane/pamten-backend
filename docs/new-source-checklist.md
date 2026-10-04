@@ -85,6 +85,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       came from (`denominator_date`), never across a split (a total that moved more than
       2×), and compare share classes by what they are, not by their wording (ADSs "each
       representing one ordinary share" are the ordinary shares).
+      **The count must be the whole holding** before anything divides it again: a filer
+      alone holds its sole AND its shared rows (SoftBank's Alibaba stake is 3.8 M sole
+      + 627 M through subsidiaries; the sole row alone became 0.02 %). Check that
+      `shares ÷` its own total gives back the filed percentage, and don't recalculate
+      a row where it doesn't.
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
       Registered/Headquarters switch exists precisely because they differ.
