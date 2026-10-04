@@ -1475,8 +1475,78 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "group_members":    group_members,
         })
 
+    _restate_against_newest_denominator(results)
     log.info("SEC EDGAR: found %d investors for CIK=%s", len(results), company_cik)
     return results
+
+
+def _class_key(title: str | None) -> str:
+    """The share class a cover's title names, without the wording around it.
+
+    BRC's 2026 schedule on AB InBev covers "Ordinary Shares, without nominal
+    value and American Depositary Shares, each of which represents one (1)
+    Ordinary Share, without nominal value"; Altria's and Bevco's cover
+    "Ordinary Shares, without nominal value". Same shares: the depositary
+    receipts are only how some of them trade, and the counts are stated in
+    ordinary shares. A different class — "Class A Common Stock" beside
+    "Class B" — keeps a different key.
+    """
+    t = (title or "").lower()
+    t = re.split(r"\s+and\s+american\s+depositary", t)[0]
+    t = re.sub(r"\([^)]*\)", " ", t)
+    t = re.sub(r"(without|no)\s+(nominal|par)\s+value|par\s+value\s+\$?[\d.,]+(\s+per\s+share)?", " ", t)
+    return re.sub(r"[^a-z0-9]+", " ", t).strip()
+
+
+#: A newer total this far from the old one is not the same shares any more —
+#: a split or a reverse split makes an old share count meaningless.
+_DENOMINATOR_DRIFT = 2.0
+
+
+def _restate_against_newest_denominator(filings: list[dict]) -> None:
+    """Re-divide each holder's count by the newest total its class has.
+
+    A stake is `shares / shares_outstanding`, and only the first of the two is
+    the holder's: the second moves with every issue and buy-back. Bevco's last
+    13D/A on AB InBev is from 2020 — 102,862,718 shares of 1,730,242,027, "5.9%" —
+    and a 13D must be amended for any change of 1% or more, so the count still
+    stands; the total does not. The company's newest schedule (BRC, May 2026)
+    states 1,972,133,054, which makes Bevco's 102,862,718 5.2%.
+
+    In place, on the filings of ONE issuer as read in one scrape: for each
+    share class the newest stated total wins; every older filing with a count
+    of its own (not a bloc-only row, not an ended one) is restated against it,
+    `denominator_date` saying where the total comes from. A total that moved
+    more than `_DENOMINATOR_DRIFT`-fold is a split, not the same shares, and is
+    left alone.
+    """
+    newest: dict[str, tuple[str, int]] = {}
+    for f in filings:
+        total, date = f.get("shares_outstanding"), f.get("file_date") or ""
+        if total and date:
+            k = _class_key(f.get("share_class"))
+            if k not in newest or date > newest[k][0]:
+                newest[k] = (date, total)
+    for f in filings:
+        f.setdefault("denominator_date", None)
+        k = _class_key(f.get("share_class"))
+        if k not in newest or f.get("until") or f.get("stake_percent") is None or not f.get("shares"):
+            continue
+        date, total = newest[k]
+        old = f.get("shares_outstanding")
+        if (f.get("file_date") or "") >= date or not old or total == old:
+            continue
+        if max(total, old) / min(total, old) > _DENOMINATOR_DRIFT:
+            log.info("SEC EDGAR: %r's total moved %s → %s; not restating across a split",
+                     f.get("investor_name"), old, total)
+            continue
+        pct = _pct_of(f["shares"], total)
+        log.info("SEC EDGAR: restated %r %s%% → %s%% against the %s total",
+                 f.get("investor_name"), f.get("stake_percent"), pct, date)
+        f["stake_percent"] = pct
+        f["shares_outstanding"] = total
+        f["denominator_date"] = date
+        f["ownership_type"] = derive_ownership_type(pct, f.get("form_type") or "")
 
 
 # ── Executives from Form 3/4 (structured XML) ────────────────────────────────

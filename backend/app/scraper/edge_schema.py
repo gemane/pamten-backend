@@ -43,6 +43,11 @@ OWNS_PROPS: tuple = (
     "share_class",
     "shares",
     "shares_outstanding",
+    # The filing date `shares_outstanding` comes from, when it is NEWER than
+    # the holder's own filing: the stake was re-divided by the issuer's latest
+    # stated total (sec_edgar._restate_against_newest_denominator). Unset when
+    # the total is the holder's own filing's.
+    "denominator_date",
     "voting_shares",
     "stale",
     "shortcut",

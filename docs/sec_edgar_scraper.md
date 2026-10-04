@@ -156,6 +156,20 @@ Bevco's holding has not changed since 2020; it reads 5.9% only because it is
 divided by a five-year-old total. Against the current one it is 5.23%. Without
 the counts that is invisible — the two percentages look equally current.
 
+**So older holdings are restated** (`_restate_against_newest_denominator`, at the
+end of `fetch_ownership_filings`). Among the schedules about one issuer, the
+newest stated total per share class wins (BRC's May 2026 13D/A: 1,972,133,054),
+and every older filing with a count of its own is re-divided by it: Bevco
+102,862,718 → **5.22 %**, Altria → 8.07 %. The edge (and its claim) keeps the new
+`shares_outstanding` and `denominator_date` — the date of the filing the total
+comes from — so the panel can say the count is 2020's and the total 2026's. A 13D
+must be amended for any change of 1 % or more, which is why an unamended count
+still stands. Left alone: a bloc-only row (no stake of its own), an ended
+holding, another share class, and a total that moved more than 2× — a split
+makes an old count meaningless. Classes are compared by `_class_key`, which reads
+"Ordinary Shares … and American Depositary Shares, each of which represents one
+(1) Ordinary Share" as the ordinary shares it is.
+
 `_shares_held` takes **dispositive** power, not voting: what a filer can sell is
 what it owns. Sole where it has any, else the shares it disposes of jointly (BRC
 can sell nothing alone, but the Stichting it co-owns holds 771,096,582 — a real

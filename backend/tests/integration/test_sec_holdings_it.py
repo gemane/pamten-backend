@@ -267,3 +267,28 @@ def test_the_website_reaches_the_filer_and_its_subjects(it_db):
                return_value="https://usurper.example.com/"):
         _run(it_db)
     assert _websites(it_db)["Hologic Inc"] == "https://cik-859737.example.com/"
+
+
+# ── A stake restated against the issuer's newest total (2026-10-04) ──────────
+# Bevco's 2020 count against AB InBev's 2026 total: the edge and the claim
+# carry the restated percentage, the new total and where that total is from;
+# a later write without a restatement clears the date.
+
+def test_a_restated_stake_carries_its_denominator_date(it_db):
+    _write_issuer_side(it_db, [_filing(stake_percent=5.2158, shares=102862718,
+                                       shares_outstanding=1972133054,
+                                       denominator_date="2026-05-15")])
+    edge = _edge_with_stake(it_db, 5.2158)
+    assert edge is not None
+    assert edge.get("shares_outstanding") == 1972133054
+    assert edge.get("denominator_date") == "2026-05-15"
+    claim = it_db.run_sql("SELECT FROM Claim WHERE kind = 'owns'")[0]
+    assert claim.get("denominator_date") == "2026-05-15"
+
+    # the holder files again, its own total current: no restatement, no date
+    _write_issuer_side(it_db, [_filing(stake_percent=5.3, shares=102862718,
+                                       shares_outstanding=1940000000,
+                                       denominator_date=None)])
+    edge = _edge_with_stake(it_db, 5.3)
+    assert edge is not None and edge.get("denominator_date") is None
+    assert it_db.run_sql("SELECT FROM Claim WHERE kind = 'owns'")[0].get("denominator_date") is None

@@ -46,7 +46,7 @@ from __future__ import annotations
 #: One source's answer about the pair. Moved together, never mixed across sources.
 ANSWER_FIELDS: tuple = (
     "stake_percent", "voting_power_pct", "ownership_type",
-    "share_class", "shares", "shares_outstanding", "voting_shares", "value_usd",
+    "share_class", "shares", "shares_outstanding", "denominator_date", "voting_shares", "value_usd",
     "until", "until_reason",
     "source_id", "credibility_score", "source_url", "source_date", "file_date",
     "filing_type",

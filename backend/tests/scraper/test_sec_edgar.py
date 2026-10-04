@@ -1505,7 +1505,7 @@ class TestANegligibleHoldingIsNotZero:
         elsewhere = src.replace(helper, "")
         assert not re.search(r"round\([^)]*/[^)]*\*\s*100,\s*4\)", elsewhere), \
             "a stake is rounded outside _pct_of — the floor rule will drift"
-        assert elsewhere.count("_pct_of(") == 4      # the four call sites (a lone voting-agreement party is the fourth)
+        assert elsewhere.count("_pct_of(") == 5      # the call sites: + a lone voting-agreement party, + the newest-denominator restatement
 
 
 class TestSecWebsite:
@@ -2039,3 +2039,85 @@ class TestDeparturesFromEightK:
         from app.scraper import sec_edgar
         with patch.object(sec_edgar, "_get", side_effect=AssertionError("must not fetch")):
             assert sec_edgar.fetch_departures("320193", []) == []
+
+
+class TestNewestDenominator:
+    """A stake is `shares / shares_outstanding`; only the count is the
+    holder's. Bevco's last 13D/A on AB InBev (2020) says 102,862,718 of
+    1,730,242,027 = 5.9%; the company's newest schedule (BRC, 2026) states
+    1,972,133,054. The real figures from the three filings."""
+
+    ORD = "Ordinary Shares, without nominal value"
+    ORD_ADS = ("Ordinary Shares, without nominal value and American Depositary Shares, "
+               "each of which represents one (1) Ordinary Share, without nominal value")
+
+    def filings(self):
+        return [
+            {"investor_name": "Brc S.A R.L.", "file_date": "2026-05-15", "form_type": "SCHEDULE 13D/A",
+             "stake_percent": None, "voting_power_pct": 52.3, "shares": 769317631,
+             "shares_outstanding": 1972133054, "share_class": self.ORD_ADS, "until": None},
+            {"investor_name": "Altria Group, Inc.", "file_date": "2025-02-07", "form_type": "SCHEDULE 13D/A",
+             "stake_percent": 8.0965, "voting_power_pct": 51.9, "shares": 159121937,
+             "shares_outstanding": 1965328900, "share_class": self.ORD, "until": None},
+            {"investor_name": "Bevco Lux S.A.R.L.", "file_date": "2020-03-10", "form_type": "SC 13D/A",
+             "stake_percent": 5.9, "voting_power_pct": None, "shares": 102862718,
+             "shares_outstanding": 1730242027, "share_class": self.ORD, "until": None},
+        ]
+
+    def test_the_class_key_sees_through_the_wording(self):
+        from app.scraper.sec_edgar import _class_key
+        assert _class_key(self.ORD) == _class_key(self.ORD_ADS) == "ordinary shares"
+        assert _class_key("Common Stock, par value $0.001 per share") == "common stock"
+        assert _class_key("Class A Common Stock") != _class_key("Class B Common Stock")
+        assert _class_key(None) == ""
+
+    def test_older_counts_are_divided_by_the_newest_total(self):
+        from app.scraper.sec_edgar import _restate_against_newest_denominator
+        fs = self.filings()
+        _restate_against_newest_denominator(fs)
+        brc, altria, bevco = fs
+        assert bevco["stake_percent"] == pytest.approx(5.216, abs=0.001)    # 102,862,718 / 1,972,133,054
+        assert bevco["shares_outstanding"] == 1972133054
+        assert bevco["denominator_date"] == "2026-05-15"
+        assert bevco["ownership_type"] == "minority"
+        assert altria["stake_percent"] == pytest.approx(8.0685, abs=0.001)
+        assert altria["voting_power_pct"] == 51.9                           # the bloc is the bloc
+        # the newest filing is its own denominator; a bloc-only row has no stake to restate
+        assert brc["stake_percent"] is None and brc["denominator_date"] is None
+
+    def test_what_is_left_alone(self):
+        from app.scraper.sec_edgar import _restate_against_newest_denominator
+        fs = self.filings()
+        fs[2]["share_class"] = "Class B Common Stock"                         # another class
+        fs[1]["until"] = "2025-06-01"                                         # an ended holding
+        _restate_against_newest_denominator(fs)
+        assert fs[2]["stake_percent"] == 5.9 and fs[2]["denominator_date"] is None
+        assert fs[1]["stake_percent"] == 8.0965 and fs[1]["denominator_date"] is None
+
+    def test_not_across_a_split(self):
+        from app.scraper.sec_edgar import _restate_against_newest_denominator
+        fs = self.filings()
+        fs[0]["shares_outstanding"] = 1730242027 * 3                         # a 3-for-1 split since 2020
+        fs[1]["shares_outstanding"] = 1730242027 * 3
+        _restate_against_newest_denominator(fs)
+        assert fs[2]["stake_percent"] == 5.9 and fs[2]["denominator_date"] is None
+
+    def test_a_same_day_or_equal_total_changes_nothing(self):
+        from app.scraper.sec_edgar import _restate_against_newest_denominator
+        fs = self.filings()
+        fs[2]["file_date"] = "2026-05-15"
+        _restate_against_newest_denominator(fs)
+        assert fs[2]["stake_percent"] == 5.9
+        fs = self.filings()
+        fs[2]["shares_outstanding"] = 1972133054
+        _restate_against_newest_denominator(fs)
+        assert fs[2]["stake_percent"] == 5.9 and fs[2]["denominator_date"] is None
+
+    def test_the_newest_total_wins_whatever_the_order(self):
+        # EDGAR lists newest first, but nothing should depend on that
+        from app.scraper.sec_edgar import _restate_against_newest_denominator
+        fs = list(reversed(self.filings()))
+        _restate_against_newest_denominator(fs)
+        bevco = next(f for f in fs if f["investor_name"].startswith("Bevco"))
+        assert bevco["denominator_date"] == "2026-05-15"
+        assert bevco["shares_outstanding"] == 1972133054

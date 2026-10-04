@@ -67,6 +67,24 @@ parser. Anything that does not map is either a new property (document it) or noi
 - [ ] **Ownership** — `stake_percent`, `ownership_type`, and `since`/`until` where the
       source states them. Bands ("more than 25%") are common: store what is stated, do not
       invent a midpoint.
+- [ ] **A reported "ownership" percentage may be power, not property.** Registers of
+      *beneficial* ownership (SEC 13D/G, and the UBO/PSC family) count shares a holder can
+      vote OR sell, so a party to a voting agreement reports the whole pooled bloc: Altria's
+      13D/A states 51.9 % of AB InBev, and 8.1 % is its own. Read the power rows (sole/shared
+      voting and dispositive) and judge by their SHAPE, not by how many parties filed: votes
+      beyond everything the holder can dispose of are somebody else's shares → that figure
+      is `voting_power_pct`, never `stake_percent`. Altria files alone, and the co-filer
+      test alone made it AB InBev's majority owner. And never *derive* other holders'
+      voting from someone's bloc: pooled votes dilute nobody; only extra votes per share
+      (a dual-class issuer) do, and then only the source's own class votes say by how much.
+- [ ] **Store the count beside the percentage, and say whose denominator it is.** A stake
+      is `shares / shares_outstanding`, and only the count belongs to the holder; the total
+      moves with every issue and buy-back. Bevco's last 13D/A (2020) said 5.9 % of AB InBev;
+      the same 102,862,718 shares are 5.2 % of the 2026 total. When the same source has a
+      newer total for the SAME class, restate older holdings against it and record where it
+      came from (`denominator_date`), never across a split (a total that moved more than
+      2×), and compare share classes by what they are, not by their wording (ADSs "each
+      representing one ordinary share" are the ordinary shares).
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
       Registered/Headquarters switch exists precisely because they differ.

@@ -102,7 +102,7 @@ def test_a_person_merge_carries_every_owns_property(it_db):
               "source_date": "2026-01-02", "last_scraped_at": "2026-08-28T00:00Z",
               "interest_types": ["voting-rights"], "direct_or_indirect": "direct",
               "psc_self_link": "/company/x/psc/1", "share_class": "Common Stock",
-              "shares": 159121937, "shares_outstanding": 1965328900,
+              "shares": 159121937, "shares_outstanding": 1965328900, "denominator_date": "2026-05-15",
               "voting_shares": 1020598157, "stale": False, "shortcut": False,
               "also_ultimate": True, "ultimate_since": "2019-05-05",
               "ultimate_until": None, "value_usd": 1234.5, "file_date": "2026-01-02",

@@ -1666,6 +1666,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             share_class=filing.get("share_class"),
             shares=filing.get("shares"),
             shares_outstanding=filing.get("shares_outstanding"),
+            denominator_date=filing.get("denominator_date"),
             voting_shares=filing.get("voting_shares"),
             source_url=filing.get("source_url"),
             filing_type=filing.get("filing_type"),
