@@ -124,11 +124,15 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
             f"""MATCH (n:{olabel} {{id: $oid}})-[r:OWNS]->(c:Entity {{id: $cid}})
                WHERE r.until IS NULL
                SET r.voting_power_pct = $pct,
-                   r.ownership_type   = $otype""",
+                   r.ownership_type   = $otype,
+                   r.source_date      = COALESCE(r.source_date, $pdate)""",
             {
                 "oid":   oid,
                 "cid":   company_id,
                 "pct":   pct,
+                # the proxy's own date: as of it the voting power stood so (the
+                # edge's existing evidence date, if any, is kept)
+                "pdate": (proxy.get("filing_date") or "")[:10] or None,
                 # A stake and `unknown` cannot both be true; re-derive rather than
                 # carry the contradiction forward.
                 "otype": coherent_ownership_type(row.get("stake"), row.get("ownership_type")),

@@ -265,6 +265,8 @@ def _upsert_entity(
                     description or rec.get("descr") or "",
                     " ".join(final_aliases)) if p).strip()
                 name_norm = normalize_entity_name(kept_name)
+            # founded only moves EARLIER: time travel hides a company before
+            # it, and a later year from Wikidata replaced an earlier one.
             # lei_id / sec_cik use COALESCE(existing, new): a register (GLEIF/SEC)
             # is authoritative for its own identifier and Wikidata is crowd-edited,
             # so only fill a gap — a clobbered lei_id would re-point a merge key at
@@ -278,7 +280,7 @@ def _upsert_entity(
                     e.sec_cik         = COALESCE(e.sec_cik, $sec_cik),
                     e.type            = COALESCE($type, e.type),
                     e.country         = COALESCE($country, e.country),
-                    e.founded         = COALESCE($founded, e.founded),
+                    e.founded         = CASE WHEN $founded IS NOT NULL AND (e.founded IS NULL OR $founded < e.founded) THEN $founded ELSE e.founded END,
                     e.revenue         = COALESCE($revenue, e.revenue),
                     e.employees       = COALESCE($employees, e.employees),
                     e.employees_as_of = COALESCE($employees_as_of, e.employees_as_of),
@@ -572,7 +574,8 @@ def _scrape_node(
             source_id=source_id,
         )
         _upsert_owns(entity_id, sub_id, source_id,
-                     source_url=_wikidata_url(sub["qid"]))
+                     source_url=_wikidata_url(sub["qid"]),
+                     since=sub.get("since"), until=sub.get("until"))
         if depth > 1:
             _scrape_node(sub["qid"], depth - 1, visited, scraped, source_id,
                          parent_entity_id=entity_id, counts=counts)
@@ -661,7 +664,8 @@ def _scrape_node(
             )
             owner_label = "Entity"
         _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid),
-                     owner_label=owner_label)
+                     owner_label=owner_label,
+                     since=owner.get("since"), until=owner.get("until"))
 
     # Succession (P1366 replaced-by / P1365 replaces) → SUCCEEDED_BY edge, always
     # directed predecessor → successor. Each side is a distinct entity (e.g.
@@ -1362,6 +1366,10 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 filing_type="13F",
                 # A quarter-end snapshot: held at the period end, not bought then.
                 filing_dates_the_stake=False,
+                # ...but held BY then: the earliest quarter a holder appears in is
+                # a lower bound (combined in the writer, so a later quarter never
+                # moves it), and time travel shows the holding from it on.
+                since_date=h.get("period"), since_basis="first_reported",
                 source_url=h.get("source_url"))
             written += 1
 
@@ -2152,6 +2160,18 @@ def run_scrape_open_corporates(company_name: str, country: str | None = None) ->
     )
     _stamp_registration(target_id, data.get("jurisdiction_code"), data.get("company_number"))
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
+    # The register's incorporation date was fetched and thrown away, so time
+    # travel never knew when the company began. Founding dates only move
+    # EARLIER (the same rule as the bulk importers).
+    inc = (data.get("incorporation_date") or "")[:10]
+    if len(inc) == 10 and inc[4] == "-" and inc[7] == "-":
+        with db.get_session() as session:
+            session.run(
+                "MATCH (e:Entity {id: $id}) "
+                "SET e.founded_date = CASE WHEN e.founded_date IS NULL OR $d < e.founded_date "
+                "THEN $d ELSE e.founded_date END, "
+                "e.founded = CASE WHEN e.founded IS NULL OR $y < e.founded THEN $y ELSE e.founded END",
+                id=target_id, d=inc, y=int(inc[:4]))
 
     # Registered address → geocoded onto the entity itself.
     address = data.get("registered_address") or {}

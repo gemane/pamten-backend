@@ -70,6 +70,7 @@ LOWER_BOUND = "first_listed"
 #:   first_listed  — the oldest Exhibit 21 naming the subsidiary
 #:   amendment     — a 13D/G amendment's date: held by then, start not seen
 #:   register_start — UK PSC notified on 2016-04-06, the day the register began
+#:   first_reported — the earliest 13F quarter a manager reported the holding in
 #: The as-of clauses (search._active_clause, relationships.subsidiary_tree_of)
 #: and the client's asOf.startedAfter read this rule, never a single value.
 STATED_BASES = frozenset({"newly_listed"})

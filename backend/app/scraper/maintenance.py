@@ -929,11 +929,15 @@ def mark_ownership_shortcuts(limit: int | None = None) -> dict:
     # statement — 500 per batch — and on the 8 GB sizing box (7.5 GB of OWNS)
     # the server was still executing orphaned batches hours after the client
     # had timed out on them.
+    # CURRENT edges only: a direct chain that has ended proves nothing about
+    # an indirect holding that goes on — flagged by it, the indirect edge was
+    # hidden after its chain was gone.
     direct_edges = run_sql(
-        "SELECT @out.id AS a, @in.id AS b FROM OWNS WHERE direct_or_indirect = 'direct'")
+        "SELECT @out.id AS a, @in.id AS b FROM OWNS "
+        "WHERE direct_or_indirect = 'direct' AND until IS NULL")
     indirect_edges = run_sql(
         "SELECT @rid AS rid, @out.id AS a, @in.id AS b, shortcut AS flag FROM OWNS "
-        "WHERE direct_or_indirect = 'indirect'")
+        "WHERE direct_or_indirect = 'indirect' AND until IS NULL")
 
     adjacency: dict[str, list[str]] = {}
     for e in direct_edges:

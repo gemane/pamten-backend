@@ -20,6 +20,7 @@ from app.claims import KIND_OWNS, KIND_ROLE, KIND_SUCCESSION, record_claim
 from app.roles import canonical_role
 from app.database import db
 from app.entity_resolution import resolve_entity_id
+from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.scraper.mapper import is_nominee_name, normalize_entity_name, parse_full_name
 import logging
@@ -250,7 +251,8 @@ def _person_search_text(full_name: str, aliases: list[str] | None) -> str:
 
 def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
                  source_url: str | None = None, source_date: str | None = None,
-                 owner_label: str = "Entity", credibility_score: int = 80):
+                 owner_label: str = "Entity", credibility_score: int = 80,
+                 since: str | None = None, until: str | None = None):
     """Create an active OWNS edge if one doesn't already exist, and record this
     source's claim behind it.
 
@@ -285,10 +287,13 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
         return
     owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
     now = _now_iso()
+    # The statement's own period (Wikidata P580/P582), and the day the source
+    # says so — its evidence date when it gives no start.
+    source_date = source_date or now[:10]
     create_clause = edge_create_clause(OWNS_PROPS)
     record_claim(
         kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
-        source_url=source_url, source_date=source_date,
+        since=since, until=until, source_url=source_url, source_date=source_date,
         credibility_score=credibility_score,
     )
     # A claims-only source may assert (the claim above) but not draw —
@@ -298,6 +303,27 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
     if edge_writes_suppressed(source_id):
         return None
     with db.get_session() as session:
+        if until:
+            # An ENDED holding is history: its own closed edge (once), never a
+            # change to the pair's current one.
+            same = session.run(
+                f"""
+                MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+                WHERE r.until = $until AND ((r.since IS NULL AND $since IS NULL) OR r.since = $since)
+                RETURN r LIMIT 1
+                """, oid=owner_id, nid=owned_id, until=until, since=since).single()
+            if not same:
+                session.run(
+                    f"""
+                    MATCH (a:{owner_label} {{id: $oid}}), (b:Entity {{id: $nid}})
+                    CREATE (a)-[:OWNS {{{create_clause}}}]->(b)
+                    """,
+                    oid=owner_id, nid=owned_id,
+                    **owns_props(ownership_type="unknown", source_id=source_id,
+                                 credibility_score=credibility_score, since=since, until=until,
+                                 source_url=source_url, source_date=source_date,
+                                 last_scraped_at=now, stale=False))
+            return
         exists = session.run(
             f"""
             MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
@@ -332,6 +358,18 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
                 oid=owner_id, nid=owned_id, now=now, cred=credibility_score,
                 surl=source_url, sdate=source_date,
             )
+            # The start, combined like every writer's: the earliest wins, a
+            # stated one over a lower bound on the same day.
+            held = exists["r"]
+            started = combine_since({f: held.get(f) for f in SINCE_FIELDS}, {"since": since})
+            if started["since"] != held.get("since") or started["since_basis"] != held.get("since_basis"):
+                session.run(
+                    f"""
+                    MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+                    WHERE r.until IS NULL
+                    SET r.since = $s, r.since_basis = $b, r.since_source_url = $u
+                    """, oid=owner_id, nid=owned_id, s=started["since"],
+                    b=started["since_basis"], u=started["since_source_url"])
             return
         session.run(
             f"""
@@ -343,7 +381,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
             # it is null, but the key set matches every other writer's, which
             # is the point: the same schema, however sparse the source.
             **owns_props(ownership_type="unknown", source_id=source_id,
-                         credibility_score=credibility_score,
+                         credibility_score=credibility_score, since=since,
                          source_url=source_url, source_date=source_date,
                          last_scraped_at=now, stale=False),
         )

@@ -695,7 +695,7 @@ class TestUpsertOwns:
         assert session.run.call_count == 2
 
     def test_refreshes_and_backfills_when_edge_exists(self):
-        ctx, session = _make_session_mock(single_returns=[{"r": "exists"}])
+        ctx, session = _make_session_mock(single_returns=[{"r": {}}])   # an existing edge
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_owns("owner-id", "owned-id", "src-1",
                          source_url="https://www.wikidata.org/wiki/Q2283")

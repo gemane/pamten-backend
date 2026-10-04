@@ -48,6 +48,7 @@ EXPECTED: dict[str, list] = {
     # The module split moved both OWNS writers out of runner: the shared one to
     # graph_writer, the SEC one to sec_writer. Same two sites, new addresses.
     "app/scraper/graph_writer.py": [
+        {"GENERATED"},        # _upsert_owns: an ended holding, its own closed edge
         {"GENERATED"},        # _upsert_owns (the shared writer)
     ],
     "app/scraper/sec_writer.py": [

@@ -522,6 +522,14 @@ r'percent\s+of\s+class\s+represented\s+by\s+amount\s+in\s+row\s+\d+\s+(\d{1,2}\.
 
 ## Quarterly Holdings — Form 13F
 
+**For time travel** a 13F row is an as-of statement, so its quarter is never a
+stated start: the earliest quarter a manager reported the holding in is a
+**lower bound** (`since_basis = first_reported`, combined so a later quarter never
+moves it), and `source_date` is the latest quarter. An edge a newer quarter no
+longer confirms is `stale` — dimmed in the panel, and in time travel for the
+years after its last confirmation. `heal-sec-dates` gave holdings written before
+this their quarter as the lower bound.
+
 Every institutional manager over $100M files a quarterly report of what it
 holds. Since 2013 the information table is structured XML — issuer name, CUSIP,
 dollar value, share count, voting authority — so unlike the pre-2024 schedules

@@ -376,35 +376,45 @@ def _sparql(qid: str) -> list:
     """
     # 2. People: CEO / founder / chair / board — UNION so one person per row.
     people = f"""
-    SELECT ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode ?ceoStart ?ceoEnd
-           ?founder ?founderLabel ?founderStart ?founderEnd
-           ?chair ?chairLabel ?chairStart ?chairEnd
-           ?board ?boardLabel ?boardStart ?boardEnd
+    SELECT ?ceo ?ceoLabel ?ceoDescription ?ceoNationalityCode ?ceoStart ?ceoEnd ?ceoStartP ?ceoEndP
+           ?founder ?founderLabel ?founderStart ?founderEnd ?founderStartP ?founderEndP
+           ?chair ?chairLabel ?chairStart ?chairEnd ?chairStartP ?chairEndP
+           ?board ?boardLabel ?boardStart ?boardEnd ?boardStartP ?boardEndP
     WHERE {{
       BIND(wd:{qid} AS ?item)
       {{
         ?item p:P169 ?ceoStmt . ?ceoStmt ps:P169 ?ceo .
         OPTIONAL {{ ?ceoStmt pq:P580 ?ceoStart }}
+               OPTIONAL {{ ?ceoStmt pqv:P580/wikibase:timePrecision ?ceoStartP }}
         OPTIONAL {{ ?ceoStmt pq:P582 ?ceoEnd }}
+               OPTIONAL {{ ?ceoStmt pqv:P582/wikibase:timePrecision ?ceoEndP }}
         OPTIONAL {{ ?ceo wdt:P27 ?ceoNationality . ?ceoNationality wdt:P297 ?ceoNationalityCode }}
         OPTIONAL {{ ?ceo schema:description ?ceoDescription . FILTER(LANG(?ceoDescription) = "en") }}
       }}
       UNION {{ ?item p:P112 ?founderStmt . ?founderStmt ps:P112 ?founder .
                OPTIONAL {{ ?founderStmt pq:P580 ?founderStart }}
-               OPTIONAL {{ ?founderStmt pq:P582 ?founderEnd }} }}
+               OPTIONAL {{ ?founderStmt pqv:P580/wikibase:timePrecision ?founderStartP }}
+               OPTIONAL {{ ?founderStmt pq:P582 ?founderEnd }}
+               OPTIONAL {{ ?founderStmt pqv:P582/wikibase:timePrecision ?founderEndP }} }}
       UNION {{ ?item p:P488 ?chairStmt . ?chairStmt ps:P488 ?chair .
                OPTIONAL {{ ?chairStmt pq:P580 ?chairStart }}
-               OPTIONAL {{ ?chairStmt pq:P582 ?chairEnd }} }}
+               OPTIONAL {{ ?chairStmt pqv:P580/wikibase:timePrecision ?chairStartP }}
+               OPTIONAL {{ ?chairStmt pq:P582 ?chairEnd }}
+               OPTIONAL {{ ?chairStmt pqv:P582/wikibase:timePrecision ?chairEndP }} }}
       UNION {{ ?item p:P3320 ?boardStmt . ?boardStmt ps:P3320 ?board .
                OPTIONAL {{ ?boardStmt pq:P580 ?boardStart }}
-               OPTIONAL {{ ?boardStmt pq:P582 ?boardEnd }} }}
+               OPTIONAL {{ ?boardStmt pqv:P580/wikibase:timePrecision ?boardStartP }}
+               OPTIONAL {{ ?boardStmt pq:P582 ?boardEnd }}
+               OPTIONAL {{ ?boardStmt pqv:P582/wikibase:timePrecision ?boardEndP }} }}
       {_LABEL_SERVICE}
     }}
     """
     # 3. Relations: subsidiaries, parent, owners, succession (replaced-by / replaces).
     relations = f"""
     SELECT ?subsidiary ?subsidiaryLabel ?subsidiaryInstance ?subsidiaryLei ?subsidiaryCik ?parent
+           ?subsidiaryStart ?subsidiaryStartP ?subsidiaryEnd ?subsidiaryEndP
            ?owner ?ownerLabel ?ownerInstance ?ownerLei ?ownerCik
+           ?ownerStart ?ownerStartP ?ownerEnd ?ownerEndP
            ?successor ?successorLabel ?successorDate ?successorLei ?successorCik
            ?predecessor ?predecessorLabel ?predecessorDate ?predecessorLei ?predecessorCik
     WHERE {{
@@ -412,12 +422,28 @@ def _sparql(qid: str) -> list:
       # Per-related-item hard ids (P1278 LEI / P5531 CIK): the node-hygiene rule
       # skips creating a related COMPANY that carries neither and does not
       # already exist, so these are what let an identified subsidiary still flow.
-      OPTIONAL {{ ?item wdt:P355 ?subsidiary .
+      # Statements, not truthy values: their start/end qualifiers (P580/P582)
+      # are what time travel needs, and an ENDED statement is history even
+      # where it is not the best rank (a former owner beside a preferred
+      # current one). An open, non-best one is left out, as `wdt:` did.
+      OPTIONAL {{ ?item p:P355 ?subStmt . ?subStmt ps:P355 ?subsidiary .
+                  FILTER NOT EXISTS {{ ?subStmt wikibase:rank wikibase:DeprecatedRank }}
+                  FILTER (EXISTS {{ ?subStmt a wikibase:BestRank }} || EXISTS {{ ?subStmt pq:P582 ?subEndAny }})
+                  OPTIONAL {{ ?subStmt pq:P580 ?subsidiaryStart }}
+                  OPTIONAL {{ ?subStmt pqv:P580/wikibase:timePrecision ?subsidiaryStartP }}
+                  OPTIONAL {{ ?subStmt pq:P582 ?subsidiaryEnd }}
+                  OPTIONAL {{ ?subStmt pqv:P582/wikibase:timePrecision ?subsidiaryEndP }}
                   OPTIONAL {{ ?subsidiary wdt:P31 ?subsidiaryInstance }}
                   OPTIONAL {{ ?subsidiary wdt:P1278 ?subsidiaryLei }}
                   OPTIONAL {{ ?subsidiary wdt:P5531 ?subsidiaryCik }} }}
       OPTIONAL {{ ?item wdt:P749 ?parent }}
-      OPTIONAL {{ ?item wdt:P127 ?owner .
+      OPTIONAL {{ ?item p:P127 ?ownStmt . ?ownStmt ps:P127 ?owner .
+                  FILTER NOT EXISTS {{ ?ownStmt wikibase:rank wikibase:DeprecatedRank }}
+                  FILTER (EXISTS {{ ?ownStmt a wikibase:BestRank }} || EXISTS {{ ?ownStmt pq:P582 ?ownEndAny }})
+                  OPTIONAL {{ ?ownStmt pq:P580 ?ownerStart }}
+                  OPTIONAL {{ ?ownStmt pqv:P580/wikibase:timePrecision ?ownerStartP }}
+                  OPTIONAL {{ ?ownStmt pq:P582 ?ownerEnd }}
+                  OPTIONAL {{ ?ownStmt pqv:P582/wikibase:timePrecision ?ownerEndP }}
                   OPTIONAL {{ ?owner wdt:P31 ?ownerInstance }}
                   OPTIONAL {{ ?owner wdt:P1278 ?ownerLei }}
                   OPTIONAL {{ ?owner wdt:P5531 ?ownerCik }} }}
@@ -801,9 +827,37 @@ def _date(row: dict, key: str) -> str | None:
     Wikidata's "unknown value" is a blank node, which SPARQL returns as
     `http://www.wikidata.org/.well-known/genid/…` — cut to ten characters that
     became the start date "http://www" on Jeff Weiner's LinkedIn seat.
+
+    Precision kept: Wikidata stores a year-only date as January 1st, and that
+    day is not the source's. With the companion ``{key}P`` precision
+    (``wikibase:timePrecision``: 9 year, 10 month, 11 day) a year is written
+    ``YYYY-00-00`` and a month ``YYYY-MM-00`` — the partial form PSC dates
+    already use, which sorts where it belongs. No precision given: as before.
     """
     raw = (_v(row, key) or "")[:10]
-    return raw if _ISO_DAY.fullmatch(raw) else None
+    if not _ISO_DAY.fullmatch(raw):
+        return None
+    precision = _v(row, f"{key}P")
+    if precision == "9":
+        return raw[:4] + "-00-00"
+    if precision == "10":
+        return raw[:7] + "-00"
+    return raw
+
+
+def _add_period(rel: dict, since: str | None, until: str | None) -> None:
+    """Fold one statement's period into a related company's: the EARLIEST
+    start any statement gives, and ended only when every statement has (one
+    open statement keeps the relationship current). Rows repeat a statement
+    once per instance/label combination, which changes nothing here."""
+    if since and (rel.get("since") is None or since < rel["since"]):
+        rel["since"] = since
+    if "_open" not in rel:
+        rel["_open"], rel["until"] = False, None
+    if until is None:
+        rel["_open"], rel["until"] = True, None
+    elif not rel["_open"] and (rel["until"] is None or until > rel["until"]):
+        rel["until"] = until
 
 
 #: A bare Q-number, which is what the label service returns when it has no label
@@ -1051,6 +1105,9 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                 }
             if sub_inst := _v(row, "subsidiaryInstance"):
                 result["subsidiaries"][sub_qid]["instances"].add(_qid(sub_inst))
+            if sub_qid:
+                _add_period(result["subsidiaries"][sub_qid], _date(row, "subsidiaryStart"),
+                            _date(row, "subsidiaryEnd"))
 
         # Parent org
         if parent_uri := _v(row, "parent"):
@@ -1063,7 +1120,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if succ_qid and succ_qid not in result["successors"]:
                 result["successors"][succ_qid] = {
                     "qid": succ_qid, "name": _label(row, "successorLabel"),
-                    "date": (_v(row, "successorDate") or "")[:10] or None,
+                    "date": _date(row, "successorDate"),
                     "lei": normalize_lei(_v(row, "successorLei")),
                     "sec_cik": normalize_cik(_v(row, "successorCik"))}
         if pred_uri := _v(row, "predecessor"):
@@ -1124,6 +1181,9 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                 }
             if owner_inst := _v(row, "ownerInstance"):
                 result["owners"][owner_qid]["instances"].add(_qid(owner_inst))
+            if owner_qid:
+                _add_period(result["owners"][owner_qid], _date(row, "ownerStart"),
+                            _date(row, "ownerEnd"))
 
     # ── Headquarters: choose a consistent primary + list them all ────────────
     multi_country = len(result["countries"]) > 1
@@ -1168,6 +1228,10 @@ def _aggregate(qid: str, rows: list) -> dict | None:
     result["officers"]     = list(result["officers"].values())
     for o in result["owners"].values():
         o["instances"] = list(o["instances"])
+    for rel in (*result["owners"].values(), *result["subsidiaries"]):   # subsidiaries: a list by now
+        rel.pop("_open", None)
+        rel.setdefault("since", None)
+        rel.setdefault("until", None)
     result["owners"]       = list(result["owners"].values())
     result.pop("headquarters", None)
 

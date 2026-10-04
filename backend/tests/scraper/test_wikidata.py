@@ -842,3 +842,70 @@ class TestUnknownValueIsNotADate:
                "ceoEnd":   {"value": "2020-06-01T00:00:00Z"}}
         ceo = _aggregate("Q1", [row])["ceos"][0]
         assert ceo["since"] is None and ceo["until"] == "2020-06-01"
+
+
+class TestStatementPeriods:
+    """Owners and subsidiaries carry their statements' periods (P580/P582) for
+    time travel; an ended former owner is history, a current one is open."""
+
+    @staticmethod
+    def _owner(qid, start=None, end=None, start_p=None, end_p=None):
+        row = {**APPLE_ROW, "owner": {"value": f"http://www.wikidata.org/entity/{qid}"},
+               "ownerLabel": {"value": qid}}
+        for key, val in (("ownerStart", start), ("ownerEnd", end),
+                         ("ownerStartP", start_p), ("ownerEndP", end_p)):
+            if val is not None:
+                row[key] = {"value": val}
+        return row
+
+    def test_an_ended_owner_and_a_current_one(self):
+        out = _aggregate("Q1", [self._owner("Q10", "2001-03-05T00:00:00Z", "2015-06-30T00:00:00Z"),
+                                self._owner("Q11", "2015-07-01T00:00:00Z")])
+        owners = {o["qid"]: (o["since"], o["until"]) for o in out["owners"]}
+        assert owners == {"Q10": ("2001-03-05", "2015-06-30"), "Q11": ("2015-07-01", None)}
+
+    def test_several_statements_earliest_start_open_if_any_is(self):
+        out = _aggregate("Q1", [self._owner("Q10", "2005-01-01T00:00:00Z", "2009-01-01T00:00:00Z"),
+                                self._owner("Q10", "2012-01-01T00:00:00Z"),
+                                self._owner("Q10", "2005-01-01T00:00:00Z", "2009-01-01T00:00:00Z")])
+        assert (out["owners"][0]["since"], out["owners"][0]["until"]) == ("2005-01-01", None)
+        out = _aggregate("Q1", [self._owner("Q10", "2005-01-01T00:00:00Z", "2009-01-01T00:00:00Z"),
+                                self._owner("Q10", "2012-01-01T00:00:00Z", "2014-01-01T00:00:00Z")])
+        assert out["owners"][0]["until"] == "2014-01-01"          # every period ended: the last end
+
+    def test_the_earliest_start_whatever_the_row_order(self):
+        out = _aggregate("Q1", [self._owner("Q10", "2012-01-01T00:00:00Z"),
+                                self._owner("Q10", "2005-01-01T00:00:00Z", "2009-01-01T00:00:00Z")])
+        assert out["owners"][0]["since"] == "2005-01-01"
+
+    def test_precision_is_kept(self):
+        out = _aggregate("Q1", [self._owner("Q10", "2001-01-01T00:00:00Z", "2015-06-01T00:00:00Z",
+                                            start_p="9", end_p="10")])
+        assert (out["owners"][0]["since"], out["owners"][0]["until"]) == ("2001-00-00", "2015-06-00")
+
+    def test_undated_owner_has_no_period(self):
+        out = _aggregate("Q1", [self._owner("Q10")])
+        assert (out["owners"][0]["since"], out["owners"][0]["until"]) == (None, None)
+
+    def test_subsidiaries_too(self):
+        row = {**APPLE_ROW, "subsidiary": {"value": "http://www.wikidata.org/entity/Q20"},
+               "subsidiaryLabel": {"value": "Sub"},
+               "subsidiaryStart": {"value": "1999-01-01T00:00:00Z"}, "subsidiaryStartP": {"value": "9"},
+               "subsidiaryEnd": {"value": "2010-04-30T00:00:00Z"}}
+        sub = _aggregate("Q1", [row])["subsidiaries"][0]
+        assert (sub["since"], sub["until"]) == ("1999-00-00", "2010-04-30")
+
+    def test_a_successor_date_is_validated(self):
+        row = {**APPLE_ROW, "successor": {"value": "http://www.wikidata.org/entity/Q96"},
+               "successorLabel": {"value": "NewCo"},
+               "successorDate": {"value": "http://www.wikidata.org/.well-known/genid/abc"}}
+        assert _aggregate("Q1", [row])["successors"][0]["date"] is None
+
+    def test_the_queries_read_statements_with_their_periods(self):
+        import inspect
+        from app.scraper import wikidata
+        src = inspect.getsource(wikidata)
+        for prop in ("P127", "P355"):
+            assert f"p:{prop} " in src and f"wdt:{prop} ?" not in src
+        assert "wikibase:BestRank" in src and "DeprecatedRank" in src
+        assert "pqv:P580/wikibase:timePrecision" in src

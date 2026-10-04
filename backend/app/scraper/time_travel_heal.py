@@ -40,11 +40,14 @@ def heal_sec_dates(dry_run: bool = False) -> dict:
     - ``ended_before_start``: an edge or a seat closed with an end BEFORE its
       start — an old exit or 8-K departure applied to a newer period — is
       reopened; the departure belonged to an earlier period.
+    - ``first_reported`` (Time travel 6/6): a 13F holding with no start gets
+      its quarter (``source_date``) as a lower bound — held by then; the next
+      13F run moves it earlier where an older quarter is read.
 
     The claims get the same repair as the edges, so the Sources panel agrees.
     """
     sec = _source_id("SEC EDGAR")
-    counts = {"amendment": 0, "form4": 0, "ended_before_start": 0, "pairs": 0}
+    counts = {"amendment": 0, "form4": 0, "ended_before_start": 0, "first_reported": 0, "pairs": 0}
     if not sec:
         return counts
     for c in _claims(sec, "owns"):
@@ -62,6 +65,14 @@ def heal_sec_dates(dry_run: bool = False) -> dict:
                 run_command(f"{match} AND r.since_basis IS NULL AND r.since = r.source_date "
                             "SET r.since_basis = 'amendment'", {"a": a, "b": b, "s": sec})
             counts["amendment"] += n
+        elif ft == "13F":
+            n = run_query(f"{match} AND r.since IS NULL AND r.source_date IS NOT NULL "
+                          "RETURN count(r) AS n", {"a": a, "b": b, "s": sec})[0]["n"]
+            if n and not dry_run:
+                run_command(f"{match} AND r.since IS NULL AND r.source_date IS NOT NULL "
+                            "SET r.since = r.source_date, r.since_basis = 'first_reported'",
+                            {"a": a, "b": b, "s": sec})
+            counts["first_reported"] += n
         elif ft in ("FORM 4", "4", "3", "FORM 3"):
             n = run_query(f"{match} AND r.since IS NOT NULL AND r.since = r.source_date "
                           "RETURN count(r) AS n", {"a": a, "b": b, "s": sec})[0]["n"]
