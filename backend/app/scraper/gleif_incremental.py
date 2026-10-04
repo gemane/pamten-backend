@@ -38,7 +38,7 @@ from app.db.arcadedb import run_command, run_sql
 from app.claims import KIND_OWNS, record_claim
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
 from app.scraper.gleif_lei_cdf import _entity_props
-from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei, _relationship_dates
+from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei, _record_date, _relationship_dates
 from app.merged_ids import canonical_id
 from app.scraper.owns_merge import ANSWER_FIELDS, combine_since, outranks
 from app.scraper.gleif_succession import _iter_lei_records, _pairs_from_record, _v
@@ -114,7 +114,8 @@ def _ensure_lei_node(lei: str, source_id: str) -> str:
     return node_id
 
 
-def _existing_consolidation_edge(parent_id: str, child_id: str) -> dict | None:
+def _existing_consolidation_edge(parent_id: str, child_id: str,
+                                 since: str | None = None) -> dict | None:
     """The RR-authored OWNS edge for this pair, whatever marker it carries.
 
     Matched on the **pair**, not on the marker. The full importer folds a pair
@@ -135,11 +136,24 @@ def _existing_consolidation_edge(parent_id: str, child_id: str) -> dict | None:
     fields = ("RETURN r.direct_or_indirect AS marker, r.since AS since, "
               "r.since_basis AS since_basis, r.since_source_url AS since_source_url, "
               "r.source_id AS source_id, r.credibility_score AS credibility_score, "
-              "r.stake_percent AS stake_percent, r.structure_basis AS structure_basis LIMIT 1")
+              "r.stake_percent AS stake_percent, r.structure_basis AS structure_basis, "
+              "r.until AS until LIMIT 1")
+    rr_own = "r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL"
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
-        "WHERE r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL " + fields,
+        f"WHERE {rr_own} AND r.until IS NULL " + fields,
         {"p": parent_id, "c": child_id})
+    if not rows:
+        # An ENDED RR edge is reopened only for the same period — a record
+        # that turned ACTIVE again with no later start (a correction). A
+        # relationship that began again after it ended is a NEW period: the
+        # old edge stays history and a new one is drawn. Reopening it merged
+        # 2010–2019 and 2024– into one edge "since 2010", present in 2021.
+        rows = run_command(
+            "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+            f"WHERE {rr_own} AND r.until IS NOT NULL "
+            "AND ($since IS NULL OR $since <= r.until) " + fields,
+            {"p": parent_id, "c": child_id, "since": since})
     if not rows:
         rows = run_command(
             "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
@@ -153,7 +167,8 @@ def _existing_consolidation_edge(parent_id: str, child_id: str) -> dict | None:
 
 
 def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str,
-                      source_id: str, credibility_score: int, since: str | None = None) -> str:
+                      source_id: str, credibility_score: int, since: str | None = None,
+                      until: str | None = None, recorded: str | None = None) -> str:
     """Create the (parent)-[:OWNS {marker}]->(child) edge if absent, else refresh it
     and clear any stale `until`. Assumes both nodes already exist.
     'created'|'updated'|'folded'|'adopted'. `since` (relationship start date) is
@@ -175,10 +190,10 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
     # vouch for anything in mark_stale_ownership's register-backed set, and the
     # corroboration badge never counted GLEIF's agreement.
     record_claim(kind=KIND_OWNS, from_id=parent_id, to_id=child_id,
-                 source_id=source_id, ownership_type="controlling", since=since,
+                 source_id=source_id, ownership_type="controlling", since=since, until=until,
                  source_url=f"https://search.gleif.org/#/record/{child_lei}",
-                 credibility_score=credibility_score, filing_type="RR")
-    existing = _existing_consolidation_edge(parent_id, child_id)
+                 source_date=recorded, credibility_score=credibility_score, filing_type="RR")
+    existing = _existing_consolidation_edge(parent_id, child_id, since)
     url = f"https://search.gleif.org/#/record/{child_lei}"
 
     if existing is None:
@@ -187,10 +202,11 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
             "CREATE (a)-[:OWNS {direct_or_indirect:$m, ownership_type:'controlling', "
             "filing_type:'RR', "
             "interest_types:$it, source_id:$src, credibility_score:$cred, "
-            "source_url:$url, since:$since, last_scraped_at:$now}]->(b)",
+            "source_url:$url, since:$since, until:$until, source_date:$sdate, "
+            "last_scraped_at:$now}]->(b)",
             {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
-             "src": source_id, "cred": credibility_score, "since": since,
-             "url": url, "now": now})
+             "src": source_id, "cred": credibility_score, "since": since, "until": until,
+             "sdate": recorded, "url": url, "now": now})
         return "created"
 
     # Whose answer the edge carries. RR's own edge (or an unattributed one) it
@@ -204,14 +220,22 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
     if takeover:
         sets.update({f: None for f in ANSWER_FIELDS})
         sets.update(ownership_type="controlling", filing_type="RR", source_id=source_id,
-                    credibility_score=credibility_score, source_url=url)
+                    credibility_score=credibility_score, source_url=url,
+                    source_date=recorded, until=until)
     elif holds:
-        sets.update(until=None, credibility_score=credibility_score)
+        # the record's own end (an ACTIVE record can state one) — not a blanket
+        # reopen, which undid what the full import closed
+        sets.update(until=until, credibility_score=credibility_score)
+        if recorded:
+            sets["source_date"] = recorded
     if holds or takeover:
         sets["last_scraped_at"] = now
 
+    # THE edge that was found — an old ended period of the same pair beside a
+    # current one must not be rewritten along with it
+    period = "r.until IS NULL" if existing.get("until") is None else "r.until = $old_until"
     if existing["marker"] is None or existing["marker"] == marker:
-        where = ("r.direct_or_indirect = $m AND r.structure_basis IS NULL" if existing["marker"] else
+        where = (f"r.direct_or_indirect = $m AND r.structure_basis IS NULL AND {period}" if existing["marker"] else
                  "r.until IS NULL AND (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)")
         if existing["marker"] is None:
             # Another source's edge: RR's marker and interest go onto it — a
@@ -221,7 +245,7 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
         extra = (", r.interest_types = coalesce(r.interest_types, $it)"
                  if existing["marker"] is None else "")
         _set_owns(parent_id, child_id, where, sets, extra,
-                  {"m": marker, "it": ["accountingConsolidation"]})
+                  {"m": marker, "it": ["accountingConsolidation"], "old_until": existing.get("until")})
         return "adopted" if existing["marker"] is None else "updated"
 
     # Stated both ways. The direct claim is the more specific one and owns the
@@ -236,7 +260,9 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
                 ultimate_since=other_since if other_since and other_since != kept_since else None)
     sets.update(combine_since({"since": kept_since},
                               existing if existing.get("since_basis") else None))
-    _set_owns(parent_id, child_id, "r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL", sets)
+    _set_owns(parent_id, child_id,
+              f"r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL AND {period}", sets,
+              params={"old_until": existing.get("until")})
     return "folded"
 
 
@@ -252,16 +278,17 @@ def _set_owns(parent_id: str, child_id: str, where: str, sets: dict,
 
 
 def _upsert_owns(parent_lei: str, child_lei: str, marker: str,
-                 source_id: str, credibility_score: int, since: str | None = None) -> str:
+                 source_id: str, credibility_score: int, since: str | None = None,
+                 until: str | None = None, recorded: str | None = None) -> str:
     """Node-ensuring convenience wrapper (standalone use / tests)."""
     parent_id = _ensure_lei_node(parent_lei, source_id)
     child_id = _ensure_lei_node(child_lei, source_id)
     return _owns_edge_upsert(parent_id, child_id, child_lei,
-                             marker, source_id, credibility_score, since)
+                             marker, source_id, credibility_score, since, until, recorded)
 
 
 def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str,
-                source_id: str | None = None) -> int:
+                source_id: str | None = None, until_reason: str | None = None) -> int:
     """Close a retired relationship's OWNS edge by stamping `until`. Returns the
     number of edges closed (0 if the edge isn't in our graph).
 
@@ -294,20 +321,41 @@ def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str,
                 "SET r.also_ultimate = null, r.ultimate_since = null, r.ultimate_until = null",
                 {"p": pid, "c": cid})
         else:
+            # The DIRECT relationship ended; the ultimate one goes on. Relabelling
+            # the edge "indirect since <ultimate start>" erased the direct
+            # period — absent in years it existed. So the direct period is
+            # closed as it stands, and the ultimate relationship continues as
+            # its own indirect edge from its own start.
+            kept = run_command(
+                "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+                "WHERE r.also_ultimate = true AND r.until IS NULL "
+                "RETURN r.source_id AS src, r.credibility_score AS cred, r.source_url AS url, "
+                "r.interest_types AS it LIMIT 1", {"p": pid, "c": cid})
             run_command(
                 "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
-                "WHERE r.also_ultimate = true "
-                "SET r.direct_or_indirect = 'indirect', r.also_ultimate = null, "
-                "r.since = coalesce($ult, r.since), r.ultimate_since = null",
-                {"p": pid, "c": cid, "ult": rows[0].get("ult")})
+                "WHERE r.also_ultimate = true AND r.until IS NULL "
+                "SET r.until = $until, r.until_reason = $reason, r.also_ultimate = null",
+                {"p": pid, "c": cid, "until": until, "reason": until_reason})
+            k = kept[0] if kept else {}
+            run_command(
+                "MATCH (a:Entity {id:$p}) MATCH (b:Entity {id:$c}) "
+                "CREATE (a)-[:OWNS {direct_or_indirect:'indirect', ownership_type:'controlling', "
+                "filing_type:'RR', interest_types:$it, source_id:$src, credibility_score:$cred, "
+                "source_url:$url, since:$since, last_scraped_at:$now}]->(b)",
+                {"p": pid, "c": cid, "it": k.get("it") or ["accountingConsolidation"],
+                 "src": k.get("src") or source_id, "cred": k.get("cred"), "url": k.get("url"),
+                 "since": rows[0].get("ult"), "now": _now_iso()})
         return 1
 
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
-        "WHERE r.direct_or_indirect = $m AND r.structure_basis IS NULL "
+        "WHERE r.direct_or_indirect = $m AND r.structure_basis IS NULL AND r.until IS NULL "
         + ("AND (r.source_id = $src OR r.source_id IS NULL) " if source_id else "")
-        + "SET r.until = $until RETURN count(r) AS n",
-        {"p": pid, "c": cid, "m": marker, "until": until, "src": source_id})
+        # only an OPEN edge: re-applying an overlapping catch-up window used to
+        # re-stamp the end of an edge already closed, pushing it later each time
+        + "SET r.until = $until, r.until_reason = $reason RETURN count(r) AS n",
+        {"p": pid, "c": cid, "m": marker, "until": until, "src": source_id,
+         "reason": until_reason})
     return int(rows[0]["n"]) if rows else 0
 
 
@@ -453,8 +501,8 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
               "closed": 0, "skipped": 0, "not_here": 0, "errors": 0}
     known = existing_lei_ids() if only_existing else None
     batch = _BatchWriter()
-    active: list[tuple[str, str, str, str | None]] = []
-    closures: list[tuple[str, str, str, str]] = []
+    active: list[tuple] = []
+    closures: list[tuple] = []
     bar = _ProgressBar("RR delta")
     try:
         for rec in ijson.items(_ProgressStream(raw, total, bar), "relations.item"):
@@ -473,10 +521,21 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                     continue
                 batch.entity(f"lei:{parent}", {"lei_id": parent, "source_id": source_id})
                 batch.entity(f"lei:{child}", {"lei_id": child, "source_id": source_id})
+                recorded = _record_date(rec)
                 if status == "ACTIVE":
-                    active.append((parent, child, marker, _relationship_dates(rel)[0]))
+                    since, until = _relationship_dates(rel)
+                    active.append((parent, child, marker, since, until, recorded))
                 elif status == "INACTIVE":
-                    closures.append((parent, child, marker, _relationship_end_date(rel) or _now_iso()))
+                    # The stated end, as a date. None stated: the record's last
+                    # update is when it had ended BY — never the run's own date,
+                    # which made it look current until today.
+                    end = _relationship_dates(rel)[1]
+                    if end:
+                        closures.append((parent, child, marker, end, None))
+                    elif recorded:
+                        closures.append((parent, child, marker, recorded, "gleif_inactive"))
+                    else:
+                        counts["skipped"] += 1
                 else:
                     counts["skipped"] += 1   # NULL / unknown — leave as-is
             except Exception as exc:  # noqa: BLE001
@@ -484,13 +543,13 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 if counts["errors"] <= 5:
                     log.warning("RR delta record error: %s", exc)
         batch.flush()                      # endpoint nodes exist before edge ops
-        for parent, child, marker, since in active:
+        for parent, child, marker, since, until, recorded in active:
             outcome = _owns_edge_upsert(canonical_id(f"lei:{parent}"),
                                         canonical_id(f"lei:{child}"), child, marker,
-                                        source_id, credibility_score, since)
+                                        source_id, credibility_score, since, until, recorded)
             counts[outcome if outcome in counts else "updated"] += 1
-        for parent, child, marker, until in closures:
-            counts["closed"] += _close_owns(parent, child, marker, until, source_id)
+        for parent, child, marker, until, reason in closures:
+            counts["closed"] += _close_owns(parent, child, marker, until, source_id, reason)
         bar.finish(f"{counts['records']:,} records, +{counts['created']:,} edges, "
                    f"{counts['folded']:,} folded, {counts['closed']:,} closed"
                    + (f", {counts['not_here']:,} not in this database" if known is not None else ""))

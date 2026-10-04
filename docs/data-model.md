@@ -405,8 +405,9 @@ Nothing is discarded:
 | Property | Meaning |
 |---|---|
 | `direct_or_indirect` | `direct` when GLEIF stated the direct relationship — the more specific claim wins |
+| `since` / `until` | the **earlier** start of the two (the parent has held the child since then, indirectly first perhaps — time travel reads `since`, never `ultimate_since`), and an end only when **both** relationships have ended |
 | `also_ultimate` | `true` when the ultimate relationship was stated for the same pair, i.e. this direct parent is also the top of the tree |
-| `ultimate_since` / `ultimate_until` | the ultimate relationship's period, kept only when it **differs** from the direct one (6.9% of folded pairs — a parent can become the direct consolidator years before an intermediate holding dissolves and makes it the ultimate one) |
+| `ultimate_since` / `ultimate_until` | the ultimate relationship's period, kept only when it **differs** from the edge's (6.9% of folded pairs — a parent can become the direct consolidator years before an intermediate holding dissolves and makes it the ultimate one) |
 
 An ultimate record whose pair has no direct record keeps `direct_or_indirect =
 indirect` and is *not* rewritten as direct: GLEIF never stated a direct holding
@@ -418,19 +419,38 @@ for it to prove.
 The daily `gleif-update` delta maintains the same invariant: it looks its edges up
 by **pair**, not by marker, so an ultimate-parent record for a folded pair updates
 that edge instead of creating a parallel one. Retiring one of a folded edge's two
-relationships does not close the edge — the other still stands, so the edge either
-drops `also_ultimate` (the ultimate link ended) or reverts to `indirect` with its
-own period (the direct holding ended). With no RR edge for the pair it **adopts**
+relationships does not end the holding — the other still stands: the edge drops
+`also_ultimate` (the ultimate link ended), or — the direct holding ended — the
+direct period is **closed as it stood** and the ultimate relationship continues as
+its **own indirect edge** from its own start (relabelling the edge "indirect since
+2018" erased the direct years from every past year). With no RR edge for the pair it **adopts**
 another source's active edge (counted `adopted`) — see *One edge per pair,
 whichever sources assert it* above.
+
+**Ended relationships in the full copy.** `gleif-rr` writes an INACTIVE
+relationship as its **own closed edge** (counted `ended`) — it used to drop them,
+so a holding sold in 2020 never existed in 2015 — with the end date as above.
+With several relationship periods, the open one (else the latest-ended) describes
+the record, not the first in the file. The full import is for a fresh database:
+it CREATEs every edge, and on a populated graph its closed edges would sit beside
+the existing ones. Founding dates written in bulk (`founded`, `founded_date`) only
+ever move **earlier** and are never blanked — a re-registration's creation date
+must not hide a company in the years it existed.
 
 Once the full copy is loaded, `manage.py gleif-update` applies GLEIF's published
 **delta files** for all three sections — entities, relationships and reporting
 exceptions (only records changed since the last publish) — as a fast daily
 refresh — see [`app/scraper/gleif_incremental.py`](../backend/app/scraper/gleif_incremental.py).
 It is **retirement-aware**: a relationship whose `RelationshipStatus` becomes
-non-ACTIVE has its `OWNS` edge *closed* (`until` = the relationship period's
-`EndDate`), and an entity whose `EntityStatus` is `INACTIVE` is flagged
+non-ACTIVE has its open `OWNS` edge *closed* (`until` = the relationship period's
+`EndDate`; GLEIF states none → the record's `LastUpdateDate`, the day it had ended
+**by**, with `until_reason = gleif_inactive` — never the run's own date, which made
+it look current until today; an already-closed edge is never re-stamped). A
+relationship that begins again after it ended is a **new period**, a new edge
+beside the old one — reopening the old edge merged 2010–2019 and 2024– into one;
+only a record restating the same period reopens it. An ACTIVE record's own end
+date is kept, and every RR edge carries the record's `LastUpdateDate` as
+`source_date`, its evidence date. And an entity whose `EntityStatus` is `INACTIVE` is flagged
 `active=false` with its `gleif_registration_status` recorded — neither is ever
 deleted (GLEIF never deletes; merges keep flowing through `SUCCEEDED_BY`). All
 writes are idempotent — nodes UPSERT by id (batched) and edges are matched by

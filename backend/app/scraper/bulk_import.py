@@ -61,6 +61,9 @@ def _tmp_dir() -> str | None:
 # retry after a 504 that actually committed server-side can duplicate edges —
 # collapse them afterwards with POST /scraper/deduplicate-edges.
 _FLUSH_ATTEMPTS = 4
+
+#: Node fields a bulk write may only move EARLIER, never blank (see _flush_nodes).
+_EARLIEST_FIELDS = frozenset({"founded", "founded_date"})
 _FLUSH_BASE_DELAY = 2.0
 
 
@@ -258,6 +261,17 @@ class _BatchWriter:
                 continue
             sets = []
             for name, val in props.items():
+                if name in _EARLIEST_FIELDS:
+                    # Time travel hides a node before its founding: a missing
+                    # date must not blank another source's, and a later one (a
+                    # re-registration's creation date) must not replace an
+                    # earlier one — the company existed in between. (A null
+                    # :value compares as unknown, so the stored date stays.)
+                    pk = f"{name}__{k}"
+                    params[pk] = val
+                    sets.append(f"{name} = CASE WHEN {name} IS NULL OR {name} > :{pk} "
+                                f"THEN :{pk} ELSE {name} END")
+                    continue
                 pk = f"{name}__{k}"
                 params[pk] = val
                 sets.append(f"{name} = :{pk}")
