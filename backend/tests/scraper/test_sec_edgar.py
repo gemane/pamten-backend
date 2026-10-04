@@ -1043,6 +1043,45 @@ class TestStakeFromStructuredFilings:
         stake, voting = _stake_from_person(d, d["persons"][0])
         assert stake == 7.48 and voting is None
 
+    def test_a_lone_party_to_a_voting_agreement_gets_its_own_stake(self):
+        # Altria's 2025 13D/A, the structured kind, names ONE reporting person
+        # — so it read as a lone custodian and row 13's 51.9% (the Voting
+        # Agreement bloc) became Altria's stake: AB InBev's "majority owner".
+        # Altria disposes of 159,121,937 shares of its own — 8.1% — and shares
+        # the vote over 1,020,598,157.
+        from app.scraper.sec_edgar import _parse_13dg_xml, _stake_from_person
+        d = _parse_13dg_xml(_fixture("13d_altria_abinbev.xml"))
+        assert len(d["persons"]) == 1 and d["schedule"] == "13D"
+        stake, voting = _stake_from_person(d, d["persons"][0])
+        assert stake == pytest.approx(8.1, abs=0.02)
+        assert voting == 51.9
+
+    def test_a_lone_custodian_and_a_lone_owner_stay_as_they_were(self):
+        from app.scraper.sec_edgar import _split_stake
+        total = 1_000_000
+        # custodian: nothing it can sell alone, everything shared → its percent
+        assert _split_stake({"sole_voting": 0, "shared_voting": 50_000, "sole_dispositive": 0,
+                             "shared_dispositive": 60_000}, total, 6.0) == (6.0, None)
+        # some sole, the rest disposed of jointly, votes no more than it disposes of → its percent
+        assert _split_stake({"sole_voting": 0, "shared_voting": 60_000, "sole_dispositive": 10_000,
+                             "shared_dispositive": 50_000}, total, 6.0) == (6.0, None)
+        # can sell nothing alone, votes a little more than it disposes of
+        # jointly: still a custodian's shape, not an owner in an agreement
+        assert _split_stake({"sole_voting": 0, "shared_voting": 70_000, "sole_dispositive": 0,
+                             "shared_dispositive": 60_000}, total, 7.0) == (7.0, None)
+        # the boundary: votes exactly what it disposes of is no agreement
+        assert _split_stake({"shared_voting": 60_000, "sole_dispositive": 60_000,
+                             "shared_dispositive": 0}, total, 6.0) == (6.0, None)
+
+    def test_a_lone_agreement_party_counts_what_it_disposes_of_jointly_too(self):
+        # votes 500k, can sell 100k alone and 50k jointly → owns 150k = 15%; 50% is the bloc
+        from app.scraper.sec_edgar import _split_stake
+        rows = {"sole_voting": 0, "shared_voting": 500_000, "sole_dispositive": 100_000,
+                "shared_dispositive": 50_000}
+        assert _split_stake(rows, 1_000_000, 50.0) == (15.0, 50.0)
+        # no denominator: the bloc is certain, the stake is not invented
+        assert _split_stake(rows, None, 50.0) == (None, 50.0)
+
 
 class TestPersonSelection:
     def test_the_filer_is_picked_out_of_the_group(self):
@@ -1466,7 +1505,7 @@ class TestANegligibleHoldingIsNotZero:
         elsewhere = src.replace(helper, "")
         assert not re.search(r"round\([^)]*/[^)]*\*\s*100,\s*4\)", elsewhere), \
             "a stake is rounded outside _pct_of — the floor rule will drift"
-        assert elsewhere.count("_pct_of(") == 3      # the three call sites
+        assert elsewhere.count("_pct_of(") == 4      # the four call sites (a lone voting-agreement party is the fourth)
 
 
 class TestSecWebsite:

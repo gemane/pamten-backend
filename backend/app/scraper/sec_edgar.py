@@ -913,11 +913,24 @@ def _split_stake(rows: dict, total: int | None, reported_pct: float | None,
         return reported_pct, None          # no group: the filer holds it all
 
     if not in_group:
-        # A lone filer with all-shared power is a custodian, not a bloc: its
-        # reported percent of class is its own stake, exactly like the common
-        # case above. Without this, every all-shared custodian (State Street,
-        # and many BlackRock/Vanguard filings) lost its stake to a phantom bloc.
-        return reported_pct, None
+        shared_disp = rows.get("shared_dispositive") or 0
+        if sole_disp == 0 or shared_vote <= sole_disp + shared_disp:
+            # A lone filer with all-shared power is a custodian, not a bloc:
+            # its reported percent of class is its own stake, exactly like the
+            # common case above. Without this, every all-shared custodian
+            # (State Street, and many BlackRock/Vanguard filings) lost its
+            # stake to a phantom bloc.
+            return reported_pct, None
+        # A lone filer that holds shares of its OWN and votes more than it can
+        # dispose of at all is a party to a voting agreement, filing alone:
+        # Altria's 2025 13D/A (the structured kind, one reporting person)
+        # disposes of 159,121,937 AB InBev shares and shares the vote over
+        # 1,020,598,157 with Bevco and the Stichting. Row 13's 51.9% is that
+        # bloc, and as Altria's stake it made Altria AB InBev's majority
+        # owner; its own shares are 8.1%. The excess vote is somebody else's
+        # shares, so it is the voting power, never the stake. (No denominator:
+        # _pct_of states no stake; the bloc stands.)
+        return _pct_of(sole_disp + shared_disp, total), reported_pct
 
     if sole_disp == 0:
         # Everything this filer holds, it holds jointly — BRC S.à.r.l. can

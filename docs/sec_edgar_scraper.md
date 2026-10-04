@@ -371,6 +371,7 @@ three report.
 | 0 < sole dispositive < shared voting (group member) | sole dispositive ÷ shares outstanding | row 13 (the bloc) |
 | sole dispositive = 0 (holds only jointly) | `None` | row 13 |
 | denominator not stated | `None` | row 13 |
+| **lone 13D filer** with sole dispositive > 0 and shared voting > sole + shared dispositive | (sole + shared dispositive) ÷ shares outstanding | row 13 (the bloc) |
 
 "Group member" means **co-filers on a 13D**. A 13G is passive by definition, so
 several reporting persons on one are a fund family or a parent with its
@@ -379,6 +380,15 @@ Sequoia's four funds on LinkedIn — each holding the shares it reports, and the
 filer keeps row 13 as its stake with no bloc (`_co_filers_form_a_bloc`). Before
 this rule the text path assumed every filer might be in a group, and seven of the
 eleven pre-2024 13G rows on dev read "stake unknown, bloc X%".
+
+**A party to a voting agreement can file alone.** Altria's 2025 13D/A is a
+structured filing with ONE reporting person, so by the co-filer test it read as
+a lone custodian, and row 13's 51.9 % made Altria AB InBev's majority owner.
+What gives it away is the shape: a custodian can sell nothing alone (sole
+dispositive 0) or votes no more than it disposes of, while Altria owns
+159,121,937 shares outright and votes 1,020,598,157. Votes beyond everything a
+filer can dispose of are somebody else's shares, so they are voting power and
+never stake: Altria 8.1 %, voting 51.9 %.
 
 Two deliberate `None`s. A purely joint holder like BRC — which can dispose of
 nothing alone, its shares sitting in the Stichting it co-owns with EPS — would
