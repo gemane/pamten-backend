@@ -64,6 +64,32 @@ STRUCTURAL_FIELDS: tuple = (
 
 LOWER_BOUND = "first_listed"
 
+#: `since_basis` values and what they mean for time travel. Every basis is a
+#: LOWER bound ("held at least since") except `newly_listed`, which the product
+#: treats like a stated start: the list before was read and did not name it.
+#:   first_listed  — the oldest Exhibit 21 naming the subsidiary
+#:   amendment     — a 13D/G amendment's date: held by then, start not seen
+#:   register_start — UK PSC notified on 2016-04-06, the day the register began
+#: The as-of clauses (search._active_clause, relationships.subsidiary_tree_of)
+#: and the client's asOf.startedAfter read this rule, never a single value.
+STATED_BASES = frozenset({"newly_listed"})
+
+
+def is_lower_bound(since_basis: str | None) -> bool:
+    """Whether a `since` with this basis only says "at least since"."""
+    return bool(since_basis) and since_basis not in STATED_BASES
+
+
+def started_by_clause(rel: str, p: str = "$") -> str:
+    """The as-of condition "this edge's start does not exclude it on as_of",
+    one string for every Cypher and SQL clause that needs it. ``rel`` is the
+    property prefix (``"r."``, or ``""`` in SQL over the edge type), ``p`` the
+    parameter marker (``$`` Cypher, ``:`` SQL). Plain comparisons, no list
+    literal — ArcadeDB's Cypher rejects those."""
+    not_stated = " AND ".join(f"{rel}since_basis <> '{b}'" for b in sorted(STATED_BASES))
+    return (f"({rel}since IS NULL OR ({rel}since_basis IS NOT NULL AND {not_stated}) "
+            f"OR {rel}since <= {p}as_of)")
+
 #: The credibility floor of the official tier. GLEIF (92), UK PSC (97) and SEC
 #: EDGAR (98) sit above it; Wikidata (80) and OpenCorporates (85) below. Tier by
 #: score rather than by source name, so a new source lands in the right tier by

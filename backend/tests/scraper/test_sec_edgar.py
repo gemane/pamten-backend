@@ -1449,7 +1449,9 @@ class TestAnExitIsNotAZeroPercentHolding:
             res = sec_edgar.fetch_ownership_filings("GCI Liberty Inc", "0002057463")
         assert len(res) == 1
         assert res[0]["stake_percent"] == 10.84
-        assert res[0]["until"] == "2026-03-26"
+        # the day the position ended — the exit's date of event, 13 days
+        # before it was filed on 2026-03-26
+        assert res[0]["until"] == "2026-03-13"
         # the structured branch carries the cover's date of event too
         assert res[0]["event_date"] == "2025-12-31"
 
@@ -2301,3 +2303,104 @@ class TestRestatementNeedsACountThatIsTheStake:
              patch.object(sec_edgar, "fetch_former_names", return_value=[]):
             res = sec_edgar.fetch_ownership_filings("Example Issuer Inc", "0000000222")
         assert res and res[0]["shares"] == 100_000
+
+
+class TestWhenAHoldingBegan:
+    """The scrape reads each holder's NEWEST filing; its date written as a
+    stated start made a holder since 2005, first scraped in 2026, "since
+    2026". An original schedule states the start; an amendment bounds it."""
+
+    def test_the_rule(self):
+        from app.scraper.sec_edgar import _stake_start
+        assert _stake_start("SCHEDULE 13G", "2026-03-31", "2026-04-20") == ("2026-03-31", None)
+        assert _stake_start("SC 13D", None, "2019-05-02") == ("2019-05-02", None)
+        assert _stake_start("SCHEDULE 13G/A", "2025-12-31", "2026-02-10") == ("2025-12-31", "amendment")
+        assert _stake_start("SC 13D/A", None, "2020-03-10") == ("2020-03-10", "amendment")
+        assert _stake_start("SC 13D/A", None, None) == (None, None)
+
+    def test_the_scrape_result_carries_it(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = """<?xml version="1.0"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><category term="SCHEDULE 13G"/><content type="text/xml">
+            <filing-href>https://x.test/i.htm</filing-href>
+            <filing-date>2026-04-29</filing-date>
+            <accession-number>0002100119-26-000139</accession-number>
+          </content></entry>
+        </feed>"""
+        url = ("https://www.sec.gov/Archives/edgar/data/320193/"
+               "000210011926000139/primary_doc.xml")
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=_serve(atom, {url: _fixture("13g_vanguard.xml")})), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("Apple Inc", "0000320193")
+        assert (res[0]["since"], res[0]["since_basis"]) == ("2026-03-31", None)
+
+
+class TestAnUnreadCoverIsNotAnExit:
+    """`not pct` read "the parser found nothing" as "the holder holds
+    nothing", and closed live holdings on that filing's date."""
+
+    @staticmethod
+    def _run(docs: dict, entries: list[tuple[str, str, str]]):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        rows = "".join(
+            f'<entry><category term="{form}"/><content type="text/xml">'
+            f'<filing-href>https://x.test/{acc}.htm</filing-href>'
+            f'<filing-date>{date}</filing-date><accession-number>{acc}</accession-number>'
+            f'</content></entry>' for acc, date, form in entries)
+        atom = f'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">{rows}</feed>'
+        pages = {None: atom}
+        for acc, (doc, _) in docs.items():
+            pages[f"https://x.test/{acc}.htm"] = (
+                '<span class="companyName">Holder Fund LP (Filed by)</span> '
+                '<a href="x">CIK=0000000777</a><table><tr><td>'
+                f'<a href="/Archives/edgar/data/1/{acc}.htm">doc</a></td><td>SC 13G</td></tr></table>')
+            pages[f"https://www.sec.gov/Archives/edgar/data/1/{acc}.htm"] = doc
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            return sec_edgar.fetch_ownership_filings("Example Issuer Inc", "0000000222")
+
+    COVER = ("Example Issuer Inc (Name of Issuer) {date} (Date of Event Which Requires Filing "
+             "of this Statement) Name of Reporting Persons Holder Fund LP "
+             "Sole Voting Power 0 Shared Voting Power 0 Sole Dispositive Power {n} "
+             "Shared Dispositive Power 0 {pct}")
+
+    def test_a_cover_without_a_percentage_falls_back_to_the_older_filing(self):
+        newest = self.COVER.format(date="March 1, 2026", n="600,000", pct="(no percent row here)")
+        older = self.COVER.format(date="March 1, 2025", n="600,000",
+                                  pct="Percent of Class Represented by Amount in Row 11 6.0%")
+        res = self._run({"a2": (newest, 0), "a1": (older, 0)},
+                        [("a2", "2026-03-05", "SC 13G/A"), ("a1", "2025-03-05", "SC 13G/A")])
+        assert len(res) == 1 and res[0]["stake_percent"] == 6.0
+        assert res[0]["until"] is None, "an unread cover closed a live holding"
+
+    def test_a_stated_zero_is_still_an_exit_dated_by_the_oldest_zero(self):
+        z2 = self.COVER.format(date="June 30, 2026", n="0",
+                               pct="Percent of Class Represented by Amount in Row 11 0%")
+        z1 = self.COVER.format(date="March 31, 2026", n="0",
+                               pct="Percent of Class Represented by Amount in Row 11 0.0%")
+        held = self.COVER.format(date="December 31, 2025", n="600,000",
+                                 pct="Percent of Class Represented by Amount in Row 11 6.0%")
+        res = self._run({"z2": (z2, 0), "z1": (z1, 0), "h": (held, 0)},
+                        [("z2", "2026-07-10", "SC 13G/A"), ("z1", "2026-04-10", "SC 13G/A"),
+                         ("h", "2026-01-10", "SC 13G/A")])
+        assert len(res) == 1 and res[0]["stake_percent"] == 6.0
+        assert res[0]["until"] == "2026-03-31"     # the first zero's date of event, not the later repeat
+
+    def test_the_filer_side_skips_an_unread_percentage(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        filings = [{"form": "SCHEDULE 13G/A", "accession": "a-2", "date": "2026-05-01"},
+                   {"form": "SCHEDULE 13G", "accession": "a-1", "date": "2025-05-01"}]
+        parsed = {"a-2": {"subject_cik": "0000000222", "subject_name": "Example", "percent": None,
+                          "accession": "a-2", "event_date": "2026-03-31"},
+                  "a-1": {"subject_cik": "0000000222", "subject_name": "Example", "percent": 6.0,
+                          "accession": "a-1", "event_date": "2025-03-31"}}
+        with patch.object(sec_edgar, "_iter_filing_pages", return_value=iter([filings])), \
+             patch.object(sec_edgar, "_parse_holding_filing", side_effect=lambda c, a: parsed[a]):
+            rows = sec_edgar.fetch_filer_holdings("0000000777")
+        assert len(rows) == 1 and rows[0]["stake_percent"] == 6.0 and rows[0]["until"] is None
+        assert (rows[0]["since"], rows[0]["since_basis"]) == ("2025-03-31", None)

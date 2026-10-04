@@ -953,6 +953,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 # A subsidiary LIST: held as of the filing, not acquired then.
                 filing_dates_the_stake=False, source_url=data["url"], **structure)
 
+        holders: set[str] = {company_id}
         for sub in data["subsidiaries"]:
             sub_id = ids.get(sub["name"].casefold())
             if not sub_id:
@@ -992,19 +993,24 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                      direct_or_indirect="direct", structure_basis="ex21_stated")
                 co_owner_edges += 1
             owns(holder, sub_id, stake, **structure)
+            holders.add(holder)
             written += 1
             if holder != company_id:
                 nested += 1
                 if detach_owns_sec(company_id, sub_id, source_id) != "none":
                     detached += 1
 
+        # What this list no longer names: dimmed, never closed.
+        from app.scraper.sec_writer import mark_ex21_stale
+        stale = mark_ex21_stale(holders, data["url"], data["filing_date"])
         with db.get_session() as session:
             session.run("MATCH (e:Entity {id: $id}) SET e.sec_ex21_ingested = $u",
                         id=company_id, u=data["url"])
         run["total"] = written
         notes = [f"{nested} under an intermediate parent" if nested else "",
                  f"{co_owner_edges} co-holder edges" if co_owner_edges else "",
-                 f"{detached} filer edges withdrawn" if detached else ""]
+                 f"{detached} filer edges withdrawn" if detached else "",
+                 f"{stale} no longer listed (dimmed)" if stale else ""]
         if any(notes):
             run["note"] = ", ".join(n for n in notes if n)
         return {"status": "ok", "company": company, "entity_id": company_id,
@@ -1012,7 +1018,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 "total": written, "unmapped_jurisdictions": skipped_unmapped,
                 "nested": nested, "unresolved_parents": unresolved_parents,
                 "detached": detached, "co_owner_edges": co_owner_edges,
-                "scraped": scraped}
+                "stale": stale, "scraped": scraped}
 
 
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
@@ -1435,6 +1441,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
             voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
             filing_type=h.get("filing_type"), event_date=h.get("event_date"),
+            since_date=h.get("since"), since_basis=h.get("since_basis"),
         )
         written += 1
         if h.get("until"):
@@ -1643,6 +1650,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 filing_type=filing.get("filing_type"),
                 source_url=filing.get("source_url"),
                 event_date=filing.get("event_date"),
+                since_date=filing.get("since"), since_basis=filing.get("since_basis"),
             )
             # Retire the edge this filing used to produce. Before groups existed
             # the bloc was written straight onto the filer, and that row is not
@@ -1669,6 +1677,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             shares_outstanding=filing.get("shares_outstanding"),
             denominator_date=filing.get("denominator_date"),
             event_date=filing.get("event_date"),
+            since_date=filing.get("since"), since_basis=filing.get("since_basis"),
             voting_shares=filing.get("voting_shares"),
             source_url=filing.get("source_url"),
             filing_type=filing.get("filing_type"),
@@ -1709,6 +1718,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             stake_percent=holding.get("stake_percent"),
             source_url=holding.get("source_url"),
             event_date=holding.get("event_date"),
+            since_date=holding.get("since"), since_basis=holding.get("since_basis"),
             # the rulebook behind the figure ("13G/A") — run_sec_holdings, the
             # other writer of the same filer-side holdings, always passed it
             filing_type=holding.get("filing_type"),
@@ -1744,7 +1754,11 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                                     else "minority"),
                     file_date=exec_rec.get("source_date"), stake_percent=stake,
                     shares=shares, shares_outstanding=data.get("shares_outstanding"),
-                    filing_type="Form 4", source_url=exec_rec.get("source_url"),
+                    filing_type="Form 4",
+                    # a Form 3/4 states what is held AS OF the report, not since
+                    # when: its date written as a start hid an insider's older
+                    # holding before their latest trade
+                    filing_dates_the_stake=False, source_url=exec_rec.get("source_url"),
                     owner_label="Entity")
                 scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             continue
@@ -1797,6 +1811,10 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 # under every stake filter as an unquantified owner.
                 shares_outstanding=data.get("shares_outstanding"),
                 filing_type="Form 4",
+                # a Form 3/4 states what is held AS OF the report, not since
+                # when: its date written as a start hid an insider's older
+                # holding before their latest trade
+                filing_dates_the_stake=False,
                 source_url=exec_rec.get("source_url"),
                 owner_label="Person",
             )
@@ -1864,6 +1882,10 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 shares=holding.get("shares_owned"),
                 shares_outstanding=shares_out,
                 filing_type="Form 4",
+                # a Form 3/4 states what is held AS OF the report, not since
+                # when: its date written as a start hid an insider's older
+                # holding before their latest trade
+                filing_dates_the_stake=False,
                 source_url=holding.get("source_url"),
                 owner_label="Person",
             )

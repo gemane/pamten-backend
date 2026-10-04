@@ -17,7 +17,9 @@ class TestTheClause:
 
     def test_a_date_tests_both_ends_and_spares_a_lower_bound(self):
         c = _active_clause("owns_r", "2019-12-31")
-        assert "owns_r.since IS NULL OR owns_r.since_basis = 'first_listed' OR owns_r.since <= $as_of" in c
+        # every basis but newly_listed is a lower bound (owns_merge.STATED_BASES)
+        assert ("owns_r.since IS NULL OR (owns_r.since_basis IS NOT NULL AND "
+                "owns_r.since_basis <> 'newly_listed') OR owns_r.since <= $as_of") in c
         assert "owns_r.until IS NULL OR owns_r.until > $as_of" in c
 
 
@@ -51,7 +53,7 @@ def test_with_a_date_every_dated_section_and_count_carries_it(client, fake_db, n
     dated = _dated_calls(fake_db)
     assert len(dated) == 6, [q[:60] for q, _ in dated]
     for q, p in dated:
-        assert "$as_of" in q and "since_basis = 'first_listed'" in q and p["as_of"] == "2019-12-31", q
+        assert "$as_of" in q and "since_basis <> 'newly_listed'" in q and p["as_of"] == "2019-12-31", q
     # the undated sections never see it
     for q, p in fake_db.calls:
         if "SUCCEEDED_BY" in q or "DUAL_LISTED_WITH" in q:

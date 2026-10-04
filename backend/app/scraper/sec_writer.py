@@ -234,8 +234,16 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      filing_type: str | None = None,
                      filing_dates_the_stake: bool = True,
                      direct_or_indirect: str | None = None,
-                     structure_basis: str | None = None):
+                     structure_basis: str | None = None,
+                     since_date: str | None = None,
+                     since_basis: str | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
+
+    ``since_date`` / ``since_basis``: the start the caller worked out from the
+    filing (`sec_edgar._stake_start`: an original 13D/G states it, an
+    amendment only bounds it — basis ``amendment``). It wins over the
+    ``filing_dates_the_stake`` default and is COMBINED with the start an edge
+    already has — the earliest wins — so a re-read never moves it later.
 
     ``filing_dates_the_stake``: whether ``file_date`` says when the holding
     BEGAN. True for 13D/13G, which are due within days of crossing 5%. False
@@ -282,14 +290,17 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     "and the issuer resolved to the same node", owner_id, stake_percent)
         return
     ownership_type = coherent_ownership_type(stake_percent, ownership_type)
-    since = file_date if filing_dates_the_stake else None
+    if since_date:
+        since, basis = since_date, since_basis
+    else:
+        since, basis = (file_date if filing_dates_the_stake else None), None
     record_claim(kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
                  stake_percent=stake_percent, ownership_type=ownership_type,
                  voting_power_pct=voting_power_pct,
                  share_class=share_class, shares=shares,
                  shares_outstanding=shares_outstanding, voting_shares=voting_shares,
                  denominator_date=denominator_date, event_date=event_date,
-                 since=since, until=until, source_url=source_url,
+                 since=since, since_basis=basis, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score,
                  filing_type=filing_type, structure_basis=structure_basis)
     # Claims-only sources assert but do not draw (see sources.edge_writes_suppressed).
@@ -303,7 +314,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     # can never carry a property the merges do not know, and vice versa.
     bag = owns_props(
         stake_percent=stake_percent, voting_power_pct=voting_power_pct,
-        ownership_type=ownership_type, since=since, until=until,
+        ownership_type=ownership_type, since=since, since_basis=basis, until=until,
         source_id=source_id, credibility_score=credibility_score,
         source_url=source_url, source_date=file_date, last_scraped_at=now,
         share_class=share_class, shares=shares,
@@ -317,17 +328,37 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     # Closing an edge has to match one that is ALREADY closed too, or re-reading
     # the same filings creates a second historical edge every run — the active-only
     # match never finds the one written last time.
-    active_only = "AND r.until IS NULL" if until is None else ""
+    #
+    # But closing must find THE period it closes, not every period of the pair:
+    # matching all of them moved an old spell's end to a new exit (present in
+    # the gap between), and an old exit re-read closed a newer open spell with
+    # an end before its start. So: the closed edge already carrying this end
+    # (a re-read), else the open one — and never one that starts after it.
+    if until is None:
+        candidates = ["r.until IS NULL"]
+    else:
+        candidates = ["r.until = $until AND (r.since IS NULL OR r.since <= $until)",
+                      "r.until IS NULL AND (r.since IS NULL OR r.since <= $until)"]
     with db.get_session() as session:
-        existing = session.run(
-            f"""
-            MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
-            WHERE r.source_id = $sid {active_only}
-            RETURN r LIMIT 1
-            """,
-            oid=owner_id, nid=owned_id, sid=source_id,
-        ).single()
+        existing, active_only = None, ""
+        for cond in candidates:
+            existing = session.run(
+                f"""
+                MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+                WHERE r.source_id = $sid AND {cond}
+                RETURN r LIMIT 1
+                """,
+                oid=owner_id, nid=owned_id, sid=source_id, until=until,
+            ).single()
+            if existing:
+                active_only = f"AND {cond}"
+                break
         if existing:
+            # The start: combined with what the edge has, earliest wins (an
+            # amendment's lower bound never replaces an original's stated day).
+            held = existing["r"]
+            started = combine_since({f: held.get(f) for f in SINCE_FIELDS},
+                                    {"since": since, "since_basis": basis})
             # Refresh last_scraped_at and backfill the specific record URL/date
             # onto edges created before provenance (COALESCE keeps existing
             # values when this scrape didn't yield a URL). The stake and its
@@ -361,6 +392,9 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.filing_type      = COALESCE($ftype, r.filing_type),
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date),
+                    r.since            = $csince,
+                    r.since_basis      = $cbasis,
+                    r.since_source_url = $csurl,
                     r.structure_basis    = CASE WHEN $doi IS NOT NULL AND
                                                      (r.direct_or_indirect IS NULL OR r.structure_basis IS NOT NULL)
                                                 THEN $sbasis ELSE r.structure_basis END,
@@ -376,16 +410,22 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 ddate=denominator_date, edate=event_date,
                 vusd=value_usd, ftype=filing_type,
                 doi=direct_or_indirect, sbasis=structure_basis,
+                csince=started["since"], cbasis=started["since_basis"],
+                csurl=started["since_source_url"],
             )
             return
         # Another source already holds this pair: take over ITS edge rather than
         # drawing a second one beside it (see app.scraper.owns_merge).
+        # An exit only ever ends a period that had begun by then — the pair's
+        # open edge from 2020 is not what a 2015 exit closes; that one is
+        # written as its own, ended period below.
+        began = "" if until is None else "AND (r.since IS NULL OR r.since <= $until)"
         shared = session.run(
             f"""
             MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
-            WHERE r.until IS NULL RETURN r LIMIT 1
+            WHERE r.until IS NULL {began} RETURN r LIMIT 1
             """,
-            oid=owner_id, nid=owned_id,
+            oid=owner_id, nid=owned_id, until=until,
         ).single()
         if shared:
             _share_owns_edge(session, owner_label, owner_id, owned_id, shared["r"], bag, now)
@@ -466,7 +506,10 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
                 o=owner_id, n=owned_id, sid=source_id)
             return "deleted"
         values = {f: v for f, v in edge_values_from(others).items() if f in ANSWER_FIELDS}
-        values.update(since_basis=None, since_source_url=None)
+        # The start from the claims that remain — clearing only the basis
+        # kept SEC's withdrawn `since` and turned a "first listed 2013" lower
+        # bound into a stated start, hiding the edge before 2013.
+        values.update(combine_since(*others))
         if edge["r"].get("structure_basis"):
             values.update(direct_or_indirect=None, structure_basis=None)
         assignments = ", ".join(f"r.{f} = $v_{f}" for f in values)
@@ -613,12 +656,16 @@ def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None
     now = datetime.now(timezone.utc).isoformat()
     want = canonical_role(role) if role else None
     with db.get_session() as session:
+        # Only a seat that began on or before the departure: a 2022 8-K about
+        # someone who returned in 2024 closed the new seat with an end before
+        # its start — absent in every year — and the next scrape reopened it.
         rows = session.run(
             """
             MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-            WHERE r.until IS NULL RETURN r.role AS role
+            WHERE r.until IS NULL AND (r.since IS NULL OR r.since <= $until)
+            RETURN r.role AS role
             """,
-            pid=person_id, eid=entity_id)
+            pid=person_id, eid=entity_id, until=until)
         seats = [r["role"] for r in rows
                  if want is None or canonical_role(r["role"] or "") == want]
         for seat in seats:
@@ -626,6 +673,7 @@ def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role AND r.until IS NULL
+                  AND (r.since IS NULL OR r.since <= $until)
                 SET r.until = $until, r.last_scraped_at = $now,
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date)
@@ -637,6 +685,40 @@ def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None
                      role=seats[0], until=until, source_url=source_url,
                      source_date=source_date, credibility_score=credibility_score)
     return len(seats)
+
+
+def mark_ex21_stale(holder_ids, current_url: str, as_of: str) -> int:
+    """Dim the subsidiary edges the newest Exhibit 21/8.1 no longer lists.
+
+    The 13F rule for the annual lists: a subsidiary missing from the newer
+    list was perhaps sold, perhaps only too small to list (an exhibit need not
+    name insignificant ones) — silence is not an end date, so it is flagged
+    ``stale``, never closed. Before, it stayed current in every later year.
+
+    ``holder_ids``: the filer and the intermediate parents this list placed
+    subsidiaries under — the edges an exhibit of this filer drew hang off
+    them. An edge counts when one of this filer's exhibits drew it (its
+    ``source_url`` is under the filer's EDGAR folder), not the one just read,
+    and it is as of an earlier year. A re-listed subsidiary heals itself: the
+    upsert sets ``stale = false``.
+    """
+    import re as _re
+    m = _re.match(r"(https?://www\.sec\.gov/Archives/edgar/data/\d+/)", current_url or "")
+    if not m or not as_of:
+        return 0
+    marked = 0
+    with db.get_session() as session:
+        for hid in sorted(set(holder_ids)):
+            rows = session.run(
+                """MATCH (a:Entity {id: $h})-[r:OWNS]->(b:Entity)
+                   WHERE (r.filing_type = 'EX-21' OR r.filing_type = 'EX-8.1')
+                     AND r.until IS NULL AND COALESCE(r.stale, false) = false
+                     AND r.source_url STARTS WITH $prefix AND r.source_url <> $url
+                     AND r.source_date < $as_of
+                   SET r.stale = true RETURN count(r) AS n""",
+                h=hid, prefix=m.group(1), url=current_url, as_of=as_of)
+            marked += sum(int(r.get("n") or 0) for r in rows)
+    return marked
 
 
 def mark_13f_stale(company_id: str, period: str) -> int:

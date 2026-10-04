@@ -522,7 +522,8 @@ def _active_clause(rel: str, as_of: str | None) -> str:
     compare as dates; a partial "2023-04-00" sorts where April 2023 belongs."""
     if as_of is None:
         return f"{rel}.until IS NULL"
-    return (f"({rel}.since IS NULL OR {rel}.since_basis = 'first_listed' OR {rel}.since <= $as_of) "
+    from app.scraper.owns_merge import started_by_clause
+    return (f"{started_by_clause(rel + '.')} "
             f"AND ({rel}.until IS NULL OR {rel}.until > $as_of)")
 
 
