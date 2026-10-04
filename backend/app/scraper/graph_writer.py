@@ -495,6 +495,21 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                 pid=person_id, eid=entity_id, role=exists["role"], since=since,
                 now=now, surl=source_url,
             )
+            if until:
+                # The source now states the END of a seat we hold open — a
+                # Wikidata end time added later. It used to be dropped here, so
+                # a CEO who left in 2015 was still CEO in 2020 and today. Only a
+                # seat that began by then (an old end must not close a new one).
+                session.run(
+                    """
+                    MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                    WHERE r.role = $role AND r.until IS NULL
+                      AND ($since IS NULL OR r.since = $since)
+                      AND (r.since IS NULL OR r.since <= $until)
+                    SET r.until = $until
+                    """,
+                    pid=person_id, eid=entity_id, role=exists["role"], since=since,
+                    until=until)
             _relabel_if_more_credible(session, person_id, entity_id,
                                       exists["role"], role, exists["cred"],
                                       credibility_score, source_id)
@@ -512,11 +527,12 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                     MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                     WHERE r.role = $role AND r.since IS NULL
                     SET r.since = $since, r.source_date = $since,
+                        r.until = COALESCE(r.until, $until),
                         r.last_scraped_at = $now,
                         r.source_url = COALESCE($surl, r.source_url)
                     """,
                     pid=person_id, eid=entity_id, role=undated["role"], since=since,
-                    now=now, surl=source_url,
+                    until=until, now=now, surl=source_url,
                 )
                 _relabel_if_more_credible(session, person_id, entity_id,
                                           undated["role"], role, undated["cred"],
@@ -529,7 +545,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
                 source_id: $sid, credibility_score: $score,
-                source_url: $surl, source_date: $since, last_scraped_at: $now
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now
             }]->(e)
             """,
             pid=person_id,
@@ -539,6 +555,10 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             until=until,
             sid=source_id,
             score=credibility_score,
+            # An undated seat is still dated by its evidence: the source lists
+            # it TODAY. Without it the seat was dimmed in every year, the
+            # present included.
+            sdate=since or now[:10],
             surl=source_url, now=now,
         )
 

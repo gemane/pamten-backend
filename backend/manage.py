@@ -589,6 +589,16 @@ def cmd_heal_sec_dates(args):
           f"{res['ended_before_start']} periods ended before they began reopened.")
 
 
+def cmd_heal_role_dates(args):
+    """Give undated seats their evidence date (see
+    `app.scraper.time_travel_heal.heal_role_dates`). `--dry-run` only counts."""
+    from app.scraper.time_travel_heal import heal_role_dates
+    res = heal_role_dates(dry_run=args.dry_run)
+    verb = "would date" if args.dry_run else "dated"
+    print(f"{res['seats']} person–company pairs read; {verb} {res['dated']} undated seats "
+          "by the day their source last listed them.")
+
+
 def cmd_dedupe_role_synonyms(args):
     """Merge HAS_ROLE edges that name the SAME position in different words.
 
@@ -1395,6 +1405,12 @@ def _build_parser():
              "(amendment dates as starts, Form 4 starts, ends before starts); --dry-run counts")
     p_hsd.add_argument('--dry-run', action='store_true', help='Count, change nothing')
     p_hsd.set_defaults(func=cmd_heal_sec_dates)
+
+    p_hrd = subparsers.add_parser('heal-role-dates',
+        help="Date undated seats by the day their source last listed them "
+             "(time travel shows them dimmed otherwise); --dry-run counts")
+    p_hrd.add_argument('--dry-run', action='store_true', help='Count, change nothing')
+    p_hrd.set_defaults(func=cmd_heal_role_dates)
 
     p_hck = subparsers.add_parser('heal-claim-keys',
         help="Re-key claims whose key does not match their content and fold the doubles "

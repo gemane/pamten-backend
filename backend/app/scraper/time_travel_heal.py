@@ -94,3 +94,32 @@ def heal_sec_dates(dry_run: bool = False) -> dict:
                 "AND since IS NOT NULL AND since = source_date "
                 "AND (filing_type = 'Form 4' OR filing_type = '4' OR filing_type = '3')", {"s": sec})
     return counts
+
+
+def heal_role_dates(dry_run: bool = False) -> dict:
+    """Undated seats written before Time travel 5/6 have no evidence date, so
+    they show dimmed in every year — the present included. The day the source
+    last listed the seat (``last_scraped_at``) is that date: it was current
+    then. Walks the role claims of every source except SEC (whose seats are
+    dated by Form 3), and only touches seats with neither a start nor one.
+    """
+    sec = _source_id("SEC EDGAR")
+    counts = {"seats": 0, "dated": 0}
+    rows = run_sql("SELECT from_id, to_id, source_id FROM Claim WHERE kind = 'role'")
+    seen = set()
+    for c in rows:
+        if c.get("source_id") == sec:
+            continue
+        pair = (c.get("from_id"), c.get("to_id"))
+        if not all(pair) or pair in seen:
+            continue
+        seen.add(pair)
+        counts["seats"] += 1
+        match = ("MATCH (x:Person {id: $a})-[r:HAS_ROLE]->(y:Entity {id: $b}) "
+                 "WHERE r.since IS NULL AND r.source_date IS NULL AND r.last_scraped_at IS NOT NULL")
+        n = run_query(f"{match} RETURN count(r) AS n", {"a": pair[0], "b": pair[1]})[0]["n"]
+        if n and not dry_run:
+            run_command(f"{match} SET r.source_date = substring(r.last_scraped_at, 0, 10)",
+                        {"a": pair[0], "b": pair[1]})
+        counts["dated"] += n
+    return counts
