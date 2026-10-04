@@ -1434,7 +1434,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             ownership_type="minority", file_date=h.get("file_date"),
             stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
             voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
-            filing_type=h.get("filing_type"),
+            filing_type=h.get("filing_type"), event_date=h.get("event_date"),
         )
         written += 1
         if h.get("until"):
@@ -1642,6 +1642,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 share_class=filing.get("share_class"),
                 filing_type=filing.get("filing_type"),
                 source_url=filing.get("source_url"),
+                event_date=filing.get("event_date"),
             )
             # Retire the edge this filing used to produce. Before groups existed
             # the bloc was written straight onto the filer, and that row is not
@@ -1666,6 +1667,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             share_class=filing.get("share_class"),
             shares=filing.get("shares"),
             shares_outstanding=filing.get("shares_outstanding"),
+            denominator_date=filing.get("denominator_date"),
+            event_date=filing.get("event_date"),
             voting_shares=filing.get("voting_shares"),
             source_url=filing.get("source_url"),
             filing_type=filing.get("filing_type"),
@@ -1705,6 +1708,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             file_date=holding.get("file_date"),
             stake_percent=holding.get("stake_percent"),
             source_url=holding.get("source_url"),
+            event_date=holding.get("event_date"),
             # Set when a later amendment reported 0% — the filer has dropped
             # below the 5% threshold, so this is history, not a live position.
             until=holding.get("until"),

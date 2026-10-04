@@ -156,6 +156,30 @@ Bevco's holding has not changed since 2020; it reads 5.9% only because it is
 divided by a five-year-old total. Against the current one it is 5.23%. Without
 the counts that is invisible — the two percentages look equally current.
 
+**The date of event.** Each cover states the day its numbers were true — 13D
+`dateOfEvent`, 13G `eventDateRequiresFilingThisStatement` (a quarter-end for
+the passive filers), "(Date of Event Which Requires Filing of this Statement)"
+on the old HTML covers — and the filing date (`source_date`) is when it was
+said, often weeks later. It is stored as `event_date` on every 13D/G edge (the
+holder's, a voting group's, a filer's own holdings), replaced by each newer
+filing and cleared when one states none; an unreadable date is `None`, never a
+guess. Only the latest amendment is kept, so the count has an as-of day but no
+history — time travel shows a past year with today's stake.
+
+**So older holdings are restated** (`_restate_against_newest_denominator`, at the
+end of `fetch_ownership_filings`). Among the schedules about one issuer, the
+newest stated total per share class wins (BRC's May 2026 13D/A: 1,972,133,054),
+and every older filing with a count of its own is re-divided by it: Bevco
+102,862,718 → **5.22 %**, Altria → 8.07 %. The edge (and its claim) keeps the new
+`shares_outstanding` and `denominator_date` — the date of the filing the total
+comes from — so the panel can say the count is 2020's and the total 2026's. A 13D
+must be amended for any change of 1 % or more, which is why an unamended count
+still stands. Left alone: a bloc-only row (no stake of its own), an ended
+holding, another share class, and a total that moved more than 2× — a split
+makes an old count meaningless. Classes are compared by `_class_key`, which reads
+"Ordinary Shares … and American Depositary Shares, each of which represents one
+(1) Ordinary Share" as the ordinary shares it is.
+
 `_shares_held` takes **dispositive** power, not voting: what a filer can sell is
 what it owns. Sole where it has any, else the shares it disposes of jointly (BRC
 can sell nothing alone, but the Stichting it co-owns holds 771,096,582 — a real
@@ -371,6 +395,7 @@ three report.
 | 0 < sole dispositive < shared voting (group member) | sole dispositive ÷ shares outstanding | row 13 (the bloc) |
 | sole dispositive = 0 (holds only jointly) | `None` | row 13 |
 | denominator not stated | `None` | row 13 |
+| **lone 13D filer** with sole dispositive > 0 and shared voting > sole + shared dispositive | (sole + shared dispositive) ÷ shares outstanding | row 13 (the bloc) |
 
 "Group member" means **co-filers on a 13D**. A 13G is passive by definition, so
 several reporting persons on one are a fund family or a parent with its
@@ -379,6 +404,15 @@ Sequoia's four funds on LinkedIn — each holding the shares it reports, and the
 filer keeps row 13 as its stake with no bloc (`_co_filers_form_a_bloc`). Before
 this rule the text path assumed every filer might be in a group, and seven of the
 eleven pre-2024 13G rows on dev read "stake unknown, bloc X%".
+
+**A party to a voting agreement can file alone.** Altria's 2025 13D/A is a
+structured filing with ONE reporting person, so by the co-filer test it read as
+a lone custodian, and row 13's 51.9 % made Altria AB InBev's majority owner.
+What gives it away is the shape: a custodian can sell nothing alone (sole
+dispositive 0) or votes no more than it disposes of, while Altria owns
+159,121,937 shares outright and votes 1,020,598,157. Votes beyond everything a
+filer can dispose of are somebody else's shares, so they are voting power and
+never stake: Altria 8.1 %, voting 51.9 %.
 
 Two deliberate `None`s. A purely joint holder like BRC — which can dispose of
 nothing alone, its shares sitting in the Stichting it co-owns with EPS — would

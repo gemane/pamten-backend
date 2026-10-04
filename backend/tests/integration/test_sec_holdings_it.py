@@ -208,11 +208,11 @@ def test_a_filer_listing_itself_is_skipped(it_db):
 # report 0 in every power row, and eighteen went into the graph as live
 # "owns 0.0%" edges instead of closing the position.
 
-def _write_issuer_side(it_db, filings):
+def _write_issuer_side(it_db, filings, holdings=None):
     """Drive the issuer-side writer with parsed filings, as a scrape would."""
     from unittest.mock import patch
     data = {"name": "Apple Inc", "cik": "0000320193",
-            "ownership_filings": filings, "executives": [], "holdings": []}
+            "ownership_filings": filings, "executives": [], "holdings": holdings or []}
     with patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
          patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
          patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
@@ -267,3 +267,68 @@ def test_the_website_reaches_the_filer_and_its_subjects(it_db):
                return_value="https://usurper.example.com/"):
         _run(it_db)
     assert _websites(it_db)["Hologic Inc"] == "https://cik-859737.example.com/"
+
+
+# ── A stake restated against the issuer's newest total (2026-10-04) ──────────
+# Bevco's 2020 count against AB InBev's 2026 total: the edge and the claim
+# carry the restated percentage, the new total and where that total is from;
+# a later write without a restatement clears the date.
+
+def test_a_restated_stake_carries_its_denominator_date(it_db):
+    _write_issuer_side(it_db, [_filing(stake_percent=5.2158, shares=102862718,
+                                       shares_outstanding=1972133054,
+                                       denominator_date="2026-05-15")])
+    edge = _edge_with_stake(it_db, 5.2158)
+    assert edge is not None
+    assert edge.get("shares_outstanding") == 1972133054
+    assert edge.get("denominator_date") == "2026-05-15"
+    claim = it_db.run_sql("SELECT FROM Claim WHERE kind = 'owns'")[0]
+    assert claim.get("denominator_date") == "2026-05-15"
+
+    # the holder files again, its own total current: no restatement, no date
+    _write_issuer_side(it_db, [_filing(stake_percent=5.3, shares=102862718,
+                                       shares_outstanding=1940000000,
+                                       denominator_date=None)])
+    edge = _edge_with_stake(it_db, 5.3)
+    assert edge is not None and edge.get("denominator_date") is None
+    assert it_db.run_sql("SELECT FROM Claim WHERE kind = 'owns'")[0].get("denominator_date") is None
+
+
+def test_the_date_of_event_is_written_and_follows_the_newest_filing(it_db):
+    _write_issuer_side(it_db, [_filing(event_date="2025-12-31")])
+    edge = _edge_with_stake(it_db, 7.48)
+    assert edge.get("event_date") == "2025-12-31"
+    assert edge.get("source_date") == "2025-02-10"          # the filing date stays its own fact
+    assert it_db.run_sql("SELECT FROM Claim WHERE kind = 'owns'")[0].get("event_date") == "2025-12-31"
+    # the next amendment states another day — and one without a date leaves none behind
+    _write_issuer_side(it_db, [_filing(event_date="2026-03-31", file_date="2026-04-20")])
+    assert _edge_with_stake(it_db, 7.48).get("event_date") == "2026-03-31"
+    _write_issuer_side(it_db, [_filing(event_date=None, file_date="2026-07-20")])
+    assert _edge_with_stake(it_db, 7.48).get("event_date") is None
+
+
+def test_the_filer_side_holding_carries_its_date_of_event(it_db):
+    _run(it_db, holdings=[{"subject_cik": "0000320193", "subject_name": "Apple Inc",
+                           "stake_percent": 7.48, "file_date": "2026-04-20",
+                           "event_date": "2026-03-31", "form_type": "SCHEDULE 13G/A",
+                           "filing_type": "13G/A", "until": None,
+                           "source_url": "https://sec.gov/x/3"}])
+    assert _edge_with_stake(it_db, 7.48).get("event_date") == "2026-03-31"
+
+
+def test_a_scraped_company_s_own_holdings_and_a_voting_group_carry_the_date(it_db):
+    # what the scraped company files about others, and a bloc over it
+    holding = {"subject_cik": "0000789019", "subject_name": "Microsoft Corp",
+               "stake_percent": 6.25, "file_date": "2026-04-20", "event_date": "2026-03-31",
+               "form_type": "SCHEDULE 13G/A", "filing_type": "13G/A", "until": None,
+               "source_url": "https://sec.gov/x/4"}
+    bloc = _filing(investor_name="Brc S.A R.L.", investor_cik="0001301486",
+                   form_type="SCHEDULE 13D/A", stake_percent=None, voting_power_pct=52.3,
+                   voting_shares=1033081237, event_date="2026-05-13",
+                   group_members=[{"name": "Stichting Anheuser-Busch InBev", "cik": None,
+                                   "source": "xml", "type_code": "OO"}])
+    with patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"):
+        _write_issuer_side(it_db, [bloc], holdings=[holding])
+    assert _edge_with_stake(it_db, 6.25).get("event_date") == "2026-03-31"
+    group_edge = next(e for e in _edges(it_db) if e.get("voting_power_pct") == 52.3)
+    assert group_edge.get("event_date") == "2026-05-13"

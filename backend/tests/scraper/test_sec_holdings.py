@@ -132,6 +132,16 @@ class TestFetchFilerHoldings:
         assert {r["subject_name"] for r in rows} == {"West Pharmaceutical", "Hologic Inc"}
         assert all(r["until"] is None for r in rows)
 
+    def test_a_holding_carries_its_date_of_event(self):
+        import pathlib
+        real = (pathlib.Path(__file__).parent / "fixtures" / "13g_vanguard.xml").read_text()
+        subs = _subs([("SCHEDULE 13G", "a-1", "2026-04-30")])
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for({"a-1": real})):
+            rows = fetch_filer_holdings("0002100119")
+        assert rows and rows[0]["event_date"] == "2026-03-31"
+        assert rows[0]["file_date"] == "2026-04-30"
+
     def test_a_filing_about_the_filer_itself_is_not_a_holding(self):
         """EDGAR's index for a CIK carries filings the company is NAMED IN as well
         as ones it submitted, so somebody else's 13G about it appears here — and

@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Altria Group's Schedule 13D/A No. 7 on Anheuser-Busch InBev, 2025-02-07, accession
+     0000950170-25-016305 (primary_doc.xml), trimmed after the cover page. One reporting
+     person; sole dispositive 159,121,937, shared voting 1,020,598,157 (51.9%) via the
+     Voting Agreement with Bevco and the Stichting. -->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13D" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <headerData>
+    <submissionType>SCHEDULE 13D/A</submissionType>
+    <previousAccessionNumber>0001193125-24-230346</previousAccessionNumber>
+    <filerInfo>
+      <filer>
+        <filerCredentials>
+          <cik>764180</cik>
+          <ccc>XXXXXXXX</ccc>
+        </filerCredentials>
+      </filer>
+      <liveTestFlag>LIVE</liveTestFlag>
+
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <coverPageHeader>
+      <amendmentNo>7</amendmentNo>
+      <securitiesClassTitle>Ordinary Shares, without nominal value</securitiesClassTitle>
+      <dateOfEvent>02/07/2025</dateOfEvent>
+      <previouslyFiledFlag>false</previouslyFiledFlag>
+      <issuerInfo>
+        <issuerCIK>0001668717</issuerCIK>
+        <issuerCUSIP>03524A108</issuerCUSIP>
+        <issuerName>Anheuser-Busch InBev SA/NV</issuerName>
+        <address>
+          <street1 xmlns="http://www.sec.gov/edgar/common">Brouwerijplein 1</street1>
+          <city xmlns="http://www.sec.gov/edgar/common">3000 Leuven</city>
+          <stateOrCountry xmlns="http://www.sec.gov/edgar/common">C9</stateOrCountry>
+          <zipCode xmlns="http://www.sec.gov/edgar/common">0</zipCode>
+        </address>
+      </issuerInfo>
+      <authorizedPersons>
+        <notificationInfo>
+          <personName>W. Hildebrandt Surgner, Jr.</personName>
+          <personPhoneNum>(804) 274-2200</personPhoneNum>
+          <personAddress>
+            <street1 xmlns="http://www.sec.gov/edgar/common">6601 West Broad Street</street1>
+            <city xmlns="http://www.sec.gov/edgar/common">Richmond</city>
+            <stateOrCountry xmlns="http://www.sec.gov/edgar/common">VA</stateOrCountry>
+            <zipCode xmlns="http://www.sec.gov/edgar/common">23230</zipCode>
+          </personAddress>
+        </notificationInfo>
+        <notificationInfo>
+          <personName>Andrew J. Nussbaum</personName>
+          <personPhoneNum>(212) 403-1000</personPhoneNum>
+          <personAddress>
+            <street1 xmlns="http://www.sec.gov/edgar/common">51 West 52nd Street</street1>
+            <city xmlns="http://www.sec.gov/edgar/common">New York</city>
+            <stateOrCountry xmlns="http://www.sec.gov/edgar/common">NY</stateOrCountry>
+            <zipCode xmlns="http://www.sec.gov/edgar/common">10019</zipCode>
+          </personAddress>
+        </notificationInfo>
+        <notificationInfo>
+          <personName>Zachary S. Podolsky</personName>
+          <personPhoneNum>(212) 403-1000</personPhoneNum>
+          <personAddress>
+            <street1 xmlns="http://www.sec.gov/edgar/common">51 West 52nd Street</street1>
+            <city xmlns="http://www.sec.gov/edgar/common">New York</city>
+            <stateOrCountry xmlns="http://www.sec.gov/edgar/common">NY</stateOrCountry>
+            <zipCode xmlns="http://www.sec.gov/edgar/common">10019</zipCode>
+          </personAddress>
+        </notificationInfo>
+      </authorizedPersons>
+    </coverPageHeader>
+    <reportingPersons>
+      <reportingPersonInfo>
+        <reportingPersonCIK>0000764180</reportingPersonCIK>
+        <reportingPersonNoCIK>N</reportingPersonNoCIK>
+        <reportingPersonName>Altria Group, Inc.</reportingPersonName>
+        <memberOfGroup>b</memberOfGroup>
+        <fundType>WC</fundType>
+        <fundType>OO</fundType>
+        <legalProceedings>N</legalProceedings>
+        <citizenshipOrOrganization>VA</citizenshipOrOrganization>
+        <soleVotingPower>0</soleVotingPower>
+        <sharedVotingPower>1020598157</sharedVotingPower>
+        <soleDispositivePower>159121937</soleDispositivePower>
+        <sharedDispositivePower>0</sharedDispositivePower>
+        <aggregateAmountOwned>1020598157</aggregateAmountOwned>
+        <isAggregateExcludeShares>N</isAggregateExcludeShares>
+        <percentOfClass>51.9</percentOfClass>
+        <typeOfReportingPerson>CO</typeOfReportingPerson>
+        <commentContent>Anheuser-Busch InBev SA/NV (the "Issuer") has two classes of shares outstanding - restricted shares without nominal value ("Restricted Shares") and ordinary shares without nominal value ("Ordinary Shares," and together with the Restricted Shares, "Voting Shares"). The Ordinary Shares are registered under Section 12(b) of the Exchange Act. As described in more detail in this Schedule 13D, the Restricted Shares and Ordinary Shares rank equally with respect to voting rights, and the Restricted Shares are convertible into Ordinary Shares at the option of the holder thereof.
+
+The amounts reported in Rows 7-12 of the cover page to this Schedule 13D represent (i) 34,006,520 Ordinary Shares and 125,115,417 Restricted Shares beneficially owned by Altria Group, Inc. ("Altria") with respect to which Altria has sole dispositive power and shared voting power and (ii) an additional 861,476,220 Voting Shares, consisting of 96,862,718 Restricted Shares and 6,000,000 Ordinary Shares held by Bevco Lux S.a.r.l, formerly known as BEVCO Ltd. ("BEVCO") and 758,613,502 Ordinary Shares held by Stichting Anheuser-Busch InBev (the "Stichting") and certain of its affiliates, with respect to which Altria may be deemed to have shared voting power by virtue of a voting and support agreement (the "Voting Agreement") among Altria, BEVCO and the Stichting described in more detail in Item 6 of this Schedule 13D.
+
+The calculation of percentage ownership reported in Row 13 of the cover page to this Schedule 13D is based on a total of 1,965,328,900 Ordinary Shares deemed to be outstanding as of January 31, 2025, which is calculated based upon the sum (i) 1,743,350,765 Ordinary Shares issued and outstanding as of such date and (ii) 221,978,135 Ordinary Shares issuable upon the conversion of Restricted Shares as of such date over which Altria may be deemed to have shared voting power by virtue of the Voting Agreement, which includes all Restricted Shares owned by Altria and BEVCO, and no Restricted Shares owned by other holders.
+</commentContent>
+      </reportingPersonInfo>
+    </reportingPersons>
+    <!-- trimmed: items 1-7 and the signature -->
+  </formData>
+</edgarSubmission>

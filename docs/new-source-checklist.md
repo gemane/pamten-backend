@@ -67,6 +67,24 @@ parser. Anything that does not map is either a new property (document it) or noi
 - [ ] **Ownership** — `stake_percent`, `ownership_type`, and `since`/`until` where the
       source states them. Bands ("more than 25%") are common: store what is stated, do not
       invent a midpoint.
+- [ ] **A reported "ownership" percentage may be power, not property.** Registers of
+      *beneficial* ownership (SEC 13D/G, and the UBO/PSC family) count shares a holder can
+      vote OR sell, so a party to a voting agreement reports the whole pooled bloc: Altria's
+      13D/A states 51.9 % of AB InBev, and 8.1 % is its own. Read the power rows (sole/shared
+      voting and dispositive) and judge by their SHAPE, not by how many parties filed: votes
+      beyond everything the holder can dispose of are somebody else's shares → that figure
+      is `voting_power_pct`, never `stake_percent`. Altria files alone, and the co-filer
+      test alone made it AB InBev's majority owner. And never *derive* other holders'
+      voting from someone's bloc: pooled votes dilute nobody; only extra votes per share
+      (a dual-class issuer) do, and then only the source's own class votes say by how much.
+- [ ] **Store the count beside the percentage, and say whose denominator it is.** A stake
+      is `shares / shares_outstanding`, and only the count belongs to the holder; the total
+      moves with every issue and buy-back. Bevco's last 13D/A (2020) said 5.9 % of AB InBev;
+      the same 102,862,718 shares are 5.2 % of the 2026 total. When the same source has a
+      newer total for the SAME class, restate older holdings against it and record where it
+      came from (`denominator_date`), never across a split (a total that moved more than
+      2×), and compare share classes by what they are, not by their wording (ADSs "each
+      representing one ordinary share" are the ordinary shares).
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
       Registered/Headquarters switch exists precisely because they differ.
@@ -210,6 +228,29 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `since`: storing the filing date as the start made News Corp's FY2026 Exhibit 21
       "acquire" 200 subsidiaries in 2026. Where older lists exist, their unbroken run
       gives a lower bound — store it with `since_basis` saying so.
+- [ ] **Make it work for time travel.** The graph and the panel can be shown *as of*
+      any year (`/search/entity/{id}/full-profile?as_of=`), and they can only be as
+      right as the dates a source writes. Before shipping, check every edge the source
+      writes against these rules:
+      - **A start**: `since` only when the source states when the relationship began
+        (GLEIF, PSC, a first 13D). A lower bound gets `since_basis`. An as-of list
+        gets only `source_date` (see the item above). The profile treats each one
+        differently: a stated start hides the edge before it, while a lower bound or
+        a bare `source_date` marks it as "not documented for that year".
+      - **An end**: when the source says a holding or role is over, close the edge
+        with `until` (+ `until_reason`), never delete it. A deleted edge is missing
+        from every past year too. A 0 % amendment is an exit, not a 0 % holding.
+      - **"As of" vs "said on"**: the day the facts were true (13D/G *date of event*
+        → `event_date`, a register's snapshot date) is a different fact from the day
+        they were published (`source_date`). Store both; never use one as the other.
+      - **Precision**: a month-only or year-only date stays that way (`2023-04-00`,
+        a bare year). A made-up day moves an edge across a year boundary.
+      - **What it can't do yet**: an edge holds the latest amendment's numbers, so a
+        past year shows today's stake. If the source publishes history (amendments,
+        annual lists, archived snapshots), say in the source doc what is kept and
+        what is lost.
+      - **Test it**: one IT that writes the source's edges and reads the profile
+        with an `as_of` before, inside and after the dated range.
 - [ ] **Instant sources stamp the target** with `set_scrape_target`, or the freshness gate
       cannot tell a scraped company from an untouched one and will re-scrape forever.
 - [ ] **Wrap the run in `record_run`** so it appears in `GET /scraper/runs`. That log, not
