@@ -1709,6 +1709,9 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             stake_percent=holding.get("stake_percent"),
             source_url=holding.get("source_url"),
             event_date=holding.get("event_date"),
+            # the rulebook behind the figure ("13G/A") — run_sec_holdings, the
+            # other writer of the same filer-side holdings, always passed it
+            filing_type=holding.get("filing_type"),
             # Set when a later amendment reported 0% — the filer has dropped
             # below the 5% threshold, so this is history, not a live position.
             until=holding.get("until"),

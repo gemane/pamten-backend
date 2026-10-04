@@ -330,5 +330,6 @@ def test_a_scraped_company_s_own_holdings_and_a_voting_group_carry_the_date(it_d
     with patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"):
         _write_issuer_side(it_db, [bloc], holdings=[holding])
     assert _edge_with_stake(it_db, 6.25).get("event_date") == "2026-03-31"
+    assert _edge_with_stake(it_db, 6.25).get("filing_type") == "13G/A"
     group_edge = next(e for e in _edges(it_db) if e.get("voting_power_pct") == 52.3)
     assert group_edge.get("event_date") == "2026-05-13"
