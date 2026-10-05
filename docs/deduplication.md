@@ -245,6 +245,12 @@ registrar is Companies House (RA000585), the same value PSC keys on — so the t
 collapse to one node carrying the LEI, the name, and the ownership edges. Exposed at
 `POST /scraper/deduplicate-entities` (background job; `strategy=bulk` deletes losers,
 `strategy=merge` migrates edges first) and `python manage.py dedupe-entities`.
+**No importer does this merge itself**, so it is the first finishing step of every
+import chain (`~/scripts/steps/finish-import.sh`, `deploy/ops.sh import`), before the
+search index, geocoding and `mark-shortcuts`. Until 2026-10-05 neither chain ran it, and
+the test import left 13 doubled companies: 8 GLEIF companies next to their Companies
+House record (Unilever PLC, Google UK), and 5 GLEIF companies next to themselves as a
+PSC foreign owner (Alphabet, Tesla, Nestlé S.A.), which broke the chain at the border.
 
 **GLEIF↔SEC** don't share the obvious key (GLEIF carries no CIK), but SEC does the work
 for us: EDGAR's submissions JSON has an `lei` field, so the SEC scraper stamps `lei_id`
