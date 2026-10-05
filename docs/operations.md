@@ -3,6 +3,13 @@
 Running the database day to day: backups, getting one back, and the service
 account a rebuild takes with it.
 
+## Setting up a production server
+
+`deploy/setup-server.sh` takes a fresh Debian/Ubuntu box to serving in one run, from
+one filled-in env file (`deploy/.env.example`); day two is `owlgraph <command>`
+(`deploy/ops.sh`). Everything — the steps, the prerequisites, what was tested — is
+in [`deploy/README.md`](../deploy/README.md).
+
 ## Releases & versions
 
 One product version for the API, the web app and the Android app, in semantic

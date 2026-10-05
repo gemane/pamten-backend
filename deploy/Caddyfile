@@ -24,3 +24,13 @@
 		Referrer-Policy strict-origin-when-cross-origin
 	}
 }
+
+# The container healthcheck's own door: plain HTTP on 8080, never published
+# (only Caddy's 80/443 are), so it cannot be reached from outside. The public
+# site cannot serve the check — HTTP redirects to HTTPS and there is no
+# certificate for "localhost", so the check failed forever. This proves Caddy
+# runs and routes to the API; TLS is checked from outside (setup-server.sh,
+# the uptime check).
+:8080 {
+	reverse_proxy /health api:8000
+}
