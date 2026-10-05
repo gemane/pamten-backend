@@ -726,10 +726,11 @@ def mark_13f_stale(company_id: str, period: str) -> int:
 
     A 13F seller never states an exit — the position simply vanishes from the
     manager's next filing, and silence is not a statement. So an edge whose
-    ``source_date`` (the latest filing period — ``since`` deliberately keeps
-    the FIRST-seen quarter for the timeline, only source_date moves on
-    refresh) predates the period just read is flagged ``stale`` (dimmed in
-    the panel), never closed: writing ``until`` would assert an end date
+    ``source_date`` (the latest filing period — ``since`` keeps the first-seen
+    quarter as a lower bound, ``since_basis = first_reported``; only
+    source_date moves on refresh) predates the period just read is flagged
+    ``stale`` (dimmed in the panel, and in time travel after that date),
+    never closed: writing ``until`` would assert an end date
     nobody filed. One direction only — the upsert already sets
     ``stale = false`` on every edge the new quarter touched, so a filer that
     reappears heals itself.

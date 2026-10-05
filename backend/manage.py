@@ -586,7 +586,8 @@ def cmd_heal_sec_dates(args):
     verb = "would repair" if args.dry_run else "repaired"
     print(f"{res['pairs']} SEC holdings read; {verb}: {res['amendment']} amendment dates made a "
           f"lower bound, {res['form4']} Form 3/4 starts removed, "
-          f"{res['ended_before_start']} periods ended before they began reopened.")
+          f"{res['ended_before_start']} periods ended before they began reopened, "
+          f"{res['first_reported']} 13F holdings given their quarter as a lower-bound start.")
 
 
 def cmd_heal_role_dates(args):

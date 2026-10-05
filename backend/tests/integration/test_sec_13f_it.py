@@ -74,8 +74,13 @@ def test_holders_become_edges_with_counts_dollars_and_computed_percent(it_db):
     # 171,826,745 / 13.1bn — COMPUTED, not transcribed
     assert giga["pct"] == pytest.approx(1.3117, abs=0.001)
     assert giga["d"] == "2026-06-30"
-    # a quarter-end snapshot: held at the period end, not bought then
-    assert giga["since"] is None
+    # a quarter-end snapshot: held at the period end, not bought then — so
+    # the quarter is a LOWER bound for the start, never a stated one
+    assert giga["since"] == "2026-06-30"
+    basis = it_db.run_command(
+        "MATCH (a {name: 'Gigafund Management Company, LLC'})-[r:OWNS]->() "
+        "RETURN r.since_basis AS b")[0]["b"]
+    assert basis == "first_reported"
 
 
 def test_without_a_denominator_counts_stay_and_percent_is_absent(it_db):
