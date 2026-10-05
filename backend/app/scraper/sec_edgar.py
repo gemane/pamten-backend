@@ -968,7 +968,9 @@ def _parse_percent_from_text(text: str) -> float | None:
         if m:
             try:
                 val = float(m.group(1))
-                if 0 < val <= 100:
+                # 0 is a statement (the filer holds nothing — an exit); only
+                # an unreadable or impossible figure is None
+                if 0 <= val <= 100:
                     return val
             except (ValueError, IndexError):
                 pass
@@ -1349,6 +1351,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
 
         pct           = None
         voting        = None
+        reported      = None      # row 13 as the filer stated it, before the split
         is_individual = None
         share_class   = None
         shares        = None
@@ -1364,6 +1367,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                          inv["investor_name"], xml.get("issuer_name"),
                          xml.get("issuer_cik"), company_name)
                 continue
+            reported      = person.get("percent")
             pct, voting   = _stake_from_person(xml, person)
             share_class   = xml.get("class_title")
             event_date    = xml.get("event_date")
@@ -1400,6 +1404,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 # page's numbers belong to someone else.
                 cover         = _cover_page_for(text, inv["investor_name"])
                 pct           = _parse_percent_from_text(cover)
+                reported      = pct
                 bloc          = _co_filers_form_a_bloc(inv["form_type"], _cover_page_count(text))
                 pct, voting    = _own_stake_and_voting(cover, pct, document=text, in_group=bloc)
                 is_individual = _parse_reporter_type_from_text(cover)
@@ -1426,6 +1431,15 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                      inv["investor_name"])
             continue
 
+        if reported is None and pct is None and not voting:
+            # Nothing READ — not "nothing held". This used to count as an exit
+            # and closed a live holding whenever a cover defeated the parser.
+            # The investor is not marked seen, so its older, readable filing
+            # is used instead: possibly out of date, never a false exit.
+            log.info("SEC EDGAR: %r's %s cover gave no percentage — skipped, not an exit",
+                     inv["investor_name"], inv["file_date"])
+            continue
+
         if not pct and not voting:
             # Nothing held and no bloc voted: an exit, not a holding. `voting`
             # is what separates this from a group member who can dispose of
@@ -1433,10 +1447,17 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # and must stay. The CIK is deliberately NOT marked seen, so this
             # investor's older, non-zero filing is still read and emitted below,
             # closed with this date — which is what builds the timeline.
-            closed_since.setdefault(inv["investor_cik"], inv["file_date"])
+            #
+            # The feed runs newest first and every zero NEWER than the holding
+            # is read before it, so the last one assigned is the oldest: the
+            # day the position actually ended (the cover's date of event when
+            # it states one), not a later repetition of the exit.
+            closed_since[inv["investor_cik"]] = event_date or inv["file_date"]
             log.info("SEC EDGAR: %r reported no position on %s — closing, not writing 0%%",
                      inv["investor_name"], inv["file_date"])
             continue
+
+        since, since_basis = _stake_start(inv["form_type"], event_date, inv["file_date"])
 
         seen_investor_ciks.add(inv["investor_cik"])
         log.info(
@@ -1468,6 +1489,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # The day the count and the percentage were as stated (the
             # cover's date of event) — what they are "as of".
             "event_date":       event_date,
+            # When the holding began, as far as this filing can say: an
+            # original schedule states it, an amendment only bounds it.
+            "since":            since,
+            "since_basis":      since_basis,
             # The bloc's own count. Belongs to the group, repeated by every
             # member — never summed, exactly like voting_power_pct.
             "voting_shares":    voting_shares,
@@ -1492,6 +1517,26 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
 _MONTHS = {m: i for i, m in enumerate(
     ("january", "february", "march", "april", "may", "june", "july", "august",
      "september", "october", "november", "december"), 1)}
+
+
+def _stake_start(form_type: str | None, event_date: str | None,
+                 file_date: str | None) -> tuple[str | None, str | None]:
+    """(since, since_basis) for a 13D/G holding, from the one filing read.
+
+    An ORIGINAL schedule is due within days of crossing 5 % (10 for a 13D, 45
+    for a passive 13G), so its date of event states the start — the file date
+    where the cover gives none. An AMENDMENT says only that the position
+    existed by then: the scrape reads each holder's newest filing, and its
+    date written as a stated start made a holder since 2005, first scraped in
+    2026, "since 2026" — absent from every year before. So it is a lower bound
+    (`amendment`), which time travel shows dimmed before the date, not hidden.
+    """
+    when = event_date or file_date
+    if not when:
+        return None, None
+    if "/A" in (form_type or "").upper():
+        return when, "amendment"
+    return when, None
 
 
 def _event_date(value: str | None) -> str | None:
@@ -3154,8 +3199,14 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
         if sid in done:
             continue
 
+        if parsed["percent"] is None:
+            # Unreadable, not "nothing held": skipped, so the holder's older
+            # readable filing is used — never a false exit.
+            continue
         if not parsed["percent"]:
-            closed_since.setdefault(sid, filing["date"])   # newest zero wins
+            # The last zero assigned before the holding is the OLDEST newer
+            # than it: the day the position ended, not a later repetition.
+            closed_since[sid] = parsed.get("event_date") or filing["date"]
             continue
 
         done.add(sid)
@@ -3165,6 +3216,8 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             "stake_percent": parsed["percent"],
             "file_date":     filing["date"],
             "event_date":    parsed.get("event_date"),
+            "since":         _stake_start(filing["form"], parsed.get("event_date"), filing["date"])[0],
+            "since_basis":   _stake_start(filing["form"], parsed.get("event_date"), filing["date"])[1],
             "form_type":     filing["form"],
             "filing_type":   _short_form(filing["form"]),
             "until":         closed_since.get(sid),

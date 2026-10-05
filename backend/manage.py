@@ -578,6 +578,17 @@ def cmd_heal_claim_keys(args):
           + f" ({verb}).")
 
 
+def cmd_heal_sec_dates(args):
+    """Repair the SEC dates written before Time travel 2/6 (see
+    `app.scraper.time_travel_heal.heal_sec_dates`). `--dry-run` only counts."""
+    from app.scraper.time_travel_heal import heal_sec_dates
+    res = heal_sec_dates(dry_run=args.dry_run)
+    verb = "would repair" if args.dry_run else "repaired"
+    print(f"{res['pairs']} SEC holdings read; {verb}: {res['amendment']} amendment dates made a "
+          f"lower bound, {res['form4']} Form 3/4 starts removed, "
+          f"{res['ended_before_start']} periods ended before they began reopened.")
+
+
 def cmd_dedupe_role_synonyms(args):
     """Merge HAS_ROLE edges that name the SAME position in different words.
 
@@ -1378,6 +1389,12 @@ def _build_parser():
     p_ex21h.add_argument('--max-filings', type=int, default=None,
                          help='Annual filings to read, newest first (default 25; ~2 requests each)')
     p_ex21h.set_defaults(func=cmd_sec_ex21_history)
+
+    p_hsd = subparsers.add_parser('heal-sec-dates',
+        help="Repair SEC start/end dates written before the time-travel fixes "
+             "(amendment dates as starts, Form 4 starts, ends before starts); --dry-run counts")
+    p_hsd.add_argument('--dry-run', action='store_true', help='Count, change nothing')
+    p_hsd.set_defaults(func=cmd_heal_sec_dates)
 
     p_hck = subparsers.add_parser('heal-claim-keys',
         help="Re-key claims whose key does not match their content and fold the doubles "

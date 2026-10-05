@@ -434,6 +434,40 @@ impossible 109.9% to a conservative 13.95%, with the 51.7% bloc shown as voting
 power. Attributing the group's holding to its members individually needs the
 group modelled as a group; see the voting-group note in `deduplication.md`.
 
+### Dates for time travel — start, end, and which period
+
+The scrape reads each holder's **newest** filing (`fetch_ownership_filings`
+keeps one per investor), so that filing cannot say when the holding began:
+- **An original schedule** (no `/A`) is due within days of crossing 5 %, so its
+  date of event (else its file date) is a **stated start**.
+- **An amendment** only proves the position existed by then:
+  `since_basis = 'amendment'`, a lower bound. Its date written as a stated
+  start made a holder since 2005, first scraped in 2026, "since 2026" — absent
+  from every earlier year. Starts are combined on every re-read (earliest
+  wins), so a later read that finds the original moves it earlier.
+- **Form 3/4 holdings** state what is held *as of* the report: no start at all.
+
+**An exit** is a stated 0 % (XML `0`, or "0%" on an HTML cover) and is dated by
+the **oldest** zero newer than the holding — the day it ended, by its date of
+event — not a later repeat. **A cover whose percentage cannot be read is not an
+exit**: it is skipped and the holder's older readable filing is used (before,
+`not pct` closed live holdings whenever a cover defeated the parser).
+
+**Closing touches one period**: the ended edge already carrying this end (a
+re-read), else the open one — never one that began after the end, whether SEC's
+own or another source's shared edge. An 8-K or "Former …" Form 4 departure
+closes only a seat that began on or before it (a 2022 departure no longer
+closes a seat someone returned to in 2024). A **detach** takes the start from
+the claims that remain instead of keeping SEC's withdrawn one as stated.
+
+**Exhibit 21 drops** (`mark_ex21_stale`): a subsidiary the newer list no longer
+names is flagged `stale` (dimmed), never closed — an exhibit may omit
+insignificant subsidiaries, and silence is not an end date.
+
+`python manage.py heal-sec-dates [--dry-run]` repairs edges written before
+these rules (amendment dates → `amendment`, Form 3/4 starts removed, ends before
+starts reopened), edges and claims alike, walking the SEC claims.
+
 ### Parsing stake percentages
 
 The primary filing document (linked from the index page's document table) contains
