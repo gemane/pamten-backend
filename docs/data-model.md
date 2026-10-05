@@ -109,7 +109,7 @@ the SEC edge (its "listed since 2013" with it) for the next SEC scrape to redraw
 | Part of the edge | Rule |
 |---|---|
 | **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
-| **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A start that is not stated keeps its label: `first_listed` ("since 2013 or earlier", the oldest Exhibit 21 naming it), `amendment` (a 13D/G amendment's date — held by then, the start not seen) or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it. **For time travel every basis is a lower bound except `newly_listed`** (`owns_merge.STATED_BASES`, `started_by_clause`): before its date the edge is shown dimmed, not hidden. The source's **claim** carries the same listing date and keeps it when the list is re-read (a re-scrape rewrites the claim and states no start; it used to wipe the date) |
+| **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A start that is not stated keeps its label: `first_listed` ("since 2013 or earlier", the oldest Exhibit 21 naming it), `amendment` (a 13D/G amendment's date — held by then, the start not seen), `register_start` (UK PSC notified on 2016-04-06, the register's first day) or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it. **For time travel every basis is a lower bound except `newly_listed`** (`owns_merge.STATED_BASES`, `started_by_clause`): before its date the edge is shown dimmed, not hidden. The source's **claim** carries the same listing date and keeps it when the list is re-read (a re-scrape rewrites the claim and states no start; it used to wipe the date) |
 | **Structure** — `direct_or_indirect` (+ `structure_basis`), `also_ultimate`, `ultimate_*`, `interest_types`, `psc_self_link` | Stays on the edge whoever holds the answer; an inferred marker travels with its basis, a stated one never gains one |
 
 A source that does not outrank the holder still records its claim, and does not
@@ -506,7 +506,8 @@ write only what moved (`app/scraper/ch_psc_incremental.py`).
 
 Three facts about the data make that exact rather than a guess:
 
-* **Ceased PSCs stay in the snapshot**, carrying `ceased_on` — 17.9% of records.
+* **Ceased PSCs stay in the snapshot**, carrying `ceased_on` — 17.9% of records — and become closed edges with `until_reason = ceased` (a vanished record is `withdrawn`).
+* **`notified_on` of 2016-04-06 is a lower bound**, not a start: the register began that day and control that already existed was notified on it (`since_basis = register_start`, on the edge and its claim). As a stated start it hid a parent holding its subsidiary since 1990 before 2016.
   A PSC's control ending is an in-record change, not a record disappearing.
 * **`data.links.self`** identifies an *appointment* and is unique across the file,
   so each changed record maps to exactly one OWNS edge (via `psc_self_link`).
@@ -517,7 +518,7 @@ Three facts about the data make that exact rather than a guess:
 | the record | the graph |
 |---|---|
 | new | nodes upserted, edge created |
-| changed | re-mapped and rewritten; `until` written **unconditionally**, so a correction that removes `ceased_on` reopens the edge |
+| changed | re-mapped and rewritten; `until` written **unconditionally**, so a correction that removes `ceased_on` reopens the edge; the start is **combined** (the earliest any source gives, a stated one over a lower bound on the same day — an earlier GLEIF start on an edge PSC took over survives) |
 | vanished | closed with `until` = the **snapshot's** date and `until_reason = withdrawn` — never deleted, and the `Claim` is closed with it |
 
 `until_reason` distinguishes the two ways a holding ends: a *ceased* PSC really did

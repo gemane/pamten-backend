@@ -297,6 +297,12 @@ class PscMapped:
     edge_props: dict
 
 
+#: The day the UK register of people with significant control began. Control
+#: that already existed was notified on it, so a `notified_on` of this day says
+#: only "since this day or earlier" (since_basis `register_start`).
+PSC_REGISTER_START = "2016-04-06"
+
+
 def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped | None:
     """Map one snapshot record, or None when it is not one we import.
 
@@ -317,6 +323,10 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
     stake, voting, otype, interest_types = _control(data.get("natures_of_control"))
     since = data.get("notified_on") or None
     until = data.get("ceased_on") or None
+    # The register began on 6 April 2016, and control that already existed was
+    # notified THAT day: a lower bound, not a start. As a stated start it hid
+    # a parent that has held its subsidiary since 1990 before 2016.
+    since_basis = "register_start" if since == PSC_REGISTER_START else None
 
     if kind in _PERSON_KINDS:
         first, last = parse_full_name(name)
@@ -381,7 +391,10 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
             "filing_type": "PSC",
             "stake_percent": stake, "voting_power_pct": voting, "ownership_type": otype,
             "interest_types": interest_types, "direct_or_indirect": None,
-            "since": since, "until": until, "source_id": source_id,
+            "since": since, "since_basis": since_basis, "until": until,
+            # why the edge ended: the register says the control ceased
+            "until_reason": "ceased" if until else None,
+            "source_id": source_id,
             "credibility_score": credibility_score,
             # The key the incremental refresh matches an edge on. Per appointment,
             # so exactly one edge per snapshot record — see ch_psc_incremental.

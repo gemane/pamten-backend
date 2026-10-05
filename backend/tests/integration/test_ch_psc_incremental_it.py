@@ -130,7 +130,8 @@ class TestWhatTheRefreshDoes:
         _apply(loaded, _b_records())
         e = _edges(it_db)["/company/00000002/persons-with-significant-control/individual/ceases"]
         assert e["until"] == "2026-07-01"
-        assert e["reason"] is None, "a cessation is not a withdrawal"
+        # a cessation is not a withdrawal: the register says the control ceased
+        assert e["reason"] == "ceased"
 
     def test_a_correction_reopens_a_closed_edge(self, loaded, it_db):
         # `until` is written unconditionally rather than COALESCEd. GLEIF coalesces
@@ -140,6 +141,7 @@ class TestWhatTheRefreshDoes:
         _apply(loaded, _b_records())
         e = _edges(it_db)["/company/00000003/persons-with-significant-control/individual/reopens"]
         assert e["until"] is None
+        assert e["reason"] is None          # and the reason goes with the end
 
     def test_a_changed_stake_is_written(self, loaded, it_db):
         _apply(loaded, _b_records())
@@ -326,3 +328,42 @@ class TestClaimsFollowTheRefresh:
         assert after[0]["last_seen_at"] >= before[0]["last_seen_at"]
         assert after[0]["stake_percent"] != before[0]["stake_percent"], \
             "the refreshed claim records the new stake band"
+
+
+# ── Time travel (2026-10): the register's start, combined starts, adoption ───
+
+class TestTimeTravel:
+    def test_the_register_start_is_a_lower_bound_on_the_edge_and_the_claim(self, loaded, it_db):
+        rows = it_db.run_command(
+            "MATCH ()-[r:OWNS]->() WHERE r.psc_self_link ENDS WITH '/steady' "
+            "RETURN r.since AS since, r.since_basis AS basis")
+        assert (rows[0]["since"], rows[0]["basis"]) == ("2016-04-06", "register_start")
+        claim = it_db.run_sql("SELECT since, since_basis FROM Claim WHERE to_id = 'gb-coh:00000001'")[0]
+        assert (claim["since"], claim["since_basis"]) == ("2016-04-06", "register_start")
+
+    def test_an_earlier_stated_start_survives_the_refresh(self, loaded, it_db):
+        # GLEIF's 2012 start on the edge PSC holds: the register's 2016 must not replace it
+        it_db.run_command("MATCH ()-[r:OWNS]->() WHERE r.psc_self_link ENDS WITH '/restake' "
+                          "SET r.since = '2012-03-01', r.since_basis = null")
+        _apply(loaded, _b_records())
+        rows = it_db.run_command(
+            "MATCH ()-[r:OWNS]->() WHERE r.psc_self_link ENDS WITH '/restake' "
+            "RETURN r.since AS since, r.since_basis AS basis, r.stake_percent AS stake")
+        assert (rows[0]["since"], rows[0]["basis"]) == ("2012-03-01", None)
+        assert rows[0]["stake"] == 25.0            # the refresh did apply the new answer
+
+    def test_a_ceased_late_filing_does_not_take_over_the_live_edge(self, loaded, it_db):
+        # A corporate PSC with a UK number is ONE node whatever the appointment
+        # link, so its old, already-ceased appointment — filed late — meets the
+        # live edge of the same pair. It used to adopt it and close it.
+        live = _corporate("00000008", "live", reg_number="09999999")
+        _apply(loaded, _b_records(live=live), date_="2026-07-28")
+        late = _corporate("00000008", "late", reg_number="09999999")
+        late["data"]["notified_on"] = "2010-01-01"
+        late["data"]["ceased_on"] = "2015-12-31"
+        _apply(loaded, _b_records(live=live, late=late), date_="2026-07-29")
+        edges = _edges(it_db)
+        live_e = edges["/company/00000008/persons-with-significant-control/corporate/live"]
+        assert live_e["until"] is None, "current control was closed by an old appointment"
+        old = edges["/company/00000008/persons-with-significant-control/corporate/late"]
+        assert (old["until"], old["reason"]) == ("2015-12-31", "ceased")

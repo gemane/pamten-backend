@@ -389,6 +389,7 @@ def _claim_stmt(k: int, mapped, params: dict, now: str) -> str:
         voting_power_pct=mapped.edge_props.get("voting_power_pct"),
         ownership_type=mapped.edge_props.get("ownership_type"),
         since=mapped.edge_props.get("since"),
+        since_basis=mapped.edge_props.get("since_basis"),
         until=mapped.edge_props.get("until"),
         source_url=mapped.edge_props.get("source_url"),
         source_date=mapped.edge_props.get("source_date"),
@@ -455,23 +456,30 @@ class _PscEdgeWriter:
         stmts, params = [], {}
         now = _now_iso()
         for k, m in enumerate(batch):
-            props = {**m.edge_props, "last_scraped_at": now, "until_reason": None}
+            # until_reason comes with the record ("ceased" with an end, else
+            # none) — a correction that reopens the edge clears it too
+            props = {**m.edge_props, "last_scraped_at": now}
             # PSC states no direct/indirect marker; writing its None would wipe
             # the one GLEIF put on a pair both sources share.
             if props.get("direct_or_indirect") is None:
                 props.pop("direct_or_indirect", None)
             since = props.pop("since", None)
+            basis = props.pop("since_basis", None)
             sets = []
             for name, value in props.items():
                 pk = f"{name}__{k}"
                 params[pk] = value
                 sets.append(f"{name} = :{pk}")
-            # The start date is combined across sources (app.scraper.owns_merge):
-            # an earlier "listed since" lower bound SEC put on the shared edge
-            # stays; otherwise the register's own date is written as before.
+            # The start date is combined across sources (app.scraper.owns_merge,
+            # combine_since): the EARLIEST any source gives, and on the same day
+            # a stated start over a lower bound. Kept only when it was a lower
+            # bound before, a stated 2012 GLEIF start on an edge PSC took over
+            # was replaced by the register's 2016 — hidden for 2012–2015.
             params[f"since__{k}"] = since
-            keep = f"since_basis IS NOT NULL AND (:since__{k} IS NULL OR since < :since__{k})"
-            sets += [f"since_basis = CASE WHEN {keep} THEN since_basis ELSE null END",
+            params[f"basis__{k}"] = basis
+            keep = (f"since IS NOT NULL AND (:since__{k} IS NULL OR since < :since__{k} "
+                    f"OR (since = :since__{k} AND since_basis IS NULL))")
+            sets += [f"since_basis = CASE WHEN {keep} THEN since_basis ELSE :basis__{k} END",
                      f"since_source_url = CASE WHEN {keep} THEN since_source_url ELSE null END",
                      f"since = CASE WHEN {keep} THEN since ELSE :since__{k} END"]
             params[f"link__{k}"] = m.self_link
@@ -494,7 +502,10 @@ class _PscEdgeWriter:
         # A live edge already on this pair means the same control stated under a new
         # appointment link — adopt it rather than opening a second one beside it, or
         # a later dedup pass deletes one and the next refresh recreates it forever.
-        adopted = run_command(
+        # Only a CURRENT appointment adopts: a late-filed, already-ceased one
+        # took over the live edge, closed current control with its own end, and
+        # stole the live appointment's link. It keeps its own closed edge below.
+        adopted = None if mapped.edge_props.get("until") else run_command(
             f"MATCH (a:{mapped.owner_label} {{id:$o}})-[r:OWNS]->(b:Entity {{id:$c}}) "
             "WHERE r.until IS NULL AND r.psc_self_link IS NOT NULL "
             "SET r.psc_self_link = $link RETURN r.psc_self_link AS l",
@@ -531,7 +542,8 @@ class _PscEdgeWriter:
         if shared:
             claim_params: dict = {}
             _flush_script(_claim_stmt(0, mapped, claim_params, _now_iso()), claim_params)
-            since = combine_since(shared[0], {"since": mapped.edge_props.get("since")})
+            since = combine_since(shared[0], {"since": mapped.edge_props.get("since"),
+                                              "since_basis": mapped.edge_props.get("since_basis")})
             if since["since"] != shared[0].get("since"):
                 run_command(
                     f"MATCH (a:{mapped.owner_label} {{id:$o}})-[r:OWNS]->(b:Entity {{id:$c}}) "
