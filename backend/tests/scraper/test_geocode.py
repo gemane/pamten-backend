@@ -133,3 +133,54 @@ def test_structured_query_params_and_user_agent_are_sent():
     assert params["city"] == "Cupertino"
     assert params["country"] == "US"
     assert params["format"] == "json" and params["limit"] == "1"
+
+
+class TestTheStructuredPathUsesTheDurableCache:
+    """geocode_address had only the per-process dict: every rebuild re-asked
+    Nominatim for every distinct address, one a second — 36 minutes after a
+    test import whose answers were all already known."""
+
+    @pytest.fixture
+    def cache(self, monkeypatch):
+        from app.scraper import geo_cache
+        store: dict = {}
+        monkeypatch.setattr(geo_cache, "lookup", lambda q: store.get(q))
+        monkeypatch.setattr(geo_cache, "store",
+                            lambda q, coord, prec: store.__setitem__(q, (coord, prec)))
+        return store
+
+    def test_a_cached_hit_sends_no_request(self, cache):
+        cache[geocode.structured_cache_key({"street": "1 Infinite Loop", "city": "Cupertino",
+                                            "country": "US"})] = ((37.33, -122.03), "structured")
+        c = _client(_resp([{"lat": "1", "lon": "1"}]))
+        with patch.object(geocode, "_get_client", return_value=c):
+            assert geocode.geocode_address(ADDR) == (37.33, -122.03)
+        c.get.assert_not_called()
+
+    def test_a_cached_miss_sends_no_request_either(self, cache):
+        cache[geocode.structured_cache_key({"city": "Nowhere", "country": "XX"})] = (None, None)
+        c = _client(_resp([{"lat": "1", "lon": "1"}]))
+        with patch.object(geocode, "_get_client", return_value=c):
+            assert geocode.geocode_address({"city": "Nowhere", "country": "XX"}) is None
+        c.get.assert_not_called()
+
+    def test_an_answer_is_stored_hit_or_clean_miss(self, cache):
+        with patch.object(geocode, "_get_client",
+                          return_value=_client(_resp([{"lat": "37.3318", "lon": "-122.0312"}]))):
+            geocode.geocode_address(ADDR)
+        with patch.object(geocode, "_get_client", return_value=_client(_resp([]))):
+            geocode.geocode_address({"city": "Atlantis", "country": "GR"})
+        assert cache[geocode.structured_cache_key({"street": "1 Infinite Loop", "city": "Cupertino",
+                                                   "country": "US"})] == ((37.3318, -122.0312), "structured")
+        assert cache[geocode.structured_cache_key({"city": "Atlantis", "country": "GR"})] == (None, None)
+
+    def test_a_transport_error_is_not_stored(self, cache):
+        with patch.object(geocode, "_get_client",
+                          return_value=_client(exc=httpx.ConnectError("down"))):
+            assert geocode.geocode_address(ADDR) is None
+        assert cache == {}
+
+    def test_the_key_is_order_independent_and_never_a_free_text_query(self):
+        a = geocode.structured_cache_key({"city": "Paris", "country": "FR"})
+        b = geocode.structured_cache_key({"country": "FR", "city": "Paris"})
+        assert a == b == "structured:city=Paris|country=FR"
