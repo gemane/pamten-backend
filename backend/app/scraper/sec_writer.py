@@ -213,6 +213,8 @@ def _retire_superseded_bloc_edge(filer_id: str, subject_id: str, source_id: str,
         session.run(
             f"""MATCH (a:{filer_label} {{id: $fid}})-[r:OWNS]->(b:Entity {{id: $sid}})
                 WHERE r.source_id = $src AND r.stake_percent IS NULL
+                  AND r.until IS NULL
+                  AND (r.filing_type IS NULL OR r.filing_type STARTS WITH '13D')
                 DELETE r""",
             fid=filer_id, sid=subject_id, src=source_id)
 

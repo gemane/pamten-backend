@@ -608,22 +608,19 @@ def merge_person_records(keep: str, dup: str) -> None:
             return [{**{p: rec.get(p) for p in props}, "target": rec.get("target")}
                     for rec in session.run(q, dup=dup)]
 
-        # OWNS → fold onto the kept person's existing edge to the same target.
-        owns_set = ", ".join(f"nr.{p} = COALESCE(nr.{p}, ${p})" for p in OWNS_PROPS)
-        # (OWNS_PROPS / ROLE_PROPS / RELATED_TO_PROPS come from edge_schema.)
+        # OWNS and HAS_ROLE → the merges' shared rule (maintenance._carry_edge):
+        # an ended period is carried as its own edge, an open one folded into
+        # the kept person's open edge with the earliest start. The MERGE …
+        # SET COALESCE this replaces matched ANY edge of the pair — a dup's
+        # ended holding folded into keep's current one and closed it.
+        from app.scraper.maintenance import _carry_edge
         for e in _edges("OWNS", OWNS_PROPS, out=True):
-            session.run(
-                f"MATCH (keep:Person {{id:$keep}}), (x {{id:$target}}) "
-                f"MERGE (keep)-[nr:OWNS]->(x) SET {owns_set}",
-                keep=keep, target=e["target"], **{p: e[p] for p in OWNS_PROPS})
-
-        # HAS_ROLE → create (distinct tenures are deduped on display).
-        role_set = ", ".join(f"nr.{p} = ${p}" for p in ROLE_PROPS)
+            _carry_edge("OWNS", OWNS_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
+                        {"k": keep, "tid": e["target"]}, e)
         for e in _edges("HAS_ROLE", ROLE_PROPS, out=True):
-            session.run(
-                f"MATCH (keep:Person {{id:$keep}}), (x {{id:$target}}) "
-                f"CREATE (keep)-[nr:HAS_ROLE]->(x) SET {role_set}",
-                keep=keep, target=e["target"], **{p: e[p] for p in ROLE_PROPS})
+            _carry_edge("HAS_ROLE", ROLE_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
+                        {"k": keep, "tid": e["target"], "seat_role": e.get("role")}, e,
+                        seat="r.role = $seat_role")
 
         # RELATED_TO (both directions) → fold onto keep's edge. This is how a
         # merged person keeps their voting-group membership.

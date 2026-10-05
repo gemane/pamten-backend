@@ -423,6 +423,20 @@ them — a property added to the schema is carried through every merge with no
 edit here. Generated with bound `$params`, never `properties(r)`, which prod
 ArcadeDB silently no-ops.
 
+**A merge keeps history** (`maintenance._carry_edge`, used by both merge paths
+and the manual person merge). An **ended** edge is carried over as its own
+period, unless the survivor already holds the very same period; an **open** one
+meets the survivor's open edge and is folded into it — `owns_merge.fold` for
+OWNS, the earliest start for a role — never dropped. Before, the dead node's
+edge was skipped whenever the survivor had a current edge to the same target,
+and the DETACH DELETE then removed it: a 2005–2012 holding vanished from every
+past year, and a stated 2005 start beside a 2020 one was lost. The manual merge
+was worse — its `MERGE … SET COALESCE` folded an ended holding *into* the
+current one and closed it. The OWNS edge dedup now folds one source's
+duplicates too (a re-import beside the old edge), and the SEC bloc-retire step
+deletes only the open 13D bloc row it replaces. Time travel shows only what the
+graph still holds; what earlier merges deleted comes back with the rebuild.
+
 `tests/integration/test_edge_schema_it.py` is parameterised **over the schema**:
 every property is asserted to survive both merge paths, so a future field is
 covered the day it is added.

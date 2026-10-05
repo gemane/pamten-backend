@@ -620,14 +620,18 @@ def cmd_dedupe_role_synonyms(args):
                     "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
                     "WHERE r.role = $role AND r.until IS NULL DELETE r",
                     pid=pid, eid=eid, role=lost.get("role"))
+                # Onto the winner's OPEN seat only (a closed spell of the same
+                # role must not take a later start than its end), and the
+                # EARLIEST start of the two, not whichever came first.
+                starts = [d for d in (winner.get("since"), lost.get("since")) if d]
                 session.run(
                     "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
-                    "WHERE r.role = $role "
-                    "SET r.since = COALESCE(r.since, $since), "
+                    "WHERE r.role = $role AND r.until IS NULL "
+                    "SET r.since = $since, "
                     "    r.source_url = COALESCE(r.source_url, $surl), "
                     "    r.source_date = COALESCE(r.source_date, $sdate)",
                     pid=pid, eid=eid, role=winner.get("role"),
-                    since=lost.get("since"), surl=lost.get("surl"),
+                    since=min(starts) if starts else None, surl=lost.get("surl"),
                     sdate=lost.get("sdate"))
     verb = "would merge" if args.dry_run else "merged"
     print(f"{verb} {merged} duplicated position(s)")

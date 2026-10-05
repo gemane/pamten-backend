@@ -252,9 +252,12 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
                 continue
             dup_pairs += 1
             losers = _losers(edges)
-            if len({e[3] for e in edges}) > 1:
-                survivor = next(e[0] for e in edges if e[0] not in losers)
-                cross_source.append((survivor, losers))
+            # Folded whether or not the sources differ: two edges of ONE
+            # source can still disagree on the start (a re-import beside the
+            # old edge), and deleting the loser unfolded threw the earlier
+            # `since` away.
+            survivor = next(e[0] for e in edges if e[0] not in losers)
+            cross_source.append((survivor, losers))
             pending.extend(losers)
         # Folded BEFORE the losers are deleted: an interrupted run then leaves
         # a survivor that already carries everything, never a loss.
@@ -375,6 +378,60 @@ def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = N
     return out
 
 
+def _carry_edge(rel: str, props: tuple, src: str, tgt: str, params: dict,
+                e: dict, seat: str = "") -> int:
+    """Put the edge ``e`` (read off a node that is about to be deleted) onto the
+    node that survives — without losing a period or a start date.
+
+    ``src``/``tgt`` are the survivor-side endpoints as Cypher node patterns
+    bound to ``a`` and ``t`` (``(a:Entity {id: $k})``); ``seat`` an extra
+    condition that makes two edges the same relationship (a role's name).
+
+    - An ENDED edge is history: it is carried over as its own edge, unless the
+      survivor already holds the very same period (same since, same until).
+      Merges used to drop it whenever the survivor had a current edge to the
+      same company — and then the DETACH DELETE took the old period with it,
+      for good: a holding of 2005–2012 vanished from every past year.
+    - An OPEN edge meets the survivor's open edge, if any: the two are folded
+      (owns_merge.fold for OWNS — the better answer, the EARLIEST start; the
+      earliest start for a role) instead of the dead one being dropped, which
+      threw away a stated 2005 start beside a 2020 one.
+    Returns 1 when a new edge was created.
+    """
+    from app.scraper.edge_schema import edge_create_clause, edge_params, edge_return_clause
+    from app.scraper.owns_merge import SINCE_FIELDS, combine_since, fold
+    seat_and = f" AND {seat}" if seat else ""
+    if e.get("until") is not None:
+        same = run_query(
+            f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until = $c_until{seat_and} "
+            "AND ((r.since IS NULL AND $c_since IS NULL) OR r.since = $c_since) RETURN r LIMIT 1",
+            {**params, "c_until": e["until"], "c_since": e.get("since")})
+        if same:
+            return 0
+    else:
+        current = run_query(
+            f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until IS NULL{seat_and} "
+            f"RETURN {edge_return_clause('r', props)} LIMIT 1", params)
+        if current:
+            kept = current[0]
+            if rel == "OWNS":
+                sets = fold([kept, e], kept)
+            else:
+                since = combine_since(kept, e)
+                sets = ({f: since[f] for f in SINCE_FIELDS if f in props}
+                        if any(since[f] != kept.get(f) for f in SINCE_FIELDS) else {})
+            if sets:
+                run_command(
+                    f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until IS NULL{seat_and} SET "
+                    + ", ".join(f"r.{f} = $c_set_{f}" for f in sets),
+                    {**params, **{f"c_set_{f}": v for f, v in sets.items()}})
+            return 0
+    run_command(
+        f"MATCH {src}, {tgt} CREATE (a)-[:{rel} {{{edge_create_clause(props)}}}]->(t)",
+        {**params, **edge_params(e, props)})
+    return 1
+
+
 def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
     """Move all OWNS / HAS_ROLE / RELATED_TO edges from dead_id → keep_id.
 
@@ -395,36 +452,17 @@ def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
             RETURN t.id AS tid, {edge_return_clause('r', OWNS_PROPS)}""",
         {"pid": dead_id},
     ):
-        if run_query(
-            "MATCH (p:Person {id: $pid})-[r:OWNS]->(t:Entity {id: $tid}) "
-            "WHERE r.until IS NULL RETURN r LIMIT 1",
-            {"pid": keep_id, "tid": e["tid"]},
-        ):
-            continue
-        run_command(
-            f"""MATCH (p:Person {{id: $pid}}), (t:Entity {{id: $tid}})
-                CREATE (p)-[:OWNS {{{edge_create_clause(OWNS_PROPS)}}}]->(t)""",
-            {"pid": keep_id, "tid": e["tid"], **edge_params(e, OWNS_PROPS)},
-        )
-        migrated += 1
+        migrated += _carry_edge("OWNS", OWNS_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
+                                {"k": keep_id, "tid": e["tid"]}, e)
 
     for e in run_query(
         f"""MATCH (p:Person {{id: $pid}})-[r:HAS_ROLE]->(t:Entity)
             RETURN t.id AS tid, {edge_return_clause('r', ROLE_PROPS)}""",
         {"pid": dead_id},
     ):
-        if run_query(
-            "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(t:Entity {id: $tid}) "
-            "WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1",
-            {"pid": keep_id, "tid": e["tid"], "role": e.get("role")},
-        ):
-            continue
-        run_command(
-            f"""MATCH (p:Person {{id: $pid}}), (t:Entity {{id: $tid}})
-                CREATE (p)-[:HAS_ROLE {{{edge_create_clause(ROLE_PROPS)}}}]->(t)""",
-            {"pid": keep_id, "tid": e["tid"], **edge_params(e, ROLE_PROPS)},
-        )
-        migrated += 1
+        migrated += _carry_edge("HAS_ROLE", ROLE_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
+                                {"k": keep_id, "tid": e["tid"], "seat_role": e.get("role")}, e,
+                                seat="r.role = $seat_role")
 
     # People are group members too — Lemann, Sicupira and Telles all are — and
     # a person-merge used to sever them from their bloc exactly as the entity
@@ -642,8 +680,10 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     cross-edge property reads. Generated clauses with bound $params are the
     one shape proven reliable there.
 
-    An edge that ``keep`` already has (active, same target/role/relation) is
-    dropped rather than duplicated. Returns the number migrated.
+    OWNS and HAS_ROLE go through ``_carry_edge``: an ended edge is carried as
+    its own period, an open one folded into ``keep``'s open edge (earliest
+    start). A RELATED_TO that ``keep`` already has is dropped rather than
+    duplicated. Returns the number of edges created on ``keep``.
     """
     from app.scraper.edge_schema import (OWNS_PROPS, ROLE_PROPS, RELATED_TO_PROPS,
                                          edge_return_clause, edge_create_clause,
@@ -658,18 +698,8 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             RETURN t.id AS tid, {edge_return_clause('r', OWNS_PROPS)}""",
         {"id": dead_id},
     ):
-        if run_query(
-            "MATCH (a:Entity {id: $k})-[r:OWNS]->(t:Entity {id: $tid}) "
-            "WHERE r.until IS NULL RETURN r LIMIT 1",
-            {"k": keep_id, "tid": e["tid"]},
-        ):
-            continue
-        run_command(
-            f"""MATCH (a:Entity {{id: $k}}), (t:Entity {{id: $tid}})
-                CREATE (a)-[:OWNS {{{edge_create_clause(OWNS_PROPS)}}}]->(t)""",
-            {"k": keep_id, "tid": e["tid"], **edge_params(e, OWNS_PROPS)},
-        )
-        migrated += 1
+        migrated += _carry_edge("OWNS", OWNS_PROPS, "(a:Entity {id: $k})", "(t:Entity {id: $tid})",
+                                {"k": keep_id, "tid": e["tid"]}, e)
 
     # 2. Incoming OWNS — the owner may be a Person or an Entity, so its label
     # is captured at read time and interpolated, keeping the match index-backed.
@@ -681,18 +711,8 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     ):
         slabels = e.get("slabels") or []
         slabel = slabels[0] if slabels and slabels[0] in ("Entity", "Person") else "Entity"
-        if run_query(
-            f"MATCH (s:{slabel} {{id: $sid}})-[r:OWNS]->(b:Entity {{id: $k}}) "
-            "WHERE r.until IS NULL RETURN r LIMIT 1",
-            {"sid": e["sid"], "k": keep_id},
-        ):
-            continue
-        run_command(
-            f"""MATCH (s:{slabel} {{id: $sid}}), (b:Entity {{id: $k}})
-                CREATE (s)-[:OWNS {{{edge_create_clause(OWNS_PROPS)}}}]->(b)""",
-            {"sid": e["sid"], "k": keep_id, **edge_params(e, OWNS_PROPS)},
-        )
-        migrated += 1
+        migrated += _carry_edge("OWNS", OWNS_PROPS, f"(a:{slabel} {{id: $sid}})", "(t:Entity {id: $k})",
+                                {"sid": e["sid"], "k": keep_id}, e)
 
     # 3. Incoming HAS_ROLE.
     for e in run_query(
@@ -700,18 +720,9 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             RETURN p.id AS pid, {edge_return_clause('r', ROLE_PROPS)}""",
         {"id": dead_id},
     ):
-        if run_query(
-            "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(b:Entity {id: $k}) "
-            "WHERE r.role = $role AND r.until IS NULL RETURN r LIMIT 1",
-            {"pid": e["pid"], "k": keep_id, "role": e.get("role")},
-        ):
-            continue
-        run_command(
-            f"""MATCH (p:Person {{id: $pid}}), (b:Entity {{id: $k}})
-                CREATE (p)-[:HAS_ROLE {{{edge_create_clause(ROLE_PROPS)}}}]->(b)""",
-            {"pid": e["pid"], "k": keep_id, **edge_params(e, ROLE_PROPS)},
-        )
-        migrated += 1
+        migrated += _carry_edge("HAS_ROLE", ROLE_PROPS, "(a:Person {id: $pid})", "(t:Entity {id: $k})",
+                                {"pid": e["pid"], "k": keep_id, "seat_role": e.get("role")}, e,
+                                seat="r.role = $seat_role")
 
     # 4. RELATED_TO, both directions — filing-group membership and 13F fund
     # affiliation. Direction preserved: a member points AT its group.
