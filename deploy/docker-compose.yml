@@ -26,10 +26,14 @@ services:
         -Darcadedb.server.defaultDatabases=${ARCADEDB_DATABASE:-owlgraph}[root]
         -Xms${ARCADEDB_HEAP:-8g} -Xmx${ARCADEDB_HEAP:-8g}
     volumes:
-      # databases/ and backups/ live under one path so `manage.py
+      # databases/ and backups/ under one host path, so `manage.py
       # backup-database` (which asks the SERVER to write the archive) lands in
-      # a directory the host can see: ${ARCADEDB_DATA}/backups/<database>/
-      - ${ARCADEDB_DATA:?set ARCADEDB_DATA in .env}:/home/arcadedb
+      # a directory the host can see: ${ARCADEDB_DATA}/backups/<database>/.
+      # The two subdirectories, NOT /home/arcadedb itself: that is where the
+      # image keeps the server (bin/, lib/, config/), and mounting over it left
+      # an empty directory — "./bin/server.sh: not found", restarting forever.
+      - ${ARCADEDB_DATA:?set ARCADEDB_DATA in .env}/databases:/home/arcadedb/databases
+      - ${ARCADEDB_DATA}/backups:/home/arcadedb/backups
     healthcheck:
       # the image is Alpine with wget, no curl
       test: ["CMD-SHELL", "wget -qO- http://localhost:2480/api/v1/ready >/dev/null || exit 1"]
@@ -48,6 +52,11 @@ services:
       ARCADEDB_USERNAME: root
       ARCADEDB_PASSWORD: ${ARCADEDB_ROOT_PASSWORD}
       ARCADEDB_DATABASE: ${ARCADEDB_DATABASE:-owlgraph}
+    volumes:
+      # The files the importers read (GLEIF golden copies, the Companies House
+      # snapshots) and their scratch space — downloaded on the host by
+      # ops.sh, read in the container at /data.
+      - ${DATA_DIR:-/srv/owlgraph/data}:/data
     depends_on:
       arcadedb:
         condition: service_healthy
@@ -81,7 +90,9 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      # the internal :8080 door in the Caddyfile — the public site redirects
+      # to HTTPS and has no certificate for localhost
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
