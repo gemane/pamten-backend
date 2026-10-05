@@ -35,7 +35,8 @@ later — 26.7.3 returns incomplete index range reads on big indexes; as of
 
 Day two is `owlgraph <command>` (`/opt/owlgraph/deploy/ops.sh`): `status`,
 `backup`, `import full|test`, `refresh-golden-copies`, `refresh-psc`,
-`refresh-company-data`, `gleif-update`, `upgrade X.Y.Z`, `manage <manage.py args>`
+`refresh-company-data`, `gleif-update`, `gleif-history` (once, after the first full
+import), `upgrade X.Y.Z`, `manage <manage.py args>`
 — the production twin of the dev box's `~/scripts`, with every `manage.py` call
 inside the `api` container and the importers' files in `DATA_DIR` (mounted at
 `/data`). `owlgraph help` lists them.

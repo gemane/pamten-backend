@@ -250,6 +250,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         they were published (`source_date`). Store both; never use one as the other.
       - **Precision**: a month-only or year-only date stays that way (`2023-04-00`,
         a bare year). A made-up day moves an edge across a year boundary.
+      - **A snapshot source forgets**: a golden copy or register dump shows today,
+        and what ended is simply gone from it. Look for the source's archive of
+        old snapshots (GLEIF keeps every publish since 2018, `gleif-rr-history`
+        diffs one a month); deltas usually only cover the last days.
       - **What it can't do yet**: an edge holds the latest amendment's numbers, so a
         past year shows today's stake. If the source publishes history (amendments,
         annual lists, archived snapshots), say in the source doc what is kept and

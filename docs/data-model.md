@@ -112,7 +112,7 @@ the SEC edge (its "listed since 2013" with it) for the next SEC scrape to redraw
 | Part of the edge | Rule |
 |---|---|
 | **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
-| **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A start that is not stated keeps its label: `first_listed` ("since 2013 or earlier", the oldest Exhibit 21 naming it), `amendment` (a 13D/G amendment's date — held by then, the start not seen), `register_start` (UK PSC notified on 2016-04-06, the register's first day), `first_reported` (the earliest 13F quarter a manager reported the holding in) or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it. **For time travel every basis is a lower bound except `newly_listed`** (`owns_merge.STATED_BASES`, `started_by_clause`): before its date the edge is shown dimmed, not hidden. The source's **claim** carries the same listing date and keeps it when the list is re-read (a re-scrape rewrites the claim and states no start; it used to wipe the date) |
+| **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A start that is not stated keeps its label: `first_listed` ("since 2013 or earlier", the oldest Exhibit 21 naming it), `amendment` (a 13D/G amendment's date — held by then, the start not seen), `register_start` (UK PSC notified on 2016-04-06, the register's first day), `first_reported` (the earliest 13F quarter a manager reported the holding in), `gleif_first_seen` (the oldest archived GLEIF golden copy listing the relationship — the archive begins 2018-02-09, so that date says only "at least since February 2018"; `gleif-rr-history`) or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it. **For time travel every basis is a lower bound except `newly_listed`** (`owns_merge.STATED_BASES`, `started_by_clause`): before its date the edge is shown dimmed, not hidden. The source's **claim** carries the same listing date and keeps it when the list is re-read (a re-scrape rewrites the claim and states no start; it used to wipe the date) |
 | **Structure** — `direct_or_indirect` (+ `structure_basis`), `also_ultimate`, `ultimate_*`, `interest_types`, `psc_self_link` | Stays on the edge whoever holds the answer; an inferred marker travels with its basis, a stated one never gains one |
 
 A source that does not outrank the holder still records its claim, and does not
@@ -451,7 +451,26 @@ non-ACTIVE has its open `OWNS` edge *closed* (`until` = the relationship period'
 it look current until today; an already-closed edge is never re-stamped). A
 relationship that begins again after it ended is a **new period**, a new edge
 beside the old one — reopening the old edge merged 2010–2019 and 2024– into one;
-only a record restating the same period reopens it. An ACTIVE record's own end
+only a record restating the same period reopens it.
+
+**History before the import** (`manage.py gleif-rr-history`, once after the first
+full import — [`gleif_rr_history.py`](../backend/app/scraper/gleif_rr_history.py)).
+The golden copy only shows today: an ended relationship is gone from it, not
+marked (60 INACTIVE of 489,953 on 2026-10-05), and deltas exist for the last
+day/week/month only. GLEIF's archive keeps every golden copy since 2018-02-09;
+the command reads the relationship file of the first publish of each month plus
+the latest (~105 files, 5 MB in 2018 to 34 MB now), and a pair present in one
+and gone from the next gets its own closed edge: `until` = the first snapshot
+without it, `until_reason = gleif_dropped` ("ended by then" — up to a month
+late, never early), `source_date` = the last snapshot listing it. A pair with no
+stated start gets `since` = the first snapshot listing it, `since_basis =
+gleif_first_seen` — on current edges only where `since` is empty. It never
+creates a current edge or a company (a period whose companies are not in the
+graph is counted, not written), a snapshot with under 80 % of the previous one's
+records is not believed, and the intervals file it builds is kept on the box,
+so a second run (after a restore) downloads nothing and writes nothing twice.
+
+An ACTIVE record's own end
 date is kept, and every RR edge carries the record's `LastUpdateDate` as
 `source_date`, its evidence date. And an entity whose `EntityStatus` is `INACTIVE` is flagged
 `active=false` with its `gleif_registration_status` recorded — neither is ever

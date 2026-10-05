@@ -8,6 +8,8 @@
 #   ops.sh refresh-psc                  Companies House PSC snapshot
 #   ops.sh refresh-company-data         Companies House BasicCompanyData
 #   ops.sh gleif-update                 the daily GLEIF delta           (cron)
+#   ops.sh gleif-history [--dry-run]    GLEIF relationship history from the archive
+#                                       (ONCE, after the first full import; ~1.5 GB)
 #   ops.sh backup                       online backup + verify + rotate + offsite (cron)
 #   ops.sh weekly-report                the Monday digest mail          (cron)
 #   ops.sh prune-analytics              retention of usage counters     (cron)
@@ -262,6 +264,8 @@ main() {
     refresh-psc)           cmd_refresh_psc ;;
     refresh-company-data)  cmd_refresh_company_data ;;
     gleif-update)          watch_job gleif-update; run_manage gleif-update "$@" ;;
+    # the intervals file stays in DATA_DIR: a re-apply after a restore downloads nothing
+    gleif-history)         run_manage gleif-rr-history --intervals /data/gleif-rr-history.jsonl.gz "$@" ;;
     backup)                cmd_backup ;;
     weekly-report)         watch_job weekly-report; exec_manage weekly-report --email ;;
     prune-analytics)       watch_job prune-analytics; exec_manage prune-analytics ;;
