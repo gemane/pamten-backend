@@ -3,7 +3,8 @@
 Nominatim is a shared free service on a one-request-per-second budget, so the
 cheapest request is the one never sent. The in-process dict in `geocode.py` only
 lasts as long as the process; this survives restarts and is shared by every path
-— scrapes, the backfill, the delta cron.
+— scrapes, the backfill, the delta cron — and by both lookups, free-text and
+structured (`geocode.structured_cache_key`).
 
 It pays because **company addresses repeat**. 36% of the registered addresses in
 the dev graph are duplicates: 51 companies at 1 Churchill Place, 24 at 251 Little

@@ -94,9 +94,30 @@ def geocode_address(address: dict) -> Coord | None:
     if key in _cache:
         return _cache[key]
 
-    result = _query({**params, "format": "json", "limit": "1"})
+    # The durable cache (table + shared bucket), as for free-text lookups.
+    # This path had only the per-process dict, so every rebuild re-asked
+    # Nominatim for every distinct address at one request a second — 2,740
+    # lookups, 36 minutes, after a test import whose answers were all known.
+    from app.scraper import geo_cache          # local: avoids an import cycle
+    ckey = structured_cache_key(params)
+    cached = geo_cache.lookup(ckey)
+    if cached is not None:
+        _cache[key] = cached[0]
+        return cached[0]
+
+    result, clean = _ask({**params, "format": "json", "limit": "1"})
+    if clean:
+        # only a clean answer, hit or miss — a transport error says nothing
+        # about the address and must not hide it for a month
+        geo_cache.store(ckey, result, "structured" if result else None)
     _cache[key] = result
     return result
+
+
+def structured_cache_key(params: dict) -> str:
+    """The durable-cache key of a structured lookup: its parts, in a fixed
+    order, marked so it can never equal a free-text query string."""
+    return "structured:" + "|".join(f"{k}={params[k]}" for k in sorted(params))
 
 
 # Nominatim place_rank at/above which a match is a specific address (street/building),
@@ -149,6 +170,12 @@ def geocode_full(query: str) -> tuple[Coord, str] | None:
 
 
 def _query(params: dict) -> Coord | None:
+    return _ask(params)[0]
+
+
+def _ask(params: dict) -> tuple[Coord | None, bool]:
+    """(coord, clean): the answer, and whether it is one — False for a
+    transport error or an unparseable reply, which must not be cached."""
     _throttle()
     try:
         resp = _get_client().get(settings.NOMINATIM_URL, params=params)
@@ -156,12 +183,12 @@ def _query(params: dict) -> Coord | None:
         data = resp.json()
     except (httpx.HTTPError, ValueError) as exc:
         log.warning("Geocoding request failed (%s): %s", params, exc)
-        return None
+        return None, False
 
     if not data:
-        return None
+        return None, True
     try:
-        return (float(data[0]["lat"]), float(data[0]["lon"]))
+        return (float(data[0]["lat"]), float(data[0]["lon"])), True
     except (KeyError, IndexError, ValueError, TypeError) as exc:
         log.warning("Geocoding response unparseable (%s): %s", params, exc)
-        return None
+        return None, False
