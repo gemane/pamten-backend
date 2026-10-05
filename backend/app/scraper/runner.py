@@ -2052,15 +2052,21 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
         matches = _matching_role(session, person_id, entity_id, role)
         existing = matches[0] if matches else None
         if existing:
+            # OpenCorporates' resignation date reaches the open seat — it was
+            # ignored here, so a resigned officer stayed current. Only a seat
+            # that began by then.
             session.run(
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role AND r.until IS NULL
                 SET r.last_scraped_at = $now,
-                    r.source_url = COALESCE($surl, r.source_url)
+                    r.source_url = COALESCE($surl, r.source_url),
+                    r.until = CASE WHEN $until IS NOT NULL
+                                    AND (r.since IS NULL OR r.since <= $until)
+                               THEN $until ELSE r.until END
                 """,
                 pid=person_id, eid=entity_id, role=existing["role"], now=now,
-                surl=source_url,
+                surl=source_url, until=end_date,
             )
             _relabel_if_more_credible(session, person_id, entity_id,
                                       existing["role"], role, existing["cred"],
@@ -2072,12 +2078,14 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
                 source_id: $sid, credibility_score: $score,
-                source_url: $surl, source_date: $since, last_scraped_at: $now
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now
             }]->(e)
             """,
             pid=person_id, eid=entity_id, role=role,
             since=start_date, until=end_date,
             sid=source_id, score=credibility_score,
+            # undated: listed as of today (the evidence date), not "no date"
+            sdate=start_date or now[:10],
             surl=source_url, now=now,
         )
 
