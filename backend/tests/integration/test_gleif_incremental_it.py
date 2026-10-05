@@ -217,11 +217,12 @@ def test_retiring_the_direct_relationship_leaves_the_ultimate_one(it_db, tmp_pat
                  [_rel(CHILD, PARENT, status="INACTIVE", end_date="2024-05-01")])
     assert res["closed"] == 1
 
-    rows = _edges(it_db)
-    assert len(rows) == 1
-    assert rows[0]["until"] is None
-    assert rows[0]["marker"] == "indirect"          # what is left is the ultimate link
-    assert rows[0]["since"] == "2018-06-01"         # with its own period restored
+    # The direct period is closed as it stood — relabelling the edge "indirect
+    # since 2018" erased 2015–2018 from every past year — and the ultimate
+    # relationship goes on as its own indirect edge from its own start.
+    rows = sorted(_edges(it_db), key=lambda r: r["since"] or "")
+    assert [(r["marker"], r["since"], r["until"]) for r in rows] == [
+        ("direct", "2015-01-01", "2024-05-01"), ("indirect", "2018-06-01", None)]
 
 
 def test_an_unfolded_edge_still_closes_normally(it_db, tmp_path):

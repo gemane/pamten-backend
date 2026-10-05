@@ -74,54 +74,86 @@ def _iso_date(value: str | None) -> str | None:
 def _relationship_dates(rel: dict) -> tuple[str | None, str | None]:
     """(since, until) — when the ownership relationship began and (if ended) ended —
     from the ``RELATIONSHIP_PERIOD``. Accounting / document-filing periods are ignored.
-    ``RelationshipPeriod`` is an object *or* a list in the CDF."""
+    ``RelationshipPeriod`` is an object *or* a list in the CDF.
+
+    With several relationship periods (ended, then begun again), the one that
+    describes the record is taken: an OPEN period (the latest-starting, if
+    more than one), else the latest-ending — not whichever the file lists
+    first, which made the choice depend on file order."""
     periods = (rel.get("RelationshipPeriods") or {}).get("RelationshipPeriod")
     if isinstance(periods, dict):
         periods = [periods]
-    for p in periods or []:
-        if _v((p or {}).get("PeriodType")) == "RELATIONSHIP_PERIOD":
-            return _iso_date(_v(p.get("StartDate"))), _iso_date(_v(p.get("EndDate")))
-    return None, None
+    found = [(_iso_date(_v(p.get("StartDate"))), _iso_date(_v(p.get("EndDate"))))
+             for p in periods or [] if _v((p or {}).get("PeriodType")) == "RELATIONSHIP_PERIOD"]
+    if not found:
+        return None, None
+    open_ = [f for f in found if not f[1]]
+    if open_:
+        return max(open_, key=lambda f: f[0] or "")
+    return max(found, key=lambda f: f[1] or "")
 
 
-def _rr_edge(rec: dict) -> tuple[str, str, str, str | None, str | None] | None:
-    """(parent_lei, child_lei, direct_or_indirect, since, until) for an active
-    consolidation relationship, else None. ``since``/``until`` come from the
-    RELATIONSHIP_PERIOD (the ownership start/end date), when present."""
+def _record_date(rec: dict) -> str | None:
+    """The day GLEIF last updated the relationship record — the date the
+    record's facts are known AS OF (``source_date``), and the latest an
+    INACTIVE relationship without a stated end can have ended by."""
+    reg = (rec.get("RelationshipRecord") or {}).get("Registration") or {}
+    return _iso_date(_v(reg.get("LastUpdateDate")))
+
+
+def _rr_edge(rec: dict) -> tuple | None:
+    """(parent_lei, child_lei, direct_or_indirect, since, until, active,
+    record_date, until_reason) for a consolidation relationship, else None.
+
+    ``since``/``until`` come from the RELATIONSHIP_PERIOD (the ownership
+    start/end date), when present. An INACTIVE relationship is kept — it is
+    the history time travel shows, and dropping it meant a holding sold in
+    2020 never existed in 2015 — with its stated end, or, when GLEIF states
+    none, the record's last update as the day it had ended BY
+    (``until_reason`` ``gleif_inactive``)."""
     rel = (rec.get("RelationshipRecord") or {}).get("Relationship") or {}
     marker = _CONSOLIDATION.get(_v(rel.get("RelationshipType")))
     if not marker:
         return None
-    if _v(rel.get("RelationshipStatus")) not in (None, "ACTIVE"):
+    status = _v(rel.get("RelationshipStatus"))
+    if status not in (None, "ACTIVE", "INACTIVE"):
         return None
     child = _node_lei(rel.get("StartNode"))
     parent = _node_lei(rel.get("EndNode"))
     if not child or not parent or child == parent:
         return None
     since, until = _relationship_dates(rel)
-    return parent, child, marker, since, until
+    recorded = _record_date(rec)
+    reason = None
+    if status == "INACTIVE" and not until:
+        until, reason = recorded, "gleif_inactive"
+        if not until:
+            return None                 # ended, and not even "by when": nothing to draw
+    return parent, child, marker, since, until, status != "INACTIVE", recorded, reason
 
 
-#: One pair's two possible assertions: (since, until) for the direct record and
-#: for the ultimate one, either of which may be absent. A plain tuple rather than
-#: a dict because there is one of these per relationship pair (~700k on the full
-#: golden copy) and a dict per pair costs several times more.
-_Dates = tuple[str | None, str | None]
+#: One pair's two possible assertions: (since, until, record_date) for the
+#: direct record and for the ultimate one, either of which may be absent. A
+#: plain tuple rather than a dict because there is one of these per
+#: relationship pair (~700k on the full golden copy) and a dict per pair costs
+#: several times more.
+_Dates = tuple[str | None, str | None, str | None]
 _Slot = tuple[_Dates | None, _Dates | None]
 
 
 def _fold(pairs: dict[tuple[str, str], _Slot], parent: str, child: str,
-          marker: str, since: str | None, until: str | None) -> None:
-    """Record one RR assertion against its (parent, child) pair.
+          marker: str, since: str | None, until: str | None,
+          recorded: str | None = None) -> None:
+    """Record one ACTIVE RR assertion against its (parent, child) pair.
 
     A repeat of the same relationship type for the same pair overwrites — GLEIF
     should not emit one, and if it does the later record is the newer statement.
     """
     direct, ultimate = pairs.get((parent, child), (None, None))
     if marker == "direct":
-        direct = (since, until)
+        direct = (since, until, recorded)
     else:
-        ultimate = (since, until)
+        ultimate = (since, until, recorded)
     pairs[(parent, child)] = (direct, ultimate)
 
 
@@ -142,16 +174,25 @@ def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
     """
     direct, ultimate = slot
     if direct is None:                      # only the ultimate parent was stated
-        since, until = ultimate            # type: ignore[misc]  (never both None)
-        return "indirect", since, until, {}
-    since, until = direct
+        since, until, recorded = ultimate  # type: ignore[misc]  (never both None)
+        return "indirect", since, until, ({"source_date": recorded} if recorded else {})
+    since, until, recorded = direct
     if ultimate is None:
-        return "direct", since, until, {}
+        return "direct", since, until, ({"source_date": recorded} if recorded else {})
 
-    u_since, u_until = ultimate
-    since = since or u_since                # the ultimate record can fill a gap
-    until = until or u_until
+    u_since, u_until, u_recorded = ultimate
+    # The parent has held the child since the EARLIER of the two — indirectly
+    # first, perhaps — so the edge starts there: time travel reads `since`,
+    # never `ultimate_since`, and a parent at the top since 2005 that became
+    # the direct one in 2020 was hidden for 2005–2019. And the holding has
+    # ended only when BOTH relationships have: one record's end used to close
+    # the edge while the other still stood.
+    since = min((d for d in (since, u_since) if d), default=None)
+    until = max(until, u_until) if until and u_until else None
     extra: dict = {"also_ultimate": True}
+    latest = max((d for d in (recorded, u_recorded) if d), default=None)
+    if latest:
+        extra["source_date"] = latest
     if u_since and u_since != since:
         extra["ultimate_since"] = u_since
     if u_until and u_until != until:
@@ -222,7 +263,8 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
 
     batch = _BatchWriter()
     seen_nodes: set[str] = set()
-    counts = {"records": 0, "direct": 0, "indirect": 0, "skipped": 0, "collapsed": 0}
+    counts = {"records": 0, "direct": 0, "indirect": 0, "skipped": 0, "collapsed": 0,
+              "ended": 0}
 
     def _node(lei: str) -> None:
         if lei not in seen_nodes:
@@ -230,6 +272,24 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             # Non-clobbering: ensure the node exists keyed by LEI, don't touch
             # name/type (GLEIF BODS/LEI-CDF imports own those).
             batch.entity(f"lei:{lei}", {"lei_id": lei, "source_id": source_id})
+
+    def _emit_ended(parent: str, child: str, marker: str, since: str | None,
+                    until: str, recorded: str | None, reason: str | None) -> None:
+        """An INACTIVE relationship: its own, closed edge — history, never
+        folded into the pair's current edge."""
+        counts["ended"] += 1
+        _node(parent)
+        _node(child)
+        _owns(
+            batch, owner_id=f"lei:{parent}", owned_id=f"lei:{child}",
+            stake_percent=None, ownership_type="controlling",
+            since=since, until=until, source_id=source_id,
+            credibility_score=credibility_score,
+            source_url=f"https://search.gleif.org/#/record/{child}",
+            interest_types=["accountingConsolidation"], direct_or_indirect=marker,
+            extra={"filing_type": "RR", "source_date": recorded,
+                   **({"until_reason": reason} if reason else {})},
+        )
 
     def _emit_pair(parent: str, child: str, slot: _Slot) -> None:
         marker, since, until, extra = _collapse(slot)
@@ -260,6 +320,7 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         # they can only be folded together once the file has been read. This also
         # gives `only_leis` the parent/child adjacency it needs for free.
         pairs: dict[tuple[str, str], _Slot] = {}
+        ended: list[tuple] = []
         for rec in ijson.items(stream, "relations.item"):
             if limit and counts["records"] >= limit:
                 break
@@ -268,7 +329,11 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             if not edge:
                 counts["skipped"] += 1
                 continue
-            _fold(pairs, *edge)
+            parent, child, marker, since, until, active, recorded, reason = edge
+            if active:
+                _fold(pairs, parent, child, marker, since, until, recorded)
+            else:
+                ended.append((parent, child, marker, since, until, recorded, reason))
 
         if only_leis is not None:
             # Keep only the seeds' family (ancestors + descendants).
@@ -281,6 +346,7 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             family = _family_of(only_leis, children, parents)
             pairs = {(p, c): slot for (p, c), slot in pairs.items()
                      if p in family and c in family}
+            ended = [e for e in ended if e[0] in family and e[1] in family]
 
         bar.finish(f"{counts['records']:,} records read")
 
@@ -288,13 +354,24 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         # on the full copy it is the slow half (~170k edges) — so it gets its own
         # bar rather than leaving the read bar parked at 100% in silence.
         write_bar = _ProgressBar("RR-CDF write")
+        # Ended relationships first — their own closed edges. FIRST because a
+        # pair's claim is keyed on the pair, not the period: written after, an
+        # old period's claim would overwrite the current one's and say "ended".
+        # A pair GLEIF lists as ACTIVE with the very same period is the same
+        # relationship restated, not a second one: skipped.
+        for parent, child, marker, since, until, recorded, reason in ended:
+            live = pairs.get((parent, child))
+            same = live and any(d and d[0] == since and since for d in live)
+            if not same:
+                _emit_ended(parent, child, marker, since, until, recorded, reason)
         for done, ((parent, child), slot) in enumerate(pairs.items(), start=1):
             _emit_pair(parent, child, slot)
             write_bar.render(done, len(pairs))
         batch.flush()
         write_bar.finish(
             f"{counts['direct']:,} direct + {counts['indirect']:,} indirect edges "
-            f"({counts['collapsed']:,} pairs stated both ways, folded into one)")
+            f"({counts['collapsed']:,} pairs stated both ways, folded into one), "
+            f"{counts['ended']:,} ended relationships")
     finally:
         raw.close()
 
@@ -304,7 +381,7 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         log.info("RR-CDF: wrote %d family LEIs to %s", len(family), emit_leis_path)
 
     result = {**counts, "nodes": len(seen_nodes),
-              "edges": counts["direct"] + counts["indirect"]}
+              "edges": counts["direct"] + counts["indirect"] + counts["ended"]}
     if family is not None:
         result["family"] = len(family)
     log.info("RR-CDF import done: %s", result)

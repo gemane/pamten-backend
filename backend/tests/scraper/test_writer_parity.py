@@ -63,6 +63,12 @@ EXPECTED: dict[str, list] = {
         # see (it reads $params); the fold path adds also_ultimate/ultimate_*
         # via targeted SETs, which are safe by construction and out of scope.
         {"direct_or_indirect", "interest_types", "source_id",
+         "credibility_score", "source_url", "since", "until", "source_date",
+         "last_scraped_at"},
+        # The direct relationship of a folded edge ended: the period is closed
+        # and the ultimate relationship continues as its own indirect edge
+        # (its marker is the literal 'indirect', which the extractor does not see).
+        {"interest_types", "source_id",
          "credibility_score", "source_url", "since", "last_scraped_at"},
     ],
     "app/routers/relationships.py": [
