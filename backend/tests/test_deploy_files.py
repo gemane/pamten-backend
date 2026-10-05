@@ -113,3 +113,13 @@ def test_the_backup_marker_is_one_alerts_can_read():
         assert m["archive"] == "owlgraph-backup-20261005-093941822.zip" and m["offsite"] is True
     finally:
         os.unlink(f.name)
+
+
+def test_the_import_merges_across_sources_before_finishing():
+    # no importer merges GLEIF's company with its Companies House record or a
+    # PSC foreign owner: without this step a rebuild left 13 doubled companies
+    finish = OPS[OPS.index('step "finishing"'):OPS.index("cmd_backup()")]
+    dedupe = finish.index("run_manage dedupe-entities")
+    assert dedupe < finish.index("run_manage geocode")
+    assert dedupe < finish.index("run_manage mark-shortcuts")
+    assert dedupe < finish.index("rebuild-search")

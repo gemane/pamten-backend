@@ -172,6 +172,9 @@ cmd_import() {
   fi
   step "finishing"
   # a --bulk-load chain rebuilds the FULL_TEXT index itself; the curated one does not
+  # first: imports never merge across sources (GLEIF vs Companies House vs a
+  # PSC foreign owner); the index, geocoding and shortcuts need the merged graph
+  run_manage dedupe-entities --limit 100000
   [ "$mode" = test ] && run_manage rebuild-search
   run_manage geocode
   run_manage mark-shortcuts

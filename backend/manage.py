@@ -172,7 +172,7 @@ def cmd_dedupe_entities(args):
     from app.scraper.maintenance import deduplicate_entities
     res = deduplicate_entities(limit=getattr(args, "limit", None))
     print(f"Merged {res['entities_merged']} entities across "
-          f"{res.get('total', '?')} shared-id groups; {res.get('remaining', 0)} groups remaining")
+          f"{res['groups_processed']} shared-id groups; {res.get('remaining', 0)} groups remaining")
 
 def cmd_audit_registers(args):
     """Scan the LEI-CDF golden copy and write the general-register map.
