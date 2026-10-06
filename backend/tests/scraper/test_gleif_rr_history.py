@@ -313,3 +313,30 @@ class TestRefuted:
                                if c[0] == "lei:MSFT"]
         assert (props["since"], props["since_basis"], props["since_not_before"]) == \
             ("2026-08-01", "gleif_first_seen", "2026-07-01")
+
+
+class TestRegistrationDay:
+    """A start that is only the child's LEI registration day — Barclays Bank
+    PLC "owned since 2012-06-06", the day its LEI was issued."""
+
+    def test_an_ended_period_on_the_registration_day_is_a_lower_bound(self):
+        regs = {"C": ("2012-06-06", "1925-01-01")}
+        ((_, _, props, _),) = h.plan_history([_p(since="2012-06-06")], IDS, {}, regs)["create"]
+        assert (props["since"], props["since_basis"]) == ("2012-06-06", "gleif_registration_day")
+
+    def test_unless_it_is_also_the_founding_day(self):
+        regs = {"C": ("2012-06-06", "2012-06-06")}           # founded and registered at once
+        ((_, _, props, _),) = h.plan_history([_p(since="2012-06-06")], IDS, {}, regs)["create"]
+        assert "since_basis" not in props
+
+    def test_another_day_stays_stated(self):
+        regs = {"C": ("2012-06-06", None)}
+        ((_, _, props, _),) = h.plan_history([_p(since="2010-01-01")], IDS, {}, regs)["create"]
+        assert "since_basis" not in props
+
+    def test_the_archive_rule_still_corrects_a_registration_day_start(self):
+        # Barclays: both rules apply; the refutation wins (the user's call)
+        edges = {("lei:MSFT", "lei:ATVI"): [{"rid": "#1:1", "since": "2001-07-03", "until": None,
+                                            "since_basis": "gleif_registration_day"}]}
+        plan = h.plan_history([TestRefuted.KING, TestRefuted.MSFT], TestRefuted.IDS, edges)
+        assert plan["correct"] == [("#1:1", "2001-07-03", "2026-08-01", "2026-07-01")]

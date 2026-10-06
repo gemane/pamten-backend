@@ -74,6 +74,8 @@ LOWER_BOUND = "first_listed"
 #:   amendment     — a 13D/G amendment's date: held by then, start not seen
 #:   register_start — UK PSC notified on 2016-04-06, the day the register began
 #:   first_reported — the earliest 13F quarter a manager reported the holding in
+#:   gleif_registration_day — a GLEIF start that is only the child's LEI
+#:                    registration day (gleif_rr.REGISTRATION_DAY)
 #:   gleif_first_seen — the oldest archived GLEIF golden copy listing the
 #:                    relationship (the archive begins 2018-02-09)
 #: The as-of clauses (search._active_clause, relationships.subsidiary_tree_of)

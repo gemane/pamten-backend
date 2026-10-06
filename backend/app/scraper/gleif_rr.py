@@ -44,6 +44,51 @@ from app.scraper.bulk_import import _BatchWriter, _owns, _ProgressBar, _Progress
 
 log = logging.getLogger(__name__)
 
+#: `since_basis` of a stated start that is just the child's LEI registration day
+#: (and not its founding day): GLEIF records reuse that date as the relationship
+#: start — 27,874 of 260,250 on 2026-10-06, 6,817 of them on companies over 20
+#: years old; Barclays Bank PLC "owned by Barclays PLC since 2012-06-06", the day
+#: its LEI was issued, owned since 1985. Only "at least since": time travel dims
+#: the edge before it instead of hiding it. The claim keeps GLEIF's date as stated.
+REGISTRATION_DAY = "gleif_registration_day"
+
+# One rule, for one pair (the daily delta) or a batch (after the bulk import).
+_REG_DAY_MATCH = (
+    "WHERE r.filing_type = 'RR' AND r.since IS NOT NULL AND r.since_basis IS NULL "
+    "AND r.since = b.lei_registration_date "
+    "AND (b.founded_date IS NULL OR r.since <> b.founded_date) ")
+
+
+def mark_registration_day(parent_id: str | None = None, child_id: str | None = None,
+                          batch: int = 5000, run=None) -> int:
+    """Label GLEIF starts that are only the child's LEI registration day.
+
+    With a pair, that pair's edges (the delta calls it after every write — a
+    later restatement of the same date resets the basis via combine_since, and
+    this puts it back). Without, every RR edge, in batches that stay under a
+    proxy's timeout. Returns how many edges were labelled. ``run`` is the
+    caller's own run_command — the one its tests mock."""
+    if run is None:
+        from app.db.arcadedb import run_command as run
+    run_command = run
+    if parent_id and child_id:
+        rows = run_command(
+            "MATCH (a:Entity {id: $p})-[r:OWNS]->(b:Entity {id: $c}) " + _REG_DAY_MATCH +
+            "SET r.since_basis = $basis RETURN count(r) AS n",
+            {"p": parent_id, "c": child_id, "basis": REGISTRATION_DAY})
+        return int((rows or [{}])[0].get("n") or 0)
+    total = 0
+    while True:
+        rows = run_command(
+            "MATCH (a:Entity)-[r:OWNS]->(b:Entity) " + _REG_DAY_MATCH +
+            "WITH r LIMIT $lim SET r.since_basis = $basis RETURN count(r) AS n",
+            {"lim": batch, "basis": REGISTRATION_DAY})
+        n = int((rows or [{}])[0].get("n") or 0)
+        total += n
+        if n < batch:
+            return total
+
+
 # RR RelationshipType → our direct/indirect marker (only consolidation ownership).
 _CONSOLIDATION = {
     "IS_DIRECTLY_CONSOLIDATED_BY":   "direct",

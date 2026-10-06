@@ -65,7 +65,7 @@ import ijson
 from app.db.arcadedb import run_sql
 from app.scraper.bulk_import import _BatchWriter, _flush_script, _now_iso, _tmp_dir
 from app.scraper.gleif_incremental import _PUBLISHES_API
-from app.scraper.gleif_rr import _rr_edge
+from app.scraper.gleif_rr import REGISTRATION_DAY, _rr_edge
 
 log = logging.getLogger(__name__)
 
@@ -311,18 +311,21 @@ def read_intervals(path: str) -> tuple[dict, list[dict]]:
 
 # ── applying ──────────────────────────────────────────────────────────────────
 
-def _resolve(leis: set[str]) -> dict[str, str]:
+def _resolve(leis: set[str]) -> tuple[dict[str, str], dict[str, tuple]]:
     """lei → entity id, by the ``lei_id`` property rather than the ``lei:`` id,
-    so a company merged into a Companies House node is still found."""
+    so a company merged into a Companies House node is still found; and lei →
+    (LEI registration date, founding date), for the registration-day rule."""
     out: dict[str, str] = {}
+    regs: dict[str, tuple] = {}
     ordered = sorted(leis)
     for i in range(0, len(ordered), _CHUNK):
-        rows = run_sql("SELECT id, lei_id FROM Entity WHERE lei_id IN :l",
-                       {"l": ordered[i:i + _CHUNK]})
+        rows = run_sql("SELECT id, lei_id, lei_registration_date, founded_date FROM Entity "
+                       "WHERE lei_id IN :l", {"l": ordered[i:i + _CHUNK]})
         for r in rows or []:
             if r.get("lei_id") and r.get("id"):
                 out.setdefault(r["lei_id"], r["id"])
-    return out
+                regs.setdefault(r["lei_id"], (r.get("lei_registration_date"), r.get("founded_date")))
+    return out, regs
 
 
 def _rr_edges(child_ids: set[str]) -> dict[tuple[str, str], list[dict]]:
@@ -395,7 +398,8 @@ def refuted_by(period: dict, top_last: dict[str, str]) -> str | None:
 
 
 def plan_history(periods: Iterable[dict], ids: dict[str, str],
-                 edges: dict[tuple[str, str], list[dict]]) -> dict:
+                 edges: dict[tuple[str, str], list[dict]],
+                 regs: dict[str, tuple] | None = None) -> dict:
     """What applying would do, without touching the graph: the closed edges to
     create (``create``: (owner_id, owned_id, props, claim)), the start dates to
     fill (``fill``: (rid, since)), the refuted starts to correct (``correct``:
@@ -422,7 +426,8 @@ def plan_history(periods: Iterable[dict], ids: dict[str, str],
                 if not current:
                     skip["open_without_edge"] += 1
                 for e in current:
-                    if refuted and e.get("since") == p["since"] and not e.get("since_basis"):
+                    if refuted and e.get("since") == p["since"] and \
+                            e.get("since_basis") in (None, REGISTRATION_DAY):
                         # the importer wrote GLEIF's refuted date: the edge stops
                         # believing it (the claim keeps it)
                         correct.append((e["rid"], p["since"], p["first_seen"], refuted))
@@ -453,8 +458,11 @@ def plan_history(periods: Iterable[dict], ids: dict[str, str],
                     "source_url": f"https://search.gleif.org/#/record/{child}",
                     "source_date": p["last_seen"], "filing_type": "RR",
                 }
+                registered, founded = (regs or {}).get(child, (None, None))
                 if not stated:
                     props["since_basis"] = SINCE_BASIS
+                elif stated == registered and stated != founded:
+                    props["since_basis"] = REGISTRATION_DAY
                 if refuted:
                     props["since_not_before"] = refuted
                 create.append((owner, owned, props, not current))
@@ -466,10 +474,10 @@ def apply_history(path: str, source_id: str, credibility_score: int,
     """Write the intervals file into the graph (see the module docstring)."""
     header, periods = read_intervals(path)
     leis = {p["parent"] for p in periods} | {p["child"] for p in periods}
-    ids = _resolve(leis)
+    ids, regs = _resolve(leis)
     children = {ids[p["child"]] for p in periods if p["child"] in ids}
     edges = _rr_edges(children)
-    plan = plan_history(periods, ids, edges)
+    plan = plan_history(periods, ids, edges, regs)
     result = {"snapshots": len(header.get("snapshots") or []), "periods": len(periods),
               "companies_found": len(ids), "created": len(plan["create"]),
               "since_filled": len(plan["fill"]), "starts_corrected": len(plan["correct"]),

@@ -169,6 +169,20 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
 def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str,
                       source_id: str, credibility_score: int, since: str | None = None,
                       until: str | None = None, recorded: str | None = None) -> str:
+    """`_write_owns_edge`, then the pair's start labelled if it is only the
+    child's LEI registration day (gleif_rr.mark_registration_day) — the same
+    rule the bulk import applies, on every path that writes a GLEIF edge."""
+    outcome = _write_owns_edge(parent_id, child_id, child_lei, marker, source_id,
+                               credibility_score, since, until, recorded)
+    if since:
+        from app.scraper.gleif_rr import mark_registration_day
+        mark_registration_day(parent_id, child_id, run=run_command)
+    return outcome
+
+
+def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
+                     source_id: str, credibility_score: int, since: str | None = None,
+                     until: str | None = None, recorded: str | None = None) -> str:
     """Create the (parent)-[:OWNS {marker}]->(child) edge if absent, else refresh it
     and clear any stale `until`. Assumes both nodes already exist.
     'created'|'updated'|'folded'|'adopted'. `since` (relationship start date) is
