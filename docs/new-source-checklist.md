@@ -254,6 +254,31 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         and what ended is simply gone from it. Look for the source's archive of
         old snapshots (GLEIF keeps every publish since 2018, `gleif-rr-history`
         diffs one a month); deltas usually only cover the last days.
+      - **An archived snapshot can be broken, and records flicker.** Diffing
+        snapshots turns every missing record into an ending, so check two things
+        before believing one. A **dip** (smaller than the month before, back the
+        month after) is a broken publish: GLEIF's 2023-08-01 file had 281k records
+        between 399k and 400k and would have ended 120k relationships. A real
+        clean-up stays down (2019-09, −10 %), so "any shrink" is the wrong test,
+        and a fixed floor latches: after one real drop it skips everything after.
+        And a record that vanishes and returns with the **same stated start** was
+        lost by the file, not ended: 63,273 of 85,001 GLEIF gaps. Join those.
+      - **A stated date can be a placeholder.** Before trusting a source's start
+        dates, count how often they equal another date on the record: the record's
+        own registration day, the identifier's registration day, the founding
+        day, the accounting-period start. Then look at the most frequent days.
+        GLEIF: 10.7 % of starts are just the child's LEI registration day
+        (Barclays Bank "since 2012", owned since 1985); 1 January and 31 December
+        pile up; 2017-10-02 alone has 1,725. A placeholder becomes a lower bound
+        (`since_basis`), never a deletion, and the claim keeps the date as stated.
+      - **A source can refute itself.** Its other records may contradict a date:
+        a company GLEIF lists as the top of a tree has no parent, so "Microsoft
+        owns Activision since 2001" falls to King.com naming Activision its
+        ultimate parent until 2026. The claim keeps what the source asserted; the
+        edge stops believing it, and no merge or delta may bring it back. Measure
+        the false positives before shipping (Barclays Bank: its subsidiaries were
+        wrong, not its parent record) and choose the failure that weakens a fact
+        rather than one that asserts a false one.
       - **What it can't do yet**: an edge holds the latest amendment's numbers, so a
         past year shows today's stake. If the source publishes history (amendments,
         annual lists, archived snapshots), say in the source doc what is kept and
@@ -323,9 +348,21 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Prefer complete snapshots over delta replay** when a source offers both. Every
       GLEIF publish is a full snapshot back to 2018 — point-in-time state is a download,
       not a fragile chain of thousands of increments.
+- [ ] **A rule that needs facts from two imports runs after each of them.** The GLEIF
+      registration-day rule compares an edge (relationship import) with a company's
+      LEI registration date (company import). The full import loads companies first,
+      the test import loads a family's companies after its relationships, so a pass
+      only at the end of the relationship import labelled 0 edges on the test DB.
+      Run the pass at the end of both imports (it is idempotent), and test the
+      rule against the order the test import actually uses.
 - [ ] **Bulk imports take the import lock** (`ImportState key='import-lock'`) so two
       dataset loads cannot interleave, and batch their writes — the dev database sits
       behind a 60-second proxy timeout.
+- [ ] **In ArcadeDB SQL an edge's endpoint is `@out` / `@in`, not `out` / `in`.**
+      `SELECT out.id …` answers null for every edge without an error, so a lookup
+      by endpoint silently matches nothing; `@out.id` works. Verify a new edge
+      query against a real ArcadeDB, where a mock would have returned what you
+      expected.
 - [ ] **Every Cypher anchor by id names its label** — `(n:Entity {id: $id})`, never
       `(n {id: $id})`. Without the label ArcadeDB cannot use the per-type id index and
       scans every vertex type: invisible on the dev graph, >400 s on the full import
@@ -384,6 +421,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Mocked suites must not reach a database.** When code under a mocked test grows a
       query, stub `app.db.arcadedb.run_sql` — a suite that quietly hits a real server is
       no longer testing what it claims, and repeated failed auth locks ArcadeDB out.
+      A shared helper called from a mocked module must use that module's
+      `run_command` (pass it in), not import its own. **Prove it** by running
+      the unit suite with the local ArcadeDB stopped: any test that still needs a
+      database fails loudly instead of writing quietly.
 - [ ] **Drive the WRITE path, not just the mapper.** A pure mapper computing a field
       proves nothing about storage: the PSC mapper carried `register_id` for weeks while
       the writer's parameter list silently dropped it, and every mapper unit test stayed
@@ -400,6 +441,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       mutant, compare pass/fail **counts**, never whole summary lines (they embed the
       runtime and match nothing, marking every mutant "killed") — and a mutant nothing
       kills sometimes means the code has a redundant guard to delete, not a missing test.
+      Run mutants with `PYTHONDONTWRITEBYTECODE=1` and `__pycache__` cleared: a
+      mutant of the same length (`if since:` → `if False:`), written and restored
+      within one second, survives in the bytecode cache and fakes every later
+      result. Run the unmutated suite again at the end. A mutant that loops
+      forever needs a per-run `timeout`, and stopping a hung run means killing
+      its exact PID, never a `pkill -f` pattern (it matched the shell itself).
 
 ## 9. Documentation
 
