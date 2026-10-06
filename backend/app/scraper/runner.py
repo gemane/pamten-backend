@@ -2510,8 +2510,13 @@ def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
     # test import re-enabled the nightly delta against a 488-entity database.
     from app.scraper.gleif_incremental import mark_full_load_done
     mark_full_load_done("subset" if (only_leis or limit or filter_jurisdiction) else "full")
+    # The registration-day rule needs the child's LEI registration date AND the
+    # edge, whichever import brings the second: the test import loads the
+    # families' companies after their relationships, and its RR pass labelled 0.
+    from app.scraper.gleif_rr import mark_registration_day
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts,
-            "duplicate_names": _duplicate_name_summary()}
+            "duplicate_names": _duplicate_name_summary(),
+            "registration_day": mark_registration_day()}
 
 
 def run_import_gleif_repex(local_file: str, limit: int | None = None) -> dict:
