@@ -2564,7 +2564,7 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None,
             "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
         )
 
-    from app.scraper.gleif_rr import import_rr_cdf
+    from app.scraper.gleif_rr import import_rr_cdf, mark_registration_day
     from app.scraper.maintenance import deduplicate_owns_edges
 
     source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
@@ -2582,7 +2582,10 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None,
     # edge) — no separate "remember to dedup" step.
     log.info("GLEIF RR-CDF: deduplicating overlapping OWNS edges")
     dedup = deduplicate_owns_edges()
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts, "edge_dedup": dedup}
+    # starts that are only the child's LEI registration day: "at least since"
+    reg_day = mark_registration_day()
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts, "edge_dedup": dedup,
+            "registration_day": reg_day}
 
 
 def run_gleif_update(interval: str = "auto", lei_file: str | None = None,

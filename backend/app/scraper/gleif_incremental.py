@@ -137,7 +137,7 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
               "r.since_basis AS since_basis, r.since_source_url AS since_source_url, "
               "r.source_id AS source_id, r.credibility_score AS credibility_score, "
               "r.stake_percent AS stake_percent, r.structure_basis AS structure_basis, "
-              "r.until AS until LIMIT 1")
+              "r.until AS until, r.since_not_before AS since_not_before LIMIT 1")
     rr_own = "r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL"
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
@@ -169,6 +169,20 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
 def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str,
                       source_id: str, credibility_score: int, since: str | None = None,
                       until: str | None = None, recorded: str | None = None) -> str:
+    """`_write_owns_edge`, then the pair's start labelled if it is only the
+    child's LEI registration day (gleif_rr.mark_registration_day) — the same
+    rule the bulk import applies, on every path that writes a GLEIF edge."""
+    outcome = _write_owns_edge(parent_id, child_id, child_lei, marker, source_id,
+                               credibility_score, since, until, recorded)
+    if since:
+        from app.scraper.gleif_rr import mark_registration_day
+        mark_registration_day(parent_id, child_id, run=run_command)
+    return outcome
+
+
+def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
+                     source_id: str, credibility_score: int, since: str | None = None,
+                     until: str | None = None, recorded: str | None = None) -> str:
     """Create the (parent)-[:OWNS {marker}]->(child) edge if absent, else refresh it
     and clear any stale `until`. Assumes both nodes already exist.
     'created'|'updated'|'folded'|'adopted'. `since` (relationship start date) is
@@ -195,6 +209,11 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
                  source_date=recorded, credibility_score=credibility_score, filing_type="RR")
     existing = _existing_consolidation_edge(parent_id, child_id, since)
     url = f"https://search.gleif.org/#/record/{child_lei}"
+    floor = (existing or {}).get("since_not_before")
+    if since and floor and since < floor:
+        # GLEIF's archive refutes this start (gleif_rr_history): the claim
+        # above keeps what the record says; the edge does not believe it
+        since = None
 
     if existing is None:
         run_command(

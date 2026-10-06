@@ -392,3 +392,14 @@ class TestRegisterId:
         assert props["search_text"].startswith("Searchable Co")
         _, plain = _entity_props(_rec("R6", "Plain Co"), "gleif", 92)
         assert plain["search_text"] == "Plain Co"
+
+
+def test_the_lei_registration_day_is_kept():
+    # GLEIF relationship records reuse it as the relationship start
+    # (gleif_rr.REGISTRATION_DAY) — the rule needs it on the company
+    rec = _rec("LEI123", "Acme AG")
+    rec["Registration"] = {"InitialRegistrationDate": _w("2012-06-06T15:51:54.000Z")}
+    _, props = _entity_props(rec, "gleif", 92)
+    assert props["lei_registration_date"] == "2012-06-06"
+    _, props = _entity_props(_rec("LEI124", "Beta AG"), "gleif", 92)
+    assert props["lei_registration_date"] is None

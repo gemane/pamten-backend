@@ -123,3 +123,12 @@ def test_the_import_merges_across_sources_before_finishing():
     assert dedupe < finish.index("run_manage geocode")
     assert dedupe < finish.index("run_manage mark-shortcuts")
     assert dedupe < finish.index("rebuild-search")
+
+
+def test_the_gleif_history_keeps_its_file_where_the_host_sees_it():
+    # in the container ~ is gone with the container: the intervals file must
+    # land in DATA_DIR, or a re-apply downloads the whole archive again
+    assert "gleif-history)" in OPS
+    line = next(ln for ln in OPS.splitlines() if ln.strip().startswith("gleif-history)"))
+    assert "gleif-rr-history --intervals /data/" in line
+    assert "gleif-history" not in SETUP          # manual, run once — never cron

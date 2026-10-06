@@ -10,6 +10,17 @@ one filled-in env file (`deploy/.env.example`); day two is `owlgraph <command>`
 (`deploy/ops.sh`). Everything — the steps, the prerequisites, what was tested — is
 in [`deploy/README.md`](../deploy/README.md).
 
+## GLEIF history (once)
+
+After the first full import, run `owlgraph gleif-history` (dev box: `manage.py
+gleif-rr-history`) once: ended GLEIF relationships since 2018 and "at least since"
+starts, from one archived relationship file per month (~1.5 GB downloaded, each
+file deleted after reading). `--dry-run` reports what it would write. It keeps the
+small intervals file (`/data/gleif-rr-history.jsonl.gz`), so re-running after a
+restore downloads nothing; `--rebuild` downloads again. Manual, never cron: from
+then on the daily `gleif-update` records endings as they happen. See
+[data-model.md](data-model.md), GLEIF.
+
 ## Releases & versions
 
 One product version for the API, the web app and the Android app, in semantic

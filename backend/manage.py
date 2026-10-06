@@ -66,6 +66,39 @@ def cmd_gleif_rr(args):
     if result is not None:
         print(result)
 
+def cmd_gleif_rr_history(args):
+    """GLEIF relationship history from the golden-copy archive (once, after
+    the first full import): download one relationship file per month back to
+    2018 → the intervals file → ended edges + lower-bound starts in the graph."""
+    import os
+    from datetime import date
+    from app.scraper import gleif_rr_history as hist
+    path = os.path.expanduser(args.intervals)
+    if args.rebuild or not os.path.exists(path):
+        start = hist.ARCHIVE_START
+        if args.start:
+            start = max(start, date.fromisoformat(f"{args.start}-01"))
+        print(f"Downloading one GLEIF relationship file per month from {start:%Y-%m} "
+              f"into {path} …")
+        res = hist.build_history(path, start=start)
+        print(f"Built {res['periods']:,} periods ({res['ended']:,} ended, {res['open']:,} open) "
+              f"from {res['snapshots']} snapshots {res['first']} → {res['last']} "
+              f"in {res['seconds']}s" + (f"; skipped: {', '.join(res['skipped'])}" if res['skipped'] else ""))
+    else:
+        header, _ = hist.read_intervals(path)
+        snaps = header.get("snapshots") or []
+        print(f"Using {path}: {len(snaps)} snapshots {snaps[:1]} → {snaps[-1:]}, built "
+              f"{header.get('built_at', '?')[:10]} (--rebuild downloads again)")
+    if args.download_only:
+        return
+    from app.scraper.graph_writer import _ensure_source
+    from app.scraper.runner import BODS_GLEIF_CREDIBILITY, GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL
+    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
+    result = _run_guarded_import("gleif-rr-history",
+        lambda: hist.apply_history(path, source_id, BODS_GLEIF_CREDIBILITY, dry_run=args.dry_run))
+    if result is not None:
+        print(result)
+
 def _apply_direct_db_url(args):
     """--db-url points the importer straight at ArcadeDB, bypassing a proxy that
     imposes a short read timeout (e.g. dev-db's 60s nginx). Removing that ceiling
@@ -1191,6 +1224,19 @@ def _build_parser():
     p_rr.add_argument('--only-file', help='File of seed LEIs (one per line, # comments) — their corporate family')
     p_rr.add_argument('--emit-leis', help='With --only: write the family LEIs here (feed to gleif-lei-cdf --only-file to name them)')
     p_rr.set_defaults(func=cmd_gleif_rr)
+
+    p_rh = subparsers.add_parser('gleif-rr-history',
+        help='GLEIF relationship history from the archive (once, after the first full import): '
+             'ended relationships since 2018 and "at least since" starts')
+    p_rh.add_argument('--intervals', default='~/data/gleif-rr-history.jsonl.gz',
+                      help='The intervals file: built here if missing (or with --rebuild), '
+                           'reused otherwise — so a re-apply after a rebuild downloads nothing')
+    p_rh.add_argument('--rebuild', action='store_true', help='Download the archive again')
+    p_rh.add_argument('--from', dest='start', metavar='YYYY-MM',
+                      help='First month (default: the archive start, 2018-02)')
+    p_rh.add_argument('--download-only', action='store_true', help='Build the intervals file, write nothing')
+    p_rh.add_argument('--dry-run', action='store_true', help='Report what applying would write, write nothing')
+    p_rh.set_defaults(func=cmd_gleif_rr_history)
 
     # gleif-repex command (why a company reports no parent)
     p_rx = subparsers.add_parser('gleif-repex',

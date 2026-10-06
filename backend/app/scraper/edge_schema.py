@@ -73,6 +73,10 @@ OWNS_PROPS: tuple = (
     # stated start. `since_source_url` is that filing.
     "since_basis",
     "since_source_url",
+    # GLEIF's own archive refutes a start before this date: the child was still
+    # the top of a tree then (gleif_rr_history). The stated start stays in the
+    # source's claim; the edge and every merge ignore anything earlier.
+    "since_not_before",
     # How the edge's PLACE in the tree is known when a source showed it by
     # layout rather than stating it: "ex21_indent" (the filer indented the
     # subsidiary under another), "ex21_heading" (it sits under a "Subsidiaries

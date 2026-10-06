@@ -102,3 +102,17 @@ class TestFold:
     def test_staleness_clears_when_any_edge_is_fresh(self):
         stale = dict(GLEIF, stale=True)
         assert fold([stale, dict(SEC_EX21, stale=False)], stale)["stale"] is False
+
+
+def test_a_refuted_start_never_wins_a_merge():
+    # GLEIF's archive refutes a start before since_not_before (gleif_rr_history)
+    from app.scraper.owns_merge import combine_since, fold
+    assert combine_since({"since": "2001-07-03"}, {"since": "2026-08-01", "since_basis": "gleif_first_seen"},
+                         not_before="2026-07-01")["since"] == "2026-08-01"
+    survivor = {"since": "2026-08-01", "since_basis": "gleif_first_seen", "since_not_before": "2026-07-01",
+                "credibility_score": 92, "source_id": "g"}
+    other = {"since": "2001-07-03", "credibility_score": 92, "source_id": "g"}
+    assert "since" not in fold([survivor, other], survivor)
+    # and the floor travels to a survivor that lacks it
+    out = fold([other, survivor], other)
+    assert out["since_not_before"] == "2026-07-01" and out["since"] == "2026-08-01"

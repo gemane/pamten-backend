@@ -212,6 +212,18 @@ _VALIDATION_PENALTY = {
 }
 
 
+def _lei_registration_date(rec: dict) -> str | None:
+    """The day the LEI was first issued (``InitialRegistrationDate``).
+
+    Kept because GLEIF's relationship records reuse it: in 27,874 of 260,250
+    (2026-10-06) the stated relationship start IS the child's LEI registration
+    day, years after the company was founded — Barclays Bank PLC "owned by
+    Barclays PLC since 2012-06-06", the day its LEI was issued; owned since
+    1985. Such a start is only "at least since" (gleif_rr.REGISTRATION_DAY)."""
+    d = _v((rec.get("Registration") or {}).get("InitialRegistrationDate"))
+    return d[:10] if d and len(d) >= 10 else None
+
+
 def _validation_sources(rec: dict) -> str | None:
     """GLEIF's `ValidationSources` for this record, e.g. 'FULLY_CORROBORATED'.
 
@@ -320,6 +332,7 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "register_id": make_register_id(reg_code, reg_number),
         "founded": _founded(entity),
         "founded_date": _founded_date(entity),
+        "lei_registration_date": _lei_registration_date(rec),
         "lei_id": lei,
         "source_id": source_id,
         # Deep-link to this company's GLEIF record, not the source home page — the

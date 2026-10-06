@@ -162,6 +162,9 @@ def test_claim_props_knows_every_fact_a_claim_should_record():
         "direct_or_indirect", "psc_self_link", "also_ultimate",
         "ultimate_since", "ultimate_until", "until_reason", "value_usd",
         "file_date",
+        # our judgement from GLEIF's archive, not the source's assertion — the
+        # claim keeps what the source stated (gleif_rr_history)
+        "since_not_before",
     }
     missing = factual - claim_fields
     assert not missing, (f"claim_props lacks {sorted(missing)} — a claim that "

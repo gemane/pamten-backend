@@ -207,10 +207,15 @@ class _BatchWriter:
         from app.scraper.sources import edge_writes_suppressed
         return not edge_writes_suppressed(props.get("source_id"))
 
-    def owns(self, owner_id: str, owner_label: str, owned_id: str, props: dict) -> None:
+    def owns(self, owner_id: str, owner_label: str, owned_id: str, props: dict,
+             claim: bool = True) -> None:
+        """`claim=False` writes the edge only: for a past period of a pair the
+        source still asserts today (gleif_rr_history) — the claim is keyed on
+        the pair, and the past would overwrite the present with "ended"."""
         if self._edge_allowed(props):
             self._edges.append(("OWNS", owner_label, owner_id, "Entity", owned_id, props))
-        self._claim(KIND_OWNS, owner_id, owned_id, props)
+        if claim:
+            self._claim(KIND_OWNS, owner_id, owned_id, props)
         self._bump()
 
     def role(self, person_id: str, entity_id: str, props: dict) -> None:
