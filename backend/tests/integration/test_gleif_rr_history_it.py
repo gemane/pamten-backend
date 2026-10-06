@@ -99,3 +99,78 @@ def test_a_start_written_meanwhile_is_never_overwritten(it_db, tmp_path, monkeyp
     rows = {r["parent"]: r for r in _owns_into_child(it_db)}
     assert rows["lei:NEWPARENT00000000001"]["since"] == "2005-01-01"
     assert rows["lei:NEWPARENT00000000001"]["basis"] is None
+
+
+def _activision(it_db, tmp_path):
+    """Microsoft → Activision as the importer writes it from GLEIF's record
+    ("since 2001-07-03"), and an archive in which King.com named Activision
+    its ultimate parent until 2026-07."""
+    for eid in ("lei:MSFT0000000000000001", "lei:ATVI0000000000000001", "lei:KING0000000000000001"):
+        _company(it_db, eid, eid[4:])
+    it_db.run_command(
+        "MATCH (a:Entity {id: 'lei:MSFT0000000000000001'}), (b:Entity {id: 'lei:ATVI0000000000000001'}) "
+        "CREATE (a)-[:OWNS {source_id: 'gleif', filing_type: 'RR', direct_or_indirect: 'direct', "
+        "since: '2001-07-03', credibility_score: 92}]->(b)")
+    from app.claims import KIND_OWNS, record_claim
+    record_claim(kind=KIND_OWNS, from_id="lei:MSFT0000000000000001", to_id="lei:ATVI0000000000000001",
+                 source_id="gleif", ownership_type="controlling", since="2001-07-03",
+                 credibility_score=92, filing_type="RR")
+    hi = h.History()
+    king = ("ATVI0000000000000001", "KING0000000000000001")
+    msft = ("MSFT0000000000000001", "ATVI0000000000000001")
+    hi.observe("2021-06-01", {king: ("indirect", "2021-05-11")})
+    hi.observe("2026-07-01", {king: ("indirect", "2021-05-11")})
+    hi.observe("2026-08-01", {msft: ("direct", "2001-07-03")})
+    hi.observe("2026-10-05", {msft: ("direct", "2001-07-03")})
+    path = str(tmp_path / "atvi.jsonl.gz")
+    h.write_intervals(path, hi)
+    return path
+
+
+def _msft_edge(it_db):
+    return it_db.run_command(
+        "MATCH (:Entity {id: 'lei:MSFT0000000000000001'})-[r:OWNS]->(:Entity {id: 'lei:ATVI0000000000000001'}) "
+        "RETURN r.since AS since, r.since_basis AS basis, r.since_not_before AS floor")
+
+
+def test_a_start_the_archive_refutes_is_corrected_and_the_claim_keeps_it(it_db, tmp_path):
+    path = _activision(it_db, tmp_path)
+    assert h.apply_history(path, "gleif", 92)["starts_corrected"] == 1
+    assert _msft_edge(it_db) == [{"since": "2026-08-01", "basis": "gleif_first_seen", "floor": "2026-07-01"}]
+    claim = it_db.run_command("MATCH (c:Claim {from_id: 'lei:MSFT0000000000000001', "
+                              "to_id: 'lei:ATVI0000000000000001'}) RETURN c.since AS since")
+    assert claim[0]["since"] == "2001-07-03"                 # what GLEIF says, kept
+    assert h.apply_history(path, "gleif", 92)["starts_corrected"] == 0
+
+
+def test_the_daily_delta_does_not_bring_the_refuted_start_back(it_db, tmp_path):
+    from app.scraper.gleif_incremental import _owns_edge_upsert
+    h.apply_history(_activision(it_db, tmp_path), "gleif", 92)
+    # GLEIF touches Activision's records again, both still stating 2001 /
+    # 2018: the direct one would win `since`, the ultimate one `ultimate_since`
+    for marker, since in (("direct", "2018-06-15"), ("indirect", "2001-07-03")):
+        _owns_edge_upsert("lei:MSFT0000000000000001", "lei:ATVI0000000000000001", "ATVI0000000000000001",
+                          marker, "gleif", 92, since=since, recorded="2026-11-01")
+    row = it_db.run_command(
+        "MATCH (:Entity {id: 'lei:MSFT0000000000000001'})-[r:OWNS]->(:Entity {id: 'lei:ATVI0000000000000001'}) "
+        "RETURN r.since AS since, r.ultimate_since AS u")
+    assert row == [{"since": "2026-08-01", "u": None}]
+
+
+def test_a_start_written_meanwhile_is_not_corrected_over(it_db, tmp_path, monkeypatch):
+    # the plan saw GLEIF's 2001; by the write another source set 2023-10-13
+    path = _activision(it_db, tmp_path)
+    it_db.run_command(
+        "MATCH (:Entity {id: 'lei:MSFT0000000000000001'})-[r:OWNS]->(:Entity {id: 'lei:ATVI0000000000000001'}) "
+        "SET r.since = '2023-10-13'")
+    stale = h._rr_edges
+
+    def as_planned(ids):
+        edges = stale(ids)
+        for rows in edges.values():
+            for r in rows:
+                r["since"] = "2001-07-03"
+        return edges
+    monkeypatch.setattr(h, "_rr_edges", as_planned)
+    assert h.apply_history(path, "gleif", 92)["starts_corrected"] == 1
+    assert _msft_edge(it_db)[0]["since"] == "2023-10-13"

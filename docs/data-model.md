@@ -473,6 +473,22 @@ clean-up stays down and is believed (the file shrank in 26 of 105 months, 2019-0
 10.3 %) — and the intervals file it builds is kept on the box,
 so a second run (after a restore) downloads nothing and writes nothing twice.
 
+**A stated start GLEIF's own archive refutes** is not believed. A company that is the
+top of a tree has no parent, so a start stated before the last snapshot in which the
+child was still someone's ultimate parent — and before the relationship itself
+appeared — is contradicted: Activision Blizzard registered Microsoft as its ultimate
+parent "since 2001-07-03" in July 2026, while King.com named Activision its own
+ultimate parent until 2026-07 (the acquisition closed 2023-10-13). 695 of 367,701
+stated starts on 2026-10-06. The edge then gets the first snapshot listing it as a
+lower bound (`gleif_first_seen`) and `since_not_before` = the last snapshot the child
+was top; GLEIF's date stays in its **claim**, and no merge (`combine_since`,
+`owns_merge.fold`) or daily delta brings it back onto the edge. The archive only
+proves that one side of the contradiction is wrong, not which: Barclays Bank PLC's
+subsidiaries named it their ultimate parent until 2021 although Barclays PLC has
+owned it since 1985, so its stated 2012 is weakened too. That failure mode is a
+dimmed edge ("not documented" before the date), never a hidden one; the other is a
+false owner since 2001.
+
 An ACTIVE record's own end
 date is kept, and every RR edge carries the record's `LastUpdateDate` as
 `source_date`, its evidence date. And an entity whose `EntityStatus` is `INACTIVE` is flagged

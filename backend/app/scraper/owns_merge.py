@@ -60,6 +60,9 @@ SINCE_FIELDS: tuple = ("since", "since_basis", "since_source_url")
 STRUCTURAL_FIELDS: tuple = (
     "interest_types", "direct_or_indirect", "psc_self_link",
     "also_ultimate", "ultimate_since", "ultimate_until",
+    # GLEIF's archive refutes any start before this (gleif_rr_history): the
+    # child was still the top of a tree then
+    "since_not_before",
 )
 
 LOWER_BOUND = "first_listed"
@@ -116,15 +119,17 @@ def outranks(incoming: dict, current: dict) -> bool:
     return answer_rank(incoming) > answer_rank(current)
 
 
-def combine_since(*candidates: dict | None) -> dict:
-    """The combined start date: the earliest one any candidate gives.
+def combine_since(*candidates: dict | None, not_before: str | None = None) -> dict:
+    """The combined start date: the earliest one any candidate gives — none
+    before ``not_before`` (``since_not_before``, a start the evidence refutes).
 
     Each candidate is a dict with ``since`` / ``since_basis`` /
     ``since_source_url`` (missing keys are None). On the same day a stated start
     beats a lower bound — it says more. Returns all three fields, None when no
     candidate is dated.
     """
-    dated = [c for c in candidates if c and c.get("since")]
+    dated = [c for c in candidates if c and c.get("since")
+             and not (not_before and str(c["since"]) < not_before)]
     if not dated:
         return {"since": None, "since_basis": None, "since_source_url": None}
     best = min(dated, key=lambda c: (str(c["since"]), c.get("since_basis") is not None))
@@ -149,7 +154,8 @@ def fold(edges: list[dict], survivor: dict) -> dict:
     out: dict = {}
     if top is not survivor:
         out.update({f: top.get(f) for f in ANSWER_FIELDS})
-    since = combine_since(*edges)
+    floors = [e["since_not_before"] for e in edges if e.get("since_not_before")]
+    since = combine_since(*edges, not_before=max(floors) if floors else None)
     if any(since[f] != survivor.get(f) for f in SINCE_FIELDS):
         out.update(since)
     for f in STRUCTURAL_FIELDS:

@@ -137,7 +137,7 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
               "r.since_basis AS since_basis, r.since_source_url AS since_source_url, "
               "r.source_id AS source_id, r.credibility_score AS credibility_score, "
               "r.stake_percent AS stake_percent, r.structure_basis AS structure_basis, "
-              "r.until AS until LIMIT 1")
+              "r.until AS until, r.since_not_before AS since_not_before LIMIT 1")
     rr_own = "r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL"
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
@@ -195,6 +195,11 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
                  source_date=recorded, credibility_score=credibility_score, filing_type="RR")
     existing = _existing_consolidation_edge(parent_id, child_id, since)
     url = f"https://search.gleif.org/#/record/{child_lei}"
+    floor = (existing or {}).get("since_not_before")
+    if since and floor and since < floor:
+        # GLEIF's archive refutes this start (gleif_rr_history): the claim
+        # above keeps what the record says; the edge does not believe it
+        since = None
 
     if existing is None:
         run_command(

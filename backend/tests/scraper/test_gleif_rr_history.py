@@ -269,3 +269,47 @@ class TestHoles:
                    _p(first="2019-10-01", last="2026-10-05", until=None, since="2012-01-01")]
         plan = h.plan_history(periods, IDS, edges)
         assert plan["create"] == [] and plan["skipped"]["stated_start"] == 1
+
+
+class TestRefuted:
+    """Activision Blizzard: Microsoft "ultimate parent since 2001-07-03",
+    registered 2026-07 — while King.com named Activision its own ultimate
+    parent until 2026-07. A top of a tree has no parent."""
+
+    KING = {"parent": "ATVI", "child": "KING", "first_seen": "2021-05-01", "last_seen": "2026-07-01",
+            "until": "2026-08-01", "marker": "indirect", "since": "2021-05-11"}
+    MSFT = {"parent": "MSFT", "child": "ATVI", "first_seen": "2026-08-01", "last_seen": "2026-10-05",
+            "until": None, "marker": "direct", "since": "2001-07-03"}
+    IDS = {"ATVI": "lei:ATVI", "KING": "lei:KING", "MSFT": "lei:MSFT"}
+
+    def test_the_last_snapshot_as_top_comes_from_ultimate_only_periods(self):
+        direct = {**self.KING, "parent": "X", "marker": "direct", "last_seen": "2026-09-01"}
+        assert h.tops([self.KING, direct]) == {"ATVI": "2026-07-01"}
+
+    def test_a_start_before_the_child_stopped_being_top_is_refuted(self):
+        assert h.refuted_by(self.MSFT, h.tops([self.KING])) == "2026-07-01"
+
+    def test_a_start_after_it_or_a_child_still_top_is_not(self):
+        top = h.tops([self.KING])
+        assert h.refuted_by({**self.MSFT, "since": "2026-07-15"}, top) is None
+        # the child still top while the relationship was already listed: stale
+        # data somewhere, but nothing says which side is wrong
+        assert h.refuted_by({**self.MSFT, "first_seen": "2026-06-01"}, top) is None
+        assert h.refuted_by({**self.MSFT, "since": None}, top) is None
+
+    def test_the_edge_with_the_refuted_date_is_corrected(self):
+        edges = {("lei:MSFT", "lei:ATVI"): [{"rid": "#1:1", "since": "2001-07-03", "until": None}]}
+        plan = h.plan_history([self.KING, self.MSFT], self.IDS, edges)
+        assert plan["correct"] == [("#1:1", "2001-07-03", "2026-08-01", "2026-07-01")]
+
+    def test_another_sources_date_on_the_edge_is_left_alone(self):
+        edges = {("lei:MSFT", "lei:ATVI"): [{"rid": "#1:1", "since": "2023-10-13", "until": None}]}
+        plan = h.plan_history([self.KING, self.MSFT], self.IDS, edges)
+        assert plan["correct"] == [] and plan["skipped"]["stated_start"] == 1
+
+    def test_an_ended_period_is_written_with_the_corrected_start(self):
+        ended = {**self.MSFT, "last_seen": "2026-09-01", "until": "2026-10-05"}
+        ((_, _, props, _),) = [c for c in h.plan_history([self.KING, ended], self.IDS, {})["create"]
+                               if c[0] == "lei:MSFT"]
+        assert (props["since"], props["since_basis"], props["since_not_before"]) == \
+            ("2026-08-01", "gleif_first_seen", "2026-07-01")

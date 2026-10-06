@@ -367,15 +367,45 @@ def join_holes(plist: list[dict]) -> list[dict]:
     return out
 
 
+def tops(periods: Iterable[dict]) -> dict[str, str]:
+    """company LEI → the last snapshot it was the TOP of a tree: named as
+    someone's ultimate parent (a period that is ultimate-only, so marked
+    ``indirect``; a pair stated both ways is folded to ``direct`` and not
+    counted — which can only miss a contradiction, never invent one)."""
+    out: dict[str, str] = {}
+    for p in periods:
+        if p["marker"] == "indirect" and p["last_seen"] > out.get(p["parent"], ""):
+            out[p["parent"]] = p["last_seen"]
+    return out
+
+
+def refuted_by(period: dict, top_last: dict[str, str]) -> str | None:
+    """The snapshot that refutes a period's stated start, or None.
+
+    A company that is the top of a tree has no parent. So a start stated
+    before the last snapshot in which the child was still someone's ultimate
+    parent — and before the relationship itself appeared — is contradicted by
+    GLEIF's own archive. Activision Blizzard registered Microsoft as its
+    ultimate parent "since 2001-07-03" in July 2026, while King.com named
+    Activision its ultimate parent until 2026-07 (the acquisition closed
+    2023-10-13). 695 of 367,701 stated starts on 2026-10-06."""
+    t = top_last.get(period["child"])
+    s = period["since"]
+    return t if s and t and s < t < period["first_seen"] else None
+
+
 def plan_history(periods: Iterable[dict], ids: dict[str, str],
                  edges: dict[tuple[str, str], list[dict]]) -> dict:
     """What applying would do, without touching the graph: the closed edges to
     create (``create``: (owner_id, owned_id, props, claim)), the start dates to
-    fill (``fill``: (rid, since)), and counts of everything skipped and why."""
+    fill (``fill``: (rid, since)), the refuted starts to correct (``correct``:
+    (rid, stated, since, not_before)), and counts of everything skipped and why."""
+    periods = list(periods)
+    top_last = tops(periods)
     by_pair: dict[tuple[str, str], list[dict]] = {}
     for p in periods:
         by_pair.setdefault((p["parent"], p["child"]), []).append(p)
-    create, fill = [], []
+    create, fill, correct = [], [], []
     skip = {"unresolved": 0, "already_written": 0, "current_in_graph": 0,
             "same_relationship": 0, "open_without_edge": 0, "stated_start": 0}
     for (parent, child), plist in by_pair.items():
@@ -387,24 +417,30 @@ def plan_history(periods: Iterable[dict], ids: dict[str, str],
         current = [e for e in existing if not e.get("until")]
         plist = join_holes(plist)
         for k, p in enumerate(plist):
+            refuted = refuted_by(p, top_last)
             if p["until"] is None:
                 if not current:
                     skip["open_without_edge"] += 1
                 for e in current:
-                    if e.get("since"):
+                    if refuted and e.get("since") == p["since"] and not e.get("since_basis"):
+                        # the importer wrote GLEIF's refuted date: the edge stops
+                        # believing it (the claim keeps it)
+                        correct.append((e["rid"], p["since"], p["first_seen"], refuted))
+                    elif e.get("since"):
                         skip["stated_start"] += 1
                     else:
                         fill.append((e["rid"], p["first_seen"]))
                 continue
             last = k == len(plist) - 1
-            since = p["since"] or p["first_seen"]
+            stated = p["since"] if not refuted else None
+            since = stated or p["first_seen"]
             if last and current:
                 # the graph is older than the newest snapshot: the daily delta
                 # closes current edges, not the history
                 skip["current_in_graph"] += 1
             elif any(_overlaps(e, since, p["until"]) for e in existing):
                 skip["already_written"] += 1
-            elif p["since"] and any(e.get("since") == p["since"] for e in current):
+            elif stated and any(e.get("since") == stated for e in current):
                 # a gap in the file (a lapse) inside one relationship with the
                 # same stated start — not a second relationship
                 skip["same_relationship"] += 1
@@ -417,10 +453,12 @@ def plan_history(periods: Iterable[dict], ids: dict[str, str],
                     "source_url": f"https://search.gleif.org/#/record/{child}",
                     "source_date": p["last_seen"], "filing_type": "RR",
                 }
-                if not p["since"]:
+                if not stated:
                     props["since_basis"] = SINCE_BASIS
+                if refuted:
+                    props["since_not_before"] = refuted
                 create.append((owner, owned, props, not current))
-    return {"create": create, "fill": fill, "skipped": skip}
+    return {"create": create, "fill": fill, "correct": correct, "skipped": skip}
 
 
 def apply_history(path: str, source_id: str, credibility_score: int,
@@ -434,7 +472,8 @@ def apply_history(path: str, source_id: str, credibility_score: int,
     plan = plan_history(periods, ids, edges)
     result = {"snapshots": len(header.get("snapshots") or []), "periods": len(periods),
               "companies_found": len(ids), "created": len(plan["create"]),
-              "since_filled": len(plan["fill"]), "skipped": plan["skipped"],
+              "since_filled": len(plan["fill"]), "starts_corrected": len(plan["correct"]),
+              "skipped": plan["skipped"],
               "dry_run": dry_run}
     if dry_run:
         return result
@@ -453,5 +492,14 @@ def apply_history(path: str, source_id: str, credibility_score: int,
             # `since IS NULL` again here: never over a date written meanwhile
             stmts.append(f"UPDATE {rid} SET since = :s{k}, since_basis = '{SINCE_BASIS}' "
                          f"WHERE since IS NULL;")
+        _flush_script("\n".join(stmts), params)
+    for i in range(0, len(plan["correct"]), _CHUNK):
+        chunk = plan["correct"][i:i + _CHUNK]
+        stmts, params = [], {}
+        for k, (rid, stated, since, floor) in enumerate(chunk):
+            params.update({f"o{k}": stated, f"s{k}": since, f"f{k}": floor})
+            # only while the edge still carries the refuted date
+            stmts.append(f"UPDATE {rid} SET since = :s{k}, since_basis = '{SINCE_BASIS}', "
+                         f"since_not_before = :f{k} WHERE since = :o{k};")
         _flush_script("\n".join(stmts), params)
     return result

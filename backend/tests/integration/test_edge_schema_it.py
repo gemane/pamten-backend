@@ -36,7 +36,7 @@ _SAMPLE = {
     "value_usd": 12345678.9, "file_date": "2025-02-07",
     "filing_type": "13G/A",
     "since_basis": "first_listed", "since_source_url": "https://sec.example.test/ex21-2014",
-    "structure_basis": "ex21_indent",
+    "structure_basis": "ex21_indent", "since_not_before": "2019-01-01",
     "role": "CEO", "relation": "group_member",
 }
 
