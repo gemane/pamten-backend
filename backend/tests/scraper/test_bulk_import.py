@@ -426,3 +426,20 @@ class TestBulkLoad:
         assert "DROP INDEX `Entity_0_111` IF EXISTS" not in issued   # wrong property, untouched
         assert "CREATE INDEX IF NOT EXISTS ON Entity (search_text) FULL_TEXT" in issued
         assert "REBUILD INDEX `Entity[search_text]`" not in issued
+
+
+def test_the_lei_cdf_import_labels_registration_day_starts(monkeypatch):
+    # the test import loads the families' companies AFTER their relationships:
+    # the RR pass found no registration dates (0 labelled on the 2026-10-07
+    # rebuild), so the company import runs the same pass when it brings them
+    from app.scraper import runner as r, gleif_lei_cdf, gleif_incremental, gleif_rr
+    monkeypatch.setattr(r.settings, "SCRAPER_ENABLED", True)
+    monkeypatch.setattr(r.settings, "SCRAPER_BODS_GLEIF_ENABLED", True)
+    monkeypatch.setattr(r, "_ensure_source", lambda *a, **k: "gleif")
+    monkeypatch.setattr(gleif_lei_cdf, "import_lei_cdf_entities", lambda **k: {"entities": 1})
+    monkeypatch.setattr(gleif_incremental, "mark_full_load_done", lambda kind: None)
+    monkeypatch.setattr(r, "_duplicate_name_summary", lambda: {})
+    calls = []
+    monkeypatch.setattr(gleif_rr, "mark_registration_day", lambda: calls.append(1) or 7)
+    res = r.run_import_gleif_lei_cdf("dummy.zip")
+    assert calls == [1] and res["registration_day"] == 7
