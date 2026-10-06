@@ -466,8 +466,11 @@ late, never early), `source_date` = the last snapshot listing it. A pair with no
 stated start gets `since` = the first snapshot listing it, `since_basis =
 gleif_first_seen` — on current edges only where `since` is empty. It never
 creates a current edge or a company (a period whose companies are not in the
-graph is counted, not written), a snapshot with under 80 % of the previous one's
-records is not believed, and the intervals file it builds is kept on the box,
+graph is counted, not written), a **dip** is not believed — a snapshot over 5 %
+smaller than the last believed one is held back a month and skipped only if the next
+one recovers (2023-08-01: 281,309 records between 398,842 and ~400k); a real
+clean-up stays down and is believed (the file shrank in 26 of 105 months, 2019-09 by
+10.3 %) — and the intervals file it builds is kept on the box,
 so a second run (after a restore) downloads nothing and writes nothing twice.
 
 An ACTIVE record's own end

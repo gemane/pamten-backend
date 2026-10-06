@@ -194,30 +194,58 @@ def test_the_new_basis_is_a_lower_bound_for_time_travel():
     assert is_lower_bound(h.SINCE_BASIS)
 
 
-def test_the_build_skips_a_snapshot_that_shrank_and_ends_nothing_by_it(tmp_path, monkeypatch):
-    # a truncated publish would otherwise end every relationship it lacks
+def _build(tmp_path, monkeypatch, counts: dict[str, int]):
+    """A faked build over snapshots holding the first N of C1..C9 (oldest
+    first; the last date is the latest publish)."""
     import zipfile
-    files = {
-        "2018-02-09": [_rec("C1", "P"), _rec("C2", "P"), _rec("C3", "P"), _rec("C4", "P"), _rec("C5", "P")],
-        "2018-03-01": [_rec("C1", "P")],                                       # 1 of 5 records
-        "2026-10-05": [_rec("C1", "P"), _rec("C2", "P"), _rec("C3", "P"), _rec("C4", "P")],
-    }
-    pubs = {d: {"publish_date": d, "url": d, "record_count": len(r)} for d, r in files.items()}
-    monkeypatch.setattr(h, "latest_publish", lambda c: pubs["2026-10-05"])
-    monkeypatch.setattr(h, "find_publish", lambda c, day: pubs.get(
-        "2018-02-09" if day == date(2018, 2, 9) else "2018-03-01" if day == date(2018, 3, 1) else "2026-10-05"))
+    days = list(counts)
+    pubs = {d: {"publish_date": d, "url": d, "record_count": n} for d, n in counts.items()}
+    monthly = {date.fromisoformat(d[:8] + "01") if i else date.fromisoformat(d): d
+               for i, d in enumerate(days[:-1])}
+    monkeypatch.setattr(h, "latest_publish", lambda c: pubs[days[-1]])
+    monkeypatch.setattr(h, "find_publish", lambda c, day: pubs.get(monthly.get(day, days[-1])))
 
     def download(client, url, dest):
         with zipfile.ZipFile(dest, "w") as z:
-            z.writestr("rr.json", json.dumps({"relations": files[url]}))
+            z.writestr("rr.json", json.dumps(
+                {"relations": [_rec(f"C{i}", "P") for i in range(1, counts[url] + 1)]}))
     monkeypatch.setattr(h, "_download", download)
     monkeypatch.setattr(h, "_tmp_dir", lambda: str(tmp_path))
     out = str(tmp_path / "hist.jsonl.gz")
-    res = h.build_history(out, end=date(2018, 4, 1), client=object(), echo=lambda *a: None)
-    assert res["snapshots"] == 2 and "2018-03-01" in res["skipped"][0]
+    res = h.build_history(out, start=date.fromisoformat(days[0]),
+                          end=date.fromisoformat(days[-2]), client=object(), echo=lambda *a: None)
     _, periods = h.read_intervals(out)
-    ended = {p["child"]: p["until"] for p in periods if p["until"]}
-    assert ended == {"C5": "2026-10-05"}           # not C2–C5 on 2018-03-01
+    return res, {p["child"]: p["until"] for p in periods if p["until"]}
+
+
+def test_a_dip_is_skipped_and_ends_nothing(tmp_path, monkeypatch):
+    # 2023-08-01: 281,309 records between 398,842 and ~400k — a broken publish
+    res, ended = _build(tmp_path, monkeypatch, {"2018-02-09": 8, "2018-03-01": 2,
+                                                "2018-04-01": 8, "2026-10-05": 8})
+    assert res["snapshots"] == 3 and "2018-03-01" in res["skipped"][0]
+    assert ended == {}
+
+
+def test_a_real_drop_is_believed_and_blocks_nothing_after_it(tmp_path, monkeypatch):
+    # 2019-09: −10.3 % and it stayed — a clean-up; a fixed floor would have
+    # skipped every snapshot after it, to today
+    res, ended = _build(tmp_path, monkeypatch, {"2018-02-09": 9, "2018-03-01": 6,
+                                                "2018-04-01": 6, "2018-05-01": 5, "2026-10-05": 5})
+    assert res["skipped"] == [] and res["snapshots"] == 5
+    assert ended == {"C7": "2018-03-01", "C8": "2018-03-01", "C9": "2018-03-01", "C6": "2018-05-01"}
+
+
+def test_the_latest_is_never_held_back(tmp_path, monkeypatch):
+    res, ended = _build(tmp_path, monkeypatch, {"2018-02-09": 8, "2026-10-05": 4})
+    assert res["skipped"] == [] and res["last"] == "2026-10-05"
+    assert set(ended) == {"C5", "C6", "C7", "C8"}
+
+
+def test_a_small_shrink_is_no_dip(tmp_path, monkeypatch):
+    # exactly 5 % down, then back: within the tolerance, so believed — no dip
+    res, ended = _build(tmp_path, monkeypatch, {"2018-02-09": 20, "2018-03-01": 19,
+                                                "2018-04-01": 20, "2026-10-05": 20})
+    assert res["skipped"] == [] and ended == {"C20": "2018-03-01"}
 
 
 class TestHoles:

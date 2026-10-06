@@ -76,11 +76,14 @@ ARCHIVE_START = date(2018, 2, 9)
 SINCE_BASIS = "gleif_first_seen"
 UNTIL_REASON = "gleif_dropped"
 
-#: A snapshot holding fewer than this share of the previous one's relationship
-#: records is not believed: a truncated or partial publish would otherwise end
-#: thousands of relationships at once. GLEIF's file only ever grew month on
-#: month (110k records in 2018, 490k in 2026).
-_MIN_RECORD_SHARE = 0.8
+#: A broken publish is a DIP: smaller than the month before and back the month
+#: after (2023-08-01: 281,309 records between 398,842 and ~400k). A real
+#: clean-up stays down — the file shrank in 26 of 105 months, 2019-09 by 10.3 %,
+#: and those relationships did not return. So a snapshot more than this share
+#: below the last believed one is held back one month, and skipped only if the
+#: next one recovers. A fixed floor alone would skip every later snapshot after
+#: a real drop larger than itself, all the way to today.
+_DIP = 0.05
 
 #: Publishes are at 00:00, 08:00 and 16:00 UTC; the first that exists on or
 #: after the first of the month is the month's snapshot.
@@ -221,6 +224,7 @@ def build_history(out_path: str, start: date = ARCHIVE_START, end: date | None =
     history = History()
     skipped: list[str] = []
     prev_records = 0
+    held: tuple | None = None          # (n, publish_date, pairs, records) on probation
     t0 = time.monotonic()
     try:
         latest = latest_publish(client)
@@ -241,17 +245,31 @@ def build_history(out_path: str, start: date = ARCHIVE_START, end: date | None =
                 with _open_json(path) as raw:
                     pairs, records = snapshot_pairs(raw)
                 os.remove(path)
-                if prev_records and records < prev_records * _MIN_RECORD_SHARE:
-                    skipped.append(f"{pub['publish_date']} ({records:,} records after "
-                                   f"{prev_records:,}: not believed)")
-                    echo(f"  {n}/{len(plan)} {pub['publish_date']}: SKIPPED, {records:,} records "
-                         f"after {prev_records:,}")
+
+                def believe(n, day, pairs, records):
+                    nonlocal prev_records
+                    prev_records = records
+                    history.observe(day, pairs)
+                    echo(f"  {n}/{len(plan)} {day}: {len(pairs):,} pairs, "
+                         f"{len(history.open):,} open, {len(history.closed):,} ended so far "
+                         f"({time.monotonic() - t0:.0f}s)")
+
+                low = prev_records * (1 - _DIP)
+                if held:
+                    hn, hday, hpairs, hrecords = held
+                    held = None
+                    if records >= low:          # back up: the held one was a dip
+                        skipped.append(f"{hday} ({hrecords:,} records between {prev_records:,} "
+                                       f"and {records:,}: a dip, not believed)")
+                        echo(f"  {hn}/{len(plan)} {hday}: SKIPPED, a dip of {hrecords:,} records")
+                    else:                       # still down: a real clean-up
+                        believe(hn, hday, hpairs, hrecords)
+                        low = prev_records * (1 - _DIP)
+                if prev_records and records < low and n < len(plan):
+                    held = (n, pub["publish_date"], pairs, records)
                     continue
-                prev_records = records
-                history.observe(pub["publish_date"], pairs)
-                echo(f"  {n}/{len(plan)} {pub['publish_date']}: {len(pairs):,} pairs, "
-                     f"{len(history.open):,} open, {len(history.closed):,} ended so far "
-                     f"({time.monotonic() - t0:.0f}s)")
+                # the latest is never held: it is the copy today's graph comes from
+                believe(n, pub["publish_date"], pairs, records)
     finally:
         if own:
             client.close()
