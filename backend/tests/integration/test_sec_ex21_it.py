@@ -362,3 +362,35 @@ def test_only_the_named_places_land_and_mauritius_is_not_us(it_db):
         "MATCH (:Entity {id:'apple'})-[r:OWNS]->(b:Entity) RETURN b.name AS name, b.country AS country")}
     assert len(rows) == 17 and "Cartrack Holdings (Pty) Ltd" not in rows
     assert rows["Cartrack Inc."] == "US" and rows["Borr (Mauritius) Holdings Limited"] == "MU"
+
+
+def _exito(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id: 'exito', name: 'Almacenes Exito S.A.', name_normalized: 'almacenes exito', "
+        "search_text: 'Almacenes Exito S.A.', type: 'company', sec_cik: '0001957146'})")
+
+
+def test_a_parent_column_puts_the_stake_on_the_parents_edge(it_db):
+    # Almacenes Éxito: "Direct controlling entity" + that entity's stake. The
+    # 80% is Viva Malls', never the filer's; a parent the list does not carry
+    # leaves the row under the filer WITHOUT the stake
+    from app.scraper.sec_ex21 import parse_exhibit
+    from tests.scraper.test_sec_ex21_layouts import EXITO
+    subs = parse_exhibit(EXITO, "Almacenes Exito S.A.")
+    subs.append({"name": "Orphan S.A.", "jurisdiction": "Uruguay", "stake_percent": 60.0,
+                 "parent": "Unlisted Holdco S.A.", "parent_basis": "column"})
+    data = {"subsidiaries": subs, "form": "20-F", "filing_date": "2025-04-30",
+            "url": "https://www.sec.gov/Archives/edgar/data/1957146/000121390025037091/ex8-1.htm"}
+    _exito(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        result = runner.run_sec_ex21("Almacenes Exito")
+    assert result["status"] == "ok" and result["unresolved_parents"] == 1
+    edges = _owns(it_db)
+    malls = it_db.run_command("MATCH (e:Entity {name: 'Patrimonio Autónomo Viva Malls'}) RETURN e.id AS id")[0]["id"]
+    assert edges[(malls, "Patrimonio Autónomo Viva Laureles")][::3] == ("direct", 80.0)
+    assert edges[(malls, "Patrimonio Autónomo Viva Laureles")][1] == "ex21_column"
+    assert ("exito", "Patrimonio Autónomo Viva Laureles") not in edges
+    assert edges[("exito", "Patrimonio Autónomo Viva Malls")][:2] == ("direct", "ex21_column")
+    assert edges[("exito", "Patrimonio Autónomo Viva Malls")][3] == 51.0
+    assert edges[("exito", "Orphan S.A.")][:2] == (None, None)
+    assert edges[("exito", "Orphan S.A.")][3] is None, "the unlisted parent's stake is not the filer's"

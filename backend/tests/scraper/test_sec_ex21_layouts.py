@@ -309,6 +309,14 @@ class TestCountryRows:
         assert [s["name"] for s in parse_exhibit(_doc(f"<table>{rows}</table>"))] == [
             "Alpha Ltd.", "Beta SAS", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"]
 
+    def test_a_page_footer_is_no_company(self):
+        # BAT prints "British American Tobacco p.l.c. Form 20-F 2025" on every page
+        rows = "".join(f"<tr><td>{c}</td></tr>" for c in (
+            "France", "Alpha SAS", "British American Tobacco p.l.c. Form 20-F 2025", "Germany", "Beta GmbH",
+            "Italy", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"))
+        assert [s["name"] for s in parse_exhibit(_doc(f"<table>{rows}</table>"))] == [
+            "Alpha SAS", "Beta GmbH", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"]
+
     def test_up_to_the_associates(self):
         rows = "".join(f"<tr><td>{c}</td></tr>" for c in (
             "France", "Alpha SAS", "Germany", "Beta GmbH", "Italy", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"))
@@ -353,14 +361,141 @@ class TestPlaces:
         ("Genstar Corporation#", ("Genstar Corporation", None)),
         ("Bidangil Picture #1", ("Bidangil Picture #1", None)),
         ("~ Navigator Titan L.L.C.", ("Navigator Titan L.L.C.", None)),          # a tree marker
+        ("Grupo Disco Uruguay S.A. (a)", ("Grupo Disco Uruguay S.A.", None)),    # a letter footnote
+        ("Crown Castle Fiber LLC(a)", ("Crown Castle Fiber LLC", None)),
+        ("Class (A) Holdings", ("Class (A) Holdings", None)),
+        ("Fund (Series A)", ("Fund (Series A)", None)),
     ])
     def test_marks_and_stakes_after_a_name(self, raw, clean):
         assert _clean_name(raw) == clean
 
 
-def test_a_table_the_reader_handles_is_read_as_before():
-    # every new reader runs only when the table reader found nothing
-    apple = (FX / "apple_ex21.htm").read_text()
-    with patch.object(ex, "_country_rows_list", side_effect=AssertionError("ran")), \
-         patch.object(ex, "_line_list", side_effect=AssertionError("ran")):
-        assert parse_exhibit(apple, "Apple Inc.")
+# The three regressions the held-out check found (2026-10-07), fixed.
+EXITO = _doc(
+    "<table><tr><td>Name</td><td>Direct controlling entity</td><td>Country</td>"
+    "<td>Stock ownership of direct controlling entity</td><td>Total direct and indirect ownership</td></tr>"
+    "<tr><td>Spice Investment Mercosur S.A.</td><td>Almacenes Éxito S.A.</td><td>Uruguay</td>"
+    "<td>100.00%</td><td>100.00%</td></tr>"
+    "<tr><td>Patrimonio Autónomo Viva Malls</td><td>Almacenes Éxito S.A.</td><td>Colombia</td>"
+    "<td>51.00%</td><td>51.00%</td></tr>"
+    "<tr><td>Patrimonio Autónomo Viva Laureles</td><td>Patrimonio Autónomo Viva Malls</td><td>Colombia</td>"
+    "<td>80.00%</td><td>40.80%</td></tr>"
+    "<tr><td>Grupo Disco Uruguay S.A. (a)</td><td>Spice Investment Mercosur S. A.</td><td>Uruguay</td>"
+    "<td>76.65%</td><td>76.65%</td></tr>"
+    "<tr><td>Ameluz S.A.</td><td>Grupo Disco Uruguay S.A.</td><td>Uruguay</td><td>100.00%</td>"
+    "<td>76.65%</td></tr></table>")
+
+
+class TestParentColumn:
+    """Almacenes Éxito: the ownership column is the DIRECT controlling
+    entity's stake, and a column names that entity."""
+
+    def test_each_row_under_the_holder_its_column_names(self):
+        subs = _by_name(parse_exhibit(EXITO, "Almacenes Exito S.A."))
+        assert subs["Patrimonio Autónomo Viva Laureles"] == {
+            "name": "Patrimonio Autónomo Viva Laureles", "jurisdiction": "Colombia", "stake_percent": 80.0,
+            "parent": "Patrimonio Autónomo Viva Malls", "parent_basis": "column"}
+        # the filer named there (accents aside): directly under it, no parent
+        assert subs["Spice Investment Mercosur S.A."]["parent_basis"] == "column"
+        assert "parent" not in subs["Spice Investment Mercosur S.A."]
+
+    def test_the_parent_as_the_list_writes_it(self):
+        subs = _by_name(parse_exhibit(EXITO, "Almacenes Exito S.A."))
+        # "Spice Investment Mercosur S. A." is the listed "… S.A."; the listed
+        # "Grupo Disco Uruguay S.A. (a)" is "Grupo Disco Uruguay S.A."
+        assert subs["Grupo Disco Uruguay S.A."]["parent"] == "Spice Investment Mercosur S.A."
+        assert subs["Ameluz S.A."]["parent"] == "Grupo Disco Uruguay S.A."
+        html = ("<table><tr><td>Name</td><td>Parent</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Seaspan Management Services Limited</td><td>Atlas Corp.</td><td>Bermuda</td></tr>"
+                "<tr><td>Seaspan Advisory Services Limited</td><td>Seaspan Management Services Ltd.</td>"
+                "<td>Bermuda</td></tr></table>")
+        assert parse_exhibit(html, "Atlas Corp.")[1]["parent"] == "Seaspan Management Services Limited"
+
+    def test_rows_the_filer_holds_beside_the_filers_own_listed_line(self):
+        # Atlas lists itself; the rows its column says Atlas holds are under
+        # the filer, not under that line
+        html = ("<table><tr><td>Name</td><td>Parent</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Atlas Corp.</td><td>Poseidon Corp.</td><td>Marshall Islands</td></tr>"
+                "<tr><td>Seaspan Corporation</td><td>Atlas Corp.</td><td>Marshall Islands</td></tr></table>")
+        assert parse_exhibit(html, "Atlas Corp.")[1] == {
+            "name": "Seaspan Corporation", "jurisdiction": "Marshall Islands", "parent_basis": "column"}
+
+    def test_the_filer_under_its_edgar_name_and_a_namesake_with_another_legal_form(self):
+        html = ("<table><tr><td>Name</td><td>Owned by</td><td>Jurisdiction</td></tr>"
+                "<tr><td>KeyBank National Association</td><td>KeyCorp</td><td>United States</td></tr></table>")
+        assert parse_exhibit(html, "KEYCORP /NEW/") == [
+            {"name": "KeyBank National Association", "jurisdiction": "United States", "parent_basis": "column"}]
+        # "Foo Technologies LLC" is a listed company, not the filer "Foo Technologies, Inc."
+        html = ("<table><tr><td>Name</td><td>Held by</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Foo Technologies LLC</td><td>Foo Technologies, Inc.</td><td>Delaware</td></tr>"
+                "<tr><td>Foo Ohio LLC</td><td>Foo Technologies LLC</td><td>Ohio</td></tr></table>")
+        subs = _by_name(parse_exhibit(html, "Foo Technologies, Inc."))
+        assert "parent" not in subs["Foo Technologies LLC"]
+        assert subs["Foo Ohio LLC"]["parent"] == "Foo Technologies LLC"
+
+    @pytest.mark.parametrize("label,parent", [
+        ("Direct controlling entity", True), ("Parent", True), ("Immediate parent company", True),
+        ("Owned by", True), ("Controlled by", True),
+        ("Name of parent and subsidiary", False), ("Ownership", False),
+    ])
+    def test_which_header_names_the_holder(self, label, parent):
+        html = (f"<table><tr><td>Subsidiary</td><td>Jurisdiction</td><td>{label}</td></tr>"
+                "<tr><td>Alpha Ltd.</td><td>Bermuda</td><td>Beta Holdings Ltd.</td></tr></table>")
+        assert (parse_exhibit(html, "Registrant plc")[0].get("parent") == "Beta Holdings Ltd.") is parent
+
+    def test_a_named_parent_beats_a_drawn_one(self):
+        rows = "".join(f'<tr><td style="padding-left:{pad}pt">{n}</td><td>{p}</td><td>Delaware</td></tr>'
+                       for n, p, pad in (("Alpha LLC", "Registrant Inc.", 0), ("Beta LLC", "Alpha LLC", 12),
+                                         ("Gamma LLC", "Alpha LLC", 24), ("Delta LLC", "Alpha LLC", 24),
+                                         ("Epsilon LLC", "Alpha LLC", 12)))
+        html = f"<table><tr><td>Name</td><td>Parent</td><td>Jurisdiction</td></tr>{rows}</table>"
+        subs = _by_name(parse_exhibit(html, "Registrant Inc."))
+        assert subs["Gamma LLC"]["parent"] == "Alpha LLC" and subs["Gamma LLC"]["parent_basis"] == "column"
+
+
+PURECYCLE = (
+    '<table><tr><td colspan="4">Subsidiary</td><td>State of Jurisdiction Of Incorporation</td></tr>'
+    '<tr><td colspan="4">PureCycle Technologies Holdings Corp.</td><td>Delaware</td></tr>'
+    '<tr><td></td><td colspan="3">PureCycle Technologies LLC</td><td>Delaware</td></tr>'
+    '<tr><td></td><td></td><td colspan="2">PureCycle Managed Services, LLC</td><td>Delaware</td></tr>'
+    '<tr><td></td><td></td><td colspan="2">PCTO Holdco, LLC</td><td>Delaware</td></tr>'
+    '<tr><td></td><td></td><td></td><td>PureCycle: Ohio, LLC</td><td>Ohio</td></tr>'
+    '<tr><td colspan="4">PureCycle Belgium, BV</td><td>Belgium</td></tr></table>')
+
+
+class TestEmptyCellsDrawATree:
+    def test_purecycles_tree(self):
+        subs = _by_name(parse_exhibit(PURECYCLE, "PureCycle Technologies, Inc."))
+        assert {n: s.get("parent") for n, s in subs.items()} == {
+            "PureCycle Technologies Holdings Corp.": None,
+            "PureCycle Technologies LLC": "PureCycle Technologies Holdings Corp.",
+            # under "… Technologies LLC", which is NOT the filer "… Technologies, Inc."
+            "PureCycle Managed Services, LLC": "PureCycle Technologies LLC",
+            "PCTO Holdco, LLC": "PureCycle Technologies LLC",
+            "PureCycle: Ohio, LLC": "PCTO Holdco, LLC",
+            "PureCycle Belgium, BV": None}
+
+    def test_the_filers_own_root_line_still_counts_as_the_filer(self):
+        html = PURECYCLE.replace("PureCycle Technologies Holdings Corp.", "PureCycle Technologies, Inc.")
+        subs = _by_name(parse_exhibit(html, "PureCycle Technologies, Inc."))
+        assert subs["PureCycle Technologies LLC"]["parent"] is None
+        assert subs["PureCycle Technologies LLC"]["parent_basis"] == "indent"
+
+    def test_a_row_number_is_no_indent(self):
+        rows = "".join(f'<tr><td>{m}</td><td colspan="2">{n}</td><td>Delaware</td></tr>'
+                       for m, n in (("1.", "Alpha LLC"), ("", "Beta LLC"), ("3.", "Gamma LLC"), ("", "Delta LLC"),
+                                    ("", "Epsilon LLC"), ("6.", "Zeta LLC"), ("", "Eta LLC")))
+        html = f'<table><tr><td colspan="3">Name</td><td>Jurisdiction</td></tr>{rows}</table>'
+        assert not any("parent_basis" in s for s in parse_exhibit(html))
+
+
+class TestOneNameTwoPlaces:
+    def test_the_first_row_of_a_name_is_kept(self):
+        # Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador, Ziff
+        # Davis' "… Performance Marketing, Inc." in Delaware and the Philippines:
+        # two companies or one with a branch — the list cannot tell, and a
+        # branch as a company would be a false edge. Undecided (2026-10-07).
+        html = ("<table><tr><td>Legal Name</td><td>Jurisdiction of Incorporation</td></tr>"
+                "<tr><td>Agrointegral Andina S.A.S.</td><td>Colombia</td></tr>"
+                "<tr><td>Agrointegral Andina S.A.S. (vii)</td><td>Ecuador</td></tr></table>")
+        assert parse_exhibit(html) == [{"name": "Agrointegral Andina S.A.S.", "jurisdiction": "Colombia"}]

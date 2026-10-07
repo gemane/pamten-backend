@@ -917,7 +917,7 @@ from readers removed again the same day, so 11 remain):
     - the 13 lists changed: 213 entries better, 21 worse — Almacenes Éxito's
       stakes are now read but are the DIRECT parent's, and its "Direct controlling
       entity" column is not read (20); Lavoro loses one name that, its footnote
-      mark stripped, equals another's (1);
+      mark stripped, equals another's (1). Fixed, see below — except Lavoro's;
     - what the removed readers produced there: 926 entries, 13 % fully right, 75 %
       without the place the document does give, 80 names with a description glued
       on ("Antuit, Inc. – a Delaware corporation"), 27 links to sister companies,
@@ -929,6 +929,33 @@ from readers removed again the same day, so 11 remain):
       (Interactive Brokers, PureCycle); a table continued after a page break is
       sometimes not read on (Western Union 44 of 102); the writer keys a list by
       name alone, so two subsidiaries of one name in two countries are one.
+  - **The regressions it found, fixed** (compared on the same 1,062 filings: 10
+    lists changed, none lost but Global-E's junk):
+    - **A column naming each row's holder** — "Direct controlling entity",
+      "Parent", "Owned by", "Controlled by" (the whole cell; checked before the
+      ownership words) — parents the row (`parent_basis: "column"`, edge
+      `structure_basis: "ex21_column"`); the filer named there puts the row
+      directly under it. It beats a drawn indent. Almacenes Éxito, Atlas,
+      Brightstar, KeyCorp. The parent is matched to the listed name it means —
+      "Vía Artika S. A." is "Vía Artika S.A.", "… Services Ltd." the only listed
+      "… Services Limited" — and the filer by EDGAR's name, accents and its
+      "/NEW/" tag aside, but only with the same legal form: "PureCycle
+      Technologies LLC" is a listed company, not the filer "… Technologies, Inc.".
+    - **A parent the list does not carry**: the row stays under the filer, and
+      now WITHOUT its stake — the stake is the named parent's, not the filer's.
+    - **Empty cells before the name draw a tree** (PureCycle: the "Subsidiary"
+      header spans four grid columns, each level one empty cell further in) — but
+      not a column that holds row numbers in some rows. The filer's own line counts
+      as the filer only at the root (TripAdvisor's nested "TripAdvisor LLC").
+    - Letter footnotes "(a)"–"(h)" are no part of a name (Éxito, Crown Castle);
+      a page footer "… Form 20-F 2025" is no company (BAT's country rows).
+    - **Not changed: one name in two places** (Lavoro's "Agrointegral Andina
+      S.A.S." in Colombia and Ecuador) keeps the first row. Across the 1,062
+      filings ten lists do this, and the rows read as much like a branch or a
+      foreign registration of one company (Ziff Davis: Delaware and the
+      Philippines; SFL: Bermuda and Canada) as like two companies (Perfect Corp.'s
+      Japanese, US and French namesakes) — a branch as a company would be a false
+      edge. Open, for the user.
   - **Places, and a mapping bug**: "Mauritius", "Cyprus" and "Belarus" end in "us"
     and mapped to the **United States** — the US-suffix rule had no word boundary.
     Fixed; because `country` is written fill-only, a re-scrape does not correct

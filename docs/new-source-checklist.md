@@ -363,6 +363,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       739 entries right), while the few-filer readers (names without a place, a
       table without a place column, a scanned page's text layer) got 13 % of 926
       entries fully right and mostly hid a gap in the main reader — removed.
+- [ ] **Before fixing a "regression", check its premise across the whole sample.**
+      One Lavoro row read as "a second company of the same name was lost"; across
+      1,062 filings the same pattern was as often one company with a branch abroad,
+      and the fix would have written branches as companies. Look at every instance
+      the fix would touch, not the one that prompted it.
 - [ ] **Measure on filings the rules were not written against, and read every
       name.** A count that went up says nothing about precision: check each entry
       of each gained or changed list against the document. Comparing versions on

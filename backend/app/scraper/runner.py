@@ -931,7 +931,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         scraped: list[dict] = []
         # a 20-F can point to an earlier F-1's Exhibit 21.1 (list_from_earlier_filing)
         filing_type = "EX-21" if data["form"] == "10-K" or data.get("exhibit") == "21" else "EX-8.1"
-        basis_of = {"indent": "ex21_indent", "heading": "ex21_heading"}
+        basis_of = {"indent": "ex21_indent", "heading": "ex21_heading", "column": "ex21_column"}
         # Nodes first, edges second: a co-holder a cell names is resolved
         # among the LISTED subsidiaries (by the name as filed) or as the filer
         # itself — never looked up in the wider graph, where a name alone
@@ -980,6 +980,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
             holder = parent_id if parent_id and parent_id != sub_id else company_id
             if sub.get("parent") and holder == company_id:
                 unresolved_parents += 1
+                # the row's stake is its named parent's (Almacenes Éxito's
+                # column says so), not the filer's: no stake beats a false one
+                stake = None
             # The layout's marker: a resolved parent, or a row the tree puts
             # straight under the filer. A row whose named parent the list does
             # not carry is under SOMEONE else — not direct under the filer.

@@ -28,6 +28,7 @@ from __future__ import annotations
 import html as _html
 import logging
 import re
+import unicodedata
 from html.parser import HTMLParser
 
 from app.scraper.mapper import normalize_entity_name
@@ -282,6 +283,12 @@ def _not_jurisdiction(cell: str) -> bool:
 # "Date of Incorporation" names a DATE column ("November 9, 2000"), though it
 # says "incorporat": Rezolve, Sentage and CCSC wrote their dates as places.
 _H_DATE = re.compile(r"\s*date\b", re.I)
+# A column naming each row's DIRECT holder — Almacenes Éxito's "Direct
+# controlling entity", beside an ownership column that is that holder's stake.
+# The whole cell, so "Name of parent and subsidiary" is not one; checked before
+# the ownership words, so "Owned by" holds names, not percentages.
+_H_PARENT = re.compile(r"^(?:(?:direct|immediate)\s+)?(?:controlling\s+entity|parent(?:\s+(?:company|entity))?|"
+                       r"holding\s+company|shareholder)$|^(?:directly\s+)?(?:controlled|held|owned)\s+by$", re.I)
 
 _PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%\s*$")
 # Under a column the filer CALLS ownership, a bare "100" is a percentage too
@@ -313,7 +320,7 @@ def _find_header(table: list[list[str]]) -> dict | None:
     subsidiary's row, never the header above it.
     """
     for row in table[:5]:
-        name_i = jur_i = own_i = None
+        name_i = jur_i = own_i = par_i = None
         for i, cell in enumerate(row):
             if not cell:
                 continue
@@ -322,6 +329,8 @@ def _find_header(table: list[list[str]]) -> dict | None:
                     and not _H_DATE.match(cell) \
                     and jurisdiction_country(cell) is None:
                 jur_i = i
+            elif par_i is None and _H_PARENT.match(cell.strip()):
+                par_i = i
             elif own_i is None and _H_OWNERSHIP.search(cell):
                 own_i = i
             elif name_i is None and _H_NAME.search(cell):
@@ -333,7 +342,7 @@ def _find_header(table: list[list[str]]) -> dict | None:
                     name_i = i
                     break
         if name_i is not None and jur_i is not None:
-            return {"name": name_i, "jurisdiction": jur_i, "ownership": own_i,
+            return {"name": name_i, "jurisdiction": jur_i, "ownership": own_i, "parent": par_i,
                     "header_row": row, "spans": getattr(row, "spans", None)}
     return None
 
@@ -366,12 +375,51 @@ def _column(row: list[str], header: dict, key: str) -> str:
               if text and not (key == "name" and _MARKER_CELL.match(text))]
     if hit := next((text for text, s, _e in usable if lo <= s < hi), None):
         return hit
-    labelled = [spans[j] for j in (header.get("name"), header.get("jurisdiction"), header.get("ownership"))
+    labelled = [spans[j] for j in (header.get("name"), header.get("jurisdiction"), header.get("ownership"),
+                                   header.get("parent"))
                 if j is not None and j < len(spans)]
     for text, s, e in usable:
         if s < hi and e > lo and sum(1 for a, b in labelled if s < b and e > a) == 1:
             return text
     return by_index
+
+
+#: Points of indent one empty grid column before the name stands for.
+_GRID_INDENT = 12.0
+
+
+def _number_columns(table: list, header: dict) -> set[int]:
+    """Grid columns inside the name column's span that hold a row number in
+    some row: a row without one leaves that cell empty, which is no indent."""
+    i, spans = header.get("name"), header.get("spans")
+    if i is None or not spans or i >= len(spans):
+        return set()
+    lo, hi = spans[i]
+    return {s for row in table for text, (s, _e) in zip(row, getattr(row, "spans", None) or [])
+            if lo <= s < hi and text and _MARKER_CELL.match(text)}
+
+
+def _grid_indent(row: list[str], header: dict, numbers: set[int] = frozenset()) -> float:
+    """The indent a row draws with EMPTY cells before its name, inside the name
+    column's span: PureCycle's "Subsidiary" header spans grid columns 0-3, and
+    "PureCycle Technologies LLC" sits in the second, after one empty cell —
+    under "… Holdings Corp." above it. A row number in front ("1.") is not an
+    indent, nor the empty cell where another row has one (``numbers``);
+    neither is anything without a grid."""
+    i, spans, own = header.get("name"), header.get("spans"), getattr(row, "spans", None)
+    if i is None or not spans or not own or i >= len(spans):
+        return 0.0
+    lo, hi = spans[i]
+    lead = 0
+    for text, (s, e) in zip(row, own):
+        if s < lo or s in numbers:
+            continue
+        if s >= hi:
+            return 0.0                    # no name inside the column: nothing drawn
+        if text:
+            return lead * _GRID_INDENT
+        lead += e - s
+    return 0.0
 
 
 def _places_under(table: list, row: list, header: dict) -> int:
@@ -394,12 +442,28 @@ def _section_header(row: list[str]) -> dict | None:
     return header if _NOISE.match(name_cell) else None
 
 
+#: EDGAR's tag after a conformed name: "KEYCORP /NEW/", "DOW CHEMICAL CO /DE/"
+_EDGAR_SUFFIX = re.compile(r"\s*/[A-Za-z]{2,5}/\s*$")
+
+
 def _same_company(a: str | None, b: str | None) -> bool:
     """Same filer under a different spelling: "Inter & Co, Inc." / "Inter&Co,
     Inc" / "NEWS CORPORATION" vs "News Corp". Legal forms and punctuation
-    dropped — a name's letters are what survives every filer's typesetting."""
-    def key(x): return re.sub(r"[^a-z0-9]", "", normalize_entity_name(x))
+    dropped — a name's letters are what survives every filer's typesetting,
+    accents too: EDGAR names the filer "Almacenes Exito S.A.", its own list
+    "Almacenes Éxito S.A."."""
+    def key(x):
+        # NFKD splits "É" into "E" and an accent, which the filter below drops
+        plain = unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", x))
+        return re.sub(r"[^a-z0-9]", "", normalize_entity_name(plain))
     return bool(a and b) and key(a) == key(b)
+
+
+def _compact(name: str) -> str:
+    """A name's letters and digits, accents and case dropped — legal forms
+    kept: "Vía Artika S. A." is "Vía Artika S.A.", "PureCycle Technologies
+    LLC" is not "PureCycle Technologies, Inc."."""
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", name)).casefold())
 
 
 def _named_parent(text: str, registrant: str | None = None) -> str | None:
@@ -465,11 +529,16 @@ def _assign_indent_parents(entries: list[dict], registrant: str | None = None) -
     for e, lv in zip(entries, levels):
         while stack and stack[-1][0] >= lv:
             stack.pop()
-        if lv > 0:
+        if lv > 0 and e.get("parent_basis") == "column":
+            pass                    # a parent the filer NAMES beats one it draws
+        elif lv > 0:
             if not stack:
                 return 0            # an indented row with nothing above it
-            above = stack[-1][1]["name"]
-            e["parent"] = None if _same_company(above, registrant) else above
+            # the filer's own line is a root: "PureCycle Technologies LLC",
+            # indented under a holding, is not the filer "… Technologies, Inc."
+            level, row_above = stack[-1]
+            above = row_above["name"]
+            e["parent"] = None if level == 0 and _same_company(above, registrant) else above
             e["parent_basis"] = "indent"
             assigned += 1
         elif _same_company(e["name"], registrant):
@@ -500,7 +569,7 @@ def _ownership_cell(cell: str) -> tuple[float | None, list[dict]]:
 # Televisa and Magnum write — "(*)", "(#)", "(**)" (2026-10-07).
 # XP's "(iv)" and BAT's "^" too.
 _FOOTNOTE_TAIL = re.compile(r"(\s*\(\d{1,2}\)|(?<=[.)])\d{1,2}|\s*\*+|\s*\([*#†‡]{1,3}\)|"
-                            r"\s*\((?:i{1,3}|iv|vi{0,3}|ix|x)\)|\s*\^+\d{0,2}|\s*#+)+$")
+                            r"\s*\((?:i{1,3}|iv|vi{0,3}|ix|x)\)|\s*\([a-h]\)|\s*\^+\d{0,2}|\s*#+)+$")
 # One stake, or BAT's two — "(99.80%)(99.93%)": the first is the holding
 _INLINE_STAKE = re.compile(r"\s*\((\d{1,3}(?:\.\d+)?)\s*%\)(?:\s*\(\d{1,3}(?:\.\d+)?\s*%\))?\s*$")
 
@@ -744,7 +813,8 @@ def _finish(entry: dict, registrant: str | None) -> dict | None:
     if owned and stake is None:
         stake = float(owned.group(1))
     if len(name) < 2 or len(name) > 150 or _NOISE.match(name) or _same_company(name, registrant) \
-            or re.search(r"subsidiar|\bP\.?\s?O\.? Box\b", name, re.I) or name.count(",") > 3:
+            or re.search(r"subsidiar|\bP\.?\s?O\.? Box\b|\bForm\s+(?:20-F|10-K)\b", name, re.I) \
+            or name.count(",") > 3:
         return None
     out = {**entry, "name": name}
     if stake is not None and "stake_percent" not in out:
@@ -835,7 +905,11 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
       the rows under it (`parent_basis: "heading"`);
     - a consistent indentation tree parents each row by the nearest
       less-indented row above (`parent_basis: "indent"`, the more specific
-      of the two where both apply).
+      of the two where both apply) — drawn by CSS, by non-breaking spaces or
+      by empty cells before the name (PureCycle);
+    - a column the filer heads "Direct controlling entity" (Almacenes Éxito)
+      names each row's parent, and beats the other two (`parent_basis:
+      "column"`; the filer named there means directly under it).
     `parent` is the listed name; resolving it to a node is the writer's job.
     `parent_basis` without a `parent` means the layout puts the row directly
     under the filer.
@@ -885,7 +959,7 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
         table_rows: list[dict] = []
         data_seen = False
         for row in table:
-            stake, co_owners = None, []
+            stake, co_owners, holder = None, [], ""
             if header is not None:
                 if row is header["header_row"]:
                     continue
@@ -905,6 +979,7 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
                 jurisdiction = _column(row, header, "jurisdiction")
                 if header["ownership"] is not None:
                     stake, co_owners = _ownership_cell(_column(row, header, "ownership"))
+                holder = _column(row, header, "parent")
             else:
                 cells = [c for c in row if c]
                 if len(cells) < 2:
@@ -928,15 +1003,27 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
             if not name:
                 continue
             entry = {"name": name, "jurisdiction": jurisdiction,
-                     "_indent": getattr(row, "indent", 0.0)}
+                     "_indent": getattr(row, "indent", 0.0) +
+                     (_grid_indent(row, header, _number_columns(table, header)) if header else 0.0)}
             if stake is None:
                 stake = inline_stake
             if stake is not None:
                 entry["stake_percent"] = stake
             if co_owners:
                 entry["co_owners"] = co_owners
+            holder = _clean_name(holder)[0] if holder and not _NOISE.match(holder) else ""
             parent = table_parent or section_parent
-            if parent and not _same_company(parent, entry["name"]):
+            if holder:
+                # the column the filer heads "Direct controlling entity": the
+                # stake beside it is that holder's, so it is the parent — or
+                # the filer itself, the row directly under it
+                if _same_company(holder, registrant):
+                    entry["parent_basis"] = "column"
+                    if _compact(holder) != _compact(registrant or ""):
+                        entry["_holder"] = holder         # or a listed namesake, see below
+                elif not _same_company(holder, entry["name"]):
+                    entry["parent"], entry["parent_basis"] = holder, "column"
+            elif parent and not _same_company(parent, entry["name"]):
                 entry["parent"], entry["parent_basis"] = parent, "heading"
             table_rows.append(entry)
         # Table-level sanity for HEADERLESS (or header-inheriting) tables: a
@@ -965,6 +1052,25 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
             if entry["name"].casefold() not in seen:
                 seen.add(entry["name"].casefold())
                 out.append({**entry, "_indent": 0.0})
+    # A parent named as the list names it: "Vía Artika S. A." is the listed
+    # "Vía Artika S.A."; a holder named like the filer but with another legal
+    # form that the list carries is that listed company, not the filer.
+    listed = {_compact(e["name"]): e["name"] for e in out}
+
+    def as_listed(who: str) -> str | None:
+        if _compact(who) in listed:
+            return listed[_compact(who)]
+        # "Seaspan Management Services Ltd." for the listed "… Limited":
+        # the legal form aside, if exactly one listed name is it
+        same = {e["name"] for e in out if _same_company(e["name"], who)}
+        return same.pop() if len(same) == 1 else None
+
+    for e in out:
+        holder = e.pop("_holder", None)
+        if holder and (hit := as_listed(holder)):
+            e["parent"] = hit
+        elif e.get("parent") and (hit := as_listed(e["parent"])):
+            e["parent"] = hit
     # The indentation tree is exhibit-wide (a page break must not cut it) and
     # more specific than a section heading, so it wins where both apply.
     _assign_indent_parents(out, registrant)
