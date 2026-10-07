@@ -900,6 +900,14 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                                    SEC_EDGAR_CREDIBILITY)
         data = fetch_subsidiaries(entity["sec_cik"], registrant=entity.get("name"))
         if not data:
+            from app.scraper.sec_ex21 import annual_filings
+            if not annual_filings(entity["sec_cik"]):
+                # SoftBank, Vanguard, FMR: 13F/13G filers with no 10-K or 20-F
+                # at all — "no exhibit" said the filing lacked one
+                run["status"], run["note"] = "skipped", "no annual filing"
+                return {"status": "no_annual_filing", "company": company,
+                        "entity_id": company_id, "total": 0,
+                        "detail": "The company files no 10-K or 20-F with the SEC."}
             run["status"], run["note"] = "skipped", "no subsidiary exhibit"
             return {"status": "no_exhibit", "company": company,
                     "entity_id": company_id, "total": 0,

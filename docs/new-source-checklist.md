@@ -329,6 +329,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       included). Capture the cleanest AND the most hostile payload as unit fixtures. (And
       check helper table shapes before using them: `_US_STATES` maps code→name; the name
       lookup is `_US_STATE_NAMES`.)
+- [ ] **Look at every "nothing found" result, not just the failures.** A status that
+      means "the source has nothing" hides parser misses: Exhibit 21 said
+      `no_exhibit` for 11 of the 135 SEC filers in the dev graph (filename patterns,
+      a list without a table, a list inside the 20-F's notes) and none of them was
+      an error. Open each empty result once and check the source really is empty;
+      give a different reason its own status (`no_annual_filing`).
 - [ ] **Then sweep EVERY eligible company in the dev graph before merging** — the 59-filer
       Ex-21 sweep found what ten hand-picked probes still missed: tables whose second
       column is a *location* ("Charlotte, NC" — not a jurisdiction; Bank of America has

@@ -281,3 +281,39 @@ def test_the_history_walks_the_tree(it_db):
     # the nested edges (holder → subsidiary) are dated, not only the filer's
     assert since["Aquarion Water Company"] == "2019-12-31"
     assert since["Abenaki Water Co., Inc."] == "2019-12-31"
+
+
+def _abinbev(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id: 'abi', name: 'Anheuser-Busch InBev SA/NV', name_normalized: 'anheuser busch inbev', "
+        "search_text: 'Anheuser-Busch InBev', type: 'company', sec_cik: '0001668717'})")
+
+
+def test_abinbevs_list_from_its_20f_note_lands_with_stakes(it_db):
+    # the list read from note 34 of the 20-F (no Exhibit 8.1 file): stakes,
+    # countries from the country rows, the note as the source
+    from pathlib import Path
+    from app.scraper.sec_ex21 import parse_exhibit
+    note = (Path(__file__).parents[1] / "scraper" / "fixtures" / "abinbev_20f_note34.htm").read_text()
+    data = {"subsidiaries": parse_exhibit(note, "Anheuser-Busch InBev SA/NV"), "form": "20-F",
+            "filing_date": "2026-03-03",
+            "url": "https://www.sec.gov/Archives/edgar/data/1668717/000119312526088105/d65314d20f.htm#note-34"}
+    _abinbev(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        result = runner.run_sec_ex21("Anheuser-Busch InBev")
+    assert result["status"] == "ok" and result["total"] == 65
+    row = it_db.run_command(
+        "MATCH (:Entity {id:'abi'})-[r:OWNS]->(b:Entity {name: 'Cerveceria y Malteria Quilmes Saica Y G'}) "
+        "RETURN b.country AS country, r.stake_percent AS stake, r.filing_type AS ft, r.source_url AS url")
+    assert row == [{"country": "AR", "stake": 61.63, "ft": "EX-8.1", "url": data["url"]}]
+
+
+@pytest.mark.parametrize("filings,status", [([], "no_annual_filing"),
+                                            ([("10-K", "0000000001-26-000001", "2026-02-25", "")], "no_exhibit")])
+def test_no_list_says_why(it_db, filings, status):
+    # SoftBank, Vanguard, FMR file no 10-K/20-F at all — "no exhibit" said the
+    # filing lacked one
+    _apple(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=None), \
+         patch("app.scraper.sec_ex21.annual_filings", return_value=filings):
+        assert runner.run_sec_ex21("Apple")["status"] == status

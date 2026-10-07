@@ -20,6 +20,7 @@ documented: Apple/Microsoft/Alphabet exhibits are all two-column tables.
 """
 from __future__ import annotations
 
+import html as _html
 import logging
 import re
 from html.parser import HTMLParser
@@ -32,10 +33,6 @@ log = logging.getLogger(__name__)
 # 10-K first (domestic, Ex-21), then 20-F (foreign private issuers, Ex-8.1 —
 # same content, different exhibit number in the rulebook).
 _ANNUAL_FORMS = ("10-K", "20-F")
-_EXHIBIT_PATTERNS = (re.compile(r"ex[-._]?21", re.I),
-                     re.compile(r"exhibit[-._]?21", re.I),
-                     re.compile(r"subsidiar", re.I),
-                     re.compile(r"ex[-._]?8[-._]?1", re.I))
 
 
 #: How far back the subsidiary history reads: one annual filing per year, two
@@ -45,9 +42,13 @@ HISTORY_MAX_FILINGS = 25
 #: Older submission pages opened for filings beyond the inline "recent" list.
 HISTORY_MAX_OLDER_PAGES = 3
 
-_EX21_NAMES = (re.compile(r"ex[-._]?21", re.I), re.compile(r"exhibit[-._]?21", re.I),
+# Filenames as filing agents write them (measured 2026-10-07): "ex21", "ex-21.1",
+# Workiva's "meli-20251231xexx2101" (exx = exhibit, 2101 = 21.01), and for the
+# 20-F "ex8_1", "dex81", or Embraer's bare "xex8". The 8 may not run on into
+# another digit ("ex85" is not 8.1).
+_EX21_NAMES = (re.compile(r"ex+[-._]?21", re.I), re.compile(r"exhibit[-._]?21", re.I),
                re.compile(r"subsidiar", re.I))
-_EX8_NAMES = (re.compile(r"ex[-._]?8[-._]?1", re.I), re.compile(r"dex8", re.I),
+_EX8_NAMES = (re.compile(r"ex+[-._]?0?8(?:[-._]?0?1)?(?!\d)", re.I), re.compile(r"dex8", re.I),
               re.compile(r"subsidiar", re.I))
 
 
@@ -420,7 +421,9 @@ def _ownership_cell(cell: str) -> tuple[float | None, list[dict]]:
 # Footnote marks glued to a name — Tenet's "USPI Holding Company, Inc.1",
 # Eversource's "NSTAR Electric Company (2) (3)", NYT's "NE Media Group, Inc.2"
 # — and an inline stake, "The New York Times Building LLC (58%)".
-_FOOTNOTE_TAIL = re.compile(r"(\s*\(\d{1,2}\)|(?<=[.)])\d{1,2}|\s*\*+)+$")
+# Footnote marks after a name: "(1)", "Ltd.2", "*", and the bracketed symbols
+# Televisa and Magnum write — "(*)", "(#)", "(**)" (2026-10-07).
+_FOOTNOTE_TAIL = re.compile(r"(\s*\(\d{1,2}\)|(?<=[.)])\d{1,2}|\s*\*+|\s*\([*#†‡]{1,3}\))+$")
 _INLINE_STAKE = re.compile(r"\s*\((\d{1,3}(?:\.\d+)?)\s*%\)\s*$")
 
 
@@ -437,6 +440,89 @@ def _clean_name(name: str) -> tuple[str, float | None]:
 _NOISE = re.compile(
     r"^(subsidiar(?:y|ies)|name|entity|jurisdiction|state|country|list of|exhibit|"
     r"significant|(?:in)?directly[- ]|partially[- ]|wholly[- ]owned|\*+$)", re.I)
+
+
+# A list that is not about subsidiaries: AB InBev's note 34 goes on to "the
+# most important companies consolidated by applying the equity method
+# (ASSOCIATES)" — held, not controlled.
+_NOT_SUBSIDIARIES = re.compile(r"associate|joint venture|equity method", re.I)
+# "Cobrew N.V - Brouwerijplein 1, 3000 - Leuven": the registered office follows
+# the name after a spaced dash.
+_ADDRESS_TAIL = re.compile(r"\s+[-\u2013]\s+.*$")
+# "Alibaba Information Port (Wulanchabu) Co., Ltd. (PRC)": the LAST bracket.
+_PAREN_JURISDICTION = re.compile(r"^(?P<name>.+?)\s*\((?P<jur>[^()]{2,40})\)\s*\*?$")
+
+
+def _grouped_list(sequence: list, registrant: str | None) -> list[dict]:
+    """A list grouped under country rows, no jurisdiction column (AB InBev's
+    note 34): a header "Name and registered office … | % economic interest",
+    then a row holding only a country, then "Name - address | 61.63%" rows
+    under it, across the tables a printed page splits it into. Read until a
+    heading or header turns to associates or joint ventures. A row is taken
+    only with a stake: footnote rows have none, and neither has the parent's
+    own row ("Consolidating")."""
+    out: list[dict] = []
+    active, country = False, None
+    for kind, item in sequence:
+        if kind == "text":
+            if _NOT_SUBSIDIARIES.search(item):
+                active = False
+            continue
+        header_row = None
+        for row in item[:3]:
+            cells = [c for c in row if c]
+            if len(cells) >= 2 and _H_NAME.search(cells[0]) \
+                    and any(_H_OWNERSHIP.search(c) for c in cells[1:]) \
+                    and not any(_H_JURISDICTION.search(c) for c in cells):
+                header_row = row
+                active, country = not _NOT_SUBSIDIARIES.search(" ".join(cells)), None
+                break
+        if not active:
+            continue
+        for row in item:
+            if row is header_row:
+                continue
+            cells = [c for c in row if c and c != "."]
+            if len(cells) == 1 and jurisdiction_country(cells[0]) is not None:
+                country = cells[0]
+                continue
+            if country is None or len(cells) < 2:
+                continue
+            pct = _PERCENT.match(cells[-1])
+            if not pct:
+                continue       # a footnote, or "Consolidating" (the parent itself)
+            name, _ = _clean_name(_ADDRESS_TAIL.sub("", cells[0]).strip())
+            if not name or _NOISE.match(name) or _same_company(name, registrant):
+                continue
+            out.append({"name": name, "jurisdiction": country,
+                        "stake_percent": float(pct.group(1))})
+    return out if len(out) >= 3 else []
+
+
+def _paragraph_list(sequence: list, registrant: str | None) -> list[dict]:
+    """One subsidiary per paragraph, "Name (Jurisdiction)", no table at all
+    (Alibaba's Exhibit 8.1: 160 paragraphs "… Co., Ltd. (PRC)"). Held to the
+    content gate a headerless table meets: most such lines must name a place
+    that maps to a country, and there must be a few of them."""
+    shaped, out = 0, []
+    for kind, item in sequence:
+        if kind != "text":
+            continue
+        m = _PAREN_JURISDICTION.match(item.strip())
+        if not m:
+            continue
+        shaped += 1
+        jur = m.group("jur").strip()
+        if jurisdiction_country(jur) is None:
+            continue
+        name, stake = _clean_name(m.group("name").strip())
+        if not name or _NOISE.match(name) or _same_company(name, registrant):
+            continue
+        entry = {"name": name, "jurisdiction": jur}
+        if stake is not None:
+            entry["stake_percent"] = stake
+        out.append(entry)
+    return out if len(out) >= 3 and len(out) >= shaped / 2 else []
 
 
 def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
@@ -562,6 +648,14 @@ def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
                 continue
             seen.add(key)
             out.append(entry)
+    if not out:
+        # Two layouts the table reader cannot see, tried only when it found
+        # nothing — so an exhibit it reads today is read exactly as before.
+        for entry in _grouped_list(parser.sequence, registrant) or \
+                _paragraph_list(parser.sequence, registrant):
+            if entry["name"].casefold() not in seen:
+                seen.add(entry["name"].casefold())
+                out.append({**entry, "_indent": 0.0})
     # The indentation tree is exhibit-wide (a page break must not cut it) and
     # more specific than a section heading, so it wins where both apply.
     _assign_indent_parents(out, registrant)
@@ -580,6 +674,7 @@ _CA_PROVINCES = {"alberta", "british columbia", "manitoba", "new brunswick",
                  "prince edward island", "quebec", "saskatchewan"}
 _EXTRA_PLACES = {"nevis": "KN", "cayman": "KY", "prc": "CN",
                  "british virgin islands": "VG", "virgin islands (british)": "VG",
+                 "bvi": "VG",         # ZTO Express writes the abbreviation
                  "korea": "KR",       # bare "Korea" in practice means the South
                  "columbia": "CO",    # a recurring filer typo for Colombia
                  "dubai": "AE", "macau": "MO", "macau sar": "MO",
@@ -734,16 +829,73 @@ def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
     """The latest annual filing's subsidiary list for a CIK, with provenance.
 
     Tries each candidate exhibit until one parses to subsidiaries — filename
-    numbering is ambiguous (ex215 = 2.15 or 21.5), so the content decides.
+    numbering is ambiguous (ex215 = 2.15 or 21.5), so the content decides —
+    then, for a 20-F, the note of the main document its exhibit index points
+    to (``note_in_main_document``).
     {"subsidiaries": [...], "form", "filing_date", "url"} or None."""
-    for meta in annual_exhibit_candidates(cik):
+    filings = annual_filings(cik)
+    if not filings:
+        return None
+    for meta in exhibit_candidates(cik, *filings[0]):
         subs = parse_exhibit(_get_text(meta["url"]), registrant)
         if subs:
             return {"subsidiaries": subs, "form": meta["form"],
                     "filing_date": meta["filing_date"], "url": meta["url"]}
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
                  meta["url"])
-    return None
+    return note_in_main_document(cik, filings[0], registrant)
+
+
+# "8.1  List of significant subsidiaries (included in note 34 to our audited
+# consolidated financial statements included in this Form 20-F)" — AB InBev's
+# exhibit index, with no Exhibit 8.1 file in the filing.
+_IN_NOTE = re.compile(
+    r"8\.1\W{0,20}list of[^()]{0,80}subsidiar[^()]{0,40}\(\s*included in note\s+(\d{1,3})",
+    re.I)
+
+
+def _note_heading(n: int) -> re.Pattern:
+    """A note's heading in the HTML: ">34. AB InBev companies"."""
+    return re.compile(rf">\s*{n}\.(?:\s|&#160;|&nbsp;|\xa0)*[A-Z]")
+
+
+def note_in_main_document(cik: str, filing: tuple, registrant: str | None = None) -> dict | None:
+    """A 20-F whose subsidiary list is a note of the financial statements, not
+    an exhibit file: the exhibit index says so ("included in note 34"), the
+    note is found by its heading (the LAST one — a contents page comes first)
+    and read up to the next note, with the exhibit parser. The latest filing
+    only: a main document is ~10 MB, so the multi-year history does not do
+    this. None when the filing says nothing of the kind."""
+    form, accession, filed, _period = filing
+    if form != "20-F":
+        return None
+    base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}"
+    items = (_get(f"{base}/index.json").get("directory") or {}).get("item") or []
+    docs = [it for it in items if (it.get("name") or "").lower().endswith((".htm", ".html"))
+            and not re.match(r"R\d+\.htm", it.get("name") or "")
+            and not re.search(r"ex[-._]?\d|-index", it.get("name") or "", re.I)]
+    if not docs:
+        return None
+    main = next((d for d in docs if "20f" in d["name"].lower().replace("-", "")),
+                max(docs, key=lambda d: int(d.get("size") or 0)))
+    url = f"{base}/{main['name']}"
+    doc = _get_text(url)
+    text = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", doc)))
+    m = _IN_NOTE.search(text)
+    if not m:
+        return None
+    n = int(m.group(1))
+    heads = list(_note_heading(n).finditer(doc))
+    if not heads:
+        log.info("%s: note %d named in the exhibit index, heading not found", url, n)
+        return None
+    start = heads[-1].start()
+    nxt = _note_heading(n + 1).search(doc, start)
+    subs = parse_exhibit(doc[start:nxt.start() if nxt else len(doc)], registrant)
+    if not subs:
+        return None
+    return {"subsidiaries": subs, "form": form, "filing_date": _iso_date(filed),
+            "url": f"{url}#note-{n}"}
 
 
 def _parse_first(candidates: list[dict]) -> tuple[list[dict], dict] | None:

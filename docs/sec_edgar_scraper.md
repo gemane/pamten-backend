@@ -811,6 +811,36 @@ stake. Edges written before this are repaired by
 equals the `source_date` (the signature of the invented date) and is not marked with
 `since_basis` (a deliberate lower bound from older filings is never cleared).
 
+**Finding the list** (all 135 CIKs of the dev graph swept on 2026-10-07: 11
+filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,796 subsidiaries):
+
+- **Filenames as filing agents write them**: `ex21`, `ex-21.1`, Workiva's
+  `meli-20251231xexx2101` (exx = exhibit, 2101 = 21.01), and on a 20-F `ex8_1`,
+  `dex81`, `xex8d1` or Embraer's bare `xex8` (an `8` running on into another digit,
+  `ex85`, is not 8.1). The content still decides between candidates.
+- **One subsidiary per paragraph, no table** (Alibaba's Exhibit 8.1, "… Co., Ltd.
+  (PRC)"): read as "Name (Jurisdiction)", the last bracket being the place, under
+  the content gate a headerless table meets.
+- **A list grouped under country rows** with no jurisdiction column (AB InBev:
+  "Name and registered office | % economic interest", a row holding only
+  "Argentina", then "Cerveceria … - Charcas 5160 - Buenos Aires | 61.63%"): the
+  country row is the jurisdiction, the registered office after " - " is cut off, the
+  stake is read; reading stops at a heading or header about **associates, joint
+  ventures or the equity method** — held, not controlled.
+- **No exhibit file, a note instead**: a 20-F's exhibit index can say "8.1 List of
+  significant subsidiaries (included in note 34 …)". The note is found by its
+  heading in the main document (the last one; a contents page comes first) and read
+  up to the next note; `source_url` ends `#note-34`. The latest filing only — a main
+  document is ~10 MB, so `sec-ex21-history` does not do this.
+- Both fallbacks run only when the table reader found nothing, so an exhibit read
+  before is read exactly as before.
+- **`no_annual_filing`** instead of `no_exhibit` when the company files no 10-K or
+  20-F at all (SoftBank, Vanguard, FMR: 13F/13G filers).
+- **Not read: Unilever.** Its 8.1 is the full UK Companies Act s.409 list,
+  subsidiaries mixed with associates and joint ventures in multi-column flowing
+  text, over a thousand entries; it points to the significant subsidiaries in its
+  annual report instead.
+
 Honesty rules, learned from the real filings:
 
 - **Significant subsidiaries only** — Reg S-K Item 601(b)(21) lets filers omit
