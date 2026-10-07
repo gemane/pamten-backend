@@ -342,6 +342,25 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       a list without a table, a list inside the 20-F's notes) and none of them was
       an error. Open each empty result once and check the source really is empty;
       give a different reason its own status (`no_annual_filing`).
+- [ ] **Ask a document what it is before guessing from its name.** Every EDGAR
+      document opens with the type its filer declared (`<TYPE>EX-2.1`); a 20-F's
+      Exhibit 2.1, the description of securities, is named
+      `exhibit21descriptionofsecu.htm` and matched the Exhibit 21 filename pattern
+      for 28 of 86 filers. When a source states what a file is, read that first and
+      keep the filename as the fallback.
+- [ ] **A suffix or abbreviation rule needs a word boundary, and a test with the
+      values that merely END in it.** The US-suffix pattern (`US`/`USA` at the end of
+      a jurisdiction) had none, so "Mauritius", "Cyprus" and "Belarus" mapped to the
+      United States for months, and the country is written fill-only, so a fixed
+      re-scrape does not correct the stored value. Run a mapping over every distinct
+      value the source produces (`jurisdiction_country` over all places of a sweep)
+      and look at what lands where.
+- [ ] **Group the unread results by layout before writing a rule.** The 61 real
+      subsidiary lists that read nothing fell into a handful of layouts (one entry
+      per line with the place in words, a header cell spanning several data cells,
+      no place column, names under country rows, a text layer behind page images);
+      a rule per layout, each tried only when the main reader found nothing, read
+      51 of them and left every list read before unchanged.
 - [ ] **Then sweep EVERY eligible company in the dev graph before merging** — the 59-filer
       Ex-21 sweep found what ten hand-picked probes still missed: tables whose second
       column is a *location* ("Charlotte, NC" — not a jurisdiction; Bank of America has

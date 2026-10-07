@@ -269,7 +269,8 @@ class TestTheEarlierList:
                    return_value=[("F-1", "0000000001-25-000002", "2025-05-02")]), \
              patch("app.scraper.sec_ex21.exhibit_candidates",
                    return_value=[{"url": "https://www.sec.gov/x/ex21-1.htm"}]) as cands, \
-             patch("app.scraper.sec_ex21._get_text", return_value=(FX / "embraer_ex8.htm").read_text()):
+             patch("app.scraper.sec_ex21._get_text",       # an F-1's list is declared EX-21.1
+                   return_value=(FX / "embraer_ex8.htm").read_text().replace("<TYPE>EX-8.1", "<TYPE>EX-21.1", 1)):
             got = ex.list_from_earlier_filing("1", "Exhibit 21.1 to our Form F-1 filed on May 2, 2025", "",
                                               "Embraer S.A.", confirmed_by="https://www.sec.gov/y/20f.htm",
                                               confirmed_on="2026-03-30")

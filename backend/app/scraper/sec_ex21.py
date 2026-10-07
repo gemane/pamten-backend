@@ -14,9 +14,14 @@ Two honesty caveats carried onto every edge:
 
 Parsing: the exhibit is free-form HTML, but in practice a two-column table
 (name | jurisdiction) or its visual equivalent. The parser reads table rows
-first and falls back to line pairs; jurisdictions like "Delaware, U.S." are
-split into country US (the state is kept as display text). Measured, not
-documented: Apple/Microsoft/Alphabet exhibits are all two-column tables.
+first; when they yield nothing it tries the other layouts filers use — one
+subsidiary per line, a table without a place column, names under country
+rows, the text layer behind scanned pages (measured on the 2026 20-Fs). A
+document declared anything but EX-8/EX-8.1 (in a 20-F) or EX-21.x is no
+list unless it opens as one. Jurisdictions
+like "Delaware, U.S." are split into country US (the state is kept as display
+text). Measured, not documented: Apple/Microsoft/Alphabet exhibits are all
+two-column tables.
 """
 from __future__ import annotations
 
@@ -125,13 +130,18 @@ def annual_exhibit_candidates(cik: str) -> list[dict]:
 
 class _Row(list):
     """One table row's cell texts, plus what its LAYOUT said: how far its first
-    text was indented. Filers draw the group tree with indentation (Chubb,
-    Eversource, NYT), and a plain list of strings threw that away."""
-    __slots__ = ("indent",)
+    text was indented, and where each cell sits on the table's column grid.
+    Filers draw the group tree with indentation (Chubb, Eversource, NYT), and
+    a plain list of strings threw that away. The grid is what `colspan` says:
+    TORM's header "Jurisdiction of Incorporation" spans grid columns 3–8 and is
+    the second cell of its row, while each subsidiary's "Denmark" is the third
+    cell of its row, at column 6 — by cell index the two never met."""
+    __slots__ = ("indent", "spans")
 
-    def __init__(self, cells=(), indent: float = 0.0):
+    def __init__(self, cells=(), indent: float = 0.0, spans=None):
         super().__init__(cells)
         self.indent = indent
+        self.spans = spans          # [(first grid column, past the last)] per cell
 
 
 # CSS lengths a filer uses to push a name to the right. Points; other units
@@ -173,6 +183,8 @@ class _TableTextParser(HTMLParser):
         self._cell_indent = 0.0
         self._row_indent: float | None = None      # of the first non-empty cell
         self._free: list[str] = []                  # text outside any table
+        self._spans: list[tuple[int, int]] = []     # grid columns of the row's cells
+        self._colspan = 1
 
     @property
     def rows(self) -> list[list[str]]:   # flattened view (tests, debugging)
@@ -185,9 +197,12 @@ class _TableTextParser(HTMLParser):
         elif tag == "tr":
             self._row = []
             self._row_indent = None
+            self._spans = []
         elif tag in ("td", "th") and self._row is not None:
             self._cell = []
             self._cell_indent = _css_indent(attrs)
+            span = re.match(r"\s*(\d+)", str(dict(attrs).get("colspan") or "1"))
+            self._colspan = min(max(int(span.group(1)) if span else 1, 1), 50)
         elif self._cell is not None and not "".join(self._cell).strip():
             # a block or span wrapping the text can carry the indent instead
             self._cell_indent += _css_indent(attrs)
@@ -206,10 +221,12 @@ class _TableTextParser(HTMLParser):
                 lead = len(raw) - len(raw.lstrip())
                 self._row_indent = self._cell_indent + lead * _NBSP_PT
             self._row.append(text)
+            start = self._spans[-1][1] if self._spans else 0
+            self._spans.append((start, start + self._colspan))
             self._cell = None
         elif tag == "tr" and self._row is not None:
             if any(self._row):
-                row = _Row(self._row, self._row_indent or 0.0)
+                row = _Row(self._row, self._row_indent or 0.0, self._spans)
                 (self._table if self._table is not None else self._orphan()).append(row)
             self._row = None
         elif tag == "table" and self._table is not None:
@@ -250,12 +267,18 @@ class _TableTextParser(HTMLParser):
 
 # Header detection: which column is which, by what the filer CALLS it.
 _H_NAME = re.compile(r"subsidiar|name|entity|compan", re.I)
-_H_JURISDICTION = re.compile(r"jurisdiction|incorporat|organi[sz]|country|state", re.I)
+# "Place of incorp" (Reitar) — the word cut short; "domicile" (Brazilian filers)
+_H_JURISDICTION = re.compile(r"jurisdiction|incorp|organi[sz]|country|state|domicil", re.I)
 _H_OWNERSHIP = re.compile(r"ownership|percent|%|owned|interest", re.I)
 # "Location"/"Address" is where an office SITS, not where the company is
 # registered — Bank of America has both columns, and taking Location wrote
-# "San Francisco, CA" as a jurisdiction.
+# "San Francisco, CA" as a jurisdiction. A cell that says both ("Location
+# Jurisdiction of Organization", Mytheresa's one column) is the jurisdiction.
 _H_NOT_JURISDICTION = re.compile(r"location|address|city", re.I)
+
+
+def _not_jurisdiction(cell: str) -> bool:
+    return bool(_H_NOT_JURISDICTION.search(cell)) and not re.search(r"jurisdiction", cell, re.I)
 # "Date of Incorporation" names a DATE column ("November 9, 2000"), though it
 # says "incorporat": Rezolve, Sentage and CCSC wrote their dates as places.
 _H_DATE = re.compile(r"\s*date\b", re.I)
@@ -295,7 +318,7 @@ def _find_header(table: list[list[str]]) -> dict | None:
             if not cell:
                 continue
             if jur_i is None and _H_JURISDICTION.search(cell) \
-                    and not _H_NOT_JURISDICTION.search(cell) \
+                    and not _not_jurisdiction(cell) \
                     and not _H_DATE.match(cell) \
                     and jurisdiction_country(cell) is None:
                 jur_i = i
@@ -311,8 +334,51 @@ def _find_header(table: list[list[str]]) -> dict | None:
                     break
         if name_i is not None and jur_i is not None:
             return {"name": name_i, "jurisdiction": jur_i, "ownership": own_i,
-                    "header_row": row}
+                    "header_row": row, "spans": getattr(row, "spans", None)}
     return None
+
+
+#: A cell that only numbers or bullets a row: "1.", "1.001", "·", "II."
+_MARKER_CELL = re.compile(r"^(?:[\u00b7\u2022\u25aa\u25cf\u25cb\u25e6\-\u2013]|\d{1,3}(?:\.\d{1,4})*[.)]?|"
+                          r"\(?[ivxlcIVXLC]{1,5}[.)])$")
+
+
+def _column(row: list[str], header: dict, key: str) -> str:
+    """The row's text under the header's column ``key``.
+
+    By grid position when both rows carry one: the first non-empty cell that
+    starts under the header cell's span — TORM's and Ellomay's header cells
+    span several narrower data cells — else one that overlaps it and no other
+    labelled column (BGM's place cell starts under the spacer before it). Not
+    a cell spanning several labelled columns: AIFU's section label
+    "Insurance Agencies and Brokers" spans the whole row and would be name
+    and place at once. A name is never a bare row number ("1.", AIFU's first
+    cell). Failing that, and without a grid, by cell index, as always."""
+    i = header.get(key)
+    if i is None:
+        return ""
+    by_index = row[i] if i < len(row) else ""
+    spans, own = header.get("spans"), getattr(row, "spans", None)
+    if not spans or not own or i >= len(spans):
+        return by_index
+    lo, hi = spans[i]
+    usable = [(text, s, e) for text, (s, e) in zip(row, own)
+              if text and not (key == "name" and _MARKER_CELL.match(text))]
+    if hit := next((text for text, s, _e in usable if lo <= s < hi), None):
+        return hit
+    labelled = [spans[j] for j in (header.get("name"), header.get("jurisdiction"), header.get("ownership"))
+                if j is not None and j < len(spans)]
+    for text, s, e in usable:
+        if s < hi and e > lo and sum(1 for a, b in labelled if s < b and e > a) == 1:
+            return text
+    return by_index
+
+
+def _places_under(table: list, row: list, header: dict) -> int:
+    """Rows below ``row`` that, read with ``header``, give a name and a place."""
+    below = table[next(i for i, r in enumerate(table) if r is row) + 1:]
+    return sum(1 for r in below if _column(r, header, "name")
+               and jurisdiction_country(_column(r, header, "jurisdiction")))
 
 
 def _section_header(row: list[str]) -> dict | None:
@@ -432,14 +498,21 @@ def _ownership_cell(cell: str) -> tuple[float | None, list[dict]]:
 # — and an inline stake, "The New York Times Building LLC (58%)".
 # Footnote marks after a name: "(1)", "Ltd.2", "*", and the bracketed symbols
 # Televisa and Magnum write — "(*)", "(#)", "(**)" (2026-10-07).
-_FOOTNOTE_TAIL = re.compile(r"(\s*\(\d{1,2}\)|(?<=[.)])\d{1,2}|\s*\*+|\s*\([*#†‡]{1,3}\))+$")
-_INLINE_STAKE = re.compile(r"\s*\((\d{1,3}(?:\.\d+)?)\s*%\)\s*$")
+# XP's "(iv)" and BAT's "^" too.
+_FOOTNOTE_TAIL = re.compile(r"(\s*\(\d{1,2}\)|(?<=[.)])\d{1,2}|\s*\*+|\s*\([*#†‡]{1,3}\)|"
+                            r"\s*\((?:i{1,3}|iv|vi{0,3}|ix|x)\)|\s*\^+\d{0,2}|\s*#+)+$")
+# One stake, or BAT's two — "(99.80%)(99.93%)": the first is the holding
+_INLINE_STAKE = re.compile(r"\s*\((\d{1,3}(?:\.\d+)?)\s*%\)(?:\s*\(\d{1,3}(?:\.\d+)?\s*%\))?\s*$")
 
 
 def _clean_name(name: str) -> tuple[str, float | None]:
-    """(name without footnote marks, a stake stated inline in the name)."""
+    """(name without footnote marks, a stake stated inline in the name). A
+    mark can follow the stake too: BAT's "… (Algérie) S.P.A. (51%)4". A tree
+    marker before it goes too: Navigator's "~ Navigator Titan L.L.C."."""
     stake = None
-    if m := _INLINE_STAKE.search(name):
+    name = re.sub(r"^[~\u2013\u2022\u00b7-]+\s*", "", name)
+    if m := _INLINE_STAKE.search(_FOOTNOTE_TAIL.sub("", name)):
+        name = _FOOTNOTE_TAIL.sub("", name)
         stake = float(m.group(1))
         name = name[:m.start()]
     return _FOOTNOTE_TAIL.sub("", name).strip(), stake
@@ -533,8 +606,402 @@ def _paragraph_list(sequence: list, registrant: str | None) -> list[dict]:
         out.append(entry)
     return out if len(out) >= 3 and len(out) >= shaped / 2 else []
 
+# ── what the filer declared the document to be ───────────────────────────────
+# Every EDGAR document opens with its SGML header, "<TYPE>EX-2.1". A 20-F's
+# Exhibit 2.1 is the description of securities, and Workiva names it
+# "exhibit21descriptionofsecu.htm" — "ex21" to the filename patterns. 28 of the
+# 86 2026 20-Fs whose candidate files all read nothing had such files (2.1,
+# 2.10–2.14) or a guarantor list ("exhibit17subsidiaryissuers"), and only by
+# luck did none parse to junk.
+_DECLARED_TYPE = re.compile(r"<TYPE>\s*([^\s<]+)", re.I)
+# EX-8 / EX-8.1 and EX-21.x — not EX-8.2: in an F-1 that is counsel's tax
+# opinion ("We act as PRC counsel to Samfine …, a company incorporated in the
+# Cayman Islands" read as a subsidiary).
+_SUBSIDIARY_TYPE = re.compile(r"^EX-(?:0?8(?:\.0?1)?|21(?:\.\d+)?)$", re.I)
 
-def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
+
+# …though a filer can mislabel: Yatra's list is declared "EX-10.8". A page
+# that opens by calling itself a subsidiary list is read all the same — by
+# the table reader and the stated-place lines only.
+_OPENS_AS_LIST = re.compile(r"\b(?:list of (?:the |our )?(?:significant |principal |material )?subsidiaries|"
+                            r"subsidiaries of (?:the )?(?:registrant|company|[A-Z]))", re.I)
+
+
+def declared_type(html: str) -> str | None:
+    """The document type the filer declared ("EX-8.1"), or None without a header."""
+    m = _DECLARED_TYPE.search(html[:2000])
+    return m.group(1).upper() if m else None
+
+
+def _subsidiary_document(kind: str, html: str, form: str | None) -> bool | None:
+    """True for a declared subsidiary exhibit, None for a mislabelled one that
+    opens as a subsidiary list, False for anything else. EX-8 is the list
+    only in a 20-F: in an F-1, F-4 or 10-K it is counsel's tax opinion (AIR
+    Global, Air Water: "We have acted as special United States counsel …")."""
+    if kind.startswith("EX-8") and form and form.upper() not in ("20-F", "20-F/A"):
+        return False
+    if _SUBSIDIARY_TYPE.match(kind):
+        return True
+    text = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", html[:8000])))
+    opening = text[:600]
+    return None if _OPENS_AS_LIST.search(opening) and not re.search(r"guarant|issuer", opening, re.I) \
+        else False
+
+
+# ── one subsidiary per line ──────────────────────────────────────────────────
+# Measured on the 2026 20-Fs: a third of the subsidiary files that read
+# nothing write one subsidiary per paragraph, list item or one-cell table row,
+# the place in words — "Bluebottle Limited, a Hong Kong company" (FinVolution,
+# Trip.com, Autohome), "COD Resorts Limited, incorporated in the Macau Special
+# Administrative Region …" (Melco), "Vuela, S.A., a corporation organized under
+# the laws of Guatemala" (Volaris), "… is a Hong Kong company and is
+# wholly-owned by the Company" (Ridgetech), "The Company indirectly owns
+# 99.83% of the economic and voting interests in Cerveceria … (incorporated in
+# Argentina)" (Ambev); or with the place set off — "Sportradar AG,
+# Switzerland", "XPACSponsor LLC - Cayman", "DLP Capital LLC (USA - Delaware)".
+_LEAD_MARKER = re.compile(r"^(?:[·•▪●○◦\-–]\s*|\d{1,3}(?:\.\d{1,4})+\s+|"
+                          r"\d{1,3}[.)]\s*|\(?[ivxIVX]{1,4}[.)]\s+)")
+_FOOTNOTE_CELL = re.compile(r"^\((?:\d{1,2}|\*{1,3}|[a-z])\)$")
+_NAME_END = re.compile(r",\s+(?=(?:an?|incorporated|organi[sz]ed|established|registered|validly|existing)\s)"
+                       r"|\s+is\s+(?=an?\s)"
+                       # Jianpu forgets the comma: "… Co., Ltd. a PRC company"
+                       r"|(?<=\.)\s+(?=an?\s+[A-Z][\w\u2019' ]{1,40}?\s+(?:company|corporation)\b)")
+# "(“Renovation”)", "(the “Company”)", "(formerly known as “ATA Testing …”)"
+_DEFINED_TERM = re.compile(r"\s*\((?:the\s+)?[\"“][^\"”]{1,80}[\"”]\)|"
+                           r"\s*\((?:formerly|previously)\b.*\)\s*$", re.I)
+_PLACE_LAW = re.compile(
+    r"\b(?:incorporated|organi[sz]ed|established|registered|existing)(?:\s+and\s+existing)?\s+"
+    r"(?:in|under\s+the\s+laws\s+of)\s+(?:the\s+)?(?P<jur>[^,;()]+?)\s*(?=[,;]|\.(?:\s|$)|\s+and\s|"
+    r"\s+with\s|\s+\(|$)", re.I)
+_PLACE_ADJ = re.compile(
+    r"^an?\s+(?P<jur>.+?)\s+(?:(?:exempted|limited liability|limited|private|public|joint[- ]stock|stock|"
+    r"holding|variable capital|wholly[- ]owned|foreign[- ]invested)\s+)*"
+    r"(?:company|corporation|entity|partnership|enterprise)\b", re.I)
+_OWNS_IN = re.compile(
+    r"\bowns\s+(?P<stake>\d{1,3}(?:\.\d+)?)\s*%\s+of\s+.{0,80}?\binterests?\s+in\s+(?P<name>.+?)\s*"
+    r"\((?:incorporated|organi[sz]ed)\s+in\s+(?:the\s+)?(?P<jur>[^()]+)\)", re.I)
+_COMMA_PLACE = re.compile(r"^(?P<name>.+),\s*(?P<jur>[^,]{2,40})$")
+_DASH_PLACE = re.compile(r"^(?P<name>.+?)\s+[-–—]\s+(?P<jur>[^-–—]{2,40})$")
+# A heading that names the place of the names under it: "Subsidiary (PRC):" (Recon)
+_PLACE_HEADING = re.compile(r"\((?P<jur>[^()]{2,40})\)\s*:$")
+# A document-wide place: "All subsidiaries listed below are incorporated in
+# Chile." (Enel Chile), "All direct subsidiaries are domiciled in Indonesia."
+# (Telkom), "The jurisdiction of incorporation of the subsidiaries listed above
+# is the Republic of Chile." (Banco de Chile)
+_DOC_PLACE = (
+    re.compile(r"\b(?i:all|each)\b(?P<span>[^.]{0,100}?)\b(?:incorporated|organi[sz]ed|domiciled)\s+in\s+"
+               r"(?:the\s+)?(?P<jur>[A-Z][\w'’ ]{1,40}?)\s*[.,;]"),
+    re.compile(r"jurisdiction of incorporation of (?:the|all|each)?\s*(?:subsidiaries|companies|entities)"
+               r"(?P<span>[^.]{0,40}?)\bis\s+(?:the\s+)?(?P<jur>[^.]{2,40})\.", re.I),
+)
+# A name that ends (or, Indonesian, starts) in a legal form — the shape of a
+# company name, for lists that state no place at all.
+_LEGAL_NAME = re.compile(
+    r"(?:\b(?:limited|ltd|llc|l\.l\.c|inc|incorporated|corp|corporation|company|co|plc|p\.l\.c|gmbh|ag|"
+    r"se|sa|s\.a|s\.a\.s|sas|s\.?r\.?l|b\.?v|n\.?v|pte\.?\s+ltd|pty\.?\s+ltd|ltda|limitada|sdn\.?\s+bhd|"
+    r"k\.?k|oy|oyj|ab|as|a/s|aps|asa|spa|s\.p\.a|lp|l\.p|llp|dmcc|fze|fzco|fz-llc|jsc|tbk|sarl|s\.?a\.?r\.?l|"
+    r"s\.? de r\.?l\.?(?: de c\.?v)?|s\.?a\.? de c\.?v|s\.?a\.?p\.?i\.? de c\.?v|kft|zrt|eood|ood|"
+    r"sp\.? z o\.?o|s\.?r\.?o|d\.?o\.?o|bhd|pvt|private)\.?|有限公司|公司|"
+    r"株式会社)\s*$|^PT\s", re.I)
+
+
+def _lines(sequence: list):
+    """Each paragraph, and each table row that holds one text once its row
+    number or bullet cells are set aside, without its own leading number."""
+    for kind, item in sequence:
+        rows = [[item]] if kind == "text" else item
+        for row in rows:
+            cells = [re.sub(r"[​‌‍﻿]", "", c).strip() for c in row]
+            cells = [c for c in cells if c]
+            if not cells or _FOOTNOTE_CELL.match(cells[0]):
+                continue                          # a footnote row: "(1) 100% of the equity …"
+            while len(cells) > 1 and _MARKER_CELL.match(cells[0]):
+                cells = cells[1:]
+            if len(cells) == 1 and not _MARKER_CELL.match(cells[0]):
+                yield _LEAD_MARKER.sub("", cells[0]).strip()
+
+
+def _place_in(text: str) -> str | None:
+    """The place a phrase states: "… incorporated in the BVI", "a PRC company"."""
+    for m in (_PLACE_LAW.search(text), _PLACE_ADJ.match(text)):
+        if m and jurisdiction_country(m.group("jur").strip()):
+            return m.group("jur").strip()
+    return None
+
+
+def _document_place(sequence: list) -> str | None:
+    """The one place a list says all its subsidiaries share, if it says so."""
+    for kind, item in sequence:
+        if kind != "text":
+            continue
+        for pat in _DOC_PLACE:
+            for m in pat.finditer(item):
+                if re.search(r"except", m.group("span"), re.I):
+                    continue                      # "all, with the exception of …"
+                jur = m.group("jur").strip()
+                if jurisdiction_country(jur):
+                    return jur
+    return None
+
+
+# A sentence, not a name: "We act as PRC counsel to …", "Our operations are …"
+_PROSE = re.compile(r"^(?:we|our|the company|this|it|they)\b|\b(?:act|acts|is|are|was|were|has|have|will|shall)\b",
+                    re.I)
+
+
+def _line_entry(line: str) -> tuple[str, dict] | None:
+    """("strong" | "loose", entry) for a line naming a subsidiary and its place."""
+    got = _line_entry_shape(line)
+    return got if got and not _PROSE.search(got[1]["name"]) else None
+
+
+def _line_entry_shape(line: str) -> tuple[str, dict] | None:
+    if m := _OWNS_IN.search(line):
+        if jurisdiction_country(m.group("jur")):
+            return "strong", {"name": m.group("name"), "jurisdiction": m.group("jur").strip(),
+                              "stake_percent": float(m.group("stake"))}
+    if m := _NAME_END.search(line):
+        if jur := _place_in(line[m.end():]):
+            return "strong", {"name": line[:m.start()], "jurisdiction": jur}
+    for pat in (_PAREN_JURISDICTION, _COMMA_PLACE, _DASH_PLACE):
+        if (m := pat.match(line)) and jurisdiction_country(m.group("jur").strip()):
+            return "loose", {"name": m.group("name"), "jurisdiction": m.group("jur").strip()}
+    return None
+
+
+# "Gan Su BHD … Co., Ltd. (51% owned by Beijing BHD Petroleum …)" (Recon)
+_OWNED_BY = re.compile(r"\s*\((\d{1,3}(?:\.\d+)?)\s*%\s+(?:owned|held)\s+by\b[^()]*(?:\([^()]*\)[^()]*)*\)\s*$",
+                       re.I)
+
+
+def _finish(entry: dict, registrant: str | None) -> dict | None:
+    raw = entry["name"]
+    owned = _OWNED_BY.search(raw)
+    if owned:
+        raw = raw[:owned.start()]
+    name, stake = _clean_name(_DEFINED_TERM.sub("", raw).strip().rstrip(",").strip())
+    if owned and stake is None:
+        stake = float(owned.group(1))
+    if len(name) < 2 or len(name) > 150 or _NOISE.match(name) or _same_company(name, registrant) \
+            or re.search(r"subsidiar|\bP\.?\s?O\.? Box\b", name, re.I) or name.count(",") > 3:
+        return None
+    out = {**entry, "name": name}
+    if stake is not None and "stake_percent" not in out:
+        out["stake_percent"] = stake
+    return out
+
+
+def _line_list(sequence: list, registrant: str | None, declared: bool) -> list[dict]:
+    """One subsidiary per line, the place in words or set off (see above).
+
+    A line that says "incorporated in …" / "a … company" is evidence enough on
+    its own; the set-off shapes ("Name, Switzerland") need three, most of the
+    shaped lines mapping — the gate ``_paragraph_list`` holds. Lines that are
+    only names (Karooooo's 100 "Cartrack … (Pty) Ltd", Banco de Chile) are
+    taken from a document the filer DECLARED its subsidiary exhibit, only when
+    no line states a place, only when they end in a legal form, and with the
+    place a heading ("Subsidiary (PRC):") or the document ("… are incorporated
+    in Chile") gives them — beside the placed lines of the same list, too."""
+    strong, loose, bare = [], [], []
+    shaped, heading_place = 0, None
+    for line in _lines(sequence):
+        if line.endswith(":"):
+            m = _PLACE_HEADING.search(line)
+            heading_place = m.group("jur").strip() if m and jurisdiction_country(m.group("jur")) else None
+            continue
+        got = _line_entry(line)
+        if got:
+            (strong if got[0] == "strong" else loose).append(got[1])
+            continue
+        # a name ending in its legal form is a bare name, even though "… Co.,
+        # Ltd." has the comma shape of "Name, Place" — and so is one with a
+        # stake after it, "… Co., Ltd. (51% owned by …)"
+        if _LEGAL_NAME.search(_OWNED_BY.sub("", line)) and len(line) <= 150 and not _PROSE.search(line):
+            bare.append({"name": line, "jurisdiction": heading_place or ""})
+        elif any(p.match(line) for p in (_PAREN_JURISDICTION, _COMMA_PLACE, _DASH_PLACE)):
+            shaped += 1
+    if strong:
+        found = strong + loose
+    elif len(loose) >= 3 and len(loose) >= (len(loose) + shaped) / 2:
+        found = loose
+    elif not (declared and bare and len(bare) >= 2 * shaped):
+        return []
+    else:
+        found = []
+    if declared and bare:
+        # the names the same list gives without a place: Karooooo writes
+        # "Cartrack Inc. (USA)" for some, "Cartrack (Pty) Ltd" for most
+        place = _document_place(sequence)
+        found += [{**e, "jurisdiction": e["jurisdiction"] or place or ""} for e in bare]
+    return [e for e in (_finish(e, registrant) for e in found) if e]
+
+
+# ── a table that names no place column ───────────────────────────────────────
+# Banco Santander Chile, Enel Chile, Integrated Media, iTonic, Atlas: a header
+# naming the subsidiary column, a stake column, no jurisdiction — the place,
+# if at all, in a sentence ("All subsidiaries listed below are incorporated in
+# Chile"). Natuzzi writes the registered office instead.
+_H_SUBSIDIARY_NAME = re.compile(r"^(?:name of (?:the )?subsidiar|subsidiar(?:y|ies)\b|subsidiary name|"
+                                r"name\b|compan(?:y|ies)\b|(?:legal )?entity\b)", re.I)
+_H_OFFICE = re.compile(r"registered office|domicile", re.I)
+_ANY_PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%?(?:\s+\w+)?\s*$")
+
+
+def _unplaced_table_list(sequence: list, registrant: str | None, place: str | None) -> list[dict]:
+    out: list[dict] = []
+    for kind, table in sequence:
+        if kind != "table":
+            continue
+        head = next(((row, i) for row in table[:5] for i, c in enumerate(row)
+                     if c and len(c) < 60 and _H_SUBSIDIARY_NAME.match(c)), None)
+        if head is None:
+            continue
+        row0, name_i = head
+        office = next((i for i, c in enumerate(row0) if c and _H_OFFICE.search(c)), None)
+        header = {"name": name_i, "jurisdiction": office, "spans": getattr(row0, "spans", None)}
+        total = any(re.search(r"\btotal\b", c, re.I) for r in table[:5] for c in r)
+        rows = table[table.index(row0) + 1:]
+        with_stake = any(any(_ANY_PERCENT.match(c) for c in r if c) for r in rows)
+        for row in rows:
+            name = _column(row, header, "name")
+            if not name or not re.search(r"[^\W\d_]", name):
+                continue
+            pcts = [float(m.group(1)) for c in row if c and (m := _ANY_PERCENT.match(c))]
+            pcts = [p for p in pcts if p <= 100]
+            if with_stake and not pcts:
+                if out and out[-1].get("_table") is table:       # Telkom wraps a name over rows
+                    out[-1]["name"] += " " + name
+                continue
+            jur = _column(row, header, "jurisdiction") if office is not None else ""
+            if not jur:
+                jur = next((p for c in row if c and c != name and (p := _place_in(c))), None) or place or ""
+            entry = {"name": name, "jurisdiction": jur, "_table": table}
+            if len(pcts) == 1 or (pcts and total):
+                entry["stake_percent"] = pcts[-1]
+            out.append(entry)
+    found = [e for e in (_finish({k: v for k, v in e.items() if k != "_table"}, registrant)
+                         for e in out) if e]
+    company_like = sum(1 for e in found if _LEGAL_NAME.search(e["name"]))
+    return found if found and company_like >= 0.6 * len(found) else []
+
+
+# ── names grouped under one-cell country rows ────────────────────────────────
+# BAT's Exhibit 8: "Albania" / "British American Tobacco – Albania SH.P.K." /
+# "Algeria" / "… (Algérie) S.P.A. (51%)4" — one cell per row, 400 subsidiaries,
+# the associates after them.
+def _country_rows_list(sequence: list, registrant: str | None) -> list[dict]:
+    out, country, countries = [], None, 0
+    for kind, item in sequence:
+        if kind == "text":
+            if _NOT_SUBSIDIARIES.search(item):
+                break
+            continue
+        for row in item:
+            cells = [c for c in row if c]
+            if len(cells) != 1:
+                continue
+            cell = cells[0]
+            if len(cell) <= 40 and not _LEGAL_NAME.search(cell) and jurisdiction_country(cell):
+                country, countries = cell, countries + 1
+            elif country and not re.search(r"subsidiar|undertaking", cell, re.I):
+                out.append({"name": re.sub(r"\s*[*#†]+(?:\s*\d{1,2})?$", "", cell),
+                            "jurisdiction": country})
+    found = [e for e in (_finish(e, registrant) for e in out) if e]
+    company_like = sum(1 for e in found if _LEGAL_NAME.search(e["name"]))
+    return found if countries >= 3 and len(found) >= 5 and company_like >= 0.6 * len(found) else []
+
+
+# ── the text layer behind a scanned page ─────────────────────────────────────
+# Amer Sports, Borr, Cellebrite, Triton, Polestar: Workiva files the list as
+# page images, with the text in 1pt white type beneath each —
+# "Amer Sports Austria GmbH Austria  Amer Sports B.V. Netherlands  …": the
+# printed lines apart by two spaces, name and place by one; Polestar's lines
+# end in a stake instead ("… AB Sweden 100% Polestar …"). Ferrovial's runs on
+# with neither, and a place inside a name ("Ferrovial Netherlands B.V.") makes
+# cutting it guesswork — not read.
+_HIDDEN_TEXT = re.compile(r"<font[^>]*font-size:\s*1pt[^>]*>(.*?)</font>", re.I | re.S)
+_STAKE_END = re.compile(r"(?<=\d%)\s+(?=\S)")
+_HIDDEN_NOTE = re.compile(r"^[*†]|owned by|unless otherwise|joint venture|as of the date", re.I)
+_FIRST_LEGAL_WORD = re.compile(r"^(?:limited|ltd\.?|ltda\.?|lda\.?|llc|llp|lp|l\.p\.|inc\.?|corp\.?|corporation|"
+                               r"company|co\.?|gmbh|ag|oyj?|ab|as|asa|aps|a/s|s\.?a\.?|s\.?a\.?u\.?|s\.?l\.?u?\.?|"
+                               r"b\.?v\.?|n\.?v\.?|plc|pte\.?|pty\.?|s\.?r\.?l\.?|sarl|sas|s\.?a\.?s\.?|spa|k\.?k\.?|"
+                               r"sdn\.?|bhd\.?|eood|holdings?|branch\)?)$", re.I)
+# the column header, and anything before it on the line: "… Legal Name
+# Jurisdiction of Incorporation Proportion of Ordinary Shares Held by the Company"
+_HIDDEN_HEADER = re.compile(r"^.*\bjurisdiction(?:\s+of\s+(?:incorporation|formation|organi[sz]ation)"
+                            r"(?:\s+or\s+organi[sz]ation)?)?(?:\s+proportion of [^%]*?held by the company)?\s*",
+                            re.I)
+
+
+
+def _place_suffix(text: str) -> tuple[str, str, float | None] | None:
+    """(name, place, stake) of "Name Place [100%]" — the LONGEST trailing words
+    that are a place, none of them a legal form or a bracket ("… Holding (HK)
+    Limited Hong Kong SAR, China", "Amer Sports Company United States")."""
+    stake = None
+    if m := re.match(r"^(.*?)\s+(\d{1,3}(?:\.\d+)?)\s*%$", text):
+        text, stake = m.group(1), float(m.group(2))
+    words = text.split()
+    for k in range(min(6, len(words) - 1), 0, -1):
+        tail = words[-k:]
+        joined = " ".join(tail)
+        # a place starts with a capital ("in" is India's ISO code), holds no
+        # legal form, and no bracket it does not open itself ("Branch) Abu Dhabi")
+        if not tail[0][:1].isupper() or tail[0].startswith("(") \
+                or any(_FIRST_LEGAL_WORD.match(w.rstrip(",")) for w in tail) \
+                or joined.count("(") != joined.count(")"):
+            continue
+        if jurisdiction_country(joined):
+            name = re.sub(r"(?<=[.)A-Za-z])\s+\d{1,2}$", "", " ".join(words[:-k]))   # "Ltd. 1": a footnote
+            return name, joined, stake
+    return None
+
+
+def _hidden_text_list(html: str, registrant: str | None) -> list[dict]:
+    if not re.search(r"<img\b", html, re.I):
+        return []
+    text = "  ".join(_html.unescape(re.sub(r"<[^>]+>", " ", m.group(1))).replace("\xa0", " ")
+                     for m in _HIDDEN_TEXT.finditer(html))
+    chunks = [c.strip() for c in re.split(r"\s{2,}", text) if c.strip()]
+    if len(re.findall(r"[A-Za-z)]\s+\d{1,3}(?:\.\d+)?%\s+[A-Z]", text)) >= 3:
+        chunks = [p for c in chunks for p in _STAKE_END.split(c)]
+    out, pending, joins, misses = [], "", 0, 0
+    for chunk in chunks:
+        if re.search(r"jurisdiction", chunk, re.I):
+            chunk = _HIDDEN_HEADER.sub("", chunk)
+            pending, joins = "", 0
+            if not chunk:
+                continue
+        if re.fullmatch(r"\d{1,3}", chunk) or _NOISE.match(chunk) or _HIDDEN_NOTE.search(chunk) \
+                or re.search(r"subsidiar|jurisdiction|exhibit", chunk, re.I):
+            pending, joins = "", 0                # a page number, a title, a header, a note
+            continue
+        text = f"{pending} {chunk}" if pending else chunk
+        got = _place_suffix(text) if len(text.split()) <= 16 else None
+        if got is None:
+            # a printed line wrapped inside one entry ("… GmbH Magyarországi" /
+            # "Fióktelepe" / "Hungary"); given up after two joins
+            if joins < 2 and len(text.split()) <= 16:
+                pending, joins = text, joins + 1
+            else:
+                pending, joins, misses = "", 0, misses + 1
+            continue
+        pending, joins = "", 0
+        name, jur, stake = got
+        # "… Rep office in" / "Thailand Thailand Amer Sports Spain, S.A. Spain":
+        # the place that ended a line was the end of the name before it
+        if out and re.search(r"\s(?:in|of)$", out[-1]["name"]) and name.startswith(out[-1]["jurisdiction"] + " "):
+            out[-1]["name"] += " " + out[-1]["jurisdiction"]
+            name = name[len(out[-1]["jurisdiction"]) + 1:]
+        entry = {"name": name, "jurisdiction": jur}
+        if stake is not None:
+            entry["stake_percent"] = stake
+        out.append(entry)
+    found = [e for e in (_finish(e, registrant) for e in out) if e]
+    return found if len(found) >= 3 and misses <= len(found) / 5 else []
+
+
+def parse_exhibit(html: str, registrant: str | None = None, form: str | None = None) -> list[dict]:
     """[{name, jurisdiction, stake_percent?, co_owners?, parent?,
     parent_basis?}] from an Ex-21/Ex-8.1 page. ``registrant`` is the filer's
     name, so a heading or root row naming the filer itself is not taken for
@@ -568,7 +1035,19 @@ def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
     under the filer.
 
     Jurisdiction text is kept as filed; the ISO mapping is the writer's
-    separate, lossy view of it."""
+    separate, lossy view of it.
+
+    A document the filer declared something else ("<TYPE>EX-2.1") is no list,
+    nor an EX-8 outside a 20-F (``form``), unless it opens as a subsidiary
+    list (``_subsidiary_document``). When the table reader finds nothing, the
+    other layouts are tried in turn (``_grouped_list`` … ``_hidden_text_list``);
+    the ones that read lists stating no place only in a document declared
+    EX-8 or EX-21."""
+    kind = declared_type(html)
+    verdict = _subsidiary_document(kind, html, form) if kind else None
+    if verdict is False:
+        return []
+    declared = verdict is True
     parser = _TableTextParser()
     parser.feed(html)
     parser.close()
@@ -583,33 +1062,44 @@ def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
         table = item
         header = _find_header(table)
         if header is None and any(any(c) for r in table[:5] for c in r
-                                  if _H_NOT_JURISDICTION.search(c or "")):
+                                  if _not_jurisdiction(c or "")):
             continue   # a labelled table that is about locations, not registration
         inherited = False
         if header is None and carried is not None:
             need = max(i for i in (carried["name"], carried["jurisdiction"],
                                    carried["ownership"]) if i is not None) + 1
             if sum(1 for r in table if len(r) >= need) >= len(table) / 2:
-                header = {**carried, "header_row": None}
+                # by cell index: the next page's grid is not the first page's
+                # (BHP's header cell spans grid columns 1-2, the rows below
+                # it on later pages one column each)
+                header = {**carried, "header_row": None, "spans": None}
                 inherited = True
         elif header is not None:
             carried = header
         table_parent = _header_parent(header, registrant) if header and header["header_row"] else None
         table_rows: list[dict] = []
+        data_seen = False
         for row in table:
             stake, co_owners = None, []
             if header is not None:
                 if row is header["header_row"]:
                     continue
-                if (again := _section_header(row)) is not None:
+                # A section header after rows of data re-maps the columns. Before
+                # any, a row of labels is the rest of a header printed over
+                # several rows, and the rows below decide which reading of it
+                # holds: UTStarcom's third line "Name | Organization |
+                # Ownership Interest" sits over the wrong cells, Supervielle's
+                # second line "Subsidiary | incorporation | business" is the
+                # one that names its subsidiary column.
+                if (again := _section_header(row)) is not None and (
+                        data_seen or _places_under(table, row, again) >= _places_under(table, row, header)):
                     header = carried = again      # a new section's columns
                     table_parent = _header_parent(again, registrant)
                     continue
-                name = row[header["name"]] if header["name"] < len(row) else ""
-                jurisdiction = (row[header["jurisdiction"]]
-                                if header["jurisdiction"] < len(row) else "")
-                if header["ownership"] is not None and header["ownership"] < len(row):
-                    stake, co_owners = _ownership_cell(row[header["ownership"]] or "")
+                name = _column(row, header, "name")
+                jurisdiction = _column(row, header, "jurisdiction")
+                if header["ownership"] is not None:
+                    stake, co_owners = _ownership_cell(_column(row, header, "ownership"))
             else:
                 cells = [c for c in row if c]
                 if len(cells) < 2:
@@ -621,12 +1111,15 @@ def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
                     jurisdiction = cells[2] if len(cells) > 2 else ""
             if not name or not jurisdiction:
                 continue
+            data_seen = True
+            if _MARKER_CELL.match(name):
+                continue                  # a row number is never a name (Chanson's "13")
             if _NOISE.match(name) or _NOISE.match(jurisdiction):
                 continue
             # a jurisdiction is short; a long second column means prose
             if len(jurisdiction) > 60 or len(name) < 2:
                 continue
-            name, inline_stake = _clean_name(name)
+            name, inline_stake = _clean_name(re.sub(r"^\d{1,3}\.\s+(?=\S)", "", name))   # AIOS: "1. YD …"
             if not name:
                 continue
             entry = {"name": name, "jurisdiction": jurisdiction,
@@ -658,10 +1151,14 @@ def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
             seen.add(key)
             out.append(entry)
     if not out:
-        # Two layouts the table reader cannot see, tried only when it found
+        # Layouts the table reader cannot see, tried only when it found
         # nothing — so an exhibit it reads today is read exactly as before.
-        for entry in _grouped_list(parser.sequence, registrant) or \
-                _paragraph_list(parser.sequence, registrant):
+        seq = parser.sequence
+        for entry in _grouped_list(seq, registrant) or _paragraph_list(seq, registrant) or \
+                (declared and _country_rows_list(seq, registrant)) or \
+                _line_list(seq, registrant, declared) or \
+                (declared and _unplaced_table_list(seq, registrant, _document_place(seq))) or \
+                _hidden_text_list(html, registrant):
             if entry["name"].casefold() not in seen:
                 seen.add(entry["name"].casefold())
                 out.append({**entry, "_indent": 0.0})
@@ -673,7 +1170,9 @@ def parse_exhibit(html: str, registrant: str | None = None) -> list[dict]:
     return out
 
 
-_US_SUFFIX = re.compile(r",?\s*(U\.?S\.?A?\.?|United States)$", re.I)
+# Not glued to a word: "Mauritius", "Cyprus" and "Belarus" end in "us", and
+# until 2026-10-07 all three mapped to the United States.
+_US_SUFFIX = re.compile(r",?\s*(?<![^\W\d_])(U\.?S\.?A?\.?|United States)$", re.I)
 # Chubb writes "USA (Delaware)"; Occidental writes Canadian provinces bare.
 _USA_PAREN = re.compile(r"^(U\.?S\.?A?\.?|United States)\s*\(", re.I)
 _GB_NATIONS = {"england & wales", "england and wales", "england", "scotland",
@@ -687,7 +1186,11 @@ _EXTRA_PLACES = {"nevis": "KN", "cayman": "KY", "prc": "CN",
                  "korea": "KR",       # bare "Korea" in practice means the South
                  "columbia": "CO",    # a recurring filer typo for Colombia
                  "dubai": "AE", "macau": "MO", "macau sar": "MO",
-                 "macao sar": "MO"}
+                 "macao sar": "MO",
+                 "cayman island": "KY", "curacao": "CW", "holland": "NL",
+                 # BAT; "Congo" alone is the Republic of the Congo
+                 "congo, democratic republic of": "CD", "congo, democratic republic of the": "CD",
+                 "democratic republic of the congo": "CD", "democratic republic of congo": "CD"}
 # "Saudi Arabia, Kingdom of" — inverted official names
 _INVERTED_TAIL = re.compile(r",\s*(kingdom|republic|state|grand duchy)\s+of$", re.I)
 
@@ -731,6 +1234,14 @@ def jurisdiction_country(jurisdiction: str | None) -> str | None:
         return "CA"
     if low in _EXTRA_PLACES:
         return _EXTRA_PLACES[low]
+    # "Hong Kong SAR, China" is Hong Kong — the comma rule below took China;
+    # "the Macau Special Administrative Region of the People's Republic of
+    # China" (Melco) is Macau
+    if m := re.match(r"^(hong kong|macau|macao)\s+(?:sar|special administrative region)"
+                     r"(?:,?\s*china|\s+of\s+(?:the\s+)?(?:prc|people's republic of china))?$", low):
+        return "HK" if m.group(1) == "hong kong" else "MO"
+    if low in ("chinese mainland", "mainland china", "mainland"):     # Sinovac
+        return "CN"
     if re.fullmatch(r"[A-Z]{2}", cleaned) and _is_us_state_code(cleaned):
         return "US"                              # Eversource: "CT", "DE" (Delaware, not Germany)
     if cleaned.casefold() in _US_STATE_NAMES:   # bare "Delaware" — filers vary
@@ -754,9 +1265,13 @@ def jurisdiction_country(jurisdiction: str | None) -> str | None:
         for part in (parts[-1], parts[0]):
             if code := jurisdiction_country(part):
                 return code
-    # "The Republic of the Marshall Islands" (Scorpio Tankers) — only with
-    # "the": "Republic of China" is Taiwan, not China.
-    if m := re.match(r"^republic of the\s+(.+)$", cleaned, re.I):
+    # "The Republic of the Marshall Islands" (Scorpio Tankers), "the Republic
+    # of Chile" (Banco de Chile), "Kingdom of Saudi Arabia" (Borr), "the
+    # Commonwealth of Virginia" (Shenandoah), "State of Israel" — but never
+    # "Republic of China": Taiwan.
+    if (m := re.match(r"^(?:republic|kingdom|sultanate|principality|grand duchy|commonwealth|state) of "
+                      r"(?:the\s+)?(.+)$",
+                      cleaned, re.I)) and m.group(1).casefold() != "china":
         if code := jurisdiction_country(m.group(1)):
             return code
     # "Panamá" — accents are typography the country table does not carry
@@ -839,6 +1354,7 @@ def jurisdiction_subdivision(jurisdiction: str | None) -> str | None:
     while (nxt := _LEGAL_FORM_TAIL.sub("", peeled)) != peeled:
         peeled = nxt.strip()
     core = peeled or core
+    core = re.sub(r"^(?:the\s+)?(?:commonwealth|state) of\s+", "", core, flags=re.I)  # "Commonwealth of Virginia"
     low = core.casefold()
     if code := _us_state_code(core):
         return f"US-{code}"
@@ -863,7 +1379,7 @@ def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
     if not filings:
         return None
     for meta in exhibit_candidates(cik, *filings[0]):
-        subs = parse_exhibit(_get_text(meta["url"]), registrant)
+        subs = parse_exhibit(_get_text(meta["url"]), registrant, meta["form"])
         if subs:
             return {"subsidiaries": subs, "form": meta["form"],
                     "filing_date": meta["filing_date"], "url": meta["url"]}
@@ -1128,7 +1644,7 @@ def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | 
     exhibit_21 = (ref["exhibit"] or "").startswith("21")
     for form, accession, filed in resolve_reference(cik, ref)[:4]:
         for meta in exhibit_candidates(cik, "10-K" if exhibit_21 else "20-F", accession, filed):
-            subs = parse_exhibit(_get_text(meta["url"]), registrant)
+            subs = parse_exhibit(_get_text(meta["url"]), registrant, form)
             if subs:
                 return {"subsidiaries": subs, "form": form, "filing_date": _iso_date(filed),
                         "url": meta["url"], "exhibit": "21" if exhibit_21 else "8.1",
@@ -1139,7 +1655,7 @@ def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | 
 def _parse_first(candidates: list[dict]) -> tuple[list[dict], dict] | None:
     """The first candidate exhibit that parses to subsidiaries, with its meta."""
     for meta in candidates:
-        subs = parse_exhibit(_get_text(meta["url"]))
+        subs = parse_exhibit(_get_text(meta["url"]), form=meta["form"])
         if subs:
             return subs, meta
         log.info("candidate %s parsed to zero subsidiaries — trying the next", meta["url"])

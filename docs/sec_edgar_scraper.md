@@ -811,8 +811,8 @@ stake. Edges written before this are repaired by
 equals the `source_date` (the signature of the invented date) and is not marked with
 `since_basis` (a deliberate lower bound from older filings is never cleared).
 
-**Finding the list** (all 135 CIKs of the dev graph swept on 2026-10-07: 11
-filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,796 subsidiaries):
+**Finding the list** (all 135 CIKs of the dev graph swept on 2026-10-07: 14
+filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,879 subsidiaries):
 
 - **Filenames as filing agents write them**: `ex21`, `ex-21.1`, Workiva's
   `meli-20251231xexx2101` (exx = exhibit, 2101 = 21.01), and on a 20-F `ex8_1`,
@@ -832,7 +832,10 @@ filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,796 subsidiarie
   an exhibit file the parser could not read 7 %; a filename the patterns missed 4 %;
   the main document (a note or Item 4.C) 3 %; nothing found 13 %. Through the code
   after these fixes: **702 of 1,004 filers read (70 %, from 51 %)** — 562 from an
-  exhibit file, 136 from an earlier filing, 4 from a note.
+  exhibit file, 136 from an earlier filing, 4 from a note — and after the layouts
+  below **769 (77 %)**, 15,945 → 17,781 subsidiaries; every list read before was
+  compared name by name: none lost, 46 gained the stake they state, the rest
+  lost junk (row numbers as names, dates or "100%" as places).
 - **No exhibit file, the list elsewhere**: what the 20-F's exhibit index says under
   8.1 decides (`list_from_main_document`, the latest filing only — a main document is
   ~10 MB, so `sec-ex21-history` does not do this):
@@ -859,8 +862,65 @@ filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,796 subsidiarie
   "the" — "Republic of China" is Taiwan), "São Paulo – Brazil", "Panamá". A column
   headed "Date of Incorporation" is never the jurisdiction (Rezolve wrote 50 dates
   as places).
-- Both fallbacks run only when the table reader found nothing, so an exhibit read
-  before is read exactly as before.
+- **Lists the parser could not read** (2026-10-07, the 86 2026 20-F filers whose
+  candidate files all read nothing — 61 real lists, the rest other documents; 51
+  of the 61 now read, 1,651 subsidiaries):
+  - **What the filer declared the file to be decides first.** Every EDGAR document
+    opens with `<TYPE>`; one declared anything but `EX-8`, `EX-8.1` or `EX-21.x` is no
+    list. Workiva names a 20-F's Exhibit 2.1 (the description of securities)
+    `exhibit21descriptionofsecu.htm` — "ex21" to the filename patterns — and an F-1's
+    `EX-8.2` is counsel's tax opinion.
+  - **The column grid**: a header cell spanning several data cells (`colspan`) is
+    matched to the cell that starts under it — TORM's "Jurisdiction of Incorporation"
+    spans grid columns 3–8 while each "Denmark" is the third cell of its row, at
+    column 6. A header printed over three rows (UTStarcom) keeps its columns: a row
+    of labels counts as a new section's header only after data rows. A row number
+    in the name cell ("1. YD Network …") is dropped; a label spanning the whole row
+    ("Insurance Agencies and Brokers") is neither name nor place.
+  - **One subsidiary per line, the place in words** (`_line_list`; paragraphs, list
+    items, one-text table rows): "Bluebottle Limited, a Hong Kong company", "COD
+    Resorts Limited, incorporated in the Macau Special Administrative Region …", "…,
+    a corporation organized under the laws of Guatemala", "… is a Hong Kong company
+    and is wholly-owned by …", "The Company indirectly owns 99.83% of the economic
+    and voting interests in … (incorporated in Argentina)" (Ambev, with the stake).
+    One such line is evidence enough; a set-off place ("Sportradar AG, Switzerland",
+    "XPACSponsor LLC - Cayman") needs three, as a "Name (PRC)" paragraph does. A
+    sentence is never a name ("We act as PRC counsel to …").
+  - **Names without any place** — Karooooo's 100 "Cartrack … (Pty) Ltd", GCL, Banco
+    de Chile — only from a document declared a subsidiary exhibit, only names ending
+    in a legal form, with the place a heading gives ("Subsidiary (PRC):", Recon) or
+    the document states ("The jurisdiction of incorporation of the subsidiaries
+    listed above is the Republic of Chile"; "All … are incorporated in Chile", never
+    "all, with the exception of …"); otherwise stored with no place.
+  - **A table naming no place column** (Banco Santander Chile, Enel Chile,
+    Integrated Media): the subsidiary column, the stake (the "Total" column where
+    Direct/Indirect/Total are given, else only a single figure), the document's
+    place; a name wrapped over rows (Telkom's "PT Telekomunikasi" / "Selular") is
+    joined. Declared exhibits only, and most names must look like company names.
+  - **Names under one-cell country rows** (BAT's Exhibit 8, ~400 subsidiaries):
+    the country row is the place, inline stakes are read ("(51%)4", and of BAT's
+    "(99.80%)(99.93%)" the first), up to the associates.
+  - **The text layer behind scanned pages** (Amer Sports, Borr, Cellebrite, Triton,
+    Polestar): Workiva files page images with the text in 1pt white type beneath;
+    the printed lines are two spaces apart (Polestar's end in a stake instead), the
+    place is the longest run of trailing words that is a place, holds no legal form
+    and starts with a capital. Ferrovial's text runs on with neither separator and a
+    place inside names ("Ferrovial Netherlands B.V. NETHERLANDS") — not read.
+  - Not read: page images without text (POET, Currenc, COSCIENS), a pointer to a
+    note of the annual report (KT, POSCO, RELX), prose (Highway Holdings), an
+    org-chart of arrows (K Wave), a table with no labelled name column (Grupo
+    Aeroportuario del Sureste).
+  - **Places, and a mapping bug**: "Mauritius", "Cyprus" and "Belarus" end in "us"
+    and mapped to the **United States** — the US-suffix rule had no word boundary.
+    Fixed; because `country` is written fill-only, a re-scrape does not correct
+    nodes that already carry "US". "Hong Kong SAR, China" is Hong Kong (the comma
+    rule took China), "… Special Administrative Region of the PRC", "Chinese
+    mainland", "the Republic of Chile", "Kingdom of Saudi Arabia", "Congo,
+    Democratic Republic of", Curacao, Holland. Trailing marks "(iv)", "^", "#" and a
+    leading tree marker "~ " are not part of a name.
+- All fallbacks run only when the table reader found nothing, so an exhibit read
+  before is read exactly as before — except where the column grid now finds a cell
+  the old index lookup missed (a stake in a split "100 | %" cell, a place).
 - **`no_annual_filing`** instead of `no_exhibit` when the company files no 10-K or
   20-F at all (SoftBank, Vanguard, FMR: 13F/13G filers).
 - **Not read: Unilever.** Its 8.1 is the full UK Companies Act s.409 list,

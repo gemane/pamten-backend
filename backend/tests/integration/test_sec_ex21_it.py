@@ -339,3 +339,27 @@ def test_a_list_from_an_earlier_f1_is_dated_by_it_and_confirmed_by_the_20f(it_db
     # record_run keeps a finished run's note in `error` (run_log._safe_finish)
     note = it_db.run_command("MATCH (r:ScrapeRun {source: 'sec-ex21'}) RETURN r.error AS note")
     assert "re-affirmed by the 20-F of 2026-04-30" in (note[0]["note"] or "")
+
+
+def test_a_list_without_places_lands_with_no_country_and_mauritius_is_not_us(it_db):
+    # Karooooo names most subsidiaries without a place; Borr's text layer has
+    # "Borr (Mauritius) Holdings Limited Mauritius" — which mapped to the US
+    # until the US-suffix rule got its word boundary
+    from pathlib import Path
+    from app.scraper.sec_ex21 import parse_exhibit
+    fx = Path(__file__).parents[1] / "scraper" / "fixtures"
+    subs = parse_exhibit((fx / "karooooo_ex81.htm").read_text(), "Karooooo Ltd.")
+    subs += [s for s in parse_exhibit((fx / "borr_ex81.htm").read_text(), "Borr Drilling Ltd")
+             if s["name"] == "Borr (Mauritius) Holdings Limited"]
+    data = {"subsidiaries": subs, "form": "20-F", "filing_date": "2026-06-30",
+            "url": "https://www.sec.gov/Archives/edgar/data/1/000000000126000009/ex8-1.htm"}
+    _apple(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        result = runner.run_sec_ex21("Apple")
+    assert result["status"] == "ok" and result["total"] == 47
+    assert result["unmapped_jurisdictions"] == 30
+    rows = {r["name"]: r["country"] for r in it_db.run_command(
+        "MATCH (:Entity {id:'apple'})-[r:OWNS]->(b:Entity) RETURN b.name AS name, b.country AS country")}
+    assert len(rows) == 47
+    assert rows["Cartrack Holdings (Pty) Ltd"] is None and rows["Cartrack Inc."] == "US"
+    assert rows["Borr (Mauritius) Holdings Limited"] == "MU"
