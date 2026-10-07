@@ -355,12 +355,18 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       re-scrape does not correct the stored value. Run a mapping over every distinct
       value the source produces (`jurisdiction_country` over all places of a sweep)
       and look at what lands where.
-- [ ] **Group the unread results by layout before writing a rule.** The 61 real
-      subsidiary lists that read nothing fell into a handful of layouts (one entry
-      per line with the place in words, a header cell spanning several data cells,
-      no place column, names under country rows, a text layer behind page images);
-      a rule per layout, each tried only when the main reader found nothing, read
-      51 of them and left every list read before unchanged.
+- [ ] **Group the unread results by layout before writing a rule — and write
+      none for a layout one to five filers use.** The 61 real subsidiary lists that
+      read nothing fell into a handful of layouts; a rule per layout read 51 of
+      them, measured on the very filings the rules were written against. On filers
+      they had never seen (2025 20-Fs, random 10-Ks) the general rules held (722 of
+      739 entries right), while the few-filer readers (names without a place, a
+      table without a place column, a scanned page's text layer) got 13 % of 926
+      entries fully right and mostly hid a gap in the main reader — removed.
+- [ ] **Measure on filings the rules were not written against, and read every
+      name.** A count that went up says nothing about precision: check each entry
+      of each gained or changed list against the document. Comparing versions on
+      the same HTTP responses (a disk cache) keeps the runs honest and cheap.
 - [ ] **Then sweep EVERY eligible company in the dev graph before merging** — the 59-filer
       Ex-21 sweep found what ten hand-picked probes still missed: tables whose second
       column is a *location* ("Charlotte, NC" — not a jurisdiction; Bank of America has

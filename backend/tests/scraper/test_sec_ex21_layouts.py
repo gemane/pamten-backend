@@ -5,12 +5,13 @@ fixtures captured from those filings:
   securities Workiva names "exhibit21descriptionofsecu.htm");
 - header cells spanning several data cells (TORM, Ellomay) and a header
   printed over three rows (UTStarcom);
-- one subsidiary per line, the place in words (FinVolution, Melco, Ambev) or
-  not at all (Karooooo, Recon, Banco de Chile);
-- tables naming no place column (Banco Santander Chile, Enel Chile);
+- one subsidiary per line, the place in words (FinVolution, Melco, Ambev);
 - names under one-cell country rows (BAT);
-- the text layer behind scanned pages (Amer Sports, Borr, Polestar);
-- and places the mapping got wrong ("Mauritius" was the United States).
+- places the mapping got wrong ("Mauritius" was the United States);
+- and the layouts deliberately NOT read: names without a place (Karooooo,
+  Recon, Banco de Chile), tables naming no place column (Banco Santander
+  Chile), the text layer behind scanned pages (Amer Sports), mislabelled
+  lists (Yatra).
 """
 from pathlib import Path
 from unittest.mock import patch
@@ -55,14 +56,6 @@ class TestDeclaredType:
         assert len(parse_exhibit(_doc(TABLE), form="20-F")) == 2
         assert parse_exhibit(_doc(TABLE), form="F-1") == []
         assert len(parse_exhibit(_doc(TABLE, "EX-21.1"), form="F-1")) == 2
-
-    def test_a_mislabelled_list_that_says_what_it_is(self):
-        # Yatra's subsidiary list is declared EX-10.8
-        assert len(parse_exhibit(_doc("<p>List of Subsidiaries</p>" + TABLE, "EX-10.8"))) == 2
-        assert parse_exhibit(_doc("<p>Credit Agreement</p>" + TABLE, "EX-10.8")) == []
-        # read like an undeclared page: no names-only fallback
-        names = "<p>List of Subsidiaries</p><p>Alpha Holdings Limited</p><p>Beta Pte. Ltd.</p>"
-        assert parse_exhibit(_doc(names, "EX-10.8")) == []
 
     def test_the_header_is_read_from_the_document_start(self):
         assert ex.declared_type(_doc("", "ex-8.1")) == "EX-8.1"
@@ -227,6 +220,18 @@ class TestOnePerLine:
         assert len(parse_exhibit(_doc(body, None))) == 3
         assert parse_exhibit(_doc("".join(f"<p>{x}</p>" for x in lines[:2]), None)) == []
 
+    def test_names_ending_in_a_legal_form_do_not_count_against_the_set_off_lines(self):
+        # "… Co., Ltd." has the comma shape of "Name, Place" without being one
+        lines = ["Sportradar AG, Switzerland", "Sports Data AG, Switzerland", "Sportradar AB, Sweden",
+                 "Alpha Co., Ltd.", "Beta Co., Ltd.", "Gamma Co., Ltd.", "Delta Co., Ltd."]
+        subs = parse_exhibit(_doc("".join(f"<p>{x}</p>" for x in lines), None))
+        assert [s["name"] for s in subs] == ["Sportradar AG", "Sports Data AG", "Sportradar AB"]
+
+    def test_a_stated_line_carries_the_set_off_lines_with_it(self):
+        lines = ["Alpha Limited, a Hong Kong company", "Beta AG (Switzerland)"]
+        subs = parse_exhibit(_doc("".join(f"<p>{x}</p>" for x in lines), None))
+        assert {s["name"]: s["jurisdiction"] for s in subs} == {"Alpha Limited": "Hong Kong", "Beta AG": "Switzerland"}
+
     def test_numbered_table_rows_with_the_place_in_brackets(self):
         rows = "".join(f"<tr><td>{i}.</td><td>{n}</td></tr>" for i, n in enumerate(
             ["DLP Capital LLC (USA - Delaware)", "Stone ALP Holding SARL (Luxembourg)",
@@ -235,87 +240,56 @@ class TestOnePerLine:
         assert [jurisdiction_country(s["jurisdiction"]) for s in subs] == ["US", "LU", "CH"]
 
 
-class TestNamesWithoutAPlace:
-    def test_a_declared_list_of_names_beside_some_with_places(self):
-        subs = _read("karooooo_ex81.htm", "Karooooo Ltd.")
-        assert len(subs) == 46
-        assert sum(1 for s in subs if s["jurisdiction"]) == 16
-        assert _by_name(subs)["Cartrack Holdings (Pty) Ltd"]["jurisdiction"] == ""
+class TestNotRead:
+    """Layouts deliberately left unread (2026-10-07): each served one to five
+    filers, and a reader that guesses at them can turn a heading or a sentence
+    into a subsidiary."""
 
-    def test_only_from_a_declared_subsidiary_exhibit(self):
+    def test_a_list_of_names_without_places(self):
         names = "".join(f"<p>{n}</p>" for n in ("Alpha Holdings Limited", "Beta Pte. Ltd.", "Gamma GmbH"))
-        assert len(parse_exhibit(_doc(names))) == 3
-        assert parse_exhibit(_doc(names, None)) == []
-        # nor beside a stated line on an undeclared page
-        stated = "<p>Delta Limited, a Hong Kong company</p>" + names
-        assert [s["name"] for s in parse_exhibit(_doc(stated, None))] == ["Delta Limited"]
-        assert len(parse_exhibit(_doc(stated))) == 4
+        assert parse_exhibit(_doc(names)) == []
 
-    def test_a_heading_gives_the_place_and_the_registrant_is_left_out(self):
-        subs = _by_name(_read("recon_ex81.htm", "Recon Technology, Ltd"))
-        assert len(subs) == 9 and "Recon Technology, Ltd" not in subs
-        assert subs["Recon Investment Ltd."]["jurisdiction"] == "Hong Kong"
-        assert subs["Gan Su BHD Environmental Technology Co., Ltd."] == {
-            "name": "Gan Su BHD Environmental Technology Co., Ltd.", "jurisdiction": "PRC",
-            "stake_percent": 51.0}
+    def test_only_the_names_that_state_their_place(self):
+        # Karooooo: "Cartrack Inc. (USA)" for 16, "Cartrack Holdings (Pty) Ltd" for 30
+        subs = _by_name(_read("karooooo_ex81.htm", "Karooooo Ltd."))
+        assert len(subs) == 16 and all(s["jurisdiction"] for s in subs.values())
+        assert subs["Cartrack Inc."]["jurisdiction"] == "USA"
+        assert "Cartrack Holdings (Pty) Ltd" not in subs
+        stated = "<p>Delta Limited, a Hong Kong company</p><p>Alpha Holdings Limited</p><p>Beta Pte. Ltd.</p>"
+        assert [s["name"] for s in parse_exhibit(_doc(stated))] == ["Delta Limited"]
 
-    def test_the_document_says_where_they_all_are(self):
-        subs = _read("bancodechile_ex81.htm", "BANK OF CHILE")
-        assert len(subs) == 5 and {jurisdiction_country(s["jurisdiction"]) for s in subs} == {"CL"}
+    def test_a_place_given_by_a_heading_or_a_sentence(self):
+        # Recon: "Subsidiary (PRC):"; Banco de Chile, Shenandoah: "… are organized in …"
+        heading = "<p>Subsidiary (PRC):</p><p>Alpha Technology Co., Ltd.</p><p>Beta Energy Co., Ltd.</p>"
+        sentence = ("<p>All subsidiaries listed below are incorporated in Chile.</p>"
+                    "<p>Alpha Asesorias Limitada</p><p>Beta Corredores S.A.</p><p>Gamma Leasing S.A.</p>")
+        assert parse_exhibit(_doc(heading)) == []
+        assert parse_exhibit(_doc(sentence)) == []
+        assert parse_exhibit(_doc(sentence, "EX-21"), form="10-K") == []
 
-    def test_organized_in_the_commonwealth_of_virginia(self):
-        # Shenandoah's 10-K Exhibit 21: one sentence, then the names
-        body = ("<p>The following are all significant subsidiaries of Shenandoah Telecommunications Company, and "
-                "are organized in the Commonwealth of Virginia.</p><p>Shenandoah Cable Television LLC</p>"
-                "<p>Shentel Management Company</p><p>Horizon Telcom Inc.</p>")
-        subs = parse_exhibit(_doc(body, "EX-21"), "SHENANDOAH TELECOMMUNICATIONS CO", "10-K")
-        assert [jurisdiction_country(s["jurisdiction"]) for s in subs] == ["US", "US", "US"]
+    def test_a_table_without_a_place_column(self):
+        # Banco Santander Chile, Enel Chile
+        table = ("<p>All subsidiaries listed below are incorporated in Chile.</p>"
+                 "<table><tr><td>Name of Subsidiary</td><td>Direct</td><td>Indirect</td><td>Total</td></tr>"
+                 "<tr><td>Alpha Corredora Limitada</td><td>99.75</td><td>0.01</td><td>99.76</td></tr>"
+                 "<tr><td>Beta Leasing S.A.</td><td>100</td><td></td><td>100</td></tr></table>")
+        assert parse_exhibit(_doc(table)) == []
 
-    def test_all_but_some_is_not_a_place_for_all(self):
-        # Highway Holdings
-        body = ("<p>Alpha Holdings Limited</p><p>Beta Shenzhen Limited</p><p>All subsidiaries, with the exception "
-                "of Beta Shenzhen Limited (organized in China), are incorporated in Hong Kong.</p>")
-        assert {s["jurisdiction"] for s in parse_exhibit(_doc(body))} == {""}
+    def test_the_text_layer_behind_a_scanned_page(self):
+        # Amer Sports, Borr, Polestar: page images over 1pt white text
+        layer = ('<img src="p1.jpg"><font style="font-size:1pt;color:white">Alpha Ltd. Bermuda  '
+                 'Beta GmbH Germany  Gamma AB Sweden  Delta B.V. Netherlands</font>')
+        assert parse_exhibit(_doc(layer)) == []
+
+    def test_a_mislabelled_list(self):
+        # Yatra's subsidiary list is declared EX-10.8
+        assert parse_exhibit(_doc("<p>List of Subsidiaries</p>" + TABLE, "EX-10.8")) == []
 
     def test_headings_and_titles_are_not_names(self):
         body = ("<p>Principal Subsidiaries of Eason Technology Limited</p><p>Subsidiaries:</p>"
-                "<p>True Silver Limited</p><p>Four Divisions Limited</p>")
+                "<p>True Silver Limited, a BVI company</p><p>Four Divisions Limited, a Hong Kong company</p>")
         assert [s["name"] for s in parse_exhibit(_doc(body), "Eason Technology Ltd")] == [
             "True Silver Limited", "Four Divisions Limited"]
-
-
-class TestTableWithoutAPlaceColumn:
-    def test_the_place_from_a_sentence_and_the_total_stake(self):
-        subs = _by_name(_read("santanderchile_ex81.htm", "BANCO SANTANDER CHILE"))
-        assert len(subs) == 6
-        assert subs["Santander Corredora de Seguros Limitada"] == {
-            "name": "Santander Corredora de Seguros Limitada", "jurisdiction": "Chile", "stake_percent": 99.76}
-
-    def test_direct_indirect_total(self):
-        subs = _by_name(_read("enelchile_ex81.htm", "Enel Chile S.A."))
-        assert len(subs) == 11
-        assert subs["Empresa Eléctrica Pehuenche S.A."]["stake_percent"] == 92.65
-        assert {s["jurisdiction"] for s in subs.values()} == {"Chile"}
-
-    def test_a_name_wrapped_over_rows(self):
-        html = _doc("<p>All direct subsidiaries are domiciled in Indonesia.</p>"
-                    "<table><tr><td>Subsidiary</td><td>Business</td><td>%</td></tr>"
-                    "<tr><td>PT Telekomunikasi</td><td>Mobile</td><td>70</td></tr>"
-                    "<tr><td>Selular</td><td>telecommunication</td><td></td></tr>"
-                    "<tr><td>PT Dayamitra Telekomunikasi Tbk.</td><td>Towers</td><td>72</td></tr></table>")
-        assert parse_exhibit(html) == [
-            {"name": "PT Telekomunikasi Selular", "jurisdiction": "Indonesia", "stake_percent": 70.0},
-            {"name": "PT Dayamitra Telekomunikasi Tbk.", "jurisdiction": "Indonesia", "stake_percent": 72.0}]
-
-    def test_not_in_an_undeclared_page_nor_for_rows_that_are_no_companies(self):
-        table = ("<table><tr><td>Name of Subsidiary</td><td>% held</td></tr>"
-                 "<tr><td>Merit Stone Limited</td><td>100%</td></tr></table>")
-        assert parse_exhibit(_doc(table)) == [{"name": "Merit Stone Limited", "jurisdiction": "",
-                                               "stake_percent": 100.0}]
-        assert parse_exhibit(_doc(table, None)) == []
-        notes = ("<table><tr><td>Name</td><td>Interest</td></tr><tr><td>Senior notes due 2030</td>"
-                 "<td>5%</td></tr><tr><td>Ordinary shares</td><td>100%</td></tr></table>")
-        assert parse_exhibit(_doc(notes)) == []
 
 
 class TestCountryRows:
@@ -343,34 +317,11 @@ class TestCountryRows:
         assert [s["name"] for s in parse_exhibit(html)] == ["Alpha SAS", "Beta GmbH", "Gamma S.p.A.",
                                                             "Delta S.r.l.", "Epsilon SpA"]
 
-
-class TestScannedPages:
-    def test_amer_sports_text_layer(self):
-        subs = _by_name(_read("amersports_ex81.htm", "Amer Sports, Inc."))
-        assert len(subs) == 79
-        assert subs["Amer Sports Austria GmbH Magyarországi Fióktelepe"]["jurisdiction"] == "Hungary"  # wrapped
-        assert subs["Amer Sports Sourcing Limited Rep office in Thailand"]["jurisdiction"] == "Thailand"
-        assert subs["Amer Sports Holding (HK) Limited"]["jurisdiction"] == "Hong Kong SAR, China"
-        assert subs["Amer Sports Korea Ltd."]["jurisdiction"] == "South Korea"                    # footnote "1"
-        assert subs["Amer Sports Winter & Outdoor Company"]["jurisdiction"] == "United States"
-        assert "Amer Sports Company" not in subs        # the filer's own name, as everywhere
-
-    def test_borr_branches_and_an_inverted_place(self):
-        subs = _by_name(_read("borr_ex81.htm", "Borr Drilling Ltd"))
-        assert len(subs) == 92
-        assert subs["Borr Arabia Well Drilling LLC"]["jurisdiction"] == "Kingdom of Saudi Arabia"
-        assert jurisdiction_country(subs["Borr (Mauritius) Holdings Limited"]["jurisdiction"]) == "MU"
-        assert subs["Borr Gerd Inc. (Cameroon Branch)"]["jurisdiction"] == "Cameroon"
-
-    def test_polestar_lines_end_in_a_stake(self):
-        subs = _read("polestar_ex81.htm", "Polestar Automotive Holding UK PLC")
-        assert len(subs) == 34
-        assert subs[0] == {"name": "Polestar Holding AB", "jurisdiction": "Sweden", "stake_percent": 100.0}
-
-    def test_no_image_no_text_layer(self):
-        layer = '<font style="font-size:1pt;color:white">Alpha Ltd. Bermuda  Beta GmbH Germany  Gamma AB Sweden</font>'
-        assert len(ex._hidden_text_list(f"<img src='p1.jpg'>{layer}", None)) == 3
-        assert ex._hidden_text_list(layer, None) == []
+    def test_only_in_a_declared_subsidiary_exhibit(self):
+        rows = "".join(f"<tr><td>{c}</td></tr>" for c in (
+            "France", "Alpha SAS", "Germany", "Beta GmbH", "Italy", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"))
+        assert len(parse_exhibit(_doc(f"<table>{rows}</table>"))) == 5
+        assert parse_exhibit(_doc(f"<table>{rows}</table>", None)) == []
 
 
 class TestPlaces:
@@ -411,7 +362,5 @@ def test_a_table_the_reader_handles_is_read_as_before():
     # every new reader runs only when the table reader found nothing
     apple = (FX / "apple_ex21.htm").read_text()
     with patch.object(ex, "_country_rows_list", side_effect=AssertionError("ran")), \
-         patch.object(ex, "_line_list", side_effect=AssertionError("ran")), \
-         patch.object(ex, "_unplaced_table_list", side_effect=AssertionError("ran")), \
-         patch.object(ex, "_hidden_text_list", side_effect=AssertionError("ran")):
+         patch.object(ex, "_line_list", side_effect=AssertionError("ran")):
         assert parse_exhibit(apple, "Apple Inc.")
