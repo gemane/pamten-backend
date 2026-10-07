@@ -929,7 +929,8 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         written, skipped_unmapped, co_owner_edges = 0, 0, 0
         nested = unresolved_parents = detached = 0
         scraped: list[dict] = []
-        filing_type = "EX-21" if data["form"] == "10-K" else "EX-8.1"
+        # a 20-F can point to an earlier F-1's Exhibit 21.1 (list_from_earlier_filing)
+        filing_type = "EX-21" if data["form"] == "10-K" or data.get("exhibit") == "21" else "EX-8.1"
         basis_of = {"indent": "ex21_indent", "heading": "ex21_heading"}
         # Nodes first, edges second: a co-holder a cell names is resolved
         # among the LISTED subsidiaries (by the name as filed) or as the filer
@@ -1022,7 +1023,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         notes = [f"{nested} under an intermediate parent" if nested else "",
                  f"{co_owner_edges} co-holder edges" if co_owner_edges else "",
                  f"{detached} filer edges withdrawn" if detached else "",
-                 f"{stale} no longer listed (dimmed)" if stale else ""]
+                 f"{stale} no longer listed (dimmed)" if stale else "",
+                 (f"list of {data['filing_date']}, re-affirmed by the 20-F of {data['confirmed_on']}"
+                  if data.get("confirmed_by") else "")]
         if any(notes):
             run["note"] = ", ".join(n for n in notes if n)
         return {"status": "ok", "company": company, "entity_id": company_id,
@@ -1030,7 +1033,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 "total": written, "unmapped_jurisdictions": skipped_unmapped,
                 "nested": nested, "unresolved_parents": unresolved_parents,
                 "detached": detached, "co_owner_edges": co_owner_edges,
-                "stale": stale, "scraped": scraped}
+                "stale": stale, "scraped": scraped,
+                **({"source_url": data["url"], "confirmed_by": data["confirmed_by"],
+                    "confirmed_on": data["confirmed_on"]} if data.get("confirmed_by") else {})}
 
 
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:

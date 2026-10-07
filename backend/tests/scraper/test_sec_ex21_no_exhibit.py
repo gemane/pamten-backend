@@ -13,7 +13,7 @@ import pytest
 
 from app.scraper import sec_ex21 as ex
 from app.scraper.sec_ex21 import (exhibit_candidates, fetch_subsidiaries, jurisdiction_country,
-                                  note_in_main_document, parse_exhibit)
+                                  parse_exhibit)
 
 FX = Path(__file__).parent / "fixtures"
 ABI = "Anheuser-Busch InBev SA/NV"
@@ -30,6 +30,9 @@ class TestExhibitFilenames:
         ("20-F", ["erj-20251231.htm", "embj-20251231xex8.htm", "embj-20251231xexx121.htm"],
          ["embj-20251231xex8.htm"]),
         ("20-F", ["a-ex85.htm", "a-ex80.htm", "a-ex2_42.htm"], []),     # not 8.1
+        # 38 of the 2026 20-Fs: Allot, Compugen, Caesarstone, Canada Goose …
+        ("20-F", ["exhibit_12-1.htm", "exhibit_8-1.htm"], ["exhibit_8-1.htm"]),
+        ("20-F", ["exhibit81fy2026.htm", "exhibit121fye26.htm"], ["exhibit81fy2026.htm"]),
     ])
     def test_the_names_filing_agents_write(self, form, names, want):
         with patch("app.scraper.sec_ex21._get", return_value=_index(*names)):
@@ -107,39 +110,177 @@ def test_a_headerless_table_after_an_associates_heading_is_not_taken():
 
 class TestListInTheMainDocument:
     FILING = ("20-F", "0001193125-26-088105", "2026-03-03", "2025-12-31")
+    URL = "https://www.sec.gov/Archives/edgar/data/1668717/000119312526088105/d65314d20f.htm"
 
     def test_the_note_the_exhibit_index_points_to(self):
-        index = _index("d65314d20f.htm", "d65314dex121.htm", "d65314dex215.htm",
-                       "0001193125-26-088105-index.html")
-        with patch("app.scraper.sec_ex21._get", return_value=index), \
-             patch("app.scraper.sec_ex21._get_text", return_value=_abinbev_main_document()):
-            got = note_in_main_document("1668717", self.FILING, ABI)
+        with patch("app.scraper.sec_ex21._main_document", return_value=(self.URL, _abinbev_main_document())):
+            got = ex.list_from_main_document("1668717", self.FILING, ABI)
         assert len(got["subsidiaries"]) == 65 and got["form"] == "20-F"
-        assert got["url"].endswith("/d65314d20f.htm#note-34")
-        assert got["filing_date"] == "2026-03-03"
+        assert got["url"] == self.URL + "#note-34" and got["filing_date"] == "2026-03-03"
 
     def test_nothing_when_the_index_does_not_say_so(self):
-        with patch("app.scraper.sec_ex21._get", return_value=_index("x20f.htm")), \
-             patch("app.scraper.sec_ex21._get_text", return_value=(FX / "abinbev_20f_note34.htm").read_text()):
-            assert note_in_main_document("1", self.FILING, ABI) is None
+        note_only = "<html><body>" + (FX / "abinbev_20f_note34.htm").read_text()
+        with patch("app.scraper.sec_ex21._main_document", return_value=(self.URL, note_only)):
+            assert ex.list_from_main_document("1", self.FILING, ABI) is None
 
     def test_a_10k_is_never_searched(self):
-        with patch("app.scraper.sec_ex21._get", side_effect=AssertionError("fetched")):
-            assert note_in_main_document("1", ("10-K", *self.FILING[1:]), ABI) is None
+        with patch("app.scraper.sec_ex21._main_document", side_effect=AssertionError("fetched")):
+            assert ex.list_from_main_document("1", ("10-K", *self.FILING[1:]), ABI) is None
+
+    def test_a_reference_to_an_earlier_filing_goes_there(self):
+        doc = ("<p>8.1 List of Subsidiaries (incorporated herein by reference to the Annual Report on "
+               "Form 20-F filed with the SEC on March 24, 2022) 11.1 Insider Trading Policy</p>")
+        with patch("app.scraper.sec_ex21._main_document", return_value=(self.URL, doc)), \
+             patch("app.scraper.sec_ex21.list_from_earlier_filing", return_value={"x": 1}) as earlier:
+            assert ex.list_from_main_document("1", self.FILING, ABI) == {"x": 1}
+        assert earlier.call_args.kwargs == {"confirmed_by": self.URL, "confirmed_on": "2026-03-03"}
 
     def test_fetch_falls_back_to_it_when_no_exhibit_parses(self):
         with patch("app.scraper.sec_ex21.annual_filings", return_value=[self.FILING]), \
              patch("app.scraper.sec_ex21.exhibit_candidates",
                    return_value=[{"url": "u/d65314dex215.htm", "form": "20-F", "filing_date": "2026-03-03"}]), \
              patch("app.scraper.sec_ex21._get_text", return_value="<table><tr><td>Notes</td></tr></table>"), \
-             patch("app.scraper.sec_ex21.note_in_main_document", return_value={"subsidiaries": [1]}) as note:
+             patch("app.scraper.sec_ex21.list_from_main_document", return_value={"subsidiaries": [1]}) as main:
             assert fetch_subsidiaries("1668717", ABI) == {"subsidiaries": [1]}
-        note.assert_called_once_with("1668717", self.FILING, ABI)
+        main.assert_called_once_with("1668717", self.FILING, ABI)
 
     def test_no_annual_filing_is_none_without_fetching_anything_else(self):
         with patch("app.scraper.sec_ex21.annual_filings", return_value=[]), \
              patch("app.scraper.sec_ex21.exhibit_candidates", side_effect=AssertionError("fetched")):
             assert fetch_subsidiaries("1065521", "SoftBank Group Corp.") is None
+
+
+# Real 8.1 entries from 2026 20-Fs (the measurement of 2026-10-07).
+class TestTheEntry:
+    @pytest.mark.parametrize("text,want", [
+        # a reference inside the entry is not the next entry
+        ("8.1 Subsidiaries of the registrant (incorporated by reference to Exhibit 21.1 to our registration "
+         "statement on Form F-1 (File No. 333-286211) filed with the SEC on March 28, 2025) 11.1 Code of Ethics",
+         "Exhibit 21.1"),
+        # a table row: "8.1 March 9, 2023" is a column, not the next entry
+        ("8.1 List of Subsidiaries. 20-F 001-41316 8.1 March 9, 2023 11.1 Insider Trading Compliance Policy",
+         "March 9, 2023"),
+    ])
+    def test_it_runs_to_the_next_entry(self, text, want):
+        entry = ex.exhibit_entry(text)
+        assert want in entry and "Insider" not in entry and "Code of Ethics" not in entry
+
+    def test_an_entry_about_something_else_is_skipped(self):
+        assert ex.exhibit_entry("8.1 % per annum. The loan was fully repaid.") is None
+
+    @pytest.mark.parametrize("entry,note", [
+        ("List of significant subsidiaries (included in note 34 to our audited consolidated financial "
+         "statements included in this Form 20-F).", 34),                                           # AB InBev
+        ("List of subsidiaries of BW LPG Limited is set forth in Note 26 to the audited consolidated "
+         "financial statements for the year ended on 31 December 2025.", 26),                      # BW LPG
+        ("List of Significant Subsidiaries ( see Note 2 to the Consolidated Financial Statements)", 2),  # Ferroglobe
+        ("List of Subsidiaries (incorporated by reference to Note 3 to our Audited Consolidated Financial "
+         "Statements filed with this Annual Report on Form 20-F).", 3),                     # Santander Brasil
+        ("Subsidiaries (incorporated by reference to Exhibit 8.1 of our Annual Report on Form 20-F filed "
+         "with the Securities and Exchange Commission on April 2, 2024)", None),            # an earlier filing
+        ("List of subsidiaries of Brookfield Renewable Corporation (incorporated by reference to Item 4.C)", None),
+        # the note of ANOTHER filing is not one of this filing's notes
+        ("Subsidiaries (filed as Exhibit 8.1 to our Form 20-F on March 3, 2022, see Note 2 thereto)", None),
+    ])
+    def test_the_note_it_points_to(self, entry, note):
+        assert ex._note_of_entry(entry) == note
+
+
+def test_a_note_list_must_be_places_nearly_throughout():
+    # Novartis' note 31 read the CITY column as jurisdiction: 70 % mapped, wrong
+    good = [{"name": f"Co {i}", "jurisdiction": "Germany"} for i in range(10)]
+    cities = [{"name": f"Co {i}", "jurisdiction": "London 5" if i < 3 else "Germany"} for i in range(10)]
+    assert ex._mostly_places(good) and not ex._mostly_places(cities) and not ex._mostly_places([])
+
+
+class TestTheReference:
+    @pytest.mark.parametrize("entry,forms,dates,exhibit", [
+        ("List of Subsidiaries of Can-Fite BioPharma Ltd. (incorporated herein by reference to the Annual "
+         "Report on Form 20-F filed with the SEC on March 24, 2022)", ["20-F"], ["2022-03-24"], None),
+        ("List of Significant Subsidiaries of the Registrant (incorporated herein by reference to Exhibit 21.1 "
+         "to the Form F-1 filed on June 6, 2025 (File No. 333-286214))", ["F-1"], ["2025-06-06"], "21.1"),
+        ("List of Subsidiaries. 20-F 001-41316 8.1 March 9, 2023", ["20-F"], ["2023-03-09"], "8.1"),
+        ("List of subsidiaries of the registrant 20-F 001-39374 8.1 03/15/21", ["20-F"], ["2021-03-15"], "8.1"),
+    ])
+    def test_what_an_entry_says(self, entry, forms, dates, exhibit):
+        ref = ex.earlier_filing_reference(entry)
+        assert ref["forms"] == forms and ref["exhibit"] == exhibit
+        assert [d.isoformat() for d in ref["dates"]][:1] == dates
+
+    def test_a_numeric_date_is_tried_both_ways(self):
+        # Alvotech "01.03.2023": January 3 in the US, March 1 in Europe
+        assert {d.isoformat() for d in ex._dates("01.03.2023")} == {"2023-01-03", "2023-03-01"}
+
+    def test_a_footnote_mark_is_read_through(self):
+        text = ("8.1 List of Subsidiaries (21) 10.3 Amendment … (21) Incorporated by reference to Exhibit "
+                "21.1 to the Registration Statement on Form F-1 filed with the SEC on March 3, 2021.")
+        ref = ex.earlier_filing_reference("List of Subsidiaries (21)", text)
+        assert ref["forms"] == ["F-1"] and ref["exhibit"] == "21.1"
+        assert ref["dates"][0].isoformat() == "2021-03-03"
+
+    def test_an_accession_number_and_a_file_number(self):
+        ref = ex.earlier_filing_reference("List of Subsidiaries and Associate. 20-F 0001641172-25-006627")
+        assert ref["accession"] == "0001641172-25-006627"
+        ref = ex.earlier_filing_reference("(incorporated herein by reference to Exhibit 21.1 to the Company's "
+                                          "Form F-1 (File No. 333-286471))")
+        assert ref["file_no"] == "333-286471" and ref["dates"] == []
+
+
+FILINGS = [  # (form, accession, filed, report date, file number)
+    ("20-F", "0000000001-26-000001", "2026-03-20", "2025-12-31", "001-40408"),
+    ("20-F/A", "0000000001-22-000009", "2022-03-24", "2021-12-31", "001-40408"),
+    ("20-F", "0000000001-22-000008", "2022-03-24", "2021-12-31", "001-40408"),
+    ("20-F", "0000000001-21-000005", "2021-03-30", "2020-12-31", "001-40408"),
+    ("F-1/A", "0000000001-25-000003", "2025-06-06", "", "333-286471"),
+    ("F-1", "0000000001-25-000002", "2025-05-02", "", "333-286471"),
+]
+
+
+class TestResolving:
+    def _resolve(self, entry):
+        with patch("app.scraper.sec_ex21._all_filings", return_value=FILINGS):
+            return [a for _f, a, _d in ex.resolve_reference("1", ex.earlier_filing_reference(entry))]
+
+    def test_by_form_and_date_the_original_before_its_amendment(self):
+        assert self._resolve("Annual Report on Form 20-F filed on March 24, 2022") == \
+            ["0000000001-22-000008", "0000000001-22-000009"]
+
+    def test_a_day_either_side(self):
+        assert self._resolve("Form 20-F filed on March 25, 2022")[0] == "0000000001-22-000008"
+
+    def test_the_year_ended_is_the_report_date(self):
+        # Ceragon: "Annual Report on Form 20-F for the year ended December 31, 2020"
+        assert self._resolve("Form 20-F for the year ended December 31, 2020") == ["0000000001-21-000005"]
+
+    def test_by_file_number_when_no_date_the_original_first(self):
+        got = self._resolve("Exhibit 21.1 to the Company's Form F-1 (File No. 333-286471)")
+        assert got == ["0000000001-25-000002", "0000000001-25-000003"]   # the original F-1 first
+
+    def test_by_accession(self):
+        assert self._resolve("20-F 0000000001-21-000005") == ["0000000001-21-000005"]
+
+    def test_the_wrong_form_never_matches(self):
+        assert self._resolve("Form F-1 filed on March 24, 2022") == []
+
+
+class TestTheEarlierList:
+    def test_dated_by_the_earlier_filing_confirmed_by_this_one(self):
+        with patch("app.scraper.sec_ex21.resolve_reference",
+                   return_value=[("F-1", "0000000001-25-000002", "2025-05-02")]), \
+             patch("app.scraper.sec_ex21.exhibit_candidates",
+                   return_value=[{"url": "https://www.sec.gov/x/ex21-1.htm"}]) as cands, \
+             patch("app.scraper.sec_ex21._get_text", return_value=(FX / "embraer_ex8.htm").read_text()):
+            got = ex.list_from_earlier_filing("1", "Exhibit 21.1 to our Form F-1 filed on May 2, 2025", "",
+                                              "Embraer S.A.", confirmed_by="https://www.sec.gov/y/20f.htm",
+                                              confirmed_on="2026-03-30")
+        assert len(got["subsidiaries"]) == 37 and got["filing_date"] == "2025-05-02"
+        assert got["exhibit"] == "21" and got["url"].endswith("ex21-1.htm")
+        assert (got["confirmed_by"], got["confirmed_on"]) == ("https://www.sec.gov/y/20f.htm", "2026-03-30")
+        assert cands.call_args.args[1] == "10-K"          # the ex-21 patterns first
+
+    def test_nothing_when_the_filing_cannot_be_found(self):
+        with patch("app.scraper.sec_ex21.resolve_reference", return_value=[]):
+            assert ex.list_from_earlier_filing("1", "Form 20-F filed on May 2, 2015", "") is None
 
 
 @pytest.mark.parametrize("raw,clean", [("Acctel, S.A. de C.V. (*)", "Acctel, S.A. de C.V."),
@@ -161,3 +302,32 @@ def test_unilevers_companies_act_list_is_not_read():
     # its 8.1 is the full s.409 list — subsidiaries, associates and joint
     # ventures in flowing columns; reading nothing beats taking associates
     assert parse_exhibit((FX / "unilever_a081.htm").read_text(), "Unilever PLC") == []
+
+
+def test_rows_before_any_table_do_not_crash_the_parser():
+    # a note cut from a 20-F can start inside a table: </tr> with no <table>
+    html = ("<tr><td>Acme GmbH</td><td>Germany</td></tr><tr><td>Beta SA</td><td>France</td></tr>"
+            "<tr><td>Gamma BV</td><td>Netherlands</td></tr></table>")
+    assert {s["name"] for s in parse_exhibit(html)} == {"Acme GmbH", "Beta SA", "Gamma BV"}
+
+
+@pytest.mark.parametrize("place,code", [
+    ("The Republic of The Marshall Islands", "MH"),     # Scorpio Tankers
+    ("São Paulo – Brazil", "BR"),                       # Bradesco: city – country
+    ("Luxembourg – G. Ducado", "LU"),                   # the first part when the last is no place
+    ("Panamá", "PA"),                                   # an accent
+    ("Republic of China", None),                        # Taiwan — never stripped to China
+    ("November 9, 2000", None),
+])
+def test_places_as_filers_write_them(place, code):
+    assert jurisdiction_country(place) == code
+
+
+def test_a_date_of_incorporation_column_is_not_the_jurisdiction():
+    # Rezolve: Name | Date of Incorporation | Place of Incorporation | % —
+    # "incorporat" matched the date column, and 50 dates became places
+    subs = parse_exhibit((FX / "rezolve_ex81.htm").read_text(), "Rezolve AI PLC")
+    assert len(subs) == 50
+    assert all(jurisdiction_country(s["jurisdiction"]) for s in subs)
+    assert {"name": "Rezolve Taiwan Inc.", "jurisdiction": "Taiwan"}.items() <= \
+        next(s for s in subs if s["name"] == "Rezolve Taiwan Inc.").items()

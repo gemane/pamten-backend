@@ -317,3 +317,25 @@ def test_no_list_says_why(it_db, filings, status):
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=None), \
          patch("app.scraper.sec_ex21.annual_filings", return_value=filings):
         assert runner.run_sec_ex21("Apple")["status"] == status
+
+
+def test_a_list_from_an_earlier_f1_is_dated_by_it_and_confirmed_by_the_20f(it_db):
+    # "8.1 Subsidiaries (incorporated by reference to Exhibit 21.1 to our Form
+    # F-1 filed on May 2, 2025)" — the list describes the group as it was then
+    data = {"subsidiaries": [{"name": "Kandal Sub Pte. Ltd.", "jurisdiction": "Singapore"}],
+            "form": "F-1", "filing_date": "2025-05-02", "exhibit": "21",
+            "url": "https://www.sec.gov/Archives/edgar/data/1/000000000125000002/ex21-1.htm",
+            "confirmed_by": "https://www.sec.gov/Archives/edgar/data/1/000000000126000001/x20f.htm",
+            "confirmed_on": "2026-04-30"}
+    _apple(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        result = runner.run_sec_ex21("Apple")
+    assert result["status"] == "ok" and result["confirmed_on"] == "2026-04-30"
+    assert result["confirmed_by"].endswith("x20f.htm") and result["source_url"].endswith("ex21-1.htm")
+    row = it_db.run_command(
+        "MATCH (:Entity {id:'apple'})-[r:OWNS]->(b:Entity {name: 'Kandal Sub Pte. Ltd.'}) "
+        "RETURN r.filing_type AS ft, r.source_date AS asof, r.source_url AS url")
+    assert row == [{"ft": "EX-21", "asof": "2025-05-02", "url": data["url"]}]
+    # record_run keeps a finished run's note in `error` (run_log._safe_finish)
+    note = it_db.run_command("MATCH (r:ScrapeRun {source: 'sec-ex21'}) RETURN r.error AS note")
+    assert "re-affirmed by the 20-F of 2026-04-30" in (note[0]["note"] or "")

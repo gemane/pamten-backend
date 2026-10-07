@@ -44,12 +44,14 @@ HISTORY_MAX_OLDER_PAGES = 3
 
 # Filenames as filing agents write them (measured 2026-10-07): "ex21", "ex-21.1",
 # Workiva's "meli-20251231xexx2101" (exx = exhibit, 2101 = 21.01), and for the
-# 20-F "ex8_1", "dex81", or Embraer's bare "xex8". The 8 may not run on into
+# 20-F "ex8_1", "dex81", Embraer's bare "xex8", and "exhibit_8-1" / "exhibit81"
+# (38 of the 1,012 20-Fs of 2026). The 8 may not run on into
 # another digit ("ex85" is not 8.1).
 _EX21_NAMES = (re.compile(r"ex+[-._]?21", re.I), re.compile(r"exhibit[-._]?21", re.I),
                re.compile(r"subsidiar", re.I))
-_EX8_NAMES = (re.compile(r"ex+[-._]?0?8(?:[-._]?0?1)?(?!\d)", re.I), re.compile(r"dex8", re.I),
-              re.compile(r"subsidiar", re.I))
+_EX8_NAMES = (re.compile(r"ex+[-._]?0?8(?:[-._]?0?1)?(?!\d)", re.I),
+              re.compile(r"exhibit[-._]?0?8(?:[-._]?0?1)?(?!\d)", re.I),   # exhibit_8-1, exhibit81fy2026
+              re.compile(r"dex8", re.I), re.compile(r"subsidiar", re.I))
 
 
 def annual_filings(cik: str, include_older: bool = False) -> list[tuple[str, str, str, str]]:
@@ -219,12 +221,15 @@ class _TableTextParser(HTMLParser):
             self._flush_free()
 
     def _orphan(self) -> list:
-        # rows outside any <table> (malformed HTML) — collect as one table
-        if not self.tables or self.tables[-1] is not self.__dict__.setdefault(
-                "_orphans", []):
-            self.tables.append(self.__dict__["_orphans"])
-            self.sequence.append(("table", self.__dict__["_orphans"]))
-        return self.__dict__["_orphans"]
+        # rows outside any <table> (malformed HTML, or an excerpt that starts
+        # inside one — a note cut from a 20-F) — collect as one table. The
+        # list used to be created only when a table had come before, so rows
+        # before the first table raised KeyError.
+        orphans = self.__dict__.setdefault("_orphans", [])
+        if not self.tables or self.tables[-1] is not orphans:
+            self.tables.append(orphans)
+            self.sequence.append(("table", orphans))
+        return orphans
 
     def _flush_free(self) -> None:
         text = re.sub(r"\s+", " ", "".join(self._free)).strip()
@@ -251,6 +256,9 @@ _H_OWNERSHIP = re.compile(r"ownership|percent|%|owned|interest", re.I)
 # registered — Bank of America has both columns, and taking Location wrote
 # "San Francisco, CA" as a jurisdiction.
 _H_NOT_JURISDICTION = re.compile(r"location|address|city", re.I)
+# "Date of Incorporation" names a DATE column ("November 9, 2000"), though it
+# says "incorporat": Rezolve, Sentage and CCSC wrote their dates as places.
+_H_DATE = re.compile(r"\s*date\b", re.I)
 
 _PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%\s*$")
 # Under a column the filer CALLS ownership, a bare "100" is a percentage too
@@ -288,6 +296,7 @@ def _find_header(table: list[list[str]]) -> dict | None:
                 continue
             if jur_i is None and _H_JURISDICTION.search(cell) \
                     and not _H_NOT_JURISDICTION.search(cell) \
+                    and not _H_DATE.match(cell) \
                     and jurisdiction_country(cell) is None:
                 jur_i = i
             elif own_i is None and _H_OWNERSHIP.search(cell):
@@ -738,6 +747,23 @@ def jurisdiction_country(jurisdiction: str | None) -> str | None:
     if "," in cleaned:
         if code := jurisdiction_country(cleaned.rsplit(",", 1)[1]):
             return code
+    # "São Paulo – Brazil" (Bradesco), "Luxembourg – G. Ducado": a spaced dash
+    # parts a city or a description from the country — the last part, else the first.
+    parts = re.split(r"\s+[-\u2013\u2014]\s+", cleaned)
+    if len(parts) > 1:
+        for part in (parts[-1], parts[0]):
+            if code := jurisdiction_country(part):
+                return code
+    # "The Republic of the Marshall Islands" (Scorpio Tankers) — only with
+    # "the": "Republic of China" is Taiwan, not China.
+    if m := re.match(r"^republic of the\s+(.+)$", cleaned, re.I):
+        if code := jurisdiction_country(m.group(1)):
+            return code
+    # "Panamá" — accents are typography the country table does not carry
+    import unicodedata
+    plain = "".join(c for c in unicodedata.normalize("NFKD", cleaned) if not unicodedata.combining(c))
+    if plain != cleaned and (code := jurisdiction_country(plain)):
+        return code
     # Fallback: peel fused legal forms ("Kentucky limited liability company")
     # and retry — repeatedly, since forms stack ("X company limited").
     stripped = cleaned
@@ -843,32 +869,72 @@ def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
                     "filing_date": meta["filing_date"], "url": meta["url"]}
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
                  meta["url"])
-    return note_in_main_document(cik, filings[0], registrant)
+    return list_from_main_document(cik, filings[0], registrant)
 
 
-# "8.1  List of significant subsidiaries (included in note 34 to our audited
-# consolidated financial statements included in this Form 20-F)" — AB InBev's
-# exhibit index, with no Exhibit 8.1 file in the filing.
-_IN_NOTE = re.compile(
-    r"8\.1\W{0,20}list of[^()]{0,80}subsidiar[^()]{0,40}\(\s*included in note\s+(\d{1,3})",
-    re.I)
+# The 8.1 entry of a 20-F's exhibit index, up to the next exhibit number:
+# "8.1 List of significant subsidiaries (included in note 34 to our audited
+# consolidated financial statements …)" (AB InBev), "… is set forth in Note 26"
+# (BW LPG), "… (see Note 2 …)" (Ferroglobe), "… (set forth in Note 38 …)" (HSBC).
+_EXHIBIT_ENTRY = re.compile(r"(?<![\d.])8\.1(?!\d)\W(.{0,450})", re.S)
+# The next entry's number: "11.1 Insider Trading Policy", "12.1* Certification"
+# — followed by its description, never "Exhibit 21.1 to our Form F-1" (a
+# reference inside this entry) nor a table column "8.1 03/16/2023".
+# The index is in ascending order, so the next entry is numbered 9 or above —
+# a "8.1 March 9, 2023" column of the same row is not one.
+_NEXT_EXHIBIT = re.compile(r"(?<!exhibit)(?<!exhibits)\s(?:9|[1-9]\d)\.\d{1,2}[*#+\u2020]*\s+(?=[A-Z])",
+                           re.I)
+_NOTE_NUMBER = re.compile(r"\bnotes?\s+(\d{1,3})\b", re.I)
+# …but not a reference to ANOTHER filing ("Exhibit 8.1 to our Form 20-F filed
+# on …"): that list lives in the earlier filing (``earlier_filing_reference``).
+_OTHER_FILING = re.compile(r"exhibit\s+\d|filed (?:on|with)|form\s+(?:20-F|F-1|S-1|F-4)\b", re.I)
+_THIS_FILING = re.compile(r"(?:this|the) (?:annual report|form 20-f)|included herein", re.I)
+
+
+def exhibit_entry(text: str) -> str | None:
+    """The text of the 8.1 entry that names subsidiaries, or None."""
+    for m in _EXHIBIT_ENTRY.finditer(text):
+        entry = m.group(1)
+        nxt = _NEXT_EXHIBIT.search(entry)
+        entry = entry[:nxt.start()] if nxt else entry
+        if re.search(r"subsidiar", entry, re.I):
+            return entry
+    return None
+
+
+def _note_of_entry(entry: str | None) -> int | None:
+    """The note number an 8.1 entry points to inside THIS filing."""
+    if not entry or (_OTHER_FILING.search(entry) and not _THIS_FILING.search(entry)):
+        return None
+    m = _NOTE_NUMBER.search(entry)
+    return int(m.group(1)) if m else None
 
 
 def _note_heading(n: int) -> re.Pattern:
-    """A note's heading in the HTML: ">34. AB InBev companies"."""
-    return re.compile(rf">\s*{n}\.(?:\s|&#160;|&nbsp;|\xa0)*[A-Z]")
+    """A note's heading in the HTML: ">34. AB InBev companies", ">Note 26 –
+    Subsidiaries", ">32 Group companies" — the number at the start of an
+    element, then punctuation or space, then (past any tags) a capital."""
+    sep = r"(?:\s|&#160;|&nbsp;|\xa0|[.:\u2013\u2014-])"
+    return re.compile(rf">\s*(?:note\s*)?{n}{sep}+(?:<[^>]+>\s*)*[A-Z]", re.I)
 
 
-def note_in_main_document(cik: str, filing: tuple, registrant: str | None = None) -> dict | None:
-    """A 20-F whose subsidiary list is a note of the financial statements, not
-    an exhibit file: the exhibit index says so ("included in note 34"), the
-    note is found by its heading (the LAST one — a contents page comes first)
-    and read up to the next note, with the exhibit parser. The latest filing
-    only: a main document is ~10 MB, so the multi-year history does not do
-    this. None when the filing says nothing of the kind."""
-    form, accession, filed, _period = filing
-    if form != "20-F":
-        return None
+#: Share of a note list's jurisdictions that must be places. Stricter than an
+#: exhibit's gate (half): a note holds other tables too. Novartis' note 31 read
+#: 30 of several hundred rows with the CITY column as jurisdiction ("East
+#: Hanover, NJ", "London 5") and a header row as a company — 70 % mapped,
+#: and wrong; AB InBev, BR Partners and Trinity Biotech map 100 %.
+_NOTE_PLACES = 0.9
+
+
+def _mostly_places(subs: list[dict]) -> bool:
+    """The content gate for a list read from a note of the main document."""
+    return bool(subs) and \
+        sum(1 for e in subs if jurisdiction_country(e["jurisdiction"])) >= _NOTE_PLACES * len(subs)
+
+
+def _main_document(cik: str, form: str, accession: str) -> tuple[str, str] | None:
+    """(url, html) of a filing's main document — the one named like the form,
+    else the largest that is not an exhibit or an XBRL page."""
     base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}"
     items = (_get(f"{base}/index.json").get("directory") or {}).get("item") or []
     docs = [it for it in items if (it.get("name") or "").lower().endswith((".htm", ".html"))
@@ -876,15 +942,45 @@ def note_in_main_document(cik: str, filing: tuple, registrant: str | None = None
             and not re.search(r"ex[-._]?\d|-index", it.get("name") or "", re.I)]
     if not docs:
         return None
-    main = next((d for d in docs if "20f" in d["name"].lower().replace("-", "")),
+    tag = form.lower().replace("-", "")
+    main = next((d for d in docs if tag in d["name"].lower().replace("-", "")),
                 max(docs, key=lambda d: int(d.get("size") or 0)))
     url = f"{base}/{main['name']}"
-    doc = _get_text(url)
-    text = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", doc)))
-    m = _IN_NOTE.search(text)
-    if not m:
+    return url, _get_text(url)
+
+
+def list_from_main_document(cik: str, filing: tuple, registrant: str | None = None) -> dict | None:
+    """A 20-F with no subsidiary exhibit file: what its exhibit index says
+    under 8.1 decides where the list is (measured on all 1,012 20-Fs of 2026):
+    - a note of this filing (``note_in_main_document``), or
+    - an EARLIER filing — "incorporated by reference to Exhibit 8.1 of our
+      Form 20-F filed on March 29, 2018", "Exhibit 21.1 to our Form F-1 (File
+      No. 333-286211)" — 19 % of all 20-Fs (``list_from_earlier_filing``).
+    The latest filing only: a main document is ~10 MB, so the multi-year
+    history does not do this."""
+    form, accession, filed, _period = filing
+    if form != "20-F":
         return None
-    n = int(m.group(1))
+    got = _main_document(cik, form, accession)
+    if not got:
+        return None
+    url, doc = got
+    text = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", doc)))
+    entry = exhibit_entry(text)
+    if entry is None:
+        return None
+    n = _note_of_entry(entry)
+    if n is not None:
+        return note_in_main_document(url, doc, n, form, filed, registrant)
+    return list_from_earlier_filing(cik, entry, text, registrant,
+                                    confirmed_by=url, confirmed_on=_iso_date(filed))
+
+
+def note_in_main_document(url: str, doc: str, n: int, form: str, filed: str,
+                          registrant: str | None = None) -> dict | None:
+    """The list in note ``n`` of the main document: found by its heading (the
+    LAST one — a contents page comes first), read up to the next note with the
+    exhibit parser, and kept only if it passes the note gate."""
     heads = list(_note_heading(n).finditer(doc))
     if not heads:
         log.info("%s: note %d named in the exhibit index, heading not found", url, n)
@@ -892,10 +988,152 @@ def note_in_main_document(cik: str, filing: tuple, registrant: str | None = None
     start = heads[-1].start()
     nxt = _note_heading(n + 1).search(doc, start)
     subs = parse_exhibit(doc[start:nxt.start() if nxt else len(doc)], registrant)
-    if not subs:
+    if not _mostly_places(subs):
         return None
     return {"subsidiaries": subs, "form": form, "filing_date": _iso_date(filed),
             "url": f"{url}#note-{n}"}
+
+
+# ── a list incorporated by reference to an earlier filing ─────────────────────
+
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december")
+_MONTH_RE = "|".join(_MONTHS)
+_DATE_MDY = re.compile(rf"\b({_MONTH_RE})\s+(\d{{1,2}}),?\s+(\d{{4}})", re.I)
+_DATE_DMY = re.compile(rf"\b(\d{{1,2}})\s+({_MONTH_RE}),?\s+(\d{{4}})", re.I)
+_DATE_NUM = re.compile(r"\b(\d{1,2})[/.](\d{1,2})[/.](\d{4}|\d{2})\b(?![/.]\d)")
+_REF_FORM = re.compile(r"\b(?:form\s+)?(20-F|F-1|F-3|F-4|S-1|S-4|10-K)(?:/A)?\b", re.I)
+_REF_EXHIBIT = re.compile(r"exhibit\s+(\d{1,2}\.\d{1,2})", re.I)
+_REF_TABLE_EXHIBIT = re.compile(r"\b(\d{1,2}\.\d{1,2})\s+(?:\d{1,2}[/.]\d{1,2}[/.]\d{2,4}|"
+                                rf"(?:{_MONTH_RE})\s)", re.I)
+_REF_ACCESSION = re.compile(r"\b(\d{10}-\d{2}-\d{6})\b")
+_REF_FILE_NO = re.compile(r"\b((?:333|001|000)-\d{5,6})\b")
+_FOOTNOTE = re.compile(r"\((\d{1,2})\)")
+
+
+def _dates(text: str) -> list:
+    """Every date the text states, as datetime.date — a numeric one both ways
+    (05/03/2023 is March 5 in Europe, May 3 in the US; the filing that exists
+    decides), two-digit years as 20xx."""
+    import datetime as dt
+    out = []
+    for m in _DATE_MDY.finditer(text):
+        try:
+            out.append(dt.date(int(m.group(3)), _MONTHS.index(m.group(1).lower()) + 1, int(m.group(2))))
+        except ValueError:
+            pass
+    for m in _DATE_DMY.finditer(text):
+        try:
+            out.append(dt.date(int(m.group(3)), _MONTHS.index(m.group(2).lower()) + 1, int(m.group(1))))
+        except ValueError:
+            pass
+    for m in _DATE_NUM.finditer(text):
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        y += 2000 if y < 100 else 0
+        for month, day in ((a, b), (b, a)):
+            try:
+                out.append(dt.date(y, month, day))
+            except ValueError:
+                pass
+    return out
+
+
+def earlier_filing_reference(entry: str, text: str = "") -> dict:
+    """What an 8.1 entry says about the filing that holds the list: forms,
+    dates, exhibit number, accession, file number. A bare footnote mark
+    ("List of Subsidiaries (21)") is replaced by the footnote's own text,
+    found in the document ("(21) Incorporated by reference to …")."""
+    fn = _FOOTNOTE.search(entry)
+    if fn and not _REF_FORM.search(entry) and not _dates(entry) and text:
+        m = re.search(rf"\({fn.group(1)}\)\s*((?:incorporated|previously|filed|included)"
+                      rf"[^()]{{0,400}}(?:\([^()]*\)[^()]{{0,200}})?)", text, re.I)
+        if m:
+            entry = f"{entry} {m.group(1)}"
+    forms = [f.upper() for f in _REF_FORM.findall(entry)]
+    if re.search(r"annual report", entry, re.I) and "20-F" not in forms:
+        forms.append("20-F")
+    exhibit = _REF_EXHIBIT.search(entry) or _REF_TABLE_EXHIBIT.search(entry)
+    accession = _REF_ACCESSION.search(entry)
+    file_no = _REF_FILE_NO.search(entry)
+    return {"forms": forms, "dates": _dates(entry),
+            "exhibit": exhibit.group(1) if exhibit else None,
+            "accession": accession.group(1) if accession else None,
+            "file_no": file_no.group(1) if file_no else None,
+            "year_ended": bool(re.search(r"year ended", entry, re.I))}
+
+
+def _all_filings(cik: str) -> list[tuple[str, str, str, str, str]]:
+    """(form, accession, filing date, report date, file number) of every filing
+    on the submissions API, older pages included."""
+    try:
+        subs = _get(f"https://data.sec.gov/submissions/CIK{_cik10(cik)}.json")
+    except Exception as exc:  # noqa: BLE001 - a stale CIK is absent, not an error
+        log.info("submissions unavailable for CIK %s: %s", cik, exc)
+        return []
+    pages = [(subs.get("filings") or {}).get("recent") or {}]
+    for f in ((subs.get("filings") or {}).get("files") or [])[:HISTORY_MAX_OLDER_PAGES]:
+        try:
+            pages.append(_get(f"{SUBMISSIONS_URL}/{f['name']}"))
+        except Exception as exc:  # noqa: BLE001 - best-effort
+            log.warning("older submissions page %s failed: %s", f.get("name"), exc)
+            break
+    out = []
+    for p in pages:
+        n = len(p.get("form") or [])
+        out.extend(zip(p.get("form") or [], p.get("accessionNumber") or [], p.get("filingDate") or [],
+                       p.get("reportDate") or [""] * n, p.get("fileNumber") or [""] * n))
+    return out
+
+
+def resolve_reference(cik: str, ref: dict) -> list[tuple[str, str, str]]:
+    """The filings a reference can mean, best first: by accession; else the
+    stated form on the stated date (± a day, or the report date for "the year
+    ended …"); else, with no date, the stated form under the stated file
+    number, newest first. An original before its amendment."""
+    import datetime as dt
+    filings = _all_filings(cik)
+    if ref["accession"]:
+        return [(f, a, d) for f, a, d, _r, _n in filings if a == ref["accession"]]
+    families = {f.split("/")[0] for f in ref["forms"]}
+    if not families:
+        return []
+    hits = []
+    for day in ref["dates"]:
+        for f, a, d, rd, _n in filings:
+            if f.split("/")[0] not in families:
+                continue
+            near = abs((dt.date.fromisoformat(d) - day).days) <= 1
+            if near or (ref["year_ended"] and rd == day.isoformat()):
+                hits.append((f, a, d))
+    if not hits and not ref["dates"] and ref["file_no"]:
+        hits = sorted(((f, a, d) for f, a, d, _r, n in filings
+                       if f.split("/")[0] in families and n == ref["file_no"]),
+                      key=lambda h: h[2], reverse=True)
+    seen, out = set(), []
+    for h in sorted(hits, key=lambda h: "/A" in h[0]):
+        if h[1] not in seen:
+            seen.add(h[1])
+            out.append(h)
+    return out
+
+
+def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | None = None,
+                             confirmed_by: str | None = None,
+                             confirmed_on: str | None = None) -> dict | None:
+    """The list a 20-F incorporates by reference: the exhibit of the earlier
+    filing it names. Dated by THAT filing — the list describes the group as it
+    was then (the user's call, 2026-10-07) — with the current 20-F that
+    re-affirms it as ``confirmed_by`` / ``confirmed_on``."""
+    ref = earlier_filing_reference(entry, text)
+    exhibit_21 = (ref["exhibit"] or "").startswith("21")
+    for form, accession, filed in resolve_reference(cik, ref)[:4]:
+        for meta in exhibit_candidates(cik, "10-K" if exhibit_21 else "20-F", accession, filed):
+            subs = parse_exhibit(_get_text(meta["url"]), registrant)
+            if subs:
+                return {"subsidiaries": subs, "form": form, "filing_date": _iso_date(filed),
+                        "url": meta["url"], "exhibit": "21" if exhibit_21 else "8.1",
+                        "confirmed_by": confirmed_by, "confirmed_on": confirmed_on}
+    return None
 
 
 def _parse_first(candidates: list[dict]) -> tuple[list[dict], dict] | None:

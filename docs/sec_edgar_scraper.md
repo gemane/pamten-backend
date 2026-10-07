@@ -827,11 +827,38 @@ filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,796 subsidiarie
   country row is the jurisdiction, the registered office after " - " is cut off, the
   stake is read; reading stops at a heading or header about **associates, joint
   ventures or the equity method** — held, not controlled.
-- **No exhibit file, a note instead**: a 20-F's exhibit index can say "8.1 List of
-  significant subsidiaries (included in note 34 …)". The note is found by its
-  heading in the main document (the last one; a contents page comes first) and read
-  up to the next note; `source_url` ends `#note-34`. The latest filing only — a main
-  document is ~10 MB, so `sec-ex21-history` does not do this.
+- **Measured on all 1,012 20-Fs filed in 2026** (2026-10-07), where a 20-F puts its
+  list: an exhibit file 51 %; **an earlier filing it incorporates by reference** 19 %;
+  an exhibit file the parser could not read 7 %; a filename the patterns missed 4 %;
+  the main document (a note or Item 4.C) 3 %; nothing found 13 %. Through the code
+  after these fixes: **702 of 1,004 filers read (70 %, from 51 %)** — 562 from an
+  exhibit file, 136 from an earlier filing, 4 from a note.
+- **No exhibit file, the list elsewhere**: what the 20-F's exhibit index says under
+  8.1 decides (`list_from_main_document`, the latest filing only — a main document is
+  ~10 MB, so `sec-ex21-history` does not do this):
+  - **a note of this filing** — "included in note 34", "set forth in Note 26", "see
+    Note 2", "incorporated by reference to Note 3 … filed with this Annual Report".
+    The note is found by its heading (the last one; a contents page comes first) and
+    read up to the next note; `source_url` ends `#note-34`. Notes hold other tables
+    too, so the list must map to places for **90 %** of its rows: Novartis' note 31
+    read the city column ("East Hanover, NJ", "London 5") — dropped, not stored.
+  - **an earlier filing** — "incorporated by reference to Exhibit 8.1 of our Annual
+    Report on Form 20-F filed on March 29, 2018", "Exhibit 21.1 to our Form F-1 (File
+    No. 333-286211)", a table row "20-F 001-41316 8.1 March 9, 2023", a footnote mark
+    "(21)" read through to the footnote, an accession number. Resolved on the
+    submissions API: by accession; by form and date (± a day; a numeric date both
+    ways, 05/03 being May 3 or March 5; "the year ended …" against the report date);
+    without a date by form and file number. The original before an amendment.
+    **The edges carry the earlier filing's date** — the list describes the group as it
+    was then (the user's call, 2026-10-07) — and the run result and log name the
+    current 20-F that re-affirms it (`confirmed_by` / `confirmed_on`). An F-1's
+    Exhibit 21.1 is written as `EX-21`.
+  - not done: "Item 4.C Organizational Structure" (Sanofi, Toyota, Nomura — usually
+    running text), renamed filers whose earlier filing sits under another CIK.
+- **Places as filers write them**: "The Republic of the Marshall Islands" (only with
+  "the" — "Republic of China" is Taiwan), "São Paulo – Brazil", "Panamá". A column
+  headed "Date of Incorporation" is never the jurisdiction (Rezolve wrote 50 dates
+  as places).
 - Both fallbacks run only when the table reader found nothing, so an exhibit read
   before is read exactly as before.
 - **`no_annual_filing`** instead of `no_exhibit` when the company files no 10-K or

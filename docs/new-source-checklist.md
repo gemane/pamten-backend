@@ -329,6 +329,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       included). Capture the cleanest AND the most hostile payload as unit fixtures. (And
       check helper table shapes before using them: `_US_STATES` maps code→name; the name
       lookup is `_US_STATE_NAMES`.)
+- [ ] **Measure the whole population, not the companies you happen to have.** One
+      example (AB InBev) produced a rule that worked for 2 of 1,012 20-F filers; the
+      measurement over all of them found the real levers (19 % incorporated by
+      reference to an earlier filing) and the junk the rules let in (a date column
+      read as places, a note's city column). The bulk indexes (EDGAR's quarterly
+      `form.idx`) make the whole population a short download; measure through the
+      real code path, and count quality (unmapped values) along with coverage.
 - [ ] **Look at every "nothing found" result, not just the failures.** A status that
       means "the source has nothing" hides parser misses: Exhibit 21 said
       `no_exhibit` for 11 of the 135 SEC filers in the dev graph (filename patterns,
