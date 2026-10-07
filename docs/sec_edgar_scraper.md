@@ -949,13 +949,16 @@ from readers removed again the same day, so 11 remain):
       as the filer only at the root (TripAdvisor's nested "TripAdvisor LLC").
     - Letter footnotes "(a)"–"(h)" are no part of a name (Éxito, Crown Castle);
       a page footer "… Form 20-F 2025" is no company (BAT's country rows).
-    - **Not changed: one name in two places** (Lavoro's "Agrointegral Andina
-      S.A.S." in Colombia and Ecuador) keeps the first row. Across the 1,062
-      filings ten lists do this, and the rows read as much like a branch or a
-      foreign registration of one company (Ziff Davis: Delaware and the
-      Philippines; SFL: Bermuda and Canada) as like two companies (Perfect Corp.'s
-      Japanese, US and French namesakes) — a branch as a company would be a false
-      edge. Open, for the user.
+    - **One name in two countries is two nodes** (the user's call, 2026-10-08):
+      Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador. The list
+      keeps one entry per name and place; the writer matches such a name in its
+      own country — the node of that name there, else one without a country,
+      else a new node, never the namesake abroad. Across the 1,062 filings ten
+      lists do this. Some are two companies (Perfect Corp.'s Japanese, US and
+      French "Perfect Corp.", which as one entry had resolved onto the filer
+      itself and vanished); some read like one company's branch or foreign
+      registration (Ziff Davis: Delaware and the Philippines; SFL: Bermuda and
+      Canada), which now show as a second node — what the filer listed.
   - **Places, and a mapping bug**: "Mauritius", "Cyprus" and "Belarus" end in "us"
     and mapped to the **United States** — the US-suffix rule had no word boundary.
     Fixed; because `country` is written fill-only, a re-scrape does not correct

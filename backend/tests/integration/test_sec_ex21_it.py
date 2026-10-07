@@ -394,3 +394,49 @@ def test_a_parent_column_puts_the_stake_on_the_parents_edge(it_db):
     assert edges[("exito", "Patrimonio Autónomo Viva Malls")][3] == 51.0
     assert edges[("exito", "Orphan S.A.")][:2] == (None, None)
     assert edges[("exito", "Orphan S.A.")][3] is None, "the unlisted parent's stake is not the filer's"
+
+
+def test_one_name_in_two_countries_is_two_nodes(it_db):
+    # Lavoro lists "Agrointegral Andina S.A.S." in Colombia and in Ecuador; an
+    # earlier node of that name without a country is the first of them
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lavoro', name: 'Lavoro Ltd', name_normalized: 'lavoro', "
+        "search_text: 'Lavoro Ltd', type: 'company', sec_cik: '0001945711'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'old', name: 'Agrointegral Andina S.A.S.', "
+        "name_normalized: 'agrointegral andina', search_text: 'Agrointegral Andina S.A.S.', type: 'company'})")
+    data = {"subsidiaries": [{"name": "Agrointegral Andina S.A.S.", "jurisdiction": "Colombia"},
+                             {"name": "Agrointegral Andina S.A.S.", "jurisdiction": "Ecuador"},
+                             {"name": "Union Agro S.A.", "jurisdiction": "Brazil"}],
+            "form": "20-F", "filing_date": "2025-10-15",
+            "url": "https://www.sec.gov/Archives/edgar/data/1945711/000155485525002351/ex81_2.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        assert runner.run_sec_ex21("Lavoro")["total"] == 3
+        runner.run_sec_ex21("Lavoro", force=True)
+    rows = it_db.run_command(
+        "MATCH (:Entity {id: 'lavoro'})-[:OWNS]->(b:Entity {name: 'Agrointegral Andina S.A.S.'}) "
+        "RETURN b.id AS id, b.country AS country")
+    assert sorted((r["id"] == "old", r["country"]) for r in rows) == [(False, "EC"), (True, "CO")]
+    n = it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name = 'Agrointegral Andina S.A.S.'")[0]["n"]
+    assert n == 2, "a re-read finds both again, creates no third"
+
+
+def test_namesakes_of_the_filer_abroad_are_its_subsidiaries(it_db):
+    # Perfect Corp. (Cayman) lists a "Perfect Corp." in Japan and one in the US:
+    # neither is the filer, nor each other
+    it_db.run_command(
+        "CREATE (:Entity {id: 'perfect', name: 'Perfect Corp.', name_normalized: 'perfect', country: 'KY', "
+        "search_text: 'Perfect Corp.', type: 'company', sec_cik: '0001847584'})")
+    data = {"subsidiaries": [{"name": "Perfect Corp.", "jurisdiction": "Japan"},
+                             {"name": "Perfect Corp.", "jurisdiction": "United States"},
+                             {"name": "Perfect Mobile Corp.", "jurisdiction": "Taiwan"}],
+            "form": "20-F", "filing_date": "2026-03-27",
+            "url": "https://www.sec.gov/Archives/edgar/data/1847584/000000000026000001/ex8-1.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        assert runner.run_sec_ex21("Perfect Corp")["total"] == 3
+    rows = it_db.run_command(
+        "MATCH (:Entity {id: 'perfect'})-[:OWNS]->(b:Entity {name: 'Perfect Corp.'}) "
+        "RETURN b.id AS id, b.country AS country")
+    assert sorted(r["country"] for r in rows) == ["JP", "US"] and all(r["id"] != "perfect" for r in rows)
+    assert it_db.run_command("MATCH (e:Entity {id: 'perfect'}) RETURN e.country AS c")[0]["c"] == "KY"
+

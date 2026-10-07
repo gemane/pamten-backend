@@ -366,8 +366,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Before fixing a "regression", check its premise across the whole sample.**
       One Lavoro row read as "a second company of the same name was lost"; across
       1,062 filings the same pattern was as often one company with a branch abroad,
-      and the fix would have written branches as companies. Look at every instance
-      the fix would touch, not the one that prompted it.
+      and the fix writes branches as companies. Look at every instance the fix
+      would touch, not the one that prompted it — then decide knowingly (the user
+      chose the split: what the filer listed, one node per country).
 - [ ] **Measure on filings the rules were not written against, and read every
       name.** A count that went up says nothing about precision: check each entry
       of each gained or changed list against the document. Comparing versions on

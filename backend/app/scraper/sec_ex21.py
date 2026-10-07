@@ -466,6 +466,14 @@ def _compact(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", name)).casefold())
 
 
+def _list_key(entry: dict) -> tuple[str, str]:
+    """One list entry per name AND place: a list repeats a row across printed
+    pages, but Lavoro lists "Agrointegral Andina S.A.S." in Colombia and in
+    Ecuador — two entries, two nodes (the writer matches each in its country)."""
+    place = entry.get("jurisdiction") or ""
+    return entry["name"].casefold(), jurisdiction_country(place) or place.casefold()
+
+
 def _named_parent(text: str, registrant: str | None = None) -> str | None:
     """"Subsidiaries of X" → X; None for a generic X ("the Registrant"), the
     filer itself (Clearway heads every printed page "SUBSIDIARIES OF CLEARWAY
@@ -1037,7 +1045,7 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
             if mapped < len(table_rows) / 2:
                 continue
         for entry in table_rows:
-            key = entry["name"].casefold()
+            key = _list_key(entry)
             if key in seen:
                 continue
             seen.add(key)
@@ -1049,8 +1057,8 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
         for entry in _grouped_list(seq, registrant) or _paragraph_list(seq, registrant) or \
                 (declared and _country_rows_list(seq, registrant)) or \
                 _line_list(seq, registrant):
-            if entry["name"].casefold() not in seen:
-                seen.add(entry["name"].casefold())
+            if _list_key(entry) not in seen:
+                seen.add(_list_key(entry))
                 out.append({**entry, "_indent": 0.0})
     # A parent named as the list names it: "Vía Artika S. A." is the listed
     # "Vía Artika S.A."; a holder named like the filer but with another legal

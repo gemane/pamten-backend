@@ -490,12 +490,15 @@ class TestEmptyCellsDrawATree:
 
 
 class TestOneNameTwoPlaces:
-    def test_the_first_row_of_a_name_is_kept(self):
-        # Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador, Ziff
-        # Davis' "… Performance Marketing, Inc." in Delaware and the Philippines:
-        # two companies or one with a branch — the list cannot tell, and a
-        # branch as a company would be a false edge. Undecided (2026-10-07).
+    def test_one_entry_per_country(self):
+        # Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador: two
+        # entries, two nodes (the user's call, 2026-10-08)
         html = ("<table><tr><td>Legal Name</td><td>Jurisdiction of Incorporation</td></tr>"
                 "<tr><td>Agrointegral Andina S.A.S.</td><td>Colombia</td></tr>"
                 "<tr><td>Agrointegral Andina S.A.S. (vii)</td><td>Ecuador</td></tr></table>")
-        assert parse_exhibit(html) == [{"name": "Agrointegral Andina S.A.S.", "jurisdiction": "Colombia"}]
+        assert [s["jurisdiction"] for s in parse_exhibit(html)] == ["Colombia", "Ecuador"]
+
+    def test_a_row_repeated_on_the_next_page_is_still_one(self):
+        page = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Alpha Ltd.</td><td>Bermuda</td></tr></table>")
+        assert len(parse_exhibit(page + page.replace("Bermuda", "BERMUDA"))) == 1
