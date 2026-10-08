@@ -931,7 +931,8 @@ from readers removed again the same day, so 11 remain):
     - Open, not caused by this change: a combined 10-K's exhibit is its parent's
       list (Duke Energy Ohio files Duke Energy's 172, its own parent among them);
       parents named by a heading or by empty leading cells are not always read
-      (Interactive Brokers, PureCycle); a table continued after a page break is
+      (Interactive Brokers, PureCycle — both fixed, see below and "The tree the
+      filer draws"); a table continued after a page break is
       sometimes not read on (Western Union 44 of 102); the writer keys a list by
       name alone, so two subsidiaries of one name in two countries are one.
   - **The regressions it found, fixed** (compared on the same 1,062 filings: 10
@@ -1017,7 +1018,25 @@ Honesty rules, learned from the real filings:
   padding or runs of `&nbsp;`) or a **"Subsidiaries of X" heading** between
   tables or as a header cell (Tenet: 813 of 1,162 under "Consolidated
   Subsidiaries of USPI Holding Company, Inc."; Inter & Co: "Subsidiary of
-  Banco Inter S.A."). Each subsidiary is then drawn **under that parent**
+  Banco Inter S.A."; with a lead-in since 2026-10-08 — Interactive Brokers heads
+  each table after the first "The following is a list of subsidiaries of IB
+  Exchange Corp:", also "Below is a list of", "List of", "… subsidiaries and
+  branches of"; a sentence that merely mentions subsidiaries is no heading).
+  A row is never its own parent, but a namesake with another legal form is
+  another company ("Covestor Limited" under Covestor, Inc.; the same in a
+  parent column). **A heading parents rows only when the list carries the
+  company it names** (2026-10-08): across 1,889 filers, 1,166 of 1,196 heading
+  parents named the filer under another name ("THE PROGRESSIVE CORPORATION",
+  Altaba's "Yahoo! Inc.", "HAFNIA LIMITED – EXHIBIT 8.", "AFG", "the VIEs") —
+  the writer found no such node and dropped the row's stake (190 stakes,
+  Hafnia's 91). Those rows are the filer's now. The named company is matched
+  as the list writes it, the same legal form spelled another way ("Ltd" /
+  "Limited", "PLC" / "Public Limited Company"); not another legal form ("ADS-TEC
+  ENERGY PLC" is not the listed "ads-tec Energy Inc.") nor none ("Subsidiaries
+  of WISeKey" is not the listed "WISeKey SA"). A parent column is matched
+  more loosely — it names group companies, not the filer: Atlas's "Seaspan
+  Holdco III" is the one listed "Seaspan Holdco III Ltd.". Each subsidiary is
+  then drawn **under that parent**
   (`direct_or_indirect: direct`, `structure_basis: ex21_indent` /
   `ex21_heading`, stake from its row) and **not under the filer**: a
   filer→subsidiary edge an earlier flat read drew is withdrawn

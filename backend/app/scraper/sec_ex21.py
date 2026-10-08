@@ -302,10 +302,13 @@ _FIRST_PERCENT = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%")
 
 # "Subsidiaries of USPI Holding Company, Inc." — a heading (or a header cell)
 # that names the parent of the rows under it. "…of the Registrant/Company"
-# names nobody in particular and resets to the filer.
+# names nobody in particular and resets to the filer. Also with a lead-in:
+# Interactive Brokers heads each table after the first "The following is a
+# list of subsidiaries of IB Exchange Corp:", and "… and branches of".
 _PARENT_HEADING = re.compile(
-    r"^(?:consolidated |direct |indirect |wholly[- ]owned |significant )*"
-    r"subsidiar(?:y|ies) of (.+?)\s*:?$", re.I)
+    r"^(?:(?:the\s+following\s+is|below\s+is)\s+a\s+list\s+of\s+(?:the\s+)?|list(?:ing)?\s+of\s+(?:the\s+)?)?"
+    r"(?:consolidated |direct |indirect |wholly[- ]owned |significant )*"
+    r"subsidiar(?:y|ies)(?:\s+and\s+branch(?:es)?)?\s+of\s+(.+?)\s*:?$", re.I)
 _GENERIC_PARENT = re.compile(r"^(the )?(registrants?|compan(y|ies)|parent|issuer)\b", re.I)
 
 
@@ -464,6 +467,19 @@ def _compact(name: str) -> str:
     kept: "Vía Artika S. A." is "Vía Artika S.A.", "PureCycle Technologies
     LLC" is not "PureCycle Technologies, Inc."."""
     return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", name)).casefold())
+
+
+# One legal form, spelled either way.
+_FORM_SPELLING = ((r"\blimited\b", "ltd"), (r"\bcorporation\b", "corp"), (r"\bincorporated\b", "inc"),
+                  (r"\bcompany\b", "co"), (r"\bpublic limited company\b", "plc"))
+
+
+def _form_key(name: str) -> str:
+    """``_compact`` with each legal form in one spelling: "Ltd." is "Limited"."""
+    plain = unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", name)).casefold()
+    for long, short in sorted(_FORM_SPELLING, key=lambda p: -len(p[0])):
+        plain = re.sub(long, short, plain)
+    return re.sub(r"[^a-z0-9]", "", plain)
 
 
 def _list_key(entry: dict) -> tuple[str, str]:
@@ -913,9 +929,12 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
                     entry["parent_basis"] = "column"
                     if _compact(holder) != _compact(registrant or ""):
                         entry["_holder"] = holder         # or a listed namesake, see below
-                elif not _same_company(holder, entry["name"]):
+                elif _compact(holder) != _compact(entry["name"]):
                     entry["parent"], entry["parent_basis"] = holder, "column"
-            elif parent and not _same_company(parent, entry["name"]):
+            # a row is not its own parent — but a namesake with another legal
+            # form is another company: "Covestor Limited" under "… subsidiaries
+            # of Covestor, Inc."
+            elif parent and _compact(parent) != _compact(entry["name"]):
                 entry["parent"], entry["parent_basis"] = parent, "heading"
             table_rows.append(entry)
         # Table-level sanity for HEADERLESS (or header-inheriting) tables: a
@@ -948,20 +967,34 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
     # form that the list carries is that listed company, not the filer.
     listed = {_compact(e["name"]): e["name"] for e in out}
 
-    def as_listed(who: str) -> str | None:
+    def as_listed(who: str, heading: bool = False) -> str | None:
         if _compact(who) in listed:
             return listed[_compact(who)]
-        # "Seaspan Management Services Ltd." for the listed "… Limited":
-        # the legal form aside, if exactly one listed name is it
-        same = {e["name"] for e in out if _same_company(e["name"], who)}
+        # A parent column names group companies: "Seaspan Holdco III" is the
+        # one listed "Seaspan Holdco III Ltd.", the legal form aside. A
+        # heading often names the filer by another name, so there only the
+        # same legal form spelled another way counts — "ADS-TEC ENERGY PLC"
+        # is not the listed "ads-tec Energy Inc.", "Subsidiaries of WISeKey"
+        # not the listed "WISeKey SA".
+        same = {e["name"] for e in out if (_form_key(e["name"]) == _form_key(who) if heading
+                                           else _same_company(e["name"], who))}
         return same.pop() if len(same) == 1 else None
 
     for e in out:
         holder = e.pop("_holder", None)
         if holder and (hit := as_listed(holder)):
             e["parent"] = hit
-        elif e.get("parent") and (hit := as_listed(e["parent"])):
+        elif e.get("parent") and (hit := as_listed(e["parent"], e.get("parent_basis") == "heading")) \
+                and hit != e["name"]:
             e["parent"] = hit
+        elif e.get("parent_basis") == "heading":
+            # A heading naming a company the list does not carry names the
+            # filer under another name — "THE PROGRESSIVE CORPORATION",
+            # Altaba's "Yahoo! Inc.", "HAFNIA LIMITED – EXHIBIT 8.", "the
+            # VIEs" (1,166 rows of 1,196 across 1,889 filers, 2026-10-08).
+            # The row is the filer's; a parent the writer cannot find would
+            # cost it its stake (Hafnia's 91).
+            del e["parent"], e["parent_basis"]
     # The indentation tree is exhibit-wide (a page break must not cut it) and
     # more specific than a section heading, so it wins where both apply.
     _assign_indent_parents(out, registrant)

@@ -112,6 +112,73 @@ class TestHeadings:
         assert by["Banco Inter S.A."] is None                   # "Subsidiary of Inter&Co, Inc" = the filer
         assert by["Inter Asset Gestão de Recursos Ltda"] == "Banco Inter S.A."
 
+    def test_each_table_under_the_company_its_lead_in_names(self):
+        # Interactive Brokers: the filer's one subsidiary, then a table per
+        # intermediate, each after "The following is a list of subsidiaries of …"
+        def table(rows):
+            return ("<table><tr><td>Name</td><td>Jurisdiction of Organization</td></tr>"
+                    + "".join(f"<tr><td>{n}</td><td>{p}</td></tr>" for n, p in rows) + "</table>")
+        html = ("<p>SUBSIDIARIES OF THE COMPANY</p>" + table([("IBG LLC", "Connecticut, U.S.A.")])
+                + "<p>The following is a list of subsidiaries of IBG LLC:</p>"
+                + table([("IB Exchange Corp.", "Delaware, U.S.A."), ("Covestor, Inc.", "Delaware, U.S.A.")])
+                + "<p>The following is a list of subsidiaries of IB Exchange Corp:</p>"
+                + table([("Interactive Brokers Canada Inc.", "Canada")])
+                + "<p>The following is a list of subsidiaries of Covestor, Inc.:</p>"
+                + table([("Covestor Limited", "United Kingdom")]))
+        assert _tree(parse_exhibit(html, "Interactive Brokers Group, Inc.")) == {
+            "IB Exchange Corp.": "IBG LLC", "Covestor, Inc.": "IBG LLC",
+            "Interactive Brokers Canada Inc.": "IB Exchange Corp.",
+            # a namesake with another legal form is another company
+            "Covestor Limited": "Covestor, Inc."}
+
+    def test_a_row_under_a_heading_naming_itself_is_not_its_own_child(self):
+        html = ("<p>Subsidiaries of Alpha Holdings, LLC</p><table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Alpha Holdings LLC</td><td>Delaware</td></tr>"
+                "<tr><td>Beta Ltd</td><td>Ireland</td></tr></table>")
+        assert _tree(parse_exhibit(html, "Gamma Inc.")) == {"Beta Ltd": "Alpha Holdings LLC"}
+
+    def test_a_heading_naming_a_company_the_list_does_not_carry_is_the_filer(self):
+        # Hafnia heads its list "Subsidiaries of HAFNIA LIMITED – EXHIBIT 8.",
+        # Altaba "Subsidiaries of Yahoo! Inc.": the filer under another name.
+        # Its rows keep their stakes, under the filer.
+        html = ("<p>Subsidiaries of HAFNIA LIMITED – EXHIBIT 8.</p>"
+                "<table><tr><td>Name</td><td>Jurisdiction</td><td>Ownership</td></tr>"
+                "<tr><td>Hafnia Pools Pte. Ltd.</td><td>Singapore</td><td>100%</td></tr>"
+                "<tr><td>Hafnia Tankers Ltd.</td><td>Bermuda</td><td>60%</td></tr></table>")
+        assert parse_exhibit(html, "Hafnia Ltd") == [
+            {"name": "Hafnia Pools Pte. Ltd.", "jurisdiction": "Singapore", "stake_percent": 100.0},
+            {"name": "Hafnia Tankers Ltd.", "jurisdiction": "Bermuda", "stake_percent": 60.0}]
+
+    @pytest.mark.parametrize("heading,listed", [
+        ("Alpha Holdings Ltd", "Alpha Holdings Limited"), ("Alpha Holdings Corp", "Alpha Holdings Corporation"),
+        ("Alpha Holdings Inc", "Alpha Holdings Incorporated"), ("Alpha Holdings Co", "Alpha Holdings Company"),
+        ("Alpha Holdings PLC", "Alpha Holdings Public Limited Company"),
+    ])
+    def test_a_heading_finds_the_listed_name_in_another_spelling_of_its_legal_form(self, heading, listed):
+        html = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                f"<tr><td>{listed}</td><td>Ireland</td></tr></table>"
+                f"<p>Subsidiaries of {heading}:</p><table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                f"<tr><td>{listed}</td><td>Ireland</td></tr><tr><td>Beta GmbH</td><td>Germany</td></tr></table>")
+        # the listed company itself, under its own heading, is not its own child
+        assert _tree(parse_exhibit(html, "Gamma Inc.")) == {"Beta GmbH": listed}
+
+    def test_the_company_a_heading_names_is_not_its_own_child_in_another_spelling(self):
+        html = ("<p>Subsidiaries of Alpha Holdings Ltd:</p><table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Alpha Holdings Limited</td><td>Ireland</td></tr>"
+                "<tr><td>Beta GmbH</td><td>Germany</td></tr></table>")
+        assert _tree(parse_exhibit(html, "Gamma Inc.")) == {"Beta GmbH": "Alpha Holdings Limited"}
+
+    @pytest.mark.parametrize("heading", [
+        "List of Significant Subsidiaries of WISeKey",      # the filer's short name, not the listed "WISeKey SA"
+        "SUBSIDIARIES OF ADS-TEC ENERGY PLC",               # another legal form than the listed "… Inc."
+    ])
+    def test_a_heading_is_not_a_listed_company_with_another_legal_form(self, heading):
+        html = (f"<p>{heading}</p><table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                "<tr><td>WISeKey SA</td><td>Switzerland</td></tr>"
+                "<tr><td>ads-tec Energy Inc.</td><td>Delaware</td></tr>"
+                "<tr><td>Beta GmbH</td><td>Germany</td></tr></table>")
+        assert _tree(parse_exhibit(html, "Gamma Holding AG")) == {}
+
     def test_a_heading_naming_the_filer_parents_nobody(self):
         subs = _load("clearway_ex21_excerpt.htm", "Clearway Energy, Inc.")
         assert len(subs) == 8 and not any(s.get("parent") for s in subs)
@@ -124,6 +191,18 @@ class TestHeadings:
         ("Consolidated Subsidiaries of USPI Holding Company, Inc.", "Tenet", "USPI Holding Company, Inc."),
         ("Subsidiary of Banco Inter S.A.", "Inter & Co, Inc.", "Banco Inter S.A."),
         ("Name of Subsidiary", None, None),
+        # Interactive Brokers: a lead-in before "subsidiaries of"
+        ("The following is a list of subsidiaries of IB Exchange Corp:", "Interactive Brokers Group, Inc.",
+         "IB Exchange Corp"),
+        ("The following is a list of subsidiaries and branches of Interactive Brokers (U.K.) Limited:",
+         "Interactive Brokers Group, Inc.", "Interactive Brokers (U.K.) Limited"),
+        ("Below is a list of the subsidiaries of Alpha Holdings LLC", "Y", "Alpha Holdings LLC"),
+        ("List of Subsidiaries of the Registrant", None, None),
+        ("List of Subsidiaries of Alpha Holdings LLC", "Y", "Alpha Holdings LLC"),
+        ("The following is a list of subsidiaries of Microsoft Corporation as of June 30, 2026",
+         "MICROSOFT CORP", None),
+        # a sentence that merely mentions them is no heading
+        ("We hold the following subsidiaries of Alpha Holdings LLC", "Y", None),
     ])
     def test_named_parent(self, text, registrant, expected):
         assert _named_parent(text, registrant) == expected
