@@ -811,6 +811,177 @@ stake. Edges written before this are repaired by
 equals the `source_date` (the signature of the invented date) and is not marked with
 `since_basis` (a deliberate lower bound from older filings is never cleared).
 
+**Finding the list** (all 135 CIKs of the dev graph swept on 2026-10-07: 14
+filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,879 subsidiaries;
+three of the 14 — Matthews, Sirius XM, Shenandoah, lists without places — came
+from readers removed again the same day, so 11 remain):
+
+- **Filenames as filing agents write them**: `ex21`, `ex-21.1`, Workiva's
+  `meli-20251231xexx2101` (exx = exhibit, 2101 = 21.01), and on a 20-F `ex8_1`,
+  `dex81`, `xex8d1` or Embraer's bare `xex8` (an `8` running on into another digit,
+  `ex85`, is not 8.1). The content still decides between candidates.
+- **One subsidiary per paragraph, no table** (Alibaba's Exhibit 8.1, "… Co., Ltd.
+  (PRC)"): read as "Name (Jurisdiction)", the last bracket being the place, under
+  the content gate a headerless table meets.
+- **A list grouped under country rows** with no jurisdiction column (AB InBev:
+  "Name and registered office | % economic interest", a row holding only
+  "Argentina", then "Cerveceria … - Charcas 5160 - Buenos Aires | 61.63%"): the
+  country row is the jurisdiction, the registered office after " - " is cut off, the
+  stake is read; reading stops at a heading or header about **associates, joint
+  ventures or the equity method** — held, not controlled.
+- **Measured on all 1,012 20-Fs filed in 2026** (2026-10-07), where a 20-F puts its
+  list: an exhibit file 51 %; **an earlier filing it incorporates by reference** 19 %;
+  an exhibit file the parser could not read 7 %; a filename the patterns missed 4 %;
+  the main document (a note or Item 4.C) 3 %; nothing found 13 %. Through the code
+  after these fixes: **702 of 1,004 filers read (70 %, from 51 %)** — 562 from an
+  exhibit file, 136 from an earlier filing, 4 from a note — and after the layouts
+  below 769 (77 %), 15,945 → 17,781 subsidiaries; every list read before was
+  compared name by name: none lost, 46 gained the stake they state, the rest
+  lost junk (row numbers as names, dates or "100%" as places). The 769 include
+  the readers removed again; without them the full set is not yet re-measured
+  (of the first 302 filers, 16 of 217 lists came from the few-filer readers and 6
+  from the one-per-line reader).
+- **No exhibit file, the list elsewhere**: what the 20-F's exhibit index says under
+  8.1 decides (`list_from_main_document`, the latest filing only — a main document is
+  ~10 MB, so `sec-ex21-history` does not do this):
+  - **a note of this filing** — "included in note 34", "set forth in Note 26", "see
+    Note 2", "incorporated by reference to Note 3 … filed with this Annual Report".
+    The note is found by its heading (the last one; a contents page comes first) and
+    read up to the next note; `source_url` ends `#note-34`. Notes hold other tables
+    too, so the list must map to places for **90 %** of its rows: Novartis' note 31
+    read the city column ("East Hanover, NJ", "London 5") — dropped, not stored.
+  - **an earlier filing** — "incorporated by reference to Exhibit 8.1 of our Annual
+    Report on Form 20-F filed on March 29, 2018", "Exhibit 21.1 to our Form F-1 (File
+    No. 333-286211)", a table row "20-F 001-41316 8.1 March 9, 2023", a footnote mark
+    "(21)" read through to the footnote, an accession number. Resolved on the
+    submissions API: by accession; by form and date (± a day; a numeric date both
+    ways, 05/03 being May 3 or March 5; "the year ended …" against the report date);
+    without a date by form and file number. The original before an amendment.
+    **The edges carry the earlier filing's date** — the list describes the group as it
+    was then (the user's call, 2026-10-07) — and the run result and log name the
+    current 20-F that re-affirms it (`confirmed_by` / `confirmed_on`). An F-1's
+    Exhibit 21.1 is written as `EX-21`.
+  - not done: "Item 4.C Organizational Structure" (Sanofi, Toyota, Nomura — usually
+    running text), renamed filers whose earlier filing sits under another CIK.
+- **Places as filers write them**: "The Republic of the Marshall Islands" (only with
+  "the" — "Republic of China" is Taiwan), "São Paulo – Brazil", "Panamá". A column
+  headed "Date of Incorporation" is never the jurisdiction (Rezolve wrote 50 dates
+  as places).
+- **Lists the parser could not read** (2026-10-07, the 86 2026 20-F filers whose
+  candidate files all read nothing — 61 real lists, the rest other documents; 51
+  of the 61 read with the first version of the readers below, fewer after the
+  few-filer readers and the one-per-line reader were removed):
+  - **What the filer declared the file to be decides first.** Every EDGAR document
+    opens with `<TYPE>`; one declared anything but `EX-8`, `EX-8.1` or `EX-21.x` is no
+    list. Workiva names a 20-F's Exhibit 2.1 (the description of securities)
+    `exhibit21descriptionofsecu.htm` — "ex21" to the filename patterns — and an F-1's
+    `EX-8.2` is counsel's tax opinion.
+  - **The column grid**: a header cell spanning several data cells (`colspan`) is
+    matched to the cell that starts under it — TORM's "Jurisdiction of Incorporation"
+    spans grid columns 3–8 while each "Denmark" is the third cell of its row, at
+    column 6. A header printed over three rows (UTStarcom) keeps its columns: a row
+    of labels counts as a new section's header only after data rows. A row number
+    in the name cell ("1. YD Network …") is dropped; a label spanning the whole row
+    ("Insurance Agencies and Brokers") is neither name nor place.
+  - **Names under one-cell country rows** (BAT's Exhibit 8, ~400 subsidiaries):
+    the country row is the place, inline stakes are read ("(51%)4", and of BAT's
+    "(99.80%)(99.93%)" the first), up to the associates. Declared exhibits only.
+  - **Deliberately not read** (removed again on 2026-10-07, the user's call: each
+    served one to five filers, and the held-out check below showed what they do on
+    filings they were not written for):
+    - **one subsidiary per line, the place in words** — "Bluebottle Limited, a Hong
+      Kong company", "…, incorporated in the Macau Special Administrative Region",
+      "Sportradar AG, Switzerland", Ambev's "owns 99.83% of … interests in …
+      (incorporated in Argentina)". Removed on 2026-10-08 (the user's call), though
+      it served more filers than the others: 20 of the 287 lists read from the 600
+      random 10-Ks (509 entries), 5 of 116 from the 2025 20-Fs, 6 of 201 of the
+      first 302 2026 20-Fs (FinVolution, Melco, Ambev, Trip.com) — mostly smaller
+      filers. It read combined 10-Ks' group lists as the filer's own (Duke Energy
+      Ohio's 172, Texas-New Mexico Power, Idaho Power: siblings and the filer's own
+      parent as its subsidiaries), and a parent stated in words ("a subsidiary of
+      Idaho Power Company") not at all, so the rows came out flat. None of these
+      filers had a list before the layout readers; the dev graph read none of them;
+    - names without a place, the place only in a heading ("Subsidiary (PRC):",
+      Recon) or one sentence ("All … are incorporated in Chile", Banco de Chile) —
+      a list like Karooooo's yields only the names that state their place;
+    - a table naming no place column (Banco Santander Chile, Enel Chile);
+    - the text layer behind scanned pages (Amer Sports, Borr, Polestar);
+    - a list the filer declared as another exhibit (Yatra's "EX-10.8").
+  - Also not read: page images without text (POET, Currenc, COSCIENS), a pointer to
+    a note of the annual report (KT, POSCO, RELX), prose (Highway Holdings), an
+    org-chart of arrows (K Wave), a table with no labelled name column (Grupo
+    Aeroportuario del Sureste).
+  - **Held-out check** (2026-10-07, filers the rules were not written against: the
+    160 filers of a 2025 20-F with none in 2026, and 600 random 2026 10-K filers;
+    every name of every gained or changed list checked against the document):
+    - lists read: 2025 20-Fs 110 → 116, 10-Ks 261 → 287; none lost (111 and 267
+      without the one-per-line reader, removed the next day);
+    - the 32 lists gained: 739 entries, 722 right, 3 junk (the registrant listed in
+      its own table, a branch), 14 with a wrong name, place or missing stake
+      (LivePerson's "KATO ACQUISITION SUB | INC. — Delaware", cut at the comma);
+    - the 13 lists changed: 213 entries better, 21 worse — Almacenes Éxito's
+      stakes are now read but are the DIRECT parent's, and its "Direct controlling
+      entity" column is not read (20); Lavoro loses one name that, its footnote
+      mark stripped, equals another's (1). Fixed, see below — except Lavoro's;
+    - what the removed readers produced there: 926 entries, 13 % fully right, 75 %
+      without the place the document does give, 80 names with a description glued
+      on ("Antuit, Inc. – a Delaware corporation"), 27 links to sister companies,
+      Dow's parent Dow Inc. as its subsidiary; 6 of the 7 "tables without a place
+      column" had one the header detection missed.
+    - Open, not caused by this change: a combined 10-K's exhibit is its parent's
+      list (Duke Energy Ohio files Duke Energy's 172, its own parent among them);
+      parents named by a heading or by empty leading cells are not always read
+      (Interactive Brokers, PureCycle); a table continued after a page break is
+      sometimes not read on (Western Union 44 of 102); the writer keys a list by
+      name alone, so two subsidiaries of one name in two countries are one.
+  - **The regressions it found, fixed** (compared on the same 1,062 filings: 10
+    lists changed, none lost but Global-E's junk):
+    - **A column naming each row's holder** — "Direct controlling entity",
+      "Parent", "Owned by", "Controlled by" (the whole cell; checked before the
+      ownership words) — parents the row (`parent_basis: "column"`, edge
+      `structure_basis: "ex21_column"`); the filer named there puts the row
+      directly under it. It beats a drawn indent. Almacenes Éxito, Atlas,
+      Brightstar, KeyCorp. The parent is matched to the listed name it means —
+      "Vía Artika S. A." is "Vía Artika S.A.", "… Services Ltd." the only listed
+      "… Services Limited" — and the filer by EDGAR's name, accents and its
+      "/NEW/" tag aside, but only with the same legal form: "PureCycle
+      Technologies LLC" is a listed company, not the filer "… Technologies, Inc.".
+    - **A parent the list does not carry**: the row stays under the filer, and
+      now WITHOUT its stake — the stake is the named parent's, not the filer's.
+    - **Empty cells before the name draw a tree** (PureCycle: the "Subsidiary"
+      header spans four grid columns, each level one empty cell further in) — but
+      not a column that holds row numbers in some rows. The filer's own line counts
+      as the filer only at the root (TripAdvisor's nested "TripAdvisor LLC").
+    - Letter footnotes "(a)"–"(h)" are no part of a name (Éxito, Crown Castle);
+      a page footer "… Form 20-F 2025" is no company (BAT's country rows).
+    - **One name in two countries is two nodes** (the user's call, 2026-10-08):
+      Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador. The list
+      keeps one entry per name and place; the writer matches such a name in its
+      own country — the node of that name there, else one without a country,
+      else a new node, never the namesake abroad. Across the 1,062 filings ten
+      lists do this. Some are two companies (Perfect Corp.'s Japanese, US and
+      French "Perfect Corp.", which as one entry had resolved onto the filer
+      itself and vanished); some read like one company's branch or foreign
+      registration (Ziff Davis: Delaware and the Philippines; SFL: Bermuda and
+      Canada), which now show as a second node — what the filer listed.
+  - **Places, and a mapping bug**: "Mauritius", "Cyprus" and "Belarus" end in "us"
+    and mapped to the **United States** — the US-suffix rule had no word boundary.
+    Fixed; because `country` is written fill-only, a re-scrape does not correct
+    nodes that already carry "US". "Hong Kong SAR, China" is Hong Kong (the comma
+    rule took China), "… Special Administrative Region of the PRC", "Chinese
+    mainland", "the Republic of Chile", "Kingdom of Saudi Arabia", "Congo,
+    Democratic Republic of", Curacao, Holland. Trailing marks "(iv)", "^", "#" and a
+    leading tree marker "~ " are not part of a name.
+- All fallbacks run only when the table reader found nothing, so an exhibit read
+  before is read exactly as before — except where the column grid now finds a cell
+  the old index lookup missed (a stake in a split "100 | %" cell, a place).
+- **`no_annual_filing`** instead of `no_exhibit` when the company files no 10-K or
+  20-F at all (SoftBank, Vanguard, FMR: 13F/13G filers).
+- **Not read: Unilever.** Its 8.1 is the full UK Companies Act s.409 list,
+  subsidiaries mixed with associates and joint ventures in multi-column flowing
+  text, over a thousand entries; it points to the significant subsidiaries in its
+  annual report instead.
+
 Honesty rules, learned from the real filings:
 
 - **Significant subsidiaries only** — Reg S-K Item 601(b)(21) lets filers omit

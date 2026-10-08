@@ -900,6 +900,14 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                                    SEC_EDGAR_CREDIBILITY)
         data = fetch_subsidiaries(entity["sec_cik"], registrant=entity.get("name"))
         if not data:
+            from app.scraper.sec_ex21 import annual_filings
+            if not annual_filings(entity["sec_cik"]):
+                # SoftBank, Vanguard, FMR: 13F/13G filers with no 10-K or 20-F
+                # at all — "no exhibit" said the filing lacked one
+                run["status"], run["note"] = "skipped", "no annual filing"
+                return {"status": "no_annual_filing", "company": company,
+                        "entity_id": company_id, "total": 0,
+                        "detail": "The company files no 10-K or 20-F with the SEC."}
             run["status"], run["note"] = "skipped", "no subsidiary exhibit"
             return {"status": "no_exhibit", "company": company,
                     "entity_id": company_id, "total": 0,
@@ -921,14 +929,25 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         written, skipped_unmapped, co_owner_edges = 0, 0, 0
         nested = unresolved_parents = detached = 0
         scraped: list[dict] = []
-        filing_type = "EX-21" if data["form"] == "10-K" else "EX-8.1"
-        basis_of = {"indent": "ex21_indent", "heading": "ex21_heading"}
+        # a 20-F can point to an earlier F-1's Exhibit 21.1 (list_from_earlier_filing)
+        filing_type = "EX-21" if data["form"] == "10-K" or data.get("exhibit") == "21" else "EX-8.1"
+        basis_of = {"indent": "ex21_indent", "heading": "ex21_heading", "column": "ex21_column"}
         # Nodes first, edges second: a co-holder a cell names is resolved
         # among the LISTED subsidiaries (by the name as filed) or as the filer
         # itself — never looked up in the wider graph, where a name alone
         # could land on a stranger.
         ids: dict[str, str] = {}
+        sub_ids: list[str | None] = []
+        # A name the list gives in two countries is two nodes, one per country
+        # (the user's call, 2026-10-08): Perfect Corp.'s Japanese, US and French
+        # "Perfect Corp.", but also Ziff Davis' "… Performance Marketing, Inc."
+        # in Delaware and the Philippines, which may be one company's branch.
+        # A parent or co-holder named so is the first of them.
+        countries_of: dict[str, set] = {}
         for sub in data["subsidiaries"]:
+            countries_of.setdefault(sub["name"].casefold(), set()).add(jurisdiction_country(sub["jurisdiction"]))
+        for sub in data["subsidiaries"]:
+            sub_ids.append(None)
             country = jurisdiction_country(sub["jurisdiction"])
             if country is None:
                 skipped_unmapped += 1   # counted, not dropped silently
@@ -939,10 +958,12 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 name=sub["name"], entity_type="company",
                 country=country,
                 jurisdiction_code=jurisdiction_subdivision(sub["jurisdiction"]),
-                source_id=source_id)
+                source_id=source_id,
+                country_must_match=len(countries_of[sub["name"].casefold()]) > 1)
             if not sub_id or sub_id == company_id:
                 continue
-            ids[sub["name"].casefold()] = sub_id
+            sub_ids[-1] = sub_id
+            ids.setdefault(sub["name"].casefold(), sub_id)
             scraped.append({"id": sub_id, "name": sub["name"],
                             "type": "company", "country": country})
 
@@ -958,8 +979,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 filing_dates_the_stake=False, source_url=data["url"], **structure)
 
         holders: set[str] = {company_id}
-        for sub in data["subsidiaries"]:
-            sub_id = ids.get(sub["name"].casefold())
+        for sub, sub_id in zip(data["subsidiaries"], sub_ids):
             if not sub_id:
                 continue
             stake = sub.get("stake_percent")
@@ -971,6 +991,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
             holder = parent_id if parent_id and parent_id != sub_id else company_id
             if sub.get("parent") and holder == company_id:
                 unresolved_parents += 1
+                # the row's stake is its named parent's (Almacenes Éxito's
+                # column says so), not the filer's: no stake beats a false one
+                stake = None
             # The layout's marker: a resolved parent, or a row the tree puts
             # straight under the filer. A row whose named parent the list does
             # not carry is under SOMEONE else — not direct under the filer.
@@ -1014,7 +1037,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         notes = [f"{nested} under an intermediate parent" if nested else "",
                  f"{co_owner_edges} co-holder edges" if co_owner_edges else "",
                  f"{detached} filer edges withdrawn" if detached else "",
-                 f"{stale} no longer listed (dimmed)" if stale else ""]
+                 f"{stale} no longer listed (dimmed)" if stale else "",
+                 (f"list of {data['filing_date']}, re-affirmed by the 20-F of {data['confirmed_on']}"
+                  if data.get("confirmed_by") else "")]
         if any(notes):
             run["note"] = ", ".join(n for n in notes if n)
         return {"status": "ok", "company": company, "entity_id": company_id,
@@ -1022,7 +1047,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 "total": written, "unmapped_jurisdictions": skipped_unmapped,
                 "nested": nested, "unresolved_parents": unresolved_parents,
                 "detached": detached, "co_owner_edges": co_owner_edges,
-                "stale": stale, "scraped": scraped}
+                "stale": stale, "scraped": scraped,
+                **({"source_url": data["url"], "confirmed_by": data["confirmed_by"],
+                    "confirmed_on": data["confirmed_on"]} if data.get("confirmed_by") else {})}
 
 
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:

@@ -80,7 +80,8 @@ OWNS_PROPS: tuple = (
     # How the edge's PLACE in the tree is known when a source showed it by
     # layout rather than stating it: "ex21_indent" (the filer indented the
     # subsidiary under another), "ex21_heading" (it sits under a "Subsidiaries
-    # of X" heading). Unset for GLEIF's stated direct/ultimate markers — which
+    # of X" heading), "ex21_column" (a "Direct controlling entity" column names
+    # its holder). Unset for GLEIF's stated direct/ultimate markers — which
     # is how the GLEIF delta tells its own markers from an inferred one.
     "structure_basis",
 )

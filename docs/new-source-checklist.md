@@ -329,6 +329,58 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       included). Capture the cleanest AND the most hostile payload as unit fixtures. (And
       check helper table shapes before using them: `_US_STATES` maps code→name; the name
       lookup is `_US_STATE_NAMES`.)
+- [ ] **Measure the whole population, not the companies you happen to have.** One
+      example (AB InBev) produced a rule that worked for 2 of 1,012 20-F filers; the
+      measurement over all of them found the real levers (19 % incorporated by
+      reference to an earlier filing) and the junk the rules let in (a date column
+      read as places, a note's city column). The bulk indexes (EDGAR's quarterly
+      `form.idx`) make the whole population a short download; measure through the
+      real code path, and count quality (unmapped values) along with coverage.
+- [ ] **Look at every "nothing found" result, not just the failures.** A status that
+      means "the source has nothing" hides parser misses: Exhibit 21 said
+      `no_exhibit` for 11 of the 135 SEC filers in the dev graph (filename patterns,
+      a list without a table, a list inside the 20-F's notes) and none of them was
+      an error. Open each empty result once and check the source really is empty;
+      give a different reason its own status (`no_annual_filing`).
+- [ ] **Ask a document what it is before guessing from its name.** Every EDGAR
+      document opens with the type its filer declared (`<TYPE>EX-2.1`); a 20-F's
+      Exhibit 2.1, the description of securities, is named
+      `exhibit21descriptionofsecu.htm` and matched the Exhibit 21 filename pattern
+      for 28 of 86 filers. When a source states what a file is, read that first and
+      keep the filename as the fallback.
+- [ ] **A suffix or abbreviation rule needs a word boundary, and a test with the
+      values that merely END in it.** The US-suffix pattern (`US`/`USA` at the end of
+      a jurisdiction) had none, so "Mauritius", "Cyprus" and "Belarus" mapped to the
+      United States for months, and the country is written fill-only, so a fixed
+      re-scrape does not correct the stored value. Run a mapping over every distinct
+      value the source produces (`jurisdiction_country` over all places of a sweep)
+      and look at what lands where.
+- [ ] **Group the unread results by layout before writing a rule — and write
+      none for a layout one to five filers use.** The 61 real subsidiary lists that
+      read nothing fell into a handful of layouts; a rule per layout read 51 of
+      them, measured on the very filings the rules were written against. On filers
+      they had never seen (2025 20-Fs, random 10-Ks) the general rules held (722 of
+      739 entries right), while the few-filer readers (names without a place, a
+      table without a place column, a scanned page's text layer) got 13 % of 926
+      entries fully right and mostly hid a gap in the main reader — removed.
+- [ ] **A reader that picks names out of single lines sees no context — check what
+      the context does to its output.** The one-per-line Exhibit 21 reader ("X
+      Limited, a Hong Kong company") was right line by line, yet a combined 10-K's
+      lines are the parent group's list (Duke Energy Ohio's exhibit names its own
+      parent and siblings) and "(a subsidiary of Idaho Power Company)" was dropped,
+      so the rows came out flat under the filer. Read whole documents of the
+      layout, not lines, before keeping such a reader; this one was removed although
+      it read 7 % of the lists of a random 10-K sample.
+- [ ] **Before fixing a "regression", check its premise across the whole sample.**
+      One Lavoro row read as "a second company of the same name was lost"; across
+      1,062 filings the same pattern was as often one company with a branch abroad,
+      and the fix writes branches as companies. Look at every instance the fix
+      would touch, not the one that prompted it — then decide knowingly (the user
+      chose the split: what the filer listed, one node per country).
+- [ ] **Measure on filings the rules were not written against, and read every
+      name.** A count that went up says nothing about precision: check each entry
+      of each gained or changed list against the document. Comparing versions on
+      the same HTTP responses (a disk cache) keeps the runs honest and cheap.
 - [ ] **Then sweep EVERY eligible company in the dev graph before merging** — the 59-filer
       Ex-21 sweep found what ten hand-picked probes still missed: tables whose second
       column is a *location* ("Charlotte, NC" — not a jurisdiction; Bank of America has

@@ -645,8 +645,14 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             jurisdiction_code: str | None = None,
                             headquarters: dict | None = None,
                             website: str | None = None,
-                            credibility_score: int = 98) -> str:
+                            credibility_score: int = 98,
+                            country_must_match: bool = False) -> str:
     """Find or create an Entity node matched by CIK, exact name, or normalized name.
+
+    ``country_must_match``: for a name a subsidiary list gives in two
+    countries (Lavoro's "Agrointegral Andina S.A.S." in Colombia and in
+    Ecuador) — the node of that name in THIS country, else one of that name
+    without a country, else a new node; never the namesake abroad.
 
     ``source_id`` (the calling scraper's Source node — SEC EDGAR or
     OpenCorporates) is stamped so the entity's own provenance shows in the node
@@ -664,10 +670,20 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     one or the other. Only ever fills a blank."""
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
+        entity_id = None
+        if country_must_match and country:
+            rec = session.run("MATCH (e:Entity) WHERE e.name = $name AND e.country = $country "
+                              "RETURN e.id AS id LIMIT 1", name=name, country=country).single()
+            entity_id = rec["id"] if rec else None
         # Indexed lookups first (an OR full-scans the Entity type on ArcadeDB).
-        entity_id = resolve_entity_id(
+        entity_id = entity_id or resolve_entity_id(
             session, sec_cik=cik, name=name, name_normalized=name_norm,
         )
+        if entity_id and country_must_match and country:
+            rec = session.run("MATCH (e:Entity {id: $id}) RETURN e.country AS country",
+                              id=entity_id).single()
+            if rec and rec["country"] not in (None, country):
+                entity_id = None                  # the namesake abroad: a company of its own
         # Fuzzy CIK fallback: an EDGAR filer whose stored normalized name is a
         # prefix of this one. This can't use an index (variable-length prefix of
         # the *parameter*), so only run it as a last resort when a CIK is known
