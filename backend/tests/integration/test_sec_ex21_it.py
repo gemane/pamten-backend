@@ -438,3 +438,33 @@ def test_namesakes_of_the_filer_abroad_are_its_subsidiaries(it_db):
     assert sorted(r["country"] for r in rows) == ["JP", "US"] and all(r["id"] != "perfect" for r in rows)
     assert it_db.run_command("MATCH (e:Entity {id: 'perfect'}) RETURN e.country AS c")[0]["c"] == "KY"
 
+
+
+def test_lead_in_headings_draw_the_tree_and_an_unlisted_one_keeps_the_stake(it_db):
+    # Interactive Brokers heads each table "The following is a list of
+    # subsidiaries of IBG LLC:"; a heading naming a company the list does not
+    # carry (Hafnia's "HAFNIA LIMITED – EXHIBIT 8.") is the filer, and its
+    # rows keep their stakes on the filer's edges
+    from app.scraper.sec_ex21 import parse_exhibit
+
+    def table(rows):
+        return ("<table><tr><td>Name</td><td>Jurisdiction</td><td>Ownership</td></tr>"
+                + "".join(f"<tr><td>{n}</td><td>{p}</td><td>{s}</td></tr>" for n, p, s in rows) + "</table>")
+    html = ("<p>Subsidiaries of APPLE COMPUTER – EXHIBIT 21.</p>"
+            + table([("IBG LLC", "Connecticut, U.S.A.", "75%")])
+            + "<p>The following is a list of subsidiaries of IBG LLC:</p>"
+            + table([("IB Exchange Corp.", "Delaware, U.S.A.", "100%")])
+            + "<p>The following is a list of subsidiaries of IB Exchange Corp:</p>"
+            + table([("Interactive Brokers Canada Inc.", "Canada", "100%")]))
+    data = {"subsidiaries": parse_exhibit(html, "Apple Inc."), "form": "10-K", "filing_date": "2026-02-27",
+            "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019326000010/ex21.htm"}
+    _apple(it_db)
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        result = runner.run_sec_ex21("Apple")
+    assert result["status"] == "ok" and result["unresolved_parents"] == 0
+    edges = _owns(it_db)
+    ids = {r["name"]: r["id"] for r in it_db.run_command("MATCH (e:Entity) RETURN e.name AS name, e.id AS id")}
+    assert edges[("apple", "IBG LLC")][3] == 75.0
+    assert edges[(ids["IBG LLC"], "IB Exchange Corp.")][:2] == ("direct", "ex21_heading")
+    assert edges[(ids["IB Exchange Corp."], "Interactive Brokers Canada Inc.")][:2] == ("direct", "ex21_heading")
+    assert ("apple", "Interactive Brokers Canada Inc.") not in edges

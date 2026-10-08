@@ -377,6 +377,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       and the fix writes branches as companies. Look at every instance the fix
       would touch, not the one that prompted it — then decide knowingly (the user
       chose the split: what the filer listed, one node per country).
+- [ ] **Count what a structural rule does across the whole sample, not on the
+      filer that prompted it.** "A heading names the parent" was right for the
+      filers it was written for; across 1,889 filers 1,166 of 1,196 heading
+      parents were the filer under another name, and a later rule (an unknown
+      parent drops the stake) turned them into 190 lost stakes. Tally every
+      value the rule produces against an independent check (here: is the named
+      company in the list?) before building on it.
 - [ ] **Measure on filings the rules were not written against, and read every
       name.** A count that went up says nothing about precision: check each entry
       of each gained or changed list against the document. Comparing versions on

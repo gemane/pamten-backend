@@ -395,6 +395,30 @@ class TestParentColumn:
         assert "parent" not in subs["Foo Technologies LLC"]
         assert subs["Foo Ohio LLC"]["parent"] == "Foo Technologies LLC"
 
+    def test_a_holder_named_without_its_legal_form(self):
+        # Atlas: "Seaspan Holdco III" is the one listed "Seaspan Holdco III Ltd."
+        # — a column names group companies; with two such listed, neither
+        html = ("<table><tr><td>Name</td><td>Owned by</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Seaspan Holdco III Ltd.</td><td>Atlas Corp.</td><td>Marshall Islands</td></tr>"
+                "<tr><td>Seaspan 2180 Ltd.</td><td>Seaspan Holdco III</td><td>Marshall Islands</td></tr>"
+                "<tr><td>Alpha Inc.</td><td>Atlas Corp.</td><td>Delaware</td></tr>"
+                "<tr><td>Alpha LLC</td><td>Atlas Corp.</td><td>Ohio</td></tr>"
+                "<tr><td>Beta GmbH</td><td>Alpha</td><td>Germany</td></tr></table>")
+        subs = _by_name(parse_exhibit(html, "Atlas Corp."))
+        assert subs["Seaspan 2180 Ltd."]["parent"] == "Seaspan Holdco III Ltd."
+        assert subs["Beta GmbH"]["parent"] == "Alpha"
+
+    def test_a_holder_named_like_the_row_with_another_legal_form(self):
+        # a row is not its own parent, but "Covestor Limited" held by
+        # "Covestor, Inc." is a company under another
+        html = ("<table><tr><td>Name</td><td>Owned by</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Covestor, Inc.</td><td>Alpha Corp.</td><td>Delaware</td></tr>"
+                "<tr><td>Covestor Limited</td><td>Covestor, Inc.</td><td>United Kingdom</td></tr>"
+                "<tr><td>Beta LLC</td><td>Beta, LLC</td><td>Ohio</td></tr></table>")
+        subs = _by_name(parse_exhibit(html, "Gamma Inc."))
+        assert subs["Covestor Limited"]["parent"] == "Covestor, Inc."
+        assert "parent" not in subs["Beta LLC"]
+
     @pytest.mark.parametrize("label,parent", [
         ("Direct controlling entity", True), ("Parent", True), ("Immediate parent company", True),
         ("Owned by", True), ("Controlled by", True),
