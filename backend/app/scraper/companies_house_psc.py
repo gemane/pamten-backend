@@ -37,6 +37,7 @@ from app.scraper.bulk_import import (
     _ProgressBar, _rebuild_indexes,
 )
 from app.scraper.mapper import derive_ownership_type, parse_full_name
+from app.scraper.edge_schema import READ_FIELD
 
 log = logging.getLogger(__name__)
 
@@ -389,6 +390,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         owner_props=owner_props,
         edge_props={
             "filing_type": "PSC",
+            "read_from": READ_FIELD,   # the snapshot's natures_of_control field
             "stake_percent": stake, "voting_power_pct": voting, "ownership_type": otype,
             "interest_types": interest_types, "direct_or_indirect": None,
             "since": since, "since_basis": since_basis, "until": until,

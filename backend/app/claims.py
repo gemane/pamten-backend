@@ -97,6 +97,7 @@ def claim_props(
     since_basis: str | None = None,
     since_source_url: str | None = None,
     structure_basis: str | None = None,
+    read_from: str | None = None,
 ) -> dict:
     """The property bag for one claim, ready to UPSERT on `claim_key`.
 
@@ -141,6 +142,10 @@ def claim_props(
         "since_source_url": since_source_url,
         # The layout evidence behind an inferred tree position (see edge_schema).
         "structure_basis": structure_basis,
+        # How reliably the values were read off the document (edge_schema
+        # READ_GRADES: field > table > layout > prose) — the claim's own, so a
+        # conflict can prefer the surer reading among equals.
+        "read_from": read_from,
         "last_seen_at": now_iso(),
     }
 
@@ -229,10 +234,12 @@ def best_claim(claims: list[dict]) -> dict | None:
     """The claim whose values the edge should carry.
 
     Ranked as `owns_merge.answer_rank` ranks a shared edge's answer — official
-    tier, then a stated stake, then credibility — with ties broken by the most
-    recent source_date. So a community source's number never beats a register
-    saying "owns, amount undisclosed"; but among registers a stake beats a
-    subsidiary list that states none (the UK PSC's 75% over SEC's Exhibit 21).
+    tier, then a stated stake, then credibility, then the reading grade — with
+    ties broken by the most recent source_date. So a community source's number
+    never beats a register saying "owns, amount undisclosed"; among registers a
+    stake beats a subsidiary list that states none (the UK PSC's 75% over SEC's
+    Exhibit 21); and of two equally credible claims the one read from a field
+    beats the one read off a page.
     """
     if not claims:
         return None
@@ -255,6 +262,8 @@ def edge_values_from(claims: list[dict]) -> dict:
         "source_url": winner.get("source_url"),
         "source_date": winner.get("source_date"),
         "credibility_score": winner.get("credibility_score"),
+        "filing_type": winner.get("filing_type"),
+        "read_from": winner.get("read_from"),
     }
 
 

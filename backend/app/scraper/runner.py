@@ -48,6 +48,7 @@ from app.scraper.sec_writer import (
     _upsert_role_sec, _upsert_voting_group, _close_role_sec,                                      # noqa: F401
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
+from app.scraper.edge_schema import READ_FIELD, READ_LAYOUT, READ_PROSE, READ_TABLE, weakest_reading
 from app.scraper.country_match import matches_requested, country_mismatch
 from app.scraper.geocode import geocode_address
 
@@ -546,7 +547,7 @@ def _scrape_node(
     # Wire up to parent if this node was reached via a subsidiary edge
     if parent_entity_id:
         _upsert_owns(parent_entity_id, entity_id, source_id,
-                     source_url=_wikidata_url(qid))
+                     source_url=_wikidata_url(qid), read_from=READ_FIELD)
 
     # Subsidiaries
     for sub in data.get("subsidiaries", [])[:MAX_SUBSIDIARIES]:
@@ -575,7 +576,8 @@ def _scrape_node(
         )
         _upsert_owns(entity_id, sub_id, source_id,
                      source_url=_wikidata_url(sub["qid"]),
-                     since=sub.get("since"), until=sub.get("until"))
+                     since=sub.get("since"), until=sub.get("until"),
+                     read_from=READ_FIELD)
         if depth > 1:
             _scrape_node(sub["qid"], depth - 1, visited, scraped, source_id,
                          parent_entity_id=entity_id, counts=counts)
@@ -612,7 +614,7 @@ def _scrape_node(
         )
         _upsert_role(person_id, entity_id, "CEO", source_id,
                      since=ceo.get("since"), until=ceo.get("until"),
-                     source_url=_wikidata_url(qid))
+                     source_url=_wikidata_url(qid), read_from=READ_FIELD)
 
     # Founders / chairpersons / board members → Person + HAS_ROLE
     for off in data.get("officers", [])[:MAX_OFFICERS]:
@@ -630,7 +632,7 @@ def _scrape_node(
                                    source_id=source_id)
         _upsert_role(person_id, entity_id, off["role"], source_id,
                      since=off.get("since"), until=off.get("until"),
-                     source_url=_wikidata_url(qid))
+                     source_url=_wikidata_url(qid), read_from=READ_FIELD)
 
     # Owned by (P127) → OWNS edge (owner → this company). The owner may be a
     # person (e.g. a founder-owner) or another entity (e.g. a holding company).
@@ -665,7 +667,8 @@ def _scrape_node(
             owner_label = "Entity"
         _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid),
                      owner_label=owner_label,
-                     since=owner.get("since"), until=owner.get("until"))
+                     since=owner.get("since"), until=owner.get("until"),
+                     read_from=READ_FIELD)
 
     # Succession (P1366 replaced-by / P1365 replaces) → SUCCEEDED_BY edge, always
     # directed predecessor → successor. Each side is a distinct entity (e.g.
@@ -967,6 +970,8 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
             scraped.append({"id": sub_id, "name": sub["name"],
                             "type": "company", "country": country})
 
+        _READ_OF_BASIS = {"column": READ_TABLE, "indent": READ_LAYOUT, "heading": READ_LAYOUT}
+
         def owns(owner_id: str, sub_id: str, stake: float | None,
                  ownership_type: str | None = "controlling", **structure) -> None:
             _upsert_owns_sec(
@@ -999,6 +1004,11 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
             # not carry is under SOMEONE else — not direct under the filer.
             structure = ({"direct_or_indirect": "direct", "structure_basis": basis}
                          if basis and (holder != company_id or not sub.get("parent")) else {})
+            # The edge is as surely read as its least sure part: a row from a
+            # table whose place in the tree came from indentation is a
+            # `layout` edge; a parent column is a table cell like the rest.
+            grade = weakest_reading(sub.get("read_from"),
+                                    _READ_OF_BASIS.get(sub.get("parent_basis") or "") if structure else None)
             for co in sub.get("co_owners") or []:
                 co_id = ids.get(co["name"].casefold())
                 if co_id is None and _same_filer(co["name"], entity.get("name")):
@@ -1017,9 +1027,10 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 # minority holder, not a controlling one. The writer derives
                 # the type from the stake when none is given.
                 owns(co_id, sub_id, co["stake_percent"], ownership_type=None,
-                     direct_or_indirect="direct", structure_basis="ex21_stated")
+                     direct_or_indirect="direct", structure_basis="ex21_stated",
+                     read_from=sub.get("read_from"))
                 co_owner_edges += 1
-            owns(holder, sub_id, stake, **structure)
+            owns(holder, sub_id, stake, read_from=grade, **structure)
             holders.add(holder)
             written += 1
             if holder != company_id:
@@ -1226,7 +1237,8 @@ def run_sec_formd(company: str, force: bool = False) -> dict:
             for role in person["roles"]:
                 _upsert_role_sec(person_id, company_id, role, source_id,
                                  source_url=data["url"],
-                                 source_date=data["filing_date"])
+                                 source_date=data["filing_date"],
+                                 read_from=READ_FIELD)  # Form D primary_doc.xml
                 written += 1
             scraped.append({"type": "person", "name": name,
                             "role": ", ".join(person["roles"])})
@@ -1389,6 +1401,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
             pct = _pct_of(h["shares"], outstanding)
             _upsert_owns_sec(
                 owner_id=filer_id, owned_id=company_id, source_id=source_id,
+                read_from=READ_FIELD,  # the 13F information table's XML
                 ownership_type=(derive_ownership_type(pct) if pct is not None
                                 else "minority"),
                 file_date=h.get("period"),
@@ -1477,6 +1490,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             website=fetch_filer_website(h["subject_cik"]) if h.get("subject_cik") else None)
         _upsert_owns_sec(
             owner_id=filer_id, owned_id=subject_id, source_id=source_id,
+            read_from=READ_FIELD,  # filer-side 13D/G: XML only, see fetch_filer_holdings
             ownership_type="minority", file_date=h.get("file_date"),
             stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
             voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
@@ -1677,6 +1691,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
 
             _upsert_owns_sec(
                 owner_id=group_id, owned_id=target_id, source_id=source_id,
+                read_from=filing.get("read_from"),
                 ownership_type=filing.get("ownership_type", "unknown"),
                 file_date=filing.get("file_date"),
                 # No stake: the group's members hold the shares individually, and
@@ -1708,6 +1723,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             owner_id=investor_node_id,
             owned_id=target_id,
             source_id=source_id,
+            read_from=filing.get("read_from"),
             ownership_type=filing.get("ownership_type", "unknown"),
             file_date=filing.get("file_date"),
             stake_percent=filing.get("stake_percent"),
@@ -1753,6 +1769,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             owner_id=target_id,
             owned_id=subject_id,
             source_id=source_id,
+            read_from=holding.get("read_from"),
             ownership_type=holding.get("ownership_type", "minority"),
             file_date=holding.get("file_date"),
             stake_percent=holding.get("stake_percent"),
@@ -1794,7 +1811,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                                     else "minority"),
                     file_date=exec_rec.get("source_date"), stake_percent=stake,
                     shares=shares, shares_outstanding=data.get("shares_outstanding"),
-                    filing_type="Form 4",
+                    filing_type="Form 4", read_from=READ_FIELD,
                     # a Form 3/4 states what is held AS OF the report, not since
                     # when: its date written as a start hid an insider's older
                     # holding before their latest trade
@@ -1811,7 +1828,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 closed = _close_role_sec(person_id, target_id, exec_rec["until"], role=role,
                                          source_id=source_id,
                                          source_url=exec_rec.get("source_url"),
-                                         source_date=exec_rec.get("source_date"))
+                                         source_date=exec_rec.get("source_date"),
+                                         read_from=READ_FIELD)
                 if closed:
                     scraped.append({"type": "person", "name": name, "role": f"former {role}"})
                     log.info("SEC EDGAR: closed HAS_ROLE %r → %r (%s, until %s)",
@@ -1823,7 +1841,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         _upsert_role_sec(person_id, target_id, role, source_id,
                          source_url=exec_rec.get("source_url"),
                          source_date=exec_rec.get("source_date"),
-                         since=exec_rec.get("since"))
+                         since=exec_rec.get("since"), read_from=READ_FIELD)
         role_holders[name] = person_id
         scraped.append({"type": "person", "name": name, "role": role})
         log.info("SEC EDGAR: wrote HAS_ROLE %r → %r (%s%s)", name, data["name"], role,
@@ -1841,7 +1859,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 source_id=source_id,
                 ownership_type=(derive_ownership_type(stake) if stake is not None else "minority"),
                 file_date=exec_rec.get("source_date"),
-                stake_percent=stake,
+                stake_percent=stake, read_from=READ_FIELD,
                 # Form 4 states the holding exactly; until now it decided
                 # whether to write an edge and was then thrown away.
                 shares=shares,
@@ -1883,7 +1901,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             closed = _close_role_sec(known[dep["name"]], target_id, dep["until"],
                                      role=dep.get("role"), source_id=source_id,
                                      source_url=dep.get("source_url"),
-                                     source_date=dep.get("source_date"))
+                                     source_date=dep.get("source_date"),
+                                     read_from=READ_PROSE)  # Item 5.02's sentences
             if closed:
                 scraped.append({"type": "person", "name": dep["name"],
                                 "role": f"departed {dep.get('role') or ''}".strip()})
@@ -1921,7 +1940,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 stake_percent=stake,
                 shares=holding.get("shares_owned"),
                 shares_outstanding=shares_out,
-                filing_type="Form 4",
+                filing_type="Form 4", read_from=READ_FIELD,
                 # a Form 3/4 states what is held AS OF the report, not since
                 # when: its date written as a start hid an insider's older
                 # holding before their latest trade
@@ -2027,10 +2046,11 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
         for role in link["roles"]:
             if role == OWNER_ROLE:
                 _upsert_owns(owner_id=person_id, owned_id=entity_id, source_id=source_id,
-                             owner_label="Person", credibility_score=WIKIDATA_CREDIBILITY)
+                             owner_label="Person", credibility_score=WIKIDATA_CREDIBILITY,
+                             read_from=READ_FIELD)
             else:
                 _upsert_role(person_id, entity_id, role, source_id,
-                             credibility_score=WIKIDATA_CREDIBILITY)
+                             credibility_score=WIKIDATA_CREDIBILITY, read_from=READ_FIELD)
         scraped.append({"type": "entity", "name": link["name"], "role": ", ".join(link["roles"])})
 
     with db.get_session() as session:
@@ -2086,7 +2106,7 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
     """
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=start_date, until=end_date, source_url=source_url,
-                 credibility_score=credibility_score)
+                 credibility_score=credibility_score, read_from=READ_FIELD)
     now = _now_iso()
     with db.get_session() as session:
         matches = _matching_role(session, person_id, entity_id, role)
@@ -2110,7 +2130,7 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
             )
             _relabel_if_more_credible(session, person_id, entity_id,
                                       existing["role"], role, existing["cred"],
-                                      credibility_score, source_id)
+                                      credibility_score, source_id, READ_FIELD)
             return
         session.run(
             """
@@ -2118,10 +2138,11 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
                 source_id: $sid, credibility_score: $score,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $now
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now,
+                read_from: $rfrom
             }]->(e)
             """,
-            pid=person_id, eid=entity_id, role=role,
+            pid=person_id, eid=entity_id, role=role, rfrom=READ_FIELD,
             since=start_date, until=end_date,
             sid=source_id, score=credibility_score,
             # undated: listed as of today (the evidence date), not "no date"

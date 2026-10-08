@@ -17,7 +17,7 @@ write shape proven reliable on prod.
 
 Adding a property to an edge now means adding it to the tuple below — once.
 The merge paths carry it automatically, and the parity test in
-``tests/scraper/test_edge_schema.py`` fails on any writer that invents a
+``tests/scraper/test_writer_parity.py`` fails on any writer that invents a
 property this module does not know.
 """
 
@@ -84,6 +84,18 @@ OWNS_PROPS: tuple = (
     # its holder). Unset for GLEIF's stated direct/ultimate markers — which
     # is how the GLEIF delta tells its own markers from an inferred one.
     "structure_basis",
+    # How reliably the answer was READ from its document — not how credible the
+    # source is (that is `credibility_score`: who speaks) but how much of the
+    # value is ours. One of `READ_GRADES`, from best to worst: "field" (a named
+    # field in XML/JSON — GLEIF, PSC, 13F, a structured 13D/G), "table" (a cell
+    # under a header the filer wrote — most Exhibit 21s), "layout" (inferred
+    # from how the page is laid out: an indented parent, a heading, a header
+    # carried onto the next page, a headerless table), "prose" (a pattern over
+    # running text — an old 13D/G cover page, a subsidiary list written as
+    # sentences). An edge is as good as its weakest value (`weakest_reading`).
+    # Unset where nobody read anything: a manual entry, an edge from before
+    # the grade existed.
+    "read_from",
 )
 
 ROLE_PROPS: tuple = (
@@ -95,7 +107,28 @@ ROLE_PROPS: tuple = (
     "source_url",
     "source_date",
     "last_scraped_at",
+    "read_from",
 )
+
+#: `read_from` values, best first. The order is the rank: a grade further
+#: right is a weaker reading.
+READ_FIELD, READ_TABLE, READ_LAYOUT, READ_PROSE = "field", "table", "layout", "prose"
+READ_GRADES: tuple = (READ_FIELD, READ_TABLE, READ_LAYOUT, READ_PROSE)
+
+
+def read_rank(grade: str | None) -> int:
+    """Higher is better; an unset grade ranks below every real one — an edge
+    that says how it was read beats one that cannot say, all else equal."""
+    return len(READ_GRADES) - READ_GRADES.index(grade) if grade in READ_GRADES else 0
+
+
+def weakest_reading(*grades: str | None) -> str | None:
+    """The grade of a value built from several readings: the weakest of them.
+    An Exhibit 21 row read from a table whose parent came from indentation is
+    a `layout` edge — the stake is only as placed as the parent is. Unset
+    grades are ignored; all unset gives None."""
+    known = [g for g in grades if g in READ_GRADES]
+    return max(known, key=READ_GRADES.index) if known else None
 
 RELATED_TO_PROPS: tuple = (
     "relation",

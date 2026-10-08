@@ -623,6 +623,21 @@ def cmd_heal_sec_dates(args):
           f"{res['first_reported']} 13F holdings given their quarter as a lower-bound start.")
 
 
+def cmd_heal_read_from(args):
+    """Stamp `read_from` (how surely a value was read) on edges and claims
+    written before the grade existed (`app.scraper.read_from_heal`). Fill-only;
+    Exhibit 21 rows wait for the next `sec-ex21` run. `--dry-run` only counts."""
+    from app.scraper.read_from_heal import heal_read_from
+    res = heal_read_from(dry_run=args.dry_run)
+    verb = "would stamp" if res.pop("dry_run") else "stamped"
+    if not res:
+        print(f"{verb} nothing: every edge and claim with a known reader already carries its grade")
+        return
+    for key, n in sorted(res.items()):
+        source, table, grade = key.split(":")
+        print(f"{verb} {n:>7}  {source:<14} {table:<9} {grade}")
+
+
 def cmd_heal_role_dates(args):
     """Give undated seats their evidence date (see
     `app.scraper.time_travel_heal.heal_role_dates`). `--dry-run` only counts."""
@@ -1452,6 +1467,13 @@ def _build_parser():
              "(amendment dates as starts, Form 4 starts, ends before starts); --dry-run counts")
     p_hsd.add_argument('--dry-run', action='store_true', help='Count, change nothing')
     p_hsd.set_defaults(func=cmd_heal_sec_dates)
+
+    p_hrf = subparsers.add_parser('heal-read-from',
+        help="Stamp read_from (how surely a value was read: field/table/layout/prose) on "
+             "edges and claims from before the grade; fill-only, Exhibit 21 rows wait for "
+             "the next sec-ex21 run; --dry-run counts")
+    p_hrf.add_argument('--dry-run', action='store_true', help='Count, change nothing')
+    p_hrf.set_defaults(func=cmd_heal_read_from)
 
     p_hrd = subparsers.add_parser('heal-role-dates',
         help="Date undated seats by the day their source last listed them "

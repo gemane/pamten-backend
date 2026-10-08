@@ -395,6 +395,7 @@ def _claim_stmt(k: int, mapped, params: dict, now: str) -> str:
         source_date=mapped.edge_props.get("source_date"),
         credibility_score=mapped.edge_props.get("credibility_score") or 97,
         filing_type=mapped.edge_props.get("filing_type"),
+        read_from=mapped.edge_props.get("read_from"),
     )
     sets = []
     for name, value in props.items():

@@ -236,8 +236,16 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      direct_or_indirect: str | None = None,
                      structure_basis: str | None = None,
                      since_date: str | None = None,
-                     since_basis: str | None = None):
+                     since_basis: str | None = None,
+                     read_from: str | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
+
+    ``read_from``: how reliably this filing's values were read
+    (`edge_schema.READ_GRADES`) — a 13F's XML field, an Exhibit 21 table cell,
+    a parent inferred from indentation, a percentage found in a cover page's
+    text. Written on the claim and, when SEC holds the answer, on the edge; a
+    re-read of the same filing by the same source replaces it (the new read's
+    grade is the edge's).
 
     ``since_date`` / ``since_basis``: the start the caller worked out from the
     filing (`sec_edgar._stake_start`: an original 13D/G states it, an
@@ -302,7 +310,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                  denominator_date=denominator_date, event_date=event_date,
                  since=since, since_basis=basis, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score,
-                 filing_type=filing_type, structure_basis=structure_basis)
+                 filing_type=filing_type, structure_basis=structure_basis,
+                 read_from=read_from)
     # Claims-only sources assert but do not draw (see sources.edge_writes_suppressed).
     from app.scraper.sources import edge_writes_suppressed
     if edge_writes_suppressed(source_id):
@@ -322,7 +331,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
         denominator_date=denominator_date, event_date=event_date,
         value_usd=value_usd, filing_type=filing_type,
         direct_or_indirect=direct_or_indirect, structure_basis=structure_basis,
-        stale=False,
+        read_from=read_from, stale=False,
     )
     create_clause = edge_create_clause(OWNS_PROPS)
     # Closing an edge has to match one that is ALREADY closed too, or re-reading
@@ -390,6 +399,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                     r.voting_shares    = COALESCE($vshares, r.voting_shares),
                     r.value_usd        = COALESCE($vusd, r.value_usd),
                     r.filing_type      = COALESCE($ftype, r.filing_type),
+                    r.read_from        = $rfrom,
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date),
                     r.since            = $csince,
@@ -408,7 +418,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 vote=voting_power_pct, sclass=share_class,
                 shares=shares, shtotal=shares_outstanding, vshares=voting_shares,
                 ddate=denominator_date, edate=event_date,
-                vusd=value_usd, ftype=filing_type,
+                vusd=value_usd, ftype=filing_type, rfrom=read_from,
                 doi=direct_or_indirect, sbasis=structure_basis,
                 csince=started["since"], cbasis=started["since_basis"],
                 csurl=started["since_source_url"],
@@ -572,8 +582,12 @@ def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: 
 def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                      source_id: str, source_url: str | None = None,
                      source_date: str | None = None, credibility_score: int = 98,
-                     since: str | None = None, until: str | None = None):
+                     since: str | None = None, until: str | None = None,
+                     read_from: str | None = None):
     """Create a HAS_ROLE edge attributed to SEC EDGAR if not already present.
+
+    ``read_from``: how the seat was read (`edge_schema.READ_GRADES`) — a Form
+    3/4 or Form D field. On the claim, a created seat, a relabelled one.
 
     Provenance: source_url = the specific Form 3/4 filing document,
     source_date = its filing date. On a re-scrape of an existing edge we refresh
@@ -584,7 +598,8 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     """
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, source_url=source_url, source_date=source_date,
-                 since=since, until=until, credibility_score=credibility_score)
+                 since=since, until=until, credibility_score=credibility_score,
+                 read_from=read_from)
     # HAS_ROLE is not gated by claims-only — the mode suppresses ownership
     # structure, not people (see graph_writer._upsert_role).
     now = datetime.now(timezone.utc).isoformat()
@@ -625,7 +640,7 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             )
             _relabel_if_more_credible(session, person_id, entity_id,
                                       existing["role"], role, existing["cred"],
-                                      credibility_score, source_id)
+                                      credibility_score, source_id, read_from)
             return
         session.run(
             """
@@ -633,19 +648,25 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
                 source_id: $sid, credibility_score: $score,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $now
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now,
+                read_from: $rfrom
             }]->(e)
             """,
             pid=person_id, eid=entity_id, role=role, since=since, until=until,
-            sid=source_id, score=credibility_score,
+            sid=source_id, score=credibility_score, rfrom=read_from,
             surl=source_url, sdate=source_date, now=now,
         )
 
 
 def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None = None,
                     source_id: str | None = None, source_url: str | None = None,
-                    source_date: str | None = None, credibility_score: int = 98) -> int:
+                    source_date: str | None = None, credibility_score: int = 98,
+                    read_from: str | None = None) -> int:
     """End the person's open seat(s) at the company on `until`.
+
+    ``read_from``: how the departure was read — a "Former …" Form 4 is a
+    field, an 8-K Item 5.02 is prose. Recorded on the closing claim only; the
+    seat keeps the grade of whoever drew it.
 
     The one statutory statement of a departure: a "Former …" Form 4 or an 8-K
     Item 5.02 naming the person. With `role`, only that seat is closed (Tim
@@ -683,7 +704,8 @@ def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None
     if seats and source_id:
         record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                      role=seats[0], until=until, source_url=source_url,
-                     source_date=source_date, credibility_score=credibility_score)
+                     source_date=source_date, credibility_score=credibility_score,
+                     read_from=read_from)
     return len(seats)
 
 

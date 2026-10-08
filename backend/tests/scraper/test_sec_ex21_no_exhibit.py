@@ -71,7 +71,8 @@ class TestGroupedUnderCountries:
         by = {s["name"]: s for s in subs}
         assert by["Cerveceria y Malteria Quilmes Saica Y G"] == {
             "name": "Cerveceria y Malteria Quilmes Saica Y G", "jurisdiction": "Argentina",
-            "stake_percent": 61.63}                   # the registered office cut off
+            "stake_percent": 61.63,                   # the registered office cut off
+            "read_from": "layout"}                    # a list grouped under country rows
         assert by["Zambian Breweries PLC"]["jurisdiction"] == "Zambia"
         assert all(jurisdiction_country(s["jurisdiction"]) for s in subs)
 

@@ -66,6 +66,7 @@ from app.db.arcadedb import run_sql
 from app.scraper.bulk_import import _BatchWriter, _flush_script, _now_iso, _tmp_dir
 from app.scraper.gleif_incremental import _PUBLISHES_API
 from app.scraper.gleif_rr import REGISTRATION_DAY, _rr_edge
+from app.scraper.edge_schema import READ_FIELD
 
 log = logging.getLogger(__name__)
 
@@ -490,6 +491,7 @@ def apply_history(path: str, source_id: str, credibility_score: int,
     for owner, owned, props, claim in plan["create"]:
         batch.owns(owner, "Entity", owned, {**props, "source_id": source_id,
                                             "credibility_score": credibility_score,
+                                            "read_from": READ_FIELD,
                                             "last_scraped_at": now}, claim=claim)
     batch.flush()
     for i in range(0, len(plan["fill"]), _CHUNK):

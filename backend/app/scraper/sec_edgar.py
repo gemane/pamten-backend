@@ -55,6 +55,7 @@ from difflib import SequenceMatcher
 
 import httpx
 from app.roles import canonical_role
+from app.scraper.edge_schema import READ_FIELD, READ_PROSE
 from app.scraper.mapper import _ENTITY_SUFFIXES, derive_ownership_type
 
 log = logging.getLogger(__name__)
@@ -1359,9 +1360,15 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         voting_shares = None
         event_date    = None
         group_members: list[dict] = []
+        # How the numbers below were read: a structured schedule's named XML
+        # fields, or patterns over an older cover page's text. The two paths
+        # could not be told apart afterwards (both cite the index page), and
+        # the text path is where every misread 13D/G came from.
+        read_from     = None
 
         if inv.get("xml"):
             xml, person = inv["xml"], inv["person"]
+            read_from     = READ_FIELD
             if not _xml_issuer_matches(xml, company_cik, known_names):
                 log.info("SEC EDGAR: dropping filing by %r — its issuer is %r (CIK %s), not %r",
                          inv["investor_name"], xml.get("issuer_name"),
@@ -1403,6 +1410,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 # joint filing has one per reporting person, and the first
                 # page's numbers belong to someone else.
                 cover         = _cover_page_for(text, inv["investor_name"])
+                read_from     = READ_PROSE
                 pct           = _parse_percent_from_text(cover)
                 reported      = pct
                 bloc          = _co_filers_form_a_bloc(inv["form_type"], _cover_page_count(text))
@@ -1475,6 +1483,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # for an exact `sec-13f` run.
             "issuer_cusip":     (inv["xml"].get("issuer_cusip") if inv.get("xml") else None),
             "filing_type":      _short_form(inv["form_type"]),
+            # which reader the numbers came through (edge_schema.READ_GRADES)
+            "read_from":        read_from,
             "stake_percent":    pct,
             # The bloc a group member votes within — see _own_stake_and_voting.
             # None for a lone filer, whose stake already is its whole position.

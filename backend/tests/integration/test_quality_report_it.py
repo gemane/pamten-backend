@@ -22,7 +22,7 @@ def graph(it_db):
     # A: SEC edge with a stake, corroborated by a Wikidata claim.
     it_db.run_command(
         "MATCH (a {id:'co-a'}), (b {id:'co-b'}) CREATE (a)-[:OWNS {stake_percent:7.5, "
-        "ownership_type:'minority', source_id:'src-sec', "
+        "ownership_type:'minority', source_id:'src-sec', read_from:'prose', "
         "source_url:'https://www.sec.gov/f/1', last_scraped_at:'2026-08-01T00:00:00Z'}]->(b)")
     for src in ("src-sec", "src-wd"):
         it_db.run_command(
@@ -46,6 +46,18 @@ class TestTheFiguresAreRight:
         by = quality_report()["owns_by_source"]
         assert by["SEC EDGAR"]["edges"] == 1 and by["SEC EDGAR"]["with_stake"] == 1
         assert by["Wikidata"]["edges"] == 1 and by["Wikidata"]["with_stake"] == 0
+
+    def test_edges_are_counted_by_how_they_were_read(self, graph):
+        # The SEC edge came off a text cover page; the Wikidata one predates
+        # the grade. The report says so per source, and the printed table has
+        # the same columns — the number that names the parser to improve next.
+        from app.quality import format_report, quality_report
+        report = quality_report()
+        by = report["owns_by_source"]
+        assert by["SEC EDGAR"]["read"] == {"field": 0, "table": 0, "layout": 0, "prose": 1, "unset": 0}
+        assert by["Wikidata"]["read"] == {"field": 0, "table": 0, "layout": 0, "prose": 0, "unset": 1}
+        text = format_report(report)
+        assert "read from" in text and "prose" in text
 
     def test_freshness_is_windowed(self, graph):
         # The SEC edge was confirmed this month; the Wikidata one in 2020. If the

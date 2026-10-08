@@ -111,7 +111,7 @@ the SEC edge (its "listed since 2013" with it) for the next SEC scrape to redraw
 
 | Part of the edge | Rule |
 |---|---|
-| **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
+| **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type, `read_from` | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
 | **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A start that is not stated keeps its label: `first_listed` ("since 2013 or earlier", the oldest Exhibit 21 naming it), `amendment` (a 13D/G amendment's date — held by then, the start not seen), `register_start` (UK PSC notified on 2016-04-06, the register's first day), `first_reported` (the earliest 13F quarter a manager reported the holding in), `gleif_registration_day` (a GLEIF start that is just the child's LEI registration day and not its founding day — GLEIF records reuse that date: 27,874 of 260,250 on 2026-10-06, Barclays Bank PLC "since 2012-06-06", owned since 1985; set by the RR import, the daily delta and `gleif-rr-history`, the claim keeps the date as stated), `gleif_first_seen` (the oldest archived GLEIF golden copy listing the relationship — the archive begins 2018-02-09, so that date says only "at least since February 2018"; `gleif-rr-history`) or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it. **For time travel every basis is a lower bound except `newly_listed`** (`owns_merge.STATED_BASES`, `started_by_clause`): before its date the edge is shown dimmed, not hidden. The source's **claim** carries the same listing date and keeps it when the list is re-read (a re-scrape rewrites the claim and states no start; it used to wipe the date) |
 | **Structure** — `direct_or_indirect` (+ `structure_basis`), `also_ultimate`, `ultimate_*`, `interest_types`, `psc_self_link` | Stays on the edge whoever holds the answer; an inferred marker travels with its basis, a stated one never gains one |
 
@@ -157,10 +157,45 @@ Two rules keep the tiers meaning something on OWNS edges:
   pairs any register claim vouches for, and closed edges. The pass clears as well
   as sets, and the quality report counts stale edges per source.
 
+### How surely it was read — `read_from`
+
+Credibility says **who speaks**; `read_from` says **how much of the value is
+ours**. The two are different questions, and conflating them would break the
+tiers: an Exhibit 21 written as sentences is still a statutory filing, only one
+we may have misread, and Wikidata's clean JSON is still a community source.
+Every claim and every OWNS / HAS_ROLE edge carries one of four grades
+(`edge_schema.READ_GRADES`, best first):
+
+| grade | the value came from | examples |
+|---|---|---|
+| `field` | a named field of a structured record (XML, JSON, NDJSON, XBRL) | GLEIF, UK PSC, Wikidata, OpenCorporates, 13F, Form 3/4, Form D, a 13D/G filed as XML (since 2024-12-18) |
+| `table` | a cell under a header the filer wrote for that table | most Exhibit 21 rows, a "Direct controlling entity" column |
+| `layout` | the page's layout: an indented or heading-named parent, a header carried onto the next page, a headerless table, a list grouped under country headings | the Exhibit 21 tree, Western Union's second page |
+| `prose` | a pattern over running text | a pre-2024 13D/G cover page, an Exhibit 21 written as paragraphs, an 8-K Item 5.02 departure |
+
+Rules:
+
+- **An edge is as surely read as its least sure part** (`weakest_reading`): an
+  Exhibit 21 row from a table whose place in the tree came from indentation is
+  a `layout` edge.
+- **Below credibility, above the date** in `answer_rank` / `best_claim`: the
+  grade orders what *equally credible* sources say — a 13G read from its XML
+  over one read off a text cover page — and never lifts a source over a more
+  credible one. A register's field is not more true than a filing's sentence,
+  only more surely ours.
+- **Unset** means nobody read anything: a manual entry, a federated edge whose
+  peer published none, or an edge from before the grade. `manage.py
+  heal-read-from` fills the known cases (bulk and API sources: `field`; SEC by
+  filing type and date) and leaves Exhibit 21 rows to the next `sec-ex21` run,
+  which grades each row while it parses.
+- **It is about our reading, not the source's worth.** A low grade is a parser
+  worth improving (`manage.py quality-report` counts edges per source and grade),
+  never a reason to admit a weaker source.
+
 ## The OWNS property schema
 
 `app/scraper/edge_schema.py` is the one place that knows what sits on an edge:
-`OWNS_PROPS` (25 properties), `ROLE_PROPS`, `RELATED_TO_PROPS`. The merge paths
+`OWNS_PROPS` (33 properties), `ROLE_PROPS`, `RELATED_TO_PROPS`. The merge paths
 generate their Cypher from it; the two runner writers build their CREATEs from
 `owns_props(**kw)`, which rejects any keyword the schema lacks; and
 `tests/scraper/test_writer_parity.py` parses every other writer's source and

@@ -146,8 +146,10 @@ class TestHeadings:
                 "<tr><td>Hafnia Pools Pte. Ltd.</td><td>Singapore</td><td>100%</td></tr>"
                 "<tr><td>Hafnia Tankers Ltd.</td><td>Bermuda</td><td>60%</td></tr></table>")
         assert parse_exhibit(html, "Hafnia Ltd") == [
-            {"name": "Hafnia Pools Pte. Ltd.", "jurisdiction": "Singapore", "stake_percent": 100.0},
-            {"name": "Hafnia Tankers Ltd.", "jurisdiction": "Bermuda", "stake_percent": 60.0}]
+            {"name": "Hafnia Pools Pte. Ltd.", "jurisdiction": "Singapore", "stake_percent": 100.0,
+             "read_from": "table"},
+            {"name": "Hafnia Tankers Ltd.", "jurisdiction": "Bermuda", "stake_percent": 60.0,
+             "read_from": "table"}]
 
     @pytest.mark.parametrize("heading,listed", [
         ("Alpha Holdings Ltd", "Alpha Holdings Limited"), ("Alpha Holdings Corp", "Alpha Holdings Corporation"),

@@ -536,6 +536,8 @@ class TestIssuerVerification:
         former.assert_called_once_with("1326801")
         assert [r["investor_name"] for r in results] == ["Vanguard Group Inc"]
         assert results[0]["stake_percent"] == 7.0
+        # a legacy cover page: the numbers came out of its text by pattern
+        assert results[0]["read_from"] == "prose"
 
     def test_no_issuer_is_not_a_mismatch(self):
         # Old text filings may not parse. A positive mismatch is the only safe
@@ -1185,6 +1187,7 @@ class TestStructuredScrapeEndToEnd:
         assert res[0]["investor_name"] == "Vanguard Capital Management"
         assert res[0]["stake_percent"] == 7.48
         assert res[0]["is_individual"] is False          # IA is an entity
+        assert res[0]["read_from"] == "field"            # named XML fields, not a regex
         index.assert_not_called(), "the XML path must not fetch the index page"
 
     def test_the_share_class_reaches_the_result(self):

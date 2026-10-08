@@ -31,6 +31,7 @@ import re
 import unicodedata
 from html.parser import HTMLParser
 
+from app.scraper.edge_schema import READ_LAYOUT, READ_PROSE, READ_TABLE
 from app.scraper.mapper import normalize_entity_name
 from app.scraper.sec_edgar import SUBMISSIONS_URL, _cik10, _get, _get_text, _iso_date
 
@@ -920,6 +921,10 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
             if not name:
                 continue
             entry = {"name": name, "jurisdiction": jurisdiction,
+                     # how surely the cells were read: under a header the
+                     # filer wrote for THIS table, or by position (a carried
+                     # header, the first-two-cells heuristic)
+                     "read_from": READ_LAYOUT if header is None or inherited else READ_TABLE,
                      "_indent": getattr(row, "indent", 0.0) +
                      (_grid_indent(row, header, _number_columns(table, header)) if header else 0.0)}
             if stake is None:
@@ -966,11 +971,18 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
         # Layouts the table reader cannot see, tried only when it found
         # nothing — so an exhibit it reads today is read exactly as before.
         seq = parser.sequence
-        for entry in _grouped_list(seq, registrant) or _paragraph_list(seq, registrant) or \
-                (declared and _country_rows_list(seq, registrant)) or []:
-            if _list_key(entry) not in seen:
-                seen.add(_list_key(entry))
-                out.append({**entry, "_indent": 0.0})
+        readers = [(_grouped_list, READ_LAYOUT), (_paragraph_list, READ_PROSE)]
+        if declared:
+            readers.append((_country_rows_list, READ_LAYOUT))
+        for reader, grade in readers:
+            found = reader(seq, registrant)
+            if not found:
+                continue
+            for entry in found:
+                if _list_key(entry) not in seen:
+                    seen.add(_list_key(entry))
+                    out.append({**entry, "_indent": 0.0, "read_from": grade})
+            break
     # A parent named as the list names it: "Vía Artika S. A." is the listed
     # "Vía Artika S.A."; a holder named like the filer but with another legal
     # form that the list carries is that listed company, not the filer.
