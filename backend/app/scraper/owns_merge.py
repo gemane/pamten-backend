@@ -43,6 +43,8 @@ module is the rule for how two assertions share that edge:
 """
 from __future__ import annotations
 
+from app.scraper.edge_schema import read_rank
+
 #: One source's answer about the pair. Moved together, never mixed across sources.
 ANSWER_FIELDS: tuple = (
     "stake_percent", "voting_power_pct", "ownership_type",
@@ -50,6 +52,8 @@ ANSWER_FIELDS: tuple = (
     "until", "until_reason",
     "source_id", "credibility_score", "source_url", "source_date", "file_date",
     "filing_type",
+    # how reliably that source's values were read (edge_schema.READ_GRADES)
+    "read_from",
 )
 
 #: The start date and how it is known — combined across sources.
@@ -107,12 +111,18 @@ OFFICIAL_TIER_MIN_CREDIBILITY = 90
 
 def answer_rank(values: dict) -> tuple:
     """Which source's answer the shared edge carries: the official tier, then a
-    stated stake, then credibility. Deliberately no date tie-break — see
-    ``outranks``."""
+    stated stake, then credibility, then how reliably the values were read
+    (`read_from`). The reading grade sits BELOW credibility on purpose: it
+    orders what equally credible sources say (a 13G read from its XML over one
+    read off a text cover page, an Exhibit 21 table over a paragraph) and
+    never lifts a source over a more credible one — a register's field is
+    not more true than a filing's sentence, only more surely ours.
+    Deliberately no date tie-break — see ``outranks``."""
     credibility = int(values.get("credibility_score") or 0)
     return (credibility >= OFFICIAL_TIER_MIN_CREDIBILITY,
             values.get("stake_percent") is not None,
-            credibility)
+            credibility,
+            read_rank(values.get("read_from")))
 
 
 def outranks(incoming: dict, current: dict) -> bool:

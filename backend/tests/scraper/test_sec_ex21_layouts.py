@@ -85,7 +85,8 @@ class TestColumnGrid:
         subs = _by_name(_read("ellomay_ex8.htm", "Ellomay Capital Ltd."))
         assert len(subs) == 57
         assert subs["Ellomay Clean Energy Ltd."] == {"name": "Ellomay Clean Energy Ltd.",
-                                                     "jurisdiction": "Israel", "stake_percent": 100.0}
+                                                     "jurisdiction": "Israel", "stake_percent": 100.0,
+                                                     "read_from": "table"}
 
     def test_a_header_printed_over_three_rows_keeps_its_columns(self):
         # the third line "Name | Organization | Ownership Interest" is the rest
@@ -140,12 +141,12 @@ class TestColumnGrid:
         # BGM: the place cell spans the spacer and the place column
         html = ("<table><tr><td>Name</td><td></td><td>Jurisdiction of Incorporation</td></tr>"
                 '<tr><td>Alpha Ltd.</td><td colspan="2">Bermuda</td></tr></table>')
-        assert parse_exhibit(html) == [{"name": "Alpha Ltd.", "jurisdiction": "Bermuda"}]
+        assert parse_exhibit(html) == [{"name": "Alpha Ltd.", "jurisdiction": "Bermuda", "read_from": "table"}]
 
     def test_the_cell_index_when_the_grid_finds_nothing(self):
         html = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
                 '<tr><td colspan="2">Alpha Ltd.</td><td>Bermuda</td></tr></table>')
-        assert parse_exhibit(html) == [{"name": "Alpha Ltd.", "jurisdiction": "Bermuda"}]
+        assert parse_exhibit(html) == [{"name": "Alpha Ltd.", "jurisdiction": "Bermuda", "read_from": "table"}]
 
     def test_a_row_number_is_never_a_name(self):
         # Chanson: "Variable Interest Entities" reads as an ownership label, the
@@ -170,7 +171,7 @@ class TestColumnGrid:
         html = ('<table><tr><td colspan="2">Name</td><td colspan="2">Place of Incorporation</td></tr>'
                 '<tr><td colspan="4">Insurance Agencies and Brokers</td></tr>'
                 '<tr><td>1.</td><td>Alpha Ltd.</td><td></td><td>BVI</td></tr></table>')
-        assert parse_exhibit(html) == [{"name": "Alpha Ltd.", "jurisdiction": "BVI"}]
+        assert parse_exhibit(html) == [{"name": "Alpha Ltd.", "jurisdiction": "BVI", "read_from": "table"}]
 
     def test_a_row_number_in_the_name_cell_is_dropped(self):
         html = ("<table><tr><td>Subsidiaries</td><td>Place of Incorporation</td></tr>"
@@ -275,7 +276,8 @@ class TestCountryRows:
         subs = _by_name(_read("bat_ex8_excerpt.htm", "British American Tobacco p.l.c."))
         assert len(subs) == 32
         assert subs["British American Tobacco (Algérie) S.P.A."] == {
-            "name": "British American Tobacco (Algérie) S.P.A.", "jurisdiction": "Algeria", "stake_percent": 51.0}
+            "name": "British American Tobacco (Algérie) S.P.A.", "jurisdiction": "Algeria", "stake_percent": 51.0,
+            "read_from": "layout"}
         assert subs["British American Tobacco – Albania SH.P.K."]["jurisdiction"] == "Albania"
 
     def test_a_registered_office_line_is_no_company(self):
@@ -381,7 +383,7 @@ class TestParentColumn:
         subs = _by_name(parse_exhibit(EXITO, "Almacenes Exito S.A."))
         assert subs["Patrimonio Autónomo Viva Laureles"] == {
             "name": "Patrimonio Autónomo Viva Laureles", "jurisdiction": "Colombia", "stake_percent": 80.0,
-            "parent": "Patrimonio Autónomo Viva Malls", "parent_basis": "column"}
+            "parent": "Patrimonio Autónomo Viva Malls", "parent_basis": "column", "read_from": "table"}
         # the filer named there (accents aside): directly under it, no parent
         assert subs["Spice Investment Mercosur S.A."]["parent_basis"] == "column"
         assert "parent" not in subs["Spice Investment Mercosur S.A."]
@@ -405,13 +407,15 @@ class TestParentColumn:
                 "<tr><td>Atlas Corp.</td><td>Poseidon Corp.</td><td>Marshall Islands</td></tr>"
                 "<tr><td>Seaspan Corporation</td><td>Atlas Corp.</td><td>Marshall Islands</td></tr></table>")
         assert parse_exhibit(html, "Atlas Corp.")[1] == {
-            "name": "Seaspan Corporation", "jurisdiction": "Marshall Islands", "parent_basis": "column"}
+            "name": "Seaspan Corporation", "jurisdiction": "Marshall Islands", "parent_basis": "column",
+            "read_from": "table"}
 
     def test_the_filer_under_its_edgar_name_and_a_namesake_with_another_legal_form(self):
         html = ("<table><tr><td>Name</td><td>Owned by</td><td>Jurisdiction</td></tr>"
                 "<tr><td>KeyBank National Association</td><td>KeyCorp</td><td>United States</td></tr></table>")
         assert parse_exhibit(html, "KEYCORP /NEW/") == [
-            {"name": "KeyBank National Association", "jurisdiction": "United States", "parent_basis": "column"}]
+            {"name": "KeyBank National Association", "jurisdiction": "United States", "parent_basis": "column",
+             "read_from": "table"}]
         # "Foo Technologies LLC" is a listed company, not the filer "Foo Technologies, Inc."
         html = ("<table><tr><td>Name</td><td>Held by</td><td>Jurisdiction</td></tr>"
                 "<tr><td>Foo Technologies LLC</td><td>Foo Technologies, Inc.</td><td>Delaware</td></tr>"

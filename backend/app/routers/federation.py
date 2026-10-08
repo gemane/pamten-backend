@@ -248,7 +248,7 @@ def build_export() -> dict:
                 "b.wikidata_id AS b_wd, b.sec_cik AS b_cik, b.lei_id AS b_lei, "
                 "b.companies_house_id AS b_ch, b.register_id AS b_rid, b.name AS b_name, "
                 "r.stake_percent AS stake, r.ownership_type AS otype, "
-                "r.source_url AS surl, r.source_date AS sdate"):
+                "r.source_url AS surl, r.source_date AS sdate, r.read_from AS rfrom"):
                 ownerships.append({
                     "owner": {"kind": owner_kind, "wikidata_id": r.get("a_wd"),
                               "sec_cik": r.get("a_cik"), "lei_id": r.get("a_lei"),
@@ -261,6 +261,8 @@ def build_export() -> dict:
                               "register_id": r.get("b_rid"), "name": r.get("b_name")},
                     "stake_percent": r.get("stake"), "ownership_type": r.get("otype"),
                     "source_url": r.get("surl"), "source_date": r.get("sdate"),
+                    # how surely this instance read it; the peer stores it as ours
+                    "read_from": r.get("rfrom"),
                 })
     return {
         "format": EXPORT_FORMAT, "version": EXPORT_VERSION,
@@ -413,12 +415,16 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
                 "    r.credibility_score = $cred, "
                 "    r.last_scraped_at = $now, "
                 "    r.source_url = COALESCE($surl, r.source_url), "
-                "    r.source_date = COALESCE($sdate, r.source_date)",
+                "    r.source_date = COALESCE($sdate, r.source_date), "
+                "    r.read_from = $rfrom",
                 oid=oid, tid=tid, stake=stake,
                 otype=coherent_ownership_type(stake, o.get("ownership_type")),
                 sid=source_id, cred=credibility,
                 now=datetime.now(timezone.utc).isoformat(),
-                surl=o.get("source_url"), sdate=o.get("source_date"))
+                surl=o.get("source_url"), sdate=o.get("source_date"),
+                # the peer's own grade travels with its answer; unset if it
+                # published none
+                rfrom=o.get("read_from"))
             # The peer's assertion, recorded like any other source's — without
             # it a peer-agreed pair never counted toward corroboration.
             record_claim(kind=KIND_OWNS, from_id=oid, to_id=tid,
@@ -426,7 +432,7 @@ def import_snapshot(data: dict, source_name: str, credibility: int,
                          ownership_type=coherent_ownership_type(stake, o.get("ownership_type")),
                          source_url=o.get("source_url"),
                          source_date=o.get("source_date"),
-                         credibility_score=credibility)
+                         credibility_score=credibility, read_from=o.get("read_from"))
             counts["ownerships"] += 1
     return counts
 

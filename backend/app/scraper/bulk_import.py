@@ -33,6 +33,7 @@ from typing import IO
 from datetime import datetime, timezone
 
 from app.claims import claim_props, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
+from app.scraper.edge_schema import READ_FIELD
 
 from app.config import settings
 from app.db.arcadedb import run_sqlscript
@@ -191,6 +192,7 @@ class _BatchWriter:
             source_url=props.get("source_url"), source_date=props.get("source_date"),
             credibility_score=props.get("credibility_score") or 80,
             filing_type=props.get("filing_type"),
+            read_from=props.get("read_from"),
         ))
 
     def entity(self, node_id: str, props: dict) -> None:
@@ -534,6 +536,8 @@ def _owns(batch, owner_id, owned_id, stake_percent, ownership_type, since, until
         "source_url": source_url,
         "source_date": source_date,
         "last_scraped_at": _now_iso(),
+        # every bulk importer reads a named field of a JSON/CSV record
+        "read_from": READ_FIELD,
         **(extra or {}),
     })
 

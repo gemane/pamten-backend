@@ -61,6 +61,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 | GET | `/search/?q=` (`limit` 1-50, default 20) | Full-text search across entities and persons (FULL_TEXT `search_text` index, whole-word `CONTAINSTEXT`). If the index returns nothing, falls back to a bounded substring name scan so a degraded/incomplete FULL_TEXT index can't hide companies that are in the DB (`SEARCH_SUBSTRING_FALLBACK`, default on) |
 | GET | `/search/entity/{id}/full-profile` | Entity with owners (self-loops excluded), subsidiaries, executives, HQ, dual-listed pairs, succession (`succeeded_by` / `replaces`), `cross_holdings` (reciprocal/circular owners), and an `ownership` summary — `free_float_pct` (computed residual = 100 − disclosed, when every owner's stake is known) + `exceeds_100` flag (`limit` per section, default 900, max 1000). `as_of=YYYY-MM-DD` (optional, the time-travel view) shows owners, subsidiaries and executives — and their counts — as they stood on that date, inclusive: an edge is in force when its `since` — stated (`since_basis` null) or a first listing (`newly_listed`) — is `<= as_of` and its `until` is null or `> as_of`; a `first_listed` `since` is a lower bound and never excludes (the client dims such an edge before that date); edges with no dates are never excluded; succession and dual-listed are undated. Omitted = the present, open edges only. |
 | GET | `/scraper/ownership-quality` | admin | Data-quality report: `self_loops` count (A owns A) + `cross_holdings` pairs (A↔B) |
+| GET | `/scraper/quality` | admin | The quality report `manage.py quality-report` prints, as JSON: per source the OWNS edges, stakes, closures, staleness, freshness windows and `read` (edges per `read_from` grade: `field` / `table` / `layout` / `prose` / `unset`); corroboration, identity and contradiction gauges |
 | GET | `/search/person/{id}/full-profile` | Person with positions, holdings, place of birth |
 | GET | `/search/geographic` | Entities grouped by country for map view |
 
@@ -77,8 +78,8 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 ## Sources (provenance)
 | Method | Path | Description |
 |---|---|---|
-| GET | `/sources/entity/{id}` | Sources behind an entity's facts (from its edges + node) |
-| GET | `/sources/person/{id}` | Sources behind a person's roles/ownership |
+| GET | `/sources/entity/{id}` | Sources behind an entity's facts (from its claims + node). Each row: `id`, `name`, `type`, `credibility_score`, `url`, `source_date`, `last_scraped_at`, `filing_type` ("13G/A", "13F", "RR", "PSC", "EX-21"), `read_from` (how surely the record was read: `field` / `table` / `layout` / `prose`, null for the node's own provenance and facts from before the grade — see data-model.md) |
+| GET | `/sources/person/{id}` | Sources behind a person's roles/ownership, same shape (from the edges) |
 
 ## Usage measurement
 

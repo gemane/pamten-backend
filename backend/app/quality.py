@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.arcadedb import run_sql
 from app.database import db
+from app.scraper.edge_schema import READ_GRADES
 
 log = logging.getLogger(__name__)
 
@@ -62,16 +63,21 @@ def _owns_by_source(names: dict) -> dict:
     per: dict = defaultdict(lambda: {
         "edges": 0, "with_stake": 0, "closed": 0, "stale": 0,
         **{f"confirmed_{d}d": 0 for d in _FRESHNESS_WINDOWS},
+        # how the edges' answers were read (edge_schema.READ_GRADES), "unset"
+        # for edges from before the grade or entered by hand — where a parser
+        # is worth improving, and how much of a source rests on a reading
+        "read": {g: 0 for g in (*READ_GRADES, "unset")},
     })
     with db.get_session() as s:
         rows = s.run("""MATCH ()-[r:OWNS]->()
                         RETURN r.source_id AS sid, r.stake_percent AS stake,
                                r.until AS until, r.last_scraped_at AS seen,
-                               r.stale AS stale""")
+                               r.stale AS stale, r.read_from AS read_from""")
         for r in rows:
             src = names.get(r["sid"], "(unattributed)")
             p = per[src]
             p["edges"] += 1
+            p["read"][r["read_from"] if r["read_from"] in READ_GRADES else "unset"] += 1
             if r["stake"] is not None:
                 p["with_stake"] += 1
             if r["until"]:
@@ -182,6 +188,9 @@ def format_report(report: dict) -> str:
         stake_pct = round(p["with_stake"] / p["edges"] * 100) if p["edges"] else 0
         lines.append(f"{src:<16} {p['edges']:>6} {stake_pct:>6}% {p['closed']:>7} {p['stale']:>6} "
                      + " ".join(f"{p[f'confirmed_{d}d']:>6}" for d in _FRESHNESS_WINDOWS))
+    lines += ["", f"{'read from':<16} " + " ".join(f"{g:>7}" for g in (*READ_GRADES, "unset"))]
+    for src, p in sorted(report["owns_by_source"].items(), key=lambda kv: -kv[1]["edges"]):
+        lines.append(f"{src:<16} " + " ".join(f"{p['read'][g]:>7}" for g in (*READ_GRADES, "unset")))
     c = report["corroboration"]
     lines += ["", f"corroboration: {c['corroborated']} of {c['relationships_with_claims']} "
                   f"claimed relationships have ≥2 sources ({c['corroborated_pct']}%)"]

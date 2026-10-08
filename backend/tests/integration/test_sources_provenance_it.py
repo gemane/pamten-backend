@@ -46,16 +46,31 @@ def _seed_provenance(arcadedb):
 
 
 def _seed_claim(arcadedb, *, from_id, to_id, source_id,
-                source_url=None, source_date=None, last_seen="2026-07-12T09:00:00+00:00"):
+                source_url=None, source_date=None, last_seen="2026-07-12T09:00:00+00:00",
+                read_from=None):
     from app.claims import KIND_OWNS, claim_key
 
     arcadedb.run_command(
         "CREATE (:Claim {claim_key: $k, kind: $kind, from_id: $f, to_id: $t, "
-        "source_id: $s, source_url: $u, source_date: $d, last_seen_at: $seen})",
+        "source_id: $s, source_url: $u, source_date: $d, last_seen_at: $seen, read_from: $rf})",
         {"k": claim_key(KIND_OWNS, from_id, to_id, source_id), "kind": KIND_OWNS,
          "f": from_id, "t": to_id, "s": source_id, "u": source_url,
-         "d": source_date, "seen": last_seen},
+         "d": source_date, "seen": last_seen, "rf": read_from},
     )
+
+
+def test_the_reading_grade_reaches_the_row(it_db):
+    """How surely a record was read travels from the claim to the Sources
+    panel's row, and a claim from before the grade shows none."""
+    from app.routers.sources import get_sources_for_entity
+    _seed_provenance(it_db)
+    it_db.run_command("CREATE (:Entity {id: 'e-other', name: 'Other Co'})")
+    _seed_claim(it_db, from_id="e-other", to_id="e-target", source_id="s1",
+                source_url="https://www.sec.gov/Archives/edgar/data/1/cover.htm",
+                source_date="2019-02-14", read_from="prose")
+    by_url = {r["url"]: r for r in get_sources_for_entity("e-target")}
+    assert by_url["https://www.sec.gov/Archives/edgar/data/1/cover.htm"]["read_from"] == "prose"
+    assert by_url["https://www.sec.gov/Archives/edgar/data/1/primary.htm"]["read_from"] is None
 
 
 def test_sources_endpoint_returns_provenance(it_db):

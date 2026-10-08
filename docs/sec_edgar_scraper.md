@@ -108,6 +108,13 @@ The same modernization made these filings machine-readable:
 path, so it is built from the Atom feed alone — no index-page fetch, which makes the
 modern path *cheaper* than the legacy one (one request per filing instead of two).
 
+Which path a holding came through is recorded on its claim and edge as
+`read_from` (data-model.md, *How surely it was read*): `field` for the XML,
+`prose` for a legacy cover page read by the regexes below. The two paths used
+to be indistinguishable afterwards — both cite the index page — and the text
+path is where every misread 13D/G came from (Bozano, Altria). Among SEC's own
+claims the field beats the prose; it never outranks a more credible source.
+
 **There are two schemas, one per schedule**, and they spell the same facts differently:
 
 | | Schedule 13D | Schedule 13G |
@@ -1093,6 +1100,17 @@ Honesty rules, learned from the real filings:
     absence of a basis.
   - Flat lists (DaVita, Tesla, Occidental, News Corp, NOV — most filers) say
     nothing about depth and get no marker; only GLEIF/PSC supply their depth.
+- **Every row is graded by how it was read** (`read_from`, data-model.md *How
+  surely it was read*): `table` for a cell under a header the filer wrote for
+  that table; `layout` for a carried header (the next page's rows), the
+  headerless first-two-cells heuristic, a list grouped under country headings
+  and the country-rows reader; `prose` for the paragraph reader. The edge is as
+  surely read as its least sure part (`edge_schema.weakest_reading`): a row from
+  a table placed under its parent by indentation or a heading is a `layout`
+  edge, one placed by a "Direct controlling entity" column stays `table`, a
+  co-owner's edge takes its row's grade. The run stamps the grade on the claim
+  and the edge; `manage.py quality-report` counts edges per source and grade,
+  which is where the next parser improvement should go.
 - **Jurisdiction text is kept as filed** ("Delaware, U.S." stays); the ISO-2
   country is a separate mapped view ("Delaware, U.S."/bare state names → US,
   country names through the shared `nationality_to_iso2` table). Unmappable

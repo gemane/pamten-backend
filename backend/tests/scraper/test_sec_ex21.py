@@ -185,7 +185,7 @@ class TestHeaderAwareTables:
                 "<td>Charlotte, NC</td><td>Delaware</td></tr></table>")
         subs = parse_exhibit(html)
         assert subs == [{"name": "BAC North America Holding Company",
-                         "jurisdiction": "Delaware"}]
+                         "jurisdiction": "Delaware", "read_from": "table"}]
 
     def test_astronics_ownership_percentage_becomes_a_stake(self):
         html = ("<table><tr><td>Subsidiary</td><td>Ownership Percentage</td>"
@@ -204,7 +204,7 @@ class TestHeaderAwareTables:
                 "<td></td><td>India</td></tr></table>")
         subs = parse_exhibit(html)
         assert subs == [{"name": "TML Business Services Limited",
-                         "jurisdiction": "India"}]
+                         "jurisdiction": "India", "read_from": "table"}]
 
     def test_a_headerless_junk_table_is_rejected_by_the_sanity_gate(self):
         # AB InBev's securities listings: headerless (to this parser) rows

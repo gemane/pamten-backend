@@ -115,7 +115,8 @@ class TestRegistrantsPart:
         html = _tree_list([("Northwest Natural Gas Company (dba NW Natural)", 0), ("NWN Gas Reserves LLC", 1),
                            ("NW Natural Water Company, LLC", 0)])
         assert _part(html, "2", filers) == (
-            [{"name": "NWN Gas Reserves LLC", "jurisdiction": "Massachusetts", "parent_basis": "indent"}],
+            [{"name": "NWN Gas Reserves LLC", "jurisdiction": "Massachusetts", "parent_basis": "indent",
+              "read_from": "table"}],
             "Northwest Natural Holding Co")
 
     def test_the_filer_by_the_name_the_graph_gives_it(self):

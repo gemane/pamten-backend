@@ -115,6 +115,17 @@ parser. Anything that does not map is either a new property (document it) or noi
 - [ ] **If the source's records are filings, stamp `filing_type`** ("13G/A", "13F", "RR",
       "PSC") — the source names the register, this names the *rulebook* the fact lives
       under, which is what a reader needs to judge it.
+- [ ] **Stamp `read_from` on every value the writer records** — how surely it
+      was read, not how good the source is: `field` (a named field of XML/JSON),
+      `table` (a cell under a header the filer wrote), `layout` (inferred from the
+      page: indentation, a heading, a carried header), `prose` (a pattern over
+      text). Grade per VALUE and inside one document where the readers differ (a
+      13D/G is XML since 2024-12-18 and a text cover page before; an Exhibit 21 row
+      is a table cell, its parent an indentation), and give an edge the weakest of
+      its parts (`edge_schema.weakest_reading`). The grade orders equally credible
+      claims and never lifts a source over a more credible one — and it is never an
+      argument for admitting a weaker source: a low grade names the parser to
+      improve next (`manage.py quality-report` counts edges per source and grade).
 - [ ] **Display-only extras follow the established conventions.** A website goes through
       `normalize_url` (http(s) only, reject rather than repair — the value becomes an
       `<a href>`); an image becomes a direct `upload.wikimedia.org` thumb via

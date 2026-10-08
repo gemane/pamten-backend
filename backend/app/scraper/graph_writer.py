@@ -252,9 +252,15 @@ def _person_search_text(full_name: str, aliases: list[str] | None) -> str:
 def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
                  source_url: str | None = None, source_date: str | None = None,
                  owner_label: str = "Entity", credibility_score: int = 80,
-                 since: str | None = None, until: str | None = None):
+                 since: str | None = None, until: str | None = None,
+                 read_from: str | None = None):
     """Create an active OWNS edge if one doesn't already exist, and record this
     source's claim behind it.
+
+    ``read_from``: how reliably the source's values were read
+    (`edge_schema.READ_GRADES`) — "field" for the JSON this writer's callers
+    bring (Wikidata's SPARQL rows). Stamped on the claim and on an edge this
+    write creates; an existing edge keeps its own holder's grade.
 
     Stamps per-entry provenance (source_url/source_date/last_scraped_at). On a
     re-scrape of an existing edge, refresh last_scraped_at so the UI shows when
@@ -294,7 +300,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
     record_claim(
         kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
         since=since, until=until, source_url=source_url, source_date=source_date,
-        credibility_score=credibility_score,
+        credibility_score=credibility_score, read_from=read_from,
     )
     # A claims-only source may assert (the claim above) but not draw —
     # see sources.edge_writes_suppressed. RELATED_TO/DUAL_LISTED writers are
@@ -322,7 +328,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
                     **owns_props(ownership_type="unknown", source_id=source_id,
                                  credibility_score=credibility_score, since=since, until=until,
                                  source_url=source_url, source_date=source_date,
-                                 last_scraped_at=now, stale=False))
+                                 last_scraped_at=now, stale=False, read_from=read_from))
             return
         exists = session.run(
             f"""
@@ -383,7 +389,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
             **owns_props(ownership_type="unknown", source_id=source_id,
                          credibility_score=credibility_score, since=since,
                          source_url=source_url, source_date=source_date,
-                         last_scraped_at=now, stale=False),
+                         last_scraped_at=now, stale=False, read_from=read_from),
         )
 
 
@@ -476,7 +482,7 @@ def _matching_role(session, person_id: str, entity_id: str, role: str,
 def _relabel_if_more_credible(session, person_id: str, entity_id: str,
                               stored_label: str, new_label: str,
                               stored_cred: int, new_cred: int,
-                              source_id: str) -> None:
+                              source_id: str, read_from: str | None = None) -> None:
     """A more credible source naming the same position takes over the label.
 
     The edge stays ONE edge; only its display word, source and credibility
@@ -489,16 +495,21 @@ def _relabel_if_more_credible(session, person_id: str, entity_id: str,
         """
         MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
         WHERE r.role = $old
-        SET r.role = $new, r.source_id = $sid, r.credibility_score = $cred
+        SET r.role = $new, r.source_id = $sid, r.credibility_score = $cred,
+            r.read_from = $rfrom
         """,
         pid=person_id, eid=entity_id, old=stored_label, new=new_label,
-        sid=source_id, cred=new_cred)
+        sid=source_id, cred=new_cred, rfrom=read_from)
 
 
 def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                  since: str | None = None, until: str | None = None,
-                 source_url: str | None = None, credibility_score: int = 80):
+                 source_url: str | None = None, credibility_score: int = 80,
+                 read_from: str | None = None):
     """Create a HAS_ROLE edge if one doesn't already exist.
+
+    ``read_from``: how reliably the seat was read (`edge_schema.READ_GRADES`);
+    on the claim, on a seat this write creates, and on a relabelled one.
 
     Matched on role, and on `since` **only when the incoming assertion has one**.
     A dated tenure is its own edge — someone can be CEO twice — but an *undated*
@@ -509,7 +520,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     """
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
-                 credibility_score=credibility_score)
+                 credibility_score=credibility_score, read_from=read_from)
     # HAS_ROLE is deliberately NOT gated by claims-only: the mode distrusts a
     # source's OWNERSHIP structure, and people are exactly what the Wikidata
     # verdict wanted kept. Suppressing roles orphaned every Wikidata person
@@ -550,7 +561,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                     until=until)
             _relabel_if_more_credible(session, person_id, entity_id,
                                       exists["role"], role, exists["cred"],
-                                      credibility_score, source_id)
+                                      credibility_score, source_id, read_from)
             return
 
         if since:
@@ -574,7 +585,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                 )
                 _relabel_if_more_credible(session, person_id, entity_id,
                                           undated["role"], role, undated["cred"],
-                                          credibility_score, source_id)
+                                          credibility_score, source_id, read_from)
                 return
 
         session.run(
@@ -583,7 +594,8 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             CREATE (p)-[:HAS_ROLE {
                 role: $role, since: $since, until: $until,
                 source_id: $sid, credibility_score: $score,
-                source_url: $surl, source_date: $sdate, last_scraped_at: $now
+                source_url: $surl, source_date: $sdate, last_scraped_at: $now,
+                read_from: $rfrom
             }]->(e)
             """,
             pid=person_id,
@@ -593,6 +605,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             until=until,
             sid=source_id,
             score=credibility_score,
+            rfrom=read_from,
             # An undated seat is still dated by its evidence: the source lists
             # it TODAY. Without it the seat was dimmed in every year, the
             # present included.

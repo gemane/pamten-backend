@@ -189,15 +189,18 @@ def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
 def _tree_data(**over):
     return {**{
         "subsidiaries": [
-            {"name": "Aquarion Company", "jurisdiction": "Delaware", "parent_basis": "indent"},
+            {"name": "Aquarion Company", "jurisdiction": "Delaware", "parent_basis": "indent",
+             "read_from": "table"},
             {"name": "Aquarion Water Company", "jurisdiction": "Connecticut",
-             "parent": "Aquarion Company", "parent_basis": "indent"},
+             "parent": "Aquarion Company", "parent_basis": "indent", "read_from": "table"},
             {"name": "Abenaki Water Co., Inc.", "jurisdiction": "New Hampshire",
-             "parent": "Aquarion Water Company", "parent_basis": "indent", "stake_percent": 100.0},
-            {"name": "HWP Company", "jurisdiction": "Massachusetts", "parent_basis": "indent"},
+             "parent": "Aquarion Water Company", "parent_basis": "indent", "stake_percent": 100.0,
+             "read_from": "table"},
+            {"name": "HWP Company", "jurisdiction": "Massachusetts", "parent_basis": "indent",
+             "read_from": "table"},
             # a parent the list does not carry: stays under the filer, counted
             {"name": "Orphan Holdings LLC", "jurisdiction": "Delaware",
-             "parent": "Yahoo! Inc.", "parent_basis": "heading"},
+             "parent": "Yahoo! Inc.", "parent_basis": "heading", "read_from": "table"},
         ],
         "form": "10-K", "filing_date": "2026-02-17",
         "url": "https://www.sec.gov/Archives/edgar/data/72741/000007274126000010/a2025-ex21.htm",
@@ -213,8 +216,10 @@ def _eversource(it_db):
 def _owns(it_db):
     rows = it_db.run_command(
         "MATCH (a:Entity)-[r:OWNS]->(b:Entity) WHERE r.until IS NULL RETURN a.id AS o, b.name AS s, "
-        "r.direct_or_indirect AS doi, r.structure_basis AS sb, r.source_id AS src, r.stake_percent AS stake")
-    return {(r["o"], r["s"]): (r.get("doi"), r.get("sb"), r.get("src"), r.get("stake")) for r in rows}
+        "r.direct_or_indirect AS doi, r.structure_basis AS sb, r.source_id AS src, r.stake_percent AS stake, "
+        "r.read_from AS rf")
+    return {(r["o"], r["s"]): (r.get("doi"), r.get("sb"), r.get("src"), r.get("stake"), r.get("rf"))
+            for r in rows}
 
 
 def test_a_drawn_tree_puts_each_subsidiary_under_its_parent_not_the_filer(it_db):
@@ -234,6 +239,16 @@ def test_a_drawn_tree_puts_each_subsidiary_under_its_parent_not_the_filer(it_db)
     assert ("es", "Abenaki Water Co., Inc.") not in edges
     assert edges[("es", "Orphan Holdings LLC")][:2] == (None, None)   # unresolved parent: flat, unmarked
     assert edges[("es", "HWP Company")][:2] == ("direct", "ex21_indent")
+    # How surely each edge was read: the rows are table cells, but a place in
+    # the tree drawn by indentation makes the edge a `layout` reading; the
+    # orphan's place was not used, so its edge is the row's own grade.
+    assert edges[(aw, "Abenaki Water Co., Inc.")][4] == "layout"
+    assert edges[("es", "HWP Company")][4] == "layout"
+    assert edges[("es", "Orphan Holdings LLC")][4] == "table"
+    claims = it_db.run_command(
+        "MATCH (c:Claim {kind: 'owns'}) RETURN c.to_id AS to, c.read_from AS rf")
+    abenaki = it_db.run_command("MATCH (e:Entity {name: 'Abenaki Water Co., Inc.'}) RETURN e.id AS id")[0]["id"]
+    assert {r["to"]: r["rf"] for r in claims}[abenaki] == "layout", "the claim carries the grade too"
 
 
 def test_a_re_read_that_finds_the_tree_withdraws_the_flat_filer_edges(it_db):
@@ -254,7 +269,7 @@ def test_a_re_read_that_finds_the_tree_withdraws_the_flat_filer_edges(it_db):
     edges = _owns(it_db)
     assert ("es", "Abenaki Water Co., Inc.") not in edges           # SEC's alone: deleted
     # GLEIF's link stays, and no longer cites SEC for anything
-    assert edges[("es", "Aquarion Water Company")] == ("indirect", None, "gleif", None)
+    assert edges[("es", "Aquarion Water Company")][:4] == ("indirect", None, "gleif", None)
     claims = {r["source_id"] for r in it_db.run_sql(
         "SELECT source_id FROM Claim WHERE from_id = 'es' AND to_id IN "
         "(SELECT id FROM Entity WHERE name IN ['Aquarion Water Company', 'Abenaki Water Co., Inc.'])")}
@@ -392,6 +407,11 @@ def test_a_parent_column_puts_the_stake_on_the_parents_edge(it_db):
     assert edges[("exito", "Patrimonio Autónomo Viva Malls")][3] == 51.0
     assert edges[("exito", "Orphan S.A.")][:2] == (None, None)
     assert edges[("exito", "Orphan S.A.")][3] is None, "the unlisted parent's stake is not the filer's"
+    # a parent named by a column is a table cell like the rest: the edge stays a
+    # `table` reading; the appended orphan row had no grade and gets none
+    assert edges[(malls, "Patrimonio Autónomo Viva Laureles")][4] == "table"
+    assert edges[("exito", "Patrimonio Autónomo Viva Malls")][4] == "table"
+    assert edges[("exito", "Orphan S.A.")][4] is None
 
 
 def test_one_name_in_two_countries_is_two_nodes(it_db):

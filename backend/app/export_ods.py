@@ -422,7 +422,7 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
 
     source_rows = [[s.get("name"), s.get("type"), s.get("credibility_score"),
                     Link(s["url"]) if s.get("url") else None, s.get("source_date"), s.get("last_scraped_at"),
-                    s.get("filing_type")]
+                    s.get("filing_type"), s.get("read_from")]
                    for s in get_sources_for_entity(entity_id)]
 
     claims = claims_for(to_id=entity_id) + claims_for(from_id=entity_id, kind="owns")
@@ -437,7 +437,8 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
                    c.get("role"), c.get("ownership_type"), _pct(c.get("stake_percent")), _pct(c.get("voting_power_pct")),
                    c.get("since"), c.get("since_basis"), c.get("until"), _source(c.get("source_id"), sources), c.get("filing_type"),
                    Link(c["source_url"]) if c.get("source_url") else None, c.get("source_date"),
-                   c.get("credibility_score"), c.get("first_seen_at"), c.get("last_seen_at")]
+                   c.get("credibility_score"), c.get("first_seen_at"), c.get("last_seen_at"),
+                   c.get("read_from")]
                   for c in claims]
 
     counts = profile.get("counts") or {}

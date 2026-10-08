@@ -41,6 +41,7 @@ from app.scraper.gleif_lei_cdf import _entity_props
 from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei, _record_date, _relationship_dates
 from app.merged_ids import canonical_id
 from app.scraper.owns_merge import ANSWER_FIELDS, combine_since, outranks
+from app.scraper.edge_schema import READ_FIELD
 from app.scraper.gleif_succession import _iter_lei_records, _pairs_from_record, _v
 
 log = logging.getLogger(__name__)
@@ -206,7 +207,8 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
     record_claim(kind=KIND_OWNS, from_id=parent_id, to_id=child_id,
                  source_id=source_id, ownership_type="controlling", since=since, until=until,
                  source_url=f"https://search.gleif.org/#/record/{child_lei}",
-                 source_date=recorded, credibility_score=credibility_score, filing_type="RR")
+                 source_date=recorded, credibility_score=credibility_score, filing_type="RR",
+                 read_from=READ_FIELD)
     existing = _existing_consolidation_edge(parent_id, child_id, since)
     url = f"https://search.gleif.org/#/record/{child_lei}"
     floor = (existing or {}).get("since_not_before")
@@ -219,13 +221,13 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
         run_command(
             "MATCH (a:Entity {id:$p}) MATCH (b:Entity {id:$c}) "
             "CREATE (a)-[:OWNS {direct_or_indirect:$m, ownership_type:'controlling', "
-            "filing_type:'RR', "
+            "filing_type:'RR', read_from:$rfrom, "
             "interest_types:$it, source_id:$src, credibility_score:$cred, "
             "source_url:$url, since:$since, until:$until, source_date:$sdate, "
             "last_scraped_at:$now}]->(b)",
             {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
              "src": source_id, "cred": credibility_score, "since": since, "until": until,
-             "sdate": recorded, "url": url, "now": now})
+             "sdate": recorded, "url": url, "now": now, "rfrom": READ_FIELD})
         return "created"
 
     # Whose answer the edge carries. RR's own edge (or an unattributed one) it
@@ -240,7 +242,7 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
         sets.update({f: None for f in ANSWER_FIELDS})
         sets.update(ownership_type="controlling", filing_type="RR", source_id=source_id,
                     credibility_score=credibility_score, source_url=url,
-                    source_date=recorded, until=until)
+                    source_date=recorded, until=until, read_from=READ_FIELD)
     elif holds:
         # the record's own end (an ACTIVE record can state one) — not a blanket
         # reopen, which undid what the full import closed
@@ -359,11 +361,12 @@ def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str,
             run_command(
                 "MATCH (a:Entity {id:$p}) MATCH (b:Entity {id:$c}) "
                 "CREATE (a)-[:OWNS {direct_or_indirect:'indirect', ownership_type:'controlling', "
-                "filing_type:'RR', interest_types:$it, source_id:$src, credibility_score:$cred, "
+                "filing_type:'RR', read_from:$rfrom, interest_types:$it, source_id:$src, "
+                "credibility_score:$cred, "
                 "source_url:$url, since:$since, last_scraped_at:$now}]->(b)",
                 {"p": pid, "c": cid, "it": k.get("it") or ["accountingConsolidation"],
                  "src": k.get("src") or source_id, "cred": k.get("cred"), "url": k.get("url"),
-                 "since": rows[0].get("ult"), "now": _now_iso()})
+                 "since": rows[0].get("ult"), "now": _now_iso(), "rfrom": READ_FIELD})
         return 1
 
     rows = run_command(
