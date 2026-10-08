@@ -1209,6 +1209,74 @@ def jurisdiction_subdivision(jurisdiction: str | None) -> str | None:
     return None
 
 
+# ── one filing, several registrants ──────────────────────────────────────────
+# AEP files one 10-K for itself and seven subsidiaries, Duke Energy for eight,
+# Eversource for four: one Exhibit 21, the group's, reached from each
+# co-registrant's CIK. Read as AEP Texas's own list, it made AEP Texas's
+# parent and siblings its subsidiaries. 40 of 1,829 annual filings measured
+# (2026-10-08) are combined; the SGML header names every registrant.
+_FILER = re.compile(r"<CONFORMED-NAME>([^\n<]*)\s*<CIK>(\d+)")
+# "Northwest Natural Gas Company (dba NW Natural)": the name is before it
+_ALIAS = re.compile(r"\s*\((?:dba|d/b/a|fka|f/k/a|formerly|aka|a/k/a)\b[^()]*\)", re.I)
+
+
+def co_registrants(cik: str, accession: str) -> list[tuple[str, str]]:
+    """(cik, name) of every registrant of one filing, from its SGML header —
+    one pair for a filing of one company; [] when the header cannot be read."""
+    url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{accession}.hdr.sgml"
+    try:
+        text = _get_text(url) or ""
+    except Exception as exc:  # noqa: BLE001 - without it, the filing reads as one filer's
+        log.info("filing header %s unreadable: %s", url, exc)
+        return []
+    return [(str(int(c)), name.strip()) for name, c in _FILER.findall(text)]
+
+
+def _same_name(a: str, b: str) -> bool:
+    """One company's name, the legal form spelled either way — never another
+    legal form: a REIT and its operating partnership are "Hudson Pacific
+    Properties, Inc." and "…, L.P.", and both file the 10-K."""
+    return _form_key(_ALIAS.sub("", a)) == _form_key(_ALIAS.sub("", b))
+
+
+def registrants_part(html: str, form: str | None, subs: list[dict], filers: list[tuple[str, str]],
+                     cik: str, registrant: str | None = None) -> tuple[list[dict], str | None]:
+    """(the part of a combined filing's list that is ``cik``'s own, whose
+    list it is — None for the filer's own).
+
+    A list that names the filer among its rows is not the filer's own: no
+    company is its own subsidiary. When another registrant of the filing is
+    absent from it, the list is that one's (Eversource's, with NSTAR Electric
+    a row in it), and the filer keeps only the branch the list draws under
+    its own row — with no branch, nothing. Otherwise (every registrant
+    listed, or the filer not) the list is read as before."""
+    me = str(int(cik))
+    if len(filers) < 2:
+        return subs, None                          # one company's filing: no second parse
+    full = parse_exhibit(html, None, form)        # the filer's own row kept
+    names = [n for c, n in filers if c == me] + ([registrant] if registrant else [])
+    row = next((e["name"] for e in full if any(_same_name(e["name"], n) for n in names)), None)
+    owners = [n for c, n in filers if c != me and not any(_same_name(e["name"], n) for e in full)]
+    if not row or not owners:
+        return subs, None
+    branch: set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for e in full:
+            if e["name"] not in branch and e.get("parent") in branch | {row}:
+                branch.add(e["name"])
+                grew = True
+    out = []
+    for e in full:
+        if e["name"] in branch:
+            e = dict(e)
+            if e.get("parent") == row:
+                del e["parent"]                    # directly under the filer, as the tree draws it
+            out.append(e)
+    return out, owners[0]
+
+
 def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
     """The latest annual filing's subsidiary list for a CIK, with provenance.
 
@@ -1221,10 +1289,13 @@ def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
     if not filings:
         return None
     for meta in exhibit_candidates(cik, *filings[0]):
-        subs = parse_exhibit(_get_text(meta["url"]), registrant, meta["form"])
+        html = _get_text(meta["url"])
+        subs = parse_exhibit(html, registrant, meta["form"])
         if subs:
-            return {"subsidiaries": subs, "form": meta["form"],
-                    "filing_date": meta["filing_date"], "url": meta["url"]}
+            subs, group_of = registrants_part(html, meta["form"], subs,
+                                              co_registrants(cik, meta["accession"]), cik, registrant)
+            return {"subsidiaries": subs, "form": meta["form"], "filing_date": meta["filing_date"],
+                    "url": meta["url"], **({"group_of": group_of} if group_of else {})}
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
                  meta["url"])
     return list_from_main_document(cik, filings[0], registrant)
@@ -1494,11 +1565,15 @@ def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | 
     return None
 
 
-def _parse_first(candidates: list[dict]) -> tuple[list[dict], dict] | None:
-    """The first candidate exhibit that parses to subsidiaries, with its meta."""
+def _parse_first(candidates: list[dict], cik: str | None = None) -> tuple[list[dict], dict] | None:
+    """The first candidate exhibit that parses to subsidiaries, with its meta
+    — of a combined filing, ``cik``'s own part (``registrants_part``)."""
     for meta in candidates:
-        subs = parse_exhibit(_get_text(meta["url"]), form=meta["form"])
+        html = _get_text(meta["url"])
+        subs = parse_exhibit(html, form=meta["form"])
         if subs:
+            if cik:
+                subs, _ = registrants_part(html, meta["form"], subs, co_registrants(cik, meta["accession"]), cik)
             return subs, meta
         log.info("candidate %s parsed to zero subsidiaries — trying the next", meta["url"])
     return None
@@ -1518,7 +1593,7 @@ def fetch_subsidiary_history(cik: str, max_filings: int = HISTORY_MAX_FILINGS) -
     for form, accession, filed, period in annual_filings(cik, include_older=True)[:max_filings]:
         as_of = _iso_date(period) if period else _iso_date(filed)
         try:
-            got = _parse_first(exhibit_candidates(cik, form, accession, filed, period))
+            got = _parse_first(exhibit_candidates(cik, form, accession, filed, period), cik)
         except Exception as exc:  # noqa: BLE001 - one bad year is a gap, not a failure
             log.warning("annual filing %s: exhibit unreadable: %s", accession, exc)
             got = None

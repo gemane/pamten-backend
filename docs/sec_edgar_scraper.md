@@ -982,6 +982,34 @@ from readers removed again the same day, so 11 remain):
   the old index lookup missed (a stake in a split "100 | %" cell, a place).
 - **`no_annual_filing`** instead of `no_exhibit` when the company files no 10-K or
   20-F at all (SoftBank, Vanguard, FMR: 13F/13G filers).
+- **One filing, several registrants** (2026-10-08). AEP files one 10-K for itself
+  and seven subsidiaries, Duke Energy for eight, Eversource for four: one Exhibit
+  21, the group's, reached from every co-registrant's CIK — read as AEP Texas's or
+  NSTAR Electric's own list, it made their parent's other subsidiaries theirs.
+  The filing's SGML header (`….hdr.sgml`, one request) names every registrant
+  (`co_registrants`). A list that names the filer among its rows is not the
+  filer's own (no company is its own subsidiary); when another registrant of the
+  filing is absent from it, the list is that one's, and the filer keeps only the
+  branch the list draws under its own row (`registrants_part`) — the list's
+  indent, heading or parent column — or nothing. The run result says whose list
+  it was (`group_of`); what an earlier read wrote from the group's list is
+  dimmed (`stale`) like any subsidiary a newer list drops. Names match with the
+  legal form spelled either way and a "(dba …)" aside, never across legal forms:
+  a REIT and its operating partnership ("Hudson Pacific Properties, Inc." /
+  "…, L.P.") file together. 40 of 1,829 annual filings measured are combined;
+  of them, 7 lists change: NSTAR Electric 40 → 1, Northwest Natural Gas 60 → 5,
+  Entergy Texas 66 → 0, Google LLC 2 → 0 (Alphabet's) — the parent's other
+  subsidiaries gone — and the REIT operating partnerships: Vornado Realty L.P.
+  388 → 0, whose list says it is "of both Vornado Realty Trust and Vornado
+  Realty, L.P."; VICI Properties L.P. and Sotherly Hotels LP keep all but
+  themselves only because "Subsidiaries of VICI Properties Inc." is taken for
+  the listed "VICI Properties L.P." while headings match across legal forms —
+  matched strictly, they read nothing too. The operating partnership holds
+  most of its REIT's list, but the list does not draw it so: the known cost
+  of the rule. Where every registrant is listed (Brixmor) or the filer is not
+  (OneMain Finance in OneMain Holdings' list), the list is read as before.
+  `sec-ex21-history` reads each older filing the same way. Not done for a list
+  read from a 20-F's main document or an earlier filing.
 - **Not read: Unilever.** Its 8.1 is the full UK Companies Act s.409 list,
   subsidiaries mixed with associates and joint ventures in multi-column flowing
   text, over a thousand entries; it points to the significant subsidiaries in its

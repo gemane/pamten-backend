@@ -400,6 +400,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       filer CALLS it, not from position. And when a bad early run wrote junk, clean it
       up in the same session (delete edges, then degree-0 unidentified nodes — via SQL:
       ArcadeDB Cypher silently ignores `size((b)--())` predicates).
+- [ ] **Ask whose document it is.** One filing can belong to several
+      registrants (a utility group's combined 10-K, a REIT and its operating
+      partnership): the document is reachable from each of their ids, and it
+      describes one of them. EDGAR's SGML header names them all; a document that
+      lists the filer among its own rows is not the filer's own.
 - [ ] **Trust measured behaviour over documented behaviour.** EDGAR's full-text search
       documents 10 results per page and returns ~100, relevance-ordered where date order
       is needed; GLEIF's thumbnail sizes 400 anything off-bucket. Probe the real API once

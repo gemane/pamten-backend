@@ -1039,7 +1039,11 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                  f"{detached} filer edges withdrawn" if detached else "",
                  f"{stale} no longer listed (dimmed)" if stale else "",
                  (f"list of {data['filing_date']}, re-affirmed by the 20-F of {data['confirmed_on']}"
-                  if data.get("confirmed_by") else "")]
+                  if data.get("confirmed_by") else ""),
+                 # A filing several registrants file together: the list is
+                 # the group's, and only the filer's branch of it was written
+                 (f"the filing's list is {data['group_of']}'s; {written} in this filer's branch"
+                  if data.get("group_of") else "")]
         if any(notes):
             run["note"] = ", ".join(n for n in notes if n)
         return {"status": "ok", "company": company, "entity_id": company_id,
@@ -1048,6 +1052,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 "nested": nested, "unresolved_parents": unresolved_parents,
                 "detached": detached, "co_owner_edges": co_owner_edges,
                 "stale": stale, "scraped": scraped,
+                **({"group_of": data["group_of"]} if data.get("group_of") else {}),
                 **({"source_url": data["url"], "confirmed_by": data["confirmed_by"],
                     "confirmed_on": data["confirmed_on"]} if data.get("confirmed_by") else {})}
 
