@@ -341,27 +341,25 @@ def test_a_list_from_an_earlier_f1_is_dated_by_it_and_confirmed_by_the_20f(it_db
     assert "re-affirmed by the 20-F of 2026-04-30" in (note[0]["note"] or "")
 
 
-def test_only_the_named_places_land_and_mauritius_is_not_us(it_db):
-    # Karooooo names 16 subsidiaries with a place and 30 without, and only the
-    # 16 are read; "Mauritius" mapped to the US until the US-suffix rule got
-    # its word boundary
-    from pathlib import Path
+def test_the_places_land_as_countries_and_mauritius_is_not_us(it_db):
+    # "Mauritius", "Cyprus" and "Belarus" mapped to the US until the US-suffix
+    # rule got its word boundary
     from app.scraper.sec_ex21 import parse_exhibit
-    fx = Path(__file__).parents[1] / "scraper" / "fixtures"
-    subs = parse_exhibit((fx / "karooooo_ex81.htm").read_text(), "Karooooo Ltd.")
-    subs += parse_exhibit("<table><tr><td>Name</td><td>Jurisdiction</td></tr><tr><td>"
-                          "Borr (Mauritius) Holdings Limited</td><td>Mauritius</td></tr></table>")
+    rows = "".join(f"<tr><td>{n}</td><td>{p}</td></tr>" for n, p in (
+        ("Cartrack Inc.", "USA"), ("Borr (Mauritius) Holdings Limited", "Mauritius"),
+        ("Alpha Cyprus Ltd", "Cyprus"), ("Beta Belarus LLC", "Belarus")))
+    subs = parse_exhibit(f"<table><tr><td>Name</td><td>Jurisdiction</td></tr>{rows}</table>")
     data = {"subsidiaries": subs, "form": "20-F", "filing_date": "2026-06-30",
             "url": "https://www.sec.gov/Archives/edgar/data/1/000000000126000009/ex8-1.htm"}
     _apple(it_db)
     with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
         result = runner.run_sec_ex21("Apple")
-    assert result["status"] == "ok" and result["total"] == 17
+    assert result["status"] == "ok" and result["total"] == 4
     assert result["unmapped_jurisdictions"] == 0
-    rows = {r["name"]: r["country"] for r in it_db.run_command(
+    got = {r["name"]: r["country"] for r in it_db.run_command(
         "MATCH (:Entity {id:'apple'})-[r:OWNS]->(b:Entity) RETURN b.name AS name, b.country AS country")}
-    assert len(rows) == 17 and "Cartrack Holdings (Pty) Ltd" not in rows
-    assert rows["Cartrack Inc."] == "US" and rows["Borr (Mauritius) Holdings Limited"] == "MU"
+    assert got == {"Cartrack Inc.": "US", "Borr (Mauritius) Holdings Limited": "MU",
+                   "Alpha Cyprus Ltd": "CY", "Beta Belarus LLC": "BY"}
 
 
 def _exito(it_db):

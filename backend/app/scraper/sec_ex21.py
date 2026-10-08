@@ -14,10 +14,10 @@ Two honesty caveats carried onto every edge:
 
 Parsing: the exhibit is free-form HTML, but in practice a two-column table
 (name | jurisdiction) or its visual equivalent. The parser reads table rows
-first; when they yield nothing it tries the other layouts filers use — one
-subsidiary per line with its place, names under country rows (measured on
-the 2026 20-Fs). A list that names no place for its subsidiaries, and the
-text layer behind scanned pages, are not read. A document declared anything
+first; when they yield nothing it tries the other layouts filers use — names
+under country rows (measured on the 2026 20-Fs). A list that names no place
+for its subsidiaries, one subsidiary per line with its place in words, and
+the text layer behind scanned pages, are not read. A document declared anything
 but EX-8/EX-8.1 (in a 20-F) or EX-21.x is no list. Jurisdictions
 like "Delaware, U.S." are split into country US (the state is kept as display
 text). Measured, not documented: Apple/Microsoft/Alphabet exhibits are all
@@ -713,42 +713,13 @@ def _subsidiary_document(kind: str, form: str | None) -> bool:
     return bool(_SUBSIDIARY_TYPE.match(kind))
 
 
-# ── one subsidiary per line ──────────────────────────────────────────────────
-# Measured on the 2026 20-Fs: a third of the subsidiary files that read
-# nothing write one subsidiary per paragraph, list item or one-cell table row,
-# the place in words — "Bluebottle Limited, a Hong Kong company" (FinVolution,
-# Trip.com, Autohome), "COD Resorts Limited, incorporated in the Macau Special
-# Administrative Region …" (Melco), "Vuela, S.A., a corporation organized under
-# the laws of Guatemala" (Volaris), "… is a Hong Kong company and is
-# wholly-owned by the Company" (Ridgetech), "The Company indirectly owns
-# 99.83% of the economic and voting interests in Cerveceria … (incorporated in
-# Argentina)" (Ambev); or with the place set off — "Sportradar AG,
-# Switzerland", "XPACSponsor LLC - Cayman", "DLP Capital LLC (USA - Delaware)".
-_LEAD_MARKER = re.compile(r"^(?:[·•▪●○◦\-–]\s*|\d{1,3}(?:\.\d{1,4})+\s+|"
-                          r"\d{1,3}[.)]\s*|\(?[ivxIVX]{1,4}[.)]\s+)")
-_FOOTNOTE_CELL = re.compile(r"^\((?:\d{1,2}|\*{1,3}|[a-z])\)$")
-_NAME_END = re.compile(r",\s+(?=(?:an?|incorporated|organi[sz]ed|established|registered|validly|existing)\s)"
-                       r"|\s+is\s+(?=an?\s)"
-                       # Jianpu forgets the comma: "… Co., Ltd. a PRC company"
-                       r"|(?<=\.)\s+(?=an?\s+[A-Z][\w\u2019' ]{1,40}?\s+(?:company|corporation)\b)")
-# "(“Renovation”)", "(the “Company”)", "(formerly known as “ATA Testing …”)"
-_DEFINED_TERM = re.compile(r"\s*\((?:the\s+)?[\"“][^\"”]{1,80}[\"”]\)|"
-                           r"\s*\((?:formerly|previously)\b.*\)\s*$", re.I)
-_PLACE_LAW = re.compile(
-    r"\b(?:incorporated|organi[sz]ed|established|registered|existing)(?:\s+and\s+existing)?\s+"
-    r"(?:in|under\s+the\s+laws\s+of)\s+(?:the\s+)?(?P<jur>[^,;()]+?)\s*(?=[,;]|\.(?:\s|$)|\s+and\s|"
-    r"\s+with\s|\s+\(|$)", re.I)
-_PLACE_ADJ = re.compile(
-    r"^an?\s+(?P<jur>.+?)\s+(?:(?:exempted|limited liability|limited|private|public|joint[- ]stock|stock|"
-    r"holding|variable capital|wholly[- ]owned|foreign[- ]invested)\s+)*"
-    r"(?:company|corporation|entity|partnership|enterprise)\b", re.I)
-_OWNS_IN = re.compile(
-    r"\bowns\s+(?P<stake>\d{1,3}(?:\.\d+)?)\s*%\s+of\s+.{0,80}?\binterests?\s+in\s+(?P<name>.+?)\s*"
-    r"\((?:incorporated|organi[sz]ed)\s+in\s+(?:the\s+)?(?P<jur>[^()]+)\)", re.I)
-_COMMA_PLACE = re.compile(r"^(?P<name>.+),\s*(?P<jur>[^,]{2,40})$")
-_DASH_PLACE = re.compile(r"^(?P<name>.+?)\s+[-–—]\s+(?P<jur>[^-–—]{2,40})$")
-# A name that ends (or, Indonesian, starts) in a legal form — the shape of a
-# company name.
+# ── names grouped under one-cell country rows ────────────────────────────────
+# BAT's Exhibit 8: "Albania" / "British American Tobacco – Albania SH.P.K." /
+# "Algeria" / "… (Algérie) S.P.A. (51%)4" — one cell per row, 400 subsidiaries,
+# the associates after them.
+#
+# A name that ends (or, Indonesian, starts) in a legal form is the shape of a
+# company name: a one-cell row naming a country is a heading only without one.
 _LEGAL_NAME = re.compile(
     r"(?:\b(?:limited|ltd|llc|l\.l\.c|inc|incorporated|corp|corporation|company|co|plc|p\.l\.c|gmbh|ag|"
     r"se|sa|s\.a|s\.a\.s|sas|s\.?r\.?l|b\.?v|n\.?v|pte\.?\s+ltd|pty\.?\s+ltd|ltda|limitada|sdn\.?\s+bhd|"
@@ -758,111 +729,21 @@ _LEGAL_NAME = re.compile(
     r"株式会社)\s*$|^PT\s", re.I)
 
 
-def _lines(sequence: list):
-    """Each paragraph, and each table row that holds one text once its row
-    number or bullet cells are set aside, without its own leading number."""
-    for kind, item in sequence:
-        rows = [[item]] if kind == "text" else item
-        for row in rows:
-            cells = [re.sub(r"[​‌‍﻿]", "", c).strip() for c in row]
-            cells = [c for c in cells if c]
-            if not cells or _FOOTNOTE_CELL.match(cells[0]):
-                continue                          # a footnote row: "(1) 100% of the equity …"
-            while len(cells) > 1 and _MARKER_CELL.match(cells[0]):
-                cells = cells[1:]
-            if len(cells) == 1 and not _MARKER_CELL.match(cells[0]):
-                yield _LEAD_MARKER.sub("", cells[0]).strip()
-
-
-def _place_in(text: str) -> str | None:
-    """The place a phrase states: "… incorporated in the BVI", "a PRC company"."""
-    for m in (_PLACE_LAW.search(text), _PLACE_ADJ.match(text)):
-        if m and jurisdiction_country(m.group("jur").strip()):
-            return m.group("jur").strip()
-    return None
-
-
-# A sentence, not a name: "We act as PRC counsel to …", "Our operations are …"
-_PROSE = re.compile(r"^(?:we|our|the company|this|it|they)\b|\b(?:act|acts|is|are|was|were|has|have|will|shall)\b",
-                    re.I)
-
-
-def _line_entry(line: str) -> tuple[str, dict] | None:
-    """("strong" | "loose", entry) for a line naming a subsidiary and its place."""
-    got = _line_entry_shape(line)
-    return got if got and not _PROSE.search(got[1]["name"]) else None
-
-
-def _line_entry_shape(line: str) -> tuple[str, dict] | None:
-    if m := _OWNS_IN.search(line):
-        if jurisdiction_country(m.group("jur")):
-            return "strong", {"name": m.group("name"), "jurisdiction": m.group("jur").strip(),
-                              "stake_percent": float(m.group("stake"))}
-    if m := _NAME_END.search(line):
-        if jur := _place_in(line[m.end():]):
-            return "strong", {"name": line[:m.start()], "jurisdiction": jur}
-    for pat in (_PAREN_JURISDICTION, _COMMA_PLACE, _DASH_PLACE):
-        if (m := pat.match(line)) and jurisdiction_country(m.group("jur").strip()):
-            return "loose", {"name": m.group("name"), "jurisdiction": m.group("jur").strip()}
-    return None
-
-
-# "Gan Su BHD … Co., Ltd. (51% owned by Beijing BHD Petroleum …)" (Recon)
-_OWNED_BY = re.compile(r"\s*\((\d{1,3}(?:\.\d+)?)\s*%\s+(?:owned|held)\s+by\b[^()]*(?:\([^()]*\)[^()]*)*\)\s*$",
-                       re.I)
-
-
 def _finish(entry: dict, registrant: str | None) -> dict | None:
-    raw = entry["name"]
-    owned = _OWNED_BY.search(raw)
-    if owned:
-        raw = raw[:owned.start()]
-    name, stake = _clean_name(_DEFINED_TERM.sub("", raw).strip().rstrip(",").strip())
-    if owned and stake is None:
-        stake = float(owned.group(1))
+    """The row's name without its marks, or None for a row that is no company:
+    a page header or footer (BAT's "… p.l.c. Form 20-F 2025"), a footnote, a
+    registered office ("…, One Capital Place, PO Box 847, Grand Cayman …"),
+    the filer itself."""
+    name, stake = _clean_name(entry["name"].strip())
     if len(name) < 2 or len(name) > 150 or _NOISE.match(name) or _same_company(name, registrant) \
-            or re.search(r"subsidiar|\bP\.?\s?O\.? Box\b|\bForm\s+(?:20-F|10-K)\b", name, re.I) \
-            or name.count(",") > 3:
+            or re.search(r"\bForm\s+(?:20-F|10-K)\b", name, re.I) or name.count(",") > 3:
         return None
     out = {**entry, "name": name}
-    if stake is not None and "stake_percent" not in out:
+    if stake is not None:
         out["stake_percent"] = stake
     return out
 
 
-def _line_list(sequence: list, registrant: str | None) -> list[dict]:
-    """One subsidiary per line, the place in words or set off (see above).
-
-    A line that says "incorporated in …" / "a … company" is evidence enough on
-    its own; the set-off shapes ("Name, Switzerland") need three, most of the
-    shaped lines mapping — the gate ``_paragraph_list`` holds. A line that
-    names no place is not read: a list of names only (Karooooo) stays unread,
-    and so do names whose place only a heading or a sentence gives."""
-    strong, loose = [], []
-    shaped = 0
-    for line in _lines(sequence):
-        got = _line_entry(line)
-        if got:
-            (strong if got[0] == "strong" else loose).append(got[1])
-            continue
-        # a name ending in its legal form has the comma shape of "Name, Place"
-        # ("… Co., Ltd.") without being one, and does not count against the gate
-        bare = _LEGAL_NAME.search(_OWNED_BY.sub("", line)) and len(line) <= 150 and not _PROSE.search(line)
-        if not bare and any(p.match(line) for p in (_PAREN_JURISDICTION, _COMMA_PLACE, _DASH_PLACE)):
-            shaped += 1
-    if strong:
-        found = strong + loose
-    elif len(loose) >= 3 and len(loose) >= (len(loose) + shaped) / 2:
-        found = loose
-    else:
-        return []
-    return [e for e in (_finish(e, registrant) for e in found) if e]
-
-
-# ── names grouped under one-cell country rows ────────────────────────────────
-# BAT's Exhibit 8: "Albania" / "British American Tobacco – Albania SH.P.K." /
-# "Algeria" / "… (Algérie) S.P.A. (51%)4" — one cell per row, 400 subsidiaries,
-# the associates after them.
 def _country_rows_list(sequence: list, registrant: str | None) -> list[dict]:
     out, country, countries = [], None, 0
     for kind, item in sequence:
@@ -928,9 +809,12 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
     A document the filer declared something else ("<TYPE>EX-2.1") is no list,
     nor an EX-8 outside a 20-F (``form``) — see ``_subsidiary_document``.
     When the table reader finds nothing, the other layouts are tried in turn
-    (``_grouped_list`` … ``_line_list``), the country rows only in a document
-    declared EX-8 or EX-21. Every entry they read names its place; a list of
-    names alone is not read."""
+    (``_grouped_list``, ``_paragraph_list``, the country rows only in a
+    document declared EX-8 or EX-21). Every entry they read names its place.
+    Not read: a list of names alone, and one subsidiary per line with its
+    place in words ("Bluebottle Limited, a Hong Kong company") — that reader
+    was removed 2026-10-08: it read combined filings' sibling lists as the
+    filer's own and parents stated in words not at all."""
     kind = declared_type(html)
     if kind and not _subsidiary_document(kind, form):
         return []
@@ -1055,8 +939,7 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
         # nothing — so an exhibit it reads today is read exactly as before.
         seq = parser.sequence
         for entry in _grouped_list(seq, registrant) or _paragraph_list(seq, registrant) or \
-                (declared and _country_rows_list(seq, registrant)) or \
-                _line_list(seq, registrant):
+                (declared and _country_rows_list(seq, registrant)) or []:
             if _list_key(entry) not in seen:
                 seen.add(_list_key(entry))
                 out.append({**entry, "_indent": 0.0})

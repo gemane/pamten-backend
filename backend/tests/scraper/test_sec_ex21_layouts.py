@@ -5,13 +5,13 @@ fixtures captured from those filings:
   securities Workiva names "exhibit21descriptionofsecu.htm");
 - header cells spanning several data cells (TORM, Ellomay) and a header
   printed over three rows (UTStarcom);
-- one subsidiary per line, the place in words (FinVolution, Melco, Ambev);
 - names under one-cell country rows (BAT);
 - places the mapping got wrong ("Mauritius" was the United States);
-- and the layouts deliberately NOT read: names without a place (Karooooo,
-  Recon, Banco de Chile), tables naming no place column (Banco Santander
-  Chile), the text layer behind scanned pages (Amer Sports), mislabelled
-  lists (Yatra).
+- and the layouts deliberately NOT read: one subsidiary per line with its
+  place in words (FinVolution, Melco, Ambev), names without a place
+  (Karooooo, Recon, Banco de Chile), tables naming no place column (Banco
+  Santander Chile), the text layer behind scanned pages (Amer Sports),
+  mislabelled lists (Yatra).
 """
 from pathlib import Path
 from unittest.mock import patch
@@ -163,46 +163,48 @@ class TestColumnGrid:
         assert parse_exhibit(both)[0]["jurisdiction"] == "Munich, Germany"
 
 
-class TestOnePerLine:
-    def test_a_hong_kong_company(self):
-        subs = _by_name(_read("finvolution_ex81.htm", "FinVolution Group"))
-        assert len(subs) == 16
-        assert subs["Bluebottle Limited"]["jurisdiction"] == "Hong Kong"
-        assert jurisdiction_country(subs["Shanghai Erxu Information Technology Co., Ltd."]["jurisdiction"]) == "CN"
+class TestNotRead:
+    """Layouts deliberately left unread. Names without a place, tables naming
+    no place column, scanned pages and mislabelled lists each served one to
+    five filers (removed 2026-10-07): a reader that guesses at them can turn a
+    heading or a sentence into a subsidiary. One subsidiary per line with its
+    place in words served more (20 of the 287 lists read from 600 random
+    10-Ks) and was removed 2026-10-08 all the same: it read combined 10-Ks'
+    group lists (Duke Energy Ohio, Texas-New Mexico Power, Idaho Power) as the
+    filer's own, and parents stated in words ("a subsidiary of …") not at
+    all."""
 
-    def test_incorporated_in_the_macau_special_administrative_region(self):
-        subs = _by_name(_read("melco_ex81.htm", "Melco Resorts & Entertainment LTD"))
-        assert len(subs) == 20
-        assert jurisdiction_country(subs["COD Resorts Limited"]["jurisdiction"]) == "MO"
-
-    def test_owns_a_share_of_the_interests_in(self):
-        subs = _by_name(_read("ambev_ex81.htm", "AMBEV S.A."))
-        assert len(subs) == 18
-        assert subs["Cerveceria Y Malteria Quilmes Saica Y G"] == {
-            "name": "Cerveceria Y Malteria Quilmes Saica Y G", "jurisdiction": "Argentina",
-            "stake_percent": 99.83}
-
-    @pytest.mark.parametrize("line,name,place", [
-        ("Vuela, S.A., a corporation organized under the laws of Guatemala", "Vuela, S.A.", "Guatemala"),
-        ("CASI Pharmaceuticals (China) Co., Ltd, a company of limited liability, incorporated and existing "
-         "under the laws of the People’s Republic of China", "CASI Pharmaceuticals (China) Co., Ltd",
-         "People’s Republic of China"),
-        ("VERAXA Biotech GmbH, validly existing under the laws of Germany.", "VERAXA Biotech GmbH", "Germany"),
-        ("Zooz Power Cayman, a Cayman Islands exempted company and a wholly owned subsidiary of the Company.",
-         "Zooz Power Cayman", "Cayman Islands"),
-        ("Renovation Investment (Hong Kong) Co., Ltd. (“Renovation”) is a Hong Kong company and is "
-         "wholly-owned by the Company.", "Renovation Investment (Hong Kong) Co., Ltd.", "Hong Kong"),
-        ("ATA Education Technology (Beijing) Limited (formerly known as “ATA Testing Authority (Beijing) "
-         "Limited”), incorporated in the People’s Republic of China",
-         "ATA Education Technology (Beijing) Limited", "People’s Republic of China"),
-        ("Sinovac Biotech Co., Ltd., a company incorporated in the Chinese mainland", "Sinovac Biotech Co., Ltd.",
-         "Chinese mainland"),
-        ("Beijing Rongsanliuling Information Technology Co., Ltd. a PRC company",
-         "Beijing Rongsanliuling Information Technology Co., Ltd.", "PRC"),
+    @pytest.mark.parametrize("fixture,registrant", [
+        ("finvolution_ex81.htm", "FinVolution Group"),            # "Bluebottle Limited, a Hong Kong company"
+        ("melco_ex81.htm", "Melco Resorts & Entertainment LTD"),  # "…, incorporated in the Macau SAR …"
+        ("ambev_ex81.htm", "AMBEV S.A."),                         # "owns 99.83% of … interests in …"
+        ("karooooo_ex81.htm", "Karooooo Ltd."),                   # "Cartrack Inc. (USA)", most without a place
     ])
-    def test_one_stated_line_is_enough(self, line, name, place):
-        assert parse_exhibit(_doc(f"<p>Exhibit 8.1</p><p>{line}</p>", None)) == [
-            {"name": name, "jurisdiction": place}]
+    def test_one_subsidiary_per_line(self, fixture, registrant):
+        assert _read(fixture, registrant) == []
+
+    @pytest.mark.parametrize("line", [
+        "Vuela, S.A., a corporation organized under the laws of Guatemala",
+        "VERAXA Biotech GmbH, validly existing under the laws of Germany.",
+        "Renovation Investment (Hong Kong) Co., Ltd. (“Renovation”) is a Hong Kong company and is "
+        "wholly-owned by the Company.",
+        "Beijing Rongsanliuling Information Technology Co., Ltd. a PRC company",
+    ])
+    def test_a_place_in_words(self, line):
+        assert parse_exhibit(_doc(f"<p>Exhibit 8.1</p><p>{line}</p>")) == []
+
+    @pytest.mark.parametrize("lines", [
+        ["Sportradar AG, Switzerland", "Sports Data AG, Switzerland", "Sportradar AB, Sweden"],
+        ["1.XPACSponsor LLC - Cayman", "2.XProject LTD - Cayman", "3.XP Holding UK Ltd - UK"],
+    ])
+    def test_a_place_set_off_after_the_name(self, lines):
+        assert parse_exhibit(_doc("".join(f"<p>{x}</p>" for x in lines))) == []
+
+    def test_numbered_one_cell_rows(self):
+        rows = "".join(f"<tr><td>{i}.</td><td>{n}</td></tr>" for i, n in enumerate(
+            ["DLP Capital LLC (USA - Delaware)", "Stone ALP Holding SARL (Luxembourg)",
+             "Stone Capital AG (Switzerland)"], 1))
+        assert parse_exhibit(_doc(f"<table>{rows}</table>")) == []
 
     def test_a_sentence_is_no_subsidiary(self):
         # Samfine's F-1 Exhibit 8.2, a tax opinion
@@ -211,52 +213,9 @@ class TestOnePerLine:
                 "Beijing 100004, China</p><p>This opinion is given to Samfine Limited</p>")
         assert parse_exhibit(_doc(body, "EX-21.1")) == []
 
-    @pytest.mark.parametrize("lines", [
-        ["Sportradar AG, Switzerland", "Sports Data AG, Switzerland", "Sportradar AB, Sweden"],
-        ["1.XPACSponsor LLC - Cayman", "2.XProject LTD - Cayman", "3.XP Holding UK Ltd - UK"],
-    ])
-    def test_a_set_off_place_needs_three(self, lines):
-        body = "".join(f"<p>{x}</p>" for x in lines)
-        assert len(parse_exhibit(_doc(body, None))) == 3
-        assert parse_exhibit(_doc("".join(f"<p>{x}</p>" for x in lines[:2]), None)) == []
-
-    def test_names_ending_in_a_legal_form_do_not_count_against_the_set_off_lines(self):
-        # "… Co., Ltd." has the comma shape of "Name, Place" without being one
-        lines = ["Sportradar AG, Switzerland", "Sports Data AG, Switzerland", "Sportradar AB, Sweden",
-                 "Alpha Co., Ltd.", "Beta Co., Ltd.", "Gamma Co., Ltd.", "Delta Co., Ltd."]
-        subs = parse_exhibit(_doc("".join(f"<p>{x}</p>" for x in lines), None))
-        assert [s["name"] for s in subs] == ["Sportradar AG", "Sports Data AG", "Sportradar AB"]
-
-    def test_a_stated_line_carries_the_set_off_lines_with_it(self):
-        lines = ["Alpha Limited, a Hong Kong company", "Beta AG (Switzerland)"]
-        subs = parse_exhibit(_doc("".join(f"<p>{x}</p>" for x in lines), None))
-        assert {s["name"]: s["jurisdiction"] for s in subs} == {"Alpha Limited": "Hong Kong", "Beta AG": "Switzerland"}
-
-    def test_numbered_table_rows_with_the_place_in_brackets(self):
-        rows = "".join(f"<tr><td>{i}.</td><td>{n}</td></tr>" for i, n in enumerate(
-            ["DLP Capital LLC (USA - Delaware)", "Stone ALP Holding SARL (Luxembourg)",
-             "Stone Capital AG (Switzerland)"], 1))
-        subs = parse_exhibit(_doc(f"<table>{rows}</table>", None))
-        assert [jurisdiction_country(s["jurisdiction"]) for s in subs] == ["US", "LU", "CH"]
-
-
-class TestNotRead:
-    """Layouts deliberately left unread (2026-10-07): each served one to five
-    filers, and a reader that guesses at them can turn a heading or a sentence
-    into a subsidiary."""
-
     def test_a_list_of_names_without_places(self):
         names = "".join(f"<p>{n}</p>" for n in ("Alpha Holdings Limited", "Beta Pte. Ltd.", "Gamma GmbH"))
         assert parse_exhibit(_doc(names)) == []
-
-    def test_only_the_names_that_state_their_place(self):
-        # Karooooo: "Cartrack Inc. (USA)" for 16, "Cartrack Holdings (Pty) Ltd" for 30
-        subs = _by_name(_read("karooooo_ex81.htm", "Karooooo Ltd."))
-        assert len(subs) == 16 and all(s["jurisdiction"] for s in subs.values())
-        assert subs["Cartrack Inc."]["jurisdiction"] == "USA"
-        assert "Cartrack Holdings (Pty) Ltd" not in subs
-        stated = "<p>Delta Limited, a Hong Kong company</p><p>Alpha Holdings Limited</p><p>Beta Pte. Ltd.</p>"
-        assert [s["name"] for s in parse_exhibit(_doc(stated))] == ["Delta Limited"]
 
     def test_a_place_given_by_a_heading_or_a_sentence(self):
         # Recon: "Subsidiary (PRC):"; Banco de Chile, Shenandoah: "… are organized in …"
@@ -285,12 +244,6 @@ class TestNotRead:
         # Yatra's subsidiary list is declared EX-10.8
         assert parse_exhibit(_doc("<p>List of Subsidiaries</p>" + TABLE, "EX-10.8")) == []
 
-    def test_headings_and_titles_are_not_names(self):
-        body = ("<p>Principal Subsidiaries of Eason Technology Limited</p><p>Subsidiaries:</p>"
-                "<p>True Silver Limited, a BVI company</p><p>Four Divisions Limited, a Hong Kong company</p>")
-        assert [s["name"] for s in parse_exhibit(_doc(body), "Eason Technology Ltd")] == [
-            "True Silver Limited", "Four Divisions Limited"]
-
 
 class TestCountryRows:
     def test_bats_names_under_their_countries(self):
@@ -316,6 +269,15 @@ class TestCountryRows:
             "Italy", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"))
         assert [s["name"] for s in parse_exhibit(_doc(f"<table>{rows}</table>"))] == [
             "Alpha SAS", "Beta GmbH", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"]
+
+    def test_headers_marks_footnotes_and_the_filer_are_no_company(self):
+        note = ("4 The Group holds a controlling interest through a shareholder agreement and consolidates "
+                "the company in full although its direct holding is below one half of the shares")
+        rows = "".join(f"<tr><td>{c}</td></tr>" for c in (
+            "France", "Alpha SAS", "Exhibit 8.1", "British American Tobacco p.l.c.", "Germany", "Beta GmbH", "†",
+            "Italy", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA", note))
+        assert [s["name"] for s in parse_exhibit(_doc(f"<table>{rows}</table>"), "British American Tobacco PLC")] \
+            == ["Alpha SAS", "Beta GmbH", "Gamma S.p.A.", "Delta S.r.l.", "Epsilon SpA"]
 
     def test_up_to_the_associates(self):
         rows = "".join(f"<tr><td>{c}</td></tr>" for c in (

@@ -363,6 +363,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       739 entries right), while the few-filer readers (names without a place, a
       table without a place column, a scanned page's text layer) got 13 % of 926
       entries fully right and mostly hid a gap in the main reader — removed.
+- [ ] **A reader that picks names out of single lines sees no context — check what
+      the context does to its output.** The one-per-line Exhibit 21 reader ("X
+      Limited, a Hong Kong company") was right line by line, yet a combined 10-K's
+      lines are the parent group's list (Duke Energy Ohio's exhibit names its own
+      parent and siblings) and "(a subsidiary of Idaho Power Company)" was dropped,
+      so the rows came out flat under the filer. Read whole documents of the
+      layout, not lines, before keeping such a reader; this one was removed although
+      it read 7 % of the lists of a random 10-K sample.
 - [ ] **Before fixing a "regression", check its premise across the whole sample.**
       One Lavoro row read as "a second company of the same name was lost"; across
       1,062 filings the same pattern was as often one company with a branch abroad,

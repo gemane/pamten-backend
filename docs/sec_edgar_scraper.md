@@ -838,8 +838,9 @@ from readers removed again the same day, so 11 remain):
   below 769 (77 %), 15,945 → 17,781 subsidiaries; every list read before was
   compared name by name: none lost, 46 gained the stake they state, the rest
   lost junk (row numbers as names, dates or "100%" as places). The 769 include
-  the readers removed again the same day; without them the full set is not yet
-  re-measured (of the first 302 filers, 16 of 217 lists came from them).
+  the readers removed again; without them the full set is not yet re-measured
+  (of the first 302 filers, 16 of 217 lists came from the few-filer readers and 6
+  from the one-per-line reader).
 - **No exhibit file, the list elsewhere**: what the 20-F's exhibit index says under
   8.1 decides (`list_from_main_document`, the latest filing only — a main document is
   ~10 MB, so `sec-ex21-history` does not do this):
@@ -869,7 +870,7 @@ from readers removed again the same day, so 11 remain):
 - **Lists the parser could not read** (2026-10-07, the 86 2026 20-F filers whose
   candidate files all read nothing — 61 real lists, the rest other documents; 51
   of the 61 read with the first version of the readers below, fewer after the
-  few-filer readers were removed):
+  few-filer readers and the one-per-line reader were removed):
   - **What the filer declared the file to be decides first.** Every EDGAR document
     opens with `<TYPE>`; one declared anything but `EX-8`, `EX-8.1` or `EX-21.x` is no
     list. Workiva names a 20-F's Exhibit 2.1 (the description of securities)
@@ -882,21 +883,24 @@ from readers removed again the same day, so 11 remain):
     of labels counts as a new section's header only after data rows. A row number
     in the name cell ("1. YD Network …") is dropped; a label spanning the whole row
     ("Insurance Agencies and Brokers") is neither name nor place.
-  - **One subsidiary per line, the place in words** (`_line_list`; paragraphs, list
-    items, one-text table rows): "Bluebottle Limited, a Hong Kong company", "COD
-    Resorts Limited, incorporated in the Macau Special Administrative Region …", "…,
-    a corporation organized under the laws of Guatemala", "… is a Hong Kong company
-    and is wholly-owned by …", "The Company indirectly owns 99.83% of the economic
-    and voting interests in … (incorporated in Argentina)" (Ambev, with the stake).
-    One such line is evidence enough; a set-off place ("Sportradar AG, Switzerland",
-    "XPACSponsor LLC - Cayman") needs three, as a "Name (PRC)" paragraph does. A
-    sentence is never a name ("We act as PRC counsel to …").
   - **Names under one-cell country rows** (BAT's Exhibit 8, ~400 subsidiaries):
     the country row is the place, inline stakes are read ("(51%)4", and of BAT's
     "(99.80%)(99.93%)" the first), up to the associates. Declared exhibits only.
   - **Deliberately not read** (removed again on 2026-10-07, the user's call: each
     served one to five filers, and the held-out check below showed what they do on
     filings they were not written for):
+    - **one subsidiary per line, the place in words** — "Bluebottle Limited, a Hong
+      Kong company", "…, incorporated in the Macau Special Administrative Region",
+      "Sportradar AG, Switzerland", Ambev's "owns 99.83% of … interests in …
+      (incorporated in Argentina)". Removed on 2026-10-08 (the user's call), though
+      it served more filers than the others: 20 of the 287 lists read from the 600
+      random 10-Ks (509 entries), 5 of 116 from the 2025 20-Fs, 6 of 201 of the
+      first 302 2026 20-Fs (FinVolution, Melco, Ambev, Trip.com) — mostly smaller
+      filers. It read combined 10-Ks' group lists as the filer's own (Duke Energy
+      Ohio's 172, Texas-New Mexico Power, Idaho Power: siblings and the filer's own
+      parent as its subsidiaries), and a parent stated in words ("a subsidiary of
+      Idaho Power Company") not at all, so the rows came out flat. None of these
+      filers had a list before the layout readers; the dev graph read none of them;
     - names without a place, the place only in a heading ("Subsidiary (PRC):",
       Recon) or one sentence ("All … are incorporated in Chile", Banco de Chile) —
       a list like Karooooo's yields only the names that state their place;
@@ -910,7 +914,8 @@ from readers removed again the same day, so 11 remain):
   - **Held-out check** (2026-10-07, filers the rules were not written against: the
     160 filers of a 2025 20-F with none in 2026, and 600 random 2026 10-K filers;
     every name of every gained or changed list checked against the document):
-    - lists read: 2025 20-Fs 110 → 116, 10-Ks 261 → 287; none lost;
+    - lists read: 2025 20-Fs 110 → 116, 10-Ks 261 → 287; none lost (111 and 267
+      without the one-per-line reader, removed the next day);
     - the 32 lists gained: 739 entries, 722 right, 3 junk (the registrant listed in
       its own table, a branch), 14 with a wrong name, place or missing stake
       (LivePerson's "KATO ACQUISITION SUB | INC. — Delaware", cut at the comma);
