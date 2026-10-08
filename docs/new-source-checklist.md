@@ -221,6 +221,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       a different table does not inherit it. A header word inside a value
       ("United States" contains "state", "ERICO Global Company" contains
       "Company") is not a header: a cell that maps to a place is data.
+- [ ] **A continued page can shift its columns.** The header-less tables that
+      follow the first page need not keep its cell positions: Western Union's
+      second page dropped the spacer columns, so the carried header read the name
+      cell as the jurisdiction and 58 of 102 rows were lost. Read a continued
+      table both ways — by cell index and by the header's column grid — keep
+      whichever reads more places, and let a tie keep the index.
 - [ ] **Layout is data only when it is unambiguous.** Exhibit 21 filers draw the
       group tree by indentation or "Subsidiaries of X" headings — and the same
       signals appear where there is no tree (a uniform hanging indent, a page
@@ -228,6 +234,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       only under strict acceptance rules with a flat fallback, stamp the basis on
       what you inferred (`structure_basis`), and test on a real sample: 62 exhibits
       found every shape above.
+- [ ] **Match a name as strictly as its writer was careless.** A heading
+      ("subsidiaries of WISeKey") and a parent column ("Seaspan Holdco III") come
+      from the same filer with different care: a loose match on headings made the
+      row "WISeKey SA" its own parent and put ADS-TEC's PLC under its Inc.; a strict
+      match on columns lost Atlas's real parents. Match a heading on legal-form
+      spelling only (Ltd = Limited, Corp = Corporation …), keep the loose unique
+      match for columns, and treat a namesake with another legal form (Covestor,
+      Inc. / Covestor Limited) as another company.
 - [ ] **A list is not a start date.** A document that lists holdings *as of* a date (an
       Exhibit 21, a 13F, a register snapshot) gives an as-of `source_date`, never a
       `since`: storing the filing date as the start made News Corp's FY2026 Exhibit 21
@@ -384,6 +398,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       parent drops the stake) turned them into 190 lost stakes. Tally every
       value the rule produces against an independent check (here: is the named
       company in the list?) before building on it.
+- [ ] **A rule keyed on another rule's output inherits its errors — and a
+      measured loss stays out of the shared database.** "An unresolved parent
+      drops the stake" was right on its own; fed the heading rule's 1,166 false
+      parents it became 190 lost stakes. Before keying a rule on a value another
+      reader produced, tally that value's error rate; and when the measurement of a
+      merged change shows it losing data, hold the write (the Exhibit 21 rescrape
+      waited for three fix PRs) instead of letting the fix race the damage.
 - [ ] **Measure on filings the rules were not written against, and read every
       name.** A count that went up says nothing about precision: check each entry
       of each gained or changed list against the document. Comparing versions on
@@ -404,7 +425,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       registrants (a utility group's combined 10-K, a REIT and its operating
       partnership): the document is reachable from each of their ids, and it
       describes one of them. EDGAR's SGML header names them all; a document that
-      lists the filer among its own rows is not the filer's own.
+      lists the filer among its own rows is not the filer's own, and the filer
+      keeps only the branch the document draws under its row (NSTAR Electric:
+      40 → 1, Entergy Texas: 66 → 0). Know what the rule costs before shipping
+      it: a REIT's operating partnership is one flat row of the 388-row list it
+      really holds (Vornado), so it reads nothing — 544 entries over three
+      partnerships, accepted knowingly. The sentence above Vornado's table
+      ("subsidiaries of both the Trust and the L.P.") is the signal a later rule
+      could read.
 - [ ] **Trust measured behaviour over documented behaviour.** EDGAR's full-text search
       documents 10 results per page and returns ~100, relevance-ordered where date order
       is needed; GLEIF's thumbnail sizes 400 anything off-bucket. Probe the real API once
@@ -499,6 +527,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       updates the fixtures — that friction is the feature.
 - [ ] **Placeholder values use reserved domains** — `example.com`, `.test`. A made-up
       "real-looking" address has bounced actual email.
+- [ ] **A fixture must pass the reader's own gates, like a real document.** The
+      combined-filing tests were written with four rows and the indent-tree
+      acceptance gate rejected them. The fix is a fixture with enough realistic
+      rows (a padding branch), never a loosened gate or a test-only flag. And when
+      several fixes leave one base at once, give each its tests in a new file and
+      its doc bullets in different places, so the PRs merge in any order (two
+      edits to one "Open" bullet conflicted).
 - [ ] **Mutation-check the silent failures.** Break the country filter, the dedup key, the
       credibility comparison: if the suite still passes, the test is decorative. The
       failures worth this treatment are the ones that look like success. When judging a
