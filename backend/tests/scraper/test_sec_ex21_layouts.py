@@ -111,6 +111,30 @@ class TestColumnGrid:
         assert {s["name"]: s["jurisdiction"] for s in parse_exhibit(html)} == {
             "Alpha Ltd.": "Bermuda", "Beta GmbH": "Germany", "Gamma AB": "Sweden"}
 
+    def test_the_next_page_on_the_same_grid_reads_by_the_grid(self):
+        # Western Union: the place sits behind a spacer cell on every page; by
+        # cell index pages two and three read no place (44 of 102)
+        header = ('<tr><td colspan="2">Name of Subsidiary</td><td></td>'
+                  '<td>Jurisdiction of Incorporation</td></tr>')
+        html = "".join(
+            f"<table>{header if i == 0 else ''}"
+            + "".join(f"<tr><td>{n}</td><td></td><td></td><td>{p}</td></tr>" for n, p in page) + "</table>"
+            for i, page in enumerate([[("Alpha Corporation", "Delaware, USA"), ("Beta Ltda.", "Brazil")],
+                                      [("Gamma Limited", "Hong Kong"), ("Delta SARL", "France")],
+                                      [("Epsilon S.A.", "Mexico")]]))
+        assert {s["name"]: s["jurisdiction"] for s in parse_exhibit(html)} == {
+            "Alpha Corporation": "Delaware, USA", "Beta Ltda.": "Brazil", "Gamma Limited": "Hong Kong",
+            "Delta SARL": "France", "Epsilon S.A.": "Mexico"}
+
+    def test_a_tie_keeps_the_cell_index(self):
+        # both readings find a place in every row: the next page is read as
+        # it was before the grid was tried
+        html = ('<table><tr><td colspan="2">Name</td><td>Jurisdiction</td></tr>'
+                '<tr><td colspan="2">Alpha Ltd.</td><td>Bermuda</td></tr></table>'
+                '<table><tr><td>Beta GmbH</td><td>Germany</td><td>Austria</td></tr></table>')
+        assert {s["name"]: s["jurisdiction"] for s in parse_exhibit(html)} == {
+            "Alpha Ltd.": "Bermuda", "Beta GmbH": "Germany"}
+
     def test_a_place_cell_starting_under_the_spacer(self):
         # BGM: the place cell spans the spacer and the place column
         html = ("<table><tr><td>Name</td><td></td><td>Jurisdiction of Incorporation</td></tr>"

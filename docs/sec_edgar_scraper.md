@@ -882,7 +882,11 @@ from readers removed again the same day, so 11 remain):
     column 6. A header printed over three rows (UTStarcom) keeps its columns: a row
     of labels counts as a new section's header only after data rows. A row number
     in the name cell ("1. YD Network …") is dropped; a label spanning the whole row
-    ("Insurance Agencies and Brokers") is neither name nor place.
+    ("Insurance Agencies and Brokers") is neither name nor place. A table continued
+    on the next printed page, without its header, is read by cell index — the next
+    page's grid need not be the first page's (BHP) — unless the header's grid reads
+    more places there (2026-10-08): Western Union's place sits behind a spacer cell
+    on every page, and by index its pages two and three read none (44 of 102).
   - **Names under one-cell country rows** (BAT's Exhibit 8, ~400 subsidiaries):
     the country row is the place, inline stakes are read ("(51%)4", and of BAT's
     "(99.80%)(99.93%)" the first), up to the associates. Declared exhibits only.

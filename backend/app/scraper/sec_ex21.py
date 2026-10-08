@@ -425,11 +425,15 @@ def _grid_indent(row: list[str], header: dict, numbers: set[int] = frozenset()) 
     return 0.0
 
 
+def _places_read(rows: list, header: dict) -> int:
+    """Rows that, read with ``header``, give a name and a place."""
+    return sum(1 for r in rows if _column(r, header, "name")
+               and jurisdiction_country(_column(r, header, "jurisdiction")))
+
+
 def _places_under(table: list, row: list, header: dict) -> int:
     """Rows below ``row`` that, read with ``header``, give a name and a place."""
-    below = table[next(i for i, r in enumerate(table) if r is row) + 1:]
-    return sum(1 for r in below if _column(r, header, "name")
-               and jurisdiction_country(_column(r, header, "jurisdiction")))
+    return _places_read(table[next(i for i, r in enumerate(table) if r is row) + 1:], header)
 
 
 def _section_header(row: list[str]) -> dict | None:
@@ -856,10 +860,15 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
             need = max(i for i in (carried["name"], carried["jurisdiction"],
                                    carried["ownership"]) if i is not None) + 1
             if sum(1 for r in table if len(r) >= need) >= len(table) / 2:
-                # by cell index: the next page's grid is not the first page's
-                # (BHP's header cell spans grid columns 1-2, the rows below
-                # it on later pages one column each)
+                # By cell index, unless the header's grid reads more places:
+                # the next page's grid need not be the first page's (BHP's
+                # header cell spans grid columns 1-2, the rows below it on
+                # later pages one column each), but where it is, the grid is
+                # what found the column — Western Union's place sits behind a
+                # spacer cell, and by index pages two and three read none.
                 header = {**carried, "header_row": None, "spans": None}
+                if _places_read(table, grid := {**carried, "header_row": None}) > _places_read(table, header):
+                    header = grid
                 inherited = True
         elif header is not None:
             carried = header
