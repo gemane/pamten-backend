@@ -64,7 +64,8 @@ class TestDeclaredType:
     def test_fetch_skips_the_description_of_securities_for_the_list_after_it(self):
         pages = {"https://x/exhibit21descriptionofsecu.htm": _doc(TABLE, "EX-2.1"),
                  "https://x/ex8-1.htm": _doc(TABLE)}
-        cands = [{"url": u, "form": "20-F", "filing_date": "2026-03-01"} for u in pages]
+        cands = [{"url": u, "form": "20-F", "filing_date": "2026-03-01", "accession": "0000000001-26-000001"}
+                 for u in pages]
         with patch.object(ex, "annual_filings", return_value=[("20-F", "a", "2026-03-01", "")]), \
              patch.object(ex, "exhibit_candidates", return_value=cands), \
              patch.object(ex, "_get_text", side_effect=pages.get):
