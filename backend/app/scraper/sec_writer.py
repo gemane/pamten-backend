@@ -665,8 +665,9 @@ def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None
     """End the person's open seat(s) at the company on `until`.
 
     ``read_from``: how the departure was read — a "Former …" Form 4 is a
-    field, an 8-K Item 5.02 is prose. Recorded on the closing claim only; the
-    seat keeps the grade of whoever drew it.
+    field, an 8-K Item 5.02 is narrative (a name, a verb and a date out of
+    an announcement's sentence). Recorded on the closing claim only; the seat
+    keeps the grade of whoever drew it.
 
     The one statutory statement of a departure: a "Former …" Form 4 or an 8-K
     Item 5.02 naming the person. With `role`, only that seat is closed (Tim

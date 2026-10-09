@@ -143,7 +143,7 @@ def claim_props(
         # The layout evidence behind an inferred tree position (see edge_schema).
         "structure_basis": structure_basis,
         # How reliably the values were read off the document (edge_schema
-        # READ_GRADES: field > table > layout > prose) — the claim's own, so a
+        # READ_GRADES: field > table > form > layout > prose > narrative) — the claim's own, so a
         # conflict can prefer the surer reading among equals.
         "read_from": read_from,
         "last_seen_at": now_iso(),

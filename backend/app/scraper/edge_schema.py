@@ -88,13 +88,15 @@ OWNS_PROPS: tuple = (
     # source is (that is `credibility_score`: who speaks) but how much of the
     # value is ours. One of `READ_GRADES`, from best to worst: "field" (a named
     # field in XML/JSON — GLEIF, PSC, 13F, a structured 13D/G), "table" (a cell
-    # under a header the filer wrote — most Exhibit 21s), "layout" (inferred
-    # from how the page is laid out: an indented parent, a heading, a header
-    # carried onto the next page, a headerless table), "prose" (a pattern over
-    # running text — an old 13D/G cover page, a subsidiary list written as
-    # sentences). An edge is as good as its weakest value (`weakest_reading`).
-    # Unset where nobody read anything: a manual entry, an edge from before
-    # the grade existed.
+    # under a header the filer wrote — most Exhibit 21s), "form" (a numbered
+    # item of a regulator's form read off its text rendering — a pre-2024 13D/G
+    # cover page), "layout" (inferred from how the page is laid out: an
+    # indented parent, a heading, a header carried onto the next page, a
+    # headerless table), "prose" (items written as text lines — a subsidiary
+    # list of "Name (Jurisdiction)" paragraphs), "narrative" (a fact picked out
+    # of running text — an 8-K's departure sentence). An edge is as good as its
+    # weakest value (`weakest_reading`). Unset where nobody read anything: a
+    # manual entry, an edge from before the grade existed.
     "read_from",
 )
 
@@ -111,9 +113,15 @@ ROLE_PROPS: tuple = (
 )
 
 #: `read_from` values, best first. The order is the rank: a grade further
-#: right is a weaker reading.
-READ_FIELD, READ_TABLE, READ_LAYOUT, READ_PROSE = "field", "table", "layout", "prose"
-READ_GRADES: tuple = (READ_FIELD, READ_TABLE, READ_LAYOUT, READ_PROSE)
+#: right is a weaker reading. `form` sits above `layout` because a form's
+#: labels are the regulator's — numbered, fixed, not the filer's to vary — so
+#: only the number is read, while a layout reading recovers a relationship the
+#: filer expressed through spacing alone. The three text grades differ in how
+#: much text the pattern has to understand: a line shaped like a list item,
+#: against a whole sentence.
+READ_FIELD, READ_TABLE, READ_FORM = "field", "table", "form"
+READ_LAYOUT, READ_PROSE, READ_NARRATIVE = "layout", "prose", "narrative"
+READ_GRADES: tuple = (READ_FIELD, READ_TABLE, READ_FORM, READ_LAYOUT, READ_PROSE, READ_NARRATIVE)
 
 
 def read_rank(grade: str | None) -> int:

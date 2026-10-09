@@ -163,15 +163,24 @@ Credibility says **who speaks**; `read_from` says **how much of the value is
 ours**. The two are different questions, and conflating them would break the
 tiers: an Exhibit 21 written as sentences is still a statutory filing, only one
 we may have misread, and Wikidata's clean JSON is still a community source.
-Every claim and every OWNS / HAS_ROLE edge carries one of four grades
+Every claim and every OWNS / HAS_ROLE edge carries one of six grades
 (`edge_schema.READ_GRADES`, best first):
 
 | grade | the value came from | examples |
 |---|---|---|
 | `field` | a named field of a structured record (XML, JSON, NDJSON, XBRL) | GLEIF, UK PSC, Wikidata, OpenCorporates, 13F, Form 3/4, Form D, a 13D/G filed as XML (since 2024-12-18) |
 | `table` | a cell under a header the filer wrote for that table | most Exhibit 21 rows, a "Direct controlling entity" column |
+| `form` | a numbered item of a regulator's form, found in its text rendering — the label is the regulator's, only the figure is read | a pre-2024 13D/G cover page (row 11's share count, row 13's percent, the power rows) |
 | `layout` | the page's layout: an indented or heading-named parent, a header carried onto the next page, a headerless table, a list grouped under country headings | the Exhibit 21 tree, Western Union's second page |
-| `prose` | a pattern over running text | a pre-2024 13D/G cover page, an Exhibit 21 written as paragraphs, an 8-K Item 5.02 departure |
+| `prose` | items written as text lines — a list in sentence form, each line shaped like an entry | an Exhibit 21 / 8.1 written as "Name (Jurisdiction)" paragraphs (Alibaba) |
+| `narrative` | a fact picked out of running text: a name, a verb, a date in a sentence | an 8-K Item 5.02 departure; a news-like source, should one ever be admitted |
+
+The three text grades differ in how much of the text the pattern has to
+understand: a form's row carries a fixed label and one figure; a list line has
+a shape; a sentence has only its words. `form` sits above `layout` because a
+layout reading recovers a *relationship* the filer expressed through spacing
+alone, while a form reading recovers a figure the regulator told the filer
+where to write.
 
 Rules:
 
@@ -186,8 +195,9 @@ Rules:
 - **Unset** means nobody read anything: a manual entry, a federated edge whose
   peer published none, or an edge from before the grade. `manage.py
   heal-read-from` fills the known cases (bulk and API sources: `field`; SEC by
-  filing type and date) and leaves Exhibit 21 rows to the next `sec-ex21` run,
-  which grades each row while it parses.
+  filing type and date), moves a 13D/G cover page's retired `prose` stamp to
+  `form`, and leaves Exhibit 21 rows to the next `sec-ex21` run, which grades
+  each row while it parses.
 - **It is about our reading, not the source's worth.** A low grade is a parser
   worth improving (`manage.py quality-report` counts edges per source and grade),
   never a reason to admit a weaker source.

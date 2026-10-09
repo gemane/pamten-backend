@@ -55,7 +55,7 @@ from difflib import SequenceMatcher
 
 import httpx
 from app.roles import canonical_role
-from app.scraper.edge_schema import READ_FIELD, READ_PROSE
+from app.scraper.edge_schema import READ_FIELD, READ_FORM
 from app.scraper.mapper import _ENTITY_SUFFIXES, derive_ownership_type
 
 log = logging.getLogger(__name__)
@@ -1361,9 +1361,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         event_date    = None
         group_members: list[dict] = []
         # How the numbers below were read: a structured schedule's named XML
-        # fields, or patterns over an older cover page's text. The two paths
-        # could not be told apart afterwards (both cite the index page), and
-        # the text path is where every misread 13D/G came from.
+        # fields, or an older cover page's numbered rows found in its text
+        # (`form`: the labels are the SEC's, only the figure is read). The two
+        # paths could not be told apart afterwards (both cite the index page),
+        # and the text path is where every misread 13D/G came from.
         read_from     = None
 
         if inv.get("xml"):
@@ -1410,7 +1411,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 # joint filing has one per reporting person, and the first
                 # page's numbers belong to someone else.
                 cover         = _cover_page_for(text, inv["investor_name"])
-                read_from     = READ_PROSE
+                read_from     = READ_FORM
                 pct           = _parse_percent_from_text(cover)
                 reported      = pct
                 bloc          = _co_filers_form_a_bloc(inv["form_type"], _cover_page_count(text))

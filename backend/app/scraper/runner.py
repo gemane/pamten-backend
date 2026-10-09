@@ -48,7 +48,8 @@ from app.scraper.sec_writer import (
     _upsert_role_sec, _upsert_voting_group, _close_role_sec,                                      # noqa: F401
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
-from app.scraper.edge_schema import READ_FIELD, READ_LAYOUT, READ_PROSE, READ_TABLE, weakest_reading
+from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
+                                     weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
 from app.scraper.geocode import geocode_address
 
@@ -1902,7 +1903,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                                      role=dep.get("role"), source_id=source_id,
                                      source_url=dep.get("source_url"),
                                      source_date=dep.get("source_date"),
-                                     read_from=READ_PROSE)  # Item 5.02's sentences
+                                     read_from=READ_NARRATIVE)  # Item 5.02's sentences
             if closed:
                 scraped.append({"type": "person", "name": dep["name"],
                                 "role": f"departed {dep.get('role') or ''}".strip()})

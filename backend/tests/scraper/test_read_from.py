@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from app.claims import best_claim, claim_props, edge_values_from
-from app.scraper.edge_schema import (READ_FIELD, READ_GRADES, READ_LAYOUT, READ_PROSE, READ_TABLE,
-                                     read_rank, weakest_reading)
+from app.scraper.edge_schema import (READ_FIELD, READ_FORM, READ_GRADES, READ_LAYOUT, READ_NARRATIVE,
+                                     READ_PROSE, READ_TABLE, read_rank, weakest_reading)
 from app.scraper.owns_merge import ANSWER_FIELDS, answer_rank, outranks
 from app.scraper.sec_ex21 import parse_exhibit
 
@@ -20,8 +20,18 @@ FX = Path(__file__).parent / "fixtures"
 
 class TestTheVocabulary:
     def test_best_first(self):
-        assert READ_GRADES == ("field", "table", "layout", "prose")
-        assert read_rank("field") > read_rank("table") > read_rank("layout") > read_rank("prose") > read_rank(None)
+        assert READ_GRADES == ("field", "table", "form", "layout", "prose", "narrative")
+        assert (read_rank("field") > read_rank("table") > read_rank("form") > read_rank("layout")
+                > read_rank("prose") > read_rank("narrative") > read_rank(None))
+
+    def test_a_regulators_form_outranks_the_pages_layout(self):
+        # the labels on a cover page are the SEC's, numbered and fixed; an
+        # indentation is the filer's alone
+        assert read_rank(READ_FORM) > read_rank(READ_LAYOUT)
+
+    def test_the_three_text_grades_in_order(self):
+        # a form's numbered row, a line shaped like a list item, a sentence
+        assert read_rank(READ_FORM) > read_rank(READ_PROSE) > read_rank(READ_NARRATIVE)
 
     def test_an_unknown_grade_ranks_like_none(self):
         assert read_rank("xml") == read_rank(None) == 0
@@ -30,6 +40,8 @@ class TestTheVocabulary:
         ((READ_TABLE, READ_LAYOUT), READ_LAYOUT),
         ((READ_LAYOUT, READ_TABLE), READ_LAYOUT),
         ((READ_FIELD, READ_PROSE, READ_TABLE), READ_PROSE),
+        ((READ_FORM, READ_FIELD), READ_FORM),      # a cover page's number under an index's name
+        ((READ_PROSE, READ_NARRATIVE), READ_NARRATIVE),
         ((READ_TABLE, None), READ_TABLE),          # an unset part says nothing
         ((None, None), None),
         ((READ_TABLE,), READ_TABLE),
@@ -58,7 +70,9 @@ class TestWhereTheGradeSits:
     def test_among_equals_the_surer_reading_wins(self):
         assert outranks(_claim(98, 5.0, READ_FIELD), _claim(98, 5.0, READ_PROSE))
         assert outranks(_claim(98, 5.0, READ_TABLE), _claim(98, 5.0, READ_LAYOUT))
-        assert outranks(_claim(98, 5.0, READ_PROSE), _claim(98, 5.0, None)), "a graded reading beats an ungraded one"
+        assert outranks(_claim(98, 5.0, READ_FORM), _claim(98, 5.0, READ_LAYOUT))
+        assert outranks(_claim(98, 5.0, READ_PROSE), _claim(98, 5.0, READ_NARRATIVE))
+        assert outranks(_claim(98, 5.0, READ_NARRATIVE), _claim(98, 5.0, None)), "a graded reading beats an ungraded one"
 
     def test_a_tie_keeps_the_incumbent(self):
         assert not outranks(_claim(98, 5.0, READ_FIELD), _claim(98, 5.0, READ_FIELD))
@@ -118,8 +132,25 @@ class TestWhatEachExhibit21ReaderStamps:
         assert subs and {s["read_from"] for s in subs} == {"layout"}
 
     def test_a_list_written_as_paragraphs_is_a_prose_reading(self):
+        # "Name (Jurisdiction)" per paragraph: lines shaped like list items,
+        # not sentences — prose, never narrative
         subs = parse_exhibit((FX / "alibaba_ex81_excerpt.htm").read_text(), "Alibaba Group Holding Limited")
         assert subs and {s["read_from"] for s in subs} == {"prose"}
+
+
+class TestWhatTheOtherTextReadersStamp:
+    def test_a_legacy_cover_page_is_a_form_reading(self):
+        # pinned in test_sec_edgar (the regex path of fetch_ownership_filings);
+        # here only that the constant the writer imports is the right grade
+        from app.scraper import sec_edgar
+        assert sec_edgar.READ_FORM == "form"
+        assert not hasattr(sec_edgar, "READ_PROSE"), "the cover page is a form, not prose"
+
+    def test_an_8k_departure_is_a_narrative_reading(self):
+        # pinned in test_runner (the 8-K close's kwargs); here the import
+        from app.scraper import runner
+        assert runner.READ_NARRATIVE == "narrative"
+        assert not hasattr(runner, "READ_PROSE"), "no SEC writer in runner grades anything prose"
 
     def test_a_parent_column_is_still_a_table_reading(self):
         html = ("<table><tr><td>Name</td><td>Parent</td><td>Jurisdiction</td></tr>"

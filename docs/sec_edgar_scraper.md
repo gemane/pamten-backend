@@ -110,10 +110,13 @@ modern path *cheaper* than the legacy one (one request per filing instead of two
 
 Which path a holding came through is recorded on its claim and edge as
 `read_from` (data-model.md, *How surely it was read*): `field` for the XML,
-`prose` for a legacy cover page read by the regexes below. The two paths used
-to be indistinguishable afterwards — both cite the index page — and the text
-path is where every misread 13D/G came from (Bozano, Altria). Among SEC's own
-claims the field beats the prose; it never outranks a more credible source.
+`form` for a legacy cover page read by the regexes below — the rows are the
+SEC's own numbered items, so the labels are fixed and only the figure is read,
+which is why it grades above a layout reading and well above prose. The two
+paths used to be indistinguishable afterwards — both cite the index page — and
+the text path is where every misread 13D/G came from (Bozano, Altria). Among
+SEC's own claims the field beats the form; it never outranks a more credible
+source.
 
 **There are two schemas, one per schedule**, and they spell the same facts differently:
 
@@ -728,7 +731,8 @@ statements of a departure exist on EDGAR, and both now close the seat
   company must file within four business days. The submissions index carries an
   `items` field per filing, so the 8-Ks that carry Item 5.02 are known **without
   opening any document**; the newest `MAX_8K_FETCH` are read (Archives files —
-  cached forever). The item text is prose, so it is read **only for names we
+  cached forever). The item text is running text — the closing claim is graded
+  `narrative`, the weakest reading there is — so it is read **only for names we
   already list** (this scan plus the people already on the graph) and never to
   mint anyone. A sentence must name the person (surname plus first name or an
   honorific — a bare surname never matches) and say a seat ends; the date is the
@@ -1104,7 +1108,9 @@ Honesty rules, learned from the real filings:
   surely it was read*): `table` for a cell under a header the filer wrote for
   that table; `layout` for a carried header (the next page's rows), the
   headerless first-two-cells heuristic, a list grouped under country headings
-  and the country-rows reader; `prose` for the paragraph reader. The edge is as
+  and the country-rows reader; `prose` for the paragraph reader (lines shaped
+  like "Name (Jurisdiction)" — never `narrative`, which is a fact in a
+  sentence). The edge is as
   surely read as its least sure part (`edge_schema.weakest_reading`): a row from
   a table placed under its parent by indentation or a heading is a `layout`
   edge, one placed by a "Direct controlling entity" column stays `table`, a

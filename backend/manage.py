@@ -625,7 +625,8 @@ def cmd_heal_sec_dates(args):
 
 def cmd_heal_read_from(args):
     """Stamp `read_from` (how surely a value was read) on edges and claims
-    written before the grade existed (`app.scraper.read_from_heal`). Fill-only;
+    written before the grade existed (`app.scraper.read_from_heal`). Fill-only,
+    plus the one re-grade (a 13D/G cover page's retired `prose` → `form`);
     Exhibit 21 rows wait for the next `sec-ex21` run. `--dry-run` only counts."""
     from app.scraper.read_from_heal import heal_read_from
     res = heal_read_from(dry_run=args.dry_run)
@@ -1469,9 +1470,10 @@ def _build_parser():
     p_hsd.set_defaults(func=cmd_heal_sec_dates)
 
     p_hrf = subparsers.add_parser('heal-read-from',
-        help="Stamp read_from (how surely a value was read: field/table/layout/prose) on "
-             "edges and claims from before the grade; fill-only, Exhibit 21 rows wait for "
-             "the next sec-ex21 run; --dry-run counts")
+        help="Stamp read_from (how surely a value was read: field/table/form/layout/prose/"
+             "narrative) on edges and claims from before the grade; fill-only plus the "
+             "13D/G prose→form re-grade, Exhibit 21 rows wait for the next sec-ex21 run; "
+             "--dry-run counts")
     p_hrf.add_argument('--dry-run', action='store_true', help='Count, change nothing')
     p_hrf.set_defaults(func=cmd_heal_read_from)
 
