@@ -536,8 +536,9 @@ class TestIssuerVerification:
         former.assert_called_once_with("1326801")
         assert [r["investor_name"] for r in results] == ["Vanguard Group Inc"]
         assert results[0]["stake_percent"] == 7.0
-        # a legacy cover page: the numbers came out of its text by pattern
-        assert results[0]["read_from"] == "prose"
+        # a legacy cover page: the numbers came out of the form's numbered
+        # rows in its text — the SEC's labels, the filer's figure
+        assert results[0]["read_from"] == "form"
 
     def test_no_issuer_is_not_a_mismatch(self):
         # Old text filings may not parse. A positive mismatch is the only safe

@@ -117,9 +117,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       under, which is what a reader needs to judge it.
 - [ ] **Stamp `read_from` on every value the writer records** — how surely it
       was read, not how good the source is: `field` (a named field of XML/JSON),
-      `table` (a cell under a header the filer wrote), `layout` (inferred from the
-      page: indentation, a heading, a carried header), `prose` (a pattern over
-      text). Grade per VALUE and inside one document where the readers differ (a
+      `table` (a cell under a header the filer wrote), `form` (a numbered item of a
+      regulator's form found in its text), `layout` (inferred from the page:
+      indentation, a heading, a carried header), `prose` (items written as text
+      lines), `narrative` (a fact picked out of a sentence — the grade for any
+      news-like text, should one ever be admitted). Grade per VALUE and inside one document where the readers differ (a
       13D/G is XML since 2024-12-18 and a text cover page before; an Exhibit 21 row
       is a table cell, its parent an indentation), and give an edge the weakest of
       its parts (`edge_schema.weakest_reading`). The grade orders equally credible

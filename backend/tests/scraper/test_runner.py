@@ -292,7 +292,7 @@ class TestRunScrapeSecEdgar:
                            {"role": "CEO", "source_id": closed[0][1]["source_id"],
                             "source_url": "https://www.sec.gov/8k", "source_date": "2026-09-02",
                             # the departure was read out of Item 5.02's sentences
-                            "read_from": "prose"})]
+                            "read_from": "narrative"})]
         assert any(r["role"] == "departed CEO" for r in result["scraped"])
 
     def test_person_investor_classified_as_person(self):

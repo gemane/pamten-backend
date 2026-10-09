@@ -67,9 +67,9 @@ def test_the_reading_grade_reaches_the_row(it_db):
     it_db.run_command("CREATE (:Entity {id: 'e-other', name: 'Other Co'})")
     _seed_claim(it_db, from_id="e-other", to_id="e-target", source_id="s1",
                 source_url="https://www.sec.gov/Archives/edgar/data/1/cover.htm",
-                source_date="2019-02-14", read_from="prose")
+                source_date="2019-02-14", read_from="form")
     by_url = {r["url"]: r for r in get_sources_for_entity("e-target")}
-    assert by_url["https://www.sec.gov/Archives/edgar/data/1/cover.htm"]["read_from"] == "prose"
+    assert by_url["https://www.sec.gov/Archives/edgar/data/1/cover.htm"]["read_from"] == "form"
     assert by_url["https://www.sec.gov/Archives/edgar/data/1/primary.htm"]["read_from"] is None
 
 

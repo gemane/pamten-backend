@@ -54,10 +54,11 @@ class TestTheFiguresAreRight:
         from app.quality import format_report, quality_report
         report = quality_report()
         by = report["owns_by_source"]
-        assert by["SEC EDGAR"]["read"] == {"field": 0, "table": 0, "layout": 0, "prose": 1, "unset": 0}
-        assert by["Wikidata"]["read"] == {"field": 0, "table": 0, "layout": 0, "prose": 0, "unset": 1}
+        none = {"field": 0, "table": 0, "form": 0, "layout": 0, "prose": 0, "narrative": 0, "unset": 0}
+        assert by["SEC EDGAR"]["read"] == {**none, "prose": 1}
+        assert by["Wikidata"]["read"] == {**none, "unset": 1}
         text = format_report(report)
-        assert "read from" in text and "prose" in text
+        assert "read from" in text and "prose" in text and "narrative" in text
 
     def test_freshness_is_windowed(self, graph):
         # The SEC edge was confirmed this month; the Wikidata one in 2020. If the
