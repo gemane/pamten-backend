@@ -197,7 +197,7 @@ PROFILE = {
          "role": {"role": "CEO", "since": "2014-02-04", "source_id": "sec"}},
     ],
 }
-TREE = {"root_id": "ms", "truncated": True,
+TREE = {"root_id": "ms", "truncated": True, "total": 10,
         "nodes": [{"entity": {"id": "li", "name": "LinkedIn", "type": "company"}, "parent_id": "ms", "depth": 1},
                   {"entity": {"id": "lii", "name": "LinkedIn Ireland", "type": "company"}, "parent_id": "li", "depth": 2},
                   {"entity": {"id": "gh", "name": "GitHub", "type": "company"}, "parent_id": "ms", "depth": 1}],
@@ -315,8 +315,15 @@ class TestTheWorkbook:
         assert [(r[0][1], r[1][1], r[2][1]) for r in rows[1:]] == [("1", "MICROSOFT CORPORATION", "LinkedIn"),
                                                                    ("2", "LinkedIn", "LinkedIn Ireland")]
         overview = {r[0][1]: r[1][1] for r in s["Overview"][1:] if r[0][1]}
-        assert overview["Subsidiaries"] == "all levels (capped, more exist)"
+        assert overview["Subsidiaries"] == "all levels (the first 2 of 10)"     # the rows listed, of the whole tree
         assert overview["As of"] == "2019-12-31"
+
+    def test_a_capped_tree_whose_count_also_gave_up_still_says_more_exist(self, readers, monkeypatch):
+        import app.routers.relationships as rels
+        monkeypatch.setattr(rels, "subsidiary_tree_of", lambda *a, **k: {**TREE, "total": None})
+        _, data = build_workbook("ms", ExportOptions(all_levels=True))
+        overview = {r[0][1]: r[1][1] for r in sheets_of(data)["Overview"][1:] if r[0][1]}
+        assert overview["Subsidiaries"] == "all levels (capped, more exist)"
 
     def test_roles_timeline_sources_and_claims(self, readers):
         _, data = build_workbook("ms", ExportOptions())

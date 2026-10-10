@@ -36,7 +36,7 @@ def _seed(it_db):
 def test_every_level_once_with_one_parent_each_and_every_holding(it_db):
     _seed(it_db)
     tree = subsidiary_tree_of("top")
-    assert tree["root_id"] == "top" and tree["truncated"] is False
+    assert tree["root_id"] == "top" and tree["truncated"] is False and tree["total"] == 5
     by = {n["entity"]["id"]: (n["parent_id"], n["depth"]) for n in tree["nodes"]}
     assert by == {"mid1": ("top", 1), "mid2": ("top", 1),
                   "leaf1": ("mid1", 2),           # the larger holder is the parent a list shows
@@ -58,11 +58,14 @@ def test_the_cap_is_on_companies_and_says_so(it_db):
     tree = subsidiary_tree_of("top", max_nodes=2)
     assert len(tree["nodes"]) == 2 and tree["truncated"] is True
     assert {n["entity"]["id"] for n in tree["nodes"]} == {"mid1", "mid2"}
+    # …and still knows how large the whole tree is: five companies, the
+    # co-held one once, the ended and shortcut ones not, the root never
+    assert tree["total"] == 5
 
 
 def test_a_leaf_has_an_empty_tree_and_a_missing_company_none(it_db):
     _seed(it_db)
-    assert subsidiary_tree_of("leaf1") == {"root_id": "leaf1", "nodes": [], "edges": [], "truncated": False}
+    assert subsidiary_tree_of("leaf1") == {"root_id": "leaf1", "nodes": [], "edges": [], "truncated": False, "total": 0}
     assert subsidiary_tree_of("nope") is None
 
 
