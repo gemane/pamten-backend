@@ -316,7 +316,8 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES,
     and the panel indents. None when the entity does not exist.
 
     `{root_id, nodes: [{entity, parent_id, depth}], edges: [{from_id, to_id,
-    depth, relationship}], truncated}`. `nodes` names ONE parent per company
+    depth, relationship}], truncated}`. Each edge's `relationship` also carries
+    `descendants`, the companies below the company it reaches (`descendant_counts`). `nodes` names ONE parent per company
     so a list can indent it and a graph can place it: its DEEPEST holder in
     the tree between holders of equal stake, the largest holder otherwise
     (`_placing_parents`). `edges`
@@ -386,7 +387,48 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES,
     else:
         truncated = truncated or bool(frontier)
     _placing_parents(entity_id, nodes, edges)
+    # Each holding says how many companies sit below the company it reaches —
+    # the figure the panel row and the graph's line carry ("· 12 below").
+    below = descendant_counts(nodes, edges)
+    for e in edges:
+        if e["to_id"] in below:
+            e["relationship"]["descendants"] = below[e["to_id"]]
     return {"root_id": entity_id, "nodes": nodes, "edges": edges, "truncated": truncated}
+
+
+def descendant_counts(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
+    """How many of the tree's companies sit below each one, at any level.
+
+    A company reached through two holders (a co-holder, a flat list naming a
+    sub-group's companies beside the sub-group) is counted once; a company
+    never counts itself, and the root — not a node of its own tree — never
+    counts at all: a cross-holding back up the tree is a real edge, not a
+    subsidiary. Within a truncated walk
+    the figures are lower bounds, which is what the caller's `truncated` says.
+
+    Bitsets over the tree's companies, OR-ed to a fixpoint from the deepest
+    holders up: one pass per level of the longest chain, each a few thousand
+    big-int ORs. A set union per company would have been quadratic over
+    Berkshire's 2,000.
+    """
+    bit = {n["entity"]["id"]: 1 << i for i, n in enumerate(nodes)}
+    depth = {n["entity"]["id"]: n["depth"] for n in nodes}
+    held_by: dict[str, list[str]] = {}
+    for e in edges:
+        if e["from_id"] in bit and e["to_id"] in bit:
+            held_by.setdefault(e["from_id"], []).append(e["to_id"])
+    holders = sorted(held_by, key=lambda h: -depth[h])
+    below = dict.fromkeys(bit, 0)
+    changed = True
+    while changed:
+        changed = False
+        for holder in holders:
+            acc = below[holder]
+            for held in held_by[holder]:
+                acc |= bit[held] | below[held]
+            if acc != below[holder]:
+                below[holder], changed = acc, True
+    return {cid: (below[cid] & ~bit[cid]).bit_count() for cid in bit}
 
 
 def _placing_parents(root_id: str, nodes: list[dict], edges: list[dict]) -> None:

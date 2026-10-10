@@ -229,3 +229,29 @@ def test_a_stamped_shortcut_leaves_the_owners_list(it_db):
     owners, _ = owners_of("s")
     assert len(owners) == 1, "GLEIF's duplicate ultimate-parent statement is folded"
     assert owners[0]["relationship"].get("direct_or_indirect") == "direct"
+
+
+# ── Companies below each subsidiary ──────────────────────────────────────────
+
+def test_each_subsidiary_row_says_how_many_companies_sit_below_it(it_db):
+    """The walk behind the tree view, so the flat list and the tree agree:
+    ended holdings are out, a company reached twice is one, the root never."""
+    for eid in ("p", "s0", "s1", "g0", "g1", "gg", "old"):
+        _company(it_db, eid, eid.upper())
+    _owns(it_db, "p", "s0")
+    _owns(it_db, "p", "s1")
+    _owns(it_db, "s0", "g0")
+    _owns(it_db, "s0", "g1")
+    _owns(it_db, "g0", "gg")
+    _owns(it_db, "g1", "gg")                                        # co-held: one company
+    _owns(it_db, "gg", "p")                                         # a cross-holding back to the root
+    it_db.run_command("MATCH (a:Entity {id: 's1'}), (b:Entity {id: 'old'}) "
+                      "CREATE (a)-[:OWNS {until: '2020-01-01', source_id: 's'}]->(b)")   # ended
+
+    profile = get_full_profile("p")
+    by = {s["entity"]["id"]: s["relationship"]["descendants"] for s in profile["subsidiaries"]}
+    assert by == {"s0": 3, "s1": 0}
+    assert profile["descendants_truncated"] is False
+    # as of 2019 the ended holding was in force
+    as_of = get_full_profile("p", as_of="2019-12-31")
+    assert {s["entity"]["id"]: s["relationship"]["descendants"] for s in as_of["subsidiaries"]} == {"s0": 3, "s1": 1}
