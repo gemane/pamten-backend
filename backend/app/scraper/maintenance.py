@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.database import db
+from app.db.anchors import not_a_voting_group
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.db.anchors import label_or_entity
 from app.db.paging import iter_id_pages
@@ -296,7 +297,7 @@ def _duplicate_name_groups() -> list[tuple[str, int]]:
         # rosters (see _upsert_voting_group), never by name.
         q = ("SELECT FROM (SELECT name_normalized AS k, count(*) AS c FROM Entity "
              "WHERE name_normalized >= :lo AND name_normalized < :hi "
-             "AND type <> 'voting_group' "
+             f"AND {not_a_voting_group()} "
              "GROUP BY name_normalized) WHERE c > 1")
         try:
             rows = run_sql(q, {"lo": prefix, "hi": prefix + "￿"})
@@ -1252,7 +1253,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
             "SELECT id, name, country, founded, lei_id, companies_house_id, sec_cik, "
             "wikidata_id, register_id, registered_address, COALESCE(name_credibility, 0) AS cred, "
             "COALESCE(verified, false) AS verified FROM Entity "
-            "WHERE name_normalized = :nn AND type <> 'voting_group' LIMIT 50", {"nn": nn})
+            f"WHERE name_normalized = :nn AND {not_a_voting_group()} LIMIT 50", {"nn": nn})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
         if len(members) < 2:
             continue
@@ -1692,7 +1693,7 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
     # every run for a fact that does not exist.
     rows = run_query(
         "MATCH (e:Entity) WHERE (e.country IS NULL OR e.country = '') "
-        "AND e.type <> 'voting_group' "
+        f"AND {not_a_voting_group('e.')} "
         "RETURN e.id AS id, e.name AS name, e.wikidata_id AS wd, e.sec_cik AS cik")
     if limit:
         rows = rows[:limit]

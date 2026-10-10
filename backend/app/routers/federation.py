@@ -43,6 +43,7 @@ from app.auth.dependencies import require_admin, require_contributor
 from app.config import settings
 from app.claims import KIND_OWNS, record_claim
 from app.database import db
+from app.db.anchors import not_a_voting_group
 from app.db.anchors import label_or_entity
 from app.entity_resolution import resolve_entity_id
 from app.models.federation import PeerCreate
@@ -223,7 +224,7 @@ def build_export() -> dict:
                 # peer importing one would resolve it by normalised name onto
                 # whatever it already has under that name. They are also local
                 # derivations from SEC filings, which any peer can derive itself.
-                "MATCH (e:Entity) WHERE e.type <> 'voting_group' "
+                f"MATCH (e:Entity) WHERE {not_a_voting_group('e.')} "
                 "RETURN e.name AS name, e.type AS type, e.country AS country, "
                 "e.founded AS founded, e.wikidata_id AS wd, e.sec_cik AS cik, "
                 "e.lei_id AS lei, e.companies_house_id AS ch, e.register_id AS rid")
