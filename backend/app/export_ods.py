@@ -391,6 +391,7 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
     if opt.all_levels:
         tree = subsidiary_tree_of(entity_id, SUBTREE_MAX_NODES, opt.as_of) or {"nodes": [], "edges": [], "truncated": False}
         truncated = bool(tree.get("truncated"))
+        tree_total = tree.get("total")
         by_id = {n["entity"]["id"]: n["entity"] for n in tree["nodes"]}
         by_id[entity_id] = entity
         placing = {(e["from_id"], e["to_id"]): e["relationship"] for e in tree["edges"]}
@@ -461,7 +462,8 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
         ["Executives", counts.get("executives")],
         [None, None],
         ["Exported", today], ["As of", opt.as_of or "present"],
-        ["Subsidiaries", "all levels" + (" (capped, more exist)" if truncated else "") if opt.all_levels else "direct"],
+        ["Subsidiaries", ("all levels" + ((f" (the first {len(sub_rows)} of {tree_total})" if tree_total else " (capped, more exist)")
+                                          if truncated else "")) if opt.all_levels else "direct"],
         ["Minimum stake", stake_label],
         ["Owners listed", len(owner_rows)], ["Subsidiaries listed", len(sub_rows)],
         ["Live graph", Link(opt.link) if opt.link else None],

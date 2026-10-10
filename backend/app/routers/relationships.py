@@ -388,12 +388,57 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES,
         truncated = truncated or bool(frontier)
     _placing_parents(entity_id, nodes, edges)
     # Each holding says how many companies sit below the company it reaches —
-    # the figure the panel row and the graph's line carry ("· 12 below").
+    # the figure the panel row and the graph's line carry ("12 subsidiaries").
     below = descendant_counts(nodes, edges)
     for e in edges:
         if e["to_id"] in below:
             e["relationship"]["descendants"] = below[e["to_id"]]
-    return {"root_id": entity_id, "nodes": nodes, "edges": edges, "truncated": truncated}
+    # The whole tree's size, even where the nodes were capped: a heading that
+    # says "2,000" over a tree of 2,734 is the cap, not the count.
+    total = (_count_subtree(root[0]["rid"], entity_id, as_of, sup, hidden)
+             if truncated else len(nodes))
+    return {"root_id": entity_id, "nodes": nodes, "edges": edges, "truncated": truncated, "total": total}
+
+
+#: How far the count-only walk goes past the node cap before giving up.
+SUBTREE_COUNT_MAX = 50_000
+
+
+def _count_subtree(root_rid: str, root_id: str, as_of: str | None, sup, hidden) -> int | None:
+    """How many distinct companies the whole tree holds — the same walk and the
+    same rules as `subsidiary_tree_of` (in-force edges, no proven shortcuts,
+    suppressed companies neither counted nor walked through, the root never,
+    a company reached twice once), but rids and ids only, no payloads and no
+    edges, so it can run on past the node cap. None when even this walk hits
+    its own cap or the depth limit with companies still unvisited."""
+    from app.db.arcadedb import run_sql
+    in_force = ("until IS NULL" if as_of is None else
+                f"{started_by_clause('', ':')} AND (until IS NULL OR until > :as_of)")
+    seen: dict[str, str] = {root_rid: root_id}
+    frontier = [root_rid]
+    for _depth in range(1, SUBTREE_MAX_DEPTH + 1):
+        if not frontier:
+            return len(seen) - 1
+        rows = run_sql(
+            "SELECT @out AS o, @in AS i FROM "
+            f"(SELECT expand(outE('OWNS')) FROM [{', '.join(frontier)}]) "
+            f"WHERE {in_force} AND (shortcut IS NULL OR shortcut <> true)",
+            {"as_of": as_of} if as_of else None)
+        new_rids = sorted({r["i"] for r in rows} - set(seen))
+        ids = {r["@rid"]: r.get("id") for r in run_sql(
+            f"SELECT @rid, id FROM [{', '.join(new_rids)}]")} if new_rids else {}
+        frontier = []
+        for r in rows:
+            parent_id, child_id = seen.get(r["o"]), ids.get(r["i"])
+            if r["i"] in seen or not parent_id or not child_id or child_id == parent_id:
+                continue
+            if child_id in hidden or is_suppressed(sup, "owns", parent_id, child_id):
+                continue
+            seen[r["i"]] = child_id
+            frontier.append(r["i"])
+            if len(seen) - 1 >= SUBTREE_COUNT_MAX:
+                return None
+    return None if frontier else len(seen) - 1
 
 
 def descendant_counts(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
