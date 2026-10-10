@@ -56,10 +56,12 @@ jobs:
     # dict(rec) vs rec.get()). See backend/tests/integration/README.md.
     services:
       arcadedb:
-        # Pinned to the version verified locally; ArcadeDB enforces a password
-        # policy, so the root password must be strong (weak ones like
-        # "playwithdata" are rejected and the server falls back to a prompt).
-        image: arcadedata/arcadedb:26.7.3
+        # Pinned to the version verified locally (26.10.1: the first release with
+        # the index range-read fix, PR #7616 — see docs/operations.md, Upgrading
+        # ArcadeDB). ArcadeDB enforces a password policy, so the root password
+        # must be strong (weak ones like "playwithdata" are rejected and the
+        # server falls back to a prompt).
+        image: arcadedata/arcadedb:26.10.1
         ports:
           - 2480:2480
         env:

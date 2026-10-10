@@ -46,3 +46,17 @@ def label_or_entity(label: str | None) -> str:
     """Coerce a label from data (a snapshot's ``kind``, a ``labels(n)[0]``
     result) to one of the two vertex types; anything else is a company."""
     return label if label in NODE_LABELS else "Entity"
+
+
+def not_a_voting_group(alias: str = "") -> str:
+    """The predicate that keeps a query to legal entities — everything but a
+    voting group — written so that an entity WITHOUT a type passes it.
+
+    ArcadeDB 26.10.1 made comparisons three-valued: ``type <> 'voting_group'``
+    no longer matches a null type (26.7.3 matched it), and 1,298 of the dev
+    graph's 6,064 entities have none — the quality report, the duplicate scan,
+    the country backfill, the missing-country list and the federation export
+    all went silent on them. ``alias`` is the node variable with its dot
+    (``"e."``), empty in SQL.
+    """
+    return f"({alias}type IS NULL OR {alias}type <> 'voting_group')"

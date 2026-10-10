@@ -42,6 +42,58 @@ release build passes in; every other build reports `0.0.0-dev` (+ the commit on 
   DDL takes the schema lock (see the sizing notes in the hosting plan).
 - Hotfix: fix on develop → fast-forward main → tag the next patch version.
 
+## Upgrading ArcadeDB
+
+The database is a pinned image (`ARCADEDB_VERSION` in `deploy/.env`; the dev box's own
+compose file). An upgrade within a year's releases is drop-in — same data directory, no
+migration — but never blind:
+
+1. **Read the upstream tracker first** (the rule since 2026-09-23): the issues *fixed since
+   our version* and the ones *opened since the target was published*, filtered to what we
+   use (LSM index range/seek, compaction, FULL_TEXT/CONTAINSTEXT, HTTP `/command`, Cypher
+   MERGE/MATCH, backup/restore, sqlscript, startup). Confirm a fix is in the **tag**, not
+   only on its milestone (`gh api repos/ArcadeData/arcadedb/compare/<fix sha>...<tag>` must
+   say `ahead`). A new release can be a trap: 26.9.1 made `sqlscript` 1.5–3× slower.
+2. **Prove it on the test container**: `ARCADEDB_IT_IMAGE=arcadedata/arcadedb:X.Y.Z`
+   with the full integration suite, then the index range reproducers
+   (`~/arcadedb-report/arcadedb_range_repro.py load --rows 10000000` + `walk`, and
+   `_more.py`): walked must equal loaded, every bound exact.
+3. **Before touching the real database**: fast-forward `main` (a stale main is not a
+   fallback), take a backup (`python3 manage.py backup-database`) and keep the previous
+   image tag at hand — the rollback is the old tag on the same data.
+4. **Upgrade**: bump the tag, `docker compose pull arcadedb && docker compose up -d`
+   (`ops.sh upgrade` covers the *application* version only). Watch the log for
+   `Index 'X' should be rebuilt: its pages are physically sorted in a different order`.
+5. **Rebuild what it asks for, over a direct connection** — `REBUILD INDEX *` on the full
+   database runs for 10+ minutes, longer than the nginx proxy allows: open an SSH tunnel
+   to the box (`ssh -N -L 2481:127.0.0.1:2480 <db host>`) and run
+   `python3 manage.py reindex --db-url http://localhost:2481`.
+6. **Accept**: `/health` ok; a search for a common token answers as many rows as a
+   scan (`CONTAINSTEXT` vs `LIKE`); a whole-space id walk counts every Entity and Person;
+   a backup taken on the new version restores into a fresh database.
+
+**26.10.1 (published 2026-10-05, reviewed 2026-10-10):** the first release with the
+index range-read fix (PR #7616 for #7611, in the tag) and the rest of the 26.7.3 list
+(#5120/#6997 compaction lookups, #5266 FULL_TEXT completeness, #7025 unclean close,
+#6382 CONTAINSTEXT and ':', #7768 WAL slot, #7464/#7637 backups without schema, #8225
+BM25 counters); four security advisories closed (Gremlin, Bolt, lightweight edges — none
+on our surface). Opened against it and still due for 26.11.1: **#9495** (every HTTP
+`UPDATE`/`DELETE` fails with 500 on the official jars under JDK 25 — the Docker image runs
+Java 21 and our writes were verified on it, but do not run 26.10.1 jars on Java 25),
+#9461 (a NOTUNIQUE LSM full scan turns quadratic after one hot key — our maintenance walks
+the UNIQUE `id` index, which is unaffected), #9402 (an in-heap GROUP BY budget that scales
+with the core count — the sharded dedup GROUP BY on a many-core prod box may need
+`arcadedb.query.heapBudget` raised), #9369 (a concurrent reader can miss a key a
+transaction deletes and re-creates in one commit — transient, retried by the next read).
+The REPEATABLE_READ regressions (#9070/#9620) do not apply: we use the default isolation.
+**It also changes a semantic we relied on:** comparisons are three-valued now — `type <> 'voting_group'`
+(SQL and Cypher, `!=` and `NOT (… = …)` alike) no longer matches a row whose `type` is null,
+where 26.7.3 matched it. 1,298 of the dev graph's 6,064 entities have no type, and the
+quality report, the duplicate scan, the country backfill, the missing-country list and the
+federation export all went silent on them. Fixed in the app (`anchors.not_a_voting_group`,
+`tests/integration/test_null_type_it.py` runs on both engines); the rule for every new query:
+a `<>` on a nullable property needs an `IS NULL OR` beside it.
+
 ## Backups
 
 ```bash

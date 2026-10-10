@@ -514,6 +514,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 
 ## 6. Failing safely
 
+- [ ] **A `<>` on a nullable property needs an `IS NULL OR` beside it.** ArcadeDB 26.10.1
+      made comparisons three-valued, as SQL has them: `type <> 'voting_group'` no longer
+      matches a row with no type (26.7.3 matched it), and five readers silently dropped the
+      1,298 typeless entities of the dev graph. Use `anchors.not_a_voting_group()` for that
+      fence, and write any other negative test on a property that may be absent as
+      `(p IS NULL OR p <> …)`.
+
 - [ ] **Not found returns `None`/an empty result, never an exception.** Auth problems
       raise `PermissionError` with a message that says which flag or key is wrong.
 - [ ] **One source failing must not sink the others.** The dispatchers already catch per
