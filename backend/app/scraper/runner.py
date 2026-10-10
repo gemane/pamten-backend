@@ -1541,6 +1541,18 @@ def _find_person(full_name: str, sec_cik: str | None = None) -> str | None:
         return rows[0]["id"] if rows else None
 
 
+def _denominator_of(exec_rec: dict, data: dict) -> float | None:
+    """The count a Form 4 holding was measured against. A record from
+    `sec_edgar.stake_for` always carries `shares_outstanding` — the count of
+    the holding's own class, or None when the issuer's classes did not match
+    it, which must stay None (the issuer's total is another class's count).
+    A record without the key predates the per-class stake: the total, as
+    it always was."""
+    if "shares_outstanding" in exec_rec:
+        return exec_rec["shares_outstanding"]
+    return data.get("shares_outstanding")
+
+
 def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.
@@ -1811,7 +1823,11 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                     ownership_type=(derive_ownership_type(stake) if stake is not None
                                     else "minority"),
                     file_date=exec_rec.get("source_date"), stake_percent=stake,
-                    shares=shares, shares_outstanding=data.get("shares_outstanding"),
+                    # the class the count is of, and the count of THAT class it
+                    # was measured against (none when the classes did not match)
+                    shares=shares, share_class=exec_rec.get("share_class"),
+                    shares_outstanding=_denominator_of(exec_rec, data),
+                    denominator_date=exec_rec.get("denominator_date"),
                     filing_type="Form 4", read_from=READ_FIELD,
                     # a Form 3/4 states what is held AS OF the report, not since
                     # when: its date written as a start hid an insider's older
@@ -1863,12 +1879,14 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 stake_percent=stake, read_from=READ_FIELD,
                 # Form 4 states the holding exactly; until now it decided
                 # whether to write an edge and was then thrown away.
-                shares=shares,
-                # Stamp the denominator too, so a holding below the percentage
-                # precision floor (a director's 1,139 shares → null stake) can
-                # still be sized and filtered client-side rather than surfacing
-                # under every stake filter as an unquantified owner.
-                shares_outstanding=data.get("shares_outstanding"),
+                shares=shares, share_class=exec_rec.get("share_class"),
+                # Stamp the denominator too — the count of the holding's own
+                # class — so a holding below the percentage precision floor (a
+                # director's 1,139 shares → null stake) can still be sized and
+                # filtered client-side rather than surfacing under every stake
+                # filter as an unquantified owner.
+                shares_outstanding=_denominator_of(exec_rec, data),
+                denominator_date=exec_rec.get("denominator_date"),
                 filing_type="Form 4",
                 # a Form 3/4 states what is held AS OF the report, not since
                 # when: its date written as a start hid an insider's older
@@ -1912,7 +1930,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
 
     from app.scraper.sec_edgar import fetch_insider_holding
     cik = data.get("cik")
-    shares_out = data.get("shares_outstanding")
+    # dated and per class; the bare total only for a scrape result that predates it
+    shares_out = data.get("shares_outstanding_detail") or data.get("shares_outstanding")
     if cik:
         with db.get_session() as session:
             known = [
@@ -1939,8 +1958,9 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                 ownership_type=(derive_ownership_type(stake) if stake is not None else "minority"),
                 file_date=holding.get("source_date"),
                 stake_percent=stake,
-                shares=holding.get("shares_owned"),
-                shares_outstanding=shares_out,
+                shares=holding.get("shares_owned"), share_class=holding.get("share_class"),
+                shares_outstanding=holding.get("shares_outstanding"),
+                denominator_date=holding.get("denominator_date"),
                 filing_type="Form 4", read_from=READ_FIELD,
                 # a Form 3/4 states what is held AS OF the report, not since
                 # when: its date written as a start hid an insider's older

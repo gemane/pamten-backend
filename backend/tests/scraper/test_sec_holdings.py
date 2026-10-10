@@ -260,7 +260,7 @@ def test_scrape_company_can_skip_holdings():
          patch.object(sec_edgar, "fetch_company_lei", return_value=None), \
          patch.object(sec_edgar, "fetch_ownership_filings", return_value=[]), \
          patch.object(sec_edgar, "fetch_executives", return_value=[]), \
-         patch.object(sec_edgar, "fetch_shares_outstanding", return_value=None), \
+         patch.object(sec_edgar, "fetch_shares_outstanding_detail", return_value=None), \
          patch.object(sec_edgar, "fetch_filer_holdings") as fh:
         data = sec_edgar.scrape_company("X", holdings_limit=0)
     assert data["holdings"] == []

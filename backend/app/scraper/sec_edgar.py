@@ -45,6 +45,7 @@ How to verify:
 
 import re
 import time
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import threading
 import html as html_lib
@@ -1724,18 +1725,15 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
     owner_cik_raw = (owner.findtext(".//rptOwnerCik") or "").strip()
     owner_cik = _cik_int(owner_cik_raw).zfill(10) if owner_cik_raw else None
 
-    # Shares held after the reported transaction(s) — the insider's current
-    # non-derivative holding. Take the largest value across rows (the total).
-    share_vals: list[float] = []
-    for el in root.findall(".//sharesOwnedFollowingTransaction/value"):
-        try:
-            share_vals.append(float((el.text or "").replace(",", "").strip()))
-        except (TypeError, ValueError):
-            continue
-    shares_owned = max(share_vals) if share_vals else None
+    # What the filer holds after the reported transactions, per security —
+    # the stake is computed per class once the issuer's counts are known.
+    holdings = _form4_holdings(root)
+    pick = stake_for(holdings, None)
 
     return {"name": name, "title": officer_title, "role": role,
-            "shares_owned": shares_owned, "issuer_cik": issuer_cik,
+            "shares_owned": pick["shares_owned"] if pick else None,
+            "share_class": pick["share_class"] if pick else None,
+            "holdings": holdings, "issuer_cik": issuer_cik,
             "person_cik": owner_cik, "document_type": document_type,
             "period_of_report": period, "former": former_role is not None}
 
@@ -2123,7 +2121,7 @@ def _lookup_person_cik(name: str) -> str | None:
 
 
 def fetch_insider_holding(name: str, issuer_cik: str,
-                          shares_outstanding: float | None = None) -> dict | None:
+                          shares_outstanding: "SharesOutstanding | dict | float | None" = None) -> dict | None:
     """
     Person-centric insider lookup (all structured XML): resolve the individual's
     CIK, read THEIR most recent Form 4 that reports on `issuer_cik`, and return
@@ -2162,26 +2160,149 @@ def fetch_insider_holding(name: str, issuer_cik: str,
         m = re.search(r"<issuerCik>0*(\d+)</issuerCik>", xml)
         if not m or m.group(1) != issuer_int:
             continue                       # this Form 4 is about a different company
-        shares = [float(v) for v in re.findall(
-            r"<sharesOwnedFollowingTransaction>\s*<value>([\d.]+)</value>", xml)]
-        held = max(shares) if shares else None
-        if not held or held <= 0:
+        try:
+            holdings = _form4_holdings(ET.fromstring(xml))
+        except ET.ParseError:
             return None
-        stake = _pct_of(held, shares_outstanding)
+        pick = stake_for(holdings, shares_outstanding)
+        if not pick:
+            return None
         return {
-            "shares_owned":  held,
-            "stake_percent": stake,
+            **pick,
             "source_url":    _filing_index_url(cik, accs[i]),
             "source_date":   dates[i] if i < len(dates) else None,
         }
     return None
 
 
-def fetch_shares_outstanding(cik: str) -> float | None:
+@dataclass(frozen=True)
+class SharesOutstanding:
+    """An issuer's stated share count: dated, and per class where it has more
+    than one. `by_class` is keyed by the class letter ("A", "B") and stays
+    empty for a single unclassed count; `total` sums the classes — which is
+    what a 13F holding of an unstated class is measured against, and what
+    a Form 4 holding never is: a count of one class is divided only by the
+    count of that class, or not at all (`stake_for`)."""
+    total: float
+    as_of: str | None
+    by_class: dict[str, float]
+
+
+#: A plain-tag series whose last value is older than this, counted back from
+#: the day the stake is computed, is one the issuer stopped keeping, not its
+#: current count. Berkshire's ended in April 2011, when it began reporting
+#: per class with a dimension (which the aggregated endpoints drop); its last
+#: value, 941,481 Class A shares, made Warren Buffett's Class B count a stake
+#: of 1,274 %. Fifteen months lets an annual filer be a quarter late.
+DENOMINATOR_MAX_AGE_DAYS = 15 * 30
+
+
+def _as_detail(x: "SharesOutstanding | dict | float | int | None") -> "SharesOutstanding | None":
+    """Callers hand over the dataclass, its dict (as stored in a scrape
+    result) or a bare total (the 13F path, older callers): one shape."""
+    if x is None:
+        return None
+    if isinstance(x, SharesOutstanding):
+        return x
+    if isinstance(x, dict):
+        return SharesOutstanding(float(x["total"]), x.get("as_of"), dict(x.get("by_class") or {}))
+    return SharesOutstanding(float(x), None, {})
+
+
+def _class_of(title: str | None) -> str:
+    """The class letter a security title names ("Class B Common Stock" → "B"), else ""."""
+    m = re.search(r"\bclass\s+([A-Z])\b", title or "", re.I)
+    return m.group(1).upper() if m else ""
+
+
+#: A derivative-table row that is an option, a unit, a right, a note… is not a
+#: share held. One titled plainly as a class of common stock is: Berkshire's
+#: Class A is convertible into Class B, so its filers list their Class A in
+#: Table II — Warren Buffett's 188,290 Class A shares sit there.
+_NOT_A_SHARE = re.compile(r"option|unit|right|warrant|note|debenture|preferred|phantom|award|\bsar\b|swap|forward", re.I)
+
+
+def _form4_holdings(root: ET.Element) -> dict[str, float]:
+    """What the filer holds after the reported transactions, per security title.
+
+    The rows of a Form 4 are in order; each states the position AFTER it. So
+    the last row per security is the position the filing leaves the filer
+    in — not the largest value across rows, which was the position midway
+    through: Warren Buffett's July 2026 Form 4 converts 8,000 Class A into
+    12,000,000 Class B ("owned following": 12,001,162) and gives the B away in
+    four gifts (…1,162); the largest was the moment before the gifts. Direct
+    and indirect positions (a trust beside the person) in the same security
+    are summed; derivative rows count only when they are plainly a class of
+    common stock (`_NOT_A_SHARE`).
+    """
+    last: dict[tuple[str, str], float] = {}
+    for row in root.iter():
+        if row.tag not in ("nonDerivativeTransaction", "nonDerivativeHolding",
+                           "derivativeTransaction", "derivativeHolding"):
+            continue
+        title = (row.findtext("securityTitle/value") or "").strip()
+        if row.tag.startswith("derivative") and not (
+                re.search(r"common|ordinary", title, re.I) and not _NOT_A_SHARE.search(title)):
+            continue
+        val = row.findtext("postTransactionAmounts/sharesOwnedFollowingTransaction/value")
+        try:
+            n = float((val or "").replace(",", "").strip())
+        except ValueError:
+            continue
+        nature = ((row.findtext("ownershipNature/directOrIndirectOwnership/value") or "D").strip().upper()
+                  + "|" + (row.findtext("ownershipNature/natureOfOwnership/value") or "").strip())
+        last[(title, nature)] = n
+    out: dict[str, float] = {}
+    for (title, _nature), n in last.items():
+        out[title] = out.get(title, 0.0) + n
+    return out
+
+
+def stake_for(holdings: dict[str, float],
+              outstanding: "SharesOutstanding | dict | float | None") -> dict | None:
+    """The one holding an edge carries, with its stake: the class with the
+    largest percentage, else the largest count.
+
+    A count of one class is divided by the count of THAT class. Where the
+    issuer states its classes and the title names none, or names one the
+    issuer does not state, there is no percentage — a Class B count over a
+    Class A total is how 1,274 % happened, and a Berkshire B share is a
+    fifteen-hundredth of an A share. An unclassed issuer total divides any
+    title, as before. The denominator and its date travel with the pick.
+    """
+    detail = _as_detail(outstanding)
+    best: tuple[tuple[float, float], dict] | None = None
+    for title, shares in holdings.items():
+        if not shares or shares <= 0:
+            continue
+        cls = _class_of(title)
+        denom: float | None = None
+        if detail is not None:
+            denom = (detail.by_class.get(cls) if cls else None) if detail.by_class else detail.total
+        pct = _pct_of(shares, denom)
+        rank = (pct if pct is not None else -1.0, shares)
+        if best is None or rank > best[0]:
+            best = (rank, {"shares_owned": shares, "share_class": title or None,
+                           "stake_percent": pct, "shares_outstanding": denom,
+                           "denominator_date": detail.as_of if (detail and denom is not None) else None})
+    return best[1] if best else None
+
+
+def fetch_shares_outstanding(cik: str, on: str | None = None) -> float | None:
+    """The issuer's total count (`fetch_shares_outstanding_detail`), for the
+    callers that measure an unclassed holding — the 13F path."""
+    d = fetch_shares_outstanding_detail(cik, on)
+    return d.total if d else None
+
+
+def fetch_shares_outstanding_detail(cik: str, on: str | None = None) -> "SharesOutstanding | None":
     """
     Latest reported common shares outstanding for an issuer (SEC XBRL facts),
-    used to turn a share count into a stake percentage.
-    Best-effort — returns None if unavailable.
+    used to turn a share count into a stake percentage — dated, per class
+    where the issuer reports classes. Best-effort — None if unavailable.
+
+    A plain-tag value older than DENOMINATOR_MAX_AGE_DAYS before `on` (today
+    when unset) is not the current count: the cover is read instead.
 
     Two layers. The concept API serves single-class issuers; a MULTI-CLASS
     issuer reports one cover-page fact per class, and dimensioned facts never
@@ -2207,15 +2328,31 @@ def fetch_shares_outstanding(cik: str) -> float | None:
         dated = [(v.get("end") or "", v.get("val")) for v in vals if v.get("val")]
         if dated:
             dated.sort()                      # most recent reporting period last
+            end, val = dated[-1]
+            if end < _freshness_floor(on):
+                log.info("SEC EDGAR: %s for CIK %s ends %s — stopped, not current; reading the cover",
+                         concept, cik, end)
+                continue
             try:
-                return float(dated[-1][1])
+                return SharesOutstanding(float(val), end or None, {})
             except (TypeError, ValueError):
                 continue
     return _shares_outstanding_from_cover(cik)
 
 
-def _shares_outstanding_from_cover(cik: str) -> float | None:
-    """Sum of per-class share counts from the newest 10-Q/10-K inline-XBRL cover."""
+def _freshness_floor(on: str | None) -> str:
+    """The oldest reporting date still taken as current, as YYYY-MM-DD."""
+    try:
+        ref = datetime.strptime(on[:10], "%Y-%m-%d") if on else datetime.now(timezone.utc).replace(tzinfo=None)
+    except ValueError:
+        ref = datetime.now(timezone.utc).replace(tzinfo=None)
+    return (ref - timedelta(days=DENOMINATOR_MAX_AGE_DAYS)).strftime("%Y-%m-%d")
+
+
+def _shares_outstanding_from_cover(cik: str) -> "SharesOutstanding | None":
+    """The per-class share counts from the newest 10-Q/10-K inline-XBRL cover,
+    each class told from its XBRL context (`us-gaap:CommonClassAMember`), dated
+    by the context's instant. One class: an unclassed count."""
     try:
         subs = _submissions(cik)
     except httpx.HTTPError:
@@ -2237,6 +2374,7 @@ def _shares_outstanding_from_cover(cik: str) -> float | None:
     # what distinguishes the classes — and, being a dict, also what keeps a
     # fact echoed elsewhere in the document from double-counting.
     seen: dict[str, float] = {}
+    facts_html = html
     for tag in re.findall(r"<ix:nonFraction[^>]*>", html):
         if 'name="dei:EntityCommonStockSharesOutstanding"' not in tag:
             continue
@@ -2249,7 +2387,31 @@ def _shares_outstanding_from_cover(cik: str) -> float | None:
                 seen[ctx.group(1)] = float(m.group(1).replace(",", ""))
             except ValueError:
                 continue
-    return sum(seen.values()) or None
+    return cover_counts(seen, facts_html)
+
+
+def cover_counts(facts: dict[str, float], html: str) -> "SharesOutstanding | None":
+    """`SharesOutstanding` from a cover's facts (contextRef → count) and the
+    document the contexts are defined in. Pure, for the tests."""
+    if not facts:
+        return None
+    by_class: dict[str, float] = {}
+    as_of: str | None = None
+    for ctx, val in facts.items():
+        block = re.search(r'<(?:xbrli:)?context id="%s"[^>]*>(.*?)</(?:xbrli:)?context>' % re.escape(ctx), html, re.S)
+        body = block.group(1) if block else ""
+        member = re.search(r"ClassOfStockAxis\"[^>]*>\s*[\w.-]+:(\w+)Member", body)
+        letter = re.search(r"Class([A-Z])(?![a-z])", member.group(1)) if member else None   # CommonClassAMember → A
+        key = letter.group(1) if letter else ""
+        by_class[key] = by_class.get(key, 0.0) + val
+        instant = re.search(r"<(?:xbrli:)?instant>(\d{4}-\d{2}-\d{2})", body)
+        if instant and (as_of is None or instant.group(1) > as_of):
+            as_of = instant.group(1)
+    total = sum(by_class.values())
+    if not total:
+        return None
+    classes = {k: v for k, v in by_class.items() if k} if len(by_class) > 1 else {}
+    return SharesOutstanding(total, as_of, classes)
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -2312,14 +2474,15 @@ def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMI
     # an actual institutional filer.
     holdings     = fetch_filer_holdings(cik, limit=holdings_limit) if (cik and holdings_limit) else []
 
-    # Turn each insider's Form-4 share holding into a stake %, when we can read
-    # the issuer's shares outstanding.
-    shares_out = fetch_shares_outstanding(cik) if cik else None
-    if shares_out:
-        for ex in executives:
-            so = ex.get("shares_owned")
-            if so and so > 0:
-                ex["stake_percent"] = _pct_of(so, shares_out)
+    # Turn each insider's Form-4 holding into a stake %, class against class,
+    # when the issuer's counts are known and fresh (see SharesOutstanding).
+    detail = fetch_shares_outstanding_detail(cik) if cik else None
+    shares_out = detail.total if detail else None
+    for ex in executives:
+        if ex.get("holdings"):
+            pick = stake_for(ex["holdings"], detail)
+            if pick:
+                ex.update(pick)
 
     return {
         "cik":                company["cik"],
@@ -2330,6 +2493,8 @@ def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMI
         "holdings":           holdings,
         "executives":         executives,
         "shares_outstanding": shares_out,
+        # dated and per class, for the insider lookups the runner adds later
+        "shares_outstanding_detail": asdict(detail) if detail else None,
     }
 
 
