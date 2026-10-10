@@ -90,6 +90,15 @@ parser. Anything that does not map is either a new property (document it) or noi
       + 627 M through subsidiaries; the sole row alone became 0.02 %). Check that
       `shares ÷` its own total gives back the filed percentage, and don't recalculate
       a row where it doesn't.
+      **A denominator needs a date, and a count needs its class.** A total that is the
+      latest value of a series the issuer stopped keeping is not its current count:
+      Berkshire's plain XBRL series ended in 2011 and its last value, 941,481 Class A
+      shares, turned Warren Buffett's 12 M Class B count into 1,274 %. Reject a total
+      older than ~15 months before the day you divide, read the cover instead, and
+      divide a class only by the count of that class — never by another's, never by
+      an unclassed total on a multi-class issuer. And take a filing's *last* row per
+      security, not its largest value: the rows are in order and each states the
+      position after it.
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
       Registered/Headquarters switch exists precisely because they differ.

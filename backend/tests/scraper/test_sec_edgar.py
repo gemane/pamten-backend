@@ -378,7 +378,7 @@ _FORM4_XML = """<?xml version="1.0"?>
 def test_parse_form4_extracts_role_and_shares_owned():
     out = _parse_form34_xml(_FORM4_XML)
     assert out["role"] == "CEO"
-    assert out["shares_owned"] == 510000.0   # largest sharesOwnedFollowingTransaction
+    assert out["shares_owned"] == 510000.0   # the LAST row: the position the filing leaves the filer in
 
 
 def test_parse_form4_shares_none_when_absent():
@@ -388,6 +388,152 @@ def test_parse_form4_shares_none_when_absent():
     </reportingOwner></ownershipDocument>"""
     out = _parse_form34_xml(xml)
     assert out["role"] == "Director" and out["shares_owned"] is None
+
+
+# ── The holding, per class, against the count of its own class ──────────────
+
+# Warren Buffett's Form 4 of 15 July 2026: 8,000 Class A converted into
+# 12,000,000 Class B, then given away in four gifts; the Class A he keeps is in
+# the derivative table, because Class A is convertible into B. The largest
+# "owned following" value (12,001,162) is the moment before the gifts.
+_BUFFETT_XML = """<ownershipDocument>
+  <issuer><issuerCik>0001067983</issuerCik></issuer>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerName>BUFFETT WARREN E</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship><isDirector>1</isDirector><isOfficer>1</isOfficer>
+      <officerTitle>Chairman and CEO</officerTitle></reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction><securityTitle><value>Class B Common Stock</value></securityTitle>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>12001162</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature></nonDerivativeTransaction>
+    <nonDerivativeTransaction><securityTitle><value>Class B Common Stock</value></securityTitle>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>3001162</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature></nonDerivativeTransaction>
+    <nonDerivativeTransaction><securityTitle><value>Class B Common Stock</value></securityTitle>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>1162</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature></nonDerivativeTransaction>
+  </nonDerivativeTable>
+  <derivativeTable>
+    <derivativeTransaction><securityTitle><value>Class A Common Stock</value></securityTitle>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>188290</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+      <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature></derivativeTransaction>
+    <derivativeHolding><securityTitle><value>Stock Option (Right to Buy)</value></securityTitle>
+      <postTransactionAmounts><sharesOwnedFollowingTransaction><value>999999</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+    </derivativeHolding>
+  </derivativeTable>
+</ownershipDocument>"""
+
+# Berkshire's cover: 488,450 Class A and 1,408,035,161 Class B as of 2026-07-29.
+BRK = {"total": 1_408_523_611.0, "as_of": "2026-07-29", "by_class": {"A": 488_450.0, "B": 1_408_035_161.0}}
+
+
+class TestForm4Holdings:
+    def test_the_last_row_per_security_not_the_largest(self):
+        from app.scraper.sec_edgar import _form4_holdings
+        import xml.etree.ElementTree as ET
+        h = _form4_holdings(ET.fromstring(_BUFFETT_XML))
+        assert h["Class B Common Stock"] == 1162.0          # after the gifts, not 12,001,162 before them
+        assert h["Class A Common Stock"] == 188290.0        # a plain class of common stock in Table II counts
+        assert "Stock Option (Right to Buy)" not in h       # an option is not a share held
+
+    def test_direct_and_indirect_positions_of_one_security_are_summed(self):
+        from app.scraper.sec_edgar import _form4_holdings
+        import xml.etree.ElementTree as ET
+        xml = """<x><nonDerivativeTable>
+          <nonDerivativeHolding><securityTitle><value>Common Stock</value></securityTitle>
+            <postTransactionAmounts><sharesOwnedFollowingTransaction><value>100</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+            <ownershipNature><directOrIndirectOwnership><value>D</value></directOrIndirectOwnership></ownershipNature></nonDerivativeHolding>
+          <nonDerivativeHolding><securityTitle><value>Common Stock</value></securityTitle>
+            <postTransactionAmounts><sharesOwnedFollowingTransaction><value>40</value></sharesOwnedFollowingTransaction></postTransactionAmounts>
+            <ownershipNature><directOrIndirectOwnership><value>I</value></directOrIndirectOwnership>
+              <natureOfOwnership><value>By trust</value></natureOfOwnership></ownershipNature></nonDerivativeHolding>
+        </nonDerivativeTable></x>"""
+        assert _form4_holdings(ET.fromstring(xml)) == {"Common Stock": 140.0}
+
+    def test_the_stake_is_class_against_class(self):
+        from app.scraper.sec_edgar import stake_for
+        pick = stake_for({"Class B Common Stock": 1162.0, "Class A Common Stock": 188290.0}, BRK)
+        # the class with the largest percentage carries the edge
+        assert pick["share_class"] == "Class A Common Stock" and pick["shares_owned"] == 188290.0
+        assert pick["stake_percent"] == 38.5485                  # of the 488,450 Class A, never of a B count
+        assert pick["shares_outstanding"] == 488_450.0 and pick["denominator_date"] == "2026-07-29"
+
+    def test_a_count_of_one_class_is_never_divided_by_another(self):
+        from app.scraper.sec_edgar import stake_for
+        # only Class B held: 1,162 of 1.4 bn Class B — a rounding-floor 0.0001 %, and never 1,274 %
+        pick = stake_for({"Class B Common Stock": 1162.0}, BRK)
+        assert pick["stake_percent"] == 0.0001 and pick["shares_outstanding"] == 1_408_035_161.0
+        # a class the issuer does not state, or no class named at all, on a multi-class issuer: no denominator
+        for title in ("Class C Common Stock", "Common Stock"):
+            pick = stake_for({title: 5000.0}, BRK)
+            assert pick["stake_percent"] is None and pick["shares_outstanding"] is None
+            assert pick["denominator_date"] is None
+
+    def test_an_unclassed_issuer_total_divides_any_title(self):
+        from app.scraper.sec_edgar import stake_for
+        assert stake_for({"Common Stock": 2000.0}, 100_000)["stake_percent"] == 2.0          # a bare total, as the 13F path hands over
+        assert stake_for({"Class A Common Stock": 2000.0}, {"total": 100_000, "as_of": "2026-05-01", "by_class": {}})["stake_percent"] == 2.0
+
+    def test_nothing_held_is_no_pick(self):
+        from app.scraper.sec_edgar import stake_for
+        assert stake_for({}, BRK) is None
+        assert stake_for({"Common Stock": 0.0}, BRK) is None
+
+    def test_the_parsed_filing_carries_its_class(self):
+        out = _parse_form34_xml(_BUFFETT_XML)
+        assert out["shares_owned"] == 188290.0 and out["share_class"] == "Class A Common Stock"
+        assert out["holdings"] == {"Class B Common Stock": 1162.0, "Class A Common Stock": 188290.0}
+
+
+class TestTheDenominatorIsDatedAndPerClass:
+    # the plain-tag series Berkshire stopped keeping in 2011
+    OLD = {"units": {"shares": [{"end": "2010-07-30", "val": 976414}, {"end": "2011-04-29", "val": 941481}]}}
+    FRESH = {"units": {"shares": [{"end": "2026-06-30", "val": 15_000_000_000}]}}
+
+    def test_a_series_that_stopped_is_not_the_current_count(self):
+        from app.scraper import sec_edgar
+        cover = sec_edgar.SharesOutstanding(1_408_523_611.0, "2026-07-29", {"A": 488_450.0, "B": 1_408_035_161.0})
+        with patch.object(sec_edgar, "_get", return_value=self.OLD), \
+             patch.object(sec_edgar, "_shares_outstanding_from_cover", return_value=cover) as fromcover:
+            d = sec_edgar.fetch_shares_outstanding_detail("0001067983", on="2026-10-10")
+            total = sec_edgar.fetch_shares_outstanding("0001067983", on="2026-10-10")
+        assert d == cover and fromcover.called
+        assert total == 1_408_523_611.0                      # the 13F path's bare total: the classes summed
+
+    def test_a_fresh_series_is_taken_as_it_was(self):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get", return_value=self.FRESH), \
+             patch.object(sec_edgar, "_shares_outstanding_from_cover") as fromcover:
+            d = sec_edgar.fetch_shares_outstanding_detail("0000320193", on="2026-10-10")
+        assert d == sec_edgar.SharesOutstanding(15_000_000_000.0, "2026-06-30", {}) and not fromcover.called
+
+    def test_the_floor_is_fifteen_months_before_the_day_asked_for(self):
+        from app.scraper import sec_edgar
+        assert sec_edgar._freshness_floor("2026-10-10") == "2025-07-17"
+        # the same 2011 value IS current when asked about from 2011
+        with patch.object(sec_edgar, "_get", return_value=self.OLD), \
+             patch.object(sec_edgar, "_shares_outstanding_from_cover") as fromcover:
+            d = sec_edgar.fetch_shares_outstanding_detail("0001067983", on="2011-08-01")
+        assert d.total == 941481.0 and not fromcover.called
+
+    def test_the_cover_tells_the_classes_apart_by_their_contexts(self):
+        from app.scraper.sec_edgar import cover_counts
+        html = """<xbrli:context id="C_a"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0001067983</xbrli:identifier>
+          <xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassAMember</xbrldi:explicitMember></xbrli:segment>
+          </xbrli:entity><xbrli:period><xbrli:instant>2026-07-29</xbrli:instant></xbrli:period></xbrli:context>
+          <xbrli:context id="C_b"><xbrli:entity><xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassBMember</xbrldi:explicitMember></xbrli:segment>
+          </xbrli:entity><xbrli:period><xbrli:instant>2026-07-29</xbrli:instant></xbrli:period></xbrli:context>"""
+        d = cover_counts({"C_a": 488_450.0, "C_b": 1_408_035_161.0}, html)
+        assert d.by_class == {"A": 488_450.0, "B": 1_408_035_161.0}
+        assert d.total == 1_408_523_611.0 and d.as_of == "2026-07-29"
+
+    def test_a_single_class_cover_is_an_unclassed_count(self):
+        from app.scraper.sec_edgar import cover_counts
+        html = '<context id="c1"><entity><identifier>1</identifier></entity><period><instant>2026-03-31</instant></period></context>'
+        d = cover_counts({"c1": 15_000_000_000.0}, html)
+        assert d.by_class == {} and d.total == 15_000_000_000.0 and d.as_of == "2026-03-31"
+        assert cover_counts({}, html) is None
 
 
 # ── Person-centric insider holding (Option A) ────────────────────────────────
@@ -413,6 +559,18 @@ def test_fetch_insider_holding_computes_stake_when_issuer_matches():
         out = fetch_insider_holding("Larry Fink", "0001364742", shares_outstanding=100000)
     assert out["shares_owned"] == 2000.0
     assert out["stake_percent"] == 2.0            # 2000 / 100000 * 100
+
+
+def test_fetch_insider_holding_divides_class_by_class():
+    from app.scraper.sec_edgar import fetch_insider_holding
+    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value="0001059245"), \
+         patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
+         patch("app.scraper.sec_edgar._get_text", return_value=_BUFFETT_XML), \
+         patch("time.sleep"):
+        out = fetch_insider_holding("Warren Buffett", "0001067983", shares_outstanding=BRK)
+    assert out["shares_owned"] == 188290.0 and out["share_class"] == "Class A Common Stock"
+    assert out["stake_percent"] == 38.5485 and out["denominator_date"] == "2026-07-29"
+    assert out["source_date"] == "2024-02-01"
 
 
 def test_fetch_insider_holding_none_when_issuer_mismatch():
@@ -1538,7 +1696,9 @@ class TestANegligibleHoldingIsNotZero:
         elsewhere = src.replace(helper, "")
         assert not re.search(r"round\([^)]*/[^)]*\*\s*100,\s*4\)", elsewhere), \
             "a stake is rounded outside _pct_of — the floor rule will drift"
-        assert elsewhere.count("_pct_of(") == 5      # the call sites: + a lone voting-agreement party, + the newest-denominator restatement
+        # the call sites: the two 13D/G cover rules, the newest-denominator
+        # restatement, and `stake_for`, which every Form 4 holding goes through
+        assert elsewhere.count("_pct_of(") == 4
 
 
 class TestSecWebsite:

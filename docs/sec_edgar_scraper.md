@@ -616,6 +616,33 @@ report their trades and holdings:
 Both forms are structured **XML** with a fixed schema. This is far more reliable
 than scraping DEF 14A proxy HTML, which is narrative and inconsistently formatted.
 
+### The holding, and the class it is a holding of
+
+A Form 4's rows are in order and each states the position *after* it, so the
+**last row per security** is what the filing leaves the filer holding — not the
+largest value across rows, which is the position midway through. Warren
+Buffett's Form 4 of 15 July 2026 converts 8,000 Class A into 12,000,000 Class B
+("owned following": 12,001,162) and gives the B away in four gifts (…1,162); the
+largest value was the moment before the gifts (`_form4_holdings`). Direct and
+indirect positions in the same security (a trust beside the person) are summed.
+Derivative-table rows count only when they are plainly a class of common stock:
+Berkshire's Class A is convertible into B, so its filers list their Class A in
+Table II; an option, a unit, a right or a note is not a share held.
+
+**A count of one class is divided only by the count of that class** (`stake_for`).
+The issuer's counts come dated and per class (`SharesOutstanding`,
+`fetch_shares_outstanding_detail`): the plain `dei:EntityCommonStockSharesOutstanding`
+series when its last value is no older than fifteen months before the day of the
+scrape, else the newest 10-Q/10-K cover, whose per-class facts are told apart by
+their XBRL context (`us-gaap:CommonClassAMember`). Berkshire's plain series ended
+in April 2011 — it reports per class since — and its last value, 941,481 Class A
+shares, divided Buffett's 12,001,162 Class B count into a stake of **1,274 %**.
+Now: 188,290 Class A of 488,450 = 38.5 %, the edge carrying the class with the
+largest percentage (`share_class`), the count of that class (`shares_outstanding`)
+and the cover's date (`denominator_date`). A title naming no class, or a class the
+issuer does not state, gets no percentage on a multi-class issuer; an unclassed
+issuer total divides any title, as before. The 13F path keeps the total.
+
 ### Fetching Form 3/4 filings
 
 The company's submissions JSON lists all its recent filings:
