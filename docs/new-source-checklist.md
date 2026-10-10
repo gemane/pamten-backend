@@ -99,6 +99,24 @@ parser. Anything that does not map is either a new property (document it) or noi
       an unclassed total on a multi-class issuer. And take a filing's *last* row per
       security, not its largest value: the rows are in order and each states the
       position after it.
+- [ ] **A series can be stopped.** The newest value of a series is not its current value
+      until you have checked how old it is. Berkshire's plain `dei:EntityCommonStockSharesOutstanding`
+      series ended in April 2011, when the issuer moved to per-class reporting with a
+      dimension — which the aggregated XBRL endpoints (companyfacts, companyconcept) drop
+      entirely. A fetcher that takes "the latest value" was handing out a fifteen-year-old
+      count. Date every value you divide by, refuse one older than the thing it measures
+      allows (15 months for a quarterly filer), and read the primary document instead.
+- [ ] **A form's second table can hold real shares.** A Form 4's derivative table is where
+      options, units, rights and notes live — and also where a convertible class of common
+      stock is reported (Berkshire's Class A, convertible into B, so Buffett's 188,290 A
+      shares sit in Table II). Read it for plain common-stock titles and skip the rest; do
+      not let the table's name decide what a row is.
+- [ ] **A plausibility bound at the writer.** A stake above 100 %, or a count above the
+      denominator it was divided by, is a parser error, not a fact: refuse the row, log it
+      with the source URL, and count such refusals in the quality report. The 1,274 %
+      stake above was stored without complaint and found by a reader's eye months later.
+      (Not yet implemented in `sec_writer` as of 2026-10-10 — the item stands as the rule
+      for every writer, and as the open task.)
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
       Registered/Headquarters switch exists precisely because they differ.
