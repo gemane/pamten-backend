@@ -188,9 +188,9 @@ PROFILE = {
     ],
     "subsidiaries": [
         {"entity": {"id": "li", "name": "LinkedIn", "type": "company", "country": "US"},
-         "relationship": {"stake_percent": 100, "ownership_type": "full", "source_id": "sec"}},
+         "relationship": {"stake_percent": 100, "ownership_type": "full", "source_id": "sec", "descendants": 1}},
         {"entity": {"id": "gh", "name": "GitHub", "type": "company", "country": "US"},
-         "relationship": {"ownership_type": "unknown", "source_id": "sec"}},        # no stake stated
+         "relationship": {"ownership_type": "unknown", "source_id": "sec", "descendants": 0}},   # no stake stated
     ],
     "executives": [
         {"person": {"id": "sn", "full_name": "Satya Nadella", "nationality": "US"},
@@ -201,9 +201,9 @@ TREE = {"root_id": "ms", "truncated": True,
         "nodes": [{"entity": {"id": "li", "name": "LinkedIn", "type": "company"}, "parent_id": "ms", "depth": 1},
                   {"entity": {"id": "lii", "name": "LinkedIn Ireland", "type": "company"}, "parent_id": "li", "depth": 2},
                   {"entity": {"id": "gh", "name": "GitHub", "type": "company"}, "parent_id": "ms", "depth": 1}],
-        "edges": [{"from_id": "ms", "to_id": "li", "depth": 1, "relationship": {"stake_percent": 100}},
-                  {"from_id": "li", "to_id": "lii", "depth": 2, "relationship": {"stake_percent": 100}},
-                  {"from_id": "ms", "to_id": "gh", "depth": 1, "relationship": {"stake_percent": 0.5}}]}
+        "edges": [{"from_id": "ms", "to_id": "li", "depth": 1, "relationship": {"stake_percent": 100, "descendants": 1}},
+                  {"from_id": "li", "to_id": "lii", "depth": 2, "relationship": {"stake_percent": 100, "descendants": 0}},
+                  {"from_id": "ms", "to_id": "gh", "depth": 1, "relationship": {"stake_percent": 0.5, "descendants": 0}}]}
 EVENTS = [{"kind": "ownership_in", "party": {"id": "br", "name": "BlackRock"}, "since": "2024-02-13",
            "stake_percent": 7.3, "ownership_type": "minority", "active": True},
           {"kind": "role", "party": {"id": "sn", "full_name": "Satya Nadella"}, "role": "CEO",
@@ -293,6 +293,16 @@ class TestTheWorkbook:
         rows = sheets_of(data)["Subsidiaries"]
         assert column(rows, "Company") == [("string", "LinkedIn"), ("string", "GitHub")]
         assert rows[0][0] == ("string", "Company")                 # no Level/Parent columns
+
+    def test_both_subsidiary_sheets_say_how_many_companies_sit_below_each(self, readers):
+        _, data = build_workbook("ms", ExportOptions())
+        rows = sheets_of(data)["Subsidiaries"]
+        assert column(rows, "Company") == [("string", "LinkedIn"), ("string", "GitHub")]
+        assert column(rows, "Companies below") == [("float", "1"), ("float", "0")]
+        _, data = build_workbook("ms", ExportOptions(all_levels=True))
+        rows = sheets_of(data)["Subsidiaries"]
+        assert column(rows, "Company") == [("string", "GitHub"), ("string", "LinkedIn"), ("string", "LinkedIn Ireland")]
+        assert column(rows, "Companies below") == [("float", "0"), ("float", "1"), ("float", "0")]
 
     def test_all_levels_lists_the_tree_with_level_and_parent_and_says_when_capped(self, readers):
         _, data = build_workbook("ms", ExportOptions(all_levels=True, as_of="2019-12-31", min_stake=1))

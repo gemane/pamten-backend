@@ -154,3 +154,17 @@ def test_the_tree_as_of_a_day(it_db):
     assert ids(subsidiary_tree_of("top", as_of="2018-03-31")) == {"bound"}          # until == day: ended
     assert ids(subsidiary_tree_of("top", as_of="2021-12-31")) == {"new", "bound"}
     assert ids(subsidiary_tree_of("top", as_of="2023-12-31")) == {"new", "bound", "newly"}
+
+
+def test_every_holding_says_how_many_companies_sit_below_the_one_it_reaches(it_db):
+    _seed(it_db)
+    tree = subsidiary_tree_of("top")
+    below = {(e["from_id"], e["to_id"]): e["relationship"].get("descendants") for e in tree["edges"]}
+    assert below == {
+        ("top", "mid1"): 1,            # leaf1
+        ("top", "mid2"): 3,            # leaf1 (co-held, once), leaf2, deep
+        ("mid1", "leaf1"): 0, ("mid2", "leaf1"): 0,
+        ("mid2", "leaf2"): 1,          # deep
+        ("leaf2", "deep"): 0,          # its holding of the root is a cross-holding, not a subsidiary
+        ("deep", "top"): None,         # the root is not a tree node and gets no figure
+    }

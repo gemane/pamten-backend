@@ -400,12 +400,13 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
             if not keeps_stake(rel.get("stake_percent"), opt):
                 continue
             sub_rows.append([n["depth"], _name(by_id.get(n["parent_id"], {})), _name(n["entity"]),
-                             *_entity_cells(n["entity"]), *_rel_cells(rel, sources)])
-        sub_columns = ["Level", "Parent", "Company", *ENTITY_COLUMNS, *REL_COLUMNS]
+                             *_entity_cells(n["entity"]), rel.get("descendants"), *_rel_cells(rel, sources)])
+        sub_columns = ["Level", "Parent", "Company", *ENTITY_COLUMNS, "Companies below", *REL_COLUMNS]
     else:
         subs = [s for s in profile["subsidiaries"] if keeps_stake(s["relationship"].get("stake_percent"), opt)]
-        sub_rows = [[_name(s["entity"]), *_entity_cells(s["entity"]), *_rel_cells(s["relationship"], sources)] for s in subs]
-        sub_columns = ["Company", *ENTITY_COLUMNS, *REL_COLUMNS]
+        sub_rows = [[_name(s["entity"]), *_entity_cells(s["entity"]), s["relationship"].get("descendants"),
+                     *_rel_cells(s["relationship"], sources)] for s in subs]
+        sub_columns = ["Company", *ENTITY_COLUMNS, "Companies below", *REL_COLUMNS]
 
     role_rows = [[_name(x["person"]), x["role"].get("role"), x["person"].get("nationality"),
                   x["role"].get("since"), x["role"].get("until"), _source(x["role"].get("source_id"), sources),
