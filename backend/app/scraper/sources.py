@@ -97,19 +97,20 @@ _DATA_MODES = ("full", "claims_only")
 def default_data_mode(name: str) -> str:
     """The mode a source runs in before its catalogue row says otherwise.
 
-    Wikidata's comes from ``SCRAPER_WIKIDATA_DATA_MODE``; every other source is
-    ``full``. This is what a fresh database seeds the row with AND what the
-    writers obey while no row exists yet (a rebuild's scrape chain runs before
-    anything has called `_ensure_sources`). An unknown value reads as ``full``
-    with a warning — a typo must not silently widen or narrow what a source
-    may draw, and ``full`` is the documented default."""
+    Wikidata's comes from ``SCRAPER_WIKIDATA_DATA_MODE`` and is ``claims_only``
+    unless that says ``full``; every other source is ``full``. This is what a
+    fresh database seeds the row with AND what the writers obey while no row
+    exists yet (a rebuild's scrape chain runs before anything has called
+    `_ensure_sources`). An empty or unknown value reads as ``claims_only`` with
+    a warning on the unknown one — a typo must not widen what a source may
+    draw, and ``claims_only`` is the documented default."""
     if name != "wikidata":
         return "full"
-    mode = (settings.SCRAPER_WIKIDATA_DATA_MODE or "full").strip().lower()
+    mode = (settings.SCRAPER_WIKIDATA_DATA_MODE or "claims_only").strip().lower()
     if mode not in _DATA_MODES:
-        log.warning("SCRAPER_WIKIDATA_DATA_MODE=%r is not one of %s — reading it as 'full'",
+        log.warning("SCRAPER_WIKIDATA_DATA_MODE=%r is not one of %s — reading it as 'claims_only'",
                     settings.SCRAPER_WIKIDATA_DATA_MODE, _DATA_MODES)
-        return "full"
+        return "claims_only"
     return mode
 
 
@@ -172,7 +173,7 @@ def list_sources():
                 # `full` draws edges; `claims_only` records claims and enriches
                 # entities but never draws structure. Null on pre-field rows
                 # reads as the source's configured default (full for all but
-                # Wikidata, whose default is SCRAPER_WIKIDATA_DATA_MODE).
+                # Wikidata: SCRAPER_WIKIDATA_DATA_MODE, claims_only by default).
                 "data_mode": r["data_mode"] or default_data_mode(r["name"]),
             })
         return rows

@@ -535,7 +535,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `ANALYTICS_ENABLED` | `false` | Record aggregate usage counters — what is searched for, which features are used, endpoint health. No user, session, IP or per-event timestamp is stored; see *Usage measurement* below. Live on dev since 2026-08-04 |
 | `SCRAPER_ENABLED` | `false` | Master scraper switch (required for any scrape) |
 | `SCRAPER_WIKIDATA_ENABLED` | `true` | Wikidata source switch |
-| `SCRAPER_WIKIDATA_DATA_MODE` | `full` | The data mode a fresh database seeds the Wikidata source with, and the mode it runs in until its catalogue row says otherwise: `full` draws ownership edges, `claims_only` records claims and enriches entities but never draws structure. Survives a drop-and-rebuild, which the Scraper-tab toggle does not (see docs/deduplication.md, *Claims-only sources*) |
+| `SCRAPER_WIKIDATA_DATA_MODE` | `claims_only` | The data mode a fresh database seeds the Wikidata source with, and the mode it runs in until its catalogue row says otherwise: `claims_only` records claims and enriches entities but never draws ownership structure, `full` draws edges like every other source. Survives a drop-and-rebuild, which the Scraper-tab toggle does not (see docs/deduplication.md, *Claims-only sources*) |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |
 | `REPORT_EMAIL` | *(empty)* | Recipient of the weekly activity digest (`manage.py weekly-report --email`); falls back to `ADMIN_EMAIL` |
 | `ALERT_HEALTH_URL` | `manage.py alerts`: the `/health` URL to probe from outside (empty = skip) |

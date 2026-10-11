@@ -127,14 +127,25 @@ class TestConfiguredDefaultMode:
         assert src_mod.default_data_mode("sec_edgar") == "full"
         assert src_mod.default_data_mode("bods_gleif") == "full"
 
-    def test_unset_and_unknown_values_read_as_full_with_a_warning(self, monkeypatch, caplog):
-        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "full")
-        assert src_mod.default_data_mode("wikidata") == "full"
-        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", " Claims_Only ")
-        assert src_mod.default_data_mode("wikidata") == "claims_only", "case and spaces forgiven"
+    def test_claims_only_is_the_built_in_default(self, monkeypatch):
+        from app.config import Settings
+        built_in = Settings.model_fields["SCRAPER_WIKIDATA_DATA_MODE"].default
+        assert built_in == "claims_only"
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", built_in)
+        assert src_mod.default_data_mode("wikidata") == "claims_only", \
+            "with no override the default must be the strict one"
+        assert src_mod.default_data_mode("sec_edgar") == "full"
+
+    def test_full_must_be_asked_for_and_unknown_values_read_as_claims_only_with_a_warning(
+            self, monkeypatch, caplog):
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", " Full ")
+        assert src_mod.default_data_mode("wikidata") == "full", "case and spaces forgiven"
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "")
+        assert src_mod.default_data_mode("wikidata") == "claims_only", "empty = default"
         monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims")
         with caplog.at_level("WARNING"):
-            assert src_mod.default_data_mode("wikidata") == "full"
+            assert src_mod.default_data_mode("wikidata") == "claims_only", \
+                "a typo must not widen what Wikidata may draw"
         assert "SCRAPER_WIKIDATA_DATA_MODE" in caplog.text
 
     def test_a_fresh_database_is_seeded_with_the_configured_mode(self, monkeypatch):
