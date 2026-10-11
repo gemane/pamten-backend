@@ -92,3 +92,89 @@ class TestSweepEndpoint:
         r = client.post("/v1/scraper/sources/wikidata/sweep-edges?confirm=wikidata",
                         headers={"Authorization": f"Bearer {make_token(role='contributor')}"})
         assert r.status_code == 403
+
+
+class _Session:
+    """A session whose `run` answers by the statement's first word pair and
+    records every call — enough for the catalogue reads and the seed MERGE."""
+
+    def __init__(self, scraper_rows, source_rows):
+        self.scraper_rows, self.source_rows, self.calls = scraper_rows, source_rows, []
+
+    def run(self, stmt, **params):
+        self.calls.append((stmt, params))
+        if "ScraperSource" in stmt and "MERGE" not in stmt:
+            return list(self.scraper_rows)
+        if "(s:Source)" in stmt:
+            return list(self.source_rows)
+        return []
+
+
+def _with_session(session):
+    return patch.object(src_mod.db, "get_session", return_value=type(
+        "C", (), {"__enter__": lambda s2: session, "__exit__": lambda *a: False})())
+
+
+class TestConfiguredDefaultMode:
+    """SCRAPER_WIKIDATA_DATA_MODE: the mode a fresh database seeds Wikidata
+    with, and the mode it runs in until its row says otherwise. A drop-and-
+    rebuild of the dev database silently put Wikidata back in full mode once
+    (2026-10-06); the env var is what keeps the choice across the next one."""
+
+    def test_only_wikidata_reads_the_setting(self, monkeypatch):
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
+        assert src_mod.default_data_mode("wikidata") == "claims_only"
+        assert src_mod.default_data_mode("sec_edgar") == "full"
+        assert src_mod.default_data_mode("bods_gleif") == "full"
+
+    def test_unset_and_unknown_values_read_as_full_with_a_warning(self, monkeypatch, caplog):
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "full")
+        assert src_mod.default_data_mode("wikidata") == "full"
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", " Claims_Only ")
+        assert src_mod.default_data_mode("wikidata") == "claims_only", "case and spaces forgiven"
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims")
+        with caplog.at_level("WARNING"):
+            assert src_mod.default_data_mode("wikidata") == "full"
+        assert "SCRAPER_WIKIDATA_DATA_MODE" in caplog.text
+
+    def test_a_fresh_database_is_seeded_with_the_configured_mode(self, monkeypatch):
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
+        session = _Session([], [])
+        with _with_session(session):
+            src_mod._ensure_sources()
+        seeds = {p["name"]: p["mode"] for stmt, p in session.calls if "MERGE (s:ScraperSource" in stmt}
+        assert seeds["wikidata"] == "claims_only"
+        assert {m for n, m in seeds.items() if n != "wikidata"} == {"full"}
+        assert all("ON CREATE SET" in stmt and "s.data_mode = $mode" in stmt
+                   for stmt, _ in session.calls if "MERGE (s:ScraperSource" in stmt), \
+            "the seed is ON CREATE only — an admin's later flip in the UI must survive restarts"
+
+    def test_writers_obey_the_setting_before_any_row_exists(self, monkeypatch):
+        # A rebuild's scrape chain writes before any request has seeded the
+        # catalogue rows: no ScraperSource row at all, only the Source node
+        # the writer stamped on its edges.
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
+        session = _Session([], [{"id": "wd-uuid", "name": "Wikidata"},
+                                {"id": "sec-uuid", "name": "SEC EDGAR"}])
+        with _with_session(session):
+            assert edge_writes_suppressed("wd-uuid") is True
+            assert edge_writes_suppressed("sec-uuid") is False
+
+    def test_a_row_with_a_mode_wins_over_the_setting_a_row_without_one_does_not(self, monkeypatch):
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
+        rows = [{"name": "wikidata", "data_mode": "full"}]
+        with _with_session(_Session(rows, [{"id": "wd-uuid", "name": "Wikidata"}])):
+            assert edge_writes_suppressed("wd-uuid") is False, "the admin's flip to full is the live control"
+        src_mod._MODE_CACHE["at"] = None
+        rows = [{"name": "wikidata", "data_mode": None}]
+        with _with_session(_Session(rows, [{"id": "wd-uuid", "name": "Wikidata"}])):
+            assert edge_writes_suppressed("wd-uuid") is True, "a pre-field row reads as the default"
+
+    def test_the_listing_shows_the_default_for_a_row_without_a_mode(self, client, monkeypatch):
+        monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
+        rows = [{"name": "wikidata", "enabled": True, "description": "", "kind": "instant", "data_mode": None},
+                {"name": "sec_edgar", "enabled": True, "description": "", "kind": "instant", "data_mode": None}]
+        with patch.object(src_mod, "_ensure_sources"), _with_session(_Session(rows, [])):
+            r = client.get("/v1/scraper/sources")
+        assert r.status_code == 200
+        assert {s["name"]: s["data_mode"] for s in r.json()} == {"wikidata": "claims_only", "sec_edgar": "full"}

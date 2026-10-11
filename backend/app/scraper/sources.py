@@ -2,9 +2,14 @@
 Per-source scraper toggles, stored as ScraperSource nodes in ArcadeDB.
 These are independent of the master SCRAPER_ENABLED env flag.
 """
+import logging
+
 from fastapi import APIRouter, HTTPException, Depends
 from app.database import db
+from app.config import settings
 from app.auth.dependencies import require_admin
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scraper/sources", tags=["Scraper"])
 
@@ -86,6 +91,28 @@ KNOWN_SOURCES = {
 }
 
 
+_DATA_MODES = ("full", "claims_only")
+
+
+def default_data_mode(name: str) -> str:
+    """The mode a source runs in before its catalogue row says otherwise.
+
+    Wikidata's comes from ``SCRAPER_WIKIDATA_DATA_MODE``; every other source is
+    ``full``. This is what a fresh database seeds the row with AND what the
+    writers obey while no row exists yet (a rebuild's scrape chain runs before
+    anything has called `_ensure_sources`). An unknown value reads as ``full``
+    with a warning — a typo must not silently widen or narrow what a source
+    may draw, and ``full`` is the documented default."""
+    if name != "wikidata":
+        return "full"
+    mode = (settings.SCRAPER_WIKIDATA_DATA_MODE or "full").strip().lower()
+    if mode not in _DATA_MODES:
+        log.warning("SCRAPER_WIKIDATA_DATA_MODE=%r is not one of %s — reading it as 'full'",
+                    settings.SCRAPER_WIKIDATA_DATA_MODE, _DATA_MODES)
+        return "full"
+    return mode
+
+
 def _ensure_sources():
     """Create default ScraperSource nodes if they don't exist."""
     with db.get_session() as session:
@@ -94,10 +121,11 @@ def _ensure_sources():
                 """
                 MERGE (s:ScraperSource {name: $name})
                 ON CREATE SET s.enabled = true, s.description = $desc,
-                              s.data_mode = 'full'
+                              s.data_mode = $mode
                 SET s.kind = $kind
                 """,
                 name=name, desc=meta["description"], kind=meta["kind"],
+                mode=default_data_mode(name),
             )
 
 
@@ -143,13 +171,13 @@ def list_sources():
                 "coverage": meta.get("coverage"),
                 # `full` draws edges; `claims_only` records claims and enriches
                 # entities but never draws structure. Null on pre-field rows
-                # reads as full — the mode is an opt-in restriction.
-                "data_mode": r["data_mode"] or "full",
+                # reads as the source's configured default (full for all but
+                # Wikidata, whose default is SCRAPER_WIKIDATA_DATA_MODE).
+                "data_mode": r["data_mode"] or default_data_mode(r["name"]),
             })
         return rows
 
 
-_DATA_MODES = ("full", "claims_only")
 
 # data_mode per Source-NODE id, cached briefly: the bulk importers consult
 # this once per edge, and a 60-second lag on an admin mode flip is invisible
@@ -169,20 +197,25 @@ def _mode_by_source_id() -> dict:
 
     Edges carry the Source NODE's uuid, not the catalogue slug; the bridge is
     the label (Source.name == KNOWN_SOURCES[slug]["label"]). Unknown labels
-    (a peer's federated source, say) read as full — restriction is opt-in."""
+    (a peer's federated source, say) read as full — restriction is opt-in.
+    A catalogue source with no row yet, or a row with no mode, runs in its
+    configured default (`default_data_mode`): a rebuilt database obeys
+    SCRAPER_WIKIDATA_DATA_MODE from its first write, before any request has
+    seeded the rows."""
     import time
     now = time.monotonic()
     if _MODE_CACHE["at"] is not None and now - _MODE_CACHE["at"] < _MODE_CACHE_TTL:
         return _MODE_CACHE["by_source_id"]
     by_id: dict = {}
     try:
-        label_to_mode = {}
+        label_to_mode = {meta["label"]: default_data_mode(slug)
+                         for slug, meta in KNOWN_SOURCES.items()}
         with db.get_session() as session:
             for r in session.run("MATCH (s:ScraperSource) RETURN s.name AS name, "
                                  "s.data_mode AS data_mode"):
                 meta = KNOWN_SOURCES.get(r["name"])
-                if meta:
-                    label_to_mode[meta["label"]] = r["data_mode"] or "full"
+                if meta and r["data_mode"]:
+                    label_to_mode[meta["label"]] = r["data_mode"]
             for r in session.run("MATCH (s:Source) RETURN s.id AS id, s.name AS name"):
                 mode = label_to_mode.get(r["name"])
                 if mode:

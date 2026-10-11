@@ -133,3 +133,32 @@ def test_the_bulk_batch_writer_honours_claims_only_too(it_db):
     batch.flush()
     assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 0
     assert it_db.run_sql("SELECT count(*) AS n FROM Claim WHERE kind = 'owns'")[0]["n"] == 1
+
+
+def test_the_configured_default_holds_before_the_catalogue_row_exists(it_db, monkeypatch):
+    """A rebuilt database: no ScraperSource rows yet (nothing has listed or
+    toggled a source), the scrape chain already writing. With
+    SCRAPER_WIKIDATA_DATA_MODE=claims_only Wikidata must assert and not draw
+    from its very first write; SEC EDGAR, unconfigured, still draws."""
+    _two_companies(it_db)
+    it_db.run_command("MATCH (s:ScraperSource) DELETE s")
+    monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
+    src_mod._MODE_CACHE["at"] = None
+    wd = _ensure_source("Wikidata", "https://www.wikidata.org", 80)
+    sec = _ensure_source("SEC EDGAR", "https://www.sec.gov", 98)
+
+    _upsert_owns("e1", "e2", wd)
+    assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 0, \
+        "no row, env says claims_only: Wikidata must not draw"
+    assert it_db.run_sql("SELECT count(*) AS n FROM Claim WHERE kind = 'owns'")[0]["n"] == 1
+
+    _upsert_owns("e2", "e1", sec)
+    assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 1, \
+        "the setting is Wikidata's alone"
+
+    # The first catalogue read seeds the rows from the same default, so the
+    # Scraper tab shows what the writers did.
+    src_mod._ensure_sources()
+    rows = {dict(r)["name"]: dict(r)["data_mode"]
+            for r in it_db.run_sql("SELECT name, data_mode FROM ScraperSource")}
+    assert rows["wikidata"] == "claims_only" and rows["sec_edgar"] == "full"

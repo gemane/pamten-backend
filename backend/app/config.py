@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     SCRAPER_ENABLED:                  bool = False
     SCRAPER_WIKIDATA_ENABLED:         bool = True
     SCRAPER_SEC_EDGAR_ENABLED:        bool = False
+    # The data mode a FRESH database seeds the Wikidata source with, and the mode
+    # it runs in until its catalogue row says otherwise: "full" draws ownership
+    # edges, "claims_only" records claims and enriches entities but never draws
+    # structure (app/scraper/sources.py). The row survives restarts but not a
+    # drop-and-rebuild — this is what keeps the choice across one.
+    SCRAPER_WIKIDATA_DATA_MODE:       str  = "full"
     # On-disk golden copy of EDGAR filings (immutable Archives files only —
     # never searches or listings). Empty = off. For servers with a disk; Render's
     # filesystem is ephemeral, so leave it unset there. See docs/sec_edgar_scraper.md.
