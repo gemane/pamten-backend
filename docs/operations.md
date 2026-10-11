@@ -70,7 +70,15 @@ migration — but never blind:
    `python3 manage.py reindex --db-url http://localhost:2481`.
 6. **Accept**: `/health` ok; a search for a common token answers as many rows as a
    scan (`CONTAINSTEXT` vs `LIKE`); a whole-space id walk counts every Entity and Person;
-   a backup taken on the new version restores into a fresh database.
+   a backup taken on the new version restores into a fresh database. A `CONTAINSTEXT`
+   that answers **0** where the scan finds rows means the FULL_TEXT index is empty: `/search`
+   still answers companies through its name-`LIKE` fallback (no aliases) but persons not
+   at all. Save the server log first (`docker compose logs arcadedb | grep -i
+   "fulltext\|bm25\|corpus\|severe\|error"` — the evidence goes with the rebuild), then
+   `python3 manage.py rebuild-search --hard` (drop + re-create; seconds on the dev graph,
+   over a tunnel on a full import). Seen on the dev box's 26.7.3 → 26.10.1 upgrade on
+   2026-10-11 and not reproduced on a copy (incremental, bulk-built + compacted, and
+   updated + deleted + rebuilt indexes all survived the same reopen).
 
 **26.10.1 (published 2026-10-05, reviewed 2026-10-10):** the first release with the
 index range-read fix (PR #7616 for #7611, in the tag) and the rest of the 26.7.3 list
