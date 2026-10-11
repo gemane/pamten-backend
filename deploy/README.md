@@ -30,8 +30,9 @@ test|none`) as the systemd unit `owlgraph-import`, so it survives the SSH sessio
 **both** repos (tag `vX.Y.Z` on main → the release workflow builds the API image
 and the web tarball), the frontend built with `PROD_API_URL=https://DOMAIN` and
 the `LEGAL_*` variables; and an ArcadeDB release of `ARCADEDB_VERSION` (26.10.1 or
-later — 26.7.3 returns incomplete index range reads on big indexes; as of
-2026-10-05 26.10.1 is not yet published).
+later — 26.7.3 returns incomplete index range reads on big indexes; 26.10.1 was
+published on 2026-10-05 and verified on 2026-10-10, see `docs/operations.md`,
+*Upgrading ArcadeDB*).
 
 Day two is `owlgraph <command>` (`/opt/owlgraph/deploy/ops.sh`): `status`,
 `backup`, `import full|test`, `refresh-golden-copies`, `refresh-psc`,
