@@ -5,8 +5,22 @@ import pytest
 from unittest.mock import patch
 
 from app.scraper import runner
+from app.scraper import sources as src_mod
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _wikidata_draws(it_db):
+    # Node hygiene is the subject here, but the assertions count the edges the
+    # scrape draws. Wikidata is claims-only unless asked otherwise (the built-in
+    # SCRAPER_WIKIDATA_DATA_MODE default), so ask: a row with a mode wins over
+    # the default. Without this the file passed only on a warm mode cache.
+    it_db.run_command("MERGE (s:ScraperSource {name: 'wikidata'}) SET s.data_mode = 'full', "
+                      "s.enabled = true, s.kind = 'instant'")
+    src_mod._MODE_CACHE["at"] = None
+    yield
+    src_mod._MODE_CACHE["at"] = None
 
 
 def _company_data(subsidiaries):

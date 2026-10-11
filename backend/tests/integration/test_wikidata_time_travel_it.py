@@ -5,6 +5,7 @@ that only move earlier, and the shortcut pass reading current paths only.
 """
 import pytest
 
+from app.scraper import sources as src_mod
 from app.scraper.graph_writer import _upsert_owns
 
 pytestmark = pytest.mark.integration
@@ -12,9 +13,18 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def pair(it_db):
+    # These tests read the EDGES the generic writer draws for a Wikidata
+    # statement. Wikidata is claims-only unless asked otherwise (the built-in
+    # SCRAPER_WIKIDATA_DATA_MODE default), so ask: a row with a mode wins over
+    # the default. Without this the tests passed only while the 60-second mode
+    # cache still held an earlier test's `full` row — and failed in CI.
+    it_db.run_command("MERGE (s:ScraperSource {name: 'wikidata'}) SET s.data_mode = 'full', "
+                      "s.enabled = true, s.kind = 'instant'")
+    src_mod._MODE_CACHE["at"] = None
     it_db.run_command("CREATE (:Entity {id:'o', name:'Owner', type:'company'})")
     it_db.run_command("CREATE (:Entity {id:'c', name:'Company', type:'company'})")
-    return it_db
+    yield it_db
+    src_mod._MODE_CACHE["at"] = None
 
 
 def _edges(db, a="o", b="c"):

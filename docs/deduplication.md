@@ -566,6 +566,18 @@ claims and HAS_ROLE edges stay). Reverting is mode back to `full` plus a
 re-scrape / re-import. Built for the Wikidata quality decision, generic on
 purpose: any source can be demoted the day its quality disappoints.
 
+The toggle lives on the source's catalogue row in the database, so it survives
+restarts but not a drop-and-rebuild — a rebuilt dev database once came back
+with Wikidata in `full` and drew 41 edges before anyone noticed (2026-10-06).
+`SCRAPER_WIKIDATA_DATA_MODE` (`claims_only` by default, `full` on request; env)
+is the seed: a fresh database creates Wikidata's row in that mode, and the
+writers obey it from the first write, before any request has seeded the rows at
+all (a rebuild's scrape chain runs that early). A row that carries a mode wins
+over the setting — the Scraper-tab toggle stays the live control; the env var
+is what it falls back to. An unknown value reads as `claims_only` with a
+warning: a typo must not widen what Wikidata may draw. Only Wikidata has such a
+setting; every other source seeds as `full`.
+
 ## Wikidata node hygiene
 
 Wikidata's related-company lists (subsidiaries P355, owners P127, successors
