@@ -10,6 +10,7 @@ Usage:
   python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
   python3 manage.py gleif-rr-status --file F  # once: mark edges on LAPSED GLEIF records stale
+  python3 manage.py gleif-rr-stakes --file F  # once: fill the share GLEIF records state
   python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
   python3 manage.py ch-psc-update [options]   # UK PSC incremental refresh (snapshot diff)
   python3 manage.py quality-report            # data quality as numbers
@@ -78,6 +79,21 @@ def cmd_gleif_rr_status(args):
     from app.scraper.runner import run_gleif_rr_status
     result = _run_guarded_import("gleif-rr-status",
         lambda: run_gleif_rr_status(local_file=args.file, dry_run=args.dry_run))
+    if result is not None:
+        print(result)
+
+
+def cmd_gleif_rr_stakes(args):
+    """Fill `stake_percent` on GLEIF edges from the share the relationship record
+    states (`gleif_rr.heal_stakes`) — once, on a database loaded before the RR
+    import read the record's quantifiers (2026-10-13). Fill-only; `--dry-run`
+    only counts."""
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    from app.scraper.runner import run_gleif_rr_stakes
+    result = _run_guarded_import("gleif-rr-stakes",
+        lambda: run_gleif_rr_stakes(local_file=args.file, dry_run=args.dry_run))
     if result is not None:
         print(result)
 
@@ -1295,6 +1311,13 @@ def _build_parser():
     p_rr_status.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
     p_rr_status.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
     p_rr_status.set_defaults(func=cmd_gleif_rr_status)
+
+    # gleif-rr-stakes command (one-off heal: the share a record states → stake_percent)
+    p_rr_stakes = subparsers.add_parser('gleif-rr-stakes',
+        help='Fill stake_percent on GLEIF edges from the share the relationship record states — once, on a database loaded before 2026-10-13')
+    p_rr_stakes.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
+    p_rr_stakes.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
+    p_rr_stakes.set_defaults(func=cmd_gleif_rr_stakes)
     p_rr.set_defaults(func=cmd_gleif_rr)
 
     p_rh = subparsers.add_parser('gleif-rr-history',

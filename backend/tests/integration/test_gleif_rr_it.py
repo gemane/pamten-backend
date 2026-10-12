@@ -18,7 +18,7 @@ def _w(v):
     return {"$": v}
 
 
-def _rec(rtype, child, parent, start=None, rr_status=None, updated=None):
+def _rec(rtype, child, parent, start=None, rr_status=None, updated=None, amount=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
@@ -29,6 +29,9 @@ def _rec(rtype, child, parent, start=None, rr_status=None, updated=None):
         rel["RelationshipPeriods"] = {"RelationshipPeriod": [
             {"PeriodType": _w("RELATIONSHIP_PERIOD"), "StartDate": _w(start)},
         ]}
+    if amount is not None:
+        rel["RelationshipQuantifiers"] = {"RelationshipQuantifier": [
+            {"MeasurementMethod": _w("ACCOUNTING_CONSOLIDATION"), "QuantifierAmount": _w(amount)}]}
     rec = {"RelationshipRecord": {"Relationship": rel}}
     registration = {}
     if rr_status:
@@ -213,3 +216,61 @@ def test_the_heal_marks_an_edge_drawn_before_the_status_was_read(it_db, tmp_path
     # idempotent
     again = heal_registration_status(today, "gleif-src")
     assert again["marked"] == 1 and _edge(it_db, PARENT, LAPSED_CHILD)["stale"] is True
+
+
+# ── The share the record states ──────────────────────────────────────────────
+
+STAKED_CHILD = "STAKEDCHILD000000006"
+PART_CHILD = "PARTCHILD00000000007"
+BAD_CHILD = "BADSTAKECHILD0000008"
+
+
+def test_the_stated_share_lands_on_the_edge_and_its_claim(it_db, tmp_path):
+    from app.scraper.gleif_rr import import_rr_cdf
+
+    res = import_rr_cdf(_zip_of(tmp_path, "rr-stakes.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", STAKED_CHILD, PARENT, amount="100.00"),
+        # stated both ways: the direct figure wins
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", PART_CHILD, PARENT, amount="60"),
+        _rec("IS_ULTIMATELY_CONSOLIDATED_BY", PART_CHILD, PARENT, amount="100"),
+        # an entry error: refused, the edge drawn without a stake
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", BAD_CHILD, PARENT, amount="250"),
+    ]), "gleif-src", 92)
+    assert res["edges"] == 3 and res["with_stake"] == 2 and res["implausible"] == 1
+
+    rows = {r["c"]: r for r in it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity) "
+        "RETURN b.lei_id AS c, r.stake_percent AS stake, r.read_from AS rf", {"p": f"lei:{PARENT}"})}
+    assert rows[STAKED_CHILD]["stake"] == 100.0 and rows[STAKED_CHILD]["rf"] == "field"
+    assert rows[PART_CHILD]["stake"] == 60.0
+    assert rows[BAD_CHILD]["stake"] is None
+    claims = {r["to_id"]: r["stake"] for r in it_db.run_sql(
+        "SELECT to_id, stake_percent AS stake FROM Claim WHERE from_id = :p", {"p": f"lei:{PARENT}"})}
+    assert claims[f"lei:{STAKED_CHILD}"] == 100.0
+    assert claims[f"lei:{BAD_CHILD}"] is None
+
+
+def test_the_stake_heal_fills_an_edge_drawn_before_and_never_overwrites(it_db, tmp_path):
+    from app.scraper.gleif_rr import heal_stakes, import_rr_cdf
+
+    # the old world: no quantifier read; one edge already holds a figure
+    import_rr_cdf(_zip_of(tmp_path, "rr-old-stakes.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", STAKED_CHILD, PARENT),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", PART_CHILD, PARENT),
+    ]), "gleif-src", 92)
+    it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) SET r.stake_percent = 55.0",
+        {"p": f"lei:{PARENT}", "c": f"lei:{PART_CHILD}"})
+    today = _zip_of(tmp_path, "rr-today-stakes.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", STAKED_CHILD, PARENT, amount="100"),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", PART_CHILD, PARENT, amount="100"),
+    ])
+    dry = heal_stakes(today, "gleif-src", dry_run=True)
+    assert dry["with_stake"] == 2 and dry["filled"] == 0
+    res = heal_stakes(today, "gleif-src")
+    assert res["filled"] == 1 and res["already"] == 1
+    rows = {r["c"]: r["stake"] for r in it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity) RETURN b.lei_id AS c, r.stake_percent AS stake",
+        {"p": f"lei:{PARENT}"})}
+    assert rows[STAKED_CHILD] == 100.0
+    assert rows[PART_CHILD] == 55.0                # fill-only: the held figure stays

@@ -565,10 +565,31 @@ lapses or is renewed is in that day's delta, and a maintained record clears the
 mark (an edge another source holds keeps that source's mark). A database loaded
 before 2026-10-13 gets the mark once from `manage.py gleif-rr-status --file
 <rr golden copy>` (`gleif_rr.heal_registration_status`, logged as a
-`gleif-rr-status` run). Not read: the RR `RelationshipQuantifiers` (49,527
-consolidation records state a percentage under ACCOUNTING_CONSOLIDATION, 40,025
-of them 100) and `ValidationDocuments` (what the LOU checked the relationship
-against) — see the open items in `new-source-checklist.md`. All
+`gleif-rr-status` run).
+
+**The share the record states.** A relationship record may carry
+`RelationshipQuantifiers`: a `QuantifierAmount` measured by
+`ACCOUNTING_CONSOLIDATION` in `PERCENTAGE` (or with no units — 16,785 of them
+state none; every amount in the file is under that one method). On 2026-10-06
+49,527 of the ~260k consolidation records carried one: 40,025 say 100, 8,765
+between 50 and 99.99, 453 below 50 (control without a majority — stored as
+stated), 269 at or below 0 and 15 above 100. It is written as **`stake_percent`**
+(the claim carries it too, `read_from = field`), the same figure every other
+register's stated share is. The last two bands are entry errors, not facts:
+**refused at the reader** — the edge is drawn without a stake, the record is
+logged and counted (`implausible`) — the checklist's plausibility bound. On a
+pair stated both ways the direct record's figure is the holding; the ultimate
+record's figure (the consolidated interest from the top) fills in only where the
+direct one states none. The delta restates the figure on GLEIF's own edge as the
+newer statement — a record stating none clears it, as its claim does — and takes
+the answer with it where `answer_rank` says so (within the official tier a
+stated stake outranks none, so GLEIF's 100 % takes the answer from an Exhibit 21
+row without a stake, while an SEC row with one keeps it). A database loaded
+before 2026-10-13 gets the figures once, fill-only, from `manage.py
+gleif-rr-stakes --file <rr golden copy>` (`gleif_rr.heal_stakes`, logged as a
+`gleif-rr-stakes` run). Not read: `ValidationDocuments` / `ValidationSources`
+on the relationship record (what the LOU checked it against, and how far) — see
+*How far GLEIF checked a relationship* below once it lands. All
 writes are idempotent — nodes UPSERT by id (batched) and edges are matched by
 endpoints+marker before create — so re-applying a delta can't duplicate, hence no
 `--bulk-load` and no whole-DB dedup. The default `--interval auto` is **gap-aware**:

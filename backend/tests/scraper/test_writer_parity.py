@@ -65,9 +65,11 @@ EXPECTED: dict[str, list] = {
         # via targeted SETs, which are safe by construction and out of scope.
         # `stale`: the record's own registration status — a LAPSED record's
         # edge is born stale (2026-10-13), a maintained one born fresh.
+        # `stake_percent`: the share the record states (RelationshipQuantifiers,
+        # 2026-10-13), bounded at the reader — None when it states none.
         {"direct_or_indirect", "interest_types", "source_id",
          "credibility_score", "source_url", "since", "until", "source_date",
-         "last_scraped_at", "read_from", "stale"},
+         "last_scraped_at", "read_from", "stale", "stake_percent"},
         # The direct relationship of a folded edge ended: the period is closed
         # and the ultimate relationship continues as its own indirect edge
         # (its marker is the literal 'indirect', which the extractor does not see).
