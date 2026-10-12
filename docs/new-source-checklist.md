@@ -111,9 +111,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       (`goog:WizIncMember`) on a consideration fact whose CONTEXT period is the closing day —
       the date is never a fact of its own, so read the context, and only a one-day period
       (`instant`, or `startDate = endDate`) is a date. The member's QName is not a name
-      (read the label linkbase; strip "[Member]" and a trailing *Acquisition*) and not stable
-      across filings (`IntersectMember` becomes `IntersectAcquisitionMember` a quarter later)
-      — dedupe by the name. The concept decides what happened: a consideration
+      (read the labels — `MetaLinks.json` sits beside EVERY inline filing; the `_lab.xml`
+      linkbase only beside Workiva-filed ones, Donnelley keeps it in the zip; strip
+      "[Member]" and a trailing *Acquisition*; unescape entities) and not stable across
+      filings (`IntersectMember` becomes `IntersectAcquisitionMember` a quarter later) —
+      dedupe by the name. A member is not always one company: a basket ("A Company And B
+      Company", a comma list), an aggregate ("Other Acquisitions"), or assets ("Fiber-To-
+      The-Home") — rules in `sec_acquisitions.clean_label`, found by sweeping all 144 dev
+      filers, not by reading one. The concept decides what happened: a consideration
       *transferred* closed; an agreed or *expected* price (`PaymentsToAcquireBusinessesGross`,
       `…PriceOfAcquisitionExpected`) is still pending — Alphabet's FY2025 10-K tagged Wiz a
       year before it closed. A context with a second axis is a breakdown of the deal, not the

@@ -1257,13 +1257,28 @@ What the instance does and does not say — learned on Alphabet's three filings
   (`FiniteLivedIntangibleAssetsByMajorClassAxis` beside the acquisition axis)
   are a breakdown of the deal, not the deal; counted `multi_axis_contexts`.
 - **The target carries no identifier** — no CIK, no LEI, no percentage. Its
-  name is the member's standard label in the linkbase ("Wiz Inc [Member]";
-  "[Member]" and a trailing *Acquisition / Merger / Transaction* dropped:
-  "Intersect Acquisition" is Intersect), falling back to the de-camel-cased
-  QName when the linkbase is missing. A label standing for several deals
-  ("Other Acquisitions") is skipped and counted. The company is then resolved
-  **by name** like an Exhibit 21 row — an existing GLEIF / PSC node wins
-  ("Wiz Inc" lands on `WIZ, INC.`), else it is created without a country.
+  name is the member's standard label ("Wiz Inc [Member]"; "[Member]" and a
+  trailing *Acquisition / Merger / Transaction* dropped: "Intersect
+  Acquisition" is Intersect), read from the filing's **`MetaLinks.json`**
+  first — EDGAR's renderer writes it beside every inline-XBRL filing,
+  whichever agent filed it — then from the label linkbase (`*_lab.xml`, which
+  Workiva filings ship and Donnelley ones keep inside the zip), and only then
+  from the de-camel-cased QName. Entities in labels are unescaped ("H&amp;E"
+  → "H&E"). Across the 144 dev filers every deal was named from a label.
+- **A member is not always one company.** Skipped and counted
+  (`skipped_aggregate`): a label standing for several deals ("Other
+  Acquisitions", "Current Year Acquisitions", "Series of Individually
+  Immaterial Business Combinations"); two companies in one member — two legal
+  forms joined by *and*, a comma-joined list, or more than eight words
+  (Builders FirstSource's "Alpine Lumber, O.C. Cluss, Truckee Tahoe, …");
+  and assets or a business line bought without a company — a name with no
+  legal form made of the words such purchases are described in ("Industrial
+  Technologies", "Fiber-To-The-Home", "Gulf Coast NGL Pipelines", "Acquired
+  Property"). "Jackson Labs Technologies, LLC" keeps its LLC and stays.
+  The company is then resolved **by name** like an Exhibit 21 row — an
+  existing GLEIF / PSC node wins ("Wiz Inc" lands on `WIZ, INC.`), else it is
+  created without a country. A filer that names itself (Republic Airways after
+  its reverse merger with Mesa) is refused as a self-owning edge.
 - **Member QNames are not stable across filings** (`goog:IntersectMember` in
   the 10-K, `goog:IntersectAcquisitionMember` in the next 10-Q): the reader
   dedupes by normalised name, newest filing first (`repeated` counts the rest).
@@ -1273,6 +1288,12 @@ What the instance does and does not say — learned on Alphabet's three filings
 - **Only material deals are tagged**; absence proves nothing. XBRL financial
   statements begin in 2009, so an older acquisition (Google–YouTube, 2006) is
   reachable only through prose (an 8-K Item 2.01) or the older Exhibit 21s.
+- **A deal states a beginning, never an end.** A later divestiture is tagged
+  under other concepts (`DisposalGroup…`, discontinued operations) that this
+  reader does not read, so an acquisition edge gets no `until` from here; a
+  register (GLEIF, PSC) or the Exhibit 21's staleness marking ends it. The
+  consideration is the price paid, not the company's value; a zero or
+  negative figure is a tagging slip and is dropped, the deal kept.
 
 Two SEC families can speak about one pair, and neither overrules the other
 (`sec_writer.write_acquisition_sec`):
@@ -1304,6 +1325,18 @@ Freshness gates on the newest instance read (`sec_acquisitions_ingested`): a
 newer 10-K / 10-Q opens the gate by itself; `--force` re-reads from the cache.
 Manual command for now (new pipelines start manual); run the SEC EDGAR scrape
 first.
+
+**Measured on the whole dev population before merging** (2026-10-12, every
+SEC filer the dev graph held, newest three 10-K / 10-Q each, read-only): 144
+filers, 65 of them with an XBRL 10-K / 10-Q (the rest are fund managers and
+13D/G co-filers), 193 instances read, none unparseable; 23 filers state a deal,
+60 deal rows, every one named from a label; 14 members skipped as baskets,
+aggregates or asset purchases; 166 pending-only rows (announced deals, old
+goodwill members). Three real deals come undated because the filer tagged the
+consideration over the reporting period — Chevron → Hess (48 bn), JPMorgan →
+First Republic Bank (67.9 bn), SmartStop → Argus — and are written without a
+start. Request budget: one submissions call plus two to three cacheable
+documents per filing.
 
 ## Form D — private-company boards (`sec_formd.py`)
 
