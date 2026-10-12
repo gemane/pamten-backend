@@ -46,7 +46,8 @@ STRUCTURED_13DG_FROM = "2024-12-18"
 #: sources whose every record is a named field
 _FIELD_SOURCES = ("GLEIF", "UK PSC", "Wikidata", "OpenCorporates")
 
-_XML_FILINGS = "(filing_type = '13F' OR filing_type = 'Form 4' OR filing_type = '4' OR filing_type = '3')"
+_XML_FILINGS = ("(filing_type = '13F' OR filing_type = 'Form 4' OR filing_type = '4' OR filing_type = '3'"
+                " OR filing_type = '10-K XBRL' OR filing_type = '10-Q XBRL')")
 _SCHEDULES = "(filing_type LIKE '13D%' OR filing_type LIKE '13G%')"
 
 _BATCH = 2000

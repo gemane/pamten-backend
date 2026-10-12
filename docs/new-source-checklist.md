@@ -106,6 +106,24 @@ parser. Anything that does not map is either a new property (document it) or noi
       entirely. A fetcher that takes "the latest value" was handing out a fifteen-year-old
       count. Date every value you divide by, refuse one older than the thing it measures
       allows (15 months for a quarterly filer), and read the primary document instead.
+- [ ] **A dimensional XBRL fact is three things: a member, a concept and a context.** The
+      acquirer's business combinations (`sec-acquisitions`) are tagged as an axis member
+      (`goog:WizIncMember`) on a consideration fact whose CONTEXT period is the closing day —
+      the date is never a fact of its own, so read the context, and only a one-day period
+      (`instant`, or `startDate = endDate`) is a date. The member's QName is not a name
+      (read the labels — `MetaLinks.json` sits beside EVERY inline filing; the `_lab.xml`
+      linkbase only beside Workiva-filed ones, Donnelley keeps it in the zip; strip
+      "[Member]" and a trailing *Acquisition*; unescape entities) and not stable across
+      filings (`IntersectMember` becomes `IntersectAcquisitionMember` a quarter later) —
+      dedupe by the name. A member is not always one company: a basket ("A Company And B
+      Company", a comma list), an aggregate ("Other Acquisitions"), or assets ("Fiber-To-
+      The-Home") — rules in `sec_acquisitions.clean_label`, found by sweeping all 144 dev
+      filers, not by reading one. The concept decides what happened: a consideration
+      *transferred* closed; an agreed or *expected* price (`PaymentsToAcquireBusinessesGross`,
+      `…PriceOfAcquisitionExpected`) is still pending — Alphabet's FY2025 10-K tagged Wiz a
+      year before it closed. A context with a second axis is a breakdown of the deal, not the
+      deal. And none of this reaches the aggregated endpoints (companyfacts, frames) — read
+      the instance document.
 - [ ] **A form's second table can hold real shares.** A Form 4's derivative table is where
       options, units, rights and notes live — and also where a convertible class of common
       stock is reported (Berkshire's Class A, convertible into B, so Buffett's 188,290 A

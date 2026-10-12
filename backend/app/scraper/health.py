@@ -22,6 +22,9 @@ from app.scraper.sources import KNOWN_SOURCES
 _RUNLOG_LABELS = {
     "all": "All sources (run-all)",
     "sec-13f": "SEC 13F holders",
+    "sec-ex21": "SEC Exhibit 21 subsidiaries",
+    "sec-formd": "SEC Form D boards",
+    "sec-acquisitions": "SEC acquisitions (XBRL)",
     "gleif-update": "GLEIF daily delta",
     "ch-psc-update": "UK PSC refresh",
     "deduplicate-entities": "Entity dedup",

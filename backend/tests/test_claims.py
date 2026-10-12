@@ -117,3 +117,36 @@ class TestEdgeValues:
     ])
     def test_carries_every_field_the_edge_needs(self, field):
         assert field in edge_values_from([claim()])
+
+
+# ── Acquisition claims: SEC's second assertion about a pair ───────────────────
+
+class TestAcquisitionClaimKey:
+    """An owns claim read from the acquirer's XBRL (filing_type "10-Q XBRL") is
+    keyed APART from the same source's Exhibit 21 claim for the pair: the list
+    says "held at year-end", the deal says "bought on this day". Keyed together
+    the two overwrote each other on every re-read."""
+
+    def test_an_acquisition_claim_is_a_second_claim_for_the_pair(self):
+        from app.claims import ACQUISITION_FILING_TYPES
+        plain = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type="EX-21")
+        for ft in sorted(ACQUISITION_FILING_TYPES):
+            deal = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type=ft)
+            assert deal["claim_key"] != plain["claim_key"]
+        assert claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec",
+                           filing_type="10-K XBRL")["claim_key"] == \
+            claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec",
+                        filing_type="10-Q XBRL")["claim_key"], "one acquisition claim per pair, whichever form"
+
+    def test_other_filing_types_keep_the_plain_key(self):
+        plain = claim_key(KIND_OWNS, "A", "B", "sec")
+        for ft in ("EX-21", "EX-8.1", "13G/A", "13F", "RR", None):
+            assert claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec",
+                               filing_type=ft)["claim_key"] == plain
+
+    def test_key_for_reproduces_the_stored_key(self):
+        from app.claims import key_for
+        deal = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type="10-Q XBRL")
+        assert key_for(deal) == deal["claim_key"], "a heal must never fold it into the plain claim"
+        plain = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type="EX-21")
+        assert key_for(plain) == plain["claim_key"]

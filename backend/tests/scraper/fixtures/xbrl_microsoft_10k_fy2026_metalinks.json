@@ -1,0 +1,152 @@
+{
+ "version": "2.2",
+ "instance": {
+  "msft-20260630.htm": {
+   "dts": {
+    "inline": {
+     "local": [
+      "msft-20260630.htm"
+     ]
+    }
+   },
+   "tag": {
+    "msft_ActivisionBlizzardIncMember": {
+     "xbrltype": "domainItemType",
+     "nsuri": "http://www.microsoft.com/20260630",
+     "localname": "ActivisionBlizzardIncMember",
+     "presentation": [
+      "http://www.microsoft.com/20260630/taxonomy/role/DisclosureSupplementalConsolidatedFinancialResultsOnUnauditedProFormaBasisDetail",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureAcquiredIntangibleAssetsDetail",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureBUSINESSCOMBINATIONSTables",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureBusinessCombinationsAdditionalInformationDetail",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureMajorClassesOfAssetsAndLiabilitiesAllocatedPurchasePriceDetail"
+     ],
+     "lang": {
+      "en-us": {
+       "role": {
+        "documentation": "Activision Blizzard, Inc.",
+        "label": "Activision Blizzard Inc [Member]",
+        "terseLabel": "Activision Blizzard, Inc.",
+        "verboseLabel": "Activision Blizzard"
+       }
+      }
+     },
+     "auth_ref": []
+    },
+    "us-gaap_BusinessAcquisitionAxis": {
+     "xbrltype": "stringItemType",
+     "nsuri": "http://fasb.org/us-gaap/2025",
+     "localname": "BusinessAcquisitionAxis",
+     "presentation": [
+      "http://www.microsoft.com/20260630/taxonomy/role/DisclosureSupplementalConsolidatedFinancialResultsOnUnauditedProFormaBasisDetail",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureAcquiredIntangibleAssetsDetail",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureBUSINESSCOMBINATIONSTables",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureBusinessCombinationsAdditionalInformationDetail",
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureMajorClassesOfAssetsAndLiabilitiesAllocatedPurchasePriceDetail"
+     ],
+     "lang": {
+      "en-us": {
+       "role": {
+        "label": "Business Combination [Axis]",
+        "terseLabel": "Business Acquisition",
+        "documentation": "Information by business combination or series of individually immaterial business combinations."
+       }
+      }
+     },
+     "auth_ref": [
+      "r388",
+      "r397",
+      "r398",
+      "r399",
+      "r400",
+      "r401",
+      "r635",
+      "r636",
+      "r637",
+      "r638",
+      "r639",
+      "r640",
+      "r641",
+      "r642",
+      "r643",
+      "r644",
+      "r645",
+      "r646",
+      "r647",
+      "r648",
+      "r649",
+      "r650",
+      "r651",
+      "r652",
+      "r653",
+      "r654",
+      "r655",
+      "r656",
+      "r657",
+      "r658",
+      "r659",
+      "r660",
+      "r661",
+      "r662",
+      "r663",
+      "r664",
+      "r665",
+      "r666",
+      "r667",
+      "r668",
+      "r669",
+      "r670",
+      "r671",
+      "r672",
+      "r673",
+      "r674",
+      "r675",
+      "r676",
+      "r677",
+      "r678",
+      "r679",
+      "r680",
+      "r681",
+      "r682",
+      "r683",
+      "r684",
+      "r685",
+      "r686",
+      "r687",
+      "r984",
+      "r1196",
+      "r1197",
+      "r1665",
+      "r1668",
+      "r1670"
+     ]
+    },
+    "us-gaap_BusinessCombinationConsiderationTransferred1": {
+     "xbrltype": "monetaryItemType",
+     "nsuri": "http://fasb.org/us-gaap/2025",
+     "localname": "BusinessCombinationConsiderationTransferred1",
+     "crdr": "credit",
+     "presentation": [
+      "http://www.microsoft.com/20260630/taxonomy/role/Role_DisclosureBusinessCombinationsAdditionalInformationDetail"
+     ],
+     "lang": {
+      "en-us": {
+       "role": {
+        "label": "Business Combination, Consideration Transferred",
+        "terseLabel": "Total consideration transferred",
+        "totalLabel": "Business Combination, Consideration Transferred, Total",
+        "documentation": "Amount of consideration transferred, consisting of acquisition-date fair value of assets transferred by the acquirer, liabilities incurred by the acquirer, and equity interest issued by the acquirer."
+       }
+      }
+     },
+     "auth_ref": [
+      "r672",
+      "r684",
+      "r1203",
+      "r1206"
+     ]
+    }
+   }
+  }
+ }
+}

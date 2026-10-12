@@ -23,7 +23,7 @@ and where it is registered are different places and the map can show either.
 | `ScraperSource` | `name`, `enabled`, `description` |
 | `MergeLog` | `id`, `kind` (`person`/`entity`), `keep_id`, `keep_name`, `dup_id`, `dup_name`, `at`, `count` — merge history, deduped by (keep, dup_name) so a re-scraped duplicate bumps `count` rather than adding a row. `kind` keeps the two logs apart |
 | `Peer` | `id`, `name`, `base_url`, `credibility_score`, `auth_token`, `public_key`, `enabled` — a trusted federation peer |
-| `Claim` | `claim_key` (UNIQUE), `kind` (owns/role/succession), `from_id`, `to_id`, `source_id`, `stake_percent`, `voting_power_pct`, `ownership_type`, `role`, `since`, `until`, `source_url`, `source_date`, `credibility_score`, `filing_type` (which KIND of record asserted it — "13F", "13G/A", "RR", "PSC"; the Sources panel shows it beside the source name), `first_seen_at`, `last_seen_at` — **what one source asserts about one relationship**; see below |
+| `Claim` | `claim_key` (UNIQUE), `kind` (owns/role/succession), `from_id`, `to_id`, `source_id`, `stake_percent`, `voting_power_pct`, `ownership_type`, `role`, `since`, `until`, `source_url`, `source_date`, `credibility_score`, `filing_type` (which KIND of record asserted it — "13F", "13G/A", "RR", "PSC", "10-Q XBRL"; the Sources panel shows it beside the source name), `first_seen_at`, `last_seen_at` — **what one source asserts about one relationship**; see below. One claim per (kind, pair, source), with two exceptions keyed apart: a role claim carries its canonical role, and an owns claim read from an acquirer's XBRL business-combination facts (`filing_type` "10-K XBRL" / "10-Q XBRL") sits beside the same source's Exhibit 21 claim for the pair — the list says "held at year-end", the deal says "bought on this day for this much" |
 | `ScrapeRun` | `id`, `source`, `target`, `status` (running/ok/failed), `started_at`, `finished_at`, `total`, `error` — the scrape run log (capped) |
 
 ## Relationships
@@ -168,7 +168,7 @@ Every claim and every OWNS / HAS_ROLE edge carries one of six grades
 
 | grade | the value came from | examples |
 |---|---|---|
-| `field` | a named field of a structured record (XML, JSON, NDJSON, XBRL) | GLEIF, UK PSC, Wikidata, OpenCorporates, 13F, Form 3/4, Form D, a 13D/G filed as XML (since 2024-12-18) |
+| `field` | a named field of a structured record (XML, JSON, NDJSON, XBRL) | GLEIF, UK PSC, Wikidata, OpenCorporates, 13F, Form 3/4, Form D, a 13D/G filed as XML (since 2024-12-18), an acquirer's XBRL business-combination facts (`sec-acquisitions`: the closing date and price of a deal, read from the 10-K / 10-Q instance) |
 | `table` | a cell under a header the filer wrote for that table | most Exhibit 21 rows, a "Direct controlling entity" column |
 | `form` | a numbered item of a regulator's form, found in its text rendering — the label is the regulator's, only the figure is read | a pre-2024 13D/G cover page (row 11's share count, row 13's percent, the power rows) |
 | `layout` | the page's layout: an indented or heading-named parent, a header carried onto the next page, a headerless table, a list grouped under country headings | the Exhibit 21 tree, Western Union's second page |

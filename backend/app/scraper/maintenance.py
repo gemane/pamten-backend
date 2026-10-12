@@ -892,6 +892,41 @@ _SHORTCUT_MAX_DEPTH = 6
 # Edge updates per sqlscript round-trip, matching the dedup pass's batching.
 _SHORTCUT_WRITE_BATCH = 500
 
+def mark_shortcut_for_pair(owner_id: str, owned_id: str) -> bool:
+    """Flag ONE pair's active edge as a shortcut when ``owned`` is reachable from
+    ``owner`` over other current edges — the per-pair form of the pass below,
+    for a writer that has just drawn an edge at the group level.
+
+    An acquirer's XBRL says "Alphabet bought Wiz" while the register says Google
+    LLC holds it: the group-level edge is true and redundant with the chain, and
+    drawn beside it the tree would repeat Wiz at two levels. The route is counted
+    over edges that are themselves drawn (unflagged, not ``indirect``) and
+    current, two to ``_SHORTCUT_MAX_DEPTH`` hops, so a flag never rests on another
+    shortcut. No route → the flag is left untouched (null reads as "drawn"); a
+    chain imported later is only noticed on the next run of this writer or of
+    the whole-graph pass, which, being limited to ``indirect`` edges, never
+    re-judges this one on its own.
+
+    ``ALL(...)`` with ``COALESCE`` rather than parenthesised predicates: ArcadeDB's
+    Cypher rejects those inside ALL (see routers/relationships.py).
+    """
+    with db.get_session() as session:
+        row = session.run(
+            f"""MATCH path = (a:Entity {{id: $o}})-[r:OWNS*2..{_SHORTCUT_MAX_DEPTH}]->(b:Entity {{id: $n}})
+                WHERE ALL(e IN r WHERE e.until IS NULL
+                                    AND COALESCE(e.shortcut, false) <> true
+                                    AND COALESCE(e.direct_or_indirect, 'direct') <> 'indirect')
+                RETURN count(path) AS n""",
+            o=owner_id, n=owned_id).single()
+        if not row or not row.get("n"):
+            return False
+        session.run(
+            """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+               WHERE r.until IS NULL SET r.shortcut = true""",
+            o=owner_id, n=owned_id)
+        return True
+
+
 def mark_ownership_shortcuts(limit: int | None = None) -> dict:
     """Flag the GLEIF ultimate-parent edges that duplicate a path already in the graph.
 

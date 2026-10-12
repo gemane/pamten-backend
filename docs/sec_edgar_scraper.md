@@ -1215,6 +1215,129 @@ back from the newest.
   name) is counted as `unmatched` and stays undated.
 - Manual command for now (new pipelines start manual); run `sec-ex21` first.
 
+## Business combinations — the acquirer's XBRL facts (`sec_acquisitions.py`)
+
+Every material acquisition since 2009 is tagged in the acquirer's own 10-K /
+10-Q financial statements as **fields**: an axis member for the acquired
+company (`us-gaap:BusinessAcquisitionAxis` = `goog:WizIncMember`), the
+consideration paid (`us-gaap:BusinessCombinationConsiderationTransferred1`)
+and the closing date. That is the one SEC family that gives a **stated start**
+for an ownership edge — Exhibit 21 lists what is held at year-end, a 13D/G
+dates a threshold crossing — and it names companies the filer's Exhibit 21
+omits as insignificant: Alphabet's FY2025 list has three subsidiaries; Wiz
+(closed 2026-03-11, 29.5 bn) and Intersect (2026-03-10, 5.9 bn) are here.
+
+`manage.py sec-acquisitions <company> [--force] [--max-filings N]`
+(`run_sec_acquisitions`, `POST /scraper/sec-acquisitions/run`): submissions
+API → the newest 10-K / 10-Q (8 by default, ~2 years) → each filing's
+`index.json` → the XBRL instance (`*_htm.xml`) and, for a filing that states a
+deal, its label linkbase (`*_lab.xml`) → acquirer → acquired company, written
+with `since` = the closing date (`since_basis` null: stated), `event_date`,
+`value_usd` = the consideration, `ownership_type` controlling with **no
+stake** (a business combination means control; no percentage is tagged),
+`filing_type` `10-K XBRL` / `10-Q XBRL`, `read_from` `field`, `source_url` =
+the instance document. All three documents are immutable filing files, so the
+cache serves every later run. The company must already carry a CIK (409 /
+`needs_sec_scrape` otherwise, like Exhibit 21).
+
+What the instance does and does not say — learned on Alphabet's three filings
+(FY2025 10-K, Q1 and Q2 2026 10-Qs), the rules the reader follows:
+
+- **The closing date lives only in the context period**, never in a fact:
+  the consideration fact's context is `instant` 2026-03-11, or
+  `startDate = endDate`. A consideration fact in a longer period is still a
+  closing, written **undated** and counted `undated`.
+- **Announced and closed are different concepts.** The FY2025 10-K tags Wiz
+  with `PaymentsToAcquireBusinessesGross` (the agreed 32 bn) in a March-2025
+  month and Intersect with `BusinessCombinationPriceOfAcquisitionExpected`.
+  Only a consideration-**transferred** fact is a closing; a member on the axis
+  without one is a pending deal, counted `pending_only` and never written.
+  (A pending-deal node is the parked "view into the future" idea.)
+- **Single-axis contexts only.** The intangible-asset classes under a deal
+  (`FiniteLivedIntangibleAssetsByMajorClassAxis` beside the acquisition axis)
+  are a breakdown of the deal, not the deal; counted `multi_axis_contexts`.
+- **The target carries no identifier** — no CIK, no LEI, no percentage. Its
+  name is the member's standard label ("Wiz Inc [Member]"; "[Member]" and a
+  trailing *Acquisition / Merger / Transaction* dropped: "Intersect
+  Acquisition" is Intersect), read from the filing's **`MetaLinks.json`**
+  first — EDGAR's renderer writes it beside every inline-XBRL filing,
+  whichever agent filed it — then from the label linkbase (`*_lab.xml`, which
+  Workiva filings ship and Donnelley ones keep inside the zip), and only then
+  from the de-camel-cased QName. Entities in labels are unescaped ("H&amp;E"
+  → "H&E"). Across the 144 dev filers every deal was named from a label.
+- **A member is not always one company.** Skipped and counted
+  (`skipped_aggregate`): a label standing for several deals ("Other
+  Acquisitions", "Current Year Acquisitions", "Series of Individually
+  Immaterial Business Combinations"); two companies in one member — two legal
+  forms joined by *and*, a comma-joined list, or more than eight words
+  (Builders FirstSource's "Alpine Lumber, O.C. Cluss, Truckee Tahoe, …");
+  and assets or a business line bought without a company — a name with no
+  legal form made of the words such purchases are described in ("Industrial
+  Technologies", "Fiber-To-The-Home", "Gulf Coast NGL Pipelines", "Acquired
+  Property"). "Jackson Labs Technologies, LLC" keeps its LLC and stays.
+  The company is then resolved **by name** like an Exhibit 21 row — an
+  existing GLEIF / PSC node wins ("Wiz Inc" lands on `WIZ, INC.`), else it is
+  created without a country. A filer that names itself (Republic Airways after
+  its reverse merger with Mesa) is refused as a self-owning edge.
+- **Member QNames are not stable across filings** (`goog:IntersectMember` in
+  the 10-K, `goog:IntersectAcquisitionMember` in the next 10-Q): the reader
+  dedupes by normalised name, newest filing first (`repeated` counts the rest).
+- **Contexts of another CIK** (a co-registrant filing's other subjects) are
+  not this filer's deals. **Dimensional facts never reach the aggregated XBRL
+  APIs** (companyfacts, frames): the instance is the only place to read them.
+- **Only material deals are tagged**; absence proves nothing. XBRL financial
+  statements begin in 2009, so an older acquisition (Google–YouTube, 2006) is
+  reachable only through prose (an 8-K Item 2.01) or the older Exhibit 21s.
+- **A deal states a beginning, never an end.** A later divestiture is tagged
+  under other concepts (`DisposalGroup…`, discontinued operations) that this
+  reader does not read, so an acquisition edge gets no `until` from here; a
+  register (GLEIF, PSC) or the Exhibit 21's staleness marking ends it. The
+  consideration is the price paid, not the company's value; a zero or
+  negative figure is a tagging slip and is dropped, the deal kept.
+
+Two SEC families can speak about one pair, and neither overrules the other
+(`sec_writer.write_acquisition_sec`):
+
+- **The pair already has an SEC edge of another filing type** (an Exhibit 21
+  row, a 13D): the list keeps the edge's *answer* — type, stake, grade, link —
+  and gains what only the deal states: the closing date (combined with the
+  start the edge has: earliest wins, a stated day beats a bound on the same
+  day), the price, the event date. The deal is recorded as its **own claim**:
+  an owns claim whose `filing_type` is an acquisition type is keyed apart from
+  the source's other owns claim for the pair (`claims.ACQUISITION_FILING_TYPES`),
+  so the Sources panel shows "SEC EDGAR · EX-21" and "SEC EDGAR · 10-Q XBRL"
+  side by side and the Exhibit 21 queries (history, staleness) never see it.
+  Result counts it as `enriched`, not `total`.
+- **Otherwise** the ordinary SEC write: a new edge, or the takeover of a pair
+  another source drew. A later Exhibit 21 read of the same pair leaves the
+  closing date (`combine_since` keeps the earliest start and the list brings
+  none) and the price in place while the type and grade become the list's.
+  Same end state whichever order the two run in.
+- **The filer is the group.** Its XBRL does not say which group company
+  bought, so the edge hangs off the filer with no `direct_or_indirect` marker.
+  When the graph already carries a chain from the filer to the company
+  (GLEIF: Alphabet → Google LLC → Wiz), the group-level edge is flagged a
+  `shortcut` (`maintenance.mark_shortcut_for_pair`: reachable over current,
+  drawn, non-indirect edges within six hops) and the tree does not repeat the
+  company at two levels. A chain imported *later* is noticed on the next run.
+
+Freshness gates on the newest instance read (`sec_acquisitions_ingested`): a
+newer 10-K / 10-Q opens the gate by itself; `--force` re-reads from the cache.
+Manual command for now (new pipelines start manual); run the SEC EDGAR scrape
+first.
+
+**Measured on the whole dev population before merging** (2026-10-12, every
+SEC filer the dev graph held, newest three 10-K / 10-Q each, read-only): 144
+filers, 65 of them with an XBRL 10-K / 10-Q (the rest are fund managers and
+13D/G co-filers), 193 instances read, none unparseable; 23 filers state a deal,
+60 deal rows, every one named from a label; 14 members skipped as baskets,
+aggregates or asset purchases; 166 pending-only rows (announced deals, old
+goodwill members). Three real deals come undated because the filer tagged the
+consideration over the reporting period — Chevron → Hess (48 bn), JPMorgan →
+First Republic Bank (67.9 bn), SmartStop → Argus — and are written without a
+start. Request budget: one submissions call plus two to three cacheable
+documents per filing.
+
 ## Form D — private-company boards (`sec_formd.py`)
 
 Every Reg D raise is notified on Form D, filed by the ISSUER as structured

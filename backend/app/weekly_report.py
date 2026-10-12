@@ -30,7 +30,7 @@ REFRESH_REASONS = frozenset({"forced", "stale", "deepen"})
 #: run-log sources that are imports rather than scrapes of one company
 IMPORT_SOURCES = frozenset({"gleif-update", "ch-psc-update"})
 #: enrichments a refresh triggers, reported by name
-SEC_ENRICHMENTS = frozenset({"sec-13f", "sec-ex21", "sec-formd"})
+SEC_ENRICHMENTS = frozenset({"sec-13f", "sec-ex21", "sec-formd", "sec-acquisitions"})
 
 TOP_N = 10
 #: Owners with more distinct subsidiaries than this are listed in the digest —

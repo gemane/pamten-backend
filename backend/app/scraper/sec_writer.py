@@ -17,7 +17,7 @@ from app.roles import canonical_role
 from app.claims import KIND_OWNS, KIND_ROLE, record_claim
 from app.database import db
 from app.db.anchors import label_or_entity
-from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
+from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, edge_create_clause, owns_props
 from app.scraper.graph_writer import _matching_role, _now_iso, _relabel_if_more_credible
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 from app.scraper.owns_merge import ANSWER_FIELDS, SINCE_FIELDS, combine_since, outranks
@@ -237,7 +237,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      structure_basis: str | None = None,
                      since_date: str | None = None,
                      since_basis: str | None = None,
-                     read_from: str | None = None):
+                     read_from: str | None = None,
+                     since_source_url: str | None = None):
     """Create or update an OWNS edge with SEC EDGAR attribution.
 
     ``read_from``: how reliably this filing's values were read
@@ -311,7 +312,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                  since=since, since_basis=basis, until=until, source_url=source_url,
                  source_date=file_date, credibility_score=credibility_score,
                  filing_type=filing_type, structure_basis=structure_basis,
-                 read_from=read_from)
+                 read_from=read_from, since_source_url=since_source_url)
     # Claims-only sources assert but do not draw (see sources.edge_writes_suppressed).
     from app.scraper.sources import edge_writes_suppressed
     if edge_writes_suppressed(source_id):
@@ -324,6 +325,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     bag = owns_props(
         stake_percent=stake_percent, voting_power_pct=voting_power_pct,
         ownership_type=ownership_type, since=since, since_basis=basis, until=until,
+        since_source_url=since_source_url if since else None,
         source_id=source_id, credibility_score=credibility_score,
         source_url=source_url, source_date=file_date, last_scraped_at=now,
         share_class=share_class, shares=shares,
@@ -367,7 +369,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             # amendment's lower bound never replaces an original's stated day).
             held = existing["r"]
             started = combine_since({f: held.get(f) for f in SINCE_FIELDS},
-                                    {"since": since, "since_basis": basis})
+                                    {"since": since, "since_basis": basis,
+                                     "since_source_url": since_source_url if since else None})
             # Refresh last_scraped_at and backfill the specific record URL/date
             # onto edges created before provenance (COALESCE keeps existing
             # values when this scrape didn't yield a URL). The stake and its
@@ -499,8 +502,8 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
     from app.claims import KIND_OWNS, claim_key, claims_for, edge_values_from
     from app.db.arcadedb import run_sql
     from app.scraper.owns_merge import ANSWER_FIELDS
-    run_sql("DELETE FROM Claim WHERE claim_key = :k",
-            {"k": claim_key(KIND_OWNS, owner_id, owned_id, source_id)})
+    withdrawn = claim_key(KIND_OWNS, owner_id, owned_id, source_id)
+    run_sql("DELETE FROM Claim WHERE claim_key = :k", {"k": withdrawn})
     with db.get_session() as session:
         edge = session.run(
             """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
@@ -508,7 +511,10 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
             o=owner_id, n=owned_id, sid=source_id).single()
         if not edge:
             return "none"
-        others = [c for c in claims_for(owner_id, owned_id, KIND_OWNS) if c.get("source_id") != source_id]
+        # By key, not by source: SEC can hold a second claim for the pair (an
+        # acquisition read from the filer's XBRL, keyed apart), and that one
+        # still supports the edge when the list's claim is withdrawn.
+        others = [c for c in claims_for(owner_id, owned_id, KIND_OWNS) if c.get("claim_key") != withdrawn]
         if not others:
             session.run(
                 """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
@@ -528,6 +534,75 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
                 WHERE r.until IS NULL AND r.source_id = $sid SET {assignments}""",
             o=owner_id, n=owned_id, sid=source_id, **{f"v_{f}": v for f, v in values.items()})
         return "reassigned"
+
+
+def write_acquisition_sec(owner_id: str, owned_id: str, source_id: str, *,
+                          closing: str | None, value_usd: float | None,
+                          file_date: str | None, source_url: str,
+                          filing_type: str) -> str:
+    """Record that ``owner`` bought ``owned``, from the acquirer's own XBRL
+    business-combination facts (`sec_acquisitions`): a STATED start (the
+    closing date), the consideration paid, read from fields.
+
+    Two SEC families can speak about one pair. The Exhibit 21 list says what
+    is held at year-end; this says when it was bought and for how much. They
+    do not contradict each other, so neither overrules the other:
+
+    * the pair's active SEC edge carries another filing type (EX-21 / EX-8.1 /
+      a 13D…): the list keeps the edge's ANSWER — type, stake, grade, link —
+      and gains what only the deal states: the closing date (combined with
+      the start it has, earliest wins, a stated day beating a bound on the
+      same day), the price and the event date. The acquisition is recorded
+      as its own claim (keyed apart, `claims.ACQUISITION_FILING_TYPES`), so
+      the Sources panel shows both filings. Returns "enriched". Routing this
+      case through `_upsert_owns_sec` would null the list's stake and replace
+      its grade and link — the list's answer, wiped by an event that agrees
+      with it.
+    * otherwise — no edge, our own earlier read, or a pair another source
+      drew — the ordinary SEC write: `_upsert_owns_sec` creates the edge, or
+      takes over the other source's (`_share_owns_edge`). Returns "written".
+
+    A later Exhibit 21 read of the same pair leaves the closing date in place
+    (`combine_since` keeps the earliest start, and the list brings none) and
+    the price (COALESCE); the edge's type and grade become the list's again.
+    Same end state whichever order the two run in.
+    """
+    from app.claims import ACQUISITION_FILING_TYPES
+    with db.get_session() as session:
+        held = session.run(
+            """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+               WHERE r.source_id = $sid AND r.until IS NULL RETURN r LIMIT 1""",
+            o=owner_id, n=owned_id, sid=source_id).single()
+    if held and held["r"].get("filing_type") not in ACQUISITION_FILING_TYPES:
+        current = held["r"]
+        record_claim(kind=KIND_OWNS, from_id=owner_id, to_id=owned_id, source_id=source_id,
+                     ownership_type="controlling", since=closing, since_basis=None,
+                     since_source_url=source_url if closing else None,
+                     event_date=closing, source_url=source_url, source_date=file_date,
+                     credibility_score=98, filing_type=filing_type, read_from=READ_FIELD)
+        started = combine_since({f: current.get(f) for f in SINCE_FIELDS},
+                                {"since": closing, "since_basis": None,
+                                 "since_source_url": source_url if closing else None})
+        with db.get_session() as session:
+            session.run(
+                """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+                   WHERE r.source_id = $sid AND r.until IS NULL
+                   SET r.since = $since, r.since_basis = $basis, r.since_source_url = $surl,
+                       r.value_usd = COALESCE($vusd, r.value_usd),
+                       r.event_date = COALESCE(r.event_date, $edate),
+                       r.last_scraped_at = $now, r.stale = false""",
+                o=owner_id, n=owned_id, sid=source_id,
+                since=started["since"], basis=started["since_basis"],
+                surl=started["since_source_url"], vusd=value_usd, edate=closing,
+                now=datetime.now(timezone.utc).isoformat())
+        return "enriched"
+    _upsert_owns_sec(owner_id=owner_id, owned_id=owned_id, source_id=source_id,
+                     ownership_type="controlling", file_date=file_date, stake_percent=None,
+                     source_url=source_url, filing_type=filing_type,
+                     filing_dates_the_stake=False, since_date=closing, since_basis=None,
+                     since_source_url=source_url, event_date=closing, value_usd=value_usd,
+                     read_from=READ_FIELD)
+    return "written"
 
 
 def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: str | None,

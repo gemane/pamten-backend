@@ -785,6 +785,39 @@ def cmd_sec_ex21(args):
     print("Note: filers list only SIGNIFICANT subsidiaries; absence proves nothing.")
 
 
+def cmd_sec_acquisitions(args):
+    """Ingest the acquisitions one filer's own 10-K / 10-Q XBRL facts state:
+    acquirer → acquired company, the closing date as a stated start, the price
+    paid — read from fields. The company must already be in the graph with a
+    CIK. Only closed deals (a consideration-transferred fact); announced ones
+    are counted and left alone."""
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_SEC_EDGAR_ENABLED = True
+    from app.scraper.runner import run_sec_acquisitions
+    result = run_sec_acquisitions(args.company, force=args.force, max_filings=args.max_filings)
+    if result["status"] == "fresh":
+        print(f"Acquisitions of {result['company']!r} already ingested from its newest "
+              f"10-K / 10-Q. A newer filing opens the gate by itself; --force re-reads now.")
+        return
+    if result["status"] in ("needs_sec_scrape", "no_filings"):
+        print(result["detail"])
+        raise SystemExit(1)
+    if result["status"] != "ok":
+        print(f"No entity in the graph matches {args.company!r} — "
+              f"sec-acquisitions enriches, it does not discover.")
+        raise SystemExit(1)
+    print(f"{result['total']} acquisition edges for {result['company']!r} from "
+          f"{result['filings']} filings ({result['enriched']} already listed, now dated "
+          f"and priced; {result['shortcuts']} redundant with a chain; "
+          f"{result['pending_only']} pending deals not written).")
+    for s in result["scraped"]:
+        price = f"{s['value_usd'] / 1e9:.2f} bn USD" if s.get("value_usd") else "price not stated"
+        print(f"  {s['name']}: closed {s['since'] or 'date not stated'}, {price} "
+              f"({s['form']} filed {s['filing_date']}, {s['outcome']})")
+    print("Note: filers tag only MATERIAL acquisitions; absence proves nothing.")
+
+
 def cmd_sec_13f(args):
     """Ingest one issuer's institutional holders from Form 13F filings.
 
@@ -1462,6 +1495,16 @@ def _build_parser():
     p_ex21h.add_argument('--max-filings', type=int, default=None,
                          help='Annual filings to read, newest first (default 25; ~2 requests each)')
     p_ex21h.set_defaults(func=cmd_sec_ex21_history)
+
+    p_acq = subparsers.add_parser('sec-acquisitions',
+        help="One filer's acquisitions from its own 10-K / 10-Q XBRL facts "
+             "(acquirer → acquired company, closing date, price)")
+    p_acq.add_argument('company', help='Acquirer name as known to the graph')
+    p_acq.add_argument('--force', action='store_true',
+                       help='Re-read even if the newest 10-K / 10-Q is already ingested')
+    p_acq.add_argument('--max-filings', type=int, default=None,
+                       help='10-K / 10-Q filings to read, newest first (default 8; ~2 requests each)')
+    p_acq.set_defaults(func=cmd_sec_acquisitions)
 
     p_hsd = subparsers.add_parser('heal-sec-dates',
         help="Repair SEC start/end dates written before the time-travel fixes "
