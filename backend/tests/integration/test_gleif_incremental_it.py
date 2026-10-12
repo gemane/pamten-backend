@@ -39,7 +39,7 @@ def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None):
 
 
 def _rel(child, parent, status="ACTIVE", end_date=None,
-         rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None, rr_status=None):
+         rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None, rr_status=None, amount=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
@@ -53,6 +53,9 @@ def _rel(child, parent, status="ACTIVE", end_date=None,
         if end_date:
             period["EndDate"] = _w(end_date)
         rel["RelationshipPeriods"] = {"RelationshipPeriod": period}
+    if amount is not None:
+        rel["RelationshipQuantifiers"] = {"RelationshipQuantifier": [
+            {"MeasurementMethod": _w("ACCOUNTING_CONSOLIDATION"), "QuantifierAmount": _w(amount)}]}
     rec = {"RelationshipRecord": {"Relationship": rel}}
     if rr_status:
         rec["RelationshipRecord"]["Registration"] = {"RegistrationStatus": _w(rr_status)}
@@ -648,3 +651,72 @@ def test_an_edge_another_source_holds_keeps_its_own_mark(it_db, tmp_path):
     res = _apply(tmp_path, "rr-adopt.json.zip", [_rel(CHILD, PARENT, rr_status="LAPSED")])
     assert res["adopted"] == 1
     assert _stale(it_db) == [False]
+
+
+# ── The share a delta record states ──────────────────────────────────────────
+
+def _stakes(it_db):
+    rows = it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) RETURN r.stake_percent AS s",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    return [r["s"] for r in rows]
+
+
+def test_a_delta_record_states_the_share_and_a_later_one_restates_it(it_db, tmp_path):
+    res = _apply(tmp_path, "rr-s1.json.zip", [_rel(CHILD, PARENT, amount="100")])
+    assert res["created"] == 1 and _stakes(it_db) == [100.0]
+    _apply(tmp_path, "rr-s2.json.zip", [_rel(CHILD, PARENT, amount="80")])
+    assert _stakes(it_db) == [80.0]                     # the newer statement
+    claim = it_db.run_sql("SELECT stake_percent AS s FROM Claim WHERE from_id = :p AND to_id = :c",
+                          {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    assert claim and claim[0]["s"] == 80.0
+    # the record is restated without a figure: the newer statement says none,
+    # and the edge agrees with its claim
+    _apply(tmp_path, "rr-s3.json.zip", [_rel(CHILD, PARENT)])
+    assert _stakes(it_db) == [None]
+    _apply(tmp_path, "rr-s3b.json.zip", [_rel(CHILD, PARENT, amount="90")])
+    res = _apply(tmp_path, "rr-s4.json.zip", [_rel(CHILD, PARENT, amount="-3")])
+    assert res["implausible"] == 1 and _stakes(it_db) == [None]     # refused: no figure, not -3
+    claim = it_db.run_sql("SELECT stake_percent AS s FROM Claim WHERE from_id = :p AND to_id = :c",
+                          {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    assert claim and claim[0]["s"] is None
+
+
+def test_on_a_folded_pair_the_direct_figure_wins_and_the_ultimate_fills(it_db, tmp_path):
+    _apply(tmp_path, "rr-f1.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE, amount="100")])
+    assert _stakes(it_db) == [100.0]
+    _apply(tmp_path, "rr-f2.json.zip", [_rel(CHILD, PARENT, amount="60")])
+    assert _stakes(it_db) == [60.0]                     # folded: the direct figure
+    _apply(tmp_path, "rr-f3.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE, amount="100")])
+    assert _stakes(it_db) == [60.0]                     # the ultimate one does not override
+    _apply(tmp_path, "rr-f4.json.zip", [_rel(CHILD, PARENT)])
+    assert _stakes(it_db) == [60.0]                     # a folded direct restatement without a figure keeps it
+
+
+def test_a_stated_share_takes_the_answer_from_a_stakeless_official_edge(it_db, tmp_path):
+    # answer_rank: within the official tier a stated stake outranks none — the
+    # same rule every writer follows (owns_merge). GLEIF's figure wins the
+    # answer from an SEC list that states no stake, and keeps SEC's claim.
+    it_db.run_command(
+        "CREATE (a:Entity {id:$p, name:'P', lei_id:$pl}) CREATE (b:Entity {id:$c, name:'C', lei_id:$cl}) "
+        "CREATE (a)-[:OWNS {source_id:'sec-src', credibility_score:98, filing_type:'EX-21', "
+        "ownership_type:'controlling', read_from:'table'}]->(b)",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}", "pl": PARENT, "cl": CHILD})
+    res = _apply(tmp_path, "rr-take.json.zip", [_rel(CHILD, PARENT, amount="100")])
+    assert res["adopted"] == 1
+    rows = it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "RETURN r.stake_percent AS s, r.source_id AS src, r.filing_type AS ft",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    assert len(rows) == 1 and rows[0]["s"] == 100.0 and rows[0]["src"] == "gleif-src"
+    assert rows[0]["ft"] == "RR"
+    # and an SEC edge WITH a stake keeps it: 98 with a stake outranks 92 with one
+    it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "SET r.source_id = 'sec-src', r.credibility_score = 98, r.filing_type = 'EX-21', r.stake_percent = 75.0",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    _apply(tmp_path, "rr-keep.json.zip", [_rel(CHILD, PARENT, amount="100")])
+    rows = it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) RETURN r.stake_percent AS s, r.source_id AS src",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    assert rows[0]["s"] == 75.0 and rows[0]["src"] == "sec-src"

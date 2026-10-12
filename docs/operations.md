@@ -30,6 +30,15 @@ the delta and clears the mark there. Idempotent; a full re-import (`gleif-rr`) m
 it unnecessary. Entities loaded before that date lack `active` /
 `gleif_registration_status` until the next full LEI-CDF load; nothing reads them yet.
 
+The same goes for the share a record states (`RelationshipQuantifiers`, read since
+2026-10-13 as `stake_percent`): fill it once onto an older database, fill-only — an
+edge that already holds a figure, from GLEIF or another source, keeps it:
+
+```bash
+python3 manage.py gleif-rr-stakes --file ~/data/rr-cdf/gleif-rr.json.zip --dry-run
+python3 manage.py gleif-rr-stakes --file ~/data/rr-cdf/gleif-rr.json.zip
+```
+
 ## GLEIF history (once)
 
 After the first full import, run `owlgraph gleif-history` (dev box: `manage.py

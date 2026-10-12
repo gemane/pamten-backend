@@ -309,7 +309,11 @@ It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` 
 status **LAPSED** — a fifth of all records, a quarter of the ownership edges) is
 drawn **stale**: dimmed, dated by the record's last update, never closed; the full
 load and the delta both set and clear the mark. A database loaded before
-2026-10-13 gets it once from `manage.py gleif-rr-status --file <rr golden copy>`. Writes are idempotent (re-applying a delta never duplicates), so no
+2026-10-13 gets it once from `manage.py gleif-rr-status --file <rr golden copy>`.
+Where the record states the consolidated share (49,527 of ~260k records, mostly
+100 %) it becomes the edge's `stake_percent`, bounded at the reader (a figure
+outside 0–100 is refused and logged, never stored); `manage.py gleif-rr-stakes`
+fills it once onto an older database. Writes are idempotent (re-applying a delta never duplicates), so no
 `--bulk-load` and no whole-DB dedup. `~/scripts/cron-gleif-update.sh` (flock + log →
 a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
 

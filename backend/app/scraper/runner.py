@@ -2819,6 +2819,37 @@ def run_gleif_rr_status(local_file: str, dry_run: bool = False) -> dict:
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 
 
+def run_gleif_rr_stakes(local_file: str, dry_run: bool = False) -> dict:
+    """
+    One-off heal: fill `stake_percent` on the RR edges from the share the
+    relationship record states (`gleif_rr.heal_stakes`), fill-only. For a database
+    loaded before the import read the record's quantifiers; logged as a
+    `gleif-rr-stakes` ScrapeRun. Checks the GLEIF flags like the import.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+    from app.scraper.gleif_rr import heal_stakes
+    from app.scraper.run_log import record_run
+
+    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
+    log.info("GLEIF RR stake heal: reading %s (dry_run=%s)", local_file, dry_run)
+    with record_run("gleif-rr-stakes", os.path.basename(local_file),
+                    reason="dry_run" if dry_run else None) as run:
+        counts = heal_stakes(local_file, source_id, dry_run=dry_run)
+        run["total"] = counts["filled"]
+        run["note"] = (f"{counts['with_stake']:,} pairs with a stated share, "
+                       f"{counts['filled']:,} edges filled, {counts['already']:,} already held one "
+                       f"or not here" + (" (dry run)" if dry_run else ""))
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+
+
 def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
                      rr_file: str | None = None, limit: int | None = None,
                      only_existing: bool | None = None,

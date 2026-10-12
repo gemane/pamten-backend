@@ -134,7 +134,9 @@ parser. Anything that does not map is either a new property (document it) or noi
       with the source URL, and count such refusals in the quality report. The 1,274 %
       stake above was stored without complaint and found by a reader's eye months later.
       (Not yet implemented in `sec_writer` as of 2026-10-10 — the item stands as the rule
-      for every writer, and as the open task.)
+      for every writer, and as the open task. Implemented for GLEIF's stated shares on
+      2026-10-13: `gleif_rr._stake` refuses a figure outside (0, 100] — 284 of 49,527 on
+      the golden copy — and the import counts them `implausible`.)
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
       Registered/Headquarters switch exists precisely because they differ.
