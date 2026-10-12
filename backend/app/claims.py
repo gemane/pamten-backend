@@ -118,6 +118,8 @@ def claim_props(
     since_source_url: str | None = None,
     structure_basis: str | None = None,
     read_from: str | None = None,
+    validation_sources: str | None = None,
+    validation_documents: str | None = None,
 ) -> dict:
     """The property bag for one claim, ready to UPSERT on `claim_key`.
 
@@ -162,6 +164,10 @@ def claim_props(
         "since_source_url": since_source_url,
         # The layout evidence behind an inferred tree position (see edge_schema).
         "structure_basis": structure_basis,
+        # How far the register checked the record behind this claim (GLEIF's
+        # ValidationSources / ValidationDocuments) — provenance, not credibility.
+        "validation_sources": validation_sources,
+        "validation_documents": validation_documents,
         # How reliably the values were read off the document (edge_schema
         # READ_GRADES: field > table > form > layout > prose > narrative) — the claim's own, so a
         # conflict can prefer the surer reading among equals.

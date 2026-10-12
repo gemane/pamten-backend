@@ -67,9 +67,11 @@ EXPECTED: dict[str, list] = {
         # edge is born stale (2026-10-13), a maintained one born fresh.
         # `stake_percent`: the share the record states (RelationshipQuantifiers,
         # 2026-10-13), bounded at the reader — None when it states none.
+        # `validation_*`: how far the LOU checked the record, as provenance.
         {"direct_or_indirect", "interest_types", "source_id",
          "credibility_score", "source_url", "since", "until", "source_date",
-         "last_scraped_at", "read_from", "stale", "stake_percent"},
+         "last_scraped_at", "read_from", "stale", "stake_percent",
+         "validation_sources", "validation_documents"},
         # The direct relationship of a folded edge ended: the period is closed
         # and the ultimate relationship continues as its own indirect edge
         # (its marker is the literal 'indirect', which the extractor does not see).

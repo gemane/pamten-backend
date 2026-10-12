@@ -75,7 +75,8 @@ _PROVENANCE_QUERIES = (
            s.credibility_score AS credibility_score, s.url AS source_home_url,
            c.source_url AS source_url, c.source_date AS source_date,
            c.last_seen_at AS last_scraped_at, c.filing_type AS filing_type,
-           c.read_from AS read_from
+           c.read_from AS read_from, c.validation_sources AS validation_sources,
+           c.validation_documents AS validation_documents
     """,
     # NOTE: the entity's OWN record provenance is a different question, answered by
     # _entity_own_source_rows from its hard identifiers — claims describe relationships,
@@ -158,6 +159,10 @@ def _dedupe_source_rows(rows: list[dict]) -> list[dict]:
             # how surely the record was read (edge_schema.READ_GRADES); unset
             # for the node's own provenance rows and facts from before the grade
             "read_from":         r.get("read_from"),
+            # how far the register checked the record (GLEIF's corroboration
+            # level and the document it was checked against); unset elsewhere
+            "validation_sources":   r.get("validation_sources"),
+            "validation_documents": r.get("validation_documents"),
         }
         cur = best.get(key)
         if cur is None or (row["source_date"] or "", row["last_scraped_at"] or "") \
@@ -183,7 +188,8 @@ def get_sources_for_entity(entity_id: str):
     # Read columns explicitly with rec.get(): the ArcadeDB result-record type
     # supports __getitem__/get but not dict(rec) on a whole multi-column row.
     _COLS = ("id", "name", "type", "credibility_score", "source_home_url",
-             "source_url", "source_date", "last_scraped_at", "filing_type", "read_from")
+             "source_url", "source_date", "last_scraped_at", "filing_type", "read_from",
+             "validation_sources", "validation_documents")
     rows: list[dict] = []
     with db.get_session() as session:
         for query in _PROVENANCE_QUERIES:            # owners + roles (edge provenance)
@@ -239,7 +245,8 @@ def get_sources_for_person(person_id: str):
     role fact and the person record itself. Same shape as /sources/entity.
     """
     _COLS = ("id", "name", "type", "credibility_score", "source_home_url",
-             "source_url", "source_date", "last_scraped_at", "filing_type", "read_from")
+             "source_url", "source_date", "last_scraped_at", "filing_type", "read_from",
+             "validation_sources", "validation_documents")
     rows: list[dict] = []
     with db.get_session() as session:
         for query in _PERSON_PROVENANCE_QUERIES:

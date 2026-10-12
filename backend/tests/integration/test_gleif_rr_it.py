@@ -18,7 +18,8 @@ def _w(v):
     return {"$": v}
 
 
-def _rec(rtype, child, parent, start=None, rr_status=None, updated=None, amount=None):
+def _rec(rtype, child, parent, start=None, rr_status=None, updated=None, amount=None,
+         checked=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
@@ -36,6 +37,10 @@ def _rec(rtype, child, parent, start=None, rr_status=None, updated=None, amount=
     registration = {}
     if rr_status:
         registration["RegistrationStatus"] = _w(rr_status)
+    if checked:
+        registration["ValidationSources"] = _w(checked[0])
+        if len(checked) > 1:
+            registration["ValidationDocuments"] = _w(checked[1])
     if updated:
         registration["LastUpdateDate"] = _w(updated)
     if registration:
@@ -274,3 +279,66 @@ def test_the_stake_heal_fills_an_edge_drawn_before_and_never_overwrites(it_db, t
         {"p": f"lei:{PARENT}"})}
     assert rows[STAKED_CHILD] == 100.0
     assert rows[PART_CHILD] == 55.0                # fill-only: the held figure stays
+
+
+# ── How far the LOU checked the record ───────────────────────────────────────
+
+CHECKED_CHILD = "CHECKEDCHILD00000009"
+OWN_CHILD = "OWNWORDCHILD00000010"
+
+
+def test_how_far_the_record_was_checked_lands_on_the_edge_and_its_claim(it_db, tmp_path):
+    from app.scraper.gleif_rr import import_rr_cdf
+
+    res = import_rr_cdf(_zip_of(tmp_path, "rr-checked.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", CHECKED_CHILD, PARENT,
+             checked=("FULLY_CORROBORATED", "ACCOUNTS_FILING")),
+        # stated both ways: the direct record's checking wins
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", OWN_CHILD, PARENT, checked=("ENTITY_SUPPLIED_ONLY",)),
+        _rec("IS_ULTIMATELY_CONSOLIDATED_BY", OWN_CHILD, PARENT,
+             checked=("FULLY_CORROBORATED", "REGULATORY_FILING")),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", FRESH_CHILD, PARENT),
+    ]), "gleif-src", 92)
+    assert res["edges"] == 3 and res["entity_supplied"] == 1
+
+    rows = {r["c"]: r for r in it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity) "
+        "RETURN b.lei_id AS c, r.validation_sources AS vs, r.validation_documents AS vd, "
+        "r.credibility_score AS cred", {"p": f"lei:{PARENT}"})}
+    assert rows[CHECKED_CHILD]["vs"] == "FULLY_CORROBORATED"
+    assert rows[CHECKED_CHILD]["vd"] == "ACCOUNTS_FILING"
+    assert rows[OWN_CHILD]["vs"] == "ENTITY_SUPPLIED_ONLY" and rows[OWN_CHILD]["vd"] is None
+    assert rows[FRESH_CHILD]["vs"] is None
+    assert {r["cred"] for r in rows.values()} == {92}          # provenance, never a penalty
+    claims = {r["to_id"]: r for r in it_db.run_sql(
+        "SELECT to_id, validation_sources AS vs, validation_documents AS vd FROM Claim "
+        "WHERE from_id = :p", {"p": f"lei:{PARENT}"})}
+    assert claims[f"lei:{CHECKED_CHILD}"]["vs"] == "FULLY_CORROBORATED"
+    assert claims[f"lei:{CHECKED_CHILD}"]["vd"] == "ACCOUNTS_FILING"
+    assert claims[f"lei:{FRESH_CHILD}"]["vs"] is None
+
+
+def test_the_validation_heal_fills_an_edge_drawn_before_and_keeps_a_held_level(it_db, tmp_path):
+    from app.scraper.gleif_rr import heal_validation, import_rr_cdf
+
+    import_rr_cdf(_zip_of(tmp_path, "rr-old-checked.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", CHECKED_CHILD, PARENT),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", OWN_CHILD, PARENT),
+    ]), "gleif-src", 92)
+    it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) SET r.validation_sources = 'PENDING'",
+        {"p": f"lei:{PARENT}", "c": f"lei:{OWN_CHILD}"})
+    today = _zip_of(tmp_path, "rr-today-checked.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", CHECKED_CHILD, PARENT,
+             checked=("FULLY_CORROBORATED", "ACCOUNTS_FILING")),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", OWN_CHILD, PARENT, checked=("ENTITY_SUPPLIED_ONLY",)),
+    ])
+    assert heal_validation(today, "gleif-src", dry_run=True)["filled"] == 0
+    res = heal_validation(today, "gleif-src")
+    assert res["with_validation"] == 2 and res["filled"] == 1 and res["already"] == 1
+    rows = {r["c"]: r for r in it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity) "
+        "RETURN b.lei_id AS c, r.validation_sources AS vs, r.validation_documents AS vd",
+        {"p": f"lei:{PARENT}"})}
+    assert rows[CHECKED_CHILD]["vs"] == "FULLY_CORROBORATED" and rows[CHECKED_CHILD]["vd"] == "ACCOUNTS_FILING"
+    assert rows[OWN_CHILD]["vs"] == "PENDING"                   # fill-only

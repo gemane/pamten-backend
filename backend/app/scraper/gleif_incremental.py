@@ -41,7 +41,7 @@ from app.scraper.gleif_lei_cdf import (  # noqa: F401 — the status readers are
     _entity_props, _entity_status, _registration_status)
 from app.scraper.gleif_rr import (
     _CONSOLIDATION, NOT_A_STATEMENT, UNMAINTAINED_STATUSES, _node_lei, _record_date,
-    _relationship_dates, _rr_status, _stake)
+    _relationship_dates, _rr_status, _stake, _validation)
 from app.merged_ids import canonical_id
 from app.scraper.owns_merge import ANSWER_FIELDS, combine_since, outranks
 from app.scraper.edge_schema import READ_FIELD
@@ -80,7 +80,7 @@ def _relationship_end_date(rel: dict) -> str | None:
 
 def _rr_delta_relationship(rec: dict) -> tuple | None:
     """(parent_lei, child_lei, direct_or_indirect, status, rel, unmaintained,
-    stake_percent, implausible) for a *consolidation*
+    stake_percent, implausible, validation) for a *consolidation*
     relationship record, else None (non-consolidation types are ignored)."""
     rel = (rec.get("RelationshipRecord") or {}).get("Relationship") or {}
     marker = _CONSOLIDATION.get(_v(rel.get("RelationshipType")))
@@ -95,7 +95,7 @@ def _rr_delta_relationship(rec: dict) -> tuple | None:
         return None
     stake, implausible = _stake(rel)
     return (parent, child, marker, _v(rel.get("RelationshipStatus")), rel,
-            rr_status in UNMAINTAINED_STATUSES, stake, implausible)
+            rr_status in UNMAINTAINED_STATUSES, stake, implausible, _validation(rec))
 
 
 # ── idempotent edge primitives (Cypher; nodes must already exist) ─────────────
@@ -140,7 +140,8 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
               "r.source_id AS source_id, r.credibility_score AS credibility_score, "
               "r.stake_percent AS stake_percent, r.structure_basis AS structure_basis, "
               "r.until AS until, r.since_not_before AS since_not_before, "
-              "r.also_ultimate AS also_ultimate, r.stale AS stale LIMIT 1")
+              "r.also_ultimate AS also_ultimate, r.stale AS stale, "
+              "r.validation_sources AS validation_sources LIMIT 1")
     rr_own = "r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL"
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
@@ -172,12 +173,14 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
 def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str,
                       source_id: str, credibility_score: int, since: str | None = None,
                       until: str | None = None, recorded: str | None = None,
-                      unmaintained: bool = False, stake: float | None = None) -> str:
+                      unmaintained: bool = False, stake: float | None = None,
+                      validation: dict | None = None) -> str:
     """`_write_owns_edge`, then the pair's start labelled if it is only the
     child's LEI registration day (gleif_rr.mark_registration_day) — the same
     rule the bulk import applies, on every path that writes a GLEIF edge."""
     outcome = _write_owns_edge(parent_id, child_id, child_lei, marker, source_id,
-                               credibility_score, since, until, recorded, unmaintained, stake)
+                               credibility_score, since, until, recorded, unmaintained, stake,
+                               validation)
     if since:
         from app.scraper.gleif_rr import mark_registration_day
         mark_registration_day(parent_id, child_id, run=run_command)
@@ -187,7 +190,8 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
 def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
                      source_id: str, credibility_score: int, since: str | None = None,
                      until: str | None = None, recorded: str | None = None,
-                     unmaintained: bool = False, stake: float | None = None) -> str:
+                     unmaintained: bool = False, stake: float | None = None,
+                     validation: dict | None = None) -> str:
     """Create the (parent)-[:OWNS {marker}]->(child) edge if absent, else refresh it
     and clear any stale `until`. Assumes both nodes already exist.
     'created'|'updated'|'folded'|'adopted'. `since` (relationship start date) is
@@ -209,6 +213,11 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
     pair the direct record's figure wins and the ultimate one's fills a gap;
     a direct restatement without a figure keeps the ultimate's.
 
+    `validation` is how far the LOU checked the record (``gleif_rr._validation``):
+    written with the answer like the stake — the record's own statement on
+    GLEIF's edge, the direct record's on a folded pair, the ultimate's filling
+    a gap.
+
     'adopted' means another source (SEC, a PSC register) already drew the pair:
     RR puts its marker on that edge instead of drawing a second one, and takes
     over the answer only if it outranks that source.
@@ -225,7 +234,7 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
     # corroboration badge never counted GLEIF's agreement.
     record_claim(kind=KIND_OWNS, from_id=parent_id, to_id=child_id,
                  source_id=source_id, ownership_type="controlling", since=since, until=until,
-                 stake_percent=stake,
+                 stake_percent=stake, **(validation or {}),
                  source_url=f"https://search.gleif.org/#/record/{child_lei}",
                  source_date=recorded, credibility_score=credibility_score, filing_type="RR",
                  read_from=READ_FIELD)
@@ -244,11 +253,14 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
             "filing_type:'RR', read_from:$rfrom, "
             "interest_types:$it, source_id:$src, credibility_score:$cred, "
             "source_url:$url, since:$since, until:$until, source_date:$sdate, "
-            "last_scraped_at:$now, stale:$stale, stake_percent:$stake}]->(b)",
+            "last_scraped_at:$now, stale:$stale, stake_percent:$stake, "
+            "validation_sources:$vs, validation_documents:$vd}]->(b)",
             {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
              "src": source_id, "cred": credibility_score, "since": since, "until": until,
              "sdate": recorded, "url": url, "now": now, "rfrom": READ_FIELD,
-             "stale": unmaintained, "stake": stake})
+             "stale": unmaintained, "stake": stake,
+             "vs": (validation or {}).get("validation_sources"),
+             "vd": (validation or {}).get("validation_documents")})
         return "created"
 
     # Whose answer the edge carries. RR's own edge (or an unattributed one) it
@@ -257,6 +269,8 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
     # no reopening what that source closed (app.scraper.owns_merge).
     incoming = {"stake_percent": stake, "credibility_score": credibility_score,
                 "read_from": READ_FIELD}
+    checked = {"validation_sources": (validation or {}).get("validation_sources"),
+               "validation_documents": (validation or {}).get("validation_documents")}
     holds = existing.get("source_id") in (source_id, None)
     takeover = not holds and outranks(incoming, existing)
     sets: dict = {}
@@ -265,7 +279,7 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
         sets.update(ownership_type="controlling", filing_type="RR", source_id=source_id,
                     credibility_score=credibility_score, source_url=url,
                     source_date=recorded, until=until, read_from=READ_FIELD,
-                    stake_percent=stake)
+                    stake_percent=stake, **checked)
     elif holds:
         # the record's own end (an ACTIVE record can state one) — not a blanket
         # reopen, which undid what the full import closed
@@ -291,6 +305,8 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
             sets.update(direct_or_indirect=marker, structure_basis=None)
         if holds and (stake is not None or not existing.get("also_ultimate")):
             sets["stake_percent"] = stake   # the newer statement; a folded edge keeps the other's
+        if holds and (validation or not existing.get("also_ultimate")):
+            sets.update(checked)            # likewise how far it was checked
         sets.update(combine_since(existing, {"since": since}))
         extra = (", r.interest_types = coalesce(r.interest_types, $it)"
                  if existing["marker"] is None else "")
@@ -313,6 +329,9 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
     if (holds or takeover) and stake is not None and (
             marker == "direct" or existing.get("stake_percent") is None):
         sets["stake_percent"] = stake       # the direct figure wins, the ultimate one fills
+    if (holds or takeover) and validation and (
+            marker == "direct" or existing.get("validation_sources") is None):
+        sets.update(checked)                # and so does the record's checking
     sets.update(combine_since({"since": kept_since},
                               existing if existing.get("since_basis") else None))
     _set_owns(parent_id, child_id,
@@ -335,13 +354,14 @@ def _set_owns(parent_id: str, child_id: str, where: str, sets: dict,
 def _upsert_owns(parent_lei: str, child_lei: str, marker: str,
                  source_id: str, credibility_score: int, since: str | None = None,
                  until: str | None = None, recorded: str | None = None,
-                 unmaintained: bool = False, stake: float | None = None) -> str:
+                 unmaintained: bool = False, stake: float | None = None,
+                 validation: dict | None = None) -> str:
     """Node-ensuring convenience wrapper (standalone use / tests)."""
     parent_id = _ensure_lei_node(parent_lei, source_id)
     child_id = _ensure_lei_node(child_lei, source_id)
     return _owns_edge_upsert(parent_id, child_id, child_lei,
                              marker, source_id, credibility_score, since, until, recorded,
-                             unmaintained, stake)
+                             unmaintained, stake, validation)
 
 
 def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str,
@@ -572,7 +592,8 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 if not parsed:
                     counts["skipped"] += 1
                     continue
-                parent, child, marker, status, rel, unmaintained, stake, implausible = parsed
+                (parent, child, marker, status, rel, unmaintained, stake, implausible,
+                 validation) = parsed
                 if implausible:
                     counts["implausible"] += 1
                     log.warning("RR delta: refusing an implausible stake on %s → %s "
@@ -587,7 +608,7 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 if status == "ACTIVE":
                     since, until = _relationship_dates(rel)
                     active.append((parent, child, marker, since, until, recorded, unmaintained,
-                                   stake))
+                                   stake, validation))
                     if unmaintained:
                         counts["unmaintained"] += 1
                 elif status == "INACTIVE":
@@ -608,11 +629,11 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 if counts["errors"] <= 5:
                     log.warning("RR delta record error: %s", exc)
         batch.flush()                      # endpoint nodes exist before edge ops
-        for parent, child, marker, since, until, recorded, unmaintained, stake in active:
+        for parent, child, marker, since, until, recorded, unmaintained, stake, validation in active:
             outcome = _owns_edge_upsert(canonical_id(f"lei:{parent}"),
                                         canonical_id(f"lei:{child}"), child, marker,
                                         source_id, credibility_score, since, until, recorded,
-                                        unmaintained, stake)
+                                        unmaintained, stake, validation)
             counts[outcome if outcome in counts else "updated"] += 1
         for parent, child, marker, until, reason in closures:
             counts["closed"] += _close_owns(parent, child, marker, until, source_id, reason)

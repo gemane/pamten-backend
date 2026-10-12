@@ -47,16 +47,39 @@ def _seed_provenance(arcadedb):
 
 def _seed_claim(arcadedb, *, from_id, to_id, source_id,
                 source_url=None, source_date=None, last_seen="2026-07-12T09:00:00+00:00",
-                read_from=None):
+                read_from=None, validation_sources=None, validation_documents=None):
     from app.claims import KIND_OWNS, claim_key
 
     arcadedb.run_command(
         "CREATE (:Claim {claim_key: $k, kind: $kind, from_id: $f, to_id: $t, "
-        "source_id: $s, source_url: $u, source_date: $d, last_seen_at: $seen, read_from: $rf})",
+        "source_id: $s, source_url: $u, source_date: $d, last_seen_at: $seen, read_from: $rf, "
+        "validation_sources: $vs, validation_documents: $vd})",
         {"k": claim_key(KIND_OWNS, from_id, to_id, source_id), "kind": KIND_OWNS,
          "f": from_id, "t": to_id, "s": source_id, "u": source_url,
-         "d": source_date, "seen": last_seen, "rf": read_from},
+         "d": source_date, "seen": last_seen, "rf": read_from,
+         "vs": validation_sources, "vd": validation_documents},
     )
+
+
+def test_how_far_the_register_checked_the_record_reaches_the_row(it_db):
+    """GLEIF's corroboration level travels from the claim to the Sources
+    panel's row; a claim from another source shows none."""
+    from app.routers.sources import get_sources_for_entity
+    _seed_provenance(it_db)
+    it_db.run_command("CREATE (:Source {id: 's-gleif', name: 'GLEIF', url: 'https://www.gleif.org', "
+                      "type: 'register', credibility_score: 92})")
+    it_db.run_command("CREATE (:Entity {id: 'e-parent', name: 'Parent Co'})")
+    _seed_claim(it_db, from_id="e-parent", to_id="e-target", source_id="s-gleif",
+                source_url="https://search.gleif.org/#/record/X", source_date="2023-06-02",
+                read_from="field", validation_sources="ENTITY_SUPPLIED_ONLY",
+                validation_documents="OTHER_OFFICIAL_DOCUMENTS")
+    by_url = {r["url"]: r for r in get_sources_for_entity("e-target")}
+    gleif = by_url["https://search.gleif.org/#/record/X"]
+    assert gleif["validation_sources"] == "ENTITY_SUPPLIED_ONLY"
+    assert gleif["validation_documents"] == "OTHER_OFFICIAL_DOCUMENTS"
+    assert gleif["credibility_score"] == 92
+    sec = by_url["https://www.sec.gov/Archives/edgar/data/1/primary.htm"]
+    assert sec["validation_sources"] is None and sec["validation_documents"] is None
 
 
 def test_the_reading_grade_reaches_the_row(it_db):

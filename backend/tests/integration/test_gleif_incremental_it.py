@@ -39,7 +39,8 @@ def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None):
 
 
 def _rel(child, parent, status="ACTIVE", end_date=None,
-         rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None, rr_status=None, amount=None):
+         rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None, rr_status=None, amount=None,
+         checked=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
@@ -57,8 +58,13 @@ def _rel(child, parent, status="ACTIVE", end_date=None,
         rel["RelationshipQuantifiers"] = {"RelationshipQuantifier": [
             {"MeasurementMethod": _w("ACCOUNTING_CONSOLIDATION"), "QuantifierAmount": _w(amount)}]}
     rec = {"RelationshipRecord": {"Relationship": rel}}
-    if rr_status:
-        rec["RelationshipRecord"]["Registration"] = {"RegistrationStatus": _w(rr_status)}
+    registration = {"RegistrationStatus": _w(rr_status)} if rr_status else {}
+    if checked:
+        registration["ValidationSources"] = _w(checked[0])
+        if len(checked) > 1:
+            registration["ValidationDocuments"] = _w(checked[1])
+    if registration:
+        rec["RelationshipRecord"]["Registration"] = registration
     return rec
 
 
@@ -720,3 +726,38 @@ def test_a_stated_share_takes_the_answer_from_a_stakeless_official_edge(it_db, t
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) RETURN r.stake_percent AS s, r.source_id AS src",
         {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
     assert rows[0]["s"] == 75.0 and rows[0]["src"] == "sec-src"
+
+
+# ── How far a delta record was checked ───────────────────────────────────────
+
+def _checked(it_db):
+    rows = it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "RETURN r.validation_sources AS vs, r.validation_documents AS vd",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    return [(r["vs"], r["vd"]) for r in rows]
+
+
+def test_a_delta_record_says_how_far_it_was_checked_and_a_restatement_updates_it(it_db, tmp_path):
+    res = _apply(tmp_path, "rr-c1.json.zip", [_rel(CHILD, PARENT, checked=("ENTITY_SUPPLIED_ONLY",))])
+    assert res["created"] == 1 and _checked(it_db) == [("ENTITY_SUPPLIED_ONLY", None)]
+    _apply(tmp_path, "rr-c2.json.zip", [_rel(CHILD, PARENT, checked=("FULLY_CORROBORATED", "ACCOUNTS_FILING"))])
+    assert _checked(it_db) == [("FULLY_CORROBORATED", "ACCOUNTS_FILING")]
+    claim = it_db.run_sql("SELECT validation_sources AS vs FROM Claim WHERE from_id = :p AND to_id = :c",
+                          {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    assert claim and claim[0]["vs"] == "FULLY_CORROBORATED"
+    # the credibility is untouched by the level
+    cred = it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) RETURN r.credibility_score AS c",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})[0]["c"]
+    assert cred == 92
+
+
+def test_on_a_folded_pair_the_direct_records_checking_wins(it_db, tmp_path):
+    _apply(tmp_path, "rr-cf1.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE,
+                                               checked=("FULLY_CORROBORATED", "ACCOUNTS_FILING"))])
+    _apply(tmp_path, "rr-cf2.json.zip", [_rel(CHILD, PARENT, checked=("ENTITY_SUPPLIED_ONLY",))])
+    assert _checked(it_db) == [("ENTITY_SUPPLIED_ONLY", None)]
+    _apply(tmp_path, "rr-cf3.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE,
+                                               checked=("FULLY_CORROBORATED", "ACCOUNTS_FILING"))])
+    assert _checked(it_db) == [("ENTITY_SUPPLIED_ONLY", None)]   # the ultimate one does not override

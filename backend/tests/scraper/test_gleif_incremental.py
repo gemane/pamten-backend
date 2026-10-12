@@ -21,7 +21,8 @@ from app.scraper.gleif_incremental import (
 )
 
 
-def _rr(rtype, child, parent, status="ACTIVE", end_date=None, rr_status=None, amount=None):
+def _rr(rtype, child, parent, status="ACTIVE", end_date=None, rr_status=None, amount=None,
+        validation=None):
     rel = {
         "StartNode": {"NodeID": {"$": child}, "NodeIDType": {"$": "LEI"}},
         "EndNode":   {"NodeID": {"$": parent}, "NodeIDType": {"$": "LEI"}},
@@ -37,8 +38,11 @@ def _rr(rtype, child, parent, status="ACTIVE", end_date=None, rr_status=None, am
         rel["RelationshipQuantifiers"] = {"RelationshipQuantifier": [
             {"MeasurementMethod": {"$": "ACCOUNTING_CONSOLIDATION"}, "QuantifierAmount": {"$": amount}}]}
     rec = {"RelationshipRecord": {"Relationship": rel}}
-    if rr_status:
-        rec["RelationshipRecord"]["Registration"] = {"RegistrationStatus": {"$": rr_status}}
+    registration = {"RegistrationStatus": {"$": rr_status}} if rr_status else {}
+    for key, value in (validation or {}).items():
+        registration[key] = {"$": value}
+    if registration:
+        rec["RelationshipRecord"]["Registration"] = registration
     return rec
 
 
@@ -78,10 +82,11 @@ class TestRelationshipEndDate:
 
 class TestRrDeltaRelationship:
     def test_active_consolidation(self):
-        parent, child, marker, status, _, unmaintained, stake, implausible = _rr_delta_relationship(
-            _rr("IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT"))
+        (parent, child, marker, status, _, unmaintained, stake, implausible,
+         validation) = _rr_delta_relationship(_rr("IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT"))
         assert (parent, child, marker, status) == ("PARENT", "CHILD", "direct", "ACTIVE")
         assert unmaintained is False and stake is None and implausible is False
+        assert validation == {}
 
     def test_ultimate_is_indirect(self):
         parent, child, marker, status, *_ = _rr_delta_relationship(
@@ -103,10 +108,15 @@ class TestRrDeltaRelationship:
 
     def test_the_stated_share_arrives_with_the_record(self):
         assert _rr_delta_relationship(
-            _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", amount="100.00"))[6:] == (100.0, False)
+            _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", amount="100.00"))[6:8] == (100.0, False)
         # refused, flagged — the record still applies, without a stake
         assert _rr_delta_relationship(
-            _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", amount="-1"))[6:] == (None, True)
+            _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", amount="-1"))[6:8] == (None, True)
+
+    def test_how_far_the_record_was_checked_arrives_with_it(self):
+        assert _rr_delta_relationship(_rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", validation={
+            "ValidationSources": "PARTIALLY_CORROBORATED", "ValidationDocuments": "CONTRACTS"}))[8] == {
+                "validation_sources": "PARTIALLY_CORROBORATED", "validation_documents": "CONTRACTS"}
 
     def test_an_annulled_or_duplicate_record_is_skipped(self):
         for st in ("ANNULLED", "DUPLICATE"):

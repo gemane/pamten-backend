@@ -60,6 +60,16 @@ OWNS_PROPS: tuple = (
     "ultimate_until",
     "value_usd",
     "file_date",
+    # How far the register checked the RECORD behind the edge, as the register
+    # states it — GLEIF's `ValidationSources` (FULLY_CORROBORATED /
+    # PARTIALLY_CORROBORATED / ENTITY_SUPPLIED_ONLY / PENDING) and
+    # `ValidationDocuments` (ACCOUNTS_FILING, REGULATORY_FILING, …) of a
+    # relationship record. Provenance, not credibility: 42 % of GLEIF's active
+    # consolidation records are entity-supplied only, so scaling the score by
+    # it would drop them out of the official tier. Belongs to the source holding
+    # the answer (owns_merge.ANSWER_FIELDS).
+    "validation_sources",
+    "validation_documents",
     # Which KIND of record asserted this — "13G/A", "13F", "RR", "PSC". The
     # source names the register; this names the rulebook the fact lives under,
     # which is what a reader needs to judge it (a 13G is a >5% event filing,

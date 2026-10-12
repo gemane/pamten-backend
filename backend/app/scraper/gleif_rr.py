@@ -155,6 +155,33 @@ def _rr_status(rec: dict) -> str | None:
     return _v(reg.get("RegistrationStatus"))
 
 
+# How far the LOU checked the relationship, as the record states it:
+# ``ValidationSources`` (the level) and ``ValidationDocuments`` (what it was
+# checked against). On the 2026-10-06 golden copy the ACTIVE consolidation
+# records split FULLY_CORROBORATED 135,169 / ENTITY_SUPPLIED_ONLY 109,060 /
+# PARTIALLY_CORROBORATED 16,108 — 42 % never checked by anyone but the entity.
+# Kept as provenance on the edge and its claim, the way the entity importer
+# keeps `validation_sources`; NOT folded into the credibility score, which is
+# the official-tier line: a −10 like the entity's name penalty would push
+# 109k edges below it and hand them to the community-tier staleness rules.
+# (``ValidationReference``, the evidence document's URL, is on no record of
+# the golden copy — only the API shows it — so it is not read.)
+_VALIDATION_FIELDS = (("validation_sources", "ValidationSources"),
+                      ("validation_documents", "ValidationDocuments"))
+
+
+def _validation(rec: dict) -> dict:
+    """``{validation_sources, validation_documents}`` of the record — only the
+    keys it states, so an edge without them keeps its exact property set."""
+    reg = (rec.get("RelationshipRecord") or {}).get("Registration") or {}
+    out = {}
+    for prop, key in _VALIDATION_FIELDS:
+        value = _v(reg.get(key))
+        if value:
+            out[prop] = value
+    return out
+
+
 def _v(node: object) -> str | None:
     """Unwrap an RR-CDF value: scalars are wrapped as {"$": value}."""
     if isinstance(node, dict):
@@ -207,8 +234,8 @@ def _record_date(rec: dict) -> str | None:
 
 def _rr_edge(rec: dict) -> tuple | None:
     """(parent_lei, child_lei, direct_or_indirect, since, until, active,
-    record_date, until_reason, unmaintained, stake_percent, implausible) for a
-    consolidation relationship, else None.
+    record_date, until_reason, unmaintained, stake_percent, implausible,
+    validation) for a consolidation relationship, else None.
 
     ``since``/``until`` come from the RELATIONSHIP_PERIOD (the ownership
     start/end date), when present. An INACTIVE relationship is kept — it is
@@ -218,7 +245,8 @@ def _rr_edge(rec: dict) -> tuple | None:
     (``until_reason`` ``gleif_inactive``). ``unmaintained`` is True for a
     LAPSED record (see ``UNMAINTAINED_STATUSES``); an ANNULLED or DUPLICATE
     record is no statement and yields None. ``stake_percent`` is the stated
-    share (``_stake``), ``implausible`` that one was stated and refused."""
+    share (``_stake``), ``implausible`` that one was stated and refused;
+    ``validation`` how far the LOU checked the record (``_validation``)."""
     rel = (rec.get("RelationshipRecord") or {}).get("Relationship") or {}
     marker = _CONSOLIDATION.get(_v(rel.get("RelationshipType")))
     if not marker:
@@ -242,46 +270,51 @@ def _rr_edge(rec: dict) -> tuple | None:
             return None                 # ended, and not even "by when": nothing to draw
     stake, implausible = _stake(rel)
     return (parent, child, marker, since, until, status != "INACTIVE", recorded, reason,
-            rr_status in UNMAINTAINED_STATUSES, stake, implausible)
+            rr_status in UNMAINTAINED_STATUSES, stake, implausible, _validation(rec))
 
 
 #: One pair's two possible assertions: (since, until, record_date, unmaintained,
-#: stake_percent) for the direct record and for the ultimate one, either of
-#: which may be absent. A plain tuple rather than a dict because there is one
-#: of these per relationship pair (~700k on the full golden copy) and a dict
-#: per pair costs several times more.
-_Dates = tuple[str | None, str | None, str | None, bool, float | None]
+#: stake_percent, validation) for the direct record and for the ultimate one,
+#: either of which may be absent. A plain tuple rather than a dict because
+#: there is one of these per relationship pair (~700k on the full golden copy)
+#: and a dict per pair costs several times more.
+_Dates = tuple[str | None, str | None, str | None, bool, float | None, dict]
 _Slot = tuple[_Dates | None, _Dates | None]
+_NO_VALIDATION: dict = {}
 
 
 def _fold(pairs: dict[tuple[str, str], _Slot], parent: str, child: str,
           marker: str, since: str | None, until: str | None,
           recorded: str | None = None, unmaintained: bool = False,
-          stake: float | None = None) -> None:
+          stake: float | None = None, validation: dict | None = None) -> None:
     """Record one ACTIVE RR assertion against its (parent, child) pair.
 
     A repeat of the same relationship type for the same pair overwrites — GLEIF
     should not emit one, and if it does the later record is the newer statement.
     """
     direct, ultimate = pairs.get((parent, child), (None, None))
+    record = (since, until, recorded, unmaintained, stake, validation or _NO_VALIDATION)
     if marker == "direct":
-        direct = (since, until, recorded, unmaintained, stake)
+        direct = record
     else:
-        ultimate = (since, until, recorded, unmaintained, stake)
+        ultimate = record
     pairs[(parent, child)] = (direct, ultimate)
 
 
-def _extras(recorded: str | None, unmaintained: bool, stake: float | None = None) -> dict:
+def _extras(recorded: str | None, unmaintained: bool, stake: float | None = None,
+            validation: dict | None = None) -> dict:
     """The props one record contributes beyond the dates: its evidence date,
-    the ``stale`` mark when the LOU no longer maintains it, and the stated
-    share. ``stake_percent`` rides in the extras so an edge without one keeps
-    the exact property set it had (the bulk writer's None is overridden only
-    when a figure was stated)."""
+    the ``stale`` mark when the LOU no longer maintains it, the stated share
+    and how far the record was checked. They ride in the extras so an edge
+    without them keeps the exact property set it had (the bulk writer's None
+    is overridden only when a figure was stated)."""
     extra: dict = {"source_date": recorded} if recorded else {}
     if unmaintained:
         extra["stale"] = True
     if stake is not None:
         extra["stake_percent"] = stake
+    if validation:
+        extra.update(validation)
     return extra
 
 
@@ -307,13 +340,13 @@ def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
     """
     direct, ultimate = slot
     if direct is None:                      # only the ultimate parent was stated
-        since, until, recorded, unmaintained, stake = ultimate  # type: ignore[misc]  (never both None)
-        return "indirect", since, until, _extras(recorded, unmaintained, stake)
-    since, until, recorded, unmaintained, stake = direct
+        since, until, recorded, unmaintained, stake, validation = ultimate  # type: ignore[misc]  (never both None)
+        return "indirect", since, until, _extras(recorded, unmaintained, stake, validation)
+    since, until, recorded, unmaintained, stake, validation = direct
     if ultimate is None:
-        return "direct", since, until, _extras(recorded, unmaintained, stake)
+        return "direct", since, until, _extras(recorded, unmaintained, stake, validation)
 
-    u_since, u_until, u_recorded, u_unmaintained, u_stake = ultimate
+    u_since, u_until, u_recorded, u_unmaintained, u_stake, u_validation = ultimate
     # The parent has held the child since the EARLIER of the two — indirectly
     # first, perhaps — so the edge starts there: time travel reads `since`,
     # never `ultimate_since`, and a parent at the top since 2005 that became
@@ -334,6 +367,8 @@ def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
         extra["stale"] = True
     if stake is not None or u_stake is not None:
         extra["stake_percent"] = stake if stake is not None else u_stake
+    # the direct record's checking, as its figure: the ultimate's fills a gap
+    extra.update(validation or u_validation)
     return "direct", since, until, extra
 
 
@@ -408,7 +443,8 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
     batch = _BatchWriter()
     seen_nodes: set[str] = set()
     counts = {"records": 0, "direct": 0, "indirect": 0, "skipped": 0, "collapsed": 0,
-              "ended": 0, "annulled": 0, "unmaintained": 0, "with_stake": 0, "implausible": 0}
+              "ended": 0, "annulled": 0, "unmaintained": 0, "with_stake": 0, "implausible": 0,
+              "entity_supplied": 0}
 
     def _node(lei: str) -> None:
         if lei not in seen_nodes:
@@ -444,6 +480,8 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             counts["unmaintained"] += 1
         if extra.get("stake_percent") is not None:
             counts["with_stake"] += 1
+        if extra.get("validation_sources") == "ENTITY_SUPPLIED_ONLY":
+            counts["entity_supplied"] += 1
         _node(parent)
         _node(child)
         _owns(
@@ -481,14 +519,15 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
                 counts["skipped"] += 1
                 continue
             (parent, child, marker, since, until, active, recorded, reason, unmaintained,
-             stake, implausible) = edge
+             stake, implausible, validation) = edge
             if implausible:
                 counts["implausible"] += 1
                 if counts["implausible"] <= 20:
                     log.warning("RR-CDF: refusing an implausible stake on %s → %s "
                                 "(https://search.gleif.org/#/record/%s)", parent, child, child)
             if active:
-                _fold(pairs, parent, child, marker, since, until, recorded, unmaintained, stake)
+                _fold(pairs, parent, child, marker, since, until, recorded, unmaintained, stake,
+                      validation)
             else:
                 ended.append((parent, child, marker, since, until, recorded, reason))
 
@@ -530,7 +569,8 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             f"({counts['collapsed']:,} pairs stated both ways, folded into one), "
             f"{counts['ended']:,} ended relationships, {counts['unmaintained']:,} on "
             f"lapsed records (stale), {counts['annulled']:,} annulled/duplicate skipped, "
-            f"{counts['with_stake']:,} with a stated share ({counts['implausible']:,} refused)")
+            f"{counts['with_stake']:,} with a stated share ({counts['implausible']:,} refused), "
+            f"{counts['entity_supplied']:,} checked by nobody but the entity")
     finally:
         raw.close()
 
@@ -578,8 +618,9 @@ def heal_registration_status(filepath: str, source_id: str, dry_run: bool = Fals
             if not edge or not edge[5]:            # not consolidation, or INACTIVE
                 continue
             (parent, child, marker, since, until, _active, recorded, _reason, unmaintained,
-             stake, _implausible) = edge
-            _fold(pairs, parent, child, marker, since, until, recorded, unmaintained, stake)
+             stake, _implausible, validation) = edge
+            _fold(pairs, parent, child, marker, since, until, recorded, unmaintained, stake,
+                  validation)
     finally:
         raw.close()
     counts["pairs"] = len(pairs)
@@ -616,8 +657,9 @@ def _folded_pairs(filepath: str) -> tuple[dict[tuple[str, str], _Slot], int]:
             if not edge or not edge[5]:            # not consolidation, or INACTIVE
                 continue
             (parent, child, marker, since, until, _active, recorded, _reason, unmaintained,
-             stake, _implausible) = edge
-            _fold(pairs, parent, child, marker, since, until, recorded, unmaintained, stake)
+             stake, _implausible, validation) = edge
+            _fold(pairs, parent, child, marker, since, until, recorded, unmaintained, stake,
+                  validation)
     finally:
         raw.close()
     return pairs, records
@@ -655,4 +697,40 @@ def heal_stakes(filepath: str, source_id: str, dry_run: bool = False, run=None) 
         n = int((rows or [{}])[0].get("n") or 0)
         counts["filled" if n else "already"] += 1
     log.info("RR stake heal: %s", counts)
+    return counts
+
+
+def heal_validation(filepath: str, source_id: str, dry_run: bool = False, run=None) -> dict:
+    """Fill how far the LOU checked the record onto the RR edges of a database
+    loaded before the import read it — one pass over the current golden copy
+    (``manage.py gleif-rr-validation``).
+
+    Fill-only on the pair's open edge **whose answer GLEIF holds**: an edge
+    already carrying a level keeps it. Idempotent; ``dry_run`` counts and
+    writes nothing; the daily delta keeps it current afterwards. ``run`` is
+    the caller's run_command (the one its tests mock).
+    """
+    if run is None:
+        from app.db.arcadedb import run_command as run
+    from app.merged_ids import canonical_id
+    pairs, records = _folded_pairs(filepath)
+    stated = sorted((pc, extra) for pc, extra in
+                    ((pc, _collapse(slot)[3]) for pc, slot in pairs.items())
+                    if extra.get("validation_sources"))
+    counts = {"records": records, "pairs": len(pairs), "with_validation": len(stated), "filled": 0,
+              "already": 0, "dry_run": dry_run}
+    if dry_run:
+        return counts
+    for (parent, child), extra in stated:
+        rows = run(
+            "MATCH (a:Entity {id: $p})-[r:OWNS]->(b:Entity {id: $c}) "
+            "WHERE r.source_id = $src AND r.filing_type = 'RR' AND r.until IS NULL "
+            "AND r.validation_sources IS NULL "
+            "SET r.validation_sources = $vs, r.validation_documents = $vd RETURN count(r) AS n",
+            {"p": canonical_id(f"lei:{parent}"), "c": canonical_id(f"lei:{child}"),
+             "src": source_id, "vs": extra.get("validation_sources"),
+             "vd": extra.get("validation_documents")})
+        n = int((rows or [{}])[0].get("n") or 0)
+        counts["filled" if n else "already"] += 1
+    log.info("RR validation heal: %s", counts)
     return counts

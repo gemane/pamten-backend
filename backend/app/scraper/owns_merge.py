@@ -54,6 +54,8 @@ ANSWER_FIELDS: tuple = (
     "filing_type",
     # how reliably that source's values were read (edge_schema.READ_GRADES)
     "read_from",
+    # how far the register checked the record (edge_schema)
+    "validation_sources", "validation_documents",
 )
 
 #: The start date and how it is known — combined across sources.

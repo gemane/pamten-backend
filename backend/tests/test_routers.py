@@ -462,6 +462,27 @@ def test_sources_for_entity_returns_provenance(client, fake_db):
     assert row["last_scraped_at"].startswith("2026-07-12")  # when we last checked it
 
 
+def test_sources_for_entity_carries_how_far_the_register_checked_the_record(client, fake_db):
+    # A GLEIF relationship claim says how far the LOU checked it; the row
+    # passes it through (42 % of GLEIF's ownership is entity-supplied only).
+    fake_db.queue([
+        {
+            "id": "s3", "name": "GLEIF", "type": "register", "credibility_score": 92,
+            "source_home_url": "https://www.gleif.org",
+            "source_url": "https://search.gleif.org/#/record/X", "source_date": "2023-06-02",
+            "last_scraped_at": "2026-10-13T00:00:00+00:00", "filing_type": "RR",
+            "read_from": "field", "validation_sources": "ENTITY_SUPPLIED_ONLY",
+            "validation_documents": "OTHER_OFFICIAL_DOCUMENTS",
+        },
+    ])
+    r = client.get("/sources/entity/e1")
+    assert r.status_code == 200
+    row = r.json()[0]
+    assert row["validation_sources"] == "ENTITY_SUPPLIED_ONLY"
+    assert row["validation_documents"] == "OTHER_OFFICIAL_DOCUMENTS"
+    assert row["credibility_score"] == 92
+
+
 def test_sources_for_entity_falls_back_to_home_url(client, fake_db):
     # Older/manual data has no per-edge source_url → fall back to the source home.
     fake_db.queue([

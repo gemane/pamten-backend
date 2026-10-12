@@ -193,6 +193,8 @@ class _BatchWriter:
             credibility_score=props.get("credibility_score") or 80,
             filing_type=props.get("filing_type"),
             read_from=props.get("read_from"),
+            validation_sources=props.get("validation_sources"),
+            validation_documents=props.get("validation_documents"),
         ))
 
     def entity(self, node_id: str, props: dict) -> None:
