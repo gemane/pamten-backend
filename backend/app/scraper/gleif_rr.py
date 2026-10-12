@@ -95,6 +95,27 @@ _CONSOLIDATION = {
     "IS_ULTIMATELY_CONSOLIDATED_BY": "indirect",
 }
 
+# The relationship RECORD's own registration status (``Registration.
+# RegistrationStatus``) — a different fact from ``RelationshipStatus``, which
+# says whether the relationship holds. GLEIF defines LAPSED as "not renewed by
+# its NextRenewalDate": the LOU stopped maintaining the record, so its ACTIVE
+# is the last word, not a current one — Metaswitch Networks Ltd still reads
+# "consolidated by Microsoft" on a record last updated 2023-06-02, while
+# Companies House records its sale to Alianza in 2025-03. Such an edge is
+# drawn ``stale``: dimmed, dated by its ``source_date``, never closed (nobody
+# stated an end). ANNULLED ("erroneous or invalid after it was issued") and
+# DUPLICATE (the non-surviving copy of another record) are not statements at
+# all and draw nothing. RETIRED records carry RelationshipStatus INACTIVE and
+# are history as before.
+UNMAINTAINED_STATUSES = frozenset({"LAPSED"})
+NOT_A_STATEMENT = frozenset({"ANNULLED", "DUPLICATE"})
+
+
+def _rr_status(rec: dict) -> str | None:
+    """The record's own ``RegistrationStatus`` (PUBLISHED, LAPSED, RETIRED, …)."""
+    reg = (rec.get("RelationshipRecord") or {}).get("Registration") or {}
+    return _v(reg.get("RegistrationStatus"))
+
 
 def _v(node: object) -> str | None:
     """Unwrap an RR-CDF value: scalars are wrapped as {"$": value}."""
@@ -148,17 +169,23 @@ def _record_date(rec: dict) -> str | None:
 
 def _rr_edge(rec: dict) -> tuple | None:
     """(parent_lei, child_lei, direct_or_indirect, since, until, active,
-    record_date, until_reason) for a consolidation relationship, else None.
+    record_date, until_reason, unmaintained) for a consolidation relationship,
+    else None.
 
     ``since``/``until`` come from the RELATIONSHIP_PERIOD (the ownership
     start/end date), when present. An INACTIVE relationship is kept — it is
     the history time travel shows, and dropping it meant a holding sold in
     2020 never existed in 2015 — with its stated end, or, when GLEIF states
     none, the record's last update as the day it had ended BY
-    (``until_reason`` ``gleif_inactive``)."""
+    (``until_reason`` ``gleif_inactive``). ``unmaintained`` is True for a
+    LAPSED record (see ``UNMAINTAINED_STATUSES``); an ANNULLED or DUPLICATE
+    record is no statement and yields None."""
     rel = (rec.get("RelationshipRecord") or {}).get("Relationship") or {}
     marker = _CONSOLIDATION.get(_v(rel.get("RelationshipType")))
     if not marker:
+        return None
+    rr_status = _rr_status(rec)
+    if rr_status in NOT_A_STATEMENT:
         return None
     status = _v(rel.get("RelationshipStatus"))
     if status not in (None, "ACTIVE", "INACTIVE"):
@@ -174,21 +201,22 @@ def _rr_edge(rec: dict) -> tuple | None:
         until, reason = recorded, "gleif_inactive"
         if not until:
             return None                 # ended, and not even "by when": nothing to draw
-    return parent, child, marker, since, until, status != "INACTIVE", recorded, reason
+    return (parent, child, marker, since, until, status != "INACTIVE", recorded, reason,
+            rr_status in UNMAINTAINED_STATUSES)
 
 
-#: One pair's two possible assertions: (since, until, record_date) for the
-#: direct record and for the ultimate one, either of which may be absent. A
-#: plain tuple rather than a dict because there is one of these per
+#: One pair's two possible assertions: (since, until, record_date, unmaintained)
+#: for the direct record and for the ultimate one, either of which may be
+#: absent. A plain tuple rather than a dict because there is one of these per
 #: relationship pair (~700k on the full golden copy) and a dict per pair costs
 #: several times more.
-_Dates = tuple[str | None, str | None, str | None]
+_Dates = tuple[str | None, str | None, str | None, bool]
 _Slot = tuple[_Dates | None, _Dates | None]
 
 
 def _fold(pairs: dict[tuple[str, str], _Slot], parent: str, child: str,
           marker: str, since: str | None, until: str | None,
-          recorded: str | None = None) -> None:
+          recorded: str | None = None, unmaintained: bool = False) -> None:
     """Record one ACTIVE RR assertion against its (parent, child) pair.
 
     A repeat of the same relationship type for the same pair overwrites — GLEIF
@@ -196,10 +224,19 @@ def _fold(pairs: dict[tuple[str, str], _Slot], parent: str, child: str,
     """
     direct, ultimate = pairs.get((parent, child), (None, None))
     if marker == "direct":
-        direct = (since, until, recorded)
+        direct = (since, until, recorded, unmaintained)
     else:
-        ultimate = (since, until, recorded)
+        ultimate = (since, until, recorded, unmaintained)
     pairs[(parent, child)] = (direct, ultimate)
+
+
+def _extras(recorded: str | None, unmaintained: bool) -> dict:
+    """The props one record contributes beyond the dates: its evidence date,
+    and the ``stale`` mark when the LOU no longer maintains it."""
+    extra: dict = {"source_date": recorded} if recorded else {}
+    if unmaintained:
+        extra["stale"] = True
+    return extra
 
 
 def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
@@ -216,16 +253,20 @@ def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
     holding dissolves and makes it the ultimate one — so a differing period is kept
     as ``ultimate_since`` / ``ultimate_until`` rather than silently dropped, and an
     ultimate date fills a gap where the direct record is silent.
+
+    The edge is ``stale`` only when EVERY record it stands on has lapsed: a
+    maintained ultimate record still confirms the pair the direct one no
+    longer does.
     """
     direct, ultimate = slot
     if direct is None:                      # only the ultimate parent was stated
-        since, until, recorded = ultimate  # type: ignore[misc]  (never both None)
-        return "indirect", since, until, ({"source_date": recorded} if recorded else {})
-    since, until, recorded = direct
+        since, until, recorded, unmaintained = ultimate  # type: ignore[misc]  (never both None)
+        return "indirect", since, until, _extras(recorded, unmaintained)
+    since, until, recorded, unmaintained = direct
     if ultimate is None:
-        return "direct", since, until, ({"source_date": recorded} if recorded else {})
+        return "direct", since, until, _extras(recorded, unmaintained)
 
-    u_since, u_until, u_recorded = ultimate
+    u_since, u_until, u_recorded, u_unmaintained = ultimate
     # The parent has held the child since the EARLIER of the two — indirectly
     # first, perhaps — so the edge starts there: time travel reads `since`,
     # never `ultimate_since`, and a parent at the top since 2005 that became
@@ -242,6 +283,8 @@ def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
         extra["ultimate_since"] = u_since
     if u_until and u_until != until:
         extra["ultimate_until"] = u_until
+    if unmaintained and u_unmaintained:
+        extra["stale"] = True
     return "direct", since, until, extra
 
 
@@ -263,6 +306,24 @@ def _family_of(seeds: set[str], children: dict, parents: dict) -> set[str]:
                 family.add(p)
                 up.append(p)
     return family
+
+
+def _open_rr_file(filepath: str) -> tuple[IO[bytes], int]:
+    """The RR-CDF golden copy as a byte stream plus its uncompressed size — a
+    ``.json`` or the ``.zip`` GLEIF publishes, read without unpacking it."""
+    if filepath.lower().endswith(".zip"):
+        zf = zipfile.ZipFile(filepath)
+        names = [n for n in zf.namelist() if n.lower().endswith(".json")]
+        if not names:
+            raise ValueError(f"No .json file found inside ZIP: {filepath}")
+        entry = names[0]
+        total_bytes = zf.getinfo(entry).file_size
+        raw: IO[bytes] = zf.open(entry)
+        log.info("RR-CDF: reading %s (%s bytes uncompressed)", entry, f"{total_bytes:,}")
+    else:
+        total_bytes = os.path.getsize(filepath)
+        raw = open(filepath, "rb")  # noqa: WPS515
+    return raw, total_bytes
 
 
 def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
@@ -293,23 +354,12 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
     1.1GB golden copy (481,903 records → 168,812 pairs): **0.12 GB peak RSS**, so
     this is comfortable on a small server.
     """
-    if filepath.lower().endswith(".zip"):
-        zf = zipfile.ZipFile(filepath)
-        names = [n for n in zf.namelist() if n.lower().endswith(".json")]
-        if not names:
-            raise ValueError(f"No .json file found inside ZIP: {filepath}")
-        entry = names[0]
-        total_bytes = zf.getinfo(entry).file_size
-        raw: IO[bytes] = zf.open(entry)
-        log.info("RR-CDF: reading %s (%s bytes uncompressed)", entry, f"{total_bytes:,}")
-    else:
-        total_bytes = os.path.getsize(filepath)
-        raw = open(filepath, "rb")  # noqa: WPS515
+    raw, total_bytes = _open_rr_file(filepath)
 
     batch = _BatchWriter()
     seen_nodes: set[str] = set()
     counts = {"records": 0, "direct": 0, "indirect": 0, "skipped": 0, "collapsed": 0,
-              "ended": 0}
+              "ended": 0, "annulled": 0, "unmaintained": 0}
 
     def _node(lei: str) -> None:
         if lei not in seen_nodes:
@@ -341,6 +391,8 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         counts["direct" if marker == "direct" else "indirect"] += 1
         if extra.get("also_ultimate"):
             counts["collapsed"] += 1
+        if extra.get("stale"):
+            counts["unmaintained"] += 1
         _node(parent)
         _node(child)
         _owns(
@@ -370,13 +422,16 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
             if limit and counts["records"] >= limit:
                 break
             counts["records"] += 1
+            if _rr_status(rec) in NOT_A_STATEMENT:
+                counts["annulled"] += 1
+                continue
             edge = _rr_edge(rec)
             if not edge:
                 counts["skipped"] += 1
                 continue
-            parent, child, marker, since, until, active, recorded, reason = edge
+            parent, child, marker, since, until, active, recorded, reason, unmaintained = edge
             if active:
-                _fold(pairs, parent, child, marker, since, until, recorded)
+                _fold(pairs, parent, child, marker, since, until, recorded, unmaintained)
             else:
                 ended.append((parent, child, marker, since, until, recorded, reason))
 
@@ -416,7 +471,8 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         write_bar.finish(
             f"{counts['direct']:,} direct + {counts['indirect']:,} indirect edges "
             f"({counts['collapsed']:,} pairs stated both ways, folded into one), "
-            f"{counts['ended']:,} ended relationships")
+            f"{counts['ended']:,} ended relationships, {counts['unmaintained']:,} on "
+            f"lapsed records (stale), {counts['annulled']:,} annulled/duplicate skipped")
     finally:
         raw.close()
 
@@ -431,3 +487,55 @@ def import_rr_cdf(filepath: str, source_id: str, credibility_score: int,
         result["family"] = len(family)
     log.info("RR-CDF import done: %s", result)
     return result
+
+
+def heal_registration_status(filepath: str, source_id: str, dry_run: bool = False,
+                             run=None) -> dict:
+    """Stamp ``stale`` on the RR edges of a database loaded before the import
+    read the record's registration status — one pass over the current golden
+    copy (``manage.py gleif-rr-status``).
+
+    Reads the file the way the import does (pairs folded; a pair unmaintained
+    only when every record it stands on is LAPSED) and marks each such pair's
+    open edge **whose answer GLEIF holds** (``source_id``): a pair another
+    source drew keeps that source's mark. Marks only — the daily delta clears
+    a mark when the record is renewed, because a renewal changes the record
+    and changed records are what a delta carries. Idempotent; ``dry_run``
+    counts and writes nothing. ``run`` is the caller's run_command (the one
+    its tests mock).
+    """
+    if run is None:
+        from app.db.arcadedb import run_command as run
+    from app.merged_ids import canonical_id
+    raw, _total = _open_rr_file(filepath)
+    pairs: dict[tuple[str, str], _Slot] = {}
+    counts = {"records": 0, "pairs": 0, "unmaintained": 0, "marked": 0, "not_here": 0,
+              "dry_run": dry_run}
+    try:
+        for rec in ijson.items(raw, "relations.item"):
+            counts["records"] += 1
+            if _rr_status(rec) in NOT_A_STATEMENT:
+                continue
+            edge = _rr_edge(rec)
+            if not edge or not edge[5]:            # not consolidation, or INACTIVE
+                continue
+            parent, child, marker, since, until, _active, recorded, _reason, unmaintained = edge
+            _fold(pairs, parent, child, marker, since, until, recorded, unmaintained)
+    finally:
+        raw.close()
+    counts["pairs"] = len(pairs)
+    unmaintained_pairs = sorted(pc for pc, slot in pairs.items() if _collapse(slot)[3].get("stale"))
+    counts["unmaintained"] = len(unmaintained_pairs)
+    if dry_run:
+        return counts
+    for parent, child in unmaintained_pairs:
+        rows = run(
+            "MATCH (a:Entity {id: $p})-[r:OWNS]->(b:Entity {id: $c}) "
+            "WHERE r.source_id = $src AND r.filing_type = 'RR' AND r.until IS NULL "
+            "SET r.stale = true RETURN count(r) AS n",
+            {"p": canonical_id(f"lei:{parent}"), "c": canonical_id(f"lei:{child}"),
+             "src": source_id})
+        n = int((rows or [{}])[0].get("n") or 0)
+        counts["marked" if n else "not_here"] += 1
+    log.info("RR registration status heal: %s", counts)
+    return counts

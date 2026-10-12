@@ -57,3 +57,33 @@ def test_imports_entities_and_names_existing_placeholder(it_db, tmp_path):
     assert child["name"] == "Nestlé Subsidiary SA"
     assert child["type"] == "holding"      # not clobbered (no legal-form refinement)
     assert child["verified"] is True       # preserved
+
+
+def test_the_full_load_stamps_the_registers_own_status(it_db, tmp_path):
+    """`active` and `gleif_registration_status` on the full load, as the delta
+    has always done — a rebuilt database used to carry neither."""
+    from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
+
+    records = [
+        {"LEI": _w("ACTIVELEI000000000011"),
+         "Entity": {"LegalName": _w("Here Ltd"), "LegalJurisdiction": _w("GB"),
+                    "EntityStatus": _w("ACTIVE")},
+         "Registration": {"RegistrationStatus": _w("LAPSED")}},
+        {"LEI": _w("GONELEI0000000000012"),
+         "Entity": {"LegalName": _w("Gone Ltd"), "LegalJurisdiction": _w("GB"),
+                    "EntityStatus": _w("INACTIVE")},
+         "Registration": {"RegistrationStatus": _w("RETIRED")}},
+    ]
+    zpath = tmp_path / "lei2-status.json.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("lei2.json", json.dumps({"records": records}))
+    result = import_lei_cdf_entities(str(zpath), "gleif", 92)
+    assert result["entities"] == 2 and result["inactive"] == 1
+
+    rows = {r["id"]: r for r in it_db.run_command(
+        "MATCH (e:Entity) WHERE e.id IN ['lei:ACTIVELEI000000000011', 'lei:GONELEI0000000000012'] "
+        "RETURN e.id AS id, e.active AS active, e.gleif_registration_status AS reg")}
+    assert rows["lei:ACTIVELEI000000000011"]["active"] is True
+    assert rows["lei:ACTIVELEI000000000011"]["reg"] == "LAPSED"
+    assert rows["lei:GONELEI0000000000012"]["active"] is False
+    assert rows["lei:GONELEI0000000000012"]["reg"] == "RETIRED"

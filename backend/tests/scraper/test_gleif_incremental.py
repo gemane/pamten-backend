@@ -21,7 +21,7 @@ from app.scraper.gleif_incremental import (
 )
 
 
-def _rr(rtype, child, parent, status="ACTIVE", end_date=None):
+def _rr(rtype, child, parent, status="ACTIVE", end_date=None, rr_status=None):
     rel = {
         "StartNode": {"NodeID": {"$": child}, "NodeIDType": {"$": "LEI"}},
         "EndNode":   {"NodeID": {"$": parent}, "NodeIDType": {"$": "LEI"}},
@@ -33,7 +33,10 @@ def _rr(rtype, child, parent, status="ACTIVE", end_date=None):
             {"PeriodType": {"$": "ACCOUNTING_PERIOD"}, "EndDate": {"$": "2020-12-31"}},
             {"PeriodType": {"$": "RELATIONSHIP_PERIOD"}, "EndDate": {"$": end_date}},
         ]}
-    return {"RelationshipRecord": {"Relationship": rel}}
+    rec = {"RelationshipRecord": {"Relationship": rel}}
+    if rr_status:
+        rec["RelationshipRecord"]["Registration"] = {"RegistrationStatus": {"$": rr_status}}
+    return rec
 
 
 class TestRegistrationStatus:
@@ -72,20 +75,33 @@ class TestRelationshipEndDate:
 
 class TestRrDeltaRelationship:
     def test_active_consolidation(self):
-        parent, child, marker, status, _ = _rr_delta_relationship(
+        parent, child, marker, status, _, unmaintained = _rr_delta_relationship(
             _rr("IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT"))
         assert (parent, child, marker, status) == ("PARENT", "CHILD", "direct", "ACTIVE")
+        assert unmaintained is False
 
     def test_ultimate_is_indirect(self):
-        parent, child, marker, status, _ = _rr_delta_relationship(
+        parent, child, marker, status, _, _ = _rr_delta_relationship(
             _rr("IS_ULTIMATELY_CONSOLIDATED_BY", "CHILD", "PARENT"))
         assert (marker, status) == ("indirect", "ACTIVE")
 
     def test_inactive_status_preserved(self):
-        _, _, _, status, rel = _rr_delta_relationship(
+        _, _, _, status, rel, _ = _rr_delta_relationship(
             _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", status="INACTIVE", end_date="2023-06-01"))
         assert status == "INACTIVE"
         assert _relationship_end_date(rel) == "2023-06-01"
+
+    def test_a_lapsed_record_arrives_unmaintained(self):
+        # the record that lapses is in that day's delta: the flag rides along
+        assert _rr_delta_relationship(
+            _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status="LAPSED"))[5] is True
+        assert _rr_delta_relationship(
+            _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status="PUBLISHED"))[5] is False
+
+    def test_an_annulled_or_duplicate_record_is_skipped(self):
+        for st in ("ANNULLED", "DUPLICATE"):
+            assert _rr_delta_relationship(
+                _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status=st)) is None
 
     def test_non_consolidation_skipped(self):
         assert _rr_delta_relationship(_rr("IS_FUND-MANAGED_BY", "C", "P")) is None

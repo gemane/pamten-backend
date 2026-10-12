@@ -326,6 +326,19 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         and what ended is simply gone from it. Look for the source's archive of
         old snapshots (GLEIF keeps every publish since 2018, `gleif-rr-history`
         diffs one a month); deltas usually only cover the last days.
+      - **A register record has a status of its own — read it.** Beside the fact
+        (GLEIF's `RelationshipStatus`: does the relationship hold) the record says
+        whether anyone still maintains it (`Registration.RegistrationStatus`).
+        LAPSED = "not renewed by its NextRenewalDate": the ACTIVE on it is the last
+        word, not a current one — Metaswitch "consolidated by Microsoft" since a
+        record last updated 2023-06-02, sold in 2025 — and it was a fifth of all
+        GLEIF relationship records, a quarter of the ownership edges, read as
+        current for a year. Draw such an edge `stale` (dimmed, dated by the
+        record's last update), never closed; ANNULLED/DUPLICATE records are no
+        statement at all. Count the statuses over the whole file before deciding
+        (`~/.cache/gleif-audit/scan.py` is the shape), and stamp them on EVERY
+        path that writes the source — the delta had carried the entity status
+        for months while the full load did not.
       - **An archived snapshot can be broken, and records flicker.** Diffing
         snapshots turns every missing record into an ending, so check two things
         before believing one. A **dip** (smaller than the month before, back the

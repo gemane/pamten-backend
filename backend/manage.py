@@ -9,6 +9,7 @@ Usage:
   python3 manage.py normalize-nationalities
   python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
+  python3 manage.py gleif-rr-status --file F  # once: mark edges on LAPSED GLEIF records stale
   python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
   python3 manage.py ch-psc-update [options]   # UK PSC incremental refresh (snapshot diff)
   python3 manage.py quality-report            # data quality as numbers
@@ -65,6 +66,21 @@ def cmd_gleif_rr(args):
                                     emit_leis_path=getattr(args, "emit_leis", None)))
     if result is not None:
         print(result)
+
+def cmd_gleif_rr_status(args):
+    """Mark the GLEIF edges whose relationship record has LAPSED as `stale`
+    (`gleif_rr.heal_registration_status`) — once, on a database loaded before
+    the RR import read the record's registration status (2026-10-13). The full
+    import and the daily delta stamp it themselves since. `--dry-run` only counts."""
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    from app.scraper.runner import run_gleif_rr_status
+    result = _run_guarded_import("gleif-rr-status",
+        lambda: run_gleif_rr_status(local_file=args.file, dry_run=args.dry_run))
+    if result is not None:
+        print(result)
+
 
 def cmd_gleif_rr_history(args):
     """GLEIF relationship history from the golden-copy archive (once, after
@@ -1272,6 +1288,13 @@ def _build_parser():
     p_rr.add_argument('--only', help='Comma-separated seed LEIs — import their whole corporate family')
     p_rr.add_argument('--only-file', help='File of seed LEIs (one per line, # comments) — their corporate family')
     p_rr.add_argument('--emit-leis', help='With --only: write the family LEIs here (feed to gleif-lei-cdf --only-file to name them)')
+
+    # gleif-rr-status command (one-off heal: edges on LAPSED records → stale)
+    p_rr_status = subparsers.add_parser('gleif-rr-status',
+        help='Mark GLEIF edges whose relationship record has LAPSED as stale — once, on a database loaded before 2026-10-13')
+    p_rr_status.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
+    p_rr_status.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
+    p_rr_status.set_defaults(func=cmd_gleif_rr_status)
     p_rr.set_defaults(func=cmd_gleif_rr)
 
     p_rh = subparsers.add_parser('gleif-rr-history',

@@ -224,6 +224,16 @@ def _lei_registration_date(rec: dict) -> str | None:
     return d[:10] if d and len(d) >= 10 else None
 
 
+def _registration_status(rec: dict) -> str | None:
+    """The LEI's own ``RegistrationStatus`` (ISSUED, LAPSED, RETIRED, MERGED, …)."""
+    return _v((rec.get("Registration") or {}).get("RegistrationStatus"))
+
+
+def _entity_status(rec: dict) -> str | None:
+    """``EntityStatus``: ACTIVE, or INACTIVE once the entity has ceased."""
+    return _v((rec.get("Entity") or {}).get("EntityStatus"))
+
+
 def _validation_sources(rec: dict) -> str | None:
     """GLEIF's `ValidationSources` for this record, e.g. 'FULLY_CORROBORATED'.
 
@@ -333,6 +343,15 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "founded": _founded(entity),
         "founded_date": _founded_date(entity),
         "lei_registration_date": _lei_registration_date(rec),
+        # The register's own word on the record, stamped by BOTH the full load
+        # and the daily delta: until 2026-10-13 only the delta did, so a rebuilt
+        # database carried neither until a record happened to change. `active`
+        # is false once GLEIF says the entity ceased (EntityStatus INACTIVE);
+        # the registration status (ISSUED, LAPSED, RETIRED, …) is kept as
+        # stated — LAPSED means the LOU no longer maintains the record, which
+        # is what makes its relationship records stale (gleif_rr).
+        "gleif_registration_status": _registration_status(rec) or "",
+        "active": _entity_status(rec) != "INACTIVE",
         "lei_id": lei,
         "source_id": source_id,
         # Deep-link to this company's GLEIF record, not the source home page — the
@@ -468,7 +487,7 @@ def import_lei_cdf_entities(
         raw = open(filepath, "rb")  # noqa: WPS515
 
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
-    counts = {"records": 0, "entities": 0, "skipped": 0}
+    counts = {"records": 0, "entities": 0, "skipped": 0, "inactive": 0}
     if bulk_load:
         _drop_secondary_indexes()
     batch = _BatchWriter()
@@ -493,8 +512,11 @@ def import_lei_cdf_entities(
                 continue
             batch.entity(node_id, props)
             counts["entities"] += 1
+            if not props["active"]:
+                counts["inactive"] += 1
         batch.flush()
-        msg = f"{counts['records']:,} records, {counts['entities']:,} entities"
+        msg = (f"{counts['records']:,} records, {counts['entities']:,} entities "
+               f"({counts['inactive']:,} inactive)")
         if bar:
             bar.finish(msg)
         else:

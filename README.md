@@ -305,7 +305,11 @@ them in seconds/minutes.
 It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` edge
 **closed** (`until` set to the relationship's end date), and a dissolved LEI is
 **marked** (`active=false`), never deleted (GLEIF never deletes; merges flow through
-`SUCCEEDED_BY`). Writes are idempotent (re-applying a delta never duplicates), so no
+`SUCCEEDED_BY`). A relationship record GLEIF no longer maintains (registration
+status **LAPSED** — a fifth of all records, a quarter of the ownership edges) is
+drawn **stale**: dimmed, dated by the record's last update, never closed; the full
+load and the delta both set and clear the mark. A database loaded before
+2026-10-13 gets it once from `manage.py gleif-rr-status --file <rr golden copy>`. Writes are idempotent (re-applying a delta never duplicates), so no
 `--bulk-load` and no whole-DB dedup. `~/scripts/cron-gleif-update.sh` (flock + log →
 a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
 

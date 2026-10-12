@@ -18,7 +18,7 @@ def _w(v):
     return {"$": v}
 
 
-def _rec(rtype, child, parent, start=None):
+def _rec(rtype, child, parent, start=None, rr_status=None, updated=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
@@ -29,7 +29,15 @@ def _rec(rtype, child, parent, start=None):
         rel["RelationshipPeriods"] = {"RelationshipPeriod": [
             {"PeriodType": _w("RELATIONSHIP_PERIOD"), "StartDate": _w(start)},
         ]}
-    return {"RelationshipRecord": {"Relationship": rel}}
+    rec = {"RelationshipRecord": {"Relationship": rel}}
+    registration = {}
+    if rr_status:
+        registration["RegistrationStatus"] = _w(rr_status)
+    if updated:
+        registration["LastUpdateDate"] = _w(updated)
+    if registration:
+        rec["RelationshipRecord"]["Registration"] = registration
+    return rec
 
 
 def _rr_zip(tmp_path):
@@ -119,3 +127,89 @@ def test_a_differing_ultimate_period_survives_on_the_edge(it_db, tmp_path):
     assert len(edges) == 1
     assert edges[0]["since"] == "2015-03-04"    # the direct relationship period
     assert edges[0]["ult"] == "2018-06-01"      # the ultimate one, not lost
+
+
+def _zip_of(tmp_path, name, records):
+    zpath = tmp_path / name
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("rr.json", json.dumps({"relations": records}))
+    return str(zpath)
+
+
+def _edge(it_db, parent, child):
+    rows = it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "RETURN r.stale AS stale, r.source_date AS sd, r.until AS until, r.source_id AS src",
+        {"p": f"lei:{parent}", "c": f"lei:{child}"})
+    return rows[0] if rows else None
+
+
+# ── The record's own registration status ─────────────────────────────────────
+#
+# GLEIF's LAPSED = "not renewed by its NextRenewalDate": the LOU stopped
+# maintaining the record, so its ACTIVE relationship is the last word, not a
+# current one (Metaswitch "consolidated by Microsoft", last updated 2023-06-02,
+# sold 2025-03). 62,934 of ~260k active consolidation records on 2026-10-06.
+
+LAPSED_CHILD = "LAPSEDCHILD000000001"
+FRESH_CHILD = "FRESHCHILD0000000002"
+PARENT = "PARENTLEI00000000003"
+ANNULLED_CHILD = "ANNULLEDCHILD0000004"
+
+
+def test_an_edge_on_a_lapsed_record_is_drawn_stale_and_dated(it_db, tmp_path):
+    from app.scraper.gleif_rr import import_rr_cdf
+
+    res = import_rr_cdf(_zip_of(tmp_path, "rr-status.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", LAPSED_CHILD, PARENT, start="2022-04-11T19:51:10Z",
+             rr_status="LAPSED", updated="2023-06-02T00:10:55Z"),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", FRESH_CHILD, PARENT, rr_status="PUBLISHED",
+             updated="2026-09-01T00:00:00Z"),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", ANNULLED_CHILD, PARENT, rr_status="ANNULLED"),
+    ]), "gleif-src", 92)
+    assert res["edges"] == 2 and res["unmaintained"] == 1 and res["annulled"] == 1
+
+    lapsed = _edge(it_db, PARENT, LAPSED_CHILD)
+    assert lapsed["stale"] is True
+    assert lapsed["sd"] == "2023-06-02"          # the evidence date time travel dims after
+    assert lapsed["until"] is None               # unmaintained, not ended
+    fresh = _edge(it_db, PARENT, FRESH_CHILD)
+    assert not fresh["stale"]
+    assert _edge(it_db, PARENT, ANNULLED_CHILD) is None   # no statement, no edge
+
+
+def test_the_heal_marks_an_edge_drawn_before_the_status_was_read(it_db, tmp_path):
+    """A database loaded by the old importer: the same pairs, no mark. One pass
+    over the current golden copy stamps them; a pair another source holds and
+    a pair with a maintained record are left alone; a dry run writes nothing."""
+    from app.scraper.gleif_rr import heal_registration_status, import_rr_cdf
+
+    # the old world: records without a status field, nothing stale
+    import_rr_cdf(_zip_of(tmp_path, "rr-old.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", LAPSED_CHILD, PARENT),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", FRESH_CHILD, PARENT),
+    ]), "gleif-src", 92)
+    assert not _edge(it_db, PARENT, LAPSED_CHILD)["stale"]
+    # a pair another source drew for the same parent
+    it_db.run_command(
+        "MATCH (a:Entity {id:$p}) CREATE (o:Entity {id:$c, name:'Other Co', lei_id:$lei}) "
+        "CREATE (a)-[:OWNS {source_id:'sec-src', filing_type:'EX-21', ownership_type:'controlling'}]->(o)",
+        {"p": f"lei:{PARENT}", "c": "lei:OTHERSRC00000000005", "lei": "OTHERSRC00000000005"})
+
+    today = _zip_of(tmp_path, "rr-today.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", LAPSED_CHILD, PARENT, rr_status="LAPSED"),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", FRESH_CHILD, PARENT, rr_status="PUBLISHED"),
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", "OTHERSRC00000000005", PARENT, rr_status="LAPSED"),
+    ])
+    dry = heal_registration_status(today, "gleif-src", dry_run=True)
+    assert dry["unmaintained"] == 2 and dry["marked"] == 0
+    assert not _edge(it_db, PARENT, LAPSED_CHILD)["stale"]
+
+    res = heal_registration_status(today, "gleif-src")
+    assert res["unmaintained"] == 2 and res["marked"] == 1 and res["not_here"] == 1
+    assert _edge(it_db, PARENT, LAPSED_CHILD)["stale"] is True
+    assert not _edge(it_db, PARENT, FRESH_CHILD)["stale"]
+    assert not _edge(it_db, PARENT, "OTHERSRC00000000005")["stale"]   # SEC's edge, SEC's mark
+    # idempotent
+    again = heal_registration_status(today, "gleif-src")
+    assert again["marked"] == 1 and _edge(it_db, PARENT, LAPSED_CHILD)["stale"] is True
