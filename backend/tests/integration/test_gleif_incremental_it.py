@@ -39,7 +39,7 @@ def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None):
 
 
 def _rel(child, parent, status="ACTIVE", end_date=None,
-         rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None):
+         rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None, rr_status=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
@@ -53,7 +53,10 @@ def _rel(child, parent, status="ACTIVE", end_date=None,
         if end_date:
             period["EndDate"] = _w(end_date)
         rel["RelationshipPeriods"] = {"RelationshipPeriod": period}
-    return {"RelationshipRecord": {"Relationship": rel}}
+    rec = {"RelationshipRecord": {"Relationship": rel}}
+    if rr_status:
+        rec["RelationshipRecord"]["Registration"] = {"RegistrationStatus": _w(rr_status)}
+    return rec
 
 
 ULTIMATE = "IS_ULTIMATELY_CONSOLIDATED_BY"
@@ -586,3 +589,62 @@ def test_a_folded_ultimate_record_still_asserts_the_claim(it_db, tmp_path):
     second = _apply(tmp_path, "b.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE)])
     assert second["folded"] == 1 and second["created"] == 0
     assert len(_gleif_claims(it_db)) == 1
+
+
+# ── The record's own registration status in a delta ──────────────────────────
+
+def _stale(it_db):
+    rows = it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) RETURN r.stale AS stale",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})
+    return [r["stale"] for r in rows]
+
+
+def test_a_record_that_lapses_marks_its_edge_and_a_renewal_clears_it(it_db, tmp_path):
+    """The day a record lapses it is in the delta with status LAPSED; the day
+    it is renewed, PUBLISHED. The mark follows — the delta is what keeps the
+    one-off heal current afterwards."""
+    _apply(tmp_path, "rr-new.json.zip", [_rel(CHILD, PARENT, rr_status="PUBLISHED")])
+    assert _stale(it_db) == [False]
+    res = _apply(tmp_path, "rr-lapsed.json.zip", [_rel(CHILD, PARENT, rr_status="LAPSED")])
+    assert res["unmaintained"] == 1 and res["updated"] == 1
+    assert _stale(it_db) == [True]
+    _apply(tmp_path, "rr-renewed.json.zip", [_rel(CHILD, PARENT, rr_status="PUBLISHED")])
+    assert _stale(it_db) == [False]
+
+
+def test_a_lapsed_record_creates_the_edge_already_stale(it_db, tmp_path):
+    res = _apply(tmp_path, "rr-born-lapsed.json.zip", [_rel(CHILD, PARENT, rr_status="LAPSED")])
+    assert res["created"] == 1 and _stale(it_db) == [True]
+
+
+def test_a_folded_pair_keeps_the_other_records_word(it_db, tmp_path):
+    # the direct record lapses while the ultimate one is maintained: the pair
+    # is still confirmed, so the mark is not set — and the fresh ultimate record
+    # arriving later clears a mark the direct one had set alone
+    _apply(tmp_path, "rr-d.json.zip", [_rel(CHILD, PARENT, rr_status="PUBLISHED")])
+    _apply(tmp_path, "rr-u.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE, rr_status="PUBLISHED")])
+    _apply(tmp_path, "rr-d2.json.zip", [_rel(CHILD, PARENT, rr_status="LAPSED")])
+    assert _stale(it_db) == [False]                 # folded: the ultimate record still stands
+    _apply(tmp_path, "rr-u2.json.zip", [_rel(CHILD, PARENT, rtype=ULTIMATE, rr_status="PUBLISHED")])
+    assert _stale(it_db) == [False]
+
+
+def test_an_annulled_record_changes_nothing(it_db, tmp_path):
+    _apply(tmp_path, "rr-ok.json.zip", [_rel(CHILD, PARENT, rr_status="PUBLISHED")])
+    res = _apply(tmp_path, "rr-annulled.json.zip", [_rel(CHILD, PARENT, rr_status="ANNULLED")])
+    assert res["skipped"] == 1 and res["updated"] == 0
+    assert _stale(it_db) == [False]
+
+
+def test_an_edge_another_source_holds_keeps_its_own_mark(it_db, tmp_path):
+    # SEC drew the pair (98 outranks GLEIF's 92): GLEIF's lapsed record neither
+    # takes the answer nor stamps the mark
+    it_db.run_command(
+        "CREATE (a:Entity {id:$p, name:'P', lei_id:$pl}) CREATE (b:Entity {id:$c, name:'C', lei_id:$cl}) "
+        "CREATE (a)-[:OWNS {source_id:'sec-src', credibility_score:98, filing_type:'EX-21', "
+        "ownership_type:'controlling', stale:false}]->(b)",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}", "pl": PARENT, "cl": CHILD})
+    res = _apply(tmp_path, "rr-adopt.json.zip", [_rel(CHILD, PARENT, rr_status="LAPSED")])
+    assert res["adopted"] == 1
+    assert _stale(it_db) == [False]

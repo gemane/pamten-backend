@@ -37,8 +37,11 @@ from app.db.paging import iter_id_pages
 from app.db.arcadedb import run_command, run_sql
 from app.claims import KIND_OWNS, record_claim
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
-from app.scraper.gleif_lei_cdf import _entity_props
-from app.scraper.gleif_rr import _CONSOLIDATION, _node_lei, _record_date, _relationship_dates
+from app.scraper.gleif_lei_cdf import (  # noqa: F401 — the status readers are re-exported
+    _entity_props, _entity_status, _registration_status)
+from app.scraper.gleif_rr import (
+    _CONSOLIDATION, NOT_A_STATEMENT, UNMAINTAINED_STATUSES, _node_lei, _record_date,
+    _relationship_dates, _rr_status)
 from app.merged_ids import canonical_id
 from app.scraper.owns_merge import ANSWER_FIELDS, combine_since, outranks
 from app.scraper.edge_schema import READ_FIELD
@@ -63,14 +66,6 @@ _INTERVAL_MAX_GAP_DAYS = (("LastDay", 1.5), ("LastWeek", 6.5), ("LastMonth", 29.
 
 # ── delta-record field extraction (reuses the full importers' _v/parsers) ─────
 
-def _registration_status(rec: dict) -> str | None:
-    return _v((rec.get("Registration") or {}).get("RegistrationStatus"))
-
-
-def _entity_status(rec: dict) -> str | None:
-    return _v((rec.get("Entity") or {}).get("EntityStatus"))
-
-
 def _relationship_end_date(rel: dict) -> str | None:
     """End date of the RELATIONSHIP_PERIOD, if the relationship has ended.
     `RelationshipPeriods.RelationshipPeriod` is an object *or* a list."""
@@ -83,18 +78,22 @@ def _relationship_end_date(rel: dict) -> str | None:
     return None
 
 
-def _rr_delta_relationship(rec: dict) -> tuple[str, str, str, str | None, dict] | None:
-    """(parent_lei, child_lei, direct_or_indirect, status, rel) for a *consolidation*
+def _rr_delta_relationship(rec: dict) -> tuple[str, str, str, str | None, dict, bool] | None:
+    """(parent_lei, child_lei, direct_or_indirect, status, rel, unmaintained) for a *consolidation*
     relationship record, else None (non-consolidation types are ignored)."""
     rel = (rec.get("RelationshipRecord") or {}).get("Relationship") or {}
     marker = _CONSOLIDATION.get(_v(rel.get("RelationshipType")))
     if not marker:
         return None
+    rr_status = _rr_status(rec)
+    if rr_status in NOT_A_STATEMENT:
+        return None                     # annulled / duplicate: not a statement
     child = _node_lei(rel.get("StartNode"))
     parent = _node_lei(rel.get("EndNode"))
     if not child or not parent or child == parent:
         return None
-    return parent, child, marker, _v(rel.get("RelationshipStatus")), rel
+    return (parent, child, marker, _v(rel.get("RelationshipStatus")), rel,
+            rr_status in UNMAINTAINED_STATUSES)
 
 
 # ── idempotent edge primitives (Cypher; nodes must already exist) ─────────────
@@ -138,7 +137,8 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
               "r.since_basis AS since_basis, r.since_source_url AS since_source_url, "
               "r.source_id AS source_id, r.credibility_score AS credibility_score, "
               "r.stake_percent AS stake_percent, r.structure_basis AS structure_basis, "
-              "r.until AS until, r.since_not_before AS since_not_before LIMIT 1")
+              "r.until AS until, r.since_not_before AS since_not_before, "
+              "r.also_ultimate AS also_ultimate LIMIT 1")
     rr_own = "r.direct_or_indirect IS NOT NULL AND r.structure_basis IS NULL"
     rows = run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
@@ -169,12 +169,13 @@ def _existing_consolidation_edge(parent_id: str, child_id: str,
 
 def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str,
                       source_id: str, credibility_score: int, since: str | None = None,
-                      until: str | None = None, recorded: str | None = None) -> str:
+                      until: str | None = None, recorded: str | None = None,
+                      unmaintained: bool = False) -> str:
     """`_write_owns_edge`, then the pair's start labelled if it is only the
     child's LEI registration day (gleif_rr.mark_registration_day) — the same
     rule the bulk import applies, on every path that writes a GLEIF edge."""
     outcome = _write_owns_edge(parent_id, child_id, child_lei, marker, source_id,
-                               credibility_score, since, until, recorded)
+                               credibility_score, since, until, recorded, unmaintained)
     if since:
         from app.scraper.gleif_rr import mark_registration_day
         mark_registration_day(parent_id, child_id, run=run_command)
@@ -183,12 +184,21 @@ def _owns_edge_upsert(parent_id: str, child_id: str, child_lei: str, marker: str
 
 def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
                      source_id: str, credibility_score: int, since: str | None = None,
-                     until: str | None = None, recorded: str | None = None) -> str:
+                     until: str | None = None, recorded: str | None = None,
+                     unmaintained: bool = False) -> str:
     """Create the (parent)-[:OWNS {marker}]->(child) edge if absent, else refresh it
     and clear any stale `until`. Assumes both nodes already exist.
     'created'|'updated'|'folded'|'adopted'. `since` (relationship start date) is
     set on create and combined on update — the earliest date wins, so a later one
     never clobbers an existing value (``owns_merge.combine_since``).
+
+    `unmaintained` (the record is LAPSED — ``gleif_rr.UNMAINTAINED_STATUSES``)
+    marks the edge ``stale``, the same mark the full import gives it; a
+    maintained record clears the mark, since the record it carries confirms
+    the pair. The mark is set only on an edge that stands on this record
+    alone — a folded edge keeps the other relationship's word — and only when
+    GLEIF holds the answer; an edge adopted from another source keeps that
+    source's mark.
 
     'adopted' means another source (SEC, a PSC register) already drew the pair:
     RR puts its marker on that edge instead of drawing a second one, and takes
@@ -224,10 +234,11 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
             "filing_type:'RR', read_from:$rfrom, "
             "interest_types:$it, source_id:$src, credibility_score:$cred, "
             "source_url:$url, since:$since, until:$until, source_date:$sdate, "
-            "last_scraped_at:$now}]->(b)",
+            "last_scraped_at:$now, stale:$stale}]->(b)",
             {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
              "src": source_id, "cred": credibility_score, "since": since, "until": until,
-             "sdate": recorded, "url": url, "now": now, "rfrom": READ_FIELD})
+             "sdate": recorded, "url": url, "now": now, "rfrom": READ_FIELD,
+             "stale": unmaintained})
         return "created"
 
     # Whose answer the edge carries. RR's own edge (or an unattributed one) it
@@ -251,6 +262,10 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
             sets["source_date"] = recorded
     if holds or takeover:
         sets["last_scraped_at"] = now
+        if not unmaintained:
+            sets["stale"] = False           # a maintained record confirms the pair
+        elif not existing.get("also_ultimate"):
+            sets["stale"] = True            # the only record the edge stands on has lapsed
 
     # THE edge that was found — an old ended period of the same pair beside a
     # current one must not be rewritten along with it
@@ -279,6 +294,8 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
         kept_since, other_since = since or existing["since"], existing["since"]
     sets.update(direct_or_indirect="direct", also_ultimate=True,
                 ultimate_since=other_since if other_since and other_since != kept_since else None)
+    if not unmaintained:
+        sets["stale"] = False               # this record confirms the pair the other may not
     sets.update(combine_since({"since": kept_since},
                               existing if existing.get("since_basis") else None))
     _set_owns(parent_id, child_id,
@@ -300,12 +317,14 @@ def _set_owns(parent_id: str, child_id: str, where: str, sets: dict,
 
 def _upsert_owns(parent_lei: str, child_lei: str, marker: str,
                  source_id: str, credibility_score: int, since: str | None = None,
-                 until: str | None = None, recorded: str | None = None) -> str:
+                 until: str | None = None, recorded: str | None = None,
+                 unmaintained: bool = False) -> str:
     """Node-ensuring convenience wrapper (standalone use / tests)."""
     parent_id = _ensure_lei_node(parent_lei, source_id)
     child_id = _ensure_lei_node(child_lei, source_id)
     return _owns_edge_upsert(parent_id, child_id, child_lei,
-                             marker, source_id, credibility_score, since, until, recorded)
+                             marker, source_id, credibility_score, since, until, recorded,
+                             unmaintained)
 
 
 def _close_owns(parent_lei: str, child_lei: str, marker: str, until: str,
@@ -459,10 +478,9 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
                     continue          # a company this database does not carry
                 if built:
                     node_id, props = built
-                    props["gleif_registration_status"] = _registration_status(rec) or ""
-                    inactive = _entity_status(rec) == "INACTIVE"
-                    props["active"] = not inactive
-                    if inactive:
+                    # `active` + `gleif_registration_status` come with the props
+                    # now (gleif_lei_cdf._entity_props stamps them on both paths)
+                    if not props["active"]:
                         counts["marked_inactive"] += 1
                     # A registration MOVE is history, not a correction: keep the
                     # outgoing pair so a source that knew the company under its
@@ -520,7 +538,7 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
     """
     raw, total = _open_json(filepath)
     counts = {"records": 0, "created": 0, "updated": 0, "folded": 0, "adopted": 0,
-              "closed": 0, "skipped": 0, "not_here": 0, "errors": 0}
+              "closed": 0, "skipped": 0, "not_here": 0, "errors": 0, "unmaintained": 0}
     known = existing_lei_ids() if only_existing else None
     batch = _BatchWriter()
     active: list[tuple] = []
@@ -536,7 +554,7 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 if not parsed:
                     counts["skipped"] += 1
                     continue
-                parent, child, marker, status, rel = parsed
+                parent, child, marker, status, rel, unmaintained = parsed
                 if known is not None and not (
                         f"lei:{parent}" in known and f"lei:{child}" in known):
                     counts["not_here"] += 1
@@ -546,7 +564,9 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 recorded = _record_date(rec)
                 if status == "ACTIVE":
                     since, until = _relationship_dates(rel)
-                    active.append((parent, child, marker, since, until, recorded))
+                    active.append((parent, child, marker, since, until, recorded, unmaintained))
+                    if unmaintained:
+                        counts["unmaintained"] += 1
                 elif status == "INACTIVE":
                     # The stated end, as a date. None stated: the record's last
                     # update is when it had ended BY — never the run's own date,
@@ -565,10 +585,11 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
                 if counts["errors"] <= 5:
                     log.warning("RR delta record error: %s", exc)
         batch.flush()                      # endpoint nodes exist before edge ops
-        for parent, child, marker, since, until, recorded in active:
+        for parent, child, marker, since, until, recorded, unmaintained in active:
             outcome = _owns_edge_upsert(canonical_id(f"lei:{parent}"),
                                         canonical_id(f"lei:{child}"), child, marker,
-                                        source_id, credibility_score, since, until, recorded)
+                                        source_id, credibility_score, since, until, recorded,
+                                        unmaintained)
             counts[outcome if outcome in counts else "updated"] += 1
         for parent, child, marker, until, reason in closures:
             counts["closed"] += _close_owns(parent, child, marker, until, source_id, reason)

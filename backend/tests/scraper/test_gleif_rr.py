@@ -12,7 +12,7 @@ from app.scraper.gleif_rr import (
 
 
 def _rec(rtype, child, parent, status="ACTIVE", child_type="LEI", parent_type="LEI",
-         periods=None, updated=None):
+         periods=None, updated=None, rr_status=None):
     rel = {
         "StartNode": {"NodeID": {"$": child}, "NodeIDType": {"$": child_type}},
         "EndNode":   {"NodeID": {"$": parent}, "NodeIDType": {"$": parent_type}},
@@ -22,8 +22,13 @@ def _rec(rtype, child, parent, status="ACTIVE", child_type="LEI", parent_type="L
     if periods is not None:
         rel["RelationshipPeriods"] = {"RelationshipPeriod": periods}
     rec = {"RelationshipRecord": {"Relationship": rel}}
+    registration = {}
     if updated:
-        rec["RelationshipRecord"]["Registration"] = {"LastUpdateDate": {"$": updated}}
+        registration["LastUpdateDate"] = {"$": updated}
+    if rr_status:
+        registration["RegistrationStatus"] = {"$": rr_status}
+    if registration:
+        rec["RelationshipRecord"]["Registration"] = registration
     return rec
 
 
@@ -50,11 +55,11 @@ class TestUnwrap:
 class TestRrEdge:
     def test_direct_consolidation(self):
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT")) == \
-            ("PARENT", "CHILD", "direct", None, None, True, None, None)
+            ("PARENT", "CHILD", "direct", None, None, True, None, None, False)
 
     def test_ultimate_is_indirect(self):
         assert _rr_edge(_rec("IS_ULTIMATELY_CONSOLIDATED_BY", "CHILD", "PARENT")) == \
-            ("PARENT", "CHILD", "indirect", None, None, True, None, None)
+            ("PARENT", "CHILD", "indirect", None, None, True, None, None, False)
 
     def test_captures_relationship_period_start_as_since(self):
         # The RELATIONSHIP_PERIOD start date is the ownership start → `since` (date only).
@@ -63,14 +68,14 @@ class TestRrEdge:
             periods=[_period("ACCOUNTING_PERIOD", "2023-05-17T00:00:00.000Z",
                              "2023-09-30T00:00:00.000Z"),
                      _period("RELATIONSHIP_PERIOD", "2023-05-17T00:00:00.000Z")]))
-        assert edge == ("PARENT", "CHILD", "direct", "2023-05-17", None, True, None, None)
+        assert edge == ("PARENT", "CHILD", "direct", "2023-05-17", None, True, None, None, False)
 
     def test_captures_relationship_period_end_as_until(self):
         edge = _rr_edge(_rec(
             "IS_ULTIMATELY_CONSOLIDATED_BY", "CHILD", "PARENT",
             periods=[_period("RELATIONSHIP_PERIOD", "2009-05-11T00:00:00.000Z",
                              "2020-01-01T00:00:00.000Z")]))
-        assert edge == ("PARENT", "CHILD", "indirect", "2009-05-11", "2020-01-01", True, None, None)
+        assert edge == ("PARENT", "CHILD", "indirect", "2009-05-11", "2020-01-01", True, None, None, False)
 
     def test_ignores_non_relationship_periods(self):
         # Only ACCOUNTING/DOCUMENT periods → no relationship start captured.
@@ -78,13 +83,13 @@ class TestRrEdge:
             "IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT",
             periods=[_period("ACCOUNTING_PERIOD", "2021-01-01T00:00:00.000Z",
                              "2021-12-31T00:00:00.000Z")]))
-        assert edge == ("PARENT", "CHILD", "direct", None, None, True, None, None)
+        assert edge == ("PARENT", "CHILD", "direct", None, None, True, None, None, False)
 
     def test_period_can_be_a_single_object(self):
         edge = _rr_edge(_rec(
             "IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT",
             periods=_period("RELATIONSHIP_PERIOD", "2017-12-05T00:00:00.000Z")))
-        assert edge == ("PARENT", "CHILD", "direct", "2017-12-05", None, True, None, None)
+        assert edge == ("PARENT", "CHILD", "direct", "2017-12-05", None, True, None, None, False)
 
     def test_fund_and_branch_types_skipped(self):
         for t in ("IS_FUND-MANAGED_BY", "IS_SUBFUND_OF", "IS_FEEDER_TO",
@@ -97,19 +102,38 @@ class TestRrEdge:
                              periods=[_period("RELATIONSHIP_PERIOD", "2010-03-01T00:00:00Z",
                                               "2020-06-30T00:00:00Z")],
                              updated="2020-07-02T08:00:00Z"))
-        assert edge == ("P", "C", "direct", "2010-03-01", "2020-06-30", False, "2020-07-02", None)
+        assert edge == ("P", "C", "direct", "2010-03-01", "2020-06-30", False, "2020-07-02", None, False)
 
     def test_an_ended_relationship_without_an_end_date_ended_by_its_last_update(self):
         edge = _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", status="INACTIVE",
                              periods=[_period("RELATIONSHIP_PERIOD", "2010-03-01T00:00:00Z")],
                              updated="2021-11-05T08:00:00Z"))
         assert edge == ("P", "C", "direct", "2010-03-01", "2021-11-05", False, "2021-11-05",
-                        "gleif_inactive")
+                        "gleif_inactive", False)
         # not even a last update: nothing to draw
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", status="INACTIVE")) is None
 
     def test_an_unknown_status_is_skipped(self):
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", status="LAPSED")) is None
+
+    def test_a_lapsed_record_is_read_as_unmaintained(self):
+        """GLEIF: LAPSED = "not renewed by its NextRenewalDate". The relationship
+        is still ACTIVE on it — Metaswitch "consolidated by Microsoft", last
+        updated 2023-06-02, sold in 2025 — so it is drawn, and flagged."""
+        edge = _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status="LAPSED",
+                             updated="2023-06-02T00:10:55Z"))
+        assert edge == ("P", "C", "direct", None, None, True, "2023-06-02", None, True)
+        # PUBLISHED, or no status at all (older fixtures), is maintained
+        for st in ("PUBLISHED", "PENDING_TRANSFER", "PENDING_ARCHIVAL", None):
+            assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status=st))[8] is False
+
+    def test_an_annulled_or_duplicate_record_is_no_statement(self):
+        # "erroneous or invalid after it was issued" / the non-surviving copy
+        for st in ("ANNULLED", "DUPLICATE"):
+            assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status=st)) is None
+            # the status alone decides — even an ACTIVE, dated relationship on it
+            assert _rr_edge(_rec("IS_ULTIMATELY_CONSOLIDATED_BY", "C", "P", rr_status=st,
+                                 periods=[_period("RELATIONSHIP_PERIOD", "2015-01-01T00:00:00Z")])) is None
 
     def test_the_period_that_describes_the_record(self):
         # ended 2015, begun again 2018: the open period, whatever the file order
@@ -139,8 +163,8 @@ class TestCollapse:
 
     def _folded(self, *assertions):
         pairs: dict = {}
-        for marker, since, until in assertions:
-            _fold(pairs, "P", "C", marker, since, until)
+        for marker, since, until, *rest in assertions:
+            _fold(pairs, "P", "C", marker, since, until, unmaintained=bool(rest and rest[0]))
         return _collapse(pairs[("P", "C")])
 
     def test_only_direct_is_unchanged(self):
@@ -210,6 +234,22 @@ class TestCollapse:
         _fold(pairs, "P", "C", "indirect", "2015-01-01", None, "2026-01-04")
         assert _collapse(pairs[("P", "C")])[3]["source_date"] == "2026-01-04"
 
+    def test_a_lapsed_record_alone_makes_the_edge_stale(self):
+        """62,934 of the ~260k ACTIVE consolidation records on 2026-10-06 stand
+        on a LAPSED child — a quarter of GLEIF's ownership. Dimmed and dated by
+        its evidence date, never closed: nobody stated an end."""
+        assert self._folded(("direct", "2022-04-11", None, True))[3] == {"stale": True}
+        assert self._folded(("indirect", None, None, True))[3] == {"stale": True}
+        assert "stale" not in self._folded(("direct", "2022-04-11", None, False))[3]
+
+    def test_a_maintained_record_keeps_a_folded_pair_fresh(self):
+        """Stale only when EVERY record the edge stands on has lapsed: a
+        maintained ultimate record still confirms the pair."""
+        assert "stale" not in self._folded(("direct", None, None, True), ("indirect", None, None, False))[3]
+        assert "stale" not in self._folded(("direct", None, None, False), ("indirect", None, None, True))[3]
+        both = self._folded(("direct", None, None, True), ("indirect", None, None, True))[3]
+        assert both == {"also_ultimate": True, "stale": True}
+
 
 class TestFamilyOf:
     def test_walks_down_and_up_the_tree(self):
@@ -221,8 +261,8 @@ class TestFamilyOf:
 
 
 def _rr_zip(tmp_path, edges):
-    """edges: list of (child, parent, rtype)."""
-    records = [_rec(rt, c, p) for (c, p, rt) in edges]
+    """edges: list of (child, parent, rtype[, rr_status])."""
+    records = [_rec(e[2], e[0], e[1], rr_status=(e[3] if len(e) > 3 else None)) for e in edges]
     zpath = tmp_path / "rr.json.zip"
     with zipfile.ZipFile(zpath, "w") as zf:
         zf.writestr("rr.json", json.dumps({"relations": records}))
@@ -313,3 +353,80 @@ class TestCollapseThroughTheImporter:
             # "nothing to record" means no fold artifacts — the constant RR tag is
         # deliberate and carries no nulls.
         assert written[0]["extra"] == {"filing_type": "RR"}
+
+    def test_a_lapsed_record_draws_a_stale_edge(self, tmp_path, monkeypatch):
+        res, written = self._run(tmp_path, monkeypatch, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "LAPSED"),
+            ("OTHER", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED"),
+        ])
+        assert res["edges"] == 2 and res["unmaintained"] == 1
+        by_child = {w["owned_id"]: w["extra"] for w in written}
+        assert by_child["lei:CHILD"] == {"filing_type": "RR", "stale": True}
+        assert by_child["lei:OTHER"] == {"filing_type": "RR"}
+
+    def test_a_maintained_ultimate_record_keeps_the_folded_pair_fresh(self, tmp_path, monkeypatch):
+        res, written = self._run(tmp_path, monkeypatch, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "LAPSED"),
+            ("CHILD", "PARENT", "IS_ULTIMATELY_CONSOLIDATED_BY", "PUBLISHED"),
+        ])
+        assert res["edges"] == 1 and res["unmaintained"] == 0
+        assert "stale" not in written[0]["extra"]
+
+    def test_an_annulled_record_is_counted_and_not_drawn(self, tmp_path, monkeypatch):
+        res, written = self._run(tmp_path, monkeypatch, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "ANNULLED"),
+            ("OTHER", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "DUPLICATE"),
+            ("THIRD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY"),
+        ])
+        assert res["annulled"] == 2 and res["skipped"] == 0
+        assert [w["owned_id"] for w in written] == ["lei:THIRD"]
+
+
+class TestHealRegistrationStatus:
+    """`manage.py gleif-rr-status`: a database loaded before the import read the
+    record's status gets the mark from one pass over the current golden copy."""
+
+    def _run(self, tmp_path, edges, dry_run=False, found=1):
+        from app.scraper.gleif_rr import heal_registration_status
+        calls: list[tuple[str, dict]] = []
+
+        def fake_run(cypher, params=None):
+            calls.append((cypher, params or {}))
+            return [{"n": found}]
+        res = heal_registration_status(_rr_zip(tmp_path, edges), "gleif-src",
+                                       dry_run=dry_run, run=fake_run)
+        return res, calls
+
+    def test_marks_only_the_pairs_on_lapsed_records(self, tmp_path):
+        res, calls = self._run(tmp_path, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "LAPSED"),
+            ("OTHER", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED"),
+            ("GONE", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "ANNULLED"),
+        ])
+        assert res["pairs"] == 2 and res["unmaintained"] == 1 and res["marked"] == 1
+        assert len(calls) == 1
+        cypher, params = calls[0]
+        assert params == {"p": "lei:PARENT", "c": "lei:CHILD", "src": "gleif-src"}
+        # only the edge GLEIF holds, only while open, and nothing but the mark
+        assert "r.source_id = $src" in cypher and "r.until IS NULL" in cypher
+        assert "SET r.stale = true" in cypher and "stale = false" not in cypher
+
+    def test_a_folded_pair_with_a_maintained_record_is_left_alone(self, tmp_path):
+        res, calls = self._run(tmp_path, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "LAPSED"),
+            ("CHILD", "PARENT", "IS_ULTIMATELY_CONSOLIDATED_BY", "PUBLISHED"),
+        ])
+        assert res["unmaintained"] == 0 and calls == []
+
+    def test_dry_run_counts_and_writes_nothing(self, tmp_path):
+        res, calls = self._run(tmp_path, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "LAPSED"),
+        ], dry_run=True)
+        assert res["unmaintained"] == 1 and res["marked"] == 0 and res["dry_run"] is True
+        assert calls == []
+
+    def test_a_pair_the_database_does_not_hold_is_counted_not_here(self, tmp_path):
+        res, _ = self._run(tmp_path, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "LAPSED"),
+        ], found=0)
+        assert res["marked"] == 0 and res["not_here"] == 1

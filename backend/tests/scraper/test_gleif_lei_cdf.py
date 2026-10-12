@@ -119,6 +119,27 @@ class TestEntityProps:
         assert props["source_url"] == "https://search.gleif.org/#/record/LEI123"  # deep link, not home page
         assert "type" not in props            # generic → type left untouched
 
+    def test_the_registers_own_word_on_the_record(self):
+        """`active` + `gleif_registration_status` on the FULL load, not only the
+        delta (the sibling path): 254,659 of 3,453,452 records were INACTIVE and
+        1,206,742 LAPSED on 2026-10-06, and a rebuilt database carried neither."""
+        rec = _rec("L1", "Gone Ltd")
+        rec["Entity"]["EntityStatus"] = _w("INACTIVE")
+        rec["Registration"] = {"RegistrationStatus": _w("RETIRED")}
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["active"] is False
+        assert props["gleif_registration_status"] == "RETIRED"
+        rec = _rec("L2", "Here Ltd")
+        rec["Entity"]["EntityStatus"] = _w("ACTIVE")
+        rec["Registration"] = {"RegistrationStatus": _w("LAPSED")}
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["active"] is True            # lapsed is unmaintained, not ceased
+        assert props["gleif_registration_status"] == "LAPSED"
+        # a record saying nothing is active, with the status written empty (the
+        # delta's convention — the bulk writer must overwrite, not skip)
+        _, props = _entity_props(_rec("L3", "Quiet Ltd"), "gleif", 92)
+        assert props["active"] is True and props["gleif_registration_status"] == ""
+
     def test_legal_form_refines_type(self):
         _, props = _entity_props(_rec("L1", "Fidelity Leveraged Company Stock Fund",
                                       other_form="FUND"), "gleif", 92)
