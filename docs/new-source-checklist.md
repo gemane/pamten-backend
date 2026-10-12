@@ -267,6 +267,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `record_claim` for the per-source assertion — that is what makes a conflict
       inspectable later instead of a mystery.
 - [ ] **`credibility_score` is written on the edge**, not assumed from the source name.
+- [ ] **A register's own "how far we checked this" is provenance, not credibility.**
+      GLEIF states a corroboration level per record (`ValidationSources`); on entities
+      98.7 % are fully corroborated and a small `name_credibility` penalty is fair, but
+      on relationships 42 % (109,060 of 260,337 active consolidation records) are
+      ENTITY_SUPPLIED_ONLY, and the same penalty would push them below the official
+      tier into the community rules (six-month staleness, outranked by Wikidata).
+      Measure the distribution before scaling anything; keep the level on the edge,
+      the claim and the Sources row (`validation_sources` / `validation_documents`) and
+      let a reader — or `answer_rank`, within the tier — weigh it.
 - [ ] **Share the pair's edge; never look up only your own.** Find the pair's active
       OWNS edge whoever drew it, and apply `app/scraper/owns_merge.py`: take the answer
       over only when you `outrank` its holder, combine `since`, keep the other source's

@@ -2850,6 +2850,36 @@ def run_gleif_rr_stakes(local_file: str, dry_run: bool = False) -> dict:
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 
 
+def run_gleif_rr_validation(local_file: str, dry_run: bool = False) -> dict:
+    """
+    One-off heal: fill how far the LOU checked each relationship record
+    (`gleif_rr.heal_validation`) onto the RR edges, fill-only. For a database
+    loaded before the import read it; logged as a `gleif-rr-validation` ScrapeRun.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError(
+            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
+        )
+    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
+        raise PermissionError(
+            "GLEIF scraper is disabled. "
+            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
+        )
+    from app.scraper.gleif_rr import heal_validation
+    from app.scraper.run_log import record_run
+
+    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
+    log.info("GLEIF RR validation heal: reading %s (dry_run=%s)", local_file, dry_run)
+    with record_run("gleif-rr-validation", os.path.basename(local_file),
+                    reason="dry_run" if dry_run else None) as run:
+        counts = heal_validation(local_file, source_id, dry_run=dry_run)
+        run["total"] = counts["filled"]
+        run["note"] = (f"{counts['with_validation']:,} pairs with a stated level, "
+                       f"{counts['filled']:,} edges filled, {counts['already']:,} already held one "
+                       f"or not here" + (" (dry run)" if dry_run else ""))
+    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
+
+
 def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
                      rr_file: str | None = None, limit: int | None = None,
                      only_existing: bool | None = None,

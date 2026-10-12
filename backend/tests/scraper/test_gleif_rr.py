@@ -12,7 +12,7 @@ from app.scraper.gleif_rr import (
 
 
 def _rec(rtype, child, parent, status="ACTIVE", child_type="LEI", parent_type="LEI",
-         periods=None, updated=None, rr_status=None, quantifiers=None):
+         periods=None, updated=None, rr_status=None, quantifiers=None, validation=None):
     rel = {
         "StartNode": {"NodeID": {"$": child}, "NodeIDType": {"$": child_type}},
         "EndNode":   {"NodeID": {"$": parent}, "NodeIDType": {"$": parent_type}},
@@ -29,6 +29,8 @@ def _rec(rtype, child, parent, status="ACTIVE", child_type="LEI", parent_type="L
         registration["LastUpdateDate"] = {"$": updated}
     if rr_status:
         registration["RegistrationStatus"] = {"$": rr_status}
+    for key, value in (validation or {}).items():
+        registration[key] = {"$": value}
     if registration:
         rec["RelationshipRecord"]["Registration"] = registration
     return rec
@@ -65,11 +67,11 @@ class TestUnwrap:
 class TestRrEdge:
     def test_direct_consolidation(self):
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT")) == \
-            ("PARENT", "CHILD", "direct", None, None, True, None, None, False, None, False)
+            ("PARENT", "CHILD", "direct", None, None, True, None, None, False, None, False, {})
 
     def test_ultimate_is_indirect(self):
         assert _rr_edge(_rec("IS_ULTIMATELY_CONSOLIDATED_BY", "CHILD", "PARENT")) == \
-            ("PARENT", "CHILD", "indirect", None, None, True, None, None, False, None, False)
+            ("PARENT", "CHILD", "indirect", None, None, True, None, None, False, None, False, {})
 
     def test_captures_relationship_period_start_as_since(self):
         # The RELATIONSHIP_PERIOD start date is the ownership start → `since` (date only).
@@ -78,14 +80,14 @@ class TestRrEdge:
             periods=[_period("ACCOUNTING_PERIOD", "2023-05-17T00:00:00.000Z",
                              "2023-09-30T00:00:00.000Z"),
                      _period("RELATIONSHIP_PERIOD", "2023-05-17T00:00:00.000Z")]))
-        assert edge == ("PARENT", "CHILD", "direct", "2023-05-17", None, True, None, None, False, None, False)
+        assert edge == ("PARENT", "CHILD", "direct", "2023-05-17", None, True, None, None, False, None, False, {})
 
     def test_captures_relationship_period_end_as_until(self):
         edge = _rr_edge(_rec(
             "IS_ULTIMATELY_CONSOLIDATED_BY", "CHILD", "PARENT",
             periods=[_period("RELATIONSHIP_PERIOD", "2009-05-11T00:00:00.000Z",
                              "2020-01-01T00:00:00.000Z")]))
-        assert edge == ("PARENT", "CHILD", "indirect", "2009-05-11", "2020-01-01", True, None, None, False, None, False)
+        assert edge == ("PARENT", "CHILD", "indirect", "2009-05-11", "2020-01-01", True, None, None, False, None, False, {})
 
     def test_ignores_non_relationship_periods(self):
         # Only ACCOUNTING/DOCUMENT periods → no relationship start captured.
@@ -93,13 +95,13 @@ class TestRrEdge:
             "IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT",
             periods=[_period("ACCOUNTING_PERIOD", "2021-01-01T00:00:00.000Z",
                              "2021-12-31T00:00:00.000Z")]))
-        assert edge == ("PARENT", "CHILD", "direct", None, None, True, None, None, False, None, False)
+        assert edge == ("PARENT", "CHILD", "direct", None, None, True, None, None, False, None, False, {})
 
     def test_period_can_be_a_single_object(self):
         edge = _rr_edge(_rec(
             "IS_DIRECTLY_CONSOLIDATED_BY", "CHILD", "PARENT",
             periods=_period("RELATIONSHIP_PERIOD", "2017-12-05T00:00:00.000Z")))
-        assert edge == ("PARENT", "CHILD", "direct", "2017-12-05", None, True, None, None, False, None, False)
+        assert edge == ("PARENT", "CHILD", "direct", "2017-12-05", None, True, None, None, False, None, False, {})
 
     def test_fund_and_branch_types_skipped(self):
         for t in ("IS_FUND-MANAGED_BY", "IS_SUBFUND_OF", "IS_FEEDER_TO",
@@ -112,14 +114,14 @@ class TestRrEdge:
                              periods=[_period("RELATIONSHIP_PERIOD", "2010-03-01T00:00:00Z",
                                               "2020-06-30T00:00:00Z")],
                              updated="2020-07-02T08:00:00Z"))
-        assert edge == ("P", "C", "direct", "2010-03-01", "2020-06-30", False, "2020-07-02", None, False, None, False)
+        assert edge == ("P", "C", "direct", "2010-03-01", "2020-06-30", False, "2020-07-02", None, False, None, False, {})
 
     def test_an_ended_relationship_without_an_end_date_ended_by_its_last_update(self):
         edge = _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", status="INACTIVE",
                              periods=[_period("RELATIONSHIP_PERIOD", "2010-03-01T00:00:00Z")],
                              updated="2021-11-05T08:00:00Z"))
         assert edge == ("P", "C", "direct", "2010-03-01", "2021-11-05", False, "2021-11-05",
-                        "gleif_inactive", False, None, False)
+                        "gleif_inactive", False, None, False, {})
         # not even a last update: nothing to draw
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", status="INACTIVE")) is None
 
@@ -132,7 +134,7 @@ class TestRrEdge:
         updated 2023-06-02, sold in 2025 — so it is drawn, and flagged."""
         edge = _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status="LAPSED",
                              updated="2023-06-02T00:10:55Z"))
-        assert edge == ("P", "C", "direct", None, None, True, "2023-06-02", None, True, None, False)
+        assert edge == ("P", "C", "direct", None, None, True, "2023-06-02", None, True, None, False, {})
         # PUBLISHED, or no status at all (older fixtures), is maintained
         for st in ("PUBLISHED", "PENDING_TRANSFER", "PENDING_ARCHIVAL", None):
             assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", rr_status=st))[8] is False
@@ -143,7 +145,7 @@ class TestRrEdge:
         consolidated interest, stored as the register stated it."""
         edge = _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P",
                              quantifiers=[_quant("100.00")]))
-        assert edge[9:] == (100.0, False)
+        assert edge[9:11] == (100.0, False)
         assert _rr_edge(_rec("IS_ULTIMATELY_CONSOLIDATED_BY", "C", "P",
                              quantifiers=[_quant("50.1")]))[9] == 50.1
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P",
@@ -158,12 +160,12 @@ class TestRrEdge:
 
     def test_other_methods_and_units_are_not_a_stake(self):
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P",
-                             quantifiers=[_quant("100", method="OTHER")]))[9:] == (None, False)
+                             quantifiers=[_quant("100", method="OTHER")]))[9:11] == (None, False)
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P",
-                             quantifiers=[_quant("100", units="SHARES")]))[9:] == (None, False)
+                             quantifiers=[_quant("100", units="SHARES")]))[9:11] == (None, False)
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P",
-                             quantifiers=[_quant("n/a")]))[9:] == (None, False)
-        assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P"))[9:] == (None, False)
+                             quantifiers=[_quant("n/a")]))[9:11] == (None, False)
+        assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P"))[9:11] == (None, False)
 
     def test_an_implausible_share_is_refused_not_stored(self):
         """269 records at or below 0 and 15 above 100 on 2026-10-06: entry
@@ -172,9 +174,24 @@ class TestRrEdge:
         still drawn, without a stake."""
         for bad in ("0", "-5", "100.01", "1000"):
             edge = _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", quantifiers=[_quant(bad)]))
-            assert edge is not None and edge[9:] == (None, True), bad
+            assert edge is not None and edge[9:11] == (None, True), bad
         assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P",
-                             quantifiers=[_quant("0.01")]))[9:] == (0.01, False)
+                             quantifiers=[_quant("0.01")]))[9:11] == (0.01, False)
+
+    def test_how_far_the_lou_checked_the_record_comes_along(self):
+        """ValidationSources / ValidationDocuments as stated — provenance on the
+        edge and its claim, never a credibility change: 42 % of the active
+        consolidation records (109,060 of 260,337 on 2026-10-06) are
+        ENTITY_SUPPLIED_ONLY, and a penalty would drop them out of the tier."""
+        edge = _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", validation={
+            "ValidationSources": "FULLY_CORROBORATED", "ValidationDocuments": "ACCOUNTS_FILING"}))
+        assert edge[11] == {"validation_sources": "FULLY_CORROBORATED",
+                            "validation_documents": "ACCOUNTS_FILING"}
+        # only what the record states: no None placeholders
+        assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", validation={
+            "ValidationSources": "ENTITY_SUPPLIED_ONLY"}))[11] == {
+                "validation_sources": "ENTITY_SUPPLIED_ONLY"}
+        assert _rr_edge(_rec("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P"))[11] == {}
 
     def test_an_annulled_or_duplicate_record_is_no_statement(self):
         # "erroneous or invalid after it was issued" / the non-surviving copy
@@ -214,7 +231,8 @@ class TestCollapse:
         pairs: dict = {}
         for marker, since, until, *rest in assertions:
             _fold(pairs, "P", "C", marker, since, until, unmaintained=bool(rest and rest[0]),
-                  stake=(rest[1] if len(rest) > 1 else None))
+                  stake=(rest[1] if len(rest) > 1 else None),
+                  validation=(rest[2] if len(rest) > 2 else None))
         return _collapse(pairs[("P", "C")])
 
     def test_only_direct_is_unchanged(self):
@@ -316,6 +334,18 @@ class TestCollapse:
         none = self._folded(("direct", None, None, False, None), ("indirect", None, None, False, None))[3]
         assert "stake_percent" not in none
 
+    def test_how_far_it_was_checked_follows_the_same_rule(self):
+        full = {"validation_sources": "FULLY_CORROBORATED", "validation_documents": "ACCOUNTS_FILING"}
+        own = {"validation_sources": "ENTITY_SUPPLIED_ONLY"}
+        assert self._folded(("direct", None, None, False, None, own))[3] == own
+        assert self._folded(("indirect", None, None, False, None, full))[3] == full
+        # the direct record's checking wins; the ultimate's fills a gap
+        both = self._folded(("direct", None, None, False, None, own), ("indirect", None, None, False, None, full))[3]
+        assert both["validation_sources"] == "ENTITY_SUPPLIED_ONLY" and "validation_documents" not in both
+        fill = self._folded(("direct", None, None, False, None, {}), ("indirect", None, None, False, None, full))[3]
+        assert fill["validation_sources"] == "FULLY_CORROBORATED"
+        assert "validation_sources" not in self._folded(("direct", None, None, False, None, {}))[3]
+
 
 class TestFamilyOf:
     def test_walks_down_and_up_the_tree(self):
@@ -327,9 +357,10 @@ class TestFamilyOf:
 
 
 def _rr_zip(tmp_path, edges):
-    """edges: list of (child, parent, rtype[, rr_status[, stake amount]])."""
+    """edges: list of (child, parent, rtype[, rr_status[, stake amount[, validation]]])."""
     records = [_rec(e[2], e[0], e[1], rr_status=(e[3] if len(e) > 3 else None),
-                    quantifiers=([_quant(e[4])] if len(e) > 4 else None)) for e in edges]
+                    quantifiers=([_quant(e[4])] if len(e) > 4 and e[4] else None),
+                    validation=(e[5] if len(e) > 5 else None)) for e in edges]
     zpath = tmp_path / "rr.json.zip"
     with zipfile.ZipFile(zpath, "w") as zf:
         zf.writestr("rr.json", json.dumps({"relations": records}))
@@ -452,6 +483,23 @@ class TestCollapseThroughTheImporter:
         assert "stake_percent" not in by_child["lei:THIRD"]["extra"]    # none stated, no null added
         assert by_child["lei:THIRD"]["stake_percent"] is None
 
+    def test_how_far_each_record_was_checked_is_written_and_counted(self, tmp_path, monkeypatch):
+        res, written = self._run(tmp_path, monkeypatch, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED", None,
+             {"ValidationSources": "ENTITY_SUPPLIED_ONLY", "ValidationDocuments": "OTHER_OFFICIAL_DOCUMENTS"}),
+            ("OTHER", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED", None,
+             {"ValidationSources": "FULLY_CORROBORATED", "ValidationDocuments": "ACCOUNTS_FILING"}),
+            ("THIRD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED"),
+        ])
+        assert res["entity_supplied"] == 1
+        by_child = {w["owned_id"]: w["extra"] for w in written}
+        assert by_child["lei:CHILD"] == {"filing_type": "RR", "validation_sources": "ENTITY_SUPPLIED_ONLY",
+                                         "validation_documents": "OTHER_OFFICIAL_DOCUMENTS"}
+        assert by_child["lei:OTHER"]["validation_sources"] == "FULLY_CORROBORATED"
+        assert by_child["lei:THIRD"] == {"filing_type": "RR"}
+        # not a credibility change
+        assert {w["credibility_score"] for w in written} == {92}
+
     def test_an_annulled_record_is_counted_and_not_drawn(self, tmp_path, monkeypatch):
         res, written = self._run(tmp_path, monkeypatch, [
             ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "ANNULLED"),
@@ -549,3 +597,39 @@ class TestHealStakes:
             ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED", "100"),
         ], found=0)
         assert res["filled"] == 0 and res["already"] == 1
+
+
+class TestHealValidation:
+    """`manage.py gleif-rr-validation`: fill how far each record was checked
+    onto a database loaded before the import read it — fill-only."""
+
+    def _run(self, tmp_path, edges, dry_run=False, found=1):
+        from app.scraper.gleif_rr import heal_validation
+        calls: list[tuple[str, dict]] = []
+
+        def fake_run(cypher, params=None):
+            calls.append((cypher, params or {}))
+            return [{"n": found}]
+        res = heal_validation(_rr_zip(tmp_path, edges), "gleif-src", dry_run=dry_run, run=fake_run)
+        return res, calls
+
+    def test_fills_both_fields_where_a_level_is_stated_and_none_is_held(self, tmp_path):
+        res, calls = self._run(tmp_path, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED", None,
+             {"ValidationSources": "FULLY_CORROBORATED", "ValidationDocuments": "ACCOUNTS_FILING"}),
+            ("OTHER", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED"),
+        ])
+        assert res["pairs"] == 2 and res["with_validation"] == 1 and res["filled"] == 1
+        assert len(calls) == 1
+        cypher, params = calls[0]
+        assert params == {"p": "lei:PARENT", "c": "lei:CHILD", "src": "gleif-src",
+                          "vs": "FULLY_CORROBORATED", "vd": "ACCOUNTS_FILING"}
+        assert "r.source_id = $src" in cypher and "r.until IS NULL" in cypher
+        assert "r.validation_sources IS NULL" in cypher       # fill-only
+
+    def test_dry_run_counts_and_writes_nothing(self, tmp_path):
+        res, calls = self._run(tmp_path, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED", None,
+             {"ValidationSources": "ENTITY_SUPPLIED_ONLY"}),
+        ], dry_run=True)
+        assert res["with_validation"] == 1 and res["filled"] == 0 and calls == []

@@ -111,7 +111,7 @@ the SEC edge (its "listed since 2013" with it) for the next SEC scrape to redraw
 
 | Part of the edge | Rule |
 |---|---|
-| **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type, `read_from` | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
+| **The answer** — stake, voting, type, share counts, `until`, source, link, date, credibility, filing type, `read_from`, `validation_sources` / `validation_documents` (how far the register checked the record behind it — see *How far GLEIF checked a relationship*) | One source's, moved as a unit (never one source's link with another's number). A source takes it over only when it **outranks** the holder — same order as `best_claim`, but a tie keeps the incumbent, so two sources cannot flip the edge nightly |
 | **`since` / `since_basis` / `since_source_url`** | Combined: the earliest date any source gives. A start that is not stated keeps its label: `first_listed` ("since 2013 or earlier", the oldest Exhibit 21 naming it), `amendment` (a 13D/G amendment's date — held by then, the start not seen), `register_start` (UK PSC notified on 2016-04-06, the register's first day), `first_reported` (the earliest 13F quarter a manager reported the holding in), `gleif_registration_day` (a GLEIF start that is just the child's LEI registration day and not its founding day — GLEIF records reuse that date: 27,874 of 260,250 on 2026-10-06, Barclays Bank PLC "since 2012-06-06", owned since 1985; set by the RR import, the daily delta and `gleif-rr-history`, the claim keeps the date as stated), `gleif_first_seen` (the oldest archived GLEIF golden copy listing the relationship — the archive begins 2018-02-09, so that date says only "at least since February 2018"; `gleif-rr-history`) or `newly_listed` ("first listed 2025": the list for the year before does not name it, nor any older one); a stated start on or before it replaces it. **For time travel every basis is a lower bound except `newly_listed`** (`owns_merge.STATED_BASES`, `started_by_clause`): before its date the edge is shown dimmed, not hidden. The source's **claim** carries the same listing date and keeps it when the list is re-read (a re-scrape rewrites the claim and states no start; it used to wipe the date) |
 | **Structure** — `direct_or_indirect` (+ `structure_basis`), `also_ultimate`, `ultimate_*`, `interest_types`, `psc_self_link` | Stays on the edge whoever holds the answer; an inferred marker travels with its basis, a stated one never gains one |
 
@@ -316,6 +316,35 @@ legal name is still better evidence than a Wikidata label (usually the common na
 rather than the registered one), so an uncorroborated GLEIF record stays above the
 community sources at 80 while losing to a corroborated one. On a day's delta of
 18,166 records: 98.7% fully corroborated, 0.8% entity-supplied, 0.4% partial.
+
+### How far GLEIF checked a relationship
+
+A relationship record carries the same statement about itself — `ValidationSources`
+(the level) and `ValidationDocuments` (what the LOU checked it against:
+`ACCOUNTS_FILING`, `REGULATORY_FILING`, `SUPPORTING_DOCUMENTS`, `CONTRACTS`,
+`OTHER_OFFICIAL_DOCUMENTS`) — and the picture is nothing like the entities':
+
+| `ValidationSources` on ACTIVE consolidation records, 2026-10-06 | records |
+|---|---|
+| `FULLY_CORROBORATED` | 135,169 |
+| `ENTITY_SUPPLIED_ONLY` | 109,060 — 42 % |
+| `PARTIALLY_CORROBORATED` | 16,108 |
+
+Both are kept **as provenance** — on the edge (`validation_sources` /
+`validation_documents`, part of *the answer*, so they move with the source that
+holds it), on the claim, and in the Sources panel's rows — and **never folded into
+the credibility score**. The entity's `name_credibility` penalty (−10 for
+entity-supplied) would put 109k relationship edges below the official-tier line
+(90) and hand them to the community-tier rules: six-month staleness, a Wikidata
+statement outranking them. That is not what "the entity said so, and the LOU
+published it" means. A reader sees the level beside the link instead, and
+`answer_rank` may weigh it later, within the tier. On a pair stated both ways the
+direct record's checking is the edge's, the ultimate's fills a gap; the delta
+restates it with the record. `ValidationReference` (the evidence document's URL,
+which the API shows for Metaswitch) is on no record of the golden copy, so it is
+not read. A database loaded before 2026-10-13 gets the two fields once, fill-only,
+from `manage.py gleif-rr-validation --file <rr golden copy>`
+(`gleif_rr.heal_validation`, logged as a `gleif-rr-validation` run).
 
 ### Why a company reports no parent — reporting exceptions (`repex`)
 
@@ -587,9 +616,8 @@ stated stake outranks none, so GLEIF's 100 % takes the answer from an Exhibit 21
 row without a stake, while an SEC row with one keeps it). A database loaded
 before 2026-10-13 gets the figures once, fill-only, from `manage.py
 gleif-rr-stakes --file <rr golden copy>` (`gleif_rr.heal_stakes`, logged as a
-`gleif-rr-stakes` run). Not read: `ValidationDocuments` / `ValidationSources`
-on the relationship record (what the LOU checked it against, and how far) — see
-*How far GLEIF checked a relationship* below once it lands. All
+`gleif-rr-stakes` run). How far the LOU checked each record rides along as
+provenance — see *How far GLEIF checked a relationship* below. All
 writes are idempotent — nodes UPSERT by id (batched) and edges are matched by
 endpoints+marker before create — so re-applying a delta can't duplicate, hence no
 `--bulk-load` and no whole-DB dedup. The default `--interval auto` is **gap-aware**:

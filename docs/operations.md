@@ -39,6 +39,15 @@ python3 manage.py gleif-rr-stakes --file ~/data/rr-cdf/gleif-rr.json.zip --dry-r
 python3 manage.py gleif-rr-stakes --file ~/data/rr-cdf/gleif-rr.json.zip
 ```
 
+And for how far the LOU checked each record (`ValidationSources` /
+`ValidationDocuments`, read since 2026-10-13 as `validation_sources` /
+`validation_documents`), likewise fill-only:
+
+```bash
+python3 manage.py gleif-rr-validation --file ~/data/rr-cdf/gleif-rr.json.zip --dry-run
+python3 manage.py gleif-rr-validation --file ~/data/rr-cdf/gleif-rr.json.zip
+```
+
 ## GLEIF history (once)
 
 After the first full import, run `owlgraph gleif-history` (dev box: `manage.py

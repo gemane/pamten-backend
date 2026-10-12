@@ -313,7 +313,11 @@ load and the delta both set and clear the mark. A database loaded before
 Where the record states the consolidated share (49,527 of ~260k records, mostly
 100 %) it becomes the edge's `stake_percent`, bounded at the reader (a figure
 outside 0–100 is refused and logged, never stored); `manage.py gleif-rr-stakes`
-fills it once onto an older database. Writes are idempotent (re-applying a delta never duplicates), so no
+fills it once onto an older database. How far GLEIF checked each relationship record
+(`ValidationSources` / `ValidationDocuments` — 42 % of the ownership records are
+entity-supplied only) rides on the edge, its claim and the Sources panel as
+provenance, never as a credibility change; `manage.py gleif-rr-validation` fills it
+once. Writes are idempotent (re-applying a delta never duplicates), so no
 `--bulk-load` and no whole-DB dedup. `~/scripts/cron-gleif-update.sh` (flock + log →
 a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
 

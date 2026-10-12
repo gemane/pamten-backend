@@ -11,6 +11,7 @@ Usage:
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
   python3 manage.py gleif-rr-status --file F  # once: mark edges on LAPSED GLEIF records stale
   python3 manage.py gleif-rr-stakes --file F  # once: fill the share GLEIF records state
+  python3 manage.py gleif-rr-validation --file F  # once: fill how far GLEIF checked each record
   python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
   python3 manage.py ch-psc-update [options]   # UK PSC incremental refresh (snapshot diff)
   python3 manage.py quality-report            # data quality as numbers
@@ -94,6 +95,21 @@ def cmd_gleif_rr_stakes(args):
     from app.scraper.runner import run_gleif_rr_stakes
     result = _run_guarded_import("gleif-rr-stakes",
         lambda: run_gleif_rr_stakes(local_file=args.file, dry_run=args.dry_run))
+    if result is not None:
+        print(result)
+
+
+def cmd_gleif_rr_validation(args):
+    """Fill how far the LOU checked each relationship record (GLEIF's
+    ValidationSources / ValidationDocuments) onto the GLEIF edges
+    (`gleif_rr.heal_validation`) — once, on a database loaded before the RR
+    import read it (2026-10-13). Fill-only; `--dry-run` only counts."""
+    from app.config import settings
+    settings.SCRAPER_ENABLED = True
+    settings.SCRAPER_BODS_GLEIF_ENABLED = True
+    from app.scraper.runner import run_gleif_rr_validation
+    result = _run_guarded_import("gleif-rr-validation",
+        lambda: run_gleif_rr_validation(local_file=args.file, dry_run=args.dry_run))
     if result is not None:
         print(result)
 
@@ -1318,6 +1334,13 @@ def _build_parser():
     p_rr_stakes.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
     p_rr_stakes.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
     p_rr_stakes.set_defaults(func=cmd_gleif_rr_stakes)
+
+    # gleif-rr-validation command (one-off heal: how far each record was checked)
+    p_rr_val = subparsers.add_parser('gleif-rr-validation',
+        help="Fill how far GLEIF checked each relationship record onto its edge — once, on a database loaded before 2026-10-13")
+    p_rr_val.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
+    p_rr_val.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
+    p_rr_val.set_defaults(func=cmd_gleif_rr_validation)
     p_rr.set_defaults(func=cmd_gleif_rr)
 
     p_rh = subparsers.add_parser('gleif-rr-history',

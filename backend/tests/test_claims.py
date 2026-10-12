@@ -150,3 +150,16 @@ class TestAcquisitionClaimKey:
         assert key_for(deal) == deal["claim_key"], "a heal must never fold it into the plain claim"
         plain = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type="EX-21")
         assert key_for(plain) == plain["claim_key"]
+
+
+class TestHowFarTheRegisterCheckedIt:
+    def test_the_claim_carries_the_corroboration_level_as_stated(self):
+        from app.claims import KIND_OWNS, claim_props
+        p = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="gleif",
+                        validation_sources="ENTITY_SUPPLIED_ONLY",
+                        validation_documents="OTHER_OFFICIAL_DOCUMENTS", credibility_score=92)
+        assert p["validation_sources"] == "ENTITY_SUPPLIED_ONLY"
+        assert p["validation_documents"] == "OTHER_OFFICIAL_DOCUMENTS"
+        assert p["credibility_score"] == 92             # provenance, not a penalty
+        bare = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="gleif")
+        assert bare["validation_sources"] is None and bare["validation_documents"] is None
