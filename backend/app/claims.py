@@ -40,6 +40,26 @@ KIND_OWNS = "owns"
 KIND_ROLE = "role"
 KIND_SUCCESSION = "succession"
 
+#: `filing_type` values of an owns claim read from an acquirer's XBRL
+#: business-combination facts (app/scraper/sec_acquisitions.py). Such a claim
+#: is keyed APART from the same source's other owns claim for the pair: SEC's
+#: Exhibit 21 says "held at year-end", its 10-Q says "bought on this day for
+#: this much" — two assertions, two claims. Keyed together, the second write
+#: overwrote the first and the next Exhibit 21 read overwrote it back.
+ACQUISITION_FILING_TYPES = frozenset({"10-K XBRL", "10-Q XBRL"})
+_ACQUISITION_KEY = "acquisition"
+
+
+def _key_discriminator(kind: str | None, role: str | None, filing_type: str | None) -> str | None:
+    """The part of a claim's identity beyond (kind, pair, source): a role claim's
+    canonical role, an acquisition claim's marker, else nothing. `claim_props`
+    and `key_for` MUST agree on this, or a heal re-keys what a writer wrote."""
+    if kind == KIND_ROLE and role:
+        return canonical_role(role)
+    if kind == KIND_OWNS and filing_type in ACQUISITION_FILING_TYPES:
+        return _ACQUISITION_KEY
+    return None
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -107,7 +127,7 @@ def claim_props(
     """
     return {
         "claim_key": claim_key(kind, from_id, to_id, source_id,
-                               role_key=canonical_role(role) if kind == KIND_ROLE and role else None),
+                               role_key=_key_discriminator(kind, role, filing_type)),
         "kind": kind,
         "from_id": from_id,
         "to_id": to_id,
@@ -280,7 +300,7 @@ def key_for(claim: dict, *, from_id: str | None = None, to_id: str | None = None
     # merge must not fail on it
     return claim_key(kind or "", from_id or claim.get("from_id") or "", to_id or claim.get("to_id") or "",
                      claim.get("source_id") or "",
-                     role_key=canonical_role(role) if kind == KIND_ROLE and role else None)
+                     role_key=_key_discriminator(kind, role, claim.get("filing_type")))
 
 
 def rekey_claim(claim: dict, *, from_id: str | None = None, to_id: str | None = None) -> str:

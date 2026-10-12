@@ -46,6 +46,7 @@ from app.scraper.sec_writer import (
     _same_member, _split_member_key,                                             # noqa: F401
     _upsert_group_membership, _upsert_owns_sec,                                  # noqa: F401
     _upsert_role_sec, _upsert_voting_group, _close_role_sec,                                      # noqa: F401
+    write_acquisition_sec,                                                       # noqa: F401
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
@@ -1067,6 +1068,126 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 **({"group_of": data["group_of"]} if data.get("group_of") else {}),
                 **({"source_url": data["url"], "confirmed_by": data["confirmed_by"],
                     "confirmed_on": data["confirmed_on"]} if data.get("confirmed_by") else {})}
+
+
+def run_sec_acquisitions(company: str, force: bool = False,
+                         max_filings: int | None = None) -> dict:
+    """Ingest the acquisitions one filer's own 10-K / 10-Q XBRL facts state:
+    acquirer → acquired company, with the CLOSING DATE as a stated start and
+    the consideration paid (`app.scraper.sec_acquisitions`).
+
+    Enriches, does not discover — the company must be in the graph with a
+    CIK (run the SEC EDGAR scrape first, like Exhibit 21). The acquired
+    company is resolved by name like an Exhibit 21 row (the filing carries no
+    identifier for it; an existing GLEIF/PSC node wins, else it is created
+    without a country — XBRL states none).
+
+    Honesty rules carried onto the data:
+    - only a consideration-TRANSFERRED fact is a closing; a member the filer
+      tags with an agreed or expected price is a pending deal, counted and
+      never written (`pending_only`);
+    - the filer is the GROUP: its XBRL does not say which group company
+      bought. The edge is drawn from the filer, undated in structure, and
+      flagged a `shortcut` when the graph already carries a chain from the
+      filer to the company (`maintenance.mark_shortcut_for_pair`);
+    - the Exhibit 21 row for the same pair keeps the edge's answer; the deal
+      adds the date and the price (`sec_writer.write_acquisition_sec`);
+    - member names vary between filings: newest filing first, one write per
+      normalised name (`repeated` counts the rest).
+
+    Freshness gates on the newest instance read: a newer 10-K / 10-Q opens
+    the gate by itself; `force` re-reads (from the cache)."""
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise PermissionError("SEC EDGAR scraper is disabled. "
+                              "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
+
+    from app.routers.search import resolve_best_entity
+    from app.scraper.run_log import record_run
+    from app.scraper.maintenance import mark_shortcut_for_pair
+    from app.scraper.sec_acquisitions import FILING_TYPE, MAX_FILINGS, fetch_acquisitions
+
+    entity = resolve_best_entity(company, None)
+    if not entity:
+        return {"status": "no_results", "company": company, "total": 0, "scraped": []}
+    company_id = entity["id"]
+    if not entity.get("sec_cik"):
+        return {"status": "needs_sec_scrape", "company": company,
+                "entity_id": company_id, "total": 0,
+                "detail": "The entity has no SEC CIK yet — run the SEC EDGAR "
+                          "scrape (13D/G + Form 4) first."}
+
+    with record_run("sec-acquisitions", company) as run:
+        run["entity_id"] = company_id
+        source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
+                                   SEC_EDGAR_CREDIBILITY)
+        data = fetch_acquisitions(entity["sec_cik"], max_filings or MAX_FILINGS)
+        if not data["filings"]:
+            run["status"], run["note"] = "skipped", "no 10-K or 10-Q with XBRL"
+            return {"status": "no_filings", "company": company, "entity_id": company_id,
+                    "total": 0, "detail": "The company files no 10-K or 10-Q with XBRL "
+                                          "financial statements."}
+        with db.get_session() as session:
+            row = session.run("MATCH (e:Entity {id: $id}) "
+                              "RETURN e.sec_acquisitions_ingested AS ingested",
+                              id=company_id).single()
+        if not force and row and row.get("ingested") == data["newest_url"]:
+            run["status"], run["note"] = "skipped", "filings already ingested"
+            return {"status": "fresh", "company": company, "entity_id": company_id,
+                    "total": 0, "detail": "The newest 10-K / 10-Q is already ingested; a "
+                                          "newer one opens the gate by itself. --force re-reads."}
+
+        written = enriched = undated = repeated = shortcuts = 0
+        pending_only: set[str] = set()
+        skipped_aggregate = 0
+        seen: set[str] = set()
+        scraped: list[dict] = []
+        for filing in data["filings"]:            # newest first: the current statement wins
+            pending_only.update(filing["pending_only"])
+            skipped_aggregate += filing["skipped_aggregate"]
+            for acq in filing["acquisitions"]:
+                key = normalize_entity_name(acq["name"])
+                if key in seen:
+                    repeated += 1
+                    continue
+                seen.add(key)
+                sub_id = _upsert_entity_by_name(name=acq["name"], entity_type="company",
+                                                source_id=source_id)
+                if not sub_id or sub_id == company_id:
+                    continue
+                outcome = write_acquisition_sec(
+                    company_id, sub_id, source_id, closing=acq["closing"],
+                    value_usd=acq["value_usd"], file_date=filing["filing_date"],
+                    source_url=filing["url"], filing_type=FILING_TYPE[filing["form"]])
+                if outcome == "enriched":
+                    enriched += 1
+                else:
+                    written += 1
+                if not acq["closing"]:
+                    undated += 1
+                if mark_shortcut_for_pair(company_id, sub_id):
+                    shortcuts += 1
+                scraped.append({"id": sub_id, "name": acq["name"], "since": acq["closing"],
+                                "value_usd": acq["value_usd"], "concept": acq["concept"],
+                                "form": filing["form"], "filing_date": filing["filing_date"],
+                                "accession": filing["accession"], "outcome": outcome})
+        with db.get_session() as session:
+            session.run("MATCH (e:Entity {id: $id}) SET e.sec_acquisitions_ingested = $u",
+                        id=company_id, u=data["newest_url"])
+        run["total"] = written
+        notes = [f"{enriched} already listed (dated and priced)" if enriched else "",
+                 f"{undated} without a closing date" if undated else "",
+                 f"{shortcuts} redundant with a chain (shortcut)" if shortcuts else "",
+                 f"{len(pending_only)} pending, not written" if pending_only else "",
+                 f"{skipped_aggregate} aggregate members skipped" if skipped_aggregate else ""]
+        if any(notes):
+            run["note"] = ", ".join(n for n in notes if n)
+        return {"status": "ok", "company": company, "entity_id": company_id,
+                "filings": len(data["filings"]), "total": written, "enriched": enriched,
+                "undated": undated, "repeated": repeated, "pending_only": len(pending_only),
+                "skipped_aggregate": skipped_aggregate, "no_instance": data["no_instance"],
+                "shortcuts": shortcuts, "scraped": scraped}
 
 
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:

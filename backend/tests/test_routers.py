@@ -669,3 +669,47 @@ def test_tree_query_keeps_the_indirect_filter_composable(fake_db):
     cypher, _ = fake_db.calls[0]
     assert "COALESCE(e.shortcut, false) <> true" in cypher
     assert "COALESCE(e.direct_or_indirect, 'direct') <> 'indirect'" in cypher
+
+
+# ── SEC acquisitions (XBRL business combinations) ──────────────────────────────
+
+def test_sec_acquisitions_run_requires_contributor(client, make_token):
+    assert client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet"}).status_code in (401, 403)
+    tok = {"Authorization": f"Bearer {make_token(role='viewer')}"}
+    assert client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet"},
+                       headers=tok).status_code == 403
+
+
+def test_sec_acquisitions_run_delegates_and_maps_needs_scrape_to_409(client, make_token, monkeypatch):
+    from app.config import settings
+    import app.scraper.runner as runner
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", True)
+    tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
+    seen = {}
+
+    def fake(company, force=False, max_filings=None):
+        seen.update(company=company, force=force, max_filings=max_filings)
+        return {"status": "ok", "total": 2, "company": company}
+    monkeypatch.setattr(runner, "run_sec_acquisitions", fake)
+    r = client.post("/scraper/sec-acquisitions/run",
+                    params={"company": "Alphabet", "force": "true", "max_filings": 3}, headers=tok)
+    assert r.status_code == 200 and r.json()["total"] == 2
+    assert seen == {"company": "Alphabet", "force": True, "max_filings": 3}
+    # the filing window is bounded
+    assert client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet", "max_filings": 0},
+                       headers=tok).status_code == 422
+
+    monkeypatch.setattr(runner, "run_sec_acquisitions",
+                        lambda company, force=False, max_filings=None: {
+                            "status": "needs_sec_scrape", "detail": "run the SEC EDGAR scrape first"})
+    r = client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet"}, headers=tok)
+    assert r.status_code == 409
+
+
+def test_sec_acquisitions_run_master_off_is_403(client, make_token, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", False)
+    tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
+    assert client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet"},
+                       headers=tok).status_code == 403

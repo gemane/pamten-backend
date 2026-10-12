@@ -252,6 +252,40 @@ def sec_ex21_run(
     return result
 
 
+@router.post("/sec-acquisitions/run")
+def sec_acquisitions_run(
+    company: str = Query(..., min_length=2, description="Acquirer name as known to the graph"),
+    force: bool = Query(False, description="Re-read even if the newest 10-K / 10-Q is already ingested"),
+    max_filings: int = Query(8, ge=1, le=25, description="10-K / 10-Q filings to read, newest first"),
+    _: dict = Depends(require_contributor),
+):
+    """Acquisitions one filer's own XBRL financial statements state — contributor-only.
+
+    `us-gaap:BusinessAcquisitionAxis` members with a consideration-transferred
+    fact in the acquirer's 10-K / 10-Q: acquirer → acquired company, the
+    closing date as a stated start, the price paid, read from fields. Cheap:
+    one instance (plus its label linkbase) per filing, all cacheable. Requires
+    the SEC EDGAR scrape to have stamped the CIK first (409 otherwise)."""
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="Scraper is disabled. Set SCRAPER_ENABLED=true.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise HTTPException(status_code=403,
+            detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true.")
+    from app.scraper.runner import run_sec_acquisitions
+    try:
+        result = run_sec_acquisitions(company, force=force, max_filings=max_filings)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
+        logger.exception("SEC acquisitions scrape failed (company=%r)", company)
+        raise HTTPException(status_code=500,
+            detail="SEC acquisitions scrape failed. Check server logs for details.")
+    if result["status"] == "needs_sec_scrape":
+        raise HTTPException(status_code=409, detail=result["detail"])
+    return result
+
+
 # ── Run-all endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/run-all")

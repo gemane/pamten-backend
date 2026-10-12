@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Alphabet Inc. Form 10-Q for Q1 2026, accession 0001652044-26-000048, label linkbase goog-20260331_lab.xml,
+     TRIMMED to the label/locator/arc triples of the two business-combination members (Intersect, Wiz).
+     Every line is verbatim from EDGAR. -->
+<link:linkbase xmlns:link="http://www.xbrl.org/2003/linkbase" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.xbrl.org/2003/linkbase http://www.xbrl.org/2003/xbrl-linkbase-2003-12-31.xsd">
+  <link:labelLink xlink:role="http://www.xbrl.org/2003/role/link" xlink:type="extended">
+    <link:label id="lab_goog_IntersectAcquisitionMember_019ce327-d650-7095-9ebf-72058f29c190_terseLabel_en-US" xlink:label="lab_goog_IntersectAcquisitionMember" xlink:role="http://www.xbrl.org/2003/role/terseLabel" xlink:type="resource" xml:lang="en-US">Intersect Acquisition</link:label>
+    <link:label id="lab_goog_IntersectAcquisitionMember_label_en-US" xlink:label="lab_goog_IntersectAcquisitionMember" xlink:role="http://www.xbrl.org/2003/role/label" xlink:type="resource" xml:lang="en-US">Intersect Acquisition [Member]</link:label>
+    <link:label id="lab_goog_IntersectAcquisitionMember_documentation_en-US" xlink:label="lab_goog_IntersectAcquisitionMember" xlink:role="http://www.xbrl.org/2003/role/documentation" xlink:type="resource" xml:lang="en-US">Intersect Acquisition</link:label>
+    <link:loc xlink:type="locator" xlink:label="loc_goog_IntersectAcquisitionMember" xlink:href="goog-20260331.xsd#goog_IntersectAcquisitionMember"/>
+    <link:labelArc xlink:arcrole="http://www.xbrl.org/2003/arcrole/concept-label" xlink:from="loc_goog_IntersectAcquisitionMember" xlink:to="lab_goog_IntersectAcquisitionMember" xlink:type="arc" order="1"/>
+    <link:label id="lab_goog_WizIncMember_019c43a3-ecd2-763b-8682-cec375367b5f_terseLabel_en-US" xlink:label="lab_goog_WizIncMember" xlink:role="http://www.xbrl.org/2003/role/terseLabel" xlink:type="resource" xml:lang="en-US">Wiz</link:label>
+    <link:label id="lab_goog_WizIncMember_label_en-US" xlink:label="lab_goog_WizIncMember" xlink:role="http://www.xbrl.org/2003/role/label" xlink:type="resource" xml:lang="en-US">Wiz Inc [Member]</link:label>
+    <link:label id="lab_goog_WizIncMember_documentation_en-US" xlink:label="lab_goog_WizIncMember" xlink:role="http://www.xbrl.org/2003/role/documentation" xlink:type="resource" xml:lang="en-US">Wiz Inc</link:label>
+    <link:loc xlink:type="locator" xlink:label="loc_goog_WizIncMember" xlink:href="goog-20260331.xsd#goog_WizIncMember"/>
+    <link:labelArc xlink:arcrole="http://www.xbrl.org/2003/arcrole/concept-label" xlink:from="loc_goog_WizIncMember" xlink:to="lab_goog_WizIncMember" xlink:type="arc" order="1"/>
+  </link:labelLink>
+</link:linkbase>
