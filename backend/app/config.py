@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     # filesystem is ephemeral, so leave it unset there. See docs/sec_edgar_scraper.md.
     SEC_CACHE_DIR:                    str  = ""
     # The shared S3-compatible object store (app/objectstore.py): one bucket for
-    # every environment, a prefix per purpose (edgar/ = the filing cache). Any
+    # every environment, a prefix per purpose (edgar/ = the filing cache,
+    # geocode/ = the geocoder's answers, images/ = logos and portraits with
+    # their credit). Any
     # S3 API — endpoint may be given with or without the https:// scheme.
     # Bucket empty = off. Keys are secrets: env only.
     OBJECT_STORE_BUCKET:              str  = ""

@@ -150,6 +150,14 @@ Off unless `ANALYTICS_ENABLED` is set.
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
 | DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
 
+## Media (images with their credit)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/media/{kind}/{id}` | — | The credit for a node's image (`kind` = `entity` for the logo, `person` for the portrait): `author`, `license`, `license_url`, `file_page` (the Commons file, the attribution target), `attribution_required`, `source`, and `url` — the path of the bytes below. 404 when the node has no servable image, 503 when Wikimedia could not be asked (not remembered) |
+| GET | `/media/{kind}/{id}/file` | — | The thumbnail bytes (`Cache-Control: public, max-age=86400`) |
+
+The browser never talks to Wikimedia: the server resolves the Commons file behind the node (the company's stored logo URL, the person's Wikipedia page — never a guess by name), reads its licence metadata once, and keeps bytes and credit in the shared bucket under `images/` and in memory (a month; "no image" a week). Only public-domain and CC0 / CC BY / CC BY-SA files are served; NC, ND, GFDL-only and project-hosted fair-use images are refused and the node has no image. Merged ids are followed like on the node routes.
+
 ## App
 
 ### `GET /app-version`

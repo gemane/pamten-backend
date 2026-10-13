@@ -169,6 +169,10 @@ version is served at `/docs` (Swagger) and `/redoc` on a running instance.
 ---
 
 
+### Images and their credit
+
+A company's logo and a person's portrait come from Wikimedia Commons, but through this API (`GET /media/{kind}/{id}` for the credit, `…/file` for the bytes), not from the reader's browser: Wikimedia sees the server, never the reader's address or what they looked at. The server reads each file's licence from Commons once and serves only public-domain and CC0 / CC BY / CC BY-SA files — a visible credit is all those ask for, and the panel shows it under the image. Bytes and credit are cached in the shared bucket (`images/`) for a month, a "no image" for a week. See [docs/api-reference.md](docs/api-reference.md#media-images-with-their-credit).
+
 ## Authentication
 
 Access tokens are JWTs signed with `SECRET_KEY` (HS256, **15-minute** expiry — `ACCESS_TOKEN_EXPIRE_MINUTES`). Nothing is consulted when one is presented, so the TTL *is* the blast radius of a stolen token — hence a short one. `SECRET_KEY` must be **at least 32 characters**; the app refuses to start with a shorter one, in any mode, since short HS256 keys are brute-forceable. Set a strong random key in production:
