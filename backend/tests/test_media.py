@@ -64,7 +64,10 @@ class FakeWikimedia:
 def store():
     s3 = FakeS3()
     media._memory.clear()
+    # Bucket AND endpoint: the store counts as on only with both (CI has no
+    # .env, so a fixture that patched the bucket alone ran with the store off).
     with patch.object(settings, "OBJECT_STORE_BUCKET", "b"), \
+         patch.object(settings, "OBJECT_STORE_ENDPOINT", "fsn1.example.test"), \
          patch.object(objectstore, "_get_client", lambda: s3):
         yield s3
     media._memory.clear()
@@ -240,7 +243,8 @@ class TestImageLookup:
 
     def test_works_without_a_bucket_from_memory(self, wikimedia):
         media._memory.clear()
-        with patch.object(settings, "OBJECT_STORE_BUCKET", ""):
+        with patch.object(settings, "OBJECT_STORE_BUCKET", ""), \
+             patch.object(settings, "OBJECT_STORE_ENDPOINT", ""):
             assert media.image_bytes("entity", "e1", {"logo_url": LOGO_URL}) == (b"PNGBYTES", "image/png")
             media.image_bytes("entity", "e1", {"logo_url": LOGO_URL})
         assert len(wikimedia.calls) == 2
