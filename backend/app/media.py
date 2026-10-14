@@ -102,9 +102,31 @@ def license_allowed(short_name: str | None) -> bool:
 _TAGS = re.compile(r"<[^>]+>")
 
 
+_HIDDEN = re.compile(r"<(\w+)[^>]*\bdisplay:\s*none[^>]*>.*?</\1>", re.I | re.S)
+_NO_AUTHOR = re.compile(r"^(unknown( author| artist)?|anonymous|n/?a|-|\?)$", re.I)
+_BARE_URL = re.compile(r"^\s*https?://\S+\s*$", re.I)
+
+
 def _plain(html: str | None) -> str | None:
-    text = _TAGS.sub("", html or "").strip()
+    """Commons' Artist/Credit fields are HTML. Elements hidden with
+    `display: none` go first (the {{unknown}} template carries a hidden
+    duplicate of its own text, which read "Unknown authorUnknown author"
+    once the tags were stripped), then the tags."""
+    text = _TAGS.sub("", _HIDDEN.sub("", html or "")).strip()
     return re.sub(r"\s+", " ", text) or None
+
+
+def author_from(artist: str | None, credit: str | None) -> str | None:
+    """The name the credit line shows, or None when nobody is named: an
+    "Unknown author" marker is nobody, and a Credit that is only a URL is a
+    source, not a person (the file page link carries it)."""
+    name = _plain(artist)
+    if name and not _NO_AUTHOR.match(name):
+        return name
+    fallback = _plain(credit)
+    if fallback and not _NO_AUTHOR.match(fallback) and not _BARE_URL.match(fallback):
+        return fallback
+    return None
 
 
 def credit_from_imageinfo(file: str, info: dict) -> ImageInfo | None:
@@ -119,7 +141,7 @@ def credit_from_imageinfo(file: str, info: dict) -> ImageInfo | None:
     return ImageInfo(
         file=file,
         file_page=info.get("descriptionurl") or f"https://commons.wikimedia.org/wiki/File:{quote(file)}",
-        author=_plain(value("Artist")) or _plain(value("Credit")),
+        author=author_from(value("Artist"), value("Credit")),
         license=short.strip(),
         license_url=value("LicenseUrl") or None,
         attribution_required=required,

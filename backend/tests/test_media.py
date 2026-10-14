@@ -37,6 +37,34 @@ def _imageinfo(license_name="CC BY-SA 4.0", artist="<a href='x'>Jane Doe</a>", r
     }
 
 
+class TestAuthor:
+    def test_hidden_duplicate_in_the_unknown_template_is_dropped_and_unknown_is_nobody(self):
+        # the real SoftBank_Group_logo.svg Artist value
+        artist = 'Unknown author<span style="display: none;">Unknown author</span>'
+        assert media._plain(artist) == "Unknown author"
+        assert media.author_from(artist, None) is None
+
+    def test_a_credit_that_is_only_a_url_names_nobody(self):
+        credit = ('<a rel="nofollow" class="external free" href="https://group.example/logo.svg">'
+                  'https://group.example/logo.svg</a>')
+        assert media.author_from("Unknown author", credit) is None
+        assert media.author_from(None, credit) is None
+
+    def test_a_named_credit_stands_in_for_a_missing_artist(self):
+        assert media.author_from(None, "Own work by <b>Someone</b>") == "Own work by Someone"
+        assert media.author_from("  ", "Press kit, Example Corp") == "Press kit, Example Corp"
+
+    def test_hidden_elements_go_but_visible_markup_stays_as_text(self):
+        html = '<a href="x">Jane Doe</a> <span style="display:none">(hidden)</span><i>photographer</i>'
+        assert media._plain(html) == "Jane Doe photographer"
+
+    def test_unknown_credit_does_not_rescue_an_unknown_artist(self):
+        assert media.author_from("Anonymous", "unknown") is None
+        info = _imageinfo(artist="Unknown author")
+        info["extmetadata"]["Credit"] = {"value": "https://example.com/logo.svg"}
+        assert media.credit_from_imageinfo("X.svg", info).author is None
+
+
 def test_svg_original_gets_the_thumbnails_png_type():
     """Commons leaves thumbmime empty when it rendered an SVG to PNG; the bytes
     we serve are that PNG, so the type must not be the original's svg+xml."""
