@@ -29,6 +29,7 @@ tests replace one seam.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -77,6 +78,15 @@ class ImageInfo:
     attribution_required: bool
     content_type: str
     source: str = SOURCE_NAME
+    etag: str = ""                 # fingerprint of the bytes; in the file URL, so a changed image is a new URL
+
+
+def fingerprint(data: bytes) -> str:
+    """Twelve hex digits of the bytes' SHA-1: the file URL's `?v=` and the
+    ETag. A replaced logo on Commons, or a changed answer from this server,
+    is then a different URL — a browser that cached the old one for a day
+    never shows it under the new credit."""
+    return hashlib.sha1(data).hexdigest()[:12]
 
 
 # ── pure parts ────────────────────────────────────────────────────────────────
@@ -313,6 +323,8 @@ def image_info(kind: str, node_id: str, record: dict) -> ImageInfo | None:
     if not pointer(kind, record):
         return None   # nothing to look up, nothing worth remembering
     meta = _read_meta(kind, node_id)
+    if meta is not None and not meta.get("none") and not meta.get("etag"):
+        meta = None   # written before the fingerprint existed: fetch again, once
     if meta is not None:
         return None if meta.get("none") else ImageInfo(**{k: meta[k] for k in ImageInfo.__dataclass_fields__})
     file = resolve_file(kind, record)
@@ -323,6 +335,7 @@ def image_info(kind: str, node_id: str, record: dict) -> ImageInfo | None:
         return None
     thumb = info.get("thumburl") or info.get("url")
     data = _get(thumb).content
+    credit.etag = fingerprint(data)
     objectstore.put(_bytes_key(kind, node_id), data, credit.content_type)
     _memory.put(_bytes_key(kind, node_id), data, POSITIVE_TTL)
     _write_meta(kind, node_id, asdict(credit))

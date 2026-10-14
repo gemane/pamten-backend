@@ -153,8 +153,8 @@ Off unless `ANALYTICS_ENABLED` is set.
 ## Media (images with their credit)
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/media/{kind}/{id}` | — | The credit for a node's image (`kind` = `entity` for the logo, `person` for the portrait): `author`, `license`, `license_url`, `file_page` (the Commons file, the attribution target), `attribution_required`, `source`, and `url` — the path of the bytes below. 404 when the node has no servable image, 503 when Wikimedia could not be asked (not remembered) |
-| GET | `/media/{kind}/{id}/file` | — | The thumbnail bytes (`Cache-Control: public, max-age=86400`) |
+| GET | `/media/{kind}/{id}` | — | The credit for a node's image (`kind` = `entity` for the logo, `person` for the portrait): `author`, `license`, `license_url`, `file_page` (the Commons file, the attribution target), `attribution_required`, `source`, and `url` — the path of the bytes below, with the bytes' fingerprint as `?v=` so a changed image is a new URL. 404 when the node has no servable image, 503 when Wikimedia could not be asked (not remembered) |
+| GET | `/media/{kind}/{id}/file` | — | The thumbnail bytes, with an `ETag` (304 on a matching `If-None-Match`). The URL the credit hands out carries `?v=<fingerprint>` and is cacheable for a year (`public, max-age=31536000, immutable`); the plain URL, or one with a fingerprint that no longer matches, for a day (`max-age=86400`) |
 
 The browser never talks to Wikimedia: the server resolves the Commons file behind the node (the company's stored logo URL, the person's Wikipedia page — never a guess by name), reads its licence metadata once, and keeps bytes and credit in the shared bucket under `images/` and in memory (a month; "no image" a week). Only public-domain and CC0 / CC BY / CC BY-SA files are served; NC, ND, GFDL-only and project-hosted fair-use images are refused and the node has no image. Merged ids are followed like on the node routes.
 

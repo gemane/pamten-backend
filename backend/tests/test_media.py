@@ -7,6 +7,7 @@ metadata; the bytes and credit are cached (bucket + memory) so a panel open
 costs Wikimedia nothing after the first; a definite "no image" is remembered,
 a transient failure is not. Wikimedia is a seam (`media._get`), never reached.
 """
+import hashlib
 import json
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ from tests.test_objectstore import FakeS3
 LOGO_URL = ("https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Tesla_T_symbol.svg/"
             "250px-Tesla_T_symbol.svg.png")
 PERSON_URL = "https://en.wikipedia.org/wiki/Elon_Musk"
+PNG_ETAG = media.fingerprint(b"PNGBYTES")
 
 
 def _imageinfo(license_name="CC BY-SA 4.0", artist="<a href='x'>Jane Doe</a>", required="true",
@@ -63,6 +65,29 @@ class TestAuthor:
         info = _imageinfo(artist="Unknown author")
         info["extmetadata"]["Credit"] = {"value": "https://example.com/logo.svg"}
         assert media.credit_from_imageinfo("X.svg", info).author is None
+
+
+def test_fingerprint_is_twelve_hex_digits_of_the_bytes():
+    assert PNG_ETAG == hashlib.sha1(b"PNGBYTES").hexdigest()[:12]
+    assert media.fingerprint(b"other") != PNG_ETAG
+
+
+def test_the_credit_carries_the_bytes_fingerprint(store, wikimedia):
+    credit = media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+    assert credit.etag == PNG_ETAG
+    assert json.loads(store.objects["images/entity/e1.json"])["etag"] == PNG_ETAG
+
+
+def test_a_credit_written_before_the_fingerprint_is_fetched_again_once(store, wikimedia):
+    media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+    media._memory.clear()
+    old = json.loads(store.objects["images/entity/e1.json"]); old.pop("etag")
+    store.objects["images/entity/e1.json"] = json.dumps(old).encode()
+    calls = len(wikimedia.calls)
+    assert media.image_info("entity", "e1", {"logo_url": LOGO_URL}).etag == PNG_ETAG
+    assert len(wikimedia.calls) > calls
+    assert media.image_info("entity", "e1", {"logo_url": LOGO_URL}).etag == PNG_ETAG
+    assert len(wikimedia.calls) == calls + 2   # imageinfo + bytes, once
 
 
 def test_svg_original_gets_the_thumbnails_png_type():
@@ -304,7 +329,7 @@ class TestEndpoints:
         fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}])
         r = client.get("/media/entity/e1")
         assert r.status_code == 200
-        assert r.json() == {"url": "/media/entity/e1/file", "author": "Jane Doe", "license": "CC BY-SA 4.0",
+        assert r.json() == {"url": f"/media/entity/e1/file?v={PNG_ETAG}", "author": "Jane Doe", "license": "CC BY-SA 4.0",
                             "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
                             "file_page": "https://commons.wikimedia.org/wiki/File:Tesla_T_symbol.svg",
                             "attribution_required": True, "source": "Wikimedia Commons"}
@@ -316,12 +341,31 @@ class TestEndpoints:
         assert r.content == b"PNGBYTES"
         assert r.headers["content-type"].startswith("image/png")
         assert r.headers["cache-control"] == "public, max-age=86400"
+        assert r.headers["etag"] == f'"{PNG_ETAG}"'
+
+    def test_the_fingerprinted_url_is_cacheable_for_a_year_a_wrong_one_for_a_day(self, client, fake_db, store, wikimedia):
+        row = [{"logo_url": LOGO_URL, "wikipedia_url": None}]
+        fake_db.queue(row, row)
+        r = client.get(f"/media/entity/e1/file?v={PNG_ETAG}")
+        assert r.status_code == 200 and r.content == b"PNGBYTES"
+        assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
+        r = client.get("/media/entity/e1/file?v=stale0stale0")   # a URL handed out before the bytes changed
+        assert r.status_code == 200 and r.content == b"PNGBYTES"
+        assert r.headers["cache-control"] == "public, max-age=86400"
+
+    def test_a_matching_if_none_match_is_304(self, client, fake_db, store, wikimedia):
+        row = [{"logo_url": LOGO_URL, "wikipedia_url": None}]
+        fake_db.queue(row, row)
+        r = client.get("/media/entity/e1/file", headers={"If-None-Match": f'"{PNG_ETAG}"'})
+        assert r.status_code == 304 and r.content == b""
+        r = client.get("/media/entity/e1/file", headers={"If-None-Match": '"other"'})
+        assert r.status_code == 200
 
     def test_an_id_with_a_colon_reaches_the_lookup(self, client, fake_db, store, wikimedia):
         fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}])
         r = client.get("/media/entity/lei:5493001KJTIIGC8Y1R12")
         assert r.status_code == 200
-        assert r.json()["url"] == "/media/entity/lei:5493001KJTIIGC8Y1R12/file"
+        assert r.json()["url"] == f"/media/entity/lei:5493001KJTIIGC8Y1R12/file?v={PNG_ETAG}"
         assert fake_db.calls[0][1] == {"id": "lei:5493001KJTIIGC8Y1R12"}
 
     def test_no_image_is_404_not_an_error(self, client, fake_db, store, wikimedia):
