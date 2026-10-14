@@ -81,7 +81,8 @@ def test_the_credit_carries_the_bytes_fingerprint(store, wikimedia):
 def test_a_credit_written_before_the_fingerprint_is_fetched_again_once(store, wikimedia):
     media.image_info("entity", "e1", {"logo_url": LOGO_URL})
     media._memory.clear()
-    old = json.loads(store.objects["images/entity/e1.json"]); old.pop("etag")
+    old = json.loads(store.objects["images/entity/e1.json"])
+    old.pop("etag")
     store.objects["images/entity/e1.json"] = json.dumps(old).encode()
     calls = len(wikimedia.calls)
     assert media.image_info("entity", "e1", {"logo_url": LOGO_URL}).etag == PNG_ETAG
@@ -323,6 +324,36 @@ class TestImageLookup:
 
 
 # ── the endpoints ─────────────────────────────────────────────────────────────
+
+class TestPersonPortrait:
+    """A person's stored portrait (Wikidata P18, written like the logo) is the
+    pointer; the Wikipedia page is only the fallback for persons without one."""
+
+    def test_the_stored_portrait_wins_over_the_wikipedia_page(self):
+        record = {"image_url": LOGO_URL, "wikipedia_url": PERSON_URL}
+        assert media.pointer("person", record) == LOGO_URL
+        assert media.resolve_file("person", record) == "Tesla_T_symbol.svg"
+
+    def test_without_a_portrait_the_page_is_asked(self, wikimedia):
+        wikimedia.summary = {"type": "standard", "originalimage": {
+            "source": "https://upload.wikimedia.org/wikipedia/commons/a/ab/Elon_Musk_2015.jpg"}}
+        record = {"image_url": None, "wikipedia_url": PERSON_URL}
+        assert media.pointer("person", record) == PERSON_URL
+        assert media.resolve_file("person", record) == "Elon_Musk_2015.jpg"
+        assert any(u.startswith(media.WIKIPEDIA_SUMMARY) for u in wikimedia.calls)
+
+    def test_a_portrait_needs_no_wikipedia_call(self, store, wikimedia):
+        credit = media.image_info("person", "p1", {"image_url": LOGO_URL, "wikipedia_url": PERSON_URL})
+        assert credit.author == "Jane Doe"
+        assert not any(u.startswith(media.WIKIPEDIA_SUMMARY) for u in wikimedia.calls)
+        assert wikimedia.calls[0] == media.COMMONS_API
+
+    def test_the_endpoint_reads_the_portrait_off_the_record(self, client, fake_db, store, wikimedia):
+        fake_db.queue([{"logo_url": None, "image_url": LOGO_URL, "wikipedia_url": None}])
+        r = client.get("/media/person/p1")
+        assert r.status_code == 200 and r.json()["author"] == "Jane Doe"
+        assert "n.image_url AS image_url" in fake_db.calls[0][0]
+
 
 class TestEndpoints:
     def test_info_is_public_and_names_the_credit(self, client, fake_db, store, wikimedia):

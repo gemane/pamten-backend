@@ -303,15 +303,19 @@ def _write_meta(kind: str, node_id: str, meta: dict) -> None:
 # ── the lookup ────────────────────────────────────────────────────────────────
 
 def pointer(kind: str, record: dict) -> str | None:
-    """What on the record leads to an image: a company's stored logo URL (the
-    Wikidata scraper writes a direct Commons thumbnail), a person's Wikipedia
-    page. A record without one has no image and nothing to ask."""
-    return record.get("logo_url") if kind == "entity" else record.get("wikipedia_url")
+    """What on the record leads to an image: a company's stored logo URL and a
+    person's stored portrait URL (both direct Commons thumbnails the Wikidata
+    scraper writes from P154/P18), else a person's Wikipedia page. A record
+    without one has no image and nothing to ask."""
+    if kind == "entity":
+        return record.get("logo_url")
+    return record.get("image_url") or record.get("wikipedia_url")
 
 
 def resolve_file(kind: str, record: dict) -> str | None:
-    """The Commons file behind the pointer. Network only for the person."""
-    if kind == "entity":
+    """The Commons file behind the pointer. Network only for a person whose
+    only pointer is the Wikipedia page."""
+    if kind == "entity" or record.get("image_url"):
         return commons_file_from_url(pointer(kind, record))
     return wikipedia_image_file(pointer(kind, record))
 

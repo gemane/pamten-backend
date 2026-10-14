@@ -570,7 +570,8 @@ def merge_person_records(keep: str, dup: str) -> None:
     # PSC interest fields, `stale`, `shortcut` and the ultimate-parent dates from
     # every person merge. Now that the post-scrape auto-dedup actually reaches
     # its duplicates, this path runs often. It reads the schema, like the others.
-    BIO_COALESCE = ["wikidata_id", "sec_cik", "birth_date", "death_date", "birth_place", "wikipedia_url"]
+    BIO_COALESCE = ["wikidata_id", "sec_cik", "birth_date", "death_date", "birth_place", "wikipedia_url",
+                    "image_url"]
 
     with db.get_session() as session:
         keep_rec = session.run("MATCH (p:Person {id:$id}) RETURN p", id=keep).single()

@@ -21,13 +21,14 @@ _FILE_CACHE_PINNED = "public, max-age=31536000, immutable"   # the URL with the 
 
 
 def _record(kind: str, node_id: str) -> dict:
-    """The two fields the lookup needs, following a merge forwarding address
+    """The three fields the lookup needs, following a merge forwarding address
     on a miss (as the node routes do)."""
     label = _LABEL.get(kind)
     if not label:
         raise HTTPException(status_code=404, detail="Unknown kind")
     query = (f"MATCH (n:{label} {{id: $id}}) "
-             "RETURN n.logo_url AS logo_url, n.wikipedia_url AS wikipedia_url")
+             "RETURN n.logo_url AS logo_url, n.image_url AS image_url, "
+             "n.wikipedia_url AS wikipedia_url")
     with db.get_session() as session:
         rec = session.run(query, id=node_id).single()
         if not rec:
@@ -36,7 +37,8 @@ def _record(kind: str, node_id: str) -> dict:
                 rec = session.run(query, id=merged_into).single()
     if not rec:
         raise HTTPException(status_code=404, detail=f"{label} not found")
-    return {"logo_url": rec.get("logo_url"), "wikipedia_url": rec.get("wikipedia_url")}
+    return {"logo_url": rec.get("logo_url"), "image_url": rec.get("image_url"),
+            "wikipedia_url": rec.get("wikipedia_url")}
 
 
 def _lookup(fn, kind: str, node_id: str):

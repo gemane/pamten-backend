@@ -794,10 +794,13 @@ class TestUpsertPersonDetail:
                 wikidata_id="Q317521",
                 birth_date="1971-06-28", death_date=None, birth_place="Pretoria",
                 aliases=["Elon"], nationalities=["US", "CA"],
+                image_url="https://upload.wikimedia.org/wikipedia/commons/thumb/x/xy/Elon.jpg/250px-Elon.jpg",
             )
         create = self._create_call(session)
         assert create.kwargs["bdate"] == "1971-06-28"
         assert create.kwargs["bplace"] == "Pretoria"
+        assert create.kwargs["image"].endswith("/250px-Elon.jpg")
+        assert "image_url: $image" in create.args[0]
         assert create.kwargs["aliases"] == ["Elon"]
         assert create.kwargs["nats"] == ["US", "CA"]
         # single nationality is derived from the first of the list when not given
@@ -811,11 +814,14 @@ class TestUpsertPersonDetail:
                 wikidata_id="Q317521",
                 birth_date="1971-06-28", birth_place="Pretoria",
                 aliases=["Elon"], nationalities=["US"],
+                image_url="https://upload.wikimedia.org/wikipedia/commons/thumb/x/xy/Elon.jpg/250px-Elon.jpg",
             )
         assert pid == "p-1"
         backfill = self._backfill_call(session)
         assert backfill.kwargs["bdate"] == "1971-06-28"
         assert backfill.kwargs["bplace"] == "Pretoria"
+        assert backfill.kwargs["image"].endswith("/250px-Elon.jpg")
+        assert "p.image_url    = COALESCE(p.image_url, $image)" in backfill.args[0]   # blank-fill only
         assert backfill.kwargs["aliases"] == ["Elon"]
         assert backfill.kwargs["nats"] == ["US"]
 
