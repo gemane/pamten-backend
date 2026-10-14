@@ -192,6 +192,51 @@ class TestFetchDeltas:
         assert (tmp_path / "lei2-LastDay.json.zip").read_bytes() == b"zipbytes"
 
 
+class TestTheDeltaClientIdentifiesItselfAndRetries:
+    """The nightly refresh used a bare `httpx.get` / `httpx.stream`: no
+    User-Agent (every other client here sends one) and no retry, so one blip
+    failed the night. Mirrors `gleif_rr_history._download`."""
+
+    def _api(self):
+        api = MagicMock()
+        api.json.return_value = {"data": [{"publish_date": "2026-10-14"}]}
+        return api
+
+    def test_the_publish_read_sends_the_user_agent_and_follows_redirects(self):
+        from app.scraper.gleif_incremental import fetch_publish_metadata
+        with patch("httpx.get", return_value=self._api()) as get:
+            assert fetch_publish_metadata() == {"publish_date": "2026-10-14"}
+        kwargs = get.call_args.kwargs
+        assert kwargs["headers"]["User-Agent"].startswith("Owlgraph/")
+        assert kwargs["follow_redirects"] is True
+
+    def test_a_blip_on_the_publish_read_is_retried_then_given_up(self):
+        from app.scraper.gleif_incremental import fetch_publish_metadata
+        import httpx
+        with patch("httpx.get", side_effect=[httpx.ConnectError("blip"), self._api()]) as get, \
+             patch("time.sleep") as sleep:
+            assert fetch_publish_metadata()["publish_date"] == "2026-10-14"
+        assert get.call_count == 2 and sleep.call_count == 1
+        with patch("httpx.get", side_effect=httpx.ConnectError("down")) as get, \
+             patch("time.sleep"), pytest.raises(httpx.ConnectError):
+            fetch_publish_metadata()
+        assert get.call_count == 3
+
+    def test_a_blip_on_the_download_is_retried(self, tmp_path):
+        from app.scraper.gleif_incremental import _download
+        import httpx
+        stream_resp = MagicMock()
+        stream_resp.iter_bytes.return_value = [b"zipbytes"]
+        ok = MagicMock()
+        ok.__enter__.return_value = stream_resp
+        with patch("httpx.stream", side_effect=[httpx.ReadTimeout("slow"), ok]) as stream, \
+             patch("time.sleep"):
+            _download("https://goldencopy.gleif.org/x.zip", str(tmp_path / "x.zip"))
+        assert (tmp_path / "x.zip").read_bytes() == b"zipbytes"
+        assert stream.call_count == 2
+        assert stream.call_args.kwargs["headers"]["User-Agent"].startswith("Owlgraph/")
+
+
 class TestTheDownloadedDeltasAreCleanedUp:
     """`download_deltas` leaves its temp directory behind, and the nightly update
     called it directly — one `gleif-delta-*` directory per run, for months. By the

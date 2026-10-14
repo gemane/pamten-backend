@@ -25,6 +25,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime
@@ -46,6 +47,7 @@ from app.merged_ids import canonical_id
 from app.scraper.owns_merge import ANSWER_FIELDS, combine_since, outranks
 from app.scraper.edge_schema import READ_FIELD
 from app.scraper.gleif_succession import _iter_lei_records, _pairs_from_record, _v
+from app.scraper.wikidata import USER_AGENT
 
 log = logging.getLogger(__name__)
 
@@ -648,10 +650,49 @@ def import_rr_delta(filepath: str, source_id: str, credibility_score: int,
 
 # ── delta fetch (GLEIF golden-copy API) ───────────────────────────────────────
 
+_HEADERS = {"User-Agent": USER_AGENT}   # identify ourselves, as every other client here does
+_ATTEMPTS = 3
+
+
+def _api_json(url: str, params: dict | None = None, timeout: float = 60) -> dict:
+    """One GLEIF API read with the project's User-Agent and three attempts —
+    the nightly refresh used to fail on the first blip (bare `httpx.get`,
+    no identity, no retry) and be skipped until the next night."""
+    for attempt in range(_ATTEMPTS):
+        try:
+            r = httpx.get(url, params=params, headers=_HEADERS, timeout=timeout, follow_redirects=True)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as exc:
+            if attempt == _ATTEMPTS - 1:
+                raise
+            log.warning("GLEIF API request failed (%s), retrying: %s", url, exc)
+            time.sleep(5 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
+def _download(url: str, path: str, timeout: float = 300) -> None:
+    """Stream one delta file to `path`, three attempts, as `gleif_rr_history`
+    downloads its archives."""
+    for attempt in range(_ATTEMPTS):
+        try:
+            with httpx.stream("GET", url, headers=_HEADERS, timeout=timeout, follow_redirects=True) as resp:
+                resp.raise_for_status()
+                with open(path, "wb") as fh:
+                    for chunk in resp.iter_bytes(1 << 20):
+                        fh.write(chunk)
+            return
+        except httpx.HTTPError as exc:
+            if attempt == _ATTEMPTS - 1:
+                raise
+            log.warning("GLEIF delta download failed (%s), retrying: %s", url, exc)
+            time.sleep(5 * (attempt + 1))
+
+
 def fetch_publish_metadata() -> dict:
     """The latest GLEIF golden-copy publish record (its `publish_date` + the
     `full_file`/`delta_files` URLs for each section)."""
-    data = httpx.get(_PUBLISHES_API, params={"per_page": 1}, timeout=60).json()
+    data = _api_json(_PUBLISHES_API, params={"per_page": 1})
     return data["data"][0] if "data" in data else data
 
 
@@ -681,11 +722,7 @@ def download_deltas(publish: dict, interval: str, dest_dir: str | None = None) -
                 continue
             raise
         path = os.path.join(dest, os.path.basename(url))
-        with httpx.stream("GET", url, timeout=300) as resp:
-            resp.raise_for_status()
-            with open(path, "wb") as fh:
-                for chunk in resp.iter_bytes(1 << 20):
-                    fh.write(chunk)
+        _download(url, path)
         out[section] = path
         log.info("GLEIF %s %s delta: %s", section, interval, path)
     return out
