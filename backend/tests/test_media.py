@@ -37,6 +37,24 @@ def _imageinfo(license_name="CC BY-SA 4.0", artist="<a href='x'>Jane Doe</a>", r
     }
 
 
+def test_svg_original_gets_the_thumbnails_png_type():
+    """Commons leaves thumbmime empty when it rendered an SVG to PNG; the bytes
+    we serve are that PNG, so the type must not be the original's svg+xml."""
+    info = _imageinfo(mime="image/svg+xml")
+    info["thumbmime"] = None
+    info["thumburl"] = ("https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/"
+                        "330px-Apple_logo_black.svg.png?utm_source=commons")
+    assert media.thumb_content_type(info) == "image/png"
+    assert media.credit_from_imageinfo("Apple_logo_black.svg", info).content_type == "image/png"
+
+
+def test_thumb_type_prefers_thumbmime_then_the_originals_mime():
+    assert media.thumb_content_type({"thumbmime": "image/webp", "thumburl": "x.png"}) == "image/webp"
+    assert media.thumb_content_type({"thumburl": "https://x/y.jpg?u=1"}) == "image/jpeg"
+    assert media.thumb_content_type({"url": "https://x/y", "mime": "image/gif"}) == "image/gif"
+    assert media.thumb_content_type({}) == "image/jpeg"
+
+
 class FakeWikimedia:
     """`media._get` stand-in: answers by URL, counts calls, can fail."""
     def __init__(self, imageinfo=None, summary=None, fail=False):

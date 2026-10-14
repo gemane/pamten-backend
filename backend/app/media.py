@@ -123,8 +123,24 @@ def credit_from_imageinfo(file: str, info: dict) -> ImageInfo | None:
         license=short.strip(),
         license_url=value("LicenseUrl") or None,
         attribution_required=required,
-        content_type=info.get("thumbmime") or info.get("mime") or "image/jpeg",
+        content_type=thumb_content_type(info),
     )
+
+
+def thumb_content_type(info: dict) -> str:
+    """The type of the bytes we serve, which are the THUMBNAIL's. Commons
+    renders an SVG original to PNG for the thumbnail and then leaves
+    `thumbmime` empty — falling back to the original's `mime` would label
+    PNG bytes `image/svg+xml`. So the thumbnail URL's extension decides
+    before the original's type does."""
+    if info.get("thumbmime"):
+        return info["thumbmime"]
+    thumb = (info.get("thumburl") or "").split("?")[0].lower()
+    for ext, mime in ((".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"),
+                      (".gif", "image/gif"), (".webp", "image/webp"), (".svg", "image/svg+xml")):
+        if thumb.endswith(ext):
+            return mime
+    return info.get("mime") or "image/jpeg"
 
 
 # ── network seam ──────────────────────────────────────────────────────────────
