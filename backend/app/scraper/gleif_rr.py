@@ -311,6 +311,8 @@ def _extras(recorded: str | None, unmaintained: bool, stake: float | None = None
     extra: dict = {"source_date": recorded} if recorded else {}
     if unmaintained:
         extra["stale"] = True
+        extra["stale_reason"] = "lei_lapsed"
+        extra["stale_since"] = recorded
     if stake is not None:
         extra["stake_percent"] = stake
     if validation:
@@ -624,17 +626,19 @@ def heal_registration_status(filepath: str, source_id: str, dry_run: bool = Fals
     finally:
         raw.close()
     counts["pairs"] = len(pairs)
-    unmaintained_pairs = sorted(pc for pc, slot in pairs.items() if _collapse(slot)[3].get("stale"))
+    unmaintained_pairs = {pc: _collapse(slot)[3] for pc, slot in pairs.items()
+                          if _collapse(slot)[3].get("stale")}
     counts["unmaintained"] = len(unmaintained_pairs)
     if dry_run:
         return counts
-    for parent, child in unmaintained_pairs:
+    for (parent, child), extra in sorted(unmaintained_pairs.items()):
         rows = run(
             "MATCH (a:Entity {id: $p})-[r:OWNS]->(b:Entity {id: $c}) "
             "WHERE r.source_id = $src AND r.filing_type = 'RR' AND r.until IS NULL "
-            "SET r.stale = true RETURN count(r) AS n",
+            "SET r.stale = true, r.stale_reason = 'lei_lapsed', r.stale_since = $since, "
+            "    r.stale_source_url = null RETURN count(r) AS n",
             {"p": canonical_id(f"lei:{parent}"), "c": canonical_id(f"lei:{child}"),
-             "src": source_id})
+             "src": source_id, "since": extra.get("stale_since")})
         n = int((rows or [{}])[0].get("n") or 0)
         counts["marked" if n else "not_here"] += 1
     log.info("RR registration status heal: %s", counts)

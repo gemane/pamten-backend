@@ -15,7 +15,7 @@ from app.db.anchors import label_or_entity
 from app.db.paging import iter_id_pages
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 from app.merged_ids import record_merge_sql
-from app.scraper.edge_schema import OWNS_PROPS
+from app.scraper.edge_schema import OWNS_PROPS, STALE_CLEAR_CYPHER
 from app.scraper.owns_merge import fold as _fold_edges
 
 log = logging.getLogger(__name__)
@@ -872,13 +872,15 @@ def mark_stale_ownership(days: int = STALE_AFTER_DAYS) -> dict:
             if is_stale and not r["stale"]:
                 session.run(
                     f"""MATCH (a:{alabel} {{id: $a}})-[r:OWNS]->(b:Entity {{id: $b}})
-                       WHERE r.until IS NULL SET r.stale = true""",
-                    a=r["aid"], b=r["bid"])
+                       WHERE r.until IS NULL
+                       SET r.stale = true, r.stale_reason = 'unconfirmed',
+                           r.stale_since = $since, r.stale_source_url = null""",
+                    a=r["aid"], b=r["bid"], since=str(r["seen"])[:10])
                 marked += 1
             elif r["stale"] and not is_stale:
                 session.run(
                     f"""MATCH (a:{alabel} {{id: $a}})-[r:OWNS]->(b:Entity {{id: $b}})
-                       WHERE r.until IS NULL SET r.stale = false""",
+                       WHERE r.until IS NULL SET {STALE_CLEAR_CYPHER}""",
                     a=r["aid"], b=r["bid"])
                 cleared += 1
     return {"marked": marked, "cleared": cleared, "community_edges": len(rows),

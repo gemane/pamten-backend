@@ -155,7 +155,20 @@ Two rules keep the tiers meaning something on OWNS edges:
   edge is weak evidence of removal and nobody stated an end date. Exempt: register
   edges (they retire facts properly via deltas, snapshot diffs and 0% amendments),
   pairs any register claim vouches for, and closed edges. The pass clears as well
-  as sets, and the quality report counts stale edges per source. The same mark is
+  as sets, and the quality report counts stale edges per source.
+* **Why, and since when** (since 2026-10-14). Every stale mark carries its evidence:
+  `stale_reason` — one of `13f_not_confirmed` (the holder's 13F for the quarter
+  ending `stale_since` no longer lists the position), `ex21_not_listed` (the newer
+  Exhibit 21 / 8.1 dated `stale_since`, linked in `stale_source_url`, no longer
+  names the subsidiary), `unconfirmed` (no source has confirmed the community-tier
+  edge since `stale_since`, its last confirmation), `lei_lapsed` (the GLEIF record
+  lapsed; `stale_since` is its last update) — and `stale_since`, the day that
+  evidence is dated. The history endpoint hands them to the panel's timeline,
+  which shows a dated "no longer confirmed" entry under that year with the reason,
+  so a reader can see why a holding went grey. Every writer that clears the mark
+  clears the three fields with it (`edge_schema.STALE_CLEAR`), so a healed edge
+  carries no old reason. Edges marked before the fields existed keep a bare
+  `stale = true` until the next pass or refresh re-marks them. The same mark is
   set by the writers themselves where a register says a record is no longer
   maintained: a GLEIF relationship record whose registration has **LAPSED** (see
   *The record's own registration status* under GLEIF below), and a 13F holding or

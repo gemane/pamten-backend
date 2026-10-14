@@ -132,6 +132,11 @@ def test_a_subsidiary_the_newer_list_drops_is_dimmed_not_closed(it_db):
         "MATCH (:Entity {id:'p'})-[r:OWNS]->(b) RETURN b.id AS b, r.stale AS stale, r.until AS until")}
     assert got["dropped"] == (True, None)
     assert not got["kept"][0] and not got["other"][0]      # listed now / another filer's exhibit
+    # the mark carries why and since when — the newer list it is missing from
+    why = it_db.run_command(
+        "MATCH (:Entity {id:'p'})-[r:OWNS]->(b:Entity {id:'dropped'}) "
+        "RETURN r.stale_reason AS reason, r.stale_since AS since, r.stale_source_url AS url")[0]
+    assert (why["reason"], why["since"], why["url"]) == ("ex21_not_listed", "2025-12-31", new)
 
 
 def test_the_profile_keeps_a_lower_bound_before_its_date(pair):

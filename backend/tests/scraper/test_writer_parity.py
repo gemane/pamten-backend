@@ -70,7 +70,7 @@ EXPECTED: dict[str, list] = {
         # `validation_*`: how far the LOU checked the record, as provenance.
         {"direct_or_indirect", "interest_types", "source_id",
          "credibility_score", "source_url", "since", "until", "source_date",
-         "last_scraped_at", "read_from", "stale", "stake_percent",
+         "last_scraped_at", "read_from", "stale", "stale_reason", "stale_since", "stake_percent",
          "validation_sources", "validation_documents"},
         # The direct relationship of a folded edge ended: the period is closed
         # and the ultimate relationship continues as its own indirect edge
@@ -164,7 +164,8 @@ def test_claim_props_knows_every_fact_a_claim_should_record():
     claim_fields = set(inspect.signature(claim_props).parameters)
     factual = set(OWNS_PROPS) - {
         # mechanics of the edge, not of the assertion:
-        "last_scraped_at", "stale", "shortcut", "interest_types",
+        "last_scraped_at", "stale", "stale_since", "stale_reason", "stale_source_url",
+        "shortcut", "interest_types",
         "direct_or_indirect", "psc_self_link", "also_ultimate",
         "ultimate_since", "ultimate_until", "until_reason", "value_usd",
         "file_date",

@@ -609,6 +609,16 @@ def get_owners(
     return owners
 
 
+def _staleness(r) -> dict:
+    """The dimming mark with its evidence, for the timeline: a dimmed holding
+    gets a dated entry saying why it went grey (edge_schema.STALE_REASONS)."""
+    if not r.get("stale"):
+        return {}
+    return {"stale": True, "stale_since": r.get("stale_since"),
+            "stale_reason": r.get("stale_reason"), "stale_source_url": r.get("stale_source_url"),
+            "filing_type": r.get("filing_type"), "source_date": r.get("source_date")}
+
+
 def ownership_history_of(
     entity_id: str, limit: int = HISTORY_DEFAULT_LIMIT,
 ) -> tuple[list[dict], bool]:
@@ -645,6 +655,7 @@ def ownership_history_of(
                 "active":        rec["r"].get("until") is None,
                 "stake_percent": rec["r"].get("stake_percent"),
                 "ownership_type": rec["r"].get("ownership_type"),
+                **_staleness(rec["r"]),
             })
 
         # What this entity owns / owned
@@ -669,6 +680,7 @@ def ownership_history_of(
                 "active":        rec["r"].get("until") is None,
                 "stake_percent": rec["r"].get("stake_percent"),
                 "ownership_type": rec["r"].get("ownership_type"),
+                **_staleness(rec["r"]),
             })
 
         # Executive roles at this entity

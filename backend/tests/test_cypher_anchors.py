@@ -149,6 +149,9 @@ class TestTheSitesThatScanned:
         assert "labels(a)[0] AS alabel" in scan and "(b:Entity)" in scan
         assert "MATCH (a:Person {id: $a})-[r:OWNS]->(b:Entity {id: $b})" in first
         assert "MATCH (a:Entity {id: $a})-[r:OWNS]->(b:Entity {id: $b})" in second
+        # the mark carries why and since when: the last day a source confirmed it
+        assert "r.stale_reason = 'unconfirmed'" in first and "r.stale_since = $since" in first
+        assert fake_db.calls[1][1]["since"] == "2020-01-01"
 
     def test_mark_13f_stale_writes_with_the_filers_label(self, fake_db):
         from app.scraper.sec_writer import mark_13f_stale
@@ -159,6 +162,9 @@ class TestTheSitesThatScanned:
         assert "labels(a)[0] AS alabel" in scan
         assert "MATCH (a:Entity {id: $a})-[r:OWNS]->(b:Entity {id: $b})" in first
         assert "MATCH (a:Person {id: $a})-[r:OWNS]->(b:Entity {id: $b})" in second
+        # dimmed with its reason and the quarter that no longer lists it
+        assert "r.stale_reason = '13f_not_confirmed'" in first and "r.stale_since = $period" in first
+        assert fake_db.calls[1][1]["period"] == "2026-06-30"
 
     def test_proxy_write_names_the_company_and_the_matched_owner(self, monkeypatch):
         from app.scraper import proxy_write

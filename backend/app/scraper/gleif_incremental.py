@@ -45,7 +45,7 @@ from app.scraper.gleif_rr import (
     _relationship_dates, _rr_status, _stake, _validation)
 from app.merged_ids import canonical_id
 from app.scraper.owns_merge import ANSWER_FIELDS, combine_since, outranks
-from app.scraper.edge_schema import READ_FIELD
+from app.scraper.edge_schema import READ_FIELD, STALE_CLEAR
 from app.scraper.gleif_succession import _iter_lei_records, _pairs_from_record, _v
 from app.scraper.wikidata import USER_AGENT
 
@@ -255,12 +255,15 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
             "filing_type:'RR', read_from:$rfrom, "
             "interest_types:$it, source_id:$src, credibility_score:$cred, "
             "source_url:$url, since:$since, until:$until, source_date:$sdate, "
-            "last_scraped_at:$now, stale:$stale, stake_percent:$stake, "
+            "last_scraped_at:$now, stale:$stale, stale_reason:$sreason, stale_since:$ssince, "
+            "stale_source_url:null, stake_percent:$stake, "
             "validation_sources:$vs, validation_documents:$vd}]->(b)",
             {"p": parent_id, "c": child_id, "m": marker, "it": ["accountingConsolidation"],
              "src": source_id, "cred": credibility_score, "since": since, "until": until,
              "sdate": recorded, "url": url, "now": now, "rfrom": READ_FIELD,
              "stale": unmaintained, "stake": stake,
+             "sreason": "lei_lapsed" if unmaintained else None,
+             "ssince": recorded if unmaintained else None,
              "vs": (validation or {}).get("validation_sources"),
              "vd": (validation or {}).get("validation_documents")})
         return "created"
@@ -291,9 +294,11 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
     if holds or takeover:
         sets["last_scraped_at"] = now
         if not unmaintained:
-            sets["stale"] = False           # a maintained record confirms the pair
+            sets.update(STALE_CLEAR)        # a maintained record confirms the pair
         elif not existing.get("also_ultimate"):
-            sets["stale"] = True            # the only record the edge stands on has lapsed
+            # the only record the edge stands on has lapsed
+            sets.update(stale=True, stale_reason="lei_lapsed", stale_since=recorded,
+                        stale_source_url=None)
 
     # THE edge that was found — an old ended period of the same pair beside a
     # current one must not be rewritten along with it
@@ -327,7 +332,7 @@ def _write_owns_edge(parent_id: str, child_id: str, child_lei: str, marker: str,
     sets.update(direct_or_indirect="direct", also_ultimate=True,
                 ultimate_since=other_since if other_since and other_since != kept_since else None)
     if not unmaintained:
-        sets["stale"] = False               # this record confirms the pair the other may not
+        sets.update(STALE_CLEAR)            # this record confirms the pair the other may not
     if (holds or takeover) and stake is not None and (
             marker == "direct" or existing.get("stake_percent") is None):
         sets["stake_percent"] = stake       # the direct figure wins, the ultimate one fills
