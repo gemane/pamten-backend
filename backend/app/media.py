@@ -53,6 +53,7 @@ THUMB_WIDTH = 256          # 2× the 72 px avatar, enough for a 36 px logo on an
 POSITIVE_TTL = 30 * 86400  # a replaced photo shows up within a month
 NEGATIVE_TTL = 7 * 86400   # "no image" is re-asked weekly
 _TIMEOUT = 10
+OUTAGE_BACKOFF = 120       # seconds a Wikimedia failure is remembered: one wait, not one per panel
 _MEMORY_SLOTS = 500
 S3_PREFIX = "images/"
 
@@ -186,10 +187,51 @@ def _get(url: str, params: dict | None = None) -> httpx.Response:
     return r
 
 
+class SourceDown(RuntimeError):
+    """Wikimedia failed a moment ago and is not asked again until the backoff
+    has passed. The router answers 503 with a Retry-After."""
+    def __init__(self, until: float):
+        self.until = until
+        super().__init__(f"Wikimedia unavailable, not asked again for {max(0, int(until - time.time()))} s")
+
+
+_outage = {"until": 0.0}
+
+
+def outage_remaining() -> float:
+    """Seconds left of the current backoff, 0 when Wikimedia may be asked."""
+    return max(0.0, _outage["until"] - time.time())
+
+
+def _is_outage(exc: Exception) -> bool:
+    """A transport failure, a 5xx or a 429 says the source is down or
+    throttling; a 404 says only that this one file or page is not there."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    return isinstance(exc, httpx.HTTPError)
+
+
+def _guarded(url: str, params: dict | None = None) -> httpx.Response:
+    """`_get` behind the outage memory. Every uncached panel opened during a
+    Wikimedia outage used to wait the full timeout itself; now the first
+    failure is remembered for OUTAGE_BACKOFF seconds and the rest answer
+    at once."""
+    remaining = outage_remaining()
+    if remaining > 0:
+        raise SourceDown(_outage["until"])
+    try:
+        return _get(url, params)
+    except Exception as exc:                                          # noqa: BLE001
+        if _is_outage(exc):
+            _outage["until"] = time.time() + OUTAGE_BACKOFF
+            log.warning("Wikimedia unavailable (%s); not asked again for %d s", exc, OUTAGE_BACKOFF)
+        raise
+
+
 def commons_imageinfo(file: str) -> dict | None:
     """The file's `imageinfo` entry (thumbnail URL + licence metadata), or
     None when Commons has no such file."""
-    r = _get(COMMONS_API, {
+    r = _guarded(COMMONS_API, {
         "action": "query", "titles": f"File:{file}", "prop": "imageinfo",
         "iiprop": "extmetadata|url|mime", "iiurlwidth": THUMB_WIDTH,
         "format": "json", "formatversion": 2,
@@ -213,7 +255,7 @@ def wikipedia_image_file(wikipedia_url: str | None) -> str | None:
     if not m:
         return None
     try:
-        r = _get(WIKIPEDIA_SUMMARY + quote(unquote(m.group(1)), safe=""))
+        r = _guarded(WIKIPEDIA_SUMMARY + quote(unquote(m.group(1)), safe=""))
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             return None
@@ -276,7 +318,10 @@ def _fresh(meta: dict) -> bool:
     return (meta.get("fetched_at") or 0) + ttl > time.time()
 
 
-def _read_meta(kind: str, node_id: str) -> dict | None:
+def _read_meta(kind: str, node_id: str, *, allow_stale: bool = False) -> dict | None:
+    """The cached credit (or "no image"), fresh only — or, with `allow_stale`,
+    whatever the bucket still holds past its TTL: the last answer we had,
+    which an outage makes worth more than none."""
     hit = _memory.get(_meta_key(kind, node_id))
     if hit is not None:
         return hit
@@ -288,7 +333,7 @@ def _read_meta(kind: str, node_id: str) -> dict | None:
     except ValueError:
         return None
     if not _fresh(meta):
-        return None
+        return meta if allow_stale else None
     _memory.put(_meta_key(kind, node_id), meta, NEGATIVE_TTL if meta.get("none") else POSITIVE_TTL)
     return meta
 
@@ -320,17 +365,16 @@ def resolve_file(kind: str, record: dict) -> str | None:
     return wikipedia_image_file(pointer(kind, record))
 
 
-def image_info(kind: str, node_id: str, record: dict) -> ImageInfo | None:
-    """The node's image credit, from the cache or from Wikimedia; None when
-    the node has no servable image. Transient failures raise (and are not
-    remembered); a definite "no image" is remembered for a week."""
-    if not pointer(kind, record):
-        return None   # nothing to look up, nothing worth remembering
-    meta = _read_meta(kind, node_id)
-    if meta is not None and not meta.get("none") and not meta.get("etag"):
-        meta = None   # written before the fingerprint existed: fetch again, once
-    if meta is not None:
-        return None if meta.get("none") else ImageInfo(**{k: meta[k] for k in ImageInfo.__dataclass_fields__})
+def _credit_from_meta(meta: dict) -> ImageInfo | None:
+    if meta.get("none"):
+        return None
+    return ImageInfo(**{k: meta.get(k, ImageInfo.__dataclass_fields__[k].default)
+                        for k in ImageInfo.__dataclass_fields__})
+
+
+def _refresh(kind: str, node_id: str, record: dict) -> ImageInfo | None:
+    """Ask Wikimedia and write what it said: the credit and bytes, or a
+    remembered "no image". Raises on a transient failure."""
     file = resolve_file(kind, record)
     info = commons_imageinfo(file) if file else None
     credit = credit_from_imageinfo(file, info) if (file and info) else None
@@ -338,12 +382,35 @@ def image_info(kind: str, node_id: str, record: dict) -> ImageInfo | None:
         _write_meta(kind, node_id, _NONE)
         return None
     thumb = info.get("thumburl") or info.get("url")
-    data = _get(thumb).content
+    data = _guarded(thumb).content
     credit.etag = fingerprint(data)
     objectstore.put(_bytes_key(kind, node_id), data, credit.content_type)
     _memory.put(_bytes_key(kind, node_id), data, POSITIVE_TTL)
     _write_meta(kind, node_id, asdict(credit))
     return credit
+
+
+def image_info(kind: str, node_id: str, record: dict) -> ImageInfo | None:
+    """The node's image credit, from the cache or from Wikimedia; None when
+    the node has no servable image. A definite "no image" is remembered for
+    a week. A transient failure is never written as an answer: while
+    Wikimedia is down, the last answer we had — even one past its TTL —
+    stands, and a node we never managed to ask raises (503 upstairs)."""
+    if not pointer(kind, record):
+        return None   # nothing to look up, nothing worth remembering
+    meta = _read_meta(kind, node_id)
+    if meta is not None and not meta.get("none") and not meta.get("etag"):
+        meta = None   # written before the fingerprint existed: fetch again, once
+    if meta is not None:
+        return _credit_from_meta(meta)
+    try:
+        return _refresh(kind, node_id, record)
+    except Exception:
+        stale = _read_meta(kind, node_id, allow_stale=True)
+        if stale is None:
+            raise
+        log.info("Serving the stale image answer for %s/%s while Wikimedia is unavailable", kind, node_id)
+        return _credit_from_meta(stale)
 
 
 def image_bytes(kind: str, node_id: str, record: dict) -> tuple[bytes, str] | None:

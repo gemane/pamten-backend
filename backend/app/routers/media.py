@@ -7,6 +7,8 @@ Wikimedia on the server's behalf and caches. See that module for the
 licence policy — a node without a servable image answers 404 here, and the
 panel simply shows none.
 """
+import time
+
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from app import media
@@ -46,8 +48,12 @@ def _lookup(fn, kind: str, node_id: str):
         found = fn(kind, node_id, _record(kind, node_id))
     except HTTPException:
         raise
+    except media.SourceDown as exc:
+        raise HTTPException(status_code=503, detail=str(exc),
+                            headers={"Retry-After": str(max(1, int(exc.until - time.time())))}) from exc
     except Exception as exc:  # noqa: BLE001 - Wikimedia down is not our 500
-        raise HTTPException(status_code=503, detail=f"Image source unavailable: {exc}") from exc
+        raise HTTPException(status_code=503, detail=f"Image source unavailable: {exc}",
+                            headers={"Retry-After": str(media.OUTAGE_BACKOFF)}) from exc
     if found is None:
         raise HTTPException(status_code=404, detail="No licensed image")
     return found

@@ -136,6 +136,7 @@ class FakeWikimedia:
 def store():
     s3 = FakeS3()
     media._memory.clear()
+    media._outage["until"] = 0.0
     # Bucket AND endpoint: the store counts as on only with both (CI has no
     # .env, so a fixture that patched the bucket alone ran with the store off).
     with patch.object(settings, "OBJECT_STORE_BUCKET", "b"), \
@@ -143,6 +144,7 @@ def store():
          patch.object(objectstore, "_get_client", lambda: s3):
         yield s3
     media._memory.clear()
+    media._outage["until"] = 0.0
 
 
 @pytest.fixture
@@ -278,7 +280,8 @@ class TestImageLookup:
         monkeypatch.setattr(media, "_get", fake)
         with pytest.raises(httpx.ConnectError):
             media.image_info("entity", "e1", {"logo_url": LOGO_URL})
-        assert store.objects == {}
+        assert store.objects == {}            # not written as an answer — only remembered as a backoff
+        media._outage["until"] = 0.0
         fake.fail, fake.imageinfo = False, _imageinfo()
         assert media.image_info("entity", "e1", {"logo_url": LOGO_URL}).license == "CC BY-SA 4.0"
 
@@ -321,6 +324,90 @@ class TestImageLookup:
             media.image_bytes("entity", "e1", {"logo_url": LOGO_URL})
         assert len(wikimedia.calls) == 2
         media._memory.clear()
+
+
+# ── an outage ─────────────────────────────────────────────────────────────────
+
+def _status_error(code: int):
+    req = httpx.Request("GET", "https://commons.wikimedia.org/w/api.php")
+    return httpx.HTTPStatusError(str(code), request=req, response=httpx.Response(code, request=req))
+
+
+class TestOutage:
+    """Wikimedia down: one wait, then everybody answers at once; whatever we
+    last knew stands until it is back."""
+
+    def test_the_first_failure_is_remembered_and_the_next_node_does_not_wait(self, store, monkeypatch):
+        fake = FakeWikimedia(fail=True)
+        monkeypatch.setattr(media, "_get", fake)
+        with pytest.raises(httpx.ConnectError):
+            media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        assert 0 < media.outage_remaining() <= media.OUTAGE_BACKOFF
+        calls = len(fake.calls)
+        with pytest.raises(media.SourceDown):
+            media.image_info("entity", "e2", {"logo_url": LOGO_URL})
+        assert len(fake.calls) == calls              # nothing asked during the backoff
+        media._outage["until"] = 0.0                 # the backoff passes
+        fake.fail, fake.imageinfo = False, _imageinfo()
+        assert media.image_info("entity", "e2", {"logo_url": LOGO_URL}).author == "Jane Doe"
+
+    def test_a_missing_page_is_not_an_outage(self, store, wikimedia):
+        wikimedia.summary = None                      # the summary API answers 404
+        assert media.image_info("person", "p1", {"wikipedia_url": PERSON_URL}) is None
+        assert media.outage_remaining() == 0
+        assert json.loads(store.objects["images/person/p1.json"])["none"] is True
+
+    @pytest.mark.parametrize("code", [500, 503, 429])
+    def test_a_server_error_or_throttle_is(self, store, monkeypatch, code):
+        monkeypatch.setattr(media, "_get", lambda url, params=None: (_ for _ in ()).throw(_status_error(code)))
+        with pytest.raises(httpx.HTTPStatusError):
+            media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        assert media.outage_remaining() > 0
+
+    def test_a_404_from_commons_is_not(self, store, monkeypatch):
+        monkeypatch.setattr(media, "_get", lambda url, params=None: (_ for _ in ()).throw(_status_error(404)))
+        with pytest.raises(httpx.HTTPStatusError):
+            media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        assert media.outage_remaining() == 0
+
+    def _age(self, store, key):
+        old = json.loads(store.objects[key])
+        old["fetched_at"] -= media.POSITIVE_TTL + 1
+        store.objects[key] = json.dumps(old).encode()
+        media._memory.clear()
+        return old["fetched_at"]
+
+    def test_a_credit_past_its_ttl_is_served_while_wikimedia_is_down(self, store, wikimedia):
+        media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        aged = self._age(store, "images/entity/e1.json")
+        wikimedia.fail = True
+        credit = media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        assert credit.author == "Jane Doe" and credit.etag == PNG_ETAG
+        assert json.loads(store.objects["images/entity/e1.json"])["fetched_at"] == aged   # not re-stamped
+        assert media.image_bytes("entity", "e1", {"logo_url": LOGO_URL}) == (b"PNGBYTES", "image/png")
+
+    def test_a_no_image_past_its_ttl_is_served_too(self, store, wikimedia):
+        wikimedia.imageinfo = None
+        assert media.image_info("entity", "e1", {"logo_url": LOGO_URL}) is None
+        self._age(store, "images/entity/e1.json")
+        wikimedia.fail = True
+        assert media.image_info("entity", "e1", {"logo_url": LOGO_URL}) is None   # the last answer, not a raise
+
+    def test_nothing_stale_means_the_failure_surfaces(self, store, wikimedia):
+        wikimedia.fail = True
+        with pytest.raises(httpx.ConnectError):
+            media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+
+    def test_the_stale_credit_is_refreshed_once_wikimedia_is_back(self, store, wikimedia):
+        media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        aged = self._age(store, "images/entity/e1.json")
+        wikimedia.fail = True
+        media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        wikimedia.fail = False
+        media._outage["until"] = 0.0
+        media._memory.clear()
+        media.image_info("entity", "e1", {"logo_url": LOGO_URL})
+        assert json.loads(store.objects["images/entity/e1.json"])["fetched_at"] > aged
 
 
 # ── the endpoints ─────────────────────────────────────────────────────────────
@@ -416,5 +503,30 @@ class TestEndpoints:
     def test_wikimedia_down_is_503_and_not_remembered(self, client, fake_db, store, monkeypatch):
         monkeypatch.setattr(media, "_get", FakeWikimedia(fail=True))
         fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}])
-        assert client.get("/media/entity/e1").status_code == 503
+        r = client.get("/media/entity/e1")
+        assert r.status_code == 503 and int(r.headers["retry-after"]) >= 1
         assert store.objects == {}
+
+    def test_during_the_backoff_the_answer_is_an_immediate_503_with_retry_after(self, client, fake_db, store, monkeypatch):
+        fake = FakeWikimedia(fail=True)
+        monkeypatch.setattr(media, "_get", fake)
+        fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}] )
+        client.get("/media/entity/e1")
+        calls = len(fake.calls)
+        fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}])
+        r = client.get("/media/entity/e2")
+        assert r.status_code == 503
+        assert 1 <= int(r.headers["retry-after"]) <= media.OUTAGE_BACKOFF
+        assert len(fake.calls) == calls
+
+    def test_a_stale_credit_is_200_while_wikimedia_is_down(self, client, fake_db, store, wikimedia):
+        fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}] * 1)
+        assert client.get("/media/entity/e1").status_code == 200
+        old = json.loads(store.objects["images/entity/e1.json"])
+        old["fetched_at"] -= media.POSITIVE_TTL + 1
+        store.objects["images/entity/e1.json"] = json.dumps(old).encode()
+        media._memory.clear()
+        wikimedia.fail = True
+        fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}])
+        r = client.get("/media/entity/e1")
+        assert r.status_code == 200 and r.json()["author"] == "Jane Doe"
