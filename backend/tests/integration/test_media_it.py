@@ -40,8 +40,11 @@ def test_the_scraper_written_portrait_survives_a_person_backfill(it_db):
                           image_url=LOGO) == first
     assert it_db.run_query("MATCH (p:Person {id:$id}) RETURN p.image_url AS u", {"id": first})[0]["u"] == LOGO
     _upsert_person("G H", nationality=None, description=None, wikidata_id="Q77",
-                   image_url="https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Other.jpg/250px-Other.jpg")
-    assert it_db.run_query("MATCH (p:Person {id:$id}) RETURN p.image_url AS u", {"id": first})[0]["u"] == LOGO
+                   image_url="https://upload.wikimedia.org/wikipedia/commons/thumb/0/00/Other.jpg/250px-Other.jpg",
+                   wikipedia_url="https://en.wikipedia.org/wiki/G_H")
+    row = it_db.run_query("MATCH (p:Person {id:$id}) RETURN p.image_url AS u, p.wikipedia_url AS w", {"id": first})[0]
+    assert row["u"] == LOGO                                        # kept
+    assert row["w"] == "https://en.wikipedia.org/wiki/G_H"          # the blank filled
 
 
 def test_a_merged_away_id_is_followed_to_the_survivor(it_db):

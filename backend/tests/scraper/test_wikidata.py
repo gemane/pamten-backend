@@ -506,6 +506,7 @@ class TestFetchPersonDetails:
             "death":      {"value": ""},
             "birthPlace": {"value": "Pretoria"},
             "image":      {"value": "http://commons.wikimedia.org/wiki/Special:FilePath/Elon%20Musk%202015.jpg"},
+            "wikipedia":  {"value": "https://en.wikipedia.org/wiki/Elon_Musk"},
             "nats":       {"value": "US|CA|ZA"},
             "aliases":    {"value": "Elon|Technoking"},
             "instances":  {"value": "http://www.wikidata.org/entity/Q5"},  # human
@@ -520,6 +521,7 @@ class TestFetchPersonDetails:
         # media endpoint resolves both the same way
         assert d["image_url"] == commons_thumb_url("Elon Musk 2015.jpg")
         assert d["image_url"].startswith("https://upload.wikimedia.org/wikipedia/commons/thumb/")
+        assert d["wikipedia_url"] == "https://en.wikipedia.org/wiki/Elon_Musk"   # the sitelink
         assert d["nationalities"] == ["US", "CA", "ZA"]
         assert d["aliases"] == ["Elon", "Technoking"]
         assert d["is_human"] is True                  # instance-of Q5
@@ -538,6 +540,7 @@ class TestFetchPersonDetails:
             out = _fetch_person_details({"Q1"})
         assert out["Q1"] == {
             "birth_date": None, "death_date": None, "birth_place": None, "image_url": None,
+            "wikipedia_url": None,
             "nationalities": [], "aliases": [], "is_human": None,   # no P31 → unknown
         }
 
@@ -549,6 +552,7 @@ class TestFetchPersonDetails:
         assert "wdt:P19" in query and "birthPlace" in query
         assert "wdt:P31" in query and "instances" in query
         assert "wdt:P18" in query and "?image" in query     # the portrait
+        assert "schema:about" in query and "https://en.wikipedia.org/" in query   # the article
 
     def test_embeds_all_qids_as_values(self):
         with patch("httpx.get", return_value=self._resp([])) as mock_get, \

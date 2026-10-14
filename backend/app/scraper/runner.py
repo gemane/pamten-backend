@@ -381,6 +381,7 @@ def _upsert_person(
     nationalities: list[str] | None = None,
     source_id: str | None = None,
     image_url: str | None = None,
+    wikipedia_url: str | None = None,
 ) -> str:
     first_name, last_name = parse_full_name(full_name)
     aliases       = aliases or []
@@ -413,6 +414,7 @@ def _upsert_person(
                     p.death_date   = COALESCE(p.death_date, $ddate),
                     p.birth_place  = COALESCE(p.birth_place, $bplace),
                     p.image_url    = COALESCE(p.image_url, $image),
+                    p.wikipedia_url = COALESCE(p.wikipedia_url, $wikipedia),
                     p.description   = CASE WHEN COALESCE(p.description, '') = '' THEN $desc ELSE p.description END,
                     p.nationality   = CASE WHEN COALESCE(p.nationality, '') = '' THEN $nat  ELSE p.nationality END,
                     p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
@@ -423,7 +425,7 @@ def _upsert_person(
                     p.search_text   = $search_text
                 """,
                 id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
-                image=image_url, desc=description or "", nat=nat,
+                image=image_url, wikipedia=wikipedia_url, desc=description or "", nat=nat,
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities, source_id=source_id,
             )
@@ -437,7 +439,7 @@ def _upsert_person(
                 full_name: $full, nationality: $nat,
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
-                image_url: $image,
+                image_url: $image, wikipedia_url: $wikipedia,
                 verified: false, alias: $aliases, nationalities: $nats,
                 source_id: $source_id, search_text: $search_text
             })
@@ -454,6 +456,7 @@ def _upsert_person(
             ddate=death_date,
             bplace=birth_place,
             image=image_url,
+            wikipedia=wikipedia_url,
             aliases=aliases,
             nats=nationalities,
             source_id=source_id,
@@ -615,6 +618,7 @@ def _scrape_node(
             death_date=ceo.get("death_date"),
             birth_place=ceo.get("birth_place"),
             image_url=ceo.get("image_url"),
+            wikipedia_url=ceo.get("wikipedia_url"),
             aliases=ceo.get("aliases"),
             nationalities=ceo.get("nationalities"),
             source_id=source_id,
@@ -635,6 +639,7 @@ def _scrape_node(
                                    death_date=off.get("death_date"),
                                    birth_place=off.get("birth_place"),
                                    image_url=off.get("image_url"),
+                                   wikipedia_url=off.get("wikipedia_url"),
                                    aliases=off.get("aliases"),
                                    nationalities=off.get("nationalities"),
                                    source_id=source_id)
@@ -655,6 +660,7 @@ def _scrape_node(
                                       death_date=owner.get("death_date"),
                                       birth_place=owner.get("birth_place"),
                                       image_url=owner.get("image_url"),
+                                      wikipedia_url=owner.get("wikipedia_url"),
                                       aliases=owner.get("aliases"),
                                       nationalities=owner.get("nationalities"),
                                       source_id=source_id)
@@ -2179,7 +2185,7 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
         nationality=None, description=detail.get("description"), wikidata_id=qid,
         birth_date=detail.get("birth_date"), death_date=detail.get("death_date"),
         birth_place=detail.get("birth_place"), image_url=detail.get("image_url"),
-        aliases=detail.get("aliases"),
+        wikipedia_url=detail.get("wikipedia_url"), aliases=detail.get("aliases"),
         nationalities=detail.get("nationalities"), source_id=source_id,
     )
 
