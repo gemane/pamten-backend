@@ -1771,6 +1771,50 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
             "still_unknown": len(rows) - len(filled), "changes": filled}
 
 
+def backfill_person_images(limit: int | None = None, batch: int = 50, fetch=None) -> dict:
+    """Store the portrait (Wikidata P18) of every person who has a Wikidata id
+    and no `image_url` yet — the pointer `/media/person/{id}` resolves.
+
+    Persons written before the scraper read P18 have none, and the panel used
+    to find their photo by searching Wikipedia for the NAME, which the media
+    endpoint refuses on purpose (a namesake's face is worse than no face).
+    The P18 claim belongs to the Q-id the person already carries, so this is
+    the same source pointer the scraper now writes, caught up once.
+
+    One SPARQL call per `batch` persons (the detail query the scraper uses).
+    Only ever fills a blank. A person with no P18 stays blank and is asked
+    again on the next run — there is nothing to remember about an absence
+    that may end tomorrow.
+    """
+    from app.scraper.wikidata import _fetch_person_details
+
+    rows = run_query(
+        "MATCH (p:Person) WHERE p.wikidata_id IS NOT NULL AND p.image_url IS NULL "
+        "RETURN p.id AS id, p.full_name AS name, p.wikidata_id AS qid")
+    if limit:
+        rows = rows[:limit]
+
+    filled: list[dict] = []
+    for start in range(0, len(rows), batch):
+        chunk = rows[start:start + batch]
+        try:
+            details = (fetch or _fetch_person_details)({r["qid"] for r in chunk})
+        except Exception as exc:                                     # noqa: BLE001
+            log.warning("Portrait backfill: Wikidata failed for %d persons: %s", len(chunk), exc)
+            continue
+        for r in chunk:
+            url = (details.get(r["qid"]) or {}).get("image_url")
+            if not url:
+                continue
+            run_command(
+                "MATCH (p:Person {id:$id}) SET p.image_url = COALESCE(p.image_url, $u)",
+                {"id": r["id"], "u": url})
+            filled.append({"id": r["id"], "name": r["name"], "image_url": url})
+
+    return {"candidates": len(rows), "filled": len(filled),
+            "without_image": len(rows) - len(filled), "changes": filled}
+
+
 def backfill_sec_headquarters(limit: int | None = None, fetch=None) -> dict:
     """Fill in the headquarters of SEC filers from EDGAR's business address.
 

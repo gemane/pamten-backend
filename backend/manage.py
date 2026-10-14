@@ -1126,6 +1126,16 @@ def cmd_backfill_sec_headquarters(args):
           f"({res['still_unknown']} EDGAR could not place)")
 
 
+def cmd_backfill_person_images(args):
+    """Store the Wikidata portrait (P18) of persons that have none yet."""
+    from app.scraper.maintenance import backfill_person_images
+    res = backfill_person_images(limit=args.limit)
+    for c in res["changes"][:20]:
+        print(f"  {(c['name'] or '')[:40]:42} {c['image_url']}")
+    print(f"Stored {res['filled']} portraits of {res['candidates']} persons with a Wikidata id "
+          f"({res['without_image']} state no image)")
+
+
 def cmd_backfill_entity_sources(args):
     from app.scraper.maintenance import backfill_entity_sources
     result = backfill_entity_sources()
@@ -1293,6 +1303,12 @@ def _build_parser():
         help="Fill SEC filers' hq_address/hq_city/hq_country from EDGAR's business address")
     p_hq.add_argument('--limit', type=int, help='Max entities to process this run')
     p_hq.set_defaults(func=cmd_backfill_sec_headquarters)
+
+    # backfill-person-images: Wikidata P18 -> Person.image_url (what /media/person/{id} serves)
+    p_pimg = subparsers.add_parser('backfill-person-images',
+        help="Store the Wikidata portrait (P18) of every person with a Wikidata id and no image_url yet")
+    p_pimg.add_argument('--limit', type=int, help='Max persons to process this run')
+    p_pimg.set_defaults(func=cmd_backfill_person_images)
 
     # backfill-countries command
     p_bc = subparsers.add_parser('backfill-countries',

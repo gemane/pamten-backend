@@ -380,6 +380,7 @@ def _upsert_person(
     aliases: list[str] | None = None,
     nationalities: list[str] | None = None,
     source_id: str | None = None,
+    image_url: str | None = None,
 ) -> str:
     first_name, last_name = parse_full_name(full_name)
     aliases       = aliases or []
@@ -411,6 +412,7 @@ def _upsert_person(
                 SET p.birth_date   = COALESCE(p.birth_date, $bdate),
                     p.death_date   = COALESCE(p.death_date, $ddate),
                     p.birth_place  = COALESCE(p.birth_place, $bplace),
+                    p.image_url    = COALESCE(p.image_url, $image),
                     p.description   = CASE WHEN COALESCE(p.description, '') = '' THEN $desc ELSE p.description END,
                     p.nationality   = CASE WHEN COALESCE(p.nationality, '') = '' THEN $nat  ELSE p.nationality END,
                     p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
@@ -421,7 +423,7 @@ def _upsert_person(
                     p.search_text   = $search_text
                 """,
                 id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
-                desc=description or "", nat=nat,
+                image=image_url, desc=description or "", nat=nat,
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities, source_id=source_id,
             )
@@ -435,6 +437,7 @@ def _upsert_person(
                 full_name: $full, nationality: $nat,
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
+                image_url: $image,
                 verified: false, alias: $aliases, nationalities: $nats,
                 source_id: $source_id, search_text: $search_text
             })
@@ -450,6 +453,7 @@ def _upsert_person(
             bdate=birth_date,
             ddate=death_date,
             bplace=birth_place,
+            image=image_url,
             aliases=aliases,
             nats=nationalities,
             source_id=source_id,
@@ -610,6 +614,7 @@ def _scrape_node(
             birth_date=ceo.get("birth_date"),
             death_date=ceo.get("death_date"),
             birth_place=ceo.get("birth_place"),
+            image_url=ceo.get("image_url"),
             aliases=ceo.get("aliases"),
             nationalities=ceo.get("nationalities"),
             source_id=source_id,
@@ -629,6 +634,7 @@ def _scrape_node(
                                    birth_date=off.get("birth_date"),
                                    death_date=off.get("death_date"),
                                    birth_place=off.get("birth_place"),
+                                   image_url=off.get("image_url"),
                                    aliases=off.get("aliases"),
                                    nationalities=off.get("nationalities"),
                                    source_id=source_id)
@@ -648,6 +654,7 @@ def _scrape_node(
                                       birth_date=owner.get("birth_date"),
                                       death_date=owner.get("death_date"),
                                       birth_place=owner.get("birth_place"),
+                                      image_url=owner.get("image_url"),
                                       aliases=owner.get("aliases"),
                                       nationalities=owner.get("nationalities"),
                                       source_id=source_id)
@@ -2171,7 +2178,8 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
         full_name=detail.get("full_name") or chosen.get("label") or query,
         nationality=None, description=detail.get("description"), wikidata_id=qid,
         birth_date=detail.get("birth_date"), death_date=detail.get("death_date"),
-        birth_place=detail.get("birth_place"), aliases=detail.get("aliases"),
+        birth_place=detail.get("birth_place"), image_url=detail.get("image_url"),
+        aliases=detail.get("aliases"),
         nationalities=detail.get("nationalities"), source_id=source_id,
     )
 

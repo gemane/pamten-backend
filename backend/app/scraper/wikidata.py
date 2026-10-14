@@ -679,8 +679,9 @@ def fetch_person_companies(qid: str, limit: int = 60) -> list[dict]:
 def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     """
     Fetch per-person detail — date of birth (P569) / death (P570), place of birth
-    (P19), nationalities (P27) and aliases ("also known as") — for a set of
-    Wikidata person QIDs in ONE query.
+    (P19), nationalities (P27), aliases ("also known as") and the portrait (P18,
+    as the direct Commons thumbnail `Entity.logo_url` uses, so `/media/person/…`
+    resolves it the same way) — for a set of Wikidata person QIDs in ONE query.
 
     GROUP_CONCAT collapses the multi-valued nationality/alias props into a single
     row per person, so the response can't blow up combinatorially. (Joining many
@@ -693,6 +694,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     query = f"""
     SELECT ?person ?birth ?death
            (SAMPLE(?bpLabel) AS ?birthPlace)
+           (SAMPLE(?img) AS ?image)
            (GROUP_CONCAT(DISTINCT ?natCode;  separator="|") AS ?nats)
            (GROUP_CONCAT(DISTINCT ?alias;    separator="|") AS ?aliases)
            (GROUP_CONCAT(DISTINCT ?instance; separator="|") AS ?instances)
@@ -701,6 +703,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
       OPTIONAL {{ ?person wdt:P569 ?birth }}
       OPTIONAL {{ ?person wdt:P570 ?death }}
       OPTIONAL {{ ?person wdt:P19 ?bp . ?bp rdfs:label ?bpLabel . FILTER(LANG(?bpLabel) = "en") }}
+      OPTIONAL {{ ?person wdt:P18 ?img }}
       OPTIONAL {{ ?person wdt:P27 ?nat . ?nat wdt:P297 ?natCode }}
       OPTIONAL {{ ?person skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }}
       OPTIONAL {{ ?person wdt:P31 ?instance }}
@@ -725,6 +728,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
             "birth_date":    (_v(row, "birth") or "")[:10] or None,
             "death_date":    (_v(row, "death") or "")[:10] or None,
             "birth_place":   _v(row, "birthPlace") or None,
+            "image_url":     commons_thumb_url(_v(row, "image")),
             "nationalities": nats,
             "aliases":       aliases,
             "is_human":      is_human,
