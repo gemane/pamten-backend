@@ -42,3 +42,47 @@ class TestRoleClaimKeys:
         from app.claims import claim_key
         assert claim_key("owns", "a", "b", "s") == claim_key("owns", "a", "b", "s")
         assert claim_key("owns", "a", "b", "s") != claim_key("role", "a", "b", "s")
+
+
+class TestSameStart:
+    """One start date at two precisions is one date (Roslansky's LinkedIn seat)."""
+
+    def test_a_month_contains_its_day(self):
+        from app.roles import same_start
+        assert same_start("2020-06-00", "2020-06-01")
+        assert same_start("2020-06-01", "2020-06-00")
+
+    def test_a_year_contains_its_days_and_months(self):
+        from app.roles import same_start
+        assert same_start("2014-00-00", "2014-10-01")
+        assert same_start("2015-12-00", "2015-00-00")
+
+    def test_two_different_days_are_two_dates(self):
+        from app.roles import same_start
+        assert not same_start("2022-07-11", "2022-07-14")
+        assert not same_start("2020-06-00", "2020-07-01")
+        assert not same_start("2020-00-00", "2021-03-01")
+
+    def test_a_bare_year_is_its_own_year_only(self):
+        # The separator is part of the test: "202" must not contain "2020-…".
+        from app.roles import same_start
+        assert same_start("2020-00-00", "2020")
+        assert not same_start("202-00-00", "2020-01-01")
+
+    def test_undated_is_no_match(self):
+        from app.roles import same_start
+        assert not same_start(None, "2020-06-01")
+        assert not same_start("2020-06-01", None)
+        assert not same_start(None, None)
+
+    def test_equal_days_match(self):
+        from app.roles import same_start
+        assert same_start("2019-04-25", "2019-04-25")
+
+
+class TestFinerStart:
+    def test_the_day_beats_the_month_and_the_year(self):
+        from app.roles import finer_start
+        assert finer_start("2020-06-00", "2020-06-01") == "2020-06-01"
+        assert finer_start("2020-06-01", "2020-06-00") == "2020-06-01"
+        assert finer_start("2014-00-00", "2014-10-00") == "2014-10-00"

@@ -228,10 +228,21 @@ role claims are keyed per canonical position, so the sources panel counts
 "SEC EDGAR + Wikidata" as corroboration of the one seat, while a "CEO" claim
 never corroborates a "Director" row.
 
-Pre-existing synonym duplicates are healed by
+**One date at two precisions is one seat.** A dated assertion matches a held
+seat when the two starts agree at the coarser precision
+(`app.roles.same_start`): Wikidata holds Ryan Roslansky's LinkedIn CEO
+statement twice — `2020-06-01` and "June 2020" (`2020-06-00`) — and SEC states
+a director's day where Wikidata gives only the year. The seat keeps the finer
+date (`finer_start`). Two different days stay two seats: someone can hold the
+same post twice (Larry Page, CEO of Google in 1998 and 2011).
+
+Pre-existing duplicates are healed by
 `python manage.py dedupe-role-synonyms [--dry-run]`: per (person, company,
 canonical role) it keeps the most credible open edge, backfills
-since/source_url/source_date from the losers, and deletes the rest.
+since/source_url/source_date from the losers, and deletes the rest. The start
+kept is the finer one when the two are the same date at two precisions, else
+the earliest. Each loser is deleted by its own date, one edge at a time, so a
+same-label pair ("CEO" + "CEO") keeps one seat.
 
 ## Same identifier, two nodes — `deduplicate_entities`
 
