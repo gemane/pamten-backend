@@ -83,3 +83,40 @@ class TestBothDirectionsAgreeOnTheName:
             if role == OWNER_ROLE:
                 continue          # ownership, not a job title
             assert role in canonical, f"{prop} writes {role!r}, which is not a RoleType"
+
+
+class TestOneDateTwoPrecisions:
+    """Wikidata holds Ryan Roslansky's LinkedIn CEO statement twice — 2020-06-01
+    and "June 2020" — and the timeline showed him twice in 2020."""
+
+    def test_a_month_and_its_day_are_one_seat_keeping_the_day(self, graph):
+        runner, person, entity = graph
+        runner._upsert_role(person, entity, "CEO", "s1", since="2020-06-01")
+        runner._upsert_role(person, entity, "CEO", "s1", since="2020-06-00")
+        assert _roles(person) == [("CEO", "2020-06-01")]
+
+    def test_in_either_order(self, graph):
+        runner, person, entity = graph
+        runner._upsert_role(person, entity, "CEO", "s1", since="2020-06-00")
+        runner._upsert_role(person, entity, "CEO", "s1", since="2020-06-01")
+        assert _roles(person) == [("CEO", "2020-06-01")], "the day replaces the month"
+
+    def test_a_statutory_day_and_a_community_year_are_one_board_seat(self, graph):
+        # Charlie Scharf: SEC "Director" since 2014-10-01, Wikidata "Board
+        # Member" since 2014 — two rows on Microsoft's board.
+        runner, person, entity = graph
+        runner._upsert_role(person, entity, "Director", "s1", since="2014-10-01",
+                            credibility_score=98)
+        runner._upsert_role(person, entity, "Board Member", "s2", since="2014-00-00")
+        assert _roles(person) == [("Director", "2014-10-01")]
+
+    def test_an_end_reaches_the_seat_stored_at_the_other_precision(self, graph):
+        from app.database import db
+        runner, person, entity = graph
+        runner._upsert_role(person, entity, "CEO", "s1", since="2020-06-01")
+        runner._upsert_role(person, entity, "CEO", "s1", since="2020-06-00",
+                            until="2024-01-00")
+        with db.get_session() as s:
+            rows = list(s.run("MATCH (p:Person {id:$id})-[r:HAS_ROLE]->() "
+                              "RETURN r.since AS since, r.until AS until", id=person))
+        assert [(r["since"], r["until"]) for r in rows] == [("2020-06-01", "2024-01-00")]

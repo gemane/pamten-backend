@@ -705,9 +705,13 @@ def cmd_dedupe_role_synonyms(args):
     (person, company, canonical role) with multiple open edges this keeps the
     most credible one (backfilling since/source_url/source_date from the
     losers) and deletes the rest. Claims are untouched: every source's
-    assertion stays on record and now corroborates the surviving edge."""
+    assertion stays on record and now corroborates the surviving edge.
+
+    Also folds one seat held twice at two date precisions (Wikidata's
+    "2020-06-01" and "June 2020" for the same CEO statement; SEC's day beside
+    Wikidata's year) — the start kept is the finer of the two."""
     from app.database import db as _db
-    from app.roles import canonical_role
+    from app.roles import canonical_role, finer_start, same_start
 
     with _db.get_session() as session:
         rows = list(session.run(
@@ -733,25 +737,37 @@ def cmd_dedupe_role_synonyms(args):
         merged += 1
         if args.dry_run:
             continue
+        kept = winner.get("since")
         with _db.get_session() as session:
             for lost in losers:
-                session.run(
-                    "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
-                    "WHERE r.role = $role AND r.until IS NULL DELETE r",
-                    pid=pid, eid=eid, role=lost.get("role"))
-                # Onto the winner's OPEN seat only (a closed spell of the same
-                # role must not take a later start than its end), and the
-                # EARLIEST start of the two, not whichever came first.
-                starts = [d for d in (winner.get("since"), lost.get("since")) if d]
+                # The loser by its OWN date, one edge: a same-label pair
+                # ("CEO" 2020-06-01 + "CEO" 2020-06-00, Wikidata's statement
+                # held twice) matched both by label alone and lost the seat.
                 session.run(
                     "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
                     "WHERE r.role = $role AND r.until IS NULL "
+                    "  AND (($since IS NULL AND r.since IS NULL) OR r.since = $since) "
+                    "WITH r LIMIT 1 DELETE r",
+                    pid=pid, eid=eid, role=lost.get("role"), since=lost.get("since"))
+                # Onto the winner's OPEN seat only (a closed spell of the same
+                # role must not take a later start than its end). One date at
+                # two precisions keeps the finer; else the EARLIEST start.
+                theirs = lost.get("since")
+                if kept and theirs:
+                    start = (finer_start(kept, theirs) if same_start(kept, theirs)
+                             else min(kept, theirs))
+                else:
+                    start = kept or theirs
+                session.run(
+                    "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
+                    "WHERE r.role = $role AND r.until IS NULL "
+                    "  AND (($kept IS NULL AND r.since IS NULL) OR r.since = $kept) "
                     "SET r.since = $since, "
                     "    r.source_url = COALESCE(r.source_url, $surl), "
                     "    r.source_date = COALESCE(r.source_date, $sdate)",
-                    pid=pid, eid=eid, role=winner.get("role"),
-                    since=min(starts) if starts else None, surl=lost.get("surl"),
-                    sdate=lost.get("sdate"))
+                    pid=pid, eid=eid, role=winner.get("role"), kept=kept,
+                    since=start, surl=lost.get("surl"), sdate=lost.get("sdate"))
+                kept = start
     verb = "would merge" if args.dry_run else "merged"
     print(f"{verb} {merged} duplicated position(s)")
 

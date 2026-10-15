@@ -33,3 +33,30 @@ def canonical_role(role: str | None) -> str:
     """The synonym-folded, punctuation-blind key for a role label."""
     key = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (role or "").lower())).strip()
     return _SYNONYMS.get(key, key)
+
+
+def _date_parts(date: str) -> str:
+    """The stated part of a date: '2020-06-00' → '2020-06', '2016-00-00' → '2016'."""
+    while date.endswith("-00"):
+        date = date[:-3]
+    return date
+
+
+def same_start(a: str | None, b: str | None) -> bool:
+    """Whether two start dates can be the same day at different precisions.
+
+    Wikidata holds Ryan Roslansky's LinkedIn CEO statement twice — once as
+    2020-06-01, once as "June 2020" (`2020-06-00`) — and SEC states a director's
+    day where Wikidata gives only the year. A date is equal to another when the
+    coarser one contains it. Two different days stay two dates: a second
+    appointment is a second seat. An undated side is not a match here — the
+    writers handle "the seat learns its date" on their own."""
+    if not a or not b:
+        return False
+    pa, pb = _date_parts(a), _date_parts(b)
+    return pa == pb or pa.startswith(pb + "-") or pb.startswith(pa + "-")
+
+
+def finer_start(a: str, b: str) -> str:
+    """Of two `same_start` dates, the more precise one."""
+    return a if len(_date_parts(a)) >= len(_date_parts(b)) else b

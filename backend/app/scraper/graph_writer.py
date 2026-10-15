@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.claims import KIND_OWNS, KIND_ROLE, KIND_SUCCESSION, record_claim
-from app.roles import canonical_role
+from app.roles import canonical_role, finer_start, same_start
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.owns_merge import SINCE_FIELDS, combine_since
@@ -517,6 +517,12 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     is how a person came to be listed twice on the same board: the company scrape
     knew Larry Page joined Alphabet's board in 1998, and the person scrape, which
     gets no dates from the reverse lookup, added a second edge beside it.
+
+    The date matches at the coarser precision (`roles.same_start`): Wikidata
+    states Ryan Roslansky's LinkedIn CEO seat as both 2020-06-01 and "June
+    2020", and SEC states a director's day where Wikidata gives the year —
+    one seat each, which kept the more precise date. Two different days are
+    still two seats.
     """
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
@@ -531,19 +537,26 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
         matches = _matching_role(session, person_id, entity_id, role,
                                  open_only=False)
         exists = next((m for m in matches
-                       if since is None or m["since"] == since), None)
+                       if since is None or same_start(m["since"], since)), None)
         if exists:
+            # Match the stored seat by ITS date; "June 2020" learning its day
+            # takes the day.
+            stored = exists["since"] if since else None
             session.run(
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role
                   AND ($since IS NULL OR r.since = $since)
                 SET r.last_scraped_at = $now,
+                    r.since = COALESCE($finer, r.since),
                     r.source_url = COALESCE(r.source_url, $surl)
                 """,
-                pid=person_id, eid=entity_id, role=exists["role"], since=since,
+                pid=person_id, eid=entity_id, role=exists["role"], since=stored,
+                finer=finer_start(stored, since) if stored else None,
                 now=now, surl=source_url,
             )
+            if stored:
+                stored = finer_start(stored, since)
             if until:
                 # The source now states the END of a seat we hold open — a
                 # Wikidata end time added later. It used to be dropped here, so
@@ -557,7 +570,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                       AND (r.since IS NULL OR r.since <= $until)
                     SET r.until = $until
                     """,
-                    pid=person_id, eid=entity_id, role=exists["role"], since=since,
+                    pid=person_id, eid=entity_id, role=exists["role"], since=stored,
                     until=until)
             _relabel_if_more_credible(session, person_id, entity_id,
                                       exists["role"], role, exists["cred"],

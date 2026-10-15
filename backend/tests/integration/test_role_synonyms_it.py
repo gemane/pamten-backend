@@ -101,3 +101,47 @@ def test_the_heal_takes_the_earliest_start_and_spares_a_closed_spell(it_db, pair
         "RETURN r.role AS role, r.since AS since, r.until AS until")
     assert sorted(((r["role"], r.get("since") or "", r.get("until") or "") for r in rows)) == [
         ("Director", "", "2001-01-01"), ("Director", "2002-05-06", "")]
+
+
+def test_the_heal_keeps_one_of_a_same_label_pair_at_the_finer_date(it_db, pair):
+    # Two "CEO" edges (2020-06-01 and 2020-06-00): deleting the loser by its
+    # label alone deleted both, and the seat was gone.
+    from types import SimpleNamespace
+    import manage
+    for since in ("2020-06-00", "2020-06-01"):
+        it_db.run_command("MATCH (p:Person {id:'pm'}), (e:Entity {id:'sx'}) "
+                          f"CREATE (p)-[:HAS_ROLE {{role: 'CEO', since: '{since}', "
+                          "credibility_score: 80}]->(e)")
+    manage.cmd_dedupe_role_synonyms(SimpleNamespace(dry_run=False))
+    rows = it_db.run_command(
+        "MATCH (:Person {id:'pm'})-[r:HAS_ROLE]->(:Entity {id:'sx'}) "
+        "RETURN r.role AS role, r.since AS since")
+    assert [(r["role"], r["since"]) for r in rows] == [("CEO", "2020-06-01")]
+
+
+def test_the_heal_keeps_the_statutory_day_over_the_community_year(it_db, pair):
+    from types import SimpleNamespace
+    import manage
+    for props in ("{role: 'Director', since: '2014-10-01', credibility_score: 98}",
+                  "{role: 'Board Member', since: '2014-00-00', credibility_score: 80}"):
+        it_db.run_command("MATCH (p:Person {id:'pm'}), (e:Entity {id:'sx'}) "
+                          f"CREATE (p)-[:HAS_ROLE {props}]->(e)")
+    manage.cmd_dedupe_role_synonyms(SimpleNamespace(dry_run=False))
+    rows = it_db.run_command(
+        "MATCH (:Person {id:'pm'})-[r:HAS_ROLE]->(:Entity {id:'sx'}) "
+        "RETURN r.role AS role, r.since AS since")
+    assert [(r["role"], r["since"]) for r in rows] == [("Director", "2014-10-01")], \
+        "'2014-00-00' sorts first, but it is the same date, less precisely"
+
+
+def test_the_heal_keeps_one_of_two_identical_edges(it_db, pair):
+    from types import SimpleNamespace
+    import manage
+    for _ in range(2):
+        it_db.run_command("MATCH (p:Person {id:'pm'}), (e:Entity {id:'sx'}) "
+                          "CREATE (p)-[:HAS_ROLE {role: 'CEO', since: '2020-06-01', "
+                          "credibility_score: 80}]->(e)")
+    manage.cmd_dedupe_role_synonyms(SimpleNamespace(dry_run=False))
+    rows = it_db.run_command(
+        "MATCH (:Person {id:'pm'})-[r:HAS_ROLE]->(:Entity {id:'sx'}) RETURN r.since AS since")
+    assert [r["since"] for r in rows] == ["2020-06-01"]
