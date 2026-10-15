@@ -43,7 +43,7 @@ module is the rule for how two assertions share that edge:
 """
 from __future__ import annotations
 
-from app.scraper.edge_schema import read_rank
+from app.scraper.edge_schema import STALE_CLEAR, read_rank
 
 #: One source's answer about the pair. Moved together, never mixed across sources.
 ANSWER_FIELDS: tuple = (
@@ -185,5 +185,5 @@ def fold(edges: list[dict], survivor: dict) -> dict:
     if seen and max(seen) != survivor.get("last_scraped_at"):
         out["last_scraped_at"] = max(seen)
     if survivor.get("stale") and any(not e.get("stale") for e in edges):
-        out["stale"] = False
+        out.update(STALE_CLEAR)
     return out

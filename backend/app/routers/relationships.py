@@ -13,7 +13,7 @@ from app.database import db
 from app.db.anchors import node_label
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
-from app.claims import KIND_OWNS, record_claim
+from app.claims import ACQUISITION_FILING_TYPES, KIND_OWNS, record_claim
 from app.routers.search import _NOT_A_SHORTCUT
 from app.scraper.owns_merge import started_by_clause
 
@@ -609,6 +609,45 @@ def get_owners(
     return owners
 
 
+def _staleness(r) -> dict:
+    """The dimming mark with its evidence, for the timeline: a dimmed holding
+    gets a dated entry saying why it went grey (edge_schema.STALE_REASONS)."""
+    if not r.get("stale"):
+        return {}
+    return {"stale": True, "stale_since": r.get("stale_since"),
+            "stale_reason": r.get("stale_reason"), "stale_source_url": r.get("stale_source_url"),
+            "filing_type": r.get("filing_type"), "source_date": r.get("source_date")}
+
+
+def _start(r) -> dict:
+    """How the holding began, where a source actually said so. The SEC
+    acquisition reader writes the closing date of a business combination as
+    a STATED start with the price paid; a subsidiary-list edge it enriched
+    keeps its own filing type but gains the closing date and the XBRL
+    instance as `since_source_url`. Either way the timeline may say
+    "Acquired" — every other start is a date a holding existed by, which the
+    timeline words as "Owns" / "Owned by" on purpose."""
+    stated = r.get("since_basis") is None
+    acquisition = (r.get("filing_type") in ACQUISITION_FILING_TYPES
+                   or (stated and str(r.get("since_source_url") or "").endswith("_htm.xml")))
+    if not acquisition:
+        return {}
+    return {"start_kind": "acquired", "value_usd": r.get("value_usd"),
+            "since_source_url": r.get("since_source_url")}
+
+
+def _end(r) -> dict:
+    """How the holding ended, as the source states it — the timeline's end
+    entry says why: `until_reason` (`gleif_inactive`, `gleif_dropped`,
+    `ceased`, `withdrawn`) and, for a 13D/G amendment that reported the stake
+    gone, the filing itself (`source_url`). No source ever says "sold to X";
+    the entry words what was stated and nothing more."""
+    if not r.get("until"):
+        return {}
+    return {"until_reason": r.get("until_reason"), "filing_type": r.get("filing_type"),
+            "source_url": r.get("source_url")}
+
+
 def ownership_history_of(
     entity_id: str, limit: int = HISTORY_DEFAULT_LIMIT,
 ) -> tuple[list[dict], bool]:
@@ -645,6 +684,9 @@ def ownership_history_of(
                 "active":        rec["r"].get("until") is None,
                 "stake_percent": rec["r"].get("stake_percent"),
                 "ownership_type": rec["r"].get("ownership_type"),
+                **_staleness(rec["r"]),
+                **_start(rec["r"]),
+                **_end(rec["r"]),
             })
 
         # What this entity owns / owned
@@ -669,6 +711,9 @@ def ownership_history_of(
                 "active":        rec["r"].get("until") is None,
                 "stake_percent": rec["r"].get("stake_percent"),
                 "ownership_type": rec["r"].get("ownership_type"),
+                **_staleness(rec["r"]),
+                **_start(rec["r"]),
+                **_end(rec["r"]),
             })
 
         # Executive roles at this entity

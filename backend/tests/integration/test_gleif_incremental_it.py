@@ -40,7 +40,7 @@ def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None):
 
 def _rel(child, parent, status="ACTIVE", end_date=None,
          rtype="IS_DIRECTLY_CONSOLIDATED_BY", start_date=None, rr_status=None, amount=None,
-         checked=None):
+         checked=None, last_update=None):
     rel = {
         "StartNode": {"NodeID": _w(child),  "NodeIDType": _w("LEI")},
         "EndNode":   {"NodeID": _w(parent), "NodeIDType": _w("LEI")},
@@ -59,6 +59,8 @@ def _rel(child, parent, status="ACTIVE", end_date=None,
             {"MeasurementMethod": _w("ACCOUNTING_CONSOLIDATION"), "QuantifierAmount": _w(amount)}]}
     rec = {"RelationshipRecord": {"Relationship": rel}}
     registration = {"RegistrationStatus": _w(rr_status)} if rr_status else {}
+    if last_update:
+        registration["LastUpdateDate"] = _w(last_update)
     if checked:
         registration["ValidationSources"] = _w(checked[0])
         if len(checked) > 1:
@@ -160,6 +162,24 @@ def _edges(it_db):
 def _apply(tmp_path, name, rels):
     from app.scraper.gleif_incremental import import_rr_delta
     return import_rr_delta(_zip(tmp_path, name, "relations", rels), "gleif-src", 92)
+
+
+def _why(it_db):
+    return it_db.run_command(
+        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
+        "RETURN r.stale AS stale, r.stale_reason AS reason, r.stale_since AS since",
+        {"p": f"lei:{PARENT}", "c": f"lei:{CHILD}"})[0]
+
+
+def test_a_lapsed_record_dims_with_its_reason_and_a_maintained_one_clears_it(it_db, tmp_path):
+    """The delta writes the mark WITH why and since when (the record's last
+    update), and a later maintained record drops all of it — the real Cypher."""
+    _apply(tmp_path, "a.json.zip", [_rel(CHILD, PARENT, rr_status="LAPSED", last_update="2023-06-02T10:00:00Z")])
+    assert _why(it_db) == {"stale": True, "reason": "lei_lapsed", "since": "2023-06-02"}
+    _apply(tmp_path, "b.json.zip", [_rel(CHILD, PARENT, rr_status="PUBLISHED", last_update="2024-01-15T10:00:00Z")])
+    assert _why(it_db) == {"stale": False, "reason": None, "since": None}
+    _apply(tmp_path, "c.json.zip", [_rel(CHILD, PARENT, rr_status="LAPSED", last_update="2025-03-03T10:00:00Z")])
+    assert _why(it_db) == {"stale": True, "reason": "lei_lapsed", "since": "2025-03-03"}
 
 
 def test_an_ultimate_record_folds_into_an_existing_direct_edge(it_db, tmp_path):

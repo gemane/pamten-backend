@@ -306,8 +306,11 @@ class TestCollapse:
         """62,934 of the ~260k ACTIVE consolidation records on 2026-10-06 stand
         on a LAPSED child — a quarter of GLEIF's ownership. Dimmed and dated by
         its evidence date, never closed: nobody stated an end."""
-        assert self._folded(("direct", "2022-04-11", None, True))[3] == {"stale": True}
-        assert self._folded(("indirect", None, None, True))[3] == {"stale": True}
+        # dimmed WITH its reason and date (the record's last update), so the
+        # timeline can say why the edge went grey
+        lapsed = {"stale": True, "stale_reason": "lei_lapsed", "stale_since": None}
+        assert self._folded(("direct", "2022-04-11", None, True))[3] == lapsed
+        assert self._folded(("indirect", None, None, True))[3] == lapsed
         assert "stale" not in self._folded(("direct", "2022-04-11", None, False))[3]
 
     def test_a_maintained_record_keeps_a_folded_pair_fresh(self):
@@ -459,7 +462,8 @@ class TestCollapseThroughTheImporter:
         ])
         assert res["edges"] == 2 and res["unmaintained"] == 1
         by_child = {w["owned_id"]: w["extra"] for w in written}
-        assert by_child["lei:CHILD"] == {"filing_type": "RR", "stale": True}
+        assert by_child["lei:CHILD"] == {"filing_type": "RR", "stale": True,
+                                         "stale_reason": "lei_lapsed", "stale_since": None}
         assert by_child["lei:OTHER"] == {"filing_type": "RR"}
 
     def test_a_maintained_ultimate_record_keeps_the_folded_pair_fresh(self, tmp_path, monkeypatch):
@@ -534,10 +538,12 @@ class TestHealRegistrationStatus:
         assert res["pairs"] == 2 and res["unmaintained"] == 1 and res["marked"] == 1
         assert len(calls) == 1
         cypher, params = calls[0]
-        assert params == {"p": "lei:PARENT", "c": "lei:CHILD", "src": "gleif-src"}
-        # only the edge GLEIF holds, only while open, and nothing but the mark
+        assert params == {"p": "lei:PARENT", "c": "lei:CHILD", "src": "gleif-src", "since": None}
+        # only the edge GLEIF holds, only while open, and nothing but the mark —
+        # with its reason and date, so the timeline can say why
         assert "r.source_id = $src" in cypher and "r.until IS NULL" in cypher
         assert "SET r.stale = true" in cypher and "stale = false" not in cypher
+        assert "r.stale_reason = 'lei_lapsed'" in cypher and "r.stale_since = $since" in cypher
 
     def test_a_folded_pair_with_a_maintained_record_is_left_alone(self, tmp_path):
         res, calls = self._run(tmp_path, [

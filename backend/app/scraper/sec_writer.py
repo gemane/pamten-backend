@@ -17,7 +17,7 @@ from app.roles import canonical_role
 from app.claims import KIND_OWNS, KIND_ROLE, record_claim
 from app.database import db
 from app.db.anchors import label_or_entity
-from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, edge_create_clause, owns_props
+from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, STALE_CLEAR, STALE_CLEAR_CYPHER, edge_create_clause, owns_props
 from app.scraper.graph_writer import _matching_role, _now_iso, _relabel_if_more_credible
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 from app.scraper.owns_merge import ANSWER_FIELDS, SINCE_FIELDS, combine_since, outranks
@@ -475,7 +475,7 @@ def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,
         sets.update(direct_or_indirect=bag["direct_or_indirect"],
                     structure_basis=bag.get("structure_basis"))
     if takeover or int(bag.get("credibility_score") or 0) >= int(held.get("credibility_score") or 0):
-        sets.update(last_scraped_at=now, stale=False)
+        sets.update(last_scraped_at=now, **STALE_CLEAR)
     if not sets:
         return
     assignments = ", ".join(f"r.{f} = $v_{f}" for f in sets)
@@ -590,7 +590,7 @@ def write_acquisition_sec(owner_id: str, owned_id: str, source_id: str, *,
                    SET r.since = $since, r.since_basis = $basis, r.since_source_url = $surl,
                        r.value_usd = COALESCE($vusd, r.value_usd),
                        r.event_date = COALESCE(r.event_date, $edate),
-                       r.last_scraped_at = $now, r.stale = false""",
+                       r.last_scraped_at = $now, """ + STALE_CLEAR_CYPHER,
                 o=owner_id, n=owned_id, sid=source_id,
                 since=started["since"], basis=started["since_basis"],
                 surl=started["since_source_url"], vusd=value_usd, edate=closing,
@@ -813,7 +813,9 @@ def mark_ex21_stale(holder_ids, current_url: str, as_of: str) -> int:
                      AND r.until IS NULL AND COALESCE(r.stale, false) = false
                      AND r.source_url STARTS WITH $prefix AND r.source_url <> $url
                      AND r.source_date < $as_of
-                   SET r.stale = true RETURN count(r) AS n""",
+                   SET r.stale = true, r.stale_reason = 'ex21_not_listed',
+                       r.stale_since = $as_of, r.stale_source_url = $url
+                   RETURN count(r) AS n""",
                 h=hid, prefix=m.group(1), url=current_url, as_of=as_of)
             marked += sum(int(r.get("n") or 0) for r in rows)
     return marked
@@ -848,6 +850,7 @@ def mark_13f_stale(company_id: str, period: str) -> int:
                 f"""MATCH (a:{label_or_entity(r.get("alabel"))} {{id: $a}})-[r:OWNS]->(b:Entity {{id: $b}})
                    WHERE r.filing_type = '13F' AND r.until IS NULL
                      AND r.source_date < $period
-                   SET r.stale = true""",
+                   SET r.stale = true, r.stale_reason = '13f_not_confirmed',
+                       r.stale_since = $period, r.stale_source_url = null""",
                 a=r["aid"], b=company_id, period=period)
     return len(rows)

@@ -54,6 +54,18 @@ OWNS_PROPS: tuple = (
     "event_date",
     "voting_shares",
     "stale",
+    # WHY the edge is dimmed and SINCE WHEN — the evidence behind `stale`, so
+    # the timeline can show the day a holding stopped being confirmed and the
+    # reader can see why it went grey. `stale_reason` is one of STALE_REASONS;
+    # `stale_since` the day the evidence is dated (the 13F quarter that no
+    # longer lists the position, the newer Exhibit 21 that no longer names the
+    # subsidiary, the last day a community source confirmed it, the LEI
+    # record's last update once it lapsed); `stale_source_url` the newer
+    # filing that did not confirm it, when there is one. All three are cleared
+    # with the mark (STALE_CLEAR).
+    "stale_since",
+    "stale_reason",
+    "stale_source_url",
     "shortcut",
     "also_ultimate",
     "ultimate_since",
@@ -158,6 +170,27 @@ RELATED_TO_PROPS: tuple = (
 def edge_return_clause(var: str, props: tuple) -> str:
     """``r.x AS x, r.y AS y, …`` — reads every schema property off an edge."""
     return ", ".join(f"{var}.{p} AS {p}" for p in props)
+
+
+#: The reasons an OWNS edge is dimmed, and what each `stale_since` means.
+STALE_REASONS: dict[str, str] = {
+    "13f_not_confirmed": "the holder's 13F for the quarter ending `stale_since` no longer lists the position",
+    "ex21_not_listed":   "the newer Exhibit 21 / 8.1 dated `stale_since` (`stale_source_url`) no longer names the subsidiary",
+    "unconfirmed":       "no source has confirmed this community-tier edge since `stale_since`",
+    "lei_lapsed":        "the GLEIF relationship record lapsed; last updated `stale_since`",
+}
+
+#: The property values that clear the mark — every writer that sets
+#: ``stale = false`` sets these with it, so a healed edge carries no old reason.
+STALE_CLEAR: dict = {"stale": False, "stale_since": None, "stale_reason": None, "stale_source_url": None}
+STALE_CLEAR_CYPHER = "r.stale = false, r.stale_since = null, r.stale_reason = null, r.stale_source_url = null"
+
+
+def stale_props(reason: str, since: str | None, source_url: str | None = None) -> dict:
+    """The property values that set the mark with its evidence."""
+    assert reason in STALE_REASONS, reason
+    return {"stale": True, "stale_since": (since or None) and str(since)[:10],
+            "stale_reason": reason, "stale_source_url": source_url}
 
 
 def edge_create_clause(props: tuple) -> str:
