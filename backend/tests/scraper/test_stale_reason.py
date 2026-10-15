@@ -66,6 +66,25 @@ class TestTheMergeAndTheHistory:
         assert out["stale"] is False
         assert out["stale_reason"] is None and out["stale_since"] is None and out["stale_source_url"] is None
 
+    def test_a_real_acquisition_is_marked_as_such_with_its_price(self):
+        """The SEC acquisition reader's closing date is the one start a source
+        STATES as a purchase; the timeline may say "Acquired" for it."""
+        from app.routers.relationships import _start
+        deal = {"filing_type": "10-Q XBRL", "since": "2026-03-11", "since_basis": None,
+                "value_usd": 2.95e10, "since_source_url": "https://www.sec.gov/Archives/edgar/data/1/0002/goog-20260331_htm.xml"}
+        assert _start(deal) == {"start_kind": "acquired", "value_usd": 2.95e10,
+                                "since_source_url": deal["since_source_url"]}
+        # an Exhibit 21 edge the reader enriched: its own filing type, the deal's date and instance
+        enriched = {"filing_type": "EX-21", "since": "2026-03-11", "since_basis": None, "value_usd": 5.9e9,
+                    "since_source_url": "https://www.sec.gov/Archives/edgar/data/1/0003/goog-20260630_htm.xml"}
+        assert _start(enriched)["start_kind"] == "acquired"
+        # a 13F holding carries a market value, not a price — never "acquired"
+        assert _start({"filing_type": "13F", "since": "2020-03-31", "since_basis": "first_reported",
+                       "value_usd": 1.2e9}) == {}
+        # a list's lower bound, a register's start: a holding existed by then
+        assert _start({"filing_type": "EX-21", "since": "2014-12-31", "since_basis": "first_listed"}) == {}
+        assert _start({"filing_type": "RR", "since": "2015-01-01", "since_basis": None, "since_source_url": None}) == {}
+
     def test_the_history_hands_the_timeline_why_and_since_when(self):
         from app.routers.relationships import _staleness
         r = {"stale": True, "stale_since": "2026-06-30", "stale_reason": "13f_not_confirmed",
