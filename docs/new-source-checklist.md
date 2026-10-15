@@ -379,6 +379,27 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         past year shows today's stake. If the source publishes history (amendments,
         annual lists, archived snapshots), say in the source doc what is kept and
         what is lost.
+      - **The timeline words what you write.** The panel's Timeline tells
+        transitions (a start, an end, the day a holding stopped being confirmed),
+        and every sentence it shows comes from a code on the edge:
+        - An end is worded by `until_reason`. The known codes are
+          `gleif_inactive`, `gleif_dropped`, `ceased` and `withdrawn` (a 13D/G
+          end is worded by its `filing_type`); anything else reads "the source
+          records the holding as ended". Reuse a code that fits; a new one gets
+          its sentence in the frontend in the same change (`END_REASONS` in
+          `TimelinePanel.tsx` + `timeline.endReason` in every locale). Never word
+          an end as a sale unless the source says it was one.
+        - A dimmed edge is four fields, not one: `stale = true` plus
+          `stale_reason`, `stale_since` and `stale_source_url`. Without
+          `stale_since` the row gets a badge but no dated "No longer confirmed"
+          entry. A new `stale_reason` code gets its sentence in
+          `timeline.reason`, as above.
+        - Every path that confirms the pair again clears all four with
+          `STALE_CLEAR` / `STALE_CLEAR_CYPHER` (`edge_schema.py`), never
+          `stale = false` alone — un-dim paths sit in several writers; grep
+          them all.
+        - A stated price goes in `value_usd` beside the stated `since`; that
+          is what reads "Acquired … for $X bn".
       - **Test it**: one IT that writes the source's edges and reads the profile
         with an `as_of` before, inside and after the dated range.
 - [ ] **Instant sources stamp the target** with `set_scrape_target`, or the freshness gate
