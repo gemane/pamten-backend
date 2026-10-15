@@ -85,6 +85,15 @@ class TestTheMergeAndTheHistory:
         assert _start({"filing_type": "EX-21", "since": "2014-12-31", "since_basis": "first_listed"}) == {}
         assert _start({"filing_type": "RR", "since": "2015-01-01", "since_basis": None, "since_source_url": None}) == {}
 
+    def test_an_ended_holding_carries_how_the_source_says_it_ended(self):
+        from app.routers.relationships import _end
+        assert _end({"until": "2024-02-13", "until_reason": None, "filing_type": "13G/A",
+                     "source_url": "https://www.sec.gov/Archives/edgar/data/1/0001/x.xml"}) == {
+            "until_reason": None, "filing_type": "13G/A",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/1/0001/x.xml"}
+        assert _end({"until": "2021-03-31", "until_reason": "ceased", "filing_type": "PSC"})["until_reason"] == "ceased"
+        assert _end({"until": None, "until_reason": "ceased"}) == {}       # not ended: nothing to say
+
     def test_the_history_hands_the_timeline_why_and_since_when(self):
         from app.routers.relationships import _staleness
         r = {"stale": True, "stale_since": "2026-06-30", "stale_reason": "13f_not_confirmed",

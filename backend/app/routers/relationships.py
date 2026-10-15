@@ -636,6 +636,18 @@ def _start(r) -> dict:
             "since_source_url": r.get("since_source_url")}
 
 
+def _end(r) -> dict:
+    """How the holding ended, as the source states it — the timeline's end
+    entry says why: `until_reason` (`gleif_inactive`, `gleif_dropped`,
+    `ceased`, `withdrawn`) and, for a 13D/G amendment that reported the stake
+    gone, the filing itself (`source_url`). No source ever says "sold to X";
+    the entry words what was stated and nothing more."""
+    if not r.get("until"):
+        return {}
+    return {"until_reason": r.get("until_reason"), "filing_type": r.get("filing_type"),
+            "source_url": r.get("source_url")}
+
+
 def ownership_history_of(
     entity_id: str, limit: int = HISTORY_DEFAULT_LIMIT,
 ) -> tuple[list[dict], bool]:
@@ -674,6 +686,7 @@ def ownership_history_of(
                 "ownership_type": rec["r"].get("ownership_type"),
                 **_staleness(rec["r"]),
                 **_start(rec["r"]),
+                **_end(rec["r"]),
             })
 
         # What this entity owns / owned
@@ -700,6 +713,7 @@ def ownership_history_of(
                 "ownership_type": rec["r"].get("ownership_type"),
                 **_staleness(rec["r"]),
                 **_start(rec["r"]),
+                **_end(rec["r"]),
             })
 
         # Executive roles at this entity
