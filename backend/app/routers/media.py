@@ -1,5 +1,6 @@
 """Images with their credit: `GET /media/{kind}/{id}` (the credit and where
-the bytes are) and `GET /media/{kind}/{id}/file` (the bytes).
+the bytes are) and `GET /media/{kind}/{id}/file` (the bytes; `?size=large`
+for the enlarged view a click on the image opens).
 
 Public and unauthenticated, like the node they belong to. The reader's
 browser talks only to this API; the module behind it (`app.media`) talks to
@@ -8,6 +9,7 @@ licence policy — a node without a servable image answers 404 here, and the
 panel simply shows none.
 """
 import time
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
@@ -60,15 +62,22 @@ def _lookup(fn, kind: str, node_id: str):
 
 
 @router.get("/{kind}/{node_id:path}/file")
-def media_file(kind: str, node_id: str, request: Request, v: str | None = None):
-    """The thumbnail bytes. The URL the credit hands out carries the bytes'
-    fingerprint (`?v=`), and that URL may be cached for a year: when the
-    image changes, so does the URL. The plain URL is cacheable for a day.
-    Either way the ETag lets a browser revalidate for free."""
-    data, content_type = _lookup(media.image_bytes, kind, node_id)
+def media_file(kind: str, node_id: str, request: Request, v: str | None = None,
+               size: Literal["large"] | None = None):
+    """The thumbnail bytes, or with `size=large` the enlarged image. The URL
+    the credit hands out carries the image's fingerprint (`?v=`, the
+    thumbnail's — one version for both sizes), and that URL may be cached for
+    a year: when the image changes, so does the URL. The plain URL is
+    cacheable for a day. Either way the ETag lets a browser revalidate for
+    free."""
+    if size == "large":
+        data, content_type, version = _lookup(media.large_image_bytes, kind, node_id)
+    else:
+        data, content_type = _lookup(media.image_bytes, kind, node_id)
+        version = media.fingerprint(data)
     etag = media.fingerprint(data)
     quoted = f'"{etag}"'
-    cache = _FILE_CACHE_PINNED if v == etag else _FILE_CACHE
+    cache = _FILE_CACHE_PINNED if v == version else _FILE_CACHE
     if request.headers.get("if-none-match") == quoted:
         return Response(status_code=304, headers={"ETag": quoted, "Cache-Control": cache})
     return Response(content=data, media_type=content_type,
@@ -79,7 +88,9 @@ def media_file(kind: str, node_id: str, request: Request, v: str | None = None):
 def media_info(kind: str, node_id: str):
     """The credit the panel shows under the image, and the file's path."""
     credit = _lookup(media.image_info, kind, node_id)
-    return {"url": f"/media/{kind}/{node_id}/file?v={credit.etag}", "author": credit.author,
+    return {"url": f"/media/{kind}/{node_id}/file?v={credit.etag}",
+            "large_url": f"/media/{kind}/{node_id}/file?size=large&v={credit.etag}",
+            "author": credit.author,
             "license": credit.license, "license_url": credit.license_url,
             "file_page": credit.file_page, "attribution_required": credit.attribution_required,
             "source": credit.source}

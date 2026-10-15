@@ -50,11 +50,13 @@ WIKIPEDIA_SUMMARY = "https://en.wikipedia.org/api/rest_v1/page/summary/"
 SOURCE_NAME = "Wikimedia Commons"
 
 THUMB_WIDTH = 256          # 2× the 72 px avatar, enough for a 36 px logo on any screen
+LARGE_WIDTH = 960          # the enlarged view a click on the image opens
 POSITIVE_TTL = 30 * 86400  # a replaced photo shows up within a month
 NEGATIVE_TTL = 7 * 86400   # "no image" is re-asked weekly
 _TIMEOUT = 10
 OUTAGE_BACKOFF = 120       # seconds a Wikimedia failure is remembered: one wait, not one per panel
 _MEMORY_SLOTS = 500
+_LARGE_SLOTS = 20          # large files are ~10× a thumbnail; the bucket holds the rest
 S3_PREFIX = "images/"
 
 KINDS = ("entity", "person")
@@ -228,12 +230,13 @@ def _guarded(url: str, params: dict | None = None) -> httpx.Response:
         raise
 
 
-def commons_imageinfo(file: str) -> dict | None:
-    """The file's `imageinfo` entry (thumbnail URL + licence metadata), or
-    None when Commons has no such file."""
+def commons_imageinfo(file: str, width: int = THUMB_WIDTH) -> dict | None:
+    """The file's `imageinfo` entry (a `width`-pixel thumbnail URL + licence
+    metadata), or None when Commons has no such file. A file narrower than
+    `width` comes back at its own size."""
     r = _guarded(COMMONS_API, {
         "action": "query", "titles": f"File:{file}", "prop": "imageinfo",
-        "iiprop": "extmetadata|url|mime", "iiurlwidth": THUMB_WIDTH,
+        "iiprop": "extmetadata|url|mime", "iiurlwidth": width,
         "format": "json", "formatversion": 2,
     })
     pages = (r.json().get("query") or {}).get("pages") or []
@@ -301,6 +304,7 @@ class _Memory:
 
 
 _memory = _Memory()
+_large_memory = _Memory(_LARGE_SLOTS)
 
 _NONE = {"none": True}
 
@@ -311,6 +315,12 @@ def _meta_key(kind: str, node_id: str) -> str:
 
 def _bytes_key(kind: str, node_id: str) -> str:
     return f"{S3_PREFIX}{kind}/{quote(node_id, safe='')}.bin"
+
+
+def _large_key(kind: str, node_id: str, version: str) -> str:
+    """Keyed by the thumbnail's fingerprint: a replaced image is a new key, so
+    a large file can never outlive the credit it was served under."""
+    return f"{S3_PREFIX}{kind}/{quote(node_id, safe='')}.large.{version}.bin"
 
 
 def _fresh(meta: dict) -> bool:
@@ -434,8 +444,37 @@ def image_bytes(kind: str, node_id: str, record: dict) -> tuple[bytes, str] | No
     return data, credit.content_type
 
 
+def large_image_bytes(kind: str, node_id: str, record: dict) -> tuple[bytes, str, str] | None:
+    """The enlarged image (`LARGE_WIDTH`), its content type and the version it
+    belongs to (the thumbnail's fingerprint, which the URL pins), or None
+    without an image.
+
+    Fetched only when somebody opens it, never with the thumbnail: most panel
+    opens never ask. The credit — and so the licence check — is the
+    thumbnail's: one file, two sizes. A Wikimedia failure raises (503
+    upstairs) rather than handing out the small file under a URL cached for
+    a year; the panel keeps showing the thumbnail it already has."""
+    credit = image_info(kind, node_id, record)
+    if credit is None:
+        return None
+    key = _large_key(kind, node_id, credit.etag)
+    data = _large_memory.get(key) or objectstore.get(key)
+    if data is None:
+        info = commons_imageinfo(credit.file, LARGE_WIDTH)
+        if info is None:
+            return None
+        data = _guarded(info.get("thumburl") or info.get("url")).content
+        objectstore.put(key, data, credit.content_type)
+    _large_memory.put(key, data, POSITIVE_TTL)
+    return data, credit.content_type, credit.etag
+
+
 def forget(kind: str, node_id: str) -> None:
-    """Drop a node's cached image and credit (both layers)."""
+    """Drop a node's cached image and credit (both layers), the large file too."""
+    meta = _read_meta(kind, node_id, allow_stale=True) or {}
+    if meta.get("etag"):
+        _large_memory.drop(_large_key(kind, node_id, meta["etag"]))
+        objectstore.delete(_large_key(kind, node_id, meta["etag"]))
     for key in (_meta_key(kind, node_id), _bytes_key(kind, node_id)):
         _memory.drop(key)
         objectstore.delete(key)
