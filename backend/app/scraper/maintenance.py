@@ -1772,8 +1772,10 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
 
 
 def backfill_person_images(limit: int | None = None, batch: int = 50, fetch=None) -> dict:
-    """Store the portrait (Wikidata P18) of every person who has a Wikidata id
-    and no `image_url` yet — the pointer `/media/person/{id}` resolves.
+    """Store the portrait (Wikidata P18) and the English Wikipedia article (the
+    sitelink) of every person who has a Wikidata id and lacks one of them —
+    the two pointers `/media/person/{id}` resolves, the article being the
+    fallback for a person whose item has no P18.
 
     Persons written before the scraper read P18 have none, and the panel used
     to find their photo by searching Wikipedia for the NAME, which the media
@@ -1789,12 +1791,15 @@ def backfill_person_images(limit: int | None = None, batch: int = 50, fetch=None
     from app.scraper.wikidata import _fetch_person_details
 
     rows = run_query(
-        "MATCH (p:Person) WHERE p.wikidata_id IS NOT NULL AND p.image_url IS NULL "
-        "RETURN p.id AS id, p.full_name AS name, p.wikidata_id AS qid")
+        "MATCH (p:Person) WHERE p.wikidata_id IS NOT NULL "
+        "AND (p.image_url IS NULL OR p.wikipedia_url IS NULL) "
+        "RETURN p.id AS id, p.full_name AS name, p.wikidata_id AS qid, "
+        "p.image_url AS image_url, p.wikipedia_url AS wikipedia_url")
     if limit:
         rows = rows[:limit]
 
     filled: list[dict] = []
+    linked: list[dict] = []
     for start in range(0, len(rows), batch):
         chunk = rows[start:start + batch]
         try:
@@ -1803,16 +1808,24 @@ def backfill_person_images(limit: int | None = None, batch: int = 50, fetch=None
             log.warning("Portrait backfill: Wikidata failed for %d persons: %s", len(chunk), exc)
             continue
         for r in chunk:
-            url = (details.get(r["qid"]) or {}).get("image_url")
-            if not url:
+            detail = details.get(r["qid"]) or {}
+            image = None if r.get("image_url") else detail.get("image_url")
+            article = None if r.get("wikipedia_url") else detail.get("wikipedia_url")
+            if not image and not article:
                 continue
             run_command(
-                "MATCH (p:Person {id:$id}) SET p.image_url = COALESCE(p.image_url, $u)",
-                {"id": r["id"], "u": url})
-            filled.append({"id": r["id"], "name": r["name"], "image_url": url})
+                "MATCH (p:Person {id:$id}) "
+                "SET p.image_url = COALESCE(p.image_url, $u), "
+                "    p.wikipedia_url = COALESCE(p.wikipedia_url, $w)",
+                {"id": r["id"], "u": image, "w": article})
+            if image:
+                filled.append({"id": r["id"], "name": r["name"], "image_url": image})
+            if article:
+                linked.append({"id": r["id"], "name": r["name"], "wikipedia_url": article})
 
-    return {"candidates": len(rows), "filled": len(filled),
-            "without_image": len(rows) - len(filled), "changes": filled}
+    still_without_image = sum(1 for r in rows if not r.get("image_url")) - len(filled)
+    return {"candidates": len(rows), "filled": len(filled), "linked": len(linked),
+            "without_image": still_without_image, "changes": filled, "links": linked}
 
 
 def backfill_sec_headquarters(limit: int | None = None, fetch=None) -> dict:

@@ -1127,13 +1127,13 @@ def cmd_backfill_sec_headquarters(args):
 
 
 def cmd_backfill_person_images(args):
-    """Store the Wikidata portrait (P18) of persons that have none yet."""
+    """Store the Wikidata portrait (P18) and English Wikipedia article of persons lacking them."""
     from app.scraper.maintenance import backfill_person_images
     res = backfill_person_images(limit=args.limit)
     for c in res["changes"][:20]:
         print(f"  {(c['name'] or '')[:40]:42} {c['image_url']}")
-    print(f"Stored {res['filled']} portraits of {res['candidates']} persons with a Wikidata id "
-          f"({res['without_image']} state no image)")
+    print(f"Stored {res['filled']} portraits and {res['linked']} Wikipedia links for "
+          f"{res['candidates']} persons with a Wikidata id ({res['without_image']} still without a portrait)")
 
 
 def cmd_backfill_entity_sources(args):
@@ -1306,7 +1306,7 @@ def _build_parser():
 
     # backfill-person-images: Wikidata P18 -> Person.image_url (what /media/person/{id} serves)
     p_pimg = subparsers.add_parser('backfill-person-images',
-        help="Store the Wikidata portrait (P18) of every person with a Wikidata id and no image_url yet")
+        help="Store the Wikidata portrait (P18) and English Wikipedia article of every person with a Wikidata id lacking them")
     p_pimg.add_argument('--limit', type=int, help='Max persons to process this run')
     p_pimg.set_defaults(func=cmd_backfill_person_images)
 
