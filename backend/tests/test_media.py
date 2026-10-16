@@ -22,6 +22,7 @@ LOGO_URL = ("https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Tesla_T_s
             "250px-Tesla_T_symbol.svg.png")
 PERSON_URL = "https://en.wikipedia.org/wiki/Elon_Musk"
 PNG_ETAG = media.fingerprint(b"PNGBYTES")
+LARGE_THUMB = "https://upload.wikimedia.org/thumb/960px-x.png"
 
 
 def _imageinfo(license_name="CC BY-SA 4.0", artist="<a href='x'>Jane Doe</a>", required="true",
@@ -120,7 +121,10 @@ class FakeWikimedia:
         if self.fail:
             raise httpx.ConnectError("down")
         if url == media.COMMONS_API:
-            pages = ([{"imageinfo": [self.imageinfo]}] if self.imageinfo
+            info = self.imageinfo
+            if info and (params or {}).get("iiurlwidth") == media.LARGE_WIDTH:
+                info = {**info, "thumburl": LARGE_THUMB}
+            pages = ([{"imageinfo": [info]}] if info
                      else [{"missing": True}])
             return httpx.Response(200, json={"query": {"pages": pages}},
                                   request=httpx.Request("GET", url))
@@ -129,13 +133,15 @@ class FakeWikimedia:
                 raise httpx.HTTPStatusError("404", request=httpx.Request("GET", url),
                                             response=httpx.Response(404, request=httpx.Request("GET", url)))
             return httpx.Response(200, json=self.summary, request=httpx.Request("GET", url))
-        return httpx.Response(200, content=b"PNGBYTES", request=httpx.Request("GET", url))
+        body = b"LARGEBYTES" if url == LARGE_THUMB else b"PNGBYTES"
+        return httpx.Response(200, content=body, request=httpx.Request("GET", url))
 
 
 @pytest.fixture
 def store():
     s3 = FakeS3()
     media._memory.clear()
+    media._large_memory.clear()
     media._outage["until"] = 0.0
     # Bucket AND endpoint: the store counts as on only with both (CI has no
     # .env, so a fixture that patched the bucket alone ran with the store off).
@@ -144,6 +150,7 @@ def store():
          patch.object(objectstore, "_get_client", lambda: s3):
         yield s3
     media._memory.clear()
+    media._large_memory.clear()
     media._outage["until"] = 0.0
 
 
@@ -447,7 +454,9 @@ class TestEndpoints:
         fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}])
         r = client.get("/media/entity/e1")
         assert r.status_code == 200
-        assert r.json() == {"url": f"/media/entity/e1/file?v={PNG_ETAG}", "author": "Jane Doe", "license": "CC BY-SA 4.0",
+        assert r.json() == {"url": f"/media/entity/e1/file?v={PNG_ETAG}",
+                            "large_url": f"/media/entity/e1/file?size=large&v={PNG_ETAG}",
+                            "author": "Jane Doe", "license": "CC BY-SA 4.0",
                             "license_url": "https://creativecommons.org/licenses/by-sa/4.0",
                             "file_page": "https://commons.wikimedia.org/wiki/File:Tesla_T_symbol.svg",
                             "attribution_required": True, "source": "Wikimedia Commons"}
@@ -530,3 +539,62 @@ class TestEndpoints:
         fake_db.queue([{"logo_url": LOGO_URL, "wikipedia_url": None}])
         r = client.get("/media/entity/e1")
         assert r.status_code == 200 and r.json()["author"] == "Jane Doe"
+
+
+# ── the enlarged view ─────────────────────────────────────────────────────────
+
+class TestLargeImage:
+    """A click on the portrait opens it big: a second rendition, fetched only
+    then, under the thumbnail's credit and version."""
+
+    def test_a_thumbnail_open_does_not_fetch_the_large_file(self, store, wikimedia):
+        media.image_bytes("person", "p1", {"image_url": LOGO_URL})
+        assert LARGE_THUMB not in wikimedia.calls
+        assert not any(".large." in k for k in store.objects)
+
+    def test_the_large_file_is_asked_at_its_width_and_kept_by_version(self, store, wikimedia):
+        got = media.large_image_bytes("person", "p1", {"image_url": LOGO_URL})
+        assert got == (b"LARGEBYTES", "image/png", PNG_ETAG)
+        assert wikimedia.calls[-1] == LARGE_THUMB
+        assert store.objects[f"images/person/p1.large.{PNG_ETAG}.bin"] == b"LARGEBYTES"
+
+    def test_a_second_open_and_a_restart_cost_wikimedia_nothing(self, store, wikimedia):
+        media.large_image_bytes("person", "p1", {"image_url": LOGO_URL})
+        n = len(wikimedia.calls)
+        media.large_image_bytes("person", "p1", {"image_url": LOGO_URL})
+        media._memory.clear()
+        media._large_memory.clear()
+        assert media.large_image_bytes("person", "p1", {"image_url": LOGO_URL})[0] == b"LARGEBYTES"
+        assert len(wikimedia.calls) == n
+
+    def test_a_refused_licence_has_no_large_file_either(self, store, monkeypatch):
+        fake = FakeWikimedia(imageinfo=_imageinfo(license_name="CC BY-NC 4.0"))
+        monkeypatch.setattr(media, "_get", fake)
+        assert media.large_image_bytes("person", "p1", {"image_url": LOGO_URL}) is None
+        assert LARGE_THUMB not in fake.calls
+
+    def test_a_failure_raises_rather_than_serving_the_small_file(self, store, wikimedia):
+        media.image_bytes("person", "p1", {"image_url": LOGO_URL})
+        wikimedia.fail = True
+        with pytest.raises(httpx.ConnectError):
+            media.large_image_bytes("person", "p1", {"image_url": LOGO_URL})
+
+    def test_forget_drops_the_large_file_too(self, store, wikimedia):
+        media.large_image_bytes("person", "p1", {"image_url": LOGO_URL})
+        media.forget("person", "p1")
+        assert store.objects == {}
+        media.large_image_bytes("person", "p1", {"image_url": LOGO_URL})
+        assert wikimedia.calls.count(LARGE_THUMB) == 2
+
+    def test_the_endpoint_serves_it_pinned_by_the_thumbnails_version(self, client, fake_db, store, wikimedia):
+        row = [{"image_url": LOGO_URL, "logo_url": None, "wikipedia_url": None}]
+        fake_db.queue(row, row)
+        r = client.get(f"/media/person/p1/file?size=large&v={PNG_ETAG}")
+        assert r.status_code == 200 and r.content == b"LARGEBYTES"
+        assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert r.headers["etag"] == f'"{media.fingerprint(b"LARGEBYTES")}"'
+        r = client.get("/media/person/p1/file?size=large&v=stale0stale0")
+        assert r.headers["cache-control"] == "public, max-age=86400"
+
+    def test_an_unknown_size_is_refused(self, client, fake_db, store, wikimedia):
+        assert client.get("/media/person/p1/file?size=huge").status_code == 422
