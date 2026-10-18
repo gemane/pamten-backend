@@ -186,3 +186,38 @@ def test_closed_twins_fold_and_distinct_intervals_stay(it_db):
                          "RETURN r.until AS u ORDER BY r.until")
     assert [r["u"] for r in pd] == ["2012-01-01", "2022-01-01"]
     assert maintenance.count_duplicate_owns_edges()["redundant_edges"] == 0
+
+
+def test_a_re_import_s_newer_statement_replaces_the_same_source_s_old_one(it_db):
+    """Dev, 2026-10-18: three PSC pairs kept `source_date 2016-04-06` after the
+    subset re-import because the old edge carried GLEIF's `direct` marker (so it
+    survived) and the fold ranked the register's two statements equal, which
+    kept the incumbent. The survivor must end up saying what the register said
+    LAST — its date, link and stake — and keep the marker."""
+    from app.scraper import maintenance
+    for x in ("p", "c"):
+        it_db.run_command(f"CREATE (:Entity {{id:'{x}'}})")
+    it_db.run_command(
+        "MATCH (p:Entity{id:'p'}),(c:Entity{id:'c'}) "
+        "CREATE (p)-[:OWNS{until:null, source_id:'psc', credibility_score:97, stake_percent:75, "
+        "source_date:'2016-04-06', since:'2016-04-06', since_basis:'register_start', "
+        "source_url:'https://find-and-update.example.test/psc/2016', "
+        "direct_or_indirect:'direct', last_scraped_at:'2025-01-01T00:00:00'}]->(c)")
+    it_db.run_command(
+        "MATCH (p:Entity{id:'p'}),(c:Entity{id:'c'}) "
+        "CREATE (p)-[:OWNS{until:null, source_id:'psc', credibility_score:97, stake_percent:50, "
+        "source_date:'2026-10-16', since:'2016-04-06', since_basis:'register_start', "
+        "source_url:'https://find-and-update.example.test/psc/2026', "
+        "last_scraped_at:'2026-10-18T00:00:00'}]->(c)")
+
+    res = maintenance.deduplicate_owns_edges()
+    assert (res["duplicates_removed"], res["survivors_folded"]) == (1, 1)
+
+    rows = it_db.run_query(
+        "MATCH (p:Entity{id:'p'})-[r:OWNS]->(c:Entity{id:'c'}) RETURN r.source_date AS d, "
+        "r.stake_percent AS s, r.source_url AS u, r.direct_or_indirect AS doi, r.since AS since, "
+        "r.last_scraped_at AS seen")
+    assert [(r["d"], r["s"], r["u"], r["doi"], r["since"]) for r in rows] == [
+        ("2026-10-16", 50, "https://find-and-update.example.test/psc/2026", "direct", "2016-04-06")]
+    # a DATETIME property: ArcadeDB renders it its own way ("…T00:00Z")
+    assert str(rows[0]["seen"]).startswith("2026-10-18")

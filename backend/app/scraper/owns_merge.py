@@ -20,6 +20,16 @@ module is the rule for how two assertions share that edge:
   edge back and forth. Every source's own answer is kept in its Claim
   regardless.
 
+  ONE source is a different matter: its newer statement replaces its older one
+  (``supersedes``: same source, equal rank, a later ``source_date`` — then a
+  later ``last_scraped_at``). The live writers do this by nature (a source
+  updating the edge it holds), and the fold does it for the bulk case, where a
+  re-import draws a second edge beside the old one and the dedup keeps
+  whichever ``_losers`` prefers: on dev the UK register's 2016 edge, carrying
+  GLEIF's ``direct`` marker, outlived the 2026 re-import's twin three times, and
+  the edge kept citing a nine-year-old statement of the same source. A changed
+  stake would have been kept old the same way.
+
   Among official sources a stated stake ranks first, because a subsidiary list
   is silent, not "undisclosed": SEC's Exhibit 21 (credibility 98) names a
   company without a number, and letting it displace the UK register's 75%
@@ -119,7 +129,8 @@ def answer_rank(values: dict) -> tuple:
     read off a text cover page, an Exhibit 21 table over a paragraph) and
     never lifts a source over a more credible one — a register's field is
     not more true than a filing's sentence, only more surely ours.
-    Deliberately no date tie-break — see ``outranks``."""
+    Deliberately no date tie-break between SOURCES — see ``outranks``; within
+    one source the later statement wins (``supersedes``)."""
     credibility = int(values.get("credibility_score") or 0)
     return (credibility >= OFFICIAL_TIER_MIN_CREDIBILITY,
             values.get("stake_percent") is not None,
@@ -131,6 +142,25 @@ def outranks(incoming: dict, current: dict) -> bool:
     """Whether ``incoming`` takes the answer from the edge holding ``current``.
     Strictly higher only: on a tie the incumbent keeps it."""
     return answer_rank(incoming) > answer_rank(current)
+
+
+def said_at(values: dict) -> tuple[str, str]:
+    """When a source made this statement: its ``source_date`` (the filing or
+    snapshot day), then ``last_scraped_at`` for statements the source does not
+    date. Strings compare as ISO dates; a missing date sorts first."""
+    return (str(values.get("source_date") or ""), str(values.get("last_scraped_at") or ""))
+
+
+def supersedes(incoming: dict, current: dict) -> bool:
+    """Whether ``incoming`` is the SAME source's later statement of an answer of
+    equal rank, and so replaces ``current`` — a register re-read in 2026 says
+    what the register says now, not what it said in 2016. Never across sources:
+    there the tie rule of ``outranks`` holds. A statement without a source id
+    cannot be matched to one and never supersedes."""
+    return (bool(incoming.get("source_id"))
+            and incoming.get("source_id") == current.get("source_id")
+            and answer_rank(incoming) == answer_rank(current)
+            and said_at(incoming) > said_at(current))
 
 
 def combine_since(*candidates: dict | None, not_before: str | None = None) -> dict:
@@ -156,7 +186,8 @@ def fold(edges: list[dict], survivor: dict) -> dict:
     edge of one pair that is active, or every one closed on the same day — the
     survivor included) said between them.
 
-    The answer comes from the highest-ranked edge (the survivor on a tie); the
+    The answer comes from the highest-ranked edge (the survivor on a tie
+    between sources; the same source's NEWEST statement, ``supersedes``); the
     start date is combined; structural fields the survivor lacks come from
     whichever other edge has them; freshness is the most recent confirmation.
     ``shortcut`` is left alone — it is a statement about the survivor's own
@@ -164,7 +195,7 @@ def fold(edges: list[dict], survivor: dict) -> dict:
     """
     top = survivor
     for e in edges:
-        if outranks(e, top):
+        if outranks(e, top) or supersedes(e, top):
             top = e
     out: dict = {}
     if top is not survivor:

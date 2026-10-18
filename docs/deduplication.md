@@ -375,12 +375,15 @@ then the `direct_or_indirect`-flagged one. **Closed edges are grouped by end dat
 (since 2026-10-18): a bulk re-import recreates every ceased appointment beside its
 old copy too (8 of 29 PSC edges on dev after one re-run), and two edges that ended
 on the same day are one fact, while a holding that ended twice on different days
-is history and stays two edges. When the pair's edges come from
-**different sources** (GLEIF beside SEC, say), what they said is folded into the
+is history and stays two edges. What the pair's edges said is folded into the
 survivor first (`owns_merge.fold`: the higher-ranked source's answer, the earliest
 start date, the other's marker or PSC link) — before 2026-09 the delete was the
-loss, taking SEC's "listed since" date with it after every GLEIF import. The result
-counts these as `survivors_folded`. Since 2026-09-21 the collector walks the
+loss, taking SEC's "listed since" date with it after every GLEIF import. Edges of
+**one** source fold too: the re-import's copy is that source's **newer statement**
+(its snapshot date, its link, perhaps a changed stake), and when the old edge
+survives for its `direct_or_indirect` marker the fold moves the new answer onto it
+(`owns_merge.supersedes`, since 2026-10-18: three PSC pairs on dev still cited the
+2016 snapshot after the re-import). The result counts these as `survivors_folded`. Since 2026-09-21 the collector walks the
 **owners** by their `id` index (an index range read per page of 5,000 vertices)
 and expands each page's outgoing OWNS edges as adjacency — a duplicate is by
 definition two edges from the same owner, so page-by-page grouping loses nothing.

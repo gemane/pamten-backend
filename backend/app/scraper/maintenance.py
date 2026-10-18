@@ -200,10 +200,13 @@ def _losers(edges: list[tuple]) -> list[str]:
 def _fold_into_survivors(groups: list[tuple[str, list[str]]]) -> int:
     """Before a cross-source pair's extra edges are deleted, fold what they said
     into the survivor (``app.scraper.owns_merge.fold``): the highest-ranked
-    source's answer, the earliest start date, the other source's structure.
+    source's answer — the same source's newest statement — the earliest start
+    date, the other source's structure.
 
-    Only groups whose edges come from more than one source reach this — a pure
-    re-import double carries nothing its twin does not. Without the fold the
+    Every duplicate group reaches this, same source or not: a re-import's
+    double is that source's NEWER statement (its snapshot date, perhaps a
+    changed stake), and when ``_losers`` keeps the old edge for its marker the
+    fold moves the new answer onto it. Without the fold the
     delete was the loss: after every GLEIF import the SEC edge beside GLEIF's
     went, taking its "listed since 2013" and its filing link with it, for the
     next SEC scrape to draw again. Returns the number of survivors changed.
@@ -281,7 +284,8 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
             # Folded whether or not the sources differ: two edges of ONE
             # source can still disagree on the start (a re-import beside the
             # old edge), and deleting the loser unfolded threw the earlier
-            # `since` away.
+            # `since` away — or the newer statement's date and stake, when the
+            # old edge survives for its direct/indirect marker.
             survivor = next(e[0] for e in edges if e[0] not in losers)
             cross_source.append((survivor, losers))
             pending.extend(losers)
