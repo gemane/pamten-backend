@@ -64,7 +64,7 @@ from app.claims import KIND_OWNS
 from app.scraper.bulk_import import (
     _BatchWriter, _flush_script, _loads, _now_iso, _ProgressBar,
 )
-from app.scraper.companies_house_psc import psc_record
+from app.scraper.companies_house_psc import psc_record, write_entity_owner
 from app.scraper.owns_merge import combine_since, outranks
 
 log = logging.getLogger(__name__)
@@ -683,7 +683,8 @@ def apply_diff(filepath: str, diff: DiffResult, source_id: str, credibility_scor
 
     nodes = _BatchWriter(batch_size=batch_size)
     edges = _PscEdgeWriter(batch_size=batch_size)
-    raw, _, _ = _open_snapshot(filepath)
+    raw, entry, _ = _open_snapshot(filepath)
+    snap_date = snapshot_date(entry)      # the edges' source_date: when the register said it
     bar = _ProgressBar("PSC refresh")
     seen = 0
     try:
@@ -695,7 +696,7 @@ def apply_diff(filepath: str, diff: DiffResult, source_id: str, credibility_scor
             if link is None or link not in diff.touched:
                 continue
             try:
-                mapped = psc_record(_loads(line), source_id, credibility_score)
+                mapped = psc_record(_loads(line), source_id, credibility_score, snap_date)
                 if mapped is None:
                     counts["skipped"] += 1
                     continue
@@ -732,13 +733,10 @@ def apply_diff(filepath: str, diff: DiffResult, source_id: str, credibility_scor
 
 
 def _write_entity_owner(batch: _BatchWriter, mapped, source_id: str, credibility_score: int) -> None:
-    from app.scraper.bulk_import import _entity
-    p = mapped.owner_props
-    _entity(batch, mapped.owner_id, name=p["name"], entity_type=p["entity_type"],
-            country=p["country"], founded=None, lei_id=None,
-            companies_house_id=p["companies_house_id"], source_id=source_id,
-            credibility_score=credibility_score, registered_address=p["registered_address"],
-            hq_address=p["hq_address"], hq_city=p["hq_city"], hq_country=p["hq_country"])
+    # One writer with the bulk load (its `extra` carries the register fields);
+    # this used to be a copy without them, and a refresh stripped a corporate
+    # PSC of its registration number and register_id.
+    write_entity_owner(batch, mapped, source_id, credibility_score)
 
 
 def default_digest_path(filepath: str) -> str:

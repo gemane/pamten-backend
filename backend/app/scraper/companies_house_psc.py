@@ -349,12 +349,21 @@ class PscMapped:
 PSC_REGISTER_START = "2016-04-06"
 
 
-def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped | None:
+def psc_record(rec: dict, source_id: str, credibility_score: int,
+               snapshot_date: str | None = None) -> PscMapped | None:
     """Map one snapshot record, or None when it is not one we import.
 
     `last_scraped_at` is deliberately absent from `edge_props`: it is a clock
     reading, and leaving it to the caller keeps this function's output a pure
     function of its input — which is what the refresh's digest depends on.
+
+    ``snapshot_date`` is the day Companies House published the file the record
+    came from (stamped into the entry name): the edge's `source_date`, i.e. when
+    the register last said this. It used to be `notified_on`, which is when
+    the control BEGAN — a 2016 appointment confirmed by the 2026-10-16 snapshot
+    read as ten-year-old evidence and lost every freshness tie to GLEIF. The
+    start stays in `since`. Without a date (a hand-made file) `notified_on`
+    stands in: a lower bound on when the register said it.
     """
     company_number = (rec.get("company_number") or "").strip()
     data = rec.get("data") or {}
@@ -414,11 +423,17 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
         # words: "England", "England & Wales" and "United Kingdom" are one GB,
         # and a node reading "Switzerland" beside one reading "CH" looked like
         # two countries. The words stay in registration_authority when the
-        # filer put the register there; an unresolvable name is kept as given.
+        # filer put the register there. A name that resolves to no code ("Not
+        # Specified/Other" — 271 in 3M records — or an ambiguous "Korea") is
+        # kept as the filer wrote it in `country_registered`, never in
+        # `country`: that field is a code everywhere else, and a country
+        # filter or flag given words finds nothing or draws nonsense.
+        iso2 = _psc_country(ident)
         country_text = (ident.get("country_registered") or "").strip() or None
         owner_props = {
             "name": name, "entity_type": "company",
-            "country": _psc_country(ident) or country_text,
+            "country": iso2,
+            "country_registered": None if iso2 else country_text,
             "companies_house_id": chid, "registered_address": reg_addr,
             "hq_address": reg_addr, "hq_city": hq_city, "hq_country": hq_country,
             "registration_number": reg_number,
@@ -450,14 +465,34 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
             # so exactly one edge per snapshot record — see ch_psc_incremental.
             "psc_self_link": self_link,
             "source_url": f"https://find-and-update.company-information.service.gov.uk/company/{company_number}/persons-with-significant-control",
-            "source_date": since,
+            # when the register said it: the snapshot's date, not the start
+            "source_date": snapshot_date or since,
         },
     )
 
 
-def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int) -> str | None:
+def write_entity_owner(batch, mapped: PscMapped, source_id: str, credibility_score: int) -> None:
+    """Upsert a corporate PSC's node from its mapped props — the ONE place the
+    bulk load and the refresh write it. The refresh had its own copy that
+    passed no `extra`, so a corporate PSC touched by a refresh lost its
+    registration number, register authority and `register_id` hard id."""
+    props = mapped.owner_props
+    _entity(batch, mapped.owner_id, name=props["name"], entity_type=props["entity_type"],
+            country=props["country"], founded=None, lei_id=None,
+            companies_house_id=props["companies_house_id"],
+            source_id=source_id, credibility_score=credibility_score,
+            registered_address=props["registered_address"], hq_address=props["hq_address"],
+            hq_city=props["hq_city"], hq_country=props["hq_country"],
+            extra={"registration_number": props["registration_number"],
+                   "registration_authority": props["registration_authority"],
+                   "register_id": props["register_id"],
+                   "country_registered": props["country_registered"]})
+
+
+def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int,
+             snapshot_date: str | None = None) -> str | None:
     """Write one PSC record's nodes + OWNS edge. Returns 'person' | 'entity' | None."""
-    mapped = psc_record(rec, source_id, credibility_score)
+    mapped = psc_record(rec, source_id, credibility_score, snapshot_date)
     if mapped is None:
         return None
 
@@ -465,20 +500,22 @@ def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score
     if mapped.kind_cat == "person":
         batch.person(mapped.owner_id, mapped.owner_props)
     else:
-        props = mapped.owner_props
-        _entity(batch, mapped.owner_id, name=props["name"], entity_type=props["entity_type"],
-                country=props["country"], founded=None, lei_id=None,
-                companies_house_id=props["companies_house_id"],
-                source_id=source_id, credibility_score=credibility_score,
-                registered_address=props["registered_address"], hq_address=props["hq_address"],
-                hq_city=props["hq_city"], hq_country=props["hq_country"],
-                extra={"registration_number": props["registration_number"],
-                       "registration_authority": props["registration_authority"],
-                       "register_id": props["register_id"]})
+        write_entity_owner(batch, mapped, source_id, credibility_score)
 
     batch.owns(mapped.owner_id, mapped.owner_label, mapped.company_id,
                {**mapped.edge_props, "last_scraped_at": _now_iso()})
     return mapped.kind_cat
+
+
+def _snapshot_date_or_none(entry_name: str) -> str | None:
+    """The snapshot's date from its entry name, None (with a warning) when the
+    name carries none — a hand-made file; the edges then date by `notified_on`."""
+    from app.scraper.ch_psc_incremental import snapshot_date
+    try:
+        return snapshot_date(entry_name)
+    except ValueError:
+        log.warning("CH PSC: no snapshot date in %r — edges dated by notified_on", entry_name)
+        return None
 
 
 def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
@@ -523,8 +560,10 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
         raw: IO[bytes] = zf.open(entry)          # ZipExtFile — line-iterable
         log.info("CH PSC: reading %s (%s bytes)", entry, f"{total_bytes:,}")
     else:
+        entry = os.path.basename(filepath)
         total_bytes = os.path.getsize(filepath)
         raw = open(filepath, "rb")  # noqa: WPS515
+    snap_date = _snapshot_date_or_none(entry)
 
     counts = {"records": 0, "persons": 0, "entities": 0, "skipped": 0, "errors": 0}
     only_bytes = [c.encode() for c in only_companies] if only_companies else None
@@ -577,7 +616,7 @@ def import_ch_psc(filepath: str, source_id: str, credibility_score: int,
                     if cn not in only_companies:
                         continue                  # substring hit in another field
                     matched.add(cn)
-                cat = _process(rec, batch, source_id, credibility_score)
+                cat = _process(rec, batch, source_id, credibility_score, snap_date)
                 if cat == "person":
                     counts["persons"] += 1
                 elif cat == "entity":

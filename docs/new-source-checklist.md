@@ -250,6 +250,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       only groups duplicates touched *together* in one scope, so per-source scopes leave
       cross-source pairs unmerged — Wikidata "Larry Page" beside SEC "Page Lawrence" is the
       bug that taught us this.
+- [ ] **A code field never carries words.** `country` (and every other ISO-coded
+      field) holds the code or nothing; a filer's text that resolves to no code is kept
+      as written in a field of its own (`country_registered` for PSCs). "Not
+      Specified/Other" sat in `country` on 271 of 3M PSC records, where a country filter
+      found nothing and a flag drew nonsense.
 - [ ] **Expect re-runs to recreate duplicates** and dedup afterwards. Scraping the same
       company twice from two sources is the normal case, not an error.
 - [ ] **Never write past a merge.** A merged node leaves a `MergedId` forwarding row and
@@ -349,6 +354,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       - **"As of" vs "said on"**: the day the facts were true (13D/G *date of event*
         → `event_date`, a register's snapshot date) is a different fact from the day
         they were published (`source_date`). Store both; never use one as the other.
+        And neither is the *start*: the PSC importer wrote `notified_on` as
+        `source_date` for two years, so a 2016 appointment confirmed by every
+        snapshot since read as 2016 evidence (fixed 2026-10-18 — the snapshot date).
       - **Precision**: a month-only or year-only date stays that way (`2023-04-00`,
         a bare year). A made-up day moves an edge across a year boundary.
       - **A snapshot source forgets**: a golden copy or register dump shows today,
