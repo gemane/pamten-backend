@@ -225,6 +225,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       different company — Tesla's Delaware pair lives in `former_register_ids` now, the
       dedup matches held-vs-holds, and a refresh that sees a registration change must
       preserve the outgoing pair (see `import_lei_cdf_delta`), not overwrite it.
+- [ ] **A former name comes with its date, if the source has one.** Registers record renames
+      dated (Companies House `PreviousName_n.CONDATE`, EDGAR `formerNames[].to`); keep the
+      date as an `app.former_names` entry (`"NAME|YYYY-MM-DD"`, the last day the old name
+      applied) in `former_names` beside the plain name in `aliases`, so the timeline can
+      say "Renamed" under the right year. Companies House dropped its dates for a year
+      before anyone asked why the register showed a name the graph did not. A source
+      that knows the name but not the date (GLEIF's previous legal names) stores it
+      undated, or leaves it in `other_names` — never invents a date.
 - [ ] **Use the existing writers** — `_upsert_entity_by_name`, `_upsert_person_by_name`,
       `resolve_entity_id`. They already implement match-by-id-then-name-then-normalised,
       and the credibility rule that stops a weak source renaming a company.

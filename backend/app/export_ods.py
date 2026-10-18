@@ -416,8 +416,12 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
                  for x in profile["executives"]]
 
     events, _ = ownership_history_of(entity_id, HISTORY_MAX_LIMIT)
-    kind_label = {"ownership_in": "Owned by", "ownership_out": "Owns", "role": "Role"}
-    timeline_rows = [[kind_label.get(e["kind"], e["kind"]), _name(e["party"]), e.get("role"),
+    kind_label = {"ownership_in": "Owned by", "ownership_out": "Owns", "role": "Role",
+                  "renamed": "Renamed"}
+    # A rename has no party: its "who" is the old name and the one that followed.
+    timeline_rows = [[kind_label.get(e["kind"], e["kind"]),
+                      _name(e["party"]) if e.get("party") else f"{e.get('former_name')} → {e.get('new_name')}",
+                      e.get("role"),
                       e.get("ownership_type"), _pct(e.get("stake_percent")), e.get("since"),
                       e.get("since_basis"), e.get("until"), bool(e.get("active"))]
                      for e in events]

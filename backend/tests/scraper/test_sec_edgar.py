@@ -58,14 +58,15 @@ class TestFetchFormerNames:
         {"name": "TheFacebook, Inc.", "from": "2004-01-01T00:00:00.000Z", "to": "2005-05-05T00:00:00.000Z"},
     ]}
 
-    def test_returns_former_names_in_order(self):
+    def test_returns_former_names_in_order_with_the_day_each_ended(self):
         with patch("app.scraper.sec_edgar._get", return_value=self._SUBS):
-            assert fetch_former_names("0001326801") == ["Facebook Inc", "TheFacebook, Inc."]
+            assert fetch_former_names("0001326801") == ["Facebook Inc|2021-10-27", "TheFacebook, Inc.|2005-05-05"]
 
-    def test_dedupes_case_insensitively(self):
-        subs = {"formerNames": [{"name": "Square, Inc."}, {"name": "SQUARE, INC."}, {"name": ""}]}
+    def test_dedupes_case_insensitively_and_tolerates_a_missing_date(self):
+        subs = {"formerNames": [{"name": "Square, Inc."}, {"name": "SQUARE, INC.", "to": "2021-12-10T05:00:00.000Z"},
+                                {"name": ""}]}
         with patch("app.scraper.sec_edgar._get", return_value=subs):
-            assert fetch_former_names("x") == ["Square, Inc."]
+            assert fetch_former_names("x") == ["Square, Inc.|"]
 
     def test_empty_or_missing(self):
         with patch("app.scraper.sec_edgar._get", return_value={"name": "Acme"}):

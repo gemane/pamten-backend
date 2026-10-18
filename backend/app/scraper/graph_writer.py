@@ -16,6 +16,7 @@ import functools
 import uuid
 from datetime import datetime, timezone
 
+from app import former_names as former
 from app.claims import KIND_OWNS, KIND_ROLE, KIND_SUCCESSION, record_claim
 from app.roles import canonical_role, finer_start, same_start
 from app.database import db
@@ -685,9 +686,12 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     panel. On an existing node it only fills a missing value, so a register or
     Wikidata source already recorded isn't overwritten.
 
-    ``former_names`` (SEC EDGAR ``formerNames`` — prior names of the *same* CIK)
-    are folded into the entity's ``aliases`` + ``search_text`` so the old name is
-    searchable (e.g. "Facebook" → Meta Platforms). Merged, never clobbered.
+    ``former_names`` (SEC EDGAR ``formerNames`` — prior names of the *same* CIK,
+    as ``app.former_names`` entries ``"NAME|YYYY-MM-DD"``; bare names are taken
+    too) are folded into the entity's ``aliases`` + ``search_text`` so the old
+    name is searchable (e.g. "Facebook" → Meta Platforms), and kept with their
+    dates in ``former_names`` for the timeline's "Renamed from". Merged, never
+    clobbered.
 
     ``headquarters`` (``{address, city, country}``) is where the company is
     **run** — EDGAR's business address. Kept strictly apart from ``country``,
@@ -743,14 +747,18 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             # name and credibility the entity already has (Wikidata names are
             # human-readable; EDGAR registered names are all-caps legal strings).
             if former_names:
-                # Fold former names into aliases + search_text (union, no clobber).
+                # Fold former names into aliases + search_text, and their dated
+                # entries into former_names (unions, no clobber).
                 rec = session.run(
                     "MATCH (e:Entity {id: $id}) RETURN e.name AS name, "
-                    "e.aliases AS aliases, e.description AS descr",
+                    "e.aliases AS aliases, e.description AS descr, "
+                    "e.former_names AS former_names",
                     id=entity_id,
                 ).single()
                 cur_name = (rec["name"] if rec else None) or name
-                merged   = _merge_aliases(rec["aliases"] if rec else None, former_names, cur_name)
+                merged   = _merge_aliases(rec["aliases"] if rec else None,
+                                          former.names(former_names), cur_name)
+                dated    = former.merge(rec["former_names"] if rec else None, former_names)
                 session.run(
                     """
                     MATCH (e:Entity {id: $id})
@@ -766,12 +774,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                         e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode),
                         e.website     = COALESCE(e.website, $website),
                         e.aliases     = $aliases,
+                        e.former_names = $former_names,
                         e.search_text = $search_text
                     """,
                     id=entity_id, cik=cik, lei=lei, source_id=source_id, country=country,
                     jurisdiction_code=jurisdiction_code, website=website,
                     **_hq_params(headquarters),
-                    aliases=merged,
+                    aliases=merged, former_names=dated,
                     search_text=_search_text(cur_name, rec["descr"] if rec else None, merged),
                 )
             else:
@@ -797,12 +806,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             return _record_touched_entity(entity_id)
 
         entity_id = str(uuid.uuid4())
-        aliases = _merge_aliases([], former_names, name)
+        aliases = _merge_aliases([], former.names(former_names), name)
         session.run(
             """
             CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
                 name_credibility: $cred, search_text: $search_text, aliases: $aliases,
+                former_names: $former_names,
                 type: $type, sec_cik: $cik, lei_id: $lei, verified: false, source_id: $source_id,
                 is_nominee: $is_nominee,
                 country: $country, jurisdiction_code: $jurisdiction_code,
@@ -818,6 +828,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             country=country, jurisdiction_code=jurisdiction_code,
             **_hq_params(headquarters),
             search_text=_search_text(name, None, aliases), aliases=aliases,
+            former_names=former.merge([], former_names),
             is_nominee=is_nominee_name(name),
         )
         return _record_touched_entity(entity_id)
