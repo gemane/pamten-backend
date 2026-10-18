@@ -78,6 +78,73 @@ class TestPscAddress:
         assert "hq_street" not in captured["extra"] and "hq_postcode" not in captured["extra"]
 
 
+class TestFirstYearLowerBounds:
+    """A notification inside the register's first year on a company that
+    predates the register is when the company first SAID it (its first
+    confirmation statement), not when the control began. The PSC import cannot
+    know the incorporation date, so this runs after ch-company-data."""
+
+    def _run(self, pages, edges, company_ids=("gb-coh:1", "gb-coh:2", "gb-coh:3"), apply=True):
+        from app.scraper.companies_house_psc import mark_first_year_lower_bounds
+        sql, scripts = [], []
+
+        def run_sql(cmd, *a, **k):
+            sql.append(cmd)
+            return edges if "expand(inE('OWNS'))" in cmd else pages
+        res = mark_first_year_lower_bounds(list(company_ids) if company_ids else None, apply=apply,
+                                           run_sql=run_sql,
+                                           run_sqlscript=lambda s, p=None: scripts.append((s, p)))
+        return res, sql, scripts
+
+    PAGE = [{"id": "gb-coh:1", "rid": "#1:1", "founded_date": "1903-08-28"},   # predates the register
+            {"id": "gb-coh:2", "rid": "#1:2", "founded_date": "2016-09-01"},   # named its PSC at incorporation
+            {"id": "gb-coh:3", "rid": "#1:3", "founded_date": None}]           # not enriched yet
+    EDGES = [{"rid": "#9:1", "i": "#1:1", "s": "2016-07-04"},
+             {"rid": "#9:2", "i": "#1:1", "s": "2016-07-04"},                  # a second PSC, same day
+             {"rid": "#9:3", "i": "#1:1", "s": "2016-10-13"}]
+
+    def test_only_companies_incorporated_before_the_register_are_expanded(self):
+        res, sql, scripts = self._run(self.PAGE, self.EDGES)
+        assert res == {"companies_before_register": 1, "edges": 3, "claims": 2, "applied": True}
+        expand = next(c for c in sql if "expand(inE('OWNS'))" in c)
+        assert "FROM [#1:1]" in expand and "#1:2" not in expand and "#1:3" not in expand
+        # the edge predicate: PSC, no basis yet, inside the first year but not its first day
+        assert ("WHERE filing_type = 'PSC' AND since_basis IS NULL "
+                "AND since > '2016-04-06' AND since <= '2017-04-20'") in expand
+
+    def test_edges_are_marked_by_rid_and_claims_by_company_and_day(self):
+        _, _, scripts = self._run(self.PAGE, self.EDGES)
+        assert len(scripts) == 1
+        script, params = scripts[0]
+        stmts = script.split(";")
+        assert stmts[:3] == [f"UPDATE #9:{n} SET since_basis = 'register_first_year'" for n in (1, 2, 3)]
+        assert len(stmts) == 5 and all("UPDATE Claim SET since_basis = 'register_first_year'" in s
+                                       and "kind = 'owns' AND filing_type = 'PSC'" in s
+                                       and "since_basis IS NULL" in s for s in stmts[3:])
+        assert params == {"t0": "gb-coh:1", "s0": "2016-07-04", "t1": "gb-coh:1", "s1": "2016-10-13"}
+
+    def test_a_dry_run_counts_and_writes_nothing(self):
+        res, _, scripts = self._run(self.PAGE, self.EDGES, apply=False)
+        assert (res["edges"], res["claims"], res["applied"]) == (3, 2, False)
+        assert scripts == []
+
+    def test_scoped_ids_are_read_by_id_list_and_nothing_is_expanded_without_old_companies(self):
+        res, sql, scripts = self._run(self.PAGE[1:], [], company_ids=("gb-coh:2", "gb-coh:3", "it's"))
+        assert sql == ["SELECT id, @rid AS rid, founded_date FROM Entity "
+                       "WHERE id IN ['gb-coh:2', 'gb-coh:3', 'it\\'s']"]
+        assert res["companies_before_register"] == 0 and scripts == []
+
+    def test_a_full_run_walks_every_uk_company_by_the_id_index(self, monkeypatch):
+        from app.db import paging
+        seen = {}
+        monkeypatch.setattr(paging, "iter_id_pages",
+                            lambda vtype, prefix="", page=5000, columns="": seen.update(
+                                vtype=vtype, prefix=prefix, columns=columns) or iter([self.PAGE]))
+        res, sql, _ = self._run(self.PAGE, self.EDGES, company_ids=None)
+        assert seen == {"vtype": "Entity", "prefix": "gb-coh:", "columns": "id, @rid AS rid, founded_date"}
+        assert res["edges"] == 3 and not any("WHERE id IN" in c for c in sql)
+
+
 def _psc_zip(tmp_path, company_numbers):
     """A tiny PSC snapshot zip — one individual-PSC line per given company number."""
     lines = "\n".join(json.dumps({

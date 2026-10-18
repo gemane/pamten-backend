@@ -37,13 +37,22 @@ def _basic_zip(tmp_path):
 def test_enriches_existing_company_only(it_db, tmp_path):
     from app.scraper.basic_company_data import import_basic_company_data
 
-    # PSC would have created this controlled company number-keyed and un-named.
+    # PSC would have created this controlled company number-keyed and un-named,
+    # with a PSC notified in the register's first year — a lower bound once the
+    # incorporation date (2015) says the company predates the register.
     it_db.run_sql(
         "UPDATE Entity SET companies_house_id = '09446231', source_id = 'ukpsc' "
         "UPSERT WHERE id = 'gb-coh:09446231'")
+    it_db.run_command("CREATE (:Entity {id:'owner'})")
+    it_db.run_command("MATCH (a:Entity {id:'owner'}), (c:Entity {id:'gb-coh:09446231'}) "
+                      "CREATE (a)-[:OWNS {since:'2016-07-04', filing_type:'PSC', until:null}]->(c)")
 
     result = import_basic_company_data(_basic_zip(tmp_path), 97)
     assert result["rows"] == 2 and result["companies"] == 2 and result["errors"] == 0
+    assert result["first_year_bounds"]["edges"] == 1
+    bound = it_db.run_command("MATCH ()-[r:OWNS]->(c:Entity {id:'gb-coh:09446231'}) "
+                              "RETURN r.since_basis AS b")
+    assert [r["b"] for r in bound] == ["register_first_year"]
 
     rec = it_db.run_command(
         "MATCH (e:Entity {id:'gb-coh:09446231'}) "

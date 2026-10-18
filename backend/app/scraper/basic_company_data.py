@@ -30,6 +30,7 @@ from app.scraper.bulk_import import (
     _rebuild_indexes,
 )
 from app import former_names
+from app.scraper.companies_house_psc import mark_first_year_lower_bounds
 from app.scraper.mapper import is_nominee_name, normalize_entity_name
 
 log = logging.getLogger(__name__)
@@ -272,6 +273,13 @@ def import_basic_company_data(filepath: str, credibility_score: int,
         raw.close()
         if bulk_load:
             _rebuild_indexes()
+
+    # Now the incorporation dates are in: a PSC notified in the register's first
+    # year on a company that predates it is a lower bound, which the PSC import
+    # could not know (companies_house_psc.mark_first_year_lower_bounds). Scoped
+    # to the companies this run enriched; a full run walks every gb-coh company.
+    counts["first_year_bounds"] = mark_first_year_lower_bounds(
+        company_ids=[f"gb-coh:{n}" for n in sorted(matched)] if only_companies is not None else None)
 
     log.info("CH BasicData import done: %s", counts)
     return counts

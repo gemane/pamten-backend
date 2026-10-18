@@ -352,7 +352,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         (GLEIF, PSC, a first 13D). A lower bound gets `since_basis`. An as-of list
         gets only `source_date` (see the item above). The profile treats each one
         differently: a stated start hides the edge before it, while a lower bound or
-        a bare `source_date` marks it as "not documented for that year".
+        a bare `source_date` marks it as "not documented for that year". **Look at
+        the register's first year, not only its first day**: a new register is filled
+        by existing companies on their next periodic filing, so a "notified" date
+        inside that year on a company that predates the register is the filing's day,
+        not the start (UK PSC: 54,815 records on 2016-07-01 — the confirmation
+        statement's first day — against a handful on 2016-04-06; marked
+        `register_first_year` since 2026-10-18). Telling them from real starts needs
+        the incorporation date, which may come from a *later* import — then the rule
+        runs at the end of that import, and the refresh must keep the mark when a
+        touched record restates the same day.
       - **An end**: when the source says a holding or role is over, close the edge
         with `until` (+ `until_reason`), never delete it. A deleted edge is missing
         from every past year too. A 0 % amendment is an exit, not a 0 % holding.

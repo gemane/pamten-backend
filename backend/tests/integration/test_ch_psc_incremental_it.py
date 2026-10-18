@@ -373,6 +373,22 @@ class TestTimeTravel:
         assert (rows[0]["since"], rows[0]["basis"]) == ("2012-03-01", None)
         assert rows[0]["stake"] == 25.0            # the refresh did apply the new answer
 
+    def test_a_lower_bound_set_after_the_import_survives_a_restated_day(self, loaded, it_db):
+        # `register_first_year` is set by ch-company-data from the incorporation
+        # date, which the PSC record does not carry: a refresh that touches the
+        # edge restates the same notified_on with no basis and must not take
+        # the mark away (it used to: same day + stored basis → replaced).
+        it_db.run_command("MATCH ()-[r:OWNS]->() WHERE r.psc_self_link ENDS WITH '/restake' "
+                          "SET r.since = '2016-07-04', r.since_basis = 'register_first_year'")
+        restake = _individual("00000004", "restake", natures=["ownership-of-shares-25-to-50-percent"])
+        restake["data"]["notified_on"] = "2016-07-04"
+        _apply(loaded, _b_records(restake=restake))
+        rows = it_db.run_command(
+            "MATCH ()-[r:OWNS]->() WHERE r.psc_self_link ENDS WITH '/restake' "
+            "RETURN r.since AS since, r.since_basis AS basis, r.stake_percent AS stake")
+        assert (rows[0]["since"], rows[0]["basis"]) == ("2016-07-04", "register_first_year")
+        assert rows[0]["stake"] == 25.0            # the refresh did apply the new answer
+
     def test_a_ceased_late_filing_does_not_take_over_the_live_edge(self, loaded, it_db):
         # A corporate PSC with a UK number is ONE node whatever the appointment
         # link, so its old, already-ceased appointment — filed late — meets the
