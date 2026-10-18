@@ -371,7 +371,11 @@ share a shape but are *different* numbers and are deliberately not folded.
 **Duplicate OWNS edges** (`deduplicate_owns_edges`). `CREATE EDGE` is not
 idempotent, so a re-import doubles edges; every BODS/register import ends with a
 best-effort pass that keeps one edge per (owner, target) pair — the largest stake,
-then the `direct_or_indirect`-flagged one. When the pair's edges come from
+then the `direct_or_indirect`-flagged one. **Closed edges are grouped by end date**
+(since 2026-10-18): a bulk re-import recreates every ceased appointment beside its
+old copy too (8 of 29 PSC edges on dev after one re-run), and two edges that ended
+on the same day are one fact, while a holding that ended twice on different days
+is history and stays two edges. When the pair's edges come from
 **different sources** (GLEIF beside SEC, say), what they said is folded into the
 survivor first (`owns_merge.fold`: the higher-ranked source's answer, the earliest
 start date, the other's marker or PSC link) — before 2026-09 the delete was the
@@ -554,8 +558,8 @@ GLEIF direct + ultimate consolidation). The importer used to emit one OWNS edge 
 interest, so **one import** created duplicate edges (fixed at the source — it now
 collapses interests to one edge per `ownership_type`, keeping the largest stake).
 
-To clean existing duplicates, `maintenance.deduplicate_owns_edges` pages active OWNS
-edges by owner (see above), groups by (`@out`, `@in`) **in Python** (a global `GROUP BY` OOMs),
+To clean existing duplicates, `maintenance.deduplicate_owns_edges` pages OWNS
+edges by owner (see above), groups by (`@out`, `@in`, `until`) **in Python** (a global `GROUP BY` OOMs),
 keeps the largest-stake edge per pair (folding a cross-source pair into it), and deletes the rest by `DELETE FROM <rid>`
 (direct record access — `WHERE @rid = …` scans the whole edge type). Read-only count
 at `GET /scraper/duplicate-edges/count`; collapse at `POST /scraper/deduplicate-edges`.
