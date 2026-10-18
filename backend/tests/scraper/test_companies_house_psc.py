@@ -16,13 +16,22 @@ class TestPscAddress:
         addr = {"premises": "The Manor", "address_line_1": "Boddington Lane",
                 "address_line_2": "Boddington", "locality": "Cheltenham",
                 "country": "England", "postal_code": "GL51 0TJ"}
-        display, city, country = _psc_address(addr)
-        assert display == "The Manor, Boddington Lane, Boddington, Cheltenham, GL51 0TJ, England"
-        assert city == "Cheltenham"
-        assert country == "GB"
+        out = _psc_address(addr)
+        assert out["registered_address"] == "The Manor, Boddington Lane, Boddington, Cheltenham, GL51 0TJ, England"
+        assert out["hq_city"] == "Cheltenham"
+        assert out["hq_country"] == "GB"
+        # the parts, for a structured geocode: the street is the lines joined in
+        # the register's order, the postcode its own field
+        assert out["hq_street"] == "The Manor, Boddington Lane, Boddington"
+        assert out["hq_postcode"] == "GL51 0TJ"
 
     def test_empty_address(self):
-        assert _psc_address(None) == (None, None, None)
+        assert _psc_address(None) == {"registered_address": None, "hq_city": None, "hq_country": None,
+                                      "hq_street": None, "hq_postcode": None}
+
+    def test_blank_parts_are_none_not_empty_strings(self):
+        out = _psc_address({"premises": " ", "locality": "Leeds", "postal_code": ""})
+        assert (out["hq_street"], out["hq_postcode"], out["registered_address"]) == (None, None, "Leeds")
 
     def test_iso2_maps_uk_subdivisions_and_foreign(self):
         assert _iso2_country("England & Wales") == "GB"
@@ -48,6 +57,25 @@ class TestPscAddress:
         assert captured["hq_city"] == "Cheltenham"       # → on the map
         assert captured["hq_country"] == "GB"
         assert "The Manor" in captured["registered_address"]
+        # the parts reach the writer (they were mapped and dropped until 2026-10-18)
+        assert captured["extra"]["hq_street"] == "The Manor, Boddington Lane"
+        assert captured["extra"]["hq_postcode"] == "GL51 0TJ"
+
+    def test_a_record_without_address_parts_writes_none_of_them(self, monkeypatch):
+        """A bulk SET of null would blank the parts GLEIF wrote on a merged node."""
+        from app.scraper import companies_house_psc as m
+        captured = {}
+        monkeypatch.setattr(m, "_entity",
+                            lambda *a, **k: captured.update(k) or "chpsc:x")
+        rec = {"company_number": "07434180", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Nameplate Holdings", "address": {"locality": "Leeds", "country": "England"},
+            "identification": {"country_registered": "England"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+        }}
+        assert m._process(rec, m._BatchWriter(), "src", 97) == "entity"
+        assert captured["hq_city"] == "Leeds"
+        assert "hq_street" not in captured["extra"] and "hq_postcode" not in captured["extra"]
 
 
 def _psc_zip(tmp_path, company_numbers):

@@ -12,7 +12,9 @@ reference) are silent no-ops. Nothing here creates nodes or edges.
 
 Per matched company it sets: ``name`` / ``name_normalized`` / ``search_text``
 (name + former names, FULL_TEXT-indexed), ``type`` (from CompanyCategory),
-``country`` (``GB``), ``founded`` (IncorporationDate), ``registered_address``,
+``country`` (``GB``), ``founded`` (IncorporationDate), ``registered_address`` (and
+the registered office in parts — ``reg_street`` / ``reg_city`` / ``reg_postcode``,
+mirrored to ``hq_street`` / ``hq_postcode`` since the HQ pin draws it too),
 ``aliases`` (PreviousName_1..10), ``former_names`` (the same names, each with
 its change-of-name date — ``app.former_names``, the timeline's "Renamed from"),
 ``is_nominee`` (name-detected) and ``name_credibility`` (the register is the
@@ -60,6 +62,29 @@ def _founded(incorp: str | None) -> str | None:
 def _reg_address(row: dict) -> str | None:
     parts = [(row.get(k) or "").strip() for k in _ADDRESS_KEYS]
     return ", ".join(p for p in parts if p) or None
+
+
+#: The street of the registered office: care-of, PO box and the two lines, in
+#: the register's order (like GLEIF's address lines — only the order says
+#: which is the building and which the street).
+_STREET_KEYS = ("RegAddress.CareOf", "RegAddress.POBox", "RegAddress.AddressLine1",
+                "RegAddress.AddressLine2")
+
+
+def _reg_address_parts(row: dict) -> dict:
+    """The registered office in PARTS, for a structured geocode: the same facts
+    `_reg_address` joins into one string, kept separate so the geocoder never
+    has to guess which piece was the town. Written under BOTH prefixes — the
+    registered office is the only location the register knows, and it is what
+    the HQ pin draws for a UK company (`hq_address` is the same string). Only
+    the parts the row has, so a re-import never blanks what another source
+    supplied. Dropped until 2026-10-18; the PostCode column is on every row."""
+    street = ", ".join(p for p in ((row.get(k) or "").strip() for k in _STREET_KEYS) if p) or None
+    city = (row.get("RegAddress.PostTown") or "").strip() or None
+    postcode = (row.get("RegAddress.PostCode") or "").strip() or None
+    parts = {"reg_street": street, "reg_city": city, "reg_postcode": postcode,
+             "hq_street": street, "hq_postcode": postcode}
+    return {k: v for k, v in parts.items() if v}
 
 
 def _prev_names(row: dict, current: str) -> list[str]:
@@ -231,6 +256,8 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "is_nominee": is_nominee_name(name),
                     "name_credibility": credibility_score,
                     "last_scraped_at": _now_iso(),
+                    # the registered office in parts, both pins (see _reg_address_parts)
+                    **_reg_address_parts(row),
                 })
                 counts["companies"] += 1
             except Exception as exc:  # noqa: BLE001 - one bad row mustn't abort

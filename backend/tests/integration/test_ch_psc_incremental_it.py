@@ -49,6 +49,8 @@ def _corporate(company, key, reg_number=None):
     return {"company_number": company, "data": {
         "kind": "corporate-entity-person-with-significant-control",
         "name": f"Holdco {key}", "identification": ident,
+        "address": {"premises": "Unit 1", "address_line_1": f"{key} Street", "locality": "Leeds",
+                    "postal_code": "LS1 1AA", "country": "England"},
         "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
         "links": {"self": f"/company/{company}/persons-with-significant-control/corporate/{key}"},
     }}
@@ -161,8 +163,11 @@ class TestWhatTheRefreshDoes:
         # the refresh used to write the owner without `extra`: no registration number
         _apply(loaded, _b_records())
         rows = it_db.run_command("MATCH (e:Entity {id:'gb-coh:12345678'}) "
-                                 "RETURN e.registration_number AS n, e.country AS c")
+                                 "RETURN e.registration_number AS n, e.country AS c, "
+                                 "e.hq_street AS s, e.hq_postcode AS p")
         assert rows and (rows[0]["n"], rows[0]["c"]) == ("12345678", "GB")
+        # the address parts ride the same shared writer (one path for load and refresh)
+        assert (rows[0]["s"], rows[0]["p"]) == ("Unit 1, corp Street", "LS1 1AA")
 
     def test_a_vanished_record_is_closed_not_deleted(self, loaded, it_db):
         # No cessation date and no reason from Companies House — a withdrawal or a

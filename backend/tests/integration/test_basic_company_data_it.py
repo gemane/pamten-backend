@@ -49,9 +49,14 @@ def test_enriches_existing_company_only(it_db, tmp_path):
         "MATCH (e:Entity {id:'gb-coh:09446231'}) "
         "RETURN e.name AS name, e.type AS type, e.founded AS founded, "
         "e.founded_date AS founded_date, "
-        "e.aliases AS aliases, e.search_text AS st, e.registered_address AS addr")
+        "e.aliases AS aliases, e.search_text AS st, e.registered_address AS addr, "
+        "e.reg_street AS rs, e.reg_city AS rc, e.reg_postcode AS rp, "
+        "e.hq_street AS hs, e.hq_postcode AS hp")
     assert rec, "existing company should be enriched"
     row = rec[0]
+    # the registered office in parts under both pins (dropped until 2026-10-18)
+    assert (row["rs"], row["rc"], row["rp"]) == ("BROADWALK HOUSE", "LONDON", "EC2A 2DA")
+    assert (row["hs"], row["hp"]) == ("BROADWALK HOUSE", "EC2A 2DA")
     assert row["name"] == "MONZO BANK LIMITED"
     assert row["type"] == "company"
     assert row["founded"] == 2015                 # headline = year

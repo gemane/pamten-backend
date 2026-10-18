@@ -90,9 +90,11 @@ class TestOnlyCompanies:
         from app.scraper import basic_company_data as m
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["CompanyName", "CompanyNumber", "RegAddress.PostTown",
+        w.writerow(["CompanyName", "CompanyNumber", "RegAddress.CareOf", "RegAddress.AddressLine1",
+                    "RegAddress.AddressLine2", "RegAddress.PostTown", "RegAddress.PostCode",
                     "RegAddress.Country", "IncorporationDate"])
-        w.writerow(["ACME LTD", "00000001", "HARROGATE", "ENGLAND", "11/09/2012"])
+        w.writerow(["ACME LTD", "00000001", "", "1 HIGH STREET", "SUITE 2", "HARROGATE", "HG1 1AA",
+                    "ENGLAND", "11/09/2012"])
         zpath = tmp_path / "b.zip"
         with zipfile.ZipFile(zpath, "w") as zf:
             zf.writestr("BasicCompanyData.csv", buf.getvalue())
@@ -106,6 +108,19 @@ class TestOnlyCompanies:
         assert captured["hq_country"] == "GB"
         assert captured["founded"] == 2012             # headline = year (was a full date)
         assert captured["founded_date"] == "2012-09-11"  # full date for the Details section
+        # the registered office in parts, under both pins (a UK company has no other location)
+        assert (captured["reg_street"], captured["reg_city"], captured["reg_postcode"]) == (
+            "1 HIGH STREET, SUITE 2", "HARROGATE", "HG1 1AA")
+        assert (captured["hq_street"], captured["hq_postcode"]) == ("1 HIGH STREET, SUITE 2", "HG1 1AA")
+
+    def test_a_row_without_address_columns_writes_no_parts(self):
+        """Only the parts the row has: a SET of null would blank GLEIF's."""
+        from app.scraper.basic_company_data import _reg_address_parts
+        assert _reg_address_parts({"RegAddress.PostTown": "", "RegAddress.PostCode": " "}) == {}
+        assert _reg_address_parts({"RegAddress.CareOf": "C/O AGENTS LTD", "RegAddress.POBox": "PO BOX 1",
+                                   "RegAddress.PostCode": "N1 1AA"}) == {
+            "reg_street": "C/O AGENTS LTD, PO BOX 1", "reg_postcode": "N1 1AA",
+            "hq_street": "C/O AGENTS LTD, PO BOX 1", "hq_postcode": "N1 1AA"}
 
     def test_prefilter_keeps_header_and_matching_lines_only(self):
         from app.scraper.basic_company_data import _prefiltered_lines

@@ -312,16 +312,25 @@ def _iso2_country(name: str | None) -> str | None:
     return name.strip().upper() if len(name.strip()) == 2 else None
 
 
-def _psc_address(addr: dict | None) -> tuple[str | None, str | None, str | None]:
-    """(display registered_address, hq_city, hq_country ISO-2) from a PSC record's
-    correspondence ``address`` dict — the corporate PSC's own service address."""
+def _psc_address(addr: dict | None) -> dict:
+    """A corporate PSC's correspondence ``address`` (its own service address) as
+    the Entity props it fills: the display string ``registered_address``,
+    ``hq_city``/``hq_country`` (ISO-2) for the map, and the PARTS ``hq_street``
+    (premises + address lines, joined — the register puts a building and a
+    street across them and only their order says which is which) and
+    ``hq_postcode``, so the geocoder runs a structured query instead of
+    re-parsing the string. Until 2026-10-18 the parts were dropped — 203k of
+    219k corporate PSCs carry one. Absent values are None."""
     addr = addr or {}
-    parts = [addr.get("premises"), addr.get("address_line_1"), addr.get("address_line_2"),
-             addr.get("locality"), addr.get("region"), addr.get("postal_code"),
-             addr.get("country")]
-    display = ", ".join(p.strip() for p in parts if p and str(p).strip()) or None
-    city = (addr.get("locality") or "").strip() or None
-    return display, city, _iso2_country(addr.get("country"))
+
+    def _v(key: str) -> str | None:
+        return (str(addr.get(key) or "")).strip() or None
+
+    lines = [p for p in (_v("premises"), _v("address_line_1"), _v("address_line_2")) if p]
+    parts = lines + [p for p in (_v("locality"), _v("region"), _v("postal_code"), _v("country")) if p]
+    return {"registered_address": ", ".join(parts) or None,
+            "hq_city": _v("locality"), "hq_country": _iso2_country(addr.get("country")),
+            "hq_street": ", ".join(lines) or None, "hq_postcode": _v("postal_code")}
 
 
 @dataclass(frozen=True)
@@ -399,8 +408,8 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
     else:
         owner_id, chid = _entity_psc_id(data)
         # The corporate PSC's own correspondence address (in the record) → its address
-        # + map location; otherwise it's a name-only node.
-        reg_addr, hq_city, hq_country = _psc_address(data.get("address"))
+        # + map location + the parts; otherwise it's a name-only node.
+        address = _psc_address(data.get("address"))
         owner_label, kind_cat = "Entity", "entity"
         ident = data.get("identification") or {}
         reg_number = (ident.get("registration_number") or "").strip() or None
@@ -434,8 +443,10 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             "name": name, "entity_type": "company",
             "country": iso2,
             "country_registered": None if iso2 else country_text,
-            "companies_house_id": chid, "registered_address": reg_addr,
-            "hq_address": reg_addr, "hq_city": hq_city, "hq_country": hq_country,
+            "companies_house_id": chid, "registered_address": address["registered_address"],
+            "hq_address": address["registered_address"],
+            "hq_city": address["hq_city"], "hq_country": address["hq_country"],
+            "hq_street": address["hq_street"], "hq_postcode": address["hq_postcode"],
             "registration_number": reg_number,
             "registration_authority": (ident.get("place_registered") or "").strip() or None,
             "register_id": register_id,
@@ -486,7 +497,10 @@ def write_entity_owner(batch, mapped: PscMapped, source_id: str, credibility_sco
             extra={"registration_number": props["registration_number"],
                    "registration_authority": props["registration_authority"],
                    "register_id": props["register_id"],
-                   "country_registered": props["country_registered"]})
+                   "country_registered": props["country_registered"],
+                   # the address parts only when the record has them: a bulk
+                   # SET of null would blank what GLEIF wrote on a merged node
+                   **{k: props[k] for k in ("hq_street", "hq_postcode") if props.get(k)}})
 
 
 def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int,

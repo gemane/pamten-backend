@@ -148,7 +148,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       so emit codes for those; elsewhere a region is administrative, not a domicile choice.
 - [ ] **Address parts stay separate** (`*_street`, `*_city`, `*_postcode`, `*_country`).
       Geocoding is a structured query; re-parsing an assembled string is guesswork, and
-      every country writes an address differently.
+      every country writes an address differently. Check it on a source that hands the
+      parts over: both Companies House importers joined premises, lines and postcode into
+      one display string and wrote the city alone until 2026-10-18 — 203k of 219k
+      corporate PSCs and every register row carried a postcode the graph never stored.
+      Write only the parts the record has (a bulk SET of null blanks what another source
+      put on a merged node).
 - [ ] **Keep values as the source gave them.** Do not strip a legitimate `C/O …` line or
       "normalise" a name to make a downstream tool happy — fix the tool-facing side. A
       stored value that no source ever said is a lie the graph cannot walk back.
