@@ -890,8 +890,11 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
     `reg_*` where nothing stands there yet (the pin stays on the map, under
     Registered). Independently, `address` — the panel's "Registered address"
     row, which the importers never filled — is set from `registered_address`
-    where empty. A node whose headquarters came from GLEIF gets it back from
-    the next GLEIF import. Walks the id index a page at a time; dry-run by
+    where empty. A node whose headquarters came from GLEIF does NOT get it
+    back from a GLEIF bulk pass: the batch writer skips a merged-away `lei:`
+    id by design, so it is refilled from the LEI-CDF record by hand (the
+    importer's mapping, fill-if-missing) — a full rebuild loads GLEIF first
+    and never needs this. Walks the id index a page at a time; dry-run by
     default.
     """
     counts = {"nodes": 0, "copied": 0, "pins_moved": 0, "addresses_filled": 0,
