@@ -164,10 +164,11 @@ class TestWhatTheRefreshDoes:
         _apply(loaded, _b_records())
         rows = it_db.run_command("MATCH (e:Entity {id:'gb-coh:12345678'}) "
                                  "RETURN e.registration_number AS n, e.country AS c, "
-                                 "e.hq_street AS s, e.hq_postcode AS p")
+                                 "e.reg_street AS s, e.reg_postcode AS p, e.hq_address AS h")
         assert rows and (rows[0]["n"], rows[0]["c"]) == ("12345678", "GB")
-        # the address parts ride the same shared writer (one path for load and refresh)
-        assert (rows[0]["s"], rows[0]["p"]) == ("Unit 1, corp Street", "LS1 1AA")
+        # the address parts ride the same shared writer (one path for load and
+        # refresh), under the registered pin and never as a headquarters
+        assert (rows[0]["s"], rows[0]["p"], rows[0]["h"]) == ("Unit 1, corp Street", "LS1 1AA", None)
 
     def test_a_vanished_record_is_closed_not_deleted(self, loaded, it_db):
         # No cessation date and no reason from Companies House — a withdrawal or a

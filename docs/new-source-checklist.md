@@ -139,7 +139,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       the golden copy — and the import counts them `implausible`.)
 - [ ] **Registration and headquarters are different facts.** `country`/`address` is where
       a company is registered, `hq_*` where it is run. Never coalesce them — the map's
-      Registered/Headquarters switch exists precisely because they differ.
+      Registered/Headquarters switch exists precisely because they differ. And never
+      COPY one into the other to give a pin something to draw: both Companies House
+      importers wrote the registered office under `hq_*` until 2026-10-18 (there was no
+      registered pin yet), which captioned an accountant's or agent's door "Headquarters"
+      and overwrote the headquarters GLEIF had put on a merged node. A source that states
+      only one of the two places leaves the other empty; "we do not know" is a fact too.
 - [ ] **Keep the finest grain the source states — do not collapse it to the country.**
       Exhibit 21 states "Florida, USA"; storing only `country: US` threw Florida away, and
       a subsidiary's panel showed "United States" with no real location (the reported bug).

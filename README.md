@@ -374,7 +374,12 @@ year (6 April 2016 to 20 April 2017) by a company incorporated before the regist
 a lower bound, not a start — the company declared it on its first confirmation
 statement — and `ch-company-data`, which brings the incorporation date, marks those
 edges at its end (`since_basis = register_first_year`); `manage.py psc-first-year-bounds`
-does it once for a database loaded before 2026-10-18.
+does it once for a database loaded before 2026-10-18. Both importers store the
+registered office only (`address`, `registered_address`, `reg_street`/`reg_city`/`reg_postcode`)
+and nothing under `hq_*`: the register does not say where a company is run, and the
+headquarters pin comes from a source that does (GLEIF, Wikidata, EDGAR). Until 2026-10-18
+they copied the registered office into the headquarters fields; `manage.py clear-copied-uk-hq`
+undoes that once (dry run unless `--apply`; the parts and the pin move under `reg_*`).
 
 ---
 
@@ -614,7 +619,7 @@ python3 manage.py init-schema
 | `gleif-repex` | Import GLEIF **reporting exceptions** (`repex` = GLEIF's abbreviation). Every LEI holder must name its parent *or file a reason why not*, so "no parent recorded" and "a parent exists and was withheld" are different facts — `NATURAL_PERSONS`, `NON_PUBLIC`, `NO_LEI`, … Take the code meanings from GLEIF's XSD rather than their names: `NO_LEI` means the parent *refuses* an LEI, not that it lacks one. See *Why a company reports no parent* in [`docs/data-model.md`](docs/data-model.md). Only ever updates entities already held; never creates one |
 | `gleif-update` | Apply a GLEIF **delta** on top of the full load — the retirement-aware daily refresh (new/changed entities, merges, closed relationships). `--interval auto` (default) is gap-aware: it picks the smallest delta window covering any missed runs since the last one (fails loudly past ~30 days → full-reload). Override with `--interval LastDay\|LastWeek\|LastMonth` or pass `--lei-file`/`--rr-file`/`--repex-file`. Idempotent; runs against the live-indexed DB (no `--bulk-load`). Daily via `~/scripts/cron-gleif-update.sh` |
 | `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`). Company names come from a companion `ch-company-data` import |
-| `ch-company-data` | Enrich UK companies with names/addresses (the registered office, as a string and in parts for the geocoder)/former-names from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph (from `ch-psc`), never creates isolated nodes |
+| `ch-company-data` | Enrich UK companies with names/addresses (the registered office, as a string and in parts for the geocoder — never as a headquarters)/former-names from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph (from `ch-psc`), never creates isolated nodes |
 | `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
 | `rebuild-search` | REBUILD the FULL_TEXT `search_text` indexes so `/search` (`CONTAINSTEXT`) finds every row — needed after a non-bulk / `--only` import (the FULL_TEXT index isn't maintained incrementally). `--hard` first DROPs + re-CREATEs the indexes: use it to recover a **stuck/corrupted** index that a plain REBUILD reports "ok" on but never repopulates (e.g. after a bulk-load's REBUILD was cut off mid-flight by the nginx 60s proxy timeout). Run `--hard` against `--db-url http://localhost:2480` so it isn't cut off by that same proxy again. |
 | `verify-users` | Mark existing accounts email-verified (login now requires it). Run once after enabling verification so pre-existing users aren't locked out; `--email <addr>` targets one account. |

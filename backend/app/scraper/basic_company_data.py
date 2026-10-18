@@ -12,9 +12,10 @@ reference) are silent no-ops. Nothing here creates nodes or edges.
 
 Per matched company it sets: ``name`` / ``name_normalized`` / ``search_text``
 (name + former names, FULL_TEXT-indexed), ``type`` (from CompanyCategory),
-``country`` (``GB``), ``founded`` (IncorporationDate), ``registered_address`` (and
-the registered office in parts — ``reg_street`` / ``reg_city`` / ``reg_postcode``,
-mirrored to ``hq_street`` / ``hq_postcode`` since the HQ pin draws it too),
+``country`` (``GB``), ``founded`` (IncorporationDate), ``registered_address`` /
+``address`` (and the registered office in parts — ``reg_street`` / ``reg_city`` /
+``reg_postcode``; nothing under ``hq_*``, the register does not say where a
+company is run),
 ``aliases`` (PreviousName_1..10), ``former_names`` (the same names, each with
 its change-of-name date — ``app.former_names``, the timeline's "Renamed from"),
 ``is_nominee`` (name-detected) and ``name_credibility`` (the register is the
@@ -75,16 +76,20 @@ _STREET_KEYS = ("RegAddress.CareOf", "RegAddress.POBox", "RegAddress.AddressLine
 def _reg_address_parts(row: dict) -> dict:
     """The registered office in PARTS, for a structured geocode: the same facts
     `_reg_address` joins into one string, kept separate so the geocoder never
-    has to guess which piece was the town. Written under BOTH prefixes — the
-    registered office is the only location the register knows, and it is what
-    the HQ pin draws for a UK company (`hq_address` is the same string). Only
-    the parts the row has, so a re-import never blanks what another source
-    supplied. Dropped until 2026-10-18; the PostCode column is on every row."""
+    has to guess which piece was the town. Under the `reg_*` prefix ONLY — the
+    registered office is the one location the register states, and it is not
+    a headquarters: until 2026-10-18 it was copied into `hq_*` too, which drew
+    an agent's or accountant's office as "Headquarters" and overwrote the HQ
+    GLEIF or Wikidata had put on the node (PSC checklist finding #7). The
+    display string `address` rides along so the panel's "Registered address"
+    row has something to show. Only the parts the row has, so a re-import
+    never blanks what another source supplied. The parts were dropped until
+    2026-10-18; the PostCode column is on every row."""
     street = ", ".join(p for p in ((row.get(k) or "").strip() for k in _STREET_KEYS) if p) or None
     city = (row.get("RegAddress.PostTown") or "").strip() or None
     postcode = (row.get("RegAddress.PostCode") or "").strip() or None
-    parts = {"reg_street": street, "reg_city": city, "reg_postcode": postcode,
-             "hq_street": street, "hq_postcode": postcode}
+    parts = {"address": _reg_address(row), "reg_street": street, "reg_city": city,
+             "reg_postcode": postcode}
     return {k: v for k, v in parts.items() if v}
 
 
@@ -238,16 +243,11 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "search_text": search_text,
                     "type": _company_type(row.get("CompanyCategory")),
                     "country": "GB",
-                    # Registered-office town → hq so the geocoder can place it on the map
-                    # (a UK Companies House company is GB-registered).
-                    "hq_city": (row.get("RegAddress.PostTown") or "").strip() or None,
-                    "hq_country": "GB",
                     "founded": founded_year,
                     "founded_date": founded_date,
                     "registered_address": _reg_address(row),
-                    # PSC/UK companies have no separate HQ — the registered office is
-                    # the location the map geocodes.
-                    "hq_address": _reg_address(row),
+                    # Nothing under hq_*: the register states the registered
+                    # office, not where the company is run (_reg_address_parts).
                     "companies_house_id": number,
                     "aliases": aliases,
                     # The register of record for its own companies: its dated
