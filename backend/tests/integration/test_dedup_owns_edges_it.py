@@ -146,3 +146,43 @@ def test_every_owner_page_is_an_index_read_including_the_first(it_db):
         plan = it_db.explain_sql(page)
         assert "FETCH FROM INDEX" in plan, (page, plan)
         assert "FETCH FROM TYPE" not in plan, (page, plan)
+
+
+def test_closed_twins_fold_and_distinct_intervals_stay(it_db):
+    """A bulk re-import recreates every ceased appointment beside its old copy
+    (`CREATE EDGE` is not idempotent): eight of 29 PSC edges on dev were doubled
+    after the 2026-10-18 subset re-run because the dedup folded active twins
+    only. Two closed edges on the SAME day are one fact; two that ended on
+    different days are two holdings and must both stay."""
+    from app.scraper import maintenance
+    for x in ("p", "c", "d"):
+        it_db.run_command(f"CREATE (:Entity {{id:'{x}'}})")
+    # p→c: the current holding, plus a 2016–2020 appointment written twice —
+    # the older copy with the earlier start that the fold must keep
+    it_db.run_command("MATCH (p:Entity{id:'p'}),(c:Entity{id:'c'}) "
+                      "CREATE (p)-[:OWNS{until:null, stake_percent:75, source_id:'psc'}]->(c)")
+    for since in ("2016-04-06", "2017-01-01"):
+        it_db.run_command(
+            "MATCH (p:Entity{id:'p'}),(c:Entity{id:'c'}) "
+            f"CREATE (p)-[:OWNS{{since:'{since}', until:'2020-05-01', stake_percent:50, "
+            "source_id:'psc', psc_self_link:'/company/c/psc/1'}]->(c)")
+    # p→d: held twice, ended on different days — history, not a duplicate
+    for since, until in (("2005-01-01", "2012-01-01"), ("2018-01-01", "2022-01-01")):
+        it_db.run_command("MATCH (p:Entity{id:'p'}),(d:Entity{id:'d'}) "
+                          f"CREATE (p)-[:OWNS{{since:'{since}', until:'{until}', source_id:'psc'}}]->(d)")
+
+    c = maintenance.count_duplicate_owns_edges()
+    assert (c["active_edges"], c["distinct_pairs"]) == (1, 1)
+    assert (c["duplicate_pairs"], c["redundant_edges"], c["closed_duplicate_pairs"]) == (1, 1, 1)
+
+    res = maintenance.deduplicate_owns_edges()
+    assert (res["duplicates_removed"], res["pairs_cleaned"], res["closed_pairs_cleaned"]) == (1, 1, 1)
+    assert res["survivors_folded"] == 1          # the later start gave way to 2016-04-06
+
+    pc = it_db.run_query("MATCH (p:Entity{id:'p'})-[r:OWNS]->(c:Entity{id:'c'}) "
+                         "RETURN r.since AS s, r.until AS u ORDER BY r.until")
+    assert [(r["s"], r["u"]) for r in pc] == [("2016-04-06", "2020-05-01"), (None, None)]
+    pd = it_db.run_query("MATCH (p:Entity{id:'p'})-[r:OWNS]->(d:Entity{id:'d'}) "
+                         "RETURN r.until AS u ORDER BY r.until")
+    assert [r["u"] for r in pd] == ["2012-01-01", "2022-01-01"]
+    assert maintenance.count_duplicate_owns_edges()["redundant_edges"] == 0

@@ -74,9 +74,16 @@ _OWNER_PAGE = 5000
 
 
 def _owns_pairs_by_page():
-    """Yield, per page of owners, the active OWNS edges grouped by (owner,
-    target) vertex pair: {(out_rid, in_rid): [(edge_rid, stake_percent,
-    direct_or_indirect, source_id, shortcut), ...]}.
+    """Yield, per page of owners, the OWNS edges grouped by (owner, target,
+    end date): {(out_rid, in_rid, until): [(edge_rid, stake_percent,
+    direct_or_indirect, source_id, shortcut), ...]}. `until` is None for the
+    pair's active edges, the date for a closed holding.
+
+    A duplicate is two edges saying the same thing about one pair: two active
+    ones, or two closed on the SAME day (a bulk re-import recreates every
+    ceased appointment beside its old copy — eight of 29 PSC edges on dev
+    after one re-run, 2026-10-18). Two closed edges with DIFFERENT end dates
+    are history (held 2005–2012, again 2018–2022) and are never grouped.
 
     Walks the OWNERS, not the edges: pages of Entity then Person by their UNIQUE
     `id` index (`app.db.paging.iter_id_pages` — a bounded index range per page,
@@ -99,11 +106,11 @@ def _owns_pairs_by_page():
             rids = ", ".join(o["rid"] for o in owners if o.get("rid"))
             rows = run_sql(
                 "SELECT @rid AS rid, @out AS o, @in AS i, stake_percent AS st, "
-                "direct_or_indirect AS doi, source_id AS src, shortcut AS sc "
-                f"FROM (SELECT expand(outE('OWNS')) FROM [{rids}]) WHERE until IS NULL")
+                "direct_or_indirect AS doi, source_id AS src, shortcut AS sc, until AS u "
+                f"FROM (SELECT expand(outE('OWNS')) FROM [{rids}])")
             pairs: dict[tuple, list[tuple]] = {}
             for r in rows:
-                pairs.setdefault((r["o"], r["i"]), []).append(
+                pairs.setdefault((r["o"], r["i"], r.get("u")), []).append(
                     (r["rid"], r.get("st"), r.get("doi"), r.get("src"), r.get("sc")))
             if pages % 200 == 0:
                 log.info("OWNS dedup: %s page %d", vtype, pages)
@@ -121,8 +128,8 @@ def largest_owners(threshold: int) -> list[dict]:
     found: list[dict] = []
     for pairs in _owns_pairs_by_page():
         per_owner: dict[str, set] = {}
-        for (o, i), edges in pairs.items():
-            if any(e[4] is not True for e in edges):
+        for (o, i, until), edges in pairs.items():
+            if until is None and any(e[4] is not True for e in edges):
                 per_owner.setdefault(o, set()).add(i)
         found += [{"rid": o, "subsidiaries": len(s)} for o, s in per_owner.items() if len(s) > threshold]
     if not found:
@@ -136,23 +143,31 @@ def largest_owners(threshold: int) -> list[dict]:
 
 
 def count_duplicate_owns_edges() -> dict:
-    """Report duplicate active OWNS edges without changing anything — a
-    duplicate is a second+ edge between the same (owner, target) pair (e.g. from
-    a multi-interest BODS relationship statement). Admin/observability.
-    Streams the walk; only the four counters live across pages."""
-    active = distinct = dup_pairs = redundant = 0
+    """Report duplicate OWNS edges without changing anything — a duplicate is
+    a second+ edge between the same (owner, target) pair that is active, or
+    closed on the same day (e.g. from a multi-interest BODS relationship
+    statement, or a bulk re-import beside the old edges). `active_edges` and
+    `distinct_pairs` describe the current graph; `duplicate_pairs` and
+    `redundant_edges` count active and closed groups alike, and
+    `closed_duplicate_pairs` says how many of the groups are closed.
+    Admin/observability. Streams the walk; only the counters live across pages."""
+    active = distinct = dup_pairs = redundant = closed_dup = 0
     for pairs in _owns_pairs_by_page():
-        distinct += len(pairs)
-        for v in pairs.values():
-            active += len(v)
+        for (_, _, until), v in pairs.items():
+            if until is None:
+                distinct += 1
+                active += len(v)
             if len(v) > 1:
                 dup_pairs += 1
                 redundant += len(v) - 1
+                if until is not None:
+                    closed_dup += 1
     return {
         "active_edges": active,
         "distinct_pairs": distinct,
         "duplicate_pairs": dup_pairs,
         "redundant_edges": redundant,
+        "closed_duplicate_pairs": closed_dup,
     }
 
 
@@ -220,12 +235,18 @@ def _fold_into_survivors(groups: list[tuple[str, list[str]]]) -> int:
 
 def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     """
-    For every (owner → target) pair with more than one active OWNS edge, keep one
-    and delete the rest by @rid (`_losers` picks the survivor). Admin only.
+    For every (owner → target) pair with more than one active OWNS edge — or
+    more than one edge closed on the same day — keep one and delete the rest
+    by @rid (`_losers` picks the survivor). Admin only.
 
     When the edges come from different sources, what they said is first folded
     into the survivor (`_fold_into_survivors`) — one edge per pair carries every
     source's contribution, not whichever edge happened to survive.
+
+    Closed duplicates are grouped by end date (see `_owns_pairs_by_page`), so
+    a holding that ended twice stays two edges while a bulk re-import's second
+    copy of a ceased appointment is folded away; the post-import pass used to
+    fold only active twins and left every ceased one doubled.
 
     Deleting by @rid preserves the kept edge's full provenance (unlike a
     delete-all-then-recreate, which drops properties), and the delete is batched
@@ -236,6 +257,7 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
     pending: list[str] = []
     deleted = 0
     dup_pairs = 0
+    closed_pairs = 0
     folded = 0
 
     def flush() -> None:
@@ -249,10 +271,12 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
 
     for pairs in _owns_pairs_by_page():
         cross_source: list[tuple[str, list[str]]] = []
-        for edges in pairs.values():
+        for (_, _, until), edges in pairs.items():
             if len(edges) < 2:
                 continue
             dup_pairs += 1
+            if until is not None:
+                closed_pairs += 1
             losers = _losers(edges)
             # Folded whether or not the sources differ: two edges of ONE
             # source can still disagree on the start (a re-import beside the
@@ -267,7 +291,8 @@ def deduplicate_owns_edges(batch_size: int = 2000) -> dict:
         if len(pending) >= batch_size:
             flush()
     flush()
-    return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs, "survivors_folded": folded}
+    return {"duplicates_removed": deleted, "pairs_cleaned": dup_pairs,
+            "closed_pairs_cleaned": closed_pairs, "survivors_folded": folded}
 
 
 # ── Cross-source duplicate detection (same company, different identifiers) ─────

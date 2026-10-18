@@ -153,7 +153,8 @@ def combine_since(*candidates: dict | None, not_before: str | None = None) -> di
 
 def fold(edges: list[dict], survivor: dict) -> dict:
     """The properties to set on ``survivor`` so it carries what ``edges`` (every
-    active edge of one pair, the survivor included) said between them.
+    edge of one pair that is active, or every one closed on the same day — the
+    survivor included) said between them.
 
     The answer comes from the highest-ranked edge (the survivor on a tie); the
     start date is combined; structural fields the survivor lacks come from

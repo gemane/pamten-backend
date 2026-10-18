@@ -608,7 +608,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       source — which is exactly why a signature or import error can pass as success. If
       your source ran and wrote nothing, make sure the run log says why.
 - [ ] **Re-running is safe.** Same input, same graph: upserts rather than inserts, no
-      duplicated edges, no double-counted stakes.
+      duplicated edges, no double-counted stakes. Check the CLOSED edges after a re-run,
+      not only the active ones: a bulk `CREATE EDGE` importer recreates every ceased
+      holding beside its old copy, and the post-import dedupe folded only active twins
+      until 2026-10-18 (8 of 29 PSC edges on dev doubled, same appointment link and end
+      date). It now groups closed edges by end date as well.
 - [ ] **Nothing is written before the record is judged.** Country checks, name checks and
       similarity thresholds all belong *before* the first upsert, so a rejection leaves no
       half-built entity behind.
