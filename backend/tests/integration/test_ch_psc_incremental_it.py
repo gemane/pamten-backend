@@ -148,6 +148,22 @@ class TestWhatTheRefreshDoes:
         e = _edges(it_db)["/company/00000004/persons-with-significant-control/individual/restake"]
         assert e["stake"] == 25
 
+    def test_a_touched_edge_is_dated_by_the_snapshot_that_said_it(self, loaded, it_db):
+        # source_date = when the register said it; the untouched edge keeps A's date
+        _apply(loaded, _b_records())
+        dated = {r["link"]: r["sd"] for r in it_db.run_command(
+            "MATCH ()-[r:OWNS]->() WHERE r.psc_self_link IS NOT NULL "
+            "RETURN r.psc_self_link AS link, r.source_date AS sd")}
+        assert dated["/company/00000004/persons-with-significant-control/individual/restake"] == "2026-07-28"
+        assert dated["/company/00000001/persons-with-significant-control/individual/steady"] == "2026-07-27"
+
+    def test_a_refreshed_corporate_owner_keeps_its_register_fields(self, loaded, it_db):
+        # the refresh used to write the owner without `extra`: no registration number
+        _apply(loaded, _b_records())
+        rows = it_db.run_command("MATCH (e:Entity {id:'gb-coh:12345678'}) "
+                                 "RETURN e.registration_number AS n, e.country AS c")
+        assert rows and (rows[0]["n"], rows[0]["c"]) == ("12345678", "GB")
+
     def test_a_vanished_record_is_closed_not_deleted(self, loaded, it_db):
         # No cessation date and no reason from Companies House — a withdrawal or a
         # correction. Marked as such, because "controlled until this date" and "the

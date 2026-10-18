@@ -600,3 +600,115 @@ def test_every_psc_edge_is_tagged_with_its_record_kind():
     }}
     mapped = psc_record(rec, "src", 97)
     assert mapped.edge_props["filing_type"] == "PSC"
+
+
+class TestSourceDate:
+    """`source_date` is when the register SAID it — the snapshot's date — not
+    when the control began. With `notified_on` there, a 2016 appointment the
+    2026-10-16 snapshot still lists read as ten-year-old evidence."""
+
+    def _rec(self):
+        return {"company_number": "07434180", "data": {
+            "kind": "individual-person-with-significant-control", "name": "Ann Owner",
+            "name_elements": {"forename": "Ann", "surname": "Owner"},
+            "links": {"self": "/company/07434180/psc/individual/abc"},
+            "notified_on": "2016-07-01",
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+
+    def test_the_edge_is_dated_by_the_snapshot_and_starts_at_the_notification(self):
+        e = psc_record(self._rec(), "src", 97, "2026-10-16").edge_props
+        assert e["source_date"] == "2026-10-16"
+        assert e["since"] == "2016-07-01"
+
+    def test_without_a_snapshot_date_the_notification_stands_in(self):
+        assert psc_record(self._rec(), "src", 97).edge_props["source_date"] == "2016-07-01"
+
+    def test_the_bulk_load_reads_the_date_from_the_entry_name(self, tmp_path, monkeypatch):
+        from app.scraper import companies_house_psc as m
+        dates = []
+        monkeypatch.setattr(m, "_process", lambda rec, batch, s, c, snap=None: dates.append(snap) or "person")
+        z = tmp_path / "psc.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("persons-with-significant-control-snapshot-2026-10-16.txt",
+                        json.dumps(self._rec()))
+        import_ch_psc(str(z), "src", 97)
+        assert dates == ["2026-10-16"]
+
+    def test_a_bare_file_is_dated_by_its_name_too(self, tmp_path, monkeypatch):
+        from app.scraper import companies_house_psc as m
+        dates = []
+        monkeypatch.setattr(m, "_process", lambda rec, batch, s, c, snap=None: dates.append(snap) or "person")
+        f = tmp_path / "persons-with-significant-control-snapshot-2026-10-17.txt"
+        f.write_text(json.dumps(self._rec()))
+        import_ch_psc(str(f), "src", 97)
+        assert dates == ["2026-10-17"]
+
+    def test_an_undated_file_passes_no_date(self, tmp_path, monkeypatch):
+        from app.scraper import companies_house_psc as m
+        dates = []
+        monkeypatch.setattr(m, "_process", lambda rec, batch, s, c, snap=None: dates.append(snap) or "person")
+        import_ch_psc(_psc_zip(tmp_path, ["00000001"]), "src", 97)      # entry "psc.txt"
+        assert dates == [None]
+
+
+class TestCountryIsACodeOrNothing:
+    """`country` is ISO-2 everywhere else; a filer's words that resolve to no
+    code — 271 "Not Specified/Other" in 3M records, an ambiguous "Korea" —
+    used to land there, where a country filter found nothing and a flag drew
+    nonsense. They stay, as written, in `country_registered`."""
+
+    def _corp(self, country):
+        return {"company_number": "07434180", "data": {
+            "kind": "corporate-entity-person-with-significant-control", "name": "Holdco",
+            "identification": {"registration_number": "99", "country_registered": country},
+            "links": {"self": "/company/07434180/psc/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+
+    def test_unresolvable_words_are_kept_beside_an_empty_country(self):
+        props = psc_record(self._corp("Not Specified/Other"), "src", 97).owner_props
+        assert props["country"] is None
+        assert props["country_registered"] == "Not Specified/Other"
+
+    def test_korea_is_words_not_a_guess(self):
+        props = psc_record(self._corp("Korea"), "src", 97).owner_props
+        assert (props["country"], props["country_registered"]) == (None, "Korea")
+
+    def test_a_resolved_country_carries_no_words(self):
+        props = psc_record(self._corp("Switzerland"), "src", 97).owner_props
+        assert (props["country"], props["country_registered"]) == ("CH", None)
+
+    def test_no_country_at_all_is_nothing_twice(self):
+        rec = self._corp(None)
+        del rec["data"]["identification"]["country_registered"]
+        props = psc_record(rec, "src", 97).owner_props
+        assert (props["country"], props["country_registered"]) == (None, None)
+
+
+class TestOneWriterForTheCorporateOwner:
+    """The refresh had its own copy of the corporate-owner upsert without the
+    `extra` fields, so a corporate PSC it touched lost its registration number,
+    register authority and `register_id`. Both paths now call one function."""
+
+    def _mapped(self):
+        return psc_record({"company_number": "00462438", "data": {
+            "kind": "corporate-entity-person-with-significant-control", "name": "Nestle S.A.",
+            "identification": {"registration_number": "CHE-105.909.036",
+                               "country_registered": "Not Specified/Other",
+                               "place_registered": "Office Du Registre Du Commerce Du Canton De Vaud",
+                               "legal_authority": "Swiss Code Of Obligations"},
+            "links": {"self": "/company/00462438/psc/corporate-entity/x"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}, "src", 97)
+
+    def test_the_refresh_writes_what_the_bulk_load_writes(self, monkeypatch):
+        from app.scraper import ch_psc_incremental as inc
+        from app.scraper import companies_house_psc as m
+        calls = []
+        monkeypatch.setattr(m, "_entity", lambda *a, **k: calls.append(k))
+        m.write_entity_owner(object(), self._mapped(), "src", 97)
+        inc._write_entity_owner(object(), self._mapped(), "src", 97)
+        assert len(calls) == 2 and calls[0] == calls[1]
+        extra = calls[1]["extra"]
+        assert extra["registration_number"] == "CHE-105.909.036"
+        assert extra["registration_authority"] == "Office Du Registre Du Commerce Du Canton De Vaud"
+        assert extra["country_registered"] == "Not Specified/Other"
+        assert calls[1]["country"] is None

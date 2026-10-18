@@ -40,12 +40,20 @@ def _psc_zip(tmp_path):
             "natures_of_control": ["right-to-appoint-and-remove-directors"],
             "notified_on": "2016-07-01",
             "links": {"self": "/company/07434180/persons-with-significant-control/corporate-entity/XYZ"}}},
+        {"company_number": "07434181", "data": {
+            "kind": "corporate-entity-person-with-significant-control",
+            "name": "Somewhere Holdings",
+            "identification": {"registration_number": "77", "country_registered": "Not Specified/Other"},
+            "natures_of_control": ["right-to-appoint-and-remove-directors"],
+            "notified_on": "2016-07-01",
+            "links": {"self": "/company/07434181/persons-with-significant-control/corporate-entity/NS"}}},
         {"company_number": "09999999", "data": {
             "kind": "super-secure-person-with-significant-control"}},   # skipped
     ]
     zpath = tmp_path / "psc.zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("psc-snapshot.txt", "\n".join(json.dumps(x) for x in lines))
+        zf.writestr("persons-with-significant-control-snapshot-2026-10-16.txt",
+                    "\n".join(json.dumps(x) for x in lines))
     return str(zpath)
 
 
@@ -53,16 +61,19 @@ def test_imports_person_and_corporate_pscs(it_db, tmp_path):
     from app.scraper.companies_house_psc import import_ch_psc
 
     result = import_ch_psc(_psc_zip(tmp_path), "ukpsc", 97)
-    assert result["records"] == 4
-    assert result["persons"] == 2 and result["entities"] == 1 and result["skipped"] == 1
+    assert result["records"] == 5
+    assert result["persons"] == 2 and result["entities"] == 2 and result["skipped"] == 1
 
     # the person is named from the parts — no "Mr" anywhere
     person = it_db.run_command(
         "MATCH (p:Person {full_name:'Michael Charles Saunders'})"
         "-[o:OWNS]->(c:Entity {companies_house_id:'08810260'}) "
         "RETURN p.first_name AS f, p.last_name AS l, p.search_text AS st, "
-        "o.stake_percent AS s, o.voting_power_pct AS v, o.ownership_type AS t")
+        "o.stake_percent AS s, o.voting_power_pct AS v, o.ownership_type AS t, "
+        "o.since AS since, o.source_date AS sd")
     assert person and person[0]["s"] == 75 and person[0]["v"] == 75 and person[0]["t"] == "controlling"
+    # dated by the snapshot (when the register said it), starting at the notification
+    assert (person[0]["since"], person[0]["sd"]) == ("2016-04-06", "2026-10-16")
     assert person[0]["f"] == "Michael" and person[0]["l"] == "Saunders"
     assert "Mr" not in person[0]["st"].split()
     assert not it_db.run_sql("SELECT FROM Person WHERE full_name LIKE 'Mr %'")
@@ -76,8 +87,14 @@ def test_imports_person_and_corporate_pscs(it_db, tmp_path):
     # corporate PSC keyed on its own UK company number, controlling appointment
     corp = it_db.run_command(
         "MATCH (e:Entity {id:'gb-coh:00686734'})-[o:OWNS]->(c:Entity {companies_house_id:'07434180'}) "
-        "RETURN e.name AS name, o.ownership_type AS t")
+        "RETURN e.name AS name, o.ownership_type AS t, e.country AS co, e.country_registered AS cr")
     assert corp and corp[0]["name"] == "Robert Hitchins Limited" and corp[0]["t"] == "controlling"
+    assert (corp[0]["co"], corp[0]["cr"]) == ("GB", None)       # a code, and no words beside it
+    # a filer's country that resolves to no code stays as words, never in `country`
+    words = it_db.run_command(
+        "MATCH (e:Entity)-[:OWNS]->(c:Entity {companies_house_id:'07434181'}) "
+        "RETURN e.country AS co, e.country_registered AS cr")
+    assert words and (words[0]["co"], words[0]["cr"]) == (None, "Not Specified/Other")
 
 
 def test_a_japanese_corporate_psc_merges_with_its_lei_node(it_db, tmp_path):
@@ -108,7 +125,8 @@ def test_a_japanese_corporate_psc_merges_with_its_lei_node(it_db, tmp_path):
         "links": {"self": "/company/03115186/persons-with-significant-control/corporate-entity/SB"}}}]
     zpath = tmp_path / "psc-jp.zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("psc-snapshot.txt", "\n".join(json.dumps(x) for x in lines))
+        zf.writestr("persons-with-significant-control-snapshot-2026-10-16.txt",
+                    "\n".join(json.dumps(x) for x in lines))
 
     result = import_ch_psc(str(zpath), "ukpsc", 97)
     assert result["entities"] == 1
@@ -150,7 +168,8 @@ def test_an_unpadded_uk_controller_merges_with_its_lei_node(it_db, tmp_path):
         "links": {"self": "/company/00017049/persons-with-significant-control/corporate-entity/UL"}}}]
     zpath = tmp_path / "psc-uk.zip"
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("psc-snapshot.txt", "\n".join(json.dumps(x) for x in lines))
+        zf.writestr("persons-with-significant-control-snapshot-2026-10-16.txt",
+                    "\n".join(json.dumps(x) for x in lines))
 
     import_ch_psc(str(zpath), "ukpsc", 97)
     assert it_db.run_command("MATCH (e:Entity {id:'gb-coh:00041424'}) RETURN e.country AS c")[0]["c"] == "GB"
