@@ -36,6 +36,8 @@ def _psc_zip(tmp_path):
         {"company_number": "07434180", "data": {
             "kind": "corporate-entity-person-with-significant-control",
             "name": "Robert Hitchins Limited",
+            "address": {"premises": "The Manor", "address_line_1": "Boddington Lane",
+                        "locality": "Cheltenham", "country": "England", "postal_code": "GL51 0TJ"},
             "identification": {"registration_number": "00686734", "country_registered": "England & Wales"},
             "natures_of_control": ["right-to-appoint-and-remove-directors"],
             "notified_on": "2016-07-01",
@@ -87,9 +89,13 @@ def test_imports_person_and_corporate_pscs(it_db, tmp_path):
     # corporate PSC keyed on its own UK company number, controlling appointment
     corp = it_db.run_command(
         "MATCH (e:Entity {id:'gb-coh:00686734'})-[o:OWNS]->(c:Entity {companies_house_id:'07434180'}) "
-        "RETURN e.name AS name, o.ownership_type AS t, e.country AS co, e.country_registered AS cr")
+        "RETURN e.name AS name, o.ownership_type AS t, e.country AS co, e.country_registered AS cr, "
+        "e.hq_city AS city, e.hq_street AS street, e.hq_postcode AS pc")
     assert corp and corp[0]["name"] == "Robert Hitchins Limited" and corp[0]["t"] == "controlling"
     assert (corp[0]["co"], corp[0]["cr"]) == ("GB", None)       # a code, and no words beside it
+    # its service address in parts, for a structured geocode (dropped until 2026-10-18)
+    assert (corp[0]["city"], corp[0]["street"], corp[0]["pc"]) == (
+        "Cheltenham", "The Manor, Boddington Lane", "GL51 0TJ")
     # a filer's country that resolves to no code stays as words, never in `country`
     words = it_db.run_command(
         "MATCH (e:Entity)-[:OWNS]->(c:Entity {companies_house_id:'07434181'}) "
