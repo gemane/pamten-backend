@@ -233,6 +233,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       before anyone asked why the register showed a name the graph did not. A source
       that knows the name but not the date (GLEIF's previous legal names) stores it
       undated, or leaves it in `other_names` — never invents a date.
+- [ ] **A record's `name` may be a display string — read the parts when the source has
+      them.** Companies House prints an individual PSC's `name` as title + forenames +
+      surname ("Mr Michael Charles Saunders") and puts the parts in `name_elements`;
+      taking `name` made `first_name = "Mr"` for 90 % of 2.78M people, so the dedup's
+      name tokens never matched a Wikidata or SEC twin — for a year. Build a person from
+      forename / middle / surname (`companies_house_psc._person_name`), keep honorifics
+      out, and count the display strings that start with a title before trusting one.
+      And read every value a `natures_of_control`-style vocabulary can take over the
+      whole file: the overseas-entity register's `more-than-25-percent` has no band, and
+      an LLP's `right-to-share-surplus-assets` is its shares — both read as "no stake".
 - [ ] **Use the existing writers** — `_upsert_entity_by_name`, `_upsert_person_by_name`,
       `resolve_entity_id`. They already implement match-by-id-then-name-then-normalised,
       and the credibility rule that stops a weak source renaming a company.

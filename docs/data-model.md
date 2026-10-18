@@ -658,9 +658,15 @@ dates (`PreviousName_n.CONDATE`) in `former_names` — the register of record fo
 companies, so its dated list replaces what stood there (a bulk `UPDATE` cannot union;
 the entity merge unions a SEC twin's list in). Individuals become `Person`
 nodes, corporate/legal PSCs become
-`Entity` nodes (keyed on their own UK company number where present). `natures_of_control`
-map to `stake_percent` (ownership-of-shares band floor), `voting_power_pct` (voting-rights
-band floor) and `ownership_type` (`controlling` when they carry voting / appointment /
+`Entity` nodes (keyed on their own UK company number where present). An individual's
+name is built from `name_elements` (forename, middle name, surname) — the record's
+`name` is a display string with the honorific in front ("Mr Michael Charles Saunders",
+90 % of individuals), which until 2026-10-18 made `first_name = "Mr"`; a record without
+elements has the title stripped. `natures_of_control` map to `stake_percent` (the
+floor of the ownership-of-shares band, or of an LLP member's
+right-to-share-surplus-assets band — the LLP's shares; the overseas-entity register's
+open `more-than-25-percent` band floors at 25), `voting_power_pct` (voting-rights band
+floor) and `ownership_type` (`controlling` when they carry voting / appointment /
 significant-influence rights). This replaces the OpenOwnership UK PSC BODS export
 (`bods-uk-psc`), which was frozen at 2025‑03.
 
