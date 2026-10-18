@@ -621,6 +621,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       holding beside its old copy, and the post-import dedupe folded only active twins
       until 2026-10-18 (8 of 29 PSC edges on dev doubled, same appointment link and end
       date). It now groups closed edges by end date as well.
+- [ ] **A re-run says what the source says NOW.** After the dedupe, read the survivors'
+      `source_date`, `source_url` and stake against the new input — not just the edge
+      count. The dedupe keeps the OLD edge whenever it carries something the new one
+      lacks (a larger stake, GLEIF's `direct` marker), and until 2026-10-18 the fold then
+      ranked the source's two statements equal and kept the incumbent's: three PSC pairs
+      on dev still cited the 2016 snapshot after a 2026 re-import, and a changed stake
+      would have stayed old the same way. `owns_merge.supersedes` now lets one source's
+      newer statement replace its older one; the tie rule between sources is unchanged.
 - [ ] **Nothing is written before the record is judged.** Country checks, name checks and
       similarity thresholds all belong *before* the first upsert, so a rejection leaves no
       half-built entity behind.

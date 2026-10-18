@@ -4,7 +4,7 @@ Pure: no database. The writers that apply it are pinned against a real ArcadeDB
 in tests/integration/test_one_owns_edge_per_pair_it.py.
 """
 from app.scraper.owns_merge import (
-    ANSWER_FIELDS, answer_rank, combine_since, fold, outranks,
+    ANSWER_FIELDS, answer_rank, combine_since, fold, outranks, said_at, supersedes,
 )
 
 SEC_EX21 = {"source_id": "sec", "credibility_score": 98, "stake_percent": None,
@@ -37,6 +37,39 @@ class TestRank:
 
     def test_missing_credibility_ranks_lowest(self):
         assert answer_rank({}) < answer_rank(OC)
+
+
+class TestSupersedes:
+    """One source's newer statement replaces its older one — the tie rule
+    between sources does not apply within a source."""
+    OLD = dict(PSC, source_date="2016-04-06", last_scraped_at="2025-01-01T00:00:00")
+    NEW = dict(PSC, source_date="2026-10-16", last_scraped_at="2026-10-18T00:00:00")
+
+    def test_the_same_source_s_later_snapshot_supersedes_its_earlier_one(self):
+        assert supersedes(self.NEW, self.OLD)
+        assert not supersedes(self.OLD, self.NEW)
+        assert not outranks(self.NEW, self.OLD)          # equal rank: the fold needs the date
+
+    def test_another_source_never_supersedes_on_the_date(self):
+        other = dict(self.NEW, source_id="psc2")
+        assert not supersedes(other, self.OLD)
+
+    def test_a_better_or_worse_answer_is_outranking_not_superseding(self):
+        # a stake that appeared or vanished changes the rank; `outranks` decides it
+        silent_newer = dict(self.NEW, stake_percent=None)
+        assert not supersedes(silent_newer, self.OLD) and outranks(self.OLD, silent_newer)
+
+    def test_undated_statements_fall_back_to_the_scrape_time(self):
+        a = dict(GLEIF, last_scraped_at="2026-01-01T00:00:00")
+        b = dict(GLEIF, last_scraped_at="2026-02-01T00:00:00")
+        assert supersedes(b, a) and not supersedes(a, b)
+        assert said_at({}) == ("", "") and said_at(b) == ("", "2026-02-01T00:00:00")
+
+    def test_the_same_statement_twice_supersedes_nothing(self):
+        assert not supersedes(dict(self.NEW), self.NEW)
+
+    def test_without_a_source_id_nothing_matches(self):
+        assert not supersedes(dict(self.NEW, source_id=None), dict(self.OLD, source_id=None))
 
 
 class TestCombineSince:
@@ -93,6 +126,38 @@ class TestFold:
     def test_nothing_to_do_for_edges_that_agree(self):
         a = dict(GLEIF, since="2020-01-01")
         assert fold([a, dict(a)], a) == {}
+
+    def test_the_same_source_s_newer_statement_takes_the_answer_from_an_old_survivor(self):
+        # Dev, 2026-10-18: the register's 2016 edge survived the dedup for GLEIF's
+        # `direct` marker and the 2026 re-import's twin was deleted — the edge kept
+        # saying "source_date 2016-04-06" (and would have kept an old stake).
+        old = dict(PSC, source_date="2016-04-06", since="2016-04-06", since_basis="register_start",
+                   direct_or_indirect="direct", last_scraped_at="2025-01-01T00:00:00")
+        new = dict(PSC, source_date="2026-10-16", stake_percent=50.0, since="2016-04-06",
+                   since_basis="register_start", last_scraped_at="2026-10-18T00:00:00",
+                   source_url="https://find-and-update.example.test/psc/2026")
+        out = fold([old, new], old)
+        assert {f: out[f] for f in ANSWER_FIELDS} == {f: new.get(f) for f in ANSWER_FIELDS}
+        assert out["last_scraped_at"] == "2026-10-18T00:00:00"
+        assert "direct_or_indirect" not in out          # the marker stays with the survivor
+        assert "since" not in out                       # the start is unchanged
+
+    def test_a_newer_survivor_keeps_its_own_answer(self):
+        old = dict(PSC, source_date="2016-04-06", last_scraped_at="2025-01-01T00:00:00")
+        new = dict(PSC, source_date="2026-10-16", last_scraped_at="2026-10-18T00:00:00")
+        assert fold([new, old], new) == {}
+
+    def test_another_source_s_newer_statement_still_leaves_the_incumbent(self):
+        held = dict(SEC_EX21, source_date="2016-01-01", last_scraped_at="2025-01-01T00:00:00")
+        other = dict(SEC_EX21, source_id="other", source_date="2026-10-16",
+                     last_scraped_at="2026-10-18T00:00:00")
+        assert "source_id" not in fold([held, other], held)
+
+    def test_a_better_ranked_source_beats_the_same_source_s_newer_statement(self):
+        old = dict(GLEIF, source_date="2016-01-01")
+        new = dict(GLEIF, source_date="2026-10-16")
+        assert fold([old, new, dict(PSC)], old)["source_id"] == "psc"
+        assert fold([old, dict(PSC), new], old)["source_id"] == "psc"
 
     def test_the_shortcut_mark_is_never_copied(self):
         survivor = dict(GLEIF)
