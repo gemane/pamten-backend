@@ -348,6 +348,86 @@ class PscMapped:
 #: only "since this day or earlier" (since_basis `register_start`).
 PSC_REGISTER_START = "2016-04-06"
 
+#: The end of the register's first year. A company that existed before the
+#: register declared its PSCs on its first confirmation statement — due on the
+#: anniversary of its last annual return plus 14 days, i.e. any day up to here
+#: — and the snapshot's `notified_on` is THAT day, not when the control began
+#: (54,815 records say 2016-07-01 and 28,737 say 2016-06-30 in the first 3M of
+#: the 2026-10-16 snapshot: the confirmation statement replaced the annual
+#: return on 30 June 2016). A company incorporated after the register began
+#: named its PSCs at incorporation, so for it the day is a real start.
+PSC_FIRST_YEAR_END = "2017-04-20"
+#: since_basis of a first-year notification on a company that predates the
+#: register: a lower bound ("held by then"), like `register_start`.
+FIRST_YEAR_BASIS = "register_first_year"
+
+
+def mark_first_year_lower_bounds(company_ids: list[str] | None = None, apply: bool = True,
+                                 run_sql=None, run_sqlscript=None) -> dict:
+    """Mark the PSC edges (and their claims) whose `since` is a notification
+    inside the register's first year on a company incorporated BEFORE the
+    register began as lower bounds (`since_basis = register_first_year`).
+
+    The PSC import cannot do this itself: the company's incorporation date
+    comes from BasicCompanyData (`ch-company-data`), which runs after it. So
+    this runs at the end of that import — scoped to the companies it touched
+    (``company_ids``) or, on a full run, over every ``gb-coh:`` company — and
+    as ``manage.py psc-first-year-bounds`` for a database loaded before it
+    existed (2026-10-18). Idempotent: only edges without a basis are touched,
+    and the refresh keeps the mark on an edge whose record restates the same
+    day. ``apply=False`` counts and writes nothing.
+
+    Walks the companies by their id index and expands each page's incoming
+    OWNS edges — adjacency, never a scan of OWNS (see `_owns_pairs_by_page`
+    in maintenance for why). The claim is updated by `to_id` + `since`, the
+    key the Sources panel reads it by.
+    """
+    from app.db import paging
+    if run_sql is None or run_sqlscript is None:
+        from app.db import arcadedb
+        run_sql = run_sql or arcadedb.run_sql
+        run_sqlscript = run_sqlscript or arcadedb.run_sqlscript
+    counts = {"companies_before_register": 0, "edges": 0, "claims": 0, "applied": bool(apply)}
+
+    def pages():
+        cols = "id, @rid AS rid, founded_date"
+        if company_ids is None:
+            yield from paging.iter_id_pages("Entity", prefix="gb-coh:", columns=cols)
+            return
+        ids = sorted(set(company_ids))
+        for i in range(0, len(ids), 500):
+            quoted = ", ".join(f"'{paging._sql_str(x)}'" for x in ids[i:i + 500])
+            yield run_sql(f"SELECT {cols} FROM Entity WHERE id IN [{quoted}]")
+
+    for page in pages():
+        old = {r["rid"]: r["id"] for r in page
+               if r.get("rid") and r.get("founded_date") and str(r["founded_date"]) < PSC_REGISTER_START}
+        counts["companies_before_register"] += len(old)
+        if not old:
+            continue
+        edges = run_sql(
+            "SELECT @rid AS rid, @in AS i, since AS s "
+            f"FROM (SELECT expand(inE('OWNS')) FROM [{', '.join(old)}]) "
+            "WHERE filing_type = 'PSC' AND since_basis IS NULL "
+            f"AND since > '{PSC_REGISTER_START}' AND since <= '{PSC_FIRST_YEAR_END}'")
+        if not edges:
+            continue
+        counts["edges"] += len(edges)
+        statements = sorted({(old[str(e["i"])], str(e["s"])) for e in edges if str(e["i"]) in old})
+        counts["claims"] += len(statements)
+        if not apply:
+            continue
+        stmts = [f"UPDATE {e['rid']} SET since_basis = '{FIRST_YEAR_BASIS}'" for e in edges]
+        params: dict = {}
+        for k, (company_id, since) in enumerate(statements):
+            params[f"t{k}"], params[f"s{k}"] = company_id, since
+            stmts.append(f"UPDATE Claim SET since_basis = '{FIRST_YEAR_BASIS}' "
+                         f"WHERE kind = 'owns' AND filing_type = 'PSC' AND to_id = :t{k} "
+                         f"AND since = :s{k} AND since_basis IS NULL")
+        run_sqlscript(";".join(stmts), params)
+    log.info("PSC first-year lower bounds: %s", counts)
+    return counts
+
 
 def psc_record(rec: dict, source_id: str, credibility_score: int,
                snapshot_date: str | None = None) -> PscMapped | None:

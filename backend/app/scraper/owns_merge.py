@@ -89,6 +89,9 @@ LOWER_BOUND = "first_listed"
 #:   first_listed  — the oldest Exhibit 21 naming the subsidiary
 #:   amendment     — a 13D/G amendment's date: held by then, start not seen
 #:   register_start — UK PSC notified on 2016-04-06, the day the register began
+#:   register_first_year — UK PSC notified in the register's first year by a
+#:                    company incorporated before it: declared on its first
+#:                    confirmation statement, held by then (companies_house_psc)
 #:   first_reported — the earliest 13F quarter a manager reported the holding in
 #:   gleif_registration_day — a GLEIF start that is only the child's LEI
 #:                    registration day (gleif_rr.REGISTRATION_DAY)

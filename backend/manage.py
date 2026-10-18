@@ -358,6 +358,18 @@ def cmd_clear_snapshot_since(args):
     verb = "Cleared" if res["applied"] else "Would clear (dry run — add --apply)"
     print(f"{verb}: since on {res['edges']} OWNS edges and {res['claims']} claims")
 
+def cmd_psc_first_year_bounds(args):
+    """Mark PSC edges notified in the register's first year (6 April 2016 to
+    20 April 2017) on companies incorporated before the register as lower bounds
+    (`since_basis = register_first_year`) — once, on a database loaded before
+    `ch-company-data` did this itself (2026-10-18). Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.scraper.companies_house_psc import mark_first_year_lower_bounds
+    res = mark_first_year_lower_bounds(apply=args.apply)
+    verb = "Marked" if res["applied"] else "Would mark (dry run — add --apply)"
+    print(f"{verb}: {res['edges']} OWNS edges and {res['claims']} claims as lower bounds "
+          f"({res['companies_before_register']} companies incorporated before the register)")
+
 def cmd_quality_report(args):
     """Data quality as numbers — run before and after any change to the source mix."""
     _apply_direct_db_url(args)
@@ -1516,6 +1528,14 @@ def _build_parser():
     p_css.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_css.set_defaults(func=cmd_clear_snapshot_since)
+
+    # psc-first-year-bounds command (one-off heal; ch-company-data does it itself since 2026-10-18)
+    p_pfy = subparsers.add_parser('psc-first-year-bounds',
+                                  help='Mark PSC edges notified in the register\'s first year on companies incorporated before it as lower bounds (since_basis register_first_year). Dry run unless --apply')
+    p_pfy.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_pfy.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_pfy.set_defaults(func=cmd_psc_first_year_bounds)
 
     # quality-report command
     p_qr = subparsers.add_parser('quality-report',

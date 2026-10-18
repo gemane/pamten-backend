@@ -369,7 +369,12 @@ today's snapshot and diffing it against the last one applied. Cessations, correc
 that reopen a closed holding, and withdrawn records are all handled; re-running against
 an unchanged snapshot is a no-op. **Deliberately not scheduled** — it is run by hand
 until it has proved itself over several real snapshots. See *Refreshing it* in
-[`docs/data-model.md`](docs/data-model.md).
+[`docs/data-model.md`](docs/data-model.md). A PSC notified in the register's first
+year (6 April 2016 to 20 April 2017) by a company incorporated before the register is
+a lower bound, not a start — the company declared it on its first confirmation
+statement — and `ch-company-data`, which brings the incorporation date, marks those
+edges at its end (`since_basis = register_first_year`); `manage.py psc-first-year-bounds`
+does it once for a database loaded before 2026-10-18.
 
 ---
 

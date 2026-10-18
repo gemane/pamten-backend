@@ -476,10 +476,15 @@ class _PscEdgeWriter:
             # a stated start over a lower bound. Kept only when it was a lower
             # bound before, a stated 2012 GLEIF start on an edge PSC took over
             # was replaced by the register's 2016 — hidden for 2012–2015.
+            # On the SAME day a record that states no basis does not take a
+            # stored one away either: `register_first_year` is set after the
+            # import, from the company's incorporation date (which the record
+            # does not carry), and a restated notified_on is the same fact,
+            # not evidence that the day is a real start.
             params[f"since__{k}"] = since
             params[f"basis__{k}"] = basis
             keep = (f"since IS NOT NULL AND (:since__{k} IS NULL OR since < :since__{k} "
-                    f"OR (since = :since__{k} AND since_basis IS NULL))")
+                    f"OR (since = :since__{k} AND (since_basis IS NULL OR :basis__{k} IS NULL)))")
             sets += [f"since_basis = CASE WHEN {keep} THEN since_basis ELSE :basis__{k} END",
                      f"since_source_url = CASE WHEN {keep} THEN since_source_url ELSE null END",
                      f"since = CASE WHEN {keep} THEN since ELSE :since__{k} END"]

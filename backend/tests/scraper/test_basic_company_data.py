@@ -6,9 +6,21 @@ import io
 import zipfile
 from unittest.mock import patch
 
+import pytest
+
 from app.scraper.basic_company_data import (
     _company_type, _founded, _prev_names, _reg_address, import_basic_company_data,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_first_year_pass():
+    """The import ends with the PSC first-year lower-bound pass, which reads the
+    graph; these tests have no graph (the one that pins the call patches it
+    again with a recorder)."""
+    with patch("app.scraper.basic_company_data.mark_first_year_lower_bounds",
+               lambda company_ids=None, **k: {"edges": 0}):
+        yield
 
 
 def _one_row_zip(tmp_path):
@@ -106,6 +118,22 @@ class TestOnlyCompanies:
         assert captured["hq_country"] == "GB"
         assert captured["founded"] == 2012             # headline = year (was a full date)
         assert captured["founded_date"] == "2012-09-11"  # full date for the Details section
+
+    def test_the_import_then_marks_first_year_lower_bounds_for_the_companies_it_touched(self, tmp_path):
+        """The incorporation dates arrive with this import, so the PSC lower-bound
+        rule (companies_house_psc.mark_first_year_lower_bounds) runs at its end —
+        scoped to the subset on an --only run, over every UK company otherwise."""
+        from app.scraper import basic_company_data as m
+        calls = []
+        with patch.object(m._UpdateBatch, "update", lambda self, nid, props: None), \
+             patch("app.scraper.basic_company_data._flush_script"), \
+             patch("app.scraper.basic_company_data.mark_first_year_lower_bounds",
+                   lambda company_ids=None, **k: calls.append(company_ids) or {"edges": 0}):
+            zpath = _multi_row_zip(tmp_path, ["00000001", "00000002", "00000003"])
+            counts = import_basic_company_data(zpath, 97, only_companies={"00000002", "00000003"})
+            import_basic_company_data(zpath, 97)
+        assert calls == [["gb-coh:00000002", "gb-coh:00000003"], None]
+        assert counts["first_year_bounds"] == {"edges": 0}
 
     def test_prefilter_keeps_header_and_matching_lines_only(self):
         from app.scraper.basic_company_data import _prefiltered_lines
