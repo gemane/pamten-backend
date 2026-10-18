@@ -63,12 +63,20 @@ _SKIP_KINDS = (
     "super-secure-person-with-significant-control",   # 116
     "super-secure-beneficial-owner",                  # 17
 )
-_BAND = re.compile(r"(\d+)-to-\d+-percent")
+#: A band's floor: ``25-to-50-percent`` → 25, and the Register of Overseas
+#: Entities' open band ``more-than-25-percent`` → 25 (every one of the 3,977
+#: overseas-entity share records in a 3M-record probe used it, and read as no
+#: stake at all until 2026-10-18).
+_BAND = re.compile(r"(?:(\d+)-to-\d+|more-than-(\d+))-percent")
+#: The natures that state an ECONOMIC interest: shares of a company, or an LLP
+#: member's share of the surplus assets — the LLP's equivalent, 16,802 records
+#: in the same probe, ignored before.
+_ECONOMIC = ("ownership-of-shares", "right-to-share-surplus-assets")
 
 
 def _band_floor(nature: str) -> int | None:
     m = _BAND.search(nature)
-    return int(m.group(1)) if m else None
+    return int(m.group(1) or m.group(2)) if m else None
 
 
 def _control(natures: list[str] | None) -> tuple:
@@ -80,7 +88,7 @@ def _control(natures: list[str] | None) -> tuple:
     for nat in natures:
         if not nat:
             continue        # 2 of 15.8M records carry a null in the list
-        if "ownership-of-shares" in nat:
+        if any(e in nat for e in _ECONOMIC):
             stake = _max_pct(stake, _band_floor(nat))
         elif "voting-rights" in nat:
             voting = _max_pct(voting, _band_floor(nat))
@@ -97,11 +105,48 @@ def _control(natures: list[str] | None) -> tuple:
 
 
 def _psc_name(data: dict) -> str | None:
+    """A corporate or legal PSC's name — the `name` field as the filer wrote it."""
     if name := (data.get("name") or "").strip():
         return name
     ne = data.get("name_elements") or {}
     parts = [ne.get("forename"), ne.get("middle_name"), ne.get("surname")]
     return " ".join(p for p in parts if p).strip() or None
+
+
+#: The titles Companies House prints in front of an individual's `name`.
+_TITLES = frozenset({"mr", "mrs", "ms", "miss", "mx", "dr", "prof", "professor", "sir",
+                     "dame", "lord", "lady", "rev", "reverend", "hon", "the hon"})
+
+
+def _person_name(data: dict) -> tuple[str, str, str] | None:
+    """(full_name, first_name, last_name) of an individual PSC.
+
+    The record's `name` is a DISPLAY string Companies House assembles as
+    title + forenames + surname — "Mr Michael Charles Saunders" — and 90 % of
+    the 2.78M individuals in a 3M-record probe carry one. Read as a name it
+    made `first_name = "Mr"`, so no PSC person ever met a Wikidata or SEC twin
+    in the dedup (its name tokens were wrong) and the panel addressed people
+    by their honorific. The parts are in `name_elements` (forename,
+    middle_name, surname, title): the name is built from them, the title left
+    out. A record without elements has the leading title stripped off `name`
+    and the rest split as before.
+    """
+    ne = data.get("name_elements") or {}
+    fore = (ne.get("forename") or "").strip()
+    middle = (ne.get("middle_name") or "").strip()
+    sur = (ne.get("surname") or "").strip()
+    if fore or sur:
+        full = " ".join(p for p in (fore, middle, sur) if p)
+        return full, fore, sur
+    name = (data.get("name") or "").strip()
+    words = name.split()
+    if words and words[0].rstrip(".").lower() in _TITLES:
+        words = words[1:]
+    name = " ".join(words)
+    if not name:
+        return None
+    first, last = parse_full_name(name)
+    return name, first, last
 
 
 def _nationality(raw: str | None) -> str:
@@ -330,7 +375,10 @@ def psc_record(rec: dict, source_id: str, credibility_score: int) -> PscMapped |
     since_basis = "register_start" if since == PSC_REGISTER_START else None
 
     if kind in _PERSON_KINDS:
-        first, last = parse_full_name(name)
+        parts = _person_name(data)
+        if parts is None:
+            return None
+        name, first, last = parts
         owner_id, owner_label = psc_slug_id(self_link), "Person"
         owner_props = {
             "first_name": first, "last_name": last, "full_name": name,

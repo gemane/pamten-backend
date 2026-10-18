@@ -161,6 +161,20 @@ class TestBandAndControl:
         assert _band_floor("ownership-of-shares-75-to-100-percent") == 75
         assert _band_floor("voting-rights-25-to-50-percent") == 25
         assert _band_floor("right-to-appoint-and-remove-directors") is None
+        # the Register of Overseas Entities' open band — read as no stake before
+        assert _band_floor("ownership-of-shares-more-than-25-percent-registered-overseas-entity") == 25
+        assert _band_floor("ownership-of-shares-more-than-25-percent-as-trust-registered-overseas-entity") == 25
+
+    def test_an_llp_members_surplus_assets_share_is_the_stake(self):
+        stake, voting, otype, _ = _control([
+            "right-to-share-surplus-assets-25-to-50-percent-limited-liability-partnership",
+            "voting-rights-25-to-50-percent-limited-liability-partnership"])
+        assert stake == 25 and voting == 25 and otype == "controlling"
+
+    def test_an_overseas_entity_share_record_carries_its_floor(self):
+        stake, voting, otype, _ = _control(
+            ["ownership-of-shares-more-than-25-percent-registered-overseas-entity"])
+        assert stake == 25 and voting is None and otype == "controlling"   # derived: 20–50 % band
 
     def test_voting_and_economic_kept_separate(self):
         stake, voting, otype, its = _control([
@@ -193,6 +207,34 @@ class TestPscFields:
         assert _psc_name({"name_elements": {"forename": "Jane", "middle_name": "Q",
                                             "surname": "Doe"}}) == "Jane Q Doe"
         assert _psc_name({}) is None
+
+    def test_an_individuals_name_is_built_from_its_parts_without_the_title(self):
+        from app.scraper.companies_house_psc import _person_name
+        # the real shape: `name` is a display string, the parts sit beside it
+        rec = {"name": "Mr Michael Charles Saunders",
+               "name_elements": {"forename": "Michael", "middle_name": "Charles",
+                                 "surname": "Saunders", "title": "Mr"}}
+        assert _person_name(rec) == ("Michael Charles Saunders", "Michael", "Saunders")
+        # no elements: the title is stripped off the display string
+        assert _person_name({"name": "Dr. Jane Doe"}) == ("Jane Doe", "Jane", "Doe")
+        assert _person_name({"name": "Lady Ann Smith-Jones"}) == ("Ann Smith-Jones", "Ann", "Smith-Jones")
+        # a name that is not a title stays whole
+        assert _person_name({"name": "Mister Rogers"}) == ("Mister Rogers", "Mister", "Rogers")
+        assert _person_name({"name": "Mr"}) is None
+        assert _person_name({}) is None
+
+    def test_a_mapped_individual_carries_the_parts(self):
+        rec = {"company_number": "01234567", "data": {
+            "kind": "individual-person-with-significant-control",
+            "name": "Mrs Jean Carol Randle",
+            "name_elements": {"forename": "Jean", "middle_name": "Carol", "surname": "Randle", "title": "Mrs"},
+            "links": {"self": "/company/01234567/persons-with-significant-control/individual/abc"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
+        m = psc_record(rec, "src", 97)
+        assert m.owner_props["full_name"] == "Jean Carol Randle"
+        assert m.owner_props["first_name"] == "Jean"
+        assert m.owner_props["last_name"] == "Randle"
+        assert m.owner_props["search_text"] == "Jean Carol Randle"
 
     def test_birth_date(self):
         assert _birth_date({"date_of_birth": {"year": 1951, "month": 8}}) == "1951-08"

@@ -18,12 +18,21 @@ def _psc_zip(tmp_path):
     lines = [
         {"company_number": "08810260", "data": {
             "kind": "individual-person-with-significant-control",
-            "name": "Mr Michael Charles Saunders",
+            "name": "Mr Michael Charles Saunders",       # the display string …
+            "name_elements": {"forename": "Michael", "middle_name": "Charles",
+                              "surname": "Saunders", "title": "Mr"},   # … and the parts
             "nationality": "British", "date_of_birth": {"year": 1951, "month": 8},
             "natures_of_control": ["ownership-of-shares-75-to-100-percent",
                                    "voting-rights-75-to-100-percent"],
             "notified_on": "2016-04-06",
             "links": {"self": "/company/08810260/persons-with-significant-control/individual/ABC"}}},
+        # Register of Overseas Entities: an open band, no "N-to-M"
+        {"company_number": "OE000123", "data": {
+            "kind": "individual-beneficial-owner",
+            "name": "Dr Ana Perez", "name_elements": {"forename": "Ana", "surname": "Perez", "title": "Dr"},
+            "natures_of_control": ["ownership-of-shares-more-than-25-percent-registered-overseas-entity"],
+            "notified_on": "2023-02-01",
+            "links": {"self": "/company/OE000123/persons-with-significant-control/individual-beneficial-owner/ROE1"}}},
         {"company_number": "07434180", "data": {
             "kind": "corporate-entity-person-with-significant-control",
             "name": "Robert Hitchins Limited",
@@ -44,14 +53,25 @@ def test_imports_person_and_corporate_pscs(it_db, tmp_path):
     from app.scraper.companies_house_psc import import_ch_psc
 
     result = import_ch_psc(_psc_zip(tmp_path), "ukpsc", 97)
-    assert result["records"] == 3
-    assert result["persons"] == 1 and result["entities"] == 1 and result["skipped"] == 1
+    assert result["records"] == 4
+    assert result["persons"] == 2 and result["entities"] == 1 and result["skipped"] == 1
 
+    # the person is named from the parts — no "Mr" anywhere
     person = it_db.run_command(
-        "MATCH (p:Person {full_name:'Mr Michael Charles Saunders'})"
+        "MATCH (p:Person {full_name:'Michael Charles Saunders'})"
         "-[o:OWNS]->(c:Entity {companies_house_id:'08810260'}) "
-        "RETURN o.stake_percent AS s, o.voting_power_pct AS v, o.ownership_type AS t")
+        "RETURN p.first_name AS f, p.last_name AS l, p.search_text AS st, "
+        "o.stake_percent AS s, o.voting_power_pct AS v, o.ownership_type AS t")
     assert person and person[0]["s"] == 75 and person[0]["v"] == 75 and person[0]["t"] == "controlling"
+    assert person[0]["f"] == "Michael" and person[0]["l"] == "Saunders"
+    assert "Mr" not in person[0]["st"].split()
+    assert not it_db.run_sql("SELECT FROM Person WHERE full_name LIKE 'Mr %'")
+
+    # the overseas-entity register's open band floors at 25, written to the edge
+    roe = it_db.run_command(
+        "MATCH (p:Person {full_name:'Ana Perez'})-[o:OWNS]->(c:Entity {companies_house_id:'OE000123'}) "
+        "RETURN o.stake_percent AS s, o.ownership_type AS t")
+    assert roe and roe[0]["s"] == 25 and roe[0]["t"] == "controlling"
 
     # corporate PSC keyed on its own UK company number, controlling appointment
     corp = it_db.run_command(
