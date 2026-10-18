@@ -861,11 +861,14 @@ def clear_snapshot_since(apply: bool = False) -> dict:
 #: all of it made from the registered office — cleared by the heal below.
 _COPIED_HQ_FIELDS = ("hq_address", "hq_city", "hq_country", "hq_street", "hq_postcode",
                      "hq_lat", "hq_lng", "hq_geo_precision")
-#: (headquarters field, registered field) — a part or a pin made from the
-#: registered office belongs under the registered prefix, where it is kept
-#: when nothing stands there yet.
-_HQ_TO_REG = (("hq_street", "reg_street"), ("hq_city", "reg_city"), ("hq_postcode", "reg_postcode"),
-              ("hq_lat", "reg_lat"), ("hq_lng", "reg_lng"), ("hq_geo_precision", "reg_geo_precision"))
+#: (headquarters field, registered field) — a PART made from the registered
+#: office belongs under the registered prefix, where it is kept when nothing
+#: stands there yet. The pin is not moved: it is cleared, because the geocoder
+#: fills hq_lat only where empty, so on a GLEIF-merged node the pin predated
+#: the copy and was GLEIF's headquarters point (Carlsberg Marston's: HQ in
+#: Northampton, registered office in Wolverhampton — the moved pin put its
+#: registered office in Northampton). The registered pass re-geocodes it.
+_HQ_TO_REG = (("hq_street", "reg_street"), ("hq_city", "reg_city"), ("hq_postcode", "reg_postcode"))
 _UK_HEAL_COLUMNS = ("id, @rid AS rid, address, registered_address, "
                     + ", ".join(_COPIED_HQ_FIELDS) + ", "
                     + ", ".join(reg for _, reg in _HQ_TO_REG))
@@ -885,10 +888,13 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
     Signature of the copy: `hq_address` equal to `registered_address` on a
     `gb-coh:` or `chpsc:` node (GLEIF's `registered_address` is a lowercased
     normalised form, so a GLEIF headquarters never matches). On such a node
-    the headquarters fields are cleared; the street, city, postcode and the
-    geocoded pin were made from the registered office, so each moves under
-    `reg_*` where nothing stands there yet (the pin stays on the map, under
-    Registered). Independently, `address` — the panel's "Registered address"
+    the headquarters fields are cleared; the street, city and postcode were
+    made from the registered office, so each moves under `reg_*` where
+    nothing stands there yet. The geocoded pin is cleared, not moved: the
+    geocoder fills `hq_lat` only where empty, so a pin that predates the copy
+    is another source's headquarters point, and `manage.py geocode --target
+    registered` draws the registered pin afresh from the parts. Independently,
+    `address` — the panel's "Registered address"
     row, which the importers never filled — is set from `registered_address`
     where empty. A node whose headquarters came from GLEIF does NOT get it
     back from a GLEIF bulk pass: the batch writer skips a merged-away `lei:`
@@ -897,7 +903,7 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
     and never needs this. Walks the id index a page at a time; dry-run by
     default.
     """
-    counts = {"nodes": 0, "copied": 0, "pins_moved": 0, "addresses_filled": 0,
+    counts = {"nodes": 0, "copied": 0, "pins_cleared": 0, "addresses_filled": 0,
               "applied": bool(apply)}
     for prefix in ("gb-coh:", "chpsc:"):
         for page in iter_id_pages("Entity", prefix=prefix, columns=_UK_HEAL_COLUMNS):
@@ -911,8 +917,8 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
                     for hq, reg in _HQ_TO_REG:
                         if r.get(hq) is not None and r.get(reg) is None:
                             sets[reg] = r[hq]
-                    if "reg_lat" in sets:
-                        counts["pins_moved"] += 1
+                    if r.get("hq_lat") is not None:
+                        counts["pins_cleared"] += 1
                     for f in _COPIED_HQ_FIELDS:
                         sets[f] = None
                 if not r.get("address") and r.get("registered_address"):

@@ -28,18 +28,19 @@ def _run(monkeypatch, pages_by_prefix: dict, apply=True):
 
 
 class TestClearCopiedUkHeadquarters:
-    def test_a_copied_headquarters_is_cleared_and_its_parts_and_pin_move_under_registered(self, monkeypatch):
+    def test_a_copied_headquarters_and_its_pin_are_cleared_and_the_parts_move_under_registered(self, monkeypatch):
         res, scripts = _run(monkeypatch, {"gb-coh:": [[_copied()]]})
-        assert res == {"nodes": 1, "copied": 1, "pins_moved": 1, "addresses_filled": 1, "applied": True}
+        assert res == {"nodes": 1, "copied": 1, "pins_cleared": 1, "addresses_filled": 1, "applied": True}
         assert len(scripts) == 1
         script, params = scripts[0]
         assert script.startswith("UPDATE #1:1 SET ")
-        for f in m._COPIED_HQ_FIELDS:
+        for f in ("hq_address", "hq_city", "hq_country", "hq_street", "hq_postcode",
+                  "hq_lat", "hq_lng", "hq_geo_precision"):
             assert f"{f} = null" in script
-        # the parts and the pin were made from the registered office: kept, under reg_*
+        # the parts were made from the registered office: kept, under reg_*; the pin is
+        # not moved (it may predate the copy and be another source's HQ point)
         assert {k: v for k, v in params.items()} == {
             "reg_street_0": "1 HIGH STREET", "reg_city_0": "HARROGATE", "reg_postcode_0": "HG1 1AA",
-            "reg_lat_0": 53.99, "reg_lng_0": -1.54, "reg_geo_precision_0": "street",
             "address_0": OFFICE}
 
     def test_a_registered_part_already_there_is_kept(self, monkeypatch):
@@ -47,7 +48,7 @@ class TestClearCopiedUkHeadquarters:
         row = _copied(reg_street="1 High Street", reg_lat=53.9, reg_lng=-1.5, reg_geo_precision="street",
                       address="1 High Street, Harrogate")
         res, scripts = _run(monkeypatch, {"gb-coh:": [[row]]})
-        assert (res["copied"], res["pins_moved"], res["addresses_filled"]) == (1, 0, 0)
+        assert (res["copied"], res["pins_cleared"], res["addresses_filled"]) == (1, 1, 0)
         _, params = scripts[0]
         assert params == {"reg_city_0": "HARROGATE", "reg_postcode_0": "HG1 1AA"}
 
@@ -77,5 +78,5 @@ class TestClearCopiedUkHeadquarters:
     def test_a_dry_run_counts_and_writes_nothing(self, monkeypatch):
         res, scripts = _run(monkeypatch, {"gb-coh:": [[_copied(), _copied(id="gb-coh:2", rid="#1:2")]]},
                             apply=False)
-        assert (res["copied"], res["pins_moved"], res["applied"]) == (2, 2, False)
+        assert (res["copied"], res["pins_cleared"], res["applied"]) == (2, 2, False)
         assert scripts == []

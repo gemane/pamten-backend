@@ -1,6 +1,6 @@
 """Real-ArcadeDB test for maintenance.clear_copied_uk_headquarters: the UK
 importers copied the registered office into hq_* until 2026-10-18; the heal
-clears those fields, moves the parts and the geocoded pin under reg_* where
+clears those fields (the geocoded pin too), moves the parts under reg_* where
 nothing stands there, fills the display `address`, and leaves a headquarters
 another source stated alone. Pins the paged id-index walk and the sqlscript
 UPDATE-by-rid with null and parameter assignments mixed in one statement.
@@ -49,16 +49,17 @@ def test_the_copied_headquarters_is_cleared_and_kept_under_registered(it_db):
     from app.scraper.maintenance import clear_copied_uk_headquarters
     _seed(it_db)
     res = clear_copied_uk_headquarters(apply=False)
-    assert res == {"nodes": 3, "copied": 2, "pins_moved": 1, "addresses_filled": 2, "applied": False}
+    assert res == {"nodes": 3, "copied": 2, "pins_cleared": 1, "addresses_filled": 2, "applied": False}
     assert _node(it_db, "gb-coh:00078439")["ha"] == OFFICE, "a dry run wrote"
 
     res = clear_copied_uk_headquarters(apply=True)
-    assert res == {"nodes": 3, "copied": 2, "pins_moved": 1, "addresses_filled": 2, "applied": True}
+    assert res == {"nodes": 3, "copied": 2, "pins_cleared": 1, "addresses_filled": 2, "applied": True}
 
     c = _node(it_db, "gb-coh:00078439")
     assert (c["ha"], c["hc"], c["hk"], c["hs"], c["hp"], c["hlat"], c["hlng"], c["hprec"]) == (None,) * 8
     assert (c["rs"], c["rc"], c["rp"]) == ("MARSTON'S HOUSE, BREWERY ROAD", "WOLVERHAMPTON", "WV1 4JT")
-    assert (c["rlat"], c["rlng"], c["rprec"]) == (52.58, -2.12, "street")   # the pin stays, under Registered
+    # the pin is NOT moved under Registered: it may have been another source's HQ point
+    assert (c["rlat"], c["rlng"], c["rprec"]) == (None, None, None)
     assert c["a"] == OFFICE                                                  # the panel's display address
 
     o = _node(it_db, "chpsc:07434180:x")
