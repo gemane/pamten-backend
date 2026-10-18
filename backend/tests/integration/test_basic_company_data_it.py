@@ -59,13 +59,16 @@ def test_enriches_existing_company_only(it_db, tmp_path):
         "RETURN e.name AS name, e.type AS type, e.founded AS founded, "
         "e.founded_date AS founded_date, "
         "e.aliases AS aliases, e.search_text AS st, e.registered_address AS addr, "
-        "e.reg_street AS rs, e.reg_city AS rc, e.reg_postcode AS rp, "
-        "e.hq_street AS hs, e.hq_postcode AS hp")
+        "e.reg_street AS rs, e.reg_city AS rc, e.reg_postcode AS rp, e.address AS a, "
+        "e.hq_address AS ha, e.hq_city AS hc, e.hq_country AS hk, e.hq_street AS hs, e.hq_postcode AS hp")
     assert rec, "existing company should be enriched"
     row = rec[0]
-    # the registered office in parts under both pins (dropped until 2026-10-18)
+    # the registered office in parts under the registered pin (dropped until 2026-10-18)
     assert (row["rs"], row["rc"], row["rp"]) == ("BROADWALK HOUSE", "LONDON", "EC2A 2DA")
-    assert (row["hs"], row["hp"]) == ("BROADWALK HOUSE", "EC2A 2DA")
+    # the display address is the same string as the dedup corroborator
+    assert row["a"] == row["addr"]
+    # and nothing under hq_*: the register does not say where the company is run
+    assert (row["ha"], row["hc"], row["hk"], row["hs"], row["hp"]) == (None,) * 5
     assert row["name"] == "MONZO BANK LIMITED"
     assert row["type"] == "company"
     assert row["founded"] == 2015                 # headline = year

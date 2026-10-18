@@ -10,28 +10,30 @@ from app.scraper.companies_house_psc import (
 
 
 class TestPscAddress:
-    """A corporate PSC's own correspondence address → its address + map location."""
+    """A corporate PSC's own address → its registered address, string and parts.
+    Nothing under hq_*: the register says where the owner is registered, not
+    where it is run (until 2026-10-18 the same address was copied there too)."""
 
-    def test_full_address_city_and_country(self):
+    def test_full_address_string_and_parts(self):
         addr = {"premises": "The Manor", "address_line_1": "Boddington Lane",
                 "address_line_2": "Boddington", "locality": "Cheltenham",
                 "country": "England", "postal_code": "GL51 0TJ"}
         out = _psc_address(addr)
         assert out["registered_address"] == "The Manor, Boddington Lane, Boddington, Cheltenham, GL51 0TJ, England"
-        assert out["hq_city"] == "Cheltenham"
-        assert out["hq_country"] == "GB"
-        # the parts, for a structured geocode: the street is the lines joined in
-        # the register's order, the postcode its own field
-        assert out["hq_street"] == "The Manor, Boddington Lane, Boddington"
-        assert out["hq_postcode"] == "GL51 0TJ"
+        # the parts, for a structured geocode of the REGISTERED pin: the street
+        # is the lines joined in the register's order, the postcode its own field
+        assert out["reg_street"] == "The Manor, Boddington Lane, Boddington"
+        assert out["reg_city"] == "Cheltenham"
+        assert out["reg_postcode"] == "GL51 0TJ"
+        assert not any(k.startswith("hq_") for k in out), "a registered office is not a headquarters"
 
     def test_empty_address(self):
-        assert _psc_address(None) == {"registered_address": None, "hq_city": None, "hq_country": None,
-                                      "hq_street": None, "hq_postcode": None}
+        assert _psc_address(None) == {"registered_address": None, "reg_street": None,
+                                      "reg_city": None, "reg_postcode": None}
 
     def test_blank_parts_are_none_not_empty_strings(self):
         out = _psc_address({"premises": " ", "locality": "Leeds", "postal_code": ""})
-        assert (out["hq_street"], out["hq_postcode"], out["registered_address"]) == (None, None, "Leeds")
+        assert (out["reg_street"], out["reg_postcode"], out["registered_address"]) == (None, None, "Leeds")
 
     def test_iso2_maps_uk_subdivisions_and_foreign(self):
         assert _iso2_country("England & Wales") == "GB"
@@ -54,12 +56,15 @@ class TestPscAddress:
             "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
         }}
         assert m._process(rec, m._BatchWriter(), "src", 97) == "entity"
-        assert captured["hq_city"] == "Cheltenham"       # → on the map
-        assert captured["hq_country"] == "GB"
         assert "The Manor" in captured["registered_address"]
-        # the parts reach the writer (they were mapped and dropped until 2026-10-18)
-        assert captured["extra"]["hq_street"] == "The Manor, Boddington Lane"
-        assert captured["extra"]["hq_postcode"] == "GL51 0TJ"
+        # the display address and the parts reach the writer (the parts were
+        # mapped and dropped until 2026-10-18)
+        assert captured["extra"]["address"] == captured["registered_address"]
+        assert captured["extra"]["reg_street"] == "The Manor, Boddington Lane"
+        assert captured["extra"]["reg_city"] == "Cheltenham"
+        assert captured["extra"]["reg_postcode"] == "GL51 0TJ"
+        # and nothing under hq_*: the register does not say where the owner is run
+        assert not any(k.startswith("hq_") for k in {**captured, **captured["extra"]})
 
     def test_a_record_without_address_parts_writes_none_of_them(self, monkeypatch):
         """A bulk SET of null would blank the parts GLEIF wrote on a merged node."""
@@ -74,8 +79,9 @@ class TestPscAddress:
             "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
         }}
         assert m._process(rec, m._BatchWriter(), "src", 97) == "entity"
-        assert captured["hq_city"] == "Leeds"
-        assert "hq_street" not in captured["extra"] and "hq_postcode" not in captured["extra"]
+        assert captured["extra"]["reg_city"] == "Leeds"
+        assert captured["extra"]["address"] == "Leeds, England"
+        assert "reg_street" not in captured["extra"] and "reg_postcode" not in captured["extra"]
 
 
 class TestFirstYearLowerBounds:
@@ -412,6 +418,8 @@ class TestPscFields:
         assert mapped.owner_props["companies_house_id"] == "00041424"
         assert mapped.owner_props["registration_number"] == "00041424"
         assert mapped.owner_props["country"] == "GB", "England is GB, like the GLEIF node"
+        # the mapper states no headquarters for a corporate owner (finding #7)
+        assert not any(k.startswith("hq_") for k in mapped.owner_props)
         node_id, chid = _entity_psc_id({"identification": {
             "registration_number": "SC123456", "country_registered": "Scotland"},
             "links": {"self": "/company/x/.../abc"}})

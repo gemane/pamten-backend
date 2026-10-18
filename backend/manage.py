@@ -370,6 +370,18 @@ def cmd_psc_first_year_bounds(args):
     print(f"{verb}: {res['edges']} OWNS edges and {res['claims']} claims as lower bounds "
           f"({res['companies_before_register']} companies incorporated before the register)")
 
+def cmd_clear_copied_uk_hq(args):
+    """Clear the headquarters fields the UK importers copied from the registered
+    office until 2026-10-18 (moving the parts and the pin under `reg_*`) and fill
+    the display `address` where empty. Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.scraper.maintenance import clear_copied_uk_headquarters
+    res = clear_copied_uk_headquarters(apply=args.apply)
+    verb = "Cleared" if res["applied"] else "Would clear (dry run — add --apply)"
+    print(f"{verb}: copied headquarters on {res['copied']} of {res['nodes']} UK nodes "
+          f"({res['pins_moved']} pins moved under Registered, "
+          f"{res['addresses_filled']} display addresses filled)")
+
 def cmd_quality_report(args):
     """Data quality as numbers — run before and after any change to the source mix."""
     _apply_direct_db_url(args)
@@ -1536,6 +1548,14 @@ def _build_parser():
     p_pfy.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_pfy.set_defaults(func=cmd_psc_first_year_bounds)
+
+    # clear-copied-uk-hq command (one-off heal; the UK importers stopped copying 2026-10-18)
+    p_cuh = subparsers.add_parser('clear-copied-uk-hq',
+                                  help='Clear the hq_* fields ch-psc/ch-company-data copied from the registered office (the parts and pin move under reg_*; the display address is filled). Dry run unless --apply')
+    p_cuh.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_cuh.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_cuh.set_defaults(func=cmd_clear_copied_uk_hq)
 
     # quality-report command
     p_qr = subparsers.add_parser('quality-report',

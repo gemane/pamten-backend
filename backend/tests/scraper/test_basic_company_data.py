@@ -98,7 +98,7 @@ class TestOnlyCompanies:
         assert written == ["gb-coh:00000002"]
         assert counts["companies"] == 1
 
-    def test_registered_town_becomes_hq_for_the_map(self, tmp_path):
+    def test_the_registered_office_is_written_in_parts_and_never_as_headquarters(self, tmp_path):
         from app.scraper import basic_company_data as m
         buf = io.StringIO()
         w = csv.writer(buf)
@@ -116,14 +116,17 @@ class TestOnlyCompanies:
                           lambda self, nid, props: captured.update(props)), \
              patch("app.scraper.basic_company_data._flush_script"):
             import_basic_company_data(str(zpath), 97)
-        assert captured["hq_city"] == "HARROGATE"      # → geocoder pins it on the map
-        assert captured["hq_country"] == "GB"
         assert captured["founded"] == 2012             # headline = year (was a full date)
         assert captured["founded_date"] == "2012-09-11"  # full date for the Details section
-        # the registered office in parts, under both pins (a UK company has no other location)
+        # the registered office in parts, under the registered pin only
         assert (captured["reg_street"], captured["reg_city"], captured["reg_postcode"]) == (
             "1 HIGH STREET, SUITE 2", "HARROGATE", "HG1 1AA")
-        assert (captured["hq_street"], captured["hq_postcode"]) == ("1 HIGH STREET, SUITE 2", "HG1 1AA")
+        # as a string twice: the dedup corroborator and the panel's display address
+        assert captured["address"] == captured["registered_address"] == \
+            "1 HIGH STREET, SUITE 2, HARROGATE, ENGLAND, HG1 1AA"
+        # and NOTHING under hq_*: the register says where a company is registered,
+        # not where it is run (copied there until 2026-10-18 — finding #7)
+        assert not any(k.startswith("hq_") for k in captured)
 
     def test_a_row_without_address_columns_writes_no_parts(self):
         """Only the parts the row has: a SET of null would blank GLEIF's."""
@@ -131,8 +134,8 @@ class TestOnlyCompanies:
         assert _reg_address_parts({"RegAddress.PostTown": "", "RegAddress.PostCode": " "}) == {}
         assert _reg_address_parts({"RegAddress.CareOf": "C/O AGENTS LTD", "RegAddress.POBox": "PO BOX 1",
                                    "RegAddress.PostCode": "N1 1AA"}) == {
-            "reg_street": "C/O AGENTS LTD, PO BOX 1", "reg_postcode": "N1 1AA",
-            "hq_street": "C/O AGENTS LTD, PO BOX 1", "hq_postcode": "N1 1AA"}
+            "address": "C/O AGENTS LTD, PO BOX 1, N1 1AA",
+            "reg_street": "C/O AGENTS LTD, PO BOX 1", "reg_postcode": "N1 1AA"}
 
     def test_the_import_then_marks_first_year_lower_bounds_for_the_companies_it_touched(self, tmp_path):
         """The incorporation dates arrive with this import, so the PSC lower-bound

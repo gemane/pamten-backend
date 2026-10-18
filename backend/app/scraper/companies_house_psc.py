@@ -313,14 +313,22 @@ def _iso2_country(name: str | None) -> str | None:
 
 
 def _psc_address(addr: dict | None) -> dict:
-    """A corporate PSC's correspondence ``address`` (its own service address) as
-    the Entity props it fills: the display string ``registered_address``,
-    ``hq_city``/``hq_country`` (ISO-2) for the map, and the PARTS ``hq_street``
-    (premises + address lines, joined — the register puts a building and a
-    street across them and only their order says which is which) and
-    ``hq_postcode``, so the geocoder runs a structured query instead of
-    re-parsing the string. Until 2026-10-18 the parts were dropped — 203k of
-    219k corporate PSCs carry one. Absent values are None."""
+    """A corporate PSC's ``address`` (the register's "registered or principal
+    office address" of the owner) as the Entity props it fills: the string
+    ``registered_address`` (also ``address``, the panel's "Registered address"
+    row), and the PARTS ``reg_street`` (premises + address lines, joined — the
+    register puts a building and a street across them and only their order
+    says which is which), ``reg_city`` and ``reg_postcode``, so the geocoder
+    runs a structured query for the REGISTERED pin instead of re-parsing the
+    string. Until 2026-10-18 the parts were dropped — 203k of 219k corporate
+    PSCs carry one.
+
+    Nothing under ``hq_*``: the register states where the owner is registered,
+    not where it is run. Until 2026-10-18 the same address was copied into the
+    headquarters fields as well, which labelled an accountant's or agent's
+    office "Headquarters" and overwrote the HQ GLEIF or Wikidata had put on a
+    merged node (finding #7 of the PSC checklist walk). A headquarters now comes
+    only from a source that states one. Absent values are None."""
     addr = addr or {}
 
     def _v(key: str) -> str | None:
@@ -329,8 +337,8 @@ def _psc_address(addr: dict | None) -> dict:
     lines = [p for p in (_v("premises"), _v("address_line_1"), _v("address_line_2")) if p]
     parts = lines + [p for p in (_v("locality"), _v("region"), _v("postal_code"), _v("country")) if p]
     return {"registered_address": ", ".join(parts) or None,
-            "hq_city": _v("locality"), "hq_country": _iso2_country(addr.get("country")),
-            "hq_street": ", ".join(lines) or None, "hq_postcode": _v("postal_code")}
+            "reg_street": ", ".join(lines) or None, "reg_city": _v("locality"),
+            "reg_postcode": _v("postal_code")}
 
 
 @dataclass(frozen=True)
@@ -524,9 +532,11 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             "country": iso2,
             "country_registered": None if iso2 else country_text,
             "companies_house_id": chid, "registered_address": address["registered_address"],
-            "hq_address": address["registered_address"],
-            "hq_city": address["hq_city"], "hq_country": address["hq_country"],
-            "hq_street": address["hq_street"], "hq_postcode": address["hq_postcode"],
+            # the same string as the panel's display address; no hq_* — the
+            # register does not say where the owner is run (see _psc_address)
+            "address": address["registered_address"],
+            "reg_street": address["reg_street"], "reg_city": address["reg_city"],
+            "reg_postcode": address["reg_postcode"],
             "registration_number": reg_number,
             "registration_authority": (ident.get("place_registered") or "").strip() or None,
             "register_id": register_id,
@@ -572,15 +582,16 @@ def write_entity_owner(batch, mapped: PscMapped, source_id: str, credibility_sco
             country=props["country"], founded=None, lei_id=None,
             companies_house_id=props["companies_house_id"],
             source_id=source_id, credibility_score=credibility_score,
-            registered_address=props["registered_address"], hq_address=props["hq_address"],
-            hq_city=props["hq_city"], hq_country=props["hq_country"],
+            registered_address=props["registered_address"],
             extra={"registration_number": props["registration_number"],
                    "registration_authority": props["registration_authority"],
                    "register_id": props["register_id"],
                    "country_registered": props["country_registered"],
-                   # the address parts only when the record has them: a bulk
-                   # SET of null would blank what GLEIF wrote on a merged node
-                   **{k: props[k] for k in ("hq_street", "hq_postcode") if props.get(k)}})
+                   # the display address and its parts only when the record
+                   # has them: a bulk SET of null would blank what GLEIF wrote
+                   # on a merged node
+                   **{k: props[k] for k in ("address", "reg_street", "reg_city", "reg_postcode")
+                      if props.get(k)}})
 
 
 def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int,
