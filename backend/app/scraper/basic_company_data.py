@@ -13,8 +13,10 @@ reference) are silent no-ops. Nothing here creates nodes or edges.
 Per matched company it sets: ``name`` / ``name_normalized`` / ``search_text``
 (name + former names, FULL_TEXT-indexed), ``type`` (from CompanyCategory),
 ``country`` (``GB``), ``founded`` (IncorporationDate), ``registered_address``,
-``aliases`` (PreviousName_1..10), ``is_nominee`` (name-detected) and
-``name_credibility`` (the register is the authoritative name source).
+``aliases`` (PreviousName_1..10), ``former_names`` (the same names, each with
+its change-of-name date — ``app.former_names``, the timeline's "Renamed from"),
+``is_nominee`` (name-detected) and ``name_credibility`` (the register is the
+authoritative name source).
 """
 import csv
 import logging
@@ -25,6 +27,7 @@ from app.scraper.bulk_import import (
     _drop_secondary_indexes, _flush_script, _now_iso, _ProgressBar,
     _rebuild_indexes,
 )
+from app import former_names
 from app.scraper.mapper import is_nominee_name, normalize_entity_name
 
 log = logging.getLogger(__name__)
@@ -69,6 +72,23 @@ def _prev_names(row: dict, current: str) -> list[str]:
         if n and n.lower() not in seen:
             seen.add(n.lower())
             out.append(n)
+    return out
+
+
+def _former_names(row: dict, current: str) -> list[str]:
+    """PreviousName_1..10 with their CONDATE (the day the name changed, so the
+    last day the old name applied) as ``former_names`` entries. The register
+    lists them newest first; kept so. A previous name equal to the current one
+    (a company renamed back) is dropped, like in ``_prev_names``."""
+    out: list[str] = []
+    cur = current.lower()
+    for i in range(1, 11):
+        n = (row.get(f"PreviousName_{i}.CompanyName") or "").strip()
+        if not n or n.lower() == cur:
+            continue
+        e = former_names.entry(n, _founded(row.get(f"PreviousName_{i}.CONDATE")))
+        if e and e not in out:
+            out.append(e)
     return out
 
 
@@ -204,6 +224,10 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "hq_address": _reg_address(row),
                     "companies_house_id": number,
                     "aliases": aliases,
+                    # The register of record for its own companies: its dated
+                    # list replaces whatever stood here (a bulk UPDATE cannot
+                    # union); the entity merge unions a SEC twin's list in.
+                    "former_names": _former_names(row, name),
                     "is_nominee": is_nominee_name(name),
                     "name_credibility": credibility_score,
                     "last_scraped_at": _now_iso(),

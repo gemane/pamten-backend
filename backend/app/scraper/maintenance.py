@@ -8,6 +8,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from app import former_names as former
 from app.database import db
 from app.db.anchors import not_a_voting_group
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
@@ -570,6 +571,7 @@ _MERGE_SKIP_PROPS = frozenset({
     "name_credibility",  # handled explicitly (max)
     "verified",          # handled explicitly (either)
     "aliases", "countries", "hq_locations",   # lists — unioned, not replaced
+    "former_names",                            # dated names — unioned by (name, date)
 })
 
 
@@ -620,6 +622,13 @@ def _merge_entity_props(keep: dict, dead: dict) -> dict:
             merged = [a for a in merged if a.lower() != own]
         if merged != list(keep.get(key) or []):
             out[key] = merged
+
+    # The dated former names: the same union, keyed on (name, date) so a
+    # Companies House date fills in a name SEC knew only undated (and the
+    # loser's own name is NOT added here — nobody dated its end).
+    dated = former.merge(keep.get("former_names"), dead.get("former_names"))
+    if dated != list(keep.get("former_names") or []):
+        out["former_names"] = dated
 
     out["name_credibility"] = max(keep.get("name_credibility") or 0,
                                   dead.get("name_credibility") or 0)

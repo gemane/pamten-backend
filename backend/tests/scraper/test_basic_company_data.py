@@ -141,6 +141,38 @@ class TestFieldParsing:
         assert _reg_address(row) == "9 PRINCES SQUARE, HARROGATE, ENGLAND, HG1 1ND"
         assert _reg_address({}) is None
 
+    def test_former_names_carry_the_change_of_name_date(self):
+        from app.scraper.basic_company_data import _former_names
+        # Companies House 08401611 as the register lists it (newest first)
+        row = {"PreviousName_1.CONDATE": "20/08/2021", "PreviousName_1.CompanyName": "BRIGHTSTAR 20:20 UK LIMITED",
+               "PreviousName_2.CONDATE": "27/11/2013", "PreviousName_2.CompanyName": "20:20 MOBILE 1 LIMITED",
+               "PreviousName_3.CONDATE": "", "PreviousName_3.CompanyName": "UNDATED LTD",
+               "PreviousName_4.CONDATE": "01/01/2000", "PreviousName_4.CompanyName": "likewize services uk limited",
+               "PreviousName_5.CONDATE": "20/08/2021", "PreviousName_5.CompanyName": "BRIGHTSTAR 20:20 UK LIMITED"}
+        assert _former_names(row, "LIKEWIZE SERVICES UK LIMITED") == [
+            "BRIGHTSTAR 20:20 UK LIMITED|2021-08-20", "20:20 MOBILE 1 LIMITED|2013-11-27", "UNDATED LTD|"]
+        assert _former_names({}, "X") == []
+
+    def test_import_writes_the_dated_former_names_beside_the_aliases(self, tmp_path):
+        from app.scraper import basic_company_data as m
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["CompanyName", "CompanyNumber", "IncorporationDate",
+                    "PreviousName_1.CONDATE", "PreviousName_1.CompanyName"])
+        w.writerow(["LIKEWIZE SERVICES UK LIMITED", "08401611", "14/02/2013",
+                    "20/08/2021", "BRIGHTSTAR 20:20 UK LIMITED"])
+        zpath = tmp_path / "b.zip"
+        with zipfile.ZipFile(zpath, "w") as zf:
+            zf.writestr("BasicCompanyData.csv", buf.getvalue())
+        captured = {}
+        with patch.object(m._UpdateBatch, "update",
+                          lambda self, nid, props: captured.update(props)), \
+             patch("app.scraper.basic_company_data._flush_script"):
+            import_basic_company_data(str(zpath), 97)
+        assert captured["aliases"] == ["BRIGHTSTAR 20:20 UK LIMITED"]
+        assert captured["former_names"] == ["BRIGHTSTAR 20:20 UK LIMITED|2021-08-20"]
+        assert "BRIGHTSTAR 20:20 UK LIMITED" in captured["search_text"]
+
     def test_prev_names_dedupes_and_drops_current(self):
         row = {
             "PreviousName_1.CompanyName": "OLD NAME LTD",

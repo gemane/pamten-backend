@@ -83,6 +83,22 @@ class TestMergeEntityProps:
         assert out["employees"] == 228000
         assert out["revenue"] == self.DEAD["revenue"]
 
+    def test_dated_former_names_are_unioned_by_name_and_date(self):
+        # the GLEIF survivor (named by Companies House) and a SEC twin: the
+        # register's dated list and SEC's undated knowledge of the same name
+        keep = {**self.KEEP, "name": "LIKEWIZE SERVICES UK LIMITED",
+                "former_names": ["BRIGHTSTAR 20:20 UK LIMITED|2021-08-20"]}
+        dead = {**self.DEAD, "name": "Likewize Services UK",
+                "former_names": ["Brightstar 20:20 UK Limited|", "20:20 MOBILE 1 LIMITED|2013-11-27"]}
+        out = _merge_entity_props(keep, dead)
+        assert out["former_names"] == ["BRIGHTSTAR 20:20 UK LIMITED|2021-08-20", "20:20 MOBILE 1 LIMITED|2013-11-27"]
+        # the loser's own name goes into aliases (as before), never into the dated list
+        assert "Likewize Services UK" in out["aliases"]
+        assert not any(e.startswith("Likewize Services UK|") for e in out["former_names"])
+
+    def test_no_former_names_on_either_side_writes_nothing(self):
+        assert "former_names" not in _merge_entity_props(self.KEEP, self.DEAD)
+
     def test_survivor_values_are_never_clobbered(self):
         # The survivor was chosen deliberately; its own data wins.
         keep = {**self.KEEP, "description": "The kept description", "country": "US"}

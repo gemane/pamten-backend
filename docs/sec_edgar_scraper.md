@@ -33,9 +33,15 @@ No API key is required. All endpoints are public. The SEC requires a descriptive
 The submissions JSON carries `formerNames` (prior registered names under the **same
 CIK** — e.g. *Meta Platforms, Inc.* ⟵ "Facebook Inc"). EDGAR has no distinct-entity
 successor link, so these are a rename of one legal entity, not a `SUCCEEDED_BY`
-edge. `fetch_former_names(cik)` reads them and `_upsert_entity_by_name` folds them
-into the entity's `aliases` + `search_text` (merged, never clobbering existing
-aliases), so the old name is searchable ("Facebook" → Meta Platforms).
+edge. `fetch_former_names(cik)` reads them **with the day each ended** (the entry's
+`to` timestamp, cut to the day: `"Facebook Inc|2021-10-27"`, the `app.former_names`
+format) and `_upsert_entity_by_name` folds the plain names into the entity's
+`aliases` + `search_text` (merged, never clobbering existing aliases), so the old
+name is searchable ("Facebook" → Meta Platforms), and the dated entries into
+`former_names` (unioned by name and date), from which `/relationships/history`
+tells the timeline "Renamed: Facebook Inc → Meta Platforms, Inc." under 2021. A
+`formerNames` entry without a `to` is kept undated (`"NAME|"`) — searchable, but
+with no place on the timeline.
 
 ---
 

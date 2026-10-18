@@ -55,6 +55,7 @@ import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
 
 import httpx
+from app import former_names
 from app.roles import canonical_role
 from app.scraper.edge_schema import READ_FIELD, READ_FORM
 from app.scraper.mapper import _ENTITY_SUFFIXES, derive_ownership_type
@@ -1337,7 +1338,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             continue
 
         if known_names is None:
-            known_names = [company_name] + fetch_former_names(company_cik)
+            known_names = [company_name] + former_names.names(fetch_former_names(company_cik))
 
         inv = {
             "investor_name": investor_name,
@@ -2422,7 +2423,9 @@ def fetch_former_names(cik: str) -> list[str]:
 
     EDGAR records a rename under the *same* CIK (e.g. "Facebook Inc" → "Meta
     Platforms, Inc."), so these are aliases of one legal entity, not a successor
-    link. Returns the distinct former names (order preserved), or [] on any error.
+    link. Returns the distinct former names as ``app.former_names`` entries
+    (``"Facebook Inc|2021-10-27"`` — the ``to`` timestamp's day is the last day
+    the name applied; order preserved), or [] on any error.
     """
     try:
         sub = _submissions(cik)
@@ -2436,7 +2439,7 @@ def fetch_former_names(cik: str) -> list[str]:
         key = name.lower()
         if name and key not in seen:
             seen.add(key)
-            out.append(name)
+            out.append(former_names.entry(name, entry.get("to")))
     return out
 
 

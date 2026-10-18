@@ -207,7 +207,10 @@ TREE = {"root_id": "ms", "truncated": True, "total": 10,
 EVENTS = [{"kind": "ownership_in", "party": {"id": "br", "name": "BlackRock"}, "since": "2024-02-13",
            "stake_percent": 7.3, "ownership_type": "minority", "active": True},
           {"kind": "role", "party": {"id": "sn", "full_name": "Satya Nadella"}, "role": "CEO",
-           "since": "2014-02-04", "until": None, "active": True}]
+           "since": "2014-02-04", "until": None, "active": True},
+          # the company's own rename: no party, the old name and the one that followed
+          {"kind": "renamed", "party": None, "since": "1986-03-13", "until": None, "active": False,
+           "former_name": "Micro-Soft", "new_name": "MICROSOFT CORPORATION"}]
 SOURCES = [{"name": "SEC EDGAR", "type": "register", "credibility_score": 98, "url": "https://example.com/13g",
             "source_date": "2024-02-13", "last_scraped_at": "2026-09-11T12:48:35Z", "filing_type": "13G"}]
 CLAIMS_TO = [{"kind": "owns", "from_id": "br", "to_id": "ms", "stake_percent": 7.3, "source_id": "sec",
@@ -329,8 +332,9 @@ class TestTheWorkbook:
         _, data = build_workbook("ms", ExportOptions())
         s = sheets_of(data)
         assert s["Roles"][1][:4] == [("string", "Satya Nadella"), ("string", "CEO"), ("string", "US"), ("date", "2014-02-04")]
-        assert column(s["Timeline"], "Kind") == [("string", "Owned by"), ("string", "Role")]
-        assert column(s["Timeline"], "Current") == [("boolean", "true"), ("boolean", "true")]
+        assert column(s["Timeline"], "Kind") == [("string", "Owned by"), ("string", "Role"), ("string", "Renamed")]
+        assert column(s["Timeline"], "Current") == [("boolean", "true"), ("boolean", "true"), ("boolean", "false")]
+        assert s["Timeline"][3][1] == ("string", "Micro-Soft → MICROSOFT CORPORATION")   # a rename's "who"
         assert s["Sources"][1][:3] == [("string", "SEC EDGAR"), ("string", "register"), ("float", "98")]
         # claims about the company and the company's own holdings, names resolved
         assert [(r[1][1], r[2][1]) for r in s["Claims"][1:]] == [("BlackRock", "MICROSOFT CORPORATION"),

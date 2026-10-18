@@ -1029,22 +1029,26 @@ class TestFormerNamesAliases:
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.graph_writer.resolve_entity_id", return_value=None):
             _upsert_entity_by_name("Meta Platforms, Inc.", cik="1326801",
-                                   source_id="sec", former_names=["Facebook Inc"])
+                                   source_id="sec", former_names=["Facebook Inc|2021-10-27"])
         create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
-        assert create.kwargs["aliases"] == ["Facebook Inc"]
+        assert create.kwargs["aliases"] == ["Facebook Inc"]            # the plain name, for search
+        assert create.kwargs["former_names"] == ["Facebook Inc|2021-10-27"]  # dated, for the timeline
         assert "Facebook Inc" in create.kwargs["search_text"]
         assert "Meta Platforms, Inc." in create.kwargs["search_text"]
 
     def test_existing_merges_without_duplicating(self):
         ctx, session = _make_session_mock(single_returns=[
-            {"name": "Meta Platforms, Inc.", "aliases": ["Facebook Inc"], "descr": None},
+            {"name": "Meta Platforms, Inc.", "aliases": ["Facebook Inc"], "descr": None,
+             "former_names": ["Facebook Inc|"]},       # known, but undated so far
         ])
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.graph_writer.resolve_entity_id", return_value="eid-1"):
             _upsert_entity_by_name("Meta Platforms, Inc.", cik="1326801", source_id="sec",
-                                   former_names=["Facebook Inc", "TheFacebook, Inc."])
+                                   former_names=["Facebook Inc|2021-10-27", "TheFacebook, Inc.|2005-05-05"])
         setcall = next(c for c in session.run.call_args_list if "aliases" in c.kwargs)
         assert setcall.kwargs["aliases"] == ["Facebook Inc", "TheFacebook, Inc."]  # no dup
+        # the date fills in the undated entry; nothing is duplicated
+        assert setcall.kwargs["former_names"] == ["Facebook Inc|2021-10-27", "TheFacebook, Inc.|2005-05-05"]
 
     def test_no_former_names_leaves_aliases_untouched(self):
         ctx, session = _make_session_mock()
