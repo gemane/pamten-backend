@@ -379,7 +379,7 @@ def cmd_clear_copied_uk_hq(args):
     res = clear_copied_uk_headquarters(apply=args.apply)
     verb = "Cleared" if res["applied"] else "Would clear (dry run — add --apply)"
     print(f"{verb}: copied headquarters on {res['copied']} of {res['nodes']} UK nodes "
-          f"({res['pins_moved']} pins moved under Registered, "
+          f"({res['pins_cleared']} headquarters pins cleared — run `geocode --target registered` next, "
           f"{res['addresses_filled']} display addresses filled)")
 
 def cmd_quality_report(args):
@@ -1551,7 +1551,7 @@ def _build_parser():
 
     # clear-copied-uk-hq command (one-off heal; the UK importers stopped copying 2026-10-18)
     p_cuh = subparsers.add_parser('clear-copied-uk-hq',
-                                  help='Clear the hq_* fields ch-psc/ch-company-data copied from the registered office (the parts and pin move under reg_*; the display address is filled). Dry run unless --apply')
+                                  help='Clear the hq_* fields ch-psc/ch-company-data copied from the registered office (the parts move under reg_*, the pin is cleared for `geocode --target registered`; the display address is filled). Dry run unless --apply')
     p_cuh.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_cuh.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')

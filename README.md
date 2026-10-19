@@ -379,7 +379,7 @@ registered office only (`address`, `registered_address`, `reg_street`/`reg_city`
 and nothing under `hq_*`: the register does not say where a company is run, and the
 headquarters pin comes from a source that does (GLEIF, Wikidata, EDGAR). Until 2026-10-18
 they copied the registered office into the headquarters fields; `manage.py clear-copied-uk-hq`
-undoes that once (dry run unless `--apply`; the parts and the pin move under `reg_*`).
+undoes that once (dry run unless `--apply`; the parts move under `reg_*`, the pin is cleared for `geocode --target registered`).
 
 ---
 
