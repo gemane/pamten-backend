@@ -4,9 +4,16 @@ the exhibit finder. The fixture is Apple's REAL Ex-21.1 from the 10-K filed
 from pathlib import Path
 from unittest.mock import patch
 
-from app.scraper.sec_ex21 import (annual_exhibit_candidates,
+from app.scraper.sec_ex21 import (annual_filings, exhibit_candidates,
                                   jurisdiction_country, jurisdiction_subdivision,
                                   parse_exhibit)
+
+def _newest_annual_candidates(cik):
+    """The exhibit candidates of the NEWEST annual filing, as the runner
+    reads them (it checks `annual_filings` first, then walks the history)."""
+    filings = annual_filings(cik)
+    return exhibit_candidates(cik, *filings[0]) if filings else []
+
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "apple_ex21.htm").read_text()
 # The hostile one: a ZWSP-only filler column, jurisdiction fused with the
@@ -146,7 +153,7 @@ class TestAnnualExhibitCandidates:
         index = {"directory": {"item": [
             {"name": "a10-k.htm"}, {"name": "a10-kexhibit21109272025.htm"}]}}
         with patch("app.scraper.sec_ex21._get", side_effect=[subs, index]):
-            cands = annual_exhibit_candidates("320193")
+            cands = _newest_annual_candidates("320193")
         assert cands and cands[0]["form"] == "10-K"
         assert cands[0]["url"].endswith("a10-kexhibit21109272025.htm")
         assert cands[0]["filing_date"] == "2025-10-31"
@@ -159,7 +166,7 @@ class TestAnnualExhibitCandidates:
         index = {"directory": {"item": [{"name": "d1dex215.htm"},
                                         {"name": "d1dex81.htm"}]}}
         with patch("app.scraper.sec_ex21._get", side_effect=[subs, index]):
-            cands = annual_exhibit_candidates("999999")
+            cands = _newest_annual_candidates("999999")
         assert [c["url"].rsplit("/", 1)[-1] for c in cands] == \
             ["d1dex81.htm", "d1dex215.htm"]
 
@@ -168,13 +175,13 @@ class TestAnnualExhibitCandidates:
                            ("10-K", "0000000000-24-000003", "2024-10-31")])
         index = {"directory": {"item": [{"name": "a10-k.htm"}]}}
         with patch("app.scraper.sec_ex21._get", side_effect=[subs, index]):
-            assert annual_exhibit_candidates("888888") == []
+            assert _newest_annual_candidates("888888") == []
 
     def test_a_stale_cik_404_is_absent_not_an_error(self):
         def boom(url):
             raise RuntimeError("404 Not Found")
         with patch("app.scraper.sec_ex21._get", side_effect=boom):
-            assert annual_exhibit_candidates("777777") == []
+            assert _newest_annual_candidates("777777") == []
 
 
 class TestHeaderAwareTables:

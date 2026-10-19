@@ -68,17 +68,6 @@ _INTERVAL_MAX_GAP_DAYS = (("LastDay", 1.5), ("LastWeek", 6.5), ("LastMonth", 29.
 
 # ── delta-record field extraction (reuses the full importers' _v/parsers) ─────
 
-def _relationship_end_date(rel: dict) -> str | None:
-    """End date of the RELATIONSHIP_PERIOD, if the relationship has ended.
-    `RelationshipPeriods.RelationshipPeriod` is an object *or* a list."""
-    periods = (rel.get("RelationshipPeriods") or {}).get("RelationshipPeriod")
-    if isinstance(periods, dict):
-        periods = [periods]
-    for p in periods or []:
-        if _v((p or {}).get("PeriodType")) == "RELATIONSHIP_PERIOD":
-            return _v(p.get("EndDate"))
-    return None
-
 
 def _rr_delta_relationship(rec: dict) -> tuple | None:
     """(parent_lei, child_lei, direct_or_indirect, status, rel, unmaintained,
@@ -753,12 +742,6 @@ def downloaded_deltas(publish: dict, interval: str):
         yield download_deltas(publish, interval, dest_dir=dest)
     finally:
         shutil.rmtree(dest, ignore_errors=True)
-
-
-def fetch_gleif_deltas(interval: str = "LastDay", dest_dir: str | None = None) -> dict:
-    """Fetch + download the current delta files for a fixed `interval`
-    (IntraDay | LastDay | LastWeek | LastMonth)."""
-    return download_deltas(fetch_publish_metadata(), interval, dest_dir)
 
 
 # ── full-load precondition ────────────────────────────────────────────────────

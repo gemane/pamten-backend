@@ -81,8 +81,6 @@ STRUCTURAL_FIELDS: tuple = (
     "since_not_before",
 )
 
-LOWER_BOUND = "first_listed"
-
 #: `since_basis` values and what they mean for time travel. Every basis is a
 #: LOWER bound ("held at least since") except `newly_listed`, which the product
 #: treats like a stated start: the list before was read and did not name it.
@@ -100,11 +98,6 @@ LOWER_BOUND = "first_listed"
 #: The as-of clauses (search._active_clause, relationships.subsidiary_tree_of)
 #: and the client's asOf.startedAfter read this rule, never a single value.
 STATED_BASES = frozenset({"newly_listed"})
-
-
-def is_lower_bound(since_basis: str | None) -> bool:
-    """Whether a `since` with this basis only says "at least since"."""
-    return bool(since_basis) and since_basis not in STATED_BASES
 
 
 def started_by_clause(rel: str, p: str = "$") -> str:

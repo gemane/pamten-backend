@@ -169,10 +169,6 @@ def geocode_full(query: str) -> tuple[Coord, str] | None:
     return result
 
 
-def _query(params: dict) -> Coord | None:
-    return _ask(params)[0]
-
-
 def _ask(params: dict) -> tuple[Coord | None, bool]:
     """(coord, clean): the answer, and whether it is one — False for a
     transport error or an unparseable reply, which must not be cached."""

@@ -97,7 +97,7 @@ def test_the_recovered_pair_merges_the_psc_twin(it_db, tmp_path):
 
 def test_the_delta_preserves_the_outgoing_pair(it_db, monkeypatch, tmp_path):
     """A registration move applied by the daily delta keeps the old pair."""
-    import json, gzip
+    import json
     from app.scraper import gleif_incremental as gi
     _tesla(it_db)
     rec = {"LEI": {"$": "TESLA000LEI000000001"},

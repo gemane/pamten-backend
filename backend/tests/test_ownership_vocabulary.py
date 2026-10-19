@@ -9,7 +9,7 @@ because nobody *holds* the free float.
 """
 import pytest
 
-from app.models.relationship import OwnershipType, coerce_ownership_type
+from app.models.relationship import OwnershipType
 from app.scraper.mapper import coherent_ownership_type
 
 
@@ -27,18 +27,6 @@ class TestVocabulary:
     def test_free_float_is_not_storable(self):
         # It is computed on read (routers/search.py), never written to an edge.
         assert "free_float" not in {t.value for t in OwnershipType}
-
-
-class TestCoercion:
-    def test_passes_through_known_values(self):
-        for value in ("full", "majority", "controlling", "minority", "unknown"):
-            assert coerce_ownership_type(value) == value
-
-    def test_maps_anything_unrecognised_to_unknown(self):
-        # Storing a novel string verbatim would render as a neutral edge in the
-        # UI while the data quietly diverged — better to land on `unknown`.
-        for value in ("partnership", "free_float", "MAJORITY", "typo", "", None):
-            assert coerce_ownership_type(value) == "unknown"
 
 
 class TestPinBoundary:

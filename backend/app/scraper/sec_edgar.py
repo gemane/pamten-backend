@@ -58,7 +58,7 @@ import httpx
 from app import former_names
 from app.roles import canonical_role
 from app.scraper.edge_schema import READ_FIELD, READ_FORM
-from app.scraper.mapper import _ENTITY_SUFFIXES, derive_ownership_type
+from app.scraper.mapper import derive_ownership_type
 
 log = logging.getLogger(__name__)
 
@@ -74,9 +74,8 @@ MAX_8K_FETCH     = 12     # newest 8-Ks with Item 5.02 read for departures
 HOLDINGS_DEFAULT_LIMIT = 100    # subjects for an explicit holdings run (CLI)
 # Default for a normal company scrape. Cheap where it matters: a filer whose
 # recent filings are live stakes needs one fetch each, so 25 subjects is ~25
-# requests. The look-back cap only bites on a filer that has exited positions.
+# requests.
 HOLDINGS_SCRAPE_LIMIT  = 25
-HOLDINGS_MAX_LOOKBACK  = 3      # earlier filings to check when the latest is an exit
 # EDGAR splits a prolific filer's index into pages: `filings.recent` plus an
 # archive list. Vanguard's old CIK has 13 pages covering back to 1999, so they are
 # read lazily, newest page first, and only while the fetch budget lasts.
@@ -427,26 +426,6 @@ def _normalize_sec_name(raw: str) -> str:
         first = " ".join(w.capitalize() for w in words[1:])
         return f"{first} {last}"
     return raw.title()
-
-
-def _normalize_investor_name(raw_display: str) -> str:
-    """
-    Given a raw EDGAR display_name entry such as:
-      'Musk Elon  (CIK 0001494730)'          ← individual, no ticker
-      'BlackRock Inc.  (BLK)  (CIK ...)'     ← company, has ticker
-    Returns a clean investor name.
-
-    Companies include a ticker '(BLK)' before the CIK; individuals do not.
-    SEC stores individual names as 'Last First' — we flip them to 'First Last'.
-    """
-    has_ticker = bool(re.search(r"\([A-Z]{1,5}\)\s+\(CIK", raw_display))
-    name = re.split(r"\s{2,}|\s+\(", raw_display)[0].strip()
-    if not name:
-        return name
-    words = name.split()
-    if not has_ticker and len(words) == 2 and not _ENTITY_SUFFIXES.search(name):
-        return f"{words[1].capitalize()} {words[0].capitalize()}"
-    return name
 
 
 def _title_to_role(title: str) -> str:
@@ -3085,12 +3064,6 @@ def _13f_filings_for(queries: list[str], limit: int,
         if offset >= qtotal or len(seen_acc) >= discover_cap:
             break
     return list(by_filer.values()), total
-
-
-def _13f_filings_single(query: str, limit: int,
-                        window_days: int = _13F_WINDOW_DAYS):
-    """Back-compat shim for callers/tests with one term."""
-    return _13f_filings_for([query], limit, window_days)
 
 
 def _13f_documents(filer_cik: str, accession: str) -> tuple[str | None, str | None]:

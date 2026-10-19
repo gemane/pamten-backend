@@ -122,14 +122,6 @@ def exhibit_candidates(cik: str, form: str, accession: str, filed: str,
     return out
 
 
-def annual_exhibit_candidates(cik: str) -> list[dict]:
-    """Candidate subsidiary-exhibit files from the NEWEST 10-K/20-F — the
-    newest annual filing decides; this does not walk back to older years
-    (``fetch_subsidiary_history`` does)."""
-    filings = annual_filings(cik)
-    return exhibit_candidates(cik, *filings[0]) if filings else []
-
-
 class _Row(list):
     """One table row's cell texts, plus what its LAYOUT said: how far its first
     text was indented, and where each cell sits on the table's column grid.

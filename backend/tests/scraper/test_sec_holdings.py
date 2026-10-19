@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 from app.scraper.sec_edgar import (
-    _parse_holding_filing, fetch_filer_holdings, HOLDINGS_MAX_LOOKBACK,
+    _parse_holding_filing, fetch_filer_holdings,
 )
 
 # Schema X0202, 13G spelling (`issuerCik`, `classPercent`), trimmed from the real
@@ -191,7 +191,7 @@ class TestFetchFilerHoldings:
 
     def test_a_company_only_ever_zero_is_not_reported(self):
         subs = _subs([("SCHEDULE 13G/A", f"a-{i}", f"2026-03-{20 + i:02d}")
-                      for i in range(HOLDINGS_MAX_LOOKBACK + 2)])
+                      for i in range(5)])
         with patch("app.scraper.sec_edgar._get", return_value=subs), \
              patch("app.scraper.sec_edgar._get_text",
                    return_value=XML.format(cik="0000111111", name="Never Held", pct="0")):

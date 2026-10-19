@@ -570,7 +570,7 @@ class TestRunScrapeWikidata:
             **self.COMPANY_DATA,
             "subsidiaries": [{"qid": "Q999", "name": "Some Subsidiary Ltd", "instances": []}],
         }
-        owns_calls, created = [], []
+        owns_calls = []
         with patch.object(settings, "SCRAPER_ENABLED", True), \
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
