@@ -7,9 +7,10 @@ class OwnershipType(str, Enum):
     """The complete vocabulary for a stored OWNS edge.
 
     This is the single source of truth: `scraper/mapper.derive_ownership_type`
-    returns these values, and anything arriving from outside is coerced through
-    `coerce_ownership_type` below. The thresholds that map a stake percentage
-    onto these are documented on the derivation function.
+    returns these values, and a value arriving from outside (the manual create
+    endpoint, a moderator pin) is validated against the enum at the API
+    boundary. The thresholds that map a stake percentage onto these are
+    documented on the derivation function.
 
     Previously this enum and the scrapers disagreed. `unknown` — by far the most
     common value written, since most sources name an owner without disclosing a
@@ -24,22 +25,6 @@ class OwnershipType(str, Enum):
     controlling = "controlling"  # >= 20% — significant blocking minority
     minority = "minority"        # > 0%   — passive stake
     unknown = "unknown"          # owner known, stake undisclosed — do not guess
-
-
-def coerce_ownership_type(value: str | None) -> str:
-    """Map an externally-supplied ownership type onto the vocabulary.
-
-    Anything unrecognised becomes `unknown` rather than being stored verbatim:
-    a typo'd or novel value would otherwise flow into the graph, where the UI
-    renders edges by exact string match and would silently fall back to the
-    neutral style while the data quietly diverged.
-    """
-    if value in _OWNERSHIP_TYPE_VALUES:
-        return value
-    return OwnershipType.unknown.value
-
-
-_OWNERSHIP_TYPE_VALUES: frozenset[str] = frozenset(t.value for t in OwnershipType)
 
 
 class RoleType(str, Enum):

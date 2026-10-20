@@ -149,8 +149,6 @@ class TestFetch13FHolders:
         import httpx
         g, t = _serve_13f([_fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")],
                           _giga_docs(), total=95)
-        orig_get = None
-
         def failing_get(url, params=None):
             if url == sec_edgar.SEARCH_URL and int((params or {}).get("from", 0)) > 0:
                 req = httpx.Request("GET", url)

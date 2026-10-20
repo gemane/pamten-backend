@@ -113,24 +113,6 @@ def _search_recent_for_def14a(recent: dict) -> tuple[str, str, str] | None:
     return None
 
 
-def _get_def14a_for_cik(cik: str) -> tuple[str, str, str] | None:
-    """Return (accession_no_dashes, primary_doc, filing_date) for a CIK's most
-    recent DEF 14A, searching across all submissions pages if needed."""
-    cik_padded = cik.zfill(10)
-    sub = _get_json(f"{SUBMISSIONS_URL}/CIK{cik_padded}.json")
-    hit = _search_recent_for_def14a(sub.get("filings", {}).get("recent", {}))
-    if hit:
-        return hit
-
-    # Large filers paginate older filings into extra files; scan them too
-    for extra in sub.get("filings", {}).get("files", []):
-        extra_data = _get_json(f"https://data.sec.gov/submissions/{extra['name']}")
-        hit = _search_recent_for_def14a(extra_data)
-        if hit:
-            return hit
-    return None
-
-
 def _browse_edgar_def14a(search_name: str) -> tuple[str, str, str, str] | None:
     """
     Search browse-edgar for DEF 14A filings matching search_name.

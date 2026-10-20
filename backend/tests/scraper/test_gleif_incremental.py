@@ -13,11 +13,11 @@ from app.scraper.gleif_incremental import (
     _PUBLISH_FMT,
     _entity_status,
     _registration_status,
-    _relationship_end_date,
     _rr_delta_relationship,
     choose_catchup_interval,
+    download_deltas,
     downloaded_deltas,
-    fetch_gleif_deltas,
+    fetch_publish_metadata,
 )
 
 
@@ -64,22 +64,6 @@ class TestEntityStatus:
         assert _entity_status({}) is None
 
 
-class TestRelationshipEndDate:
-    def test_picks_relationship_period_end(self):
-        rel = _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P",
-                  status="INACTIVE", end_date="2023-06-01")["RelationshipRecord"]["Relationship"]
-        assert _relationship_end_date(rel) == "2023-06-01"
-
-    def test_single_object_not_list(self):
-        rel = {"RelationshipPeriods": {"RelationshipPeriod":
-               {"PeriodType": {"$": "RELATIONSHIP_PERIOD"}, "EndDate": {"$": "2022-01-01"}}}}
-        assert _relationship_end_date(rel) == "2022-01-01"
-
-    def test_no_end_date(self):
-        rel = _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P")["RelationshipRecord"]["Relationship"]
-        assert _relationship_end_date(rel) is None
-
-
 class TestRrDeltaRelationship:
     def test_active_consolidation(self):
         (parent, child, marker, status, _, unmaintained, stake, implausible,
@@ -94,10 +78,9 @@ class TestRrDeltaRelationship:
         assert (marker, status) == ("indirect", "ACTIVE")
 
     def test_inactive_status_preserved(self):
-        _, _, _, status, rel, *_ = _rr_delta_relationship(
+        _, _, _, status, *_ = _rr_delta_relationship(
             _rr("IS_DIRECTLY_CONSOLIDATED_BY", "C", "P", status="INACTIVE", end_date="2023-06-01"))
         assert status == "INACTIVE"
-        assert _relationship_end_date(rel) == "2023-06-01"
 
     def test_a_lapsed_record_arrives_unmaintained(self):
         # the record that lapses is in that day's delta: the flag rides along
@@ -185,7 +168,7 @@ class TestFetchDeltas:
 
         with patch("httpx.get", return_value=api), \
              patch("httpx.stream", return_value=stream_ctx):
-            out = fetch_gleif_deltas(interval="LastDay", dest_dir=str(tmp_path))
+            out = download_deltas(fetch_publish_metadata(), "LastDay", str(tmp_path))
 
         assert out["lei2"].endswith("lei2-LastDay.json.zip")
         assert out["rr"].endswith("rr-LastDay.json.zip")
@@ -288,15 +271,14 @@ class TestTheDownloadedDeltasAreCleanedUp:
 
     def test_a_caller_supplied_directory_is_left_alone(self, tmp_path):
         # `download_deltas` with an explicit dest_dir is the caller's directory to
-        # keep — deleting it would be a surprise, and `fetch_gleif_deltas` exists
-        # precisely so a human can fetch files and look at them.
+        # keep — deleting it would be a surprise.
         #
-        # `fetch_gleif_deltas` fetches the publish record before downloading, so
+        # `fetch_publish_metadata` fetches the publish record before downloading, so
         # httpx.get is patched as well as httpx.stream. Without it this test spent
         # five seconds on the live GLEIF API — a unit test quietly depending on the
         # internet, which is how the country-filter tests came to fail in CI.
         api = MagicMock()
         api.json.return_value = {"data": [self._publish()]}
         with self._patched(), patch("httpx.get", return_value=api):
-            out = fetch_gleif_deltas(interval="LastDay", dest_dir=str(tmp_path))
+            out = download_deltas(fetch_publish_metadata(), "LastDay", str(tmp_path))
         assert os.path.exists(out["lei2"]), "an explicitly requested file was deleted"

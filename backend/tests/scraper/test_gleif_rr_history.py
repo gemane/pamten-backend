@@ -190,8 +190,8 @@ class TestPlan:
 
 
 def test_the_new_basis_is_a_lower_bound_for_time_travel():
-    from app.scraper.owns_merge import is_lower_bound
-    assert is_lower_bound(h.SINCE_BASIS)
+    from app.scraper.owns_merge import STATED_BASES
+    assert h.SINCE_BASIS and h.SINCE_BASIS not in STATED_BASES
 
 
 def _build(tmp_path, monkeypatch, counts: dict[str, int]):

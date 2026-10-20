@@ -1,7 +1,7 @@
 """Why an edge is dimmed, and since when: every stale mark carries its
 reason and evidence date, every clearing drops them, and the history hands
 them to the timeline so a reader can see why a holding went grey."""
-from app.scraper.edge_schema import OWNS_PROPS, STALE_CLEAR, STALE_CLEAR_CYPHER, STALE_REASONS, stale_props
+from app.scraper.edge_schema import OWNS_PROPS, STALE_CLEAR, STALE_CLEAR_CYPHER, STALE_REASONS
 
 
 class TestTheVocabulary:
@@ -11,14 +11,7 @@ class TestTheVocabulary:
             assert f in STALE_CLEAR and f"r.{f} = null" in STALE_CLEAR_CYPHER
         assert STALE_CLEAR["stale"] is False and "r.stale = false" in STALE_CLEAR_CYPHER
 
-    def test_stale_props_names_a_known_reason_and_trims_the_date(self):
-        p = stale_props("13f_not_confirmed", "2026-06-30T00:00:00+00:00")
-        assert p == {"stale": True, "stale_since": "2026-06-30", "stale_reason": "13f_not_confirmed",
-                     "stale_source_url": None}
-        assert stale_props("unconfirmed", None)["stale_since"] is None
-        import pytest
-        with pytest.raises(AssertionError):
-            stale_props("made_up", "2026-01-01")
+    def test_the_four_reasons(self):
         assert set(STALE_REASONS) == {"13f_not_confirmed", "ex21_not_listed", "unconfirmed", "lei_lapsed"}
 
 

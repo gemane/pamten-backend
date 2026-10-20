@@ -53,8 +53,8 @@ and where it is registered are different places and the map can show either.
 | `minority` | > 0% — passive stake |
 | `unknown` | owner known, stake undisclosed — the most common case, and deliberately not guessed |
 
-Values arriving from outside are coerced onto this set (`coerce_ownership_type`),
-and a moderator pin is validated against it at the API boundary. `free_float` is
+A value arriving from outside (the manual create endpoint, a moderator pin) is
+validated against this set at the API boundary. `free_float` is
 **not** a stored value: the widely-held remainder is derived on read as
 `free_float_pct`, because nobody holds the free float.
 

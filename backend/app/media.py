@@ -59,8 +59,6 @@ _MEMORY_SLOTS = 500
 _LARGE_SLOTS = 20          # large files are ~10× a thumbnail; the bucket holds the rest
 S3_PREFIX = "images/"
 
-KINDS = ("entity", "person")
-
 # Licences whose terms a visible credit satisfies for any reuse. Commons'
 # LicenseShortName is the key: "CC BY-SA 4.0", "CC BY 3.0 de", "CC0",
 # "Public domain", "PD-US" and friends. NC / ND variants are excluded by the

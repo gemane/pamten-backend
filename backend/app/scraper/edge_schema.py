@@ -186,13 +186,6 @@ STALE_CLEAR: dict = {"stale": False, "stale_since": None, "stale_reason": None, 
 STALE_CLEAR_CYPHER = "r.stale = false, r.stale_since = null, r.stale_reason = null, r.stale_source_url = null"
 
 
-def stale_props(reason: str, since: str | None, source_url: str | None = None) -> dict:
-    """The property values that set the mark with its evidence."""
-    assert reason in STALE_REASONS, reason
-    return {"stale": True, "stale_since": (since or None) and str(since)[:10],
-            "stale_reason": reason, "stale_source_url": source_url}
-
-
 def edge_create_clause(props: tuple) -> str:
     """``x: $x, y: $y, …`` — writes every schema property from bound params.
 
