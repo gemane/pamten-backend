@@ -130,6 +130,47 @@ tier anyway. Bulk imports still `CREATE` blindly, and the post-import dedup now
 An entity's own record provenance is a different question, answered from its hard
 identifiers (`_entity_own_source_rows`) — claims describe relationships, not nodes.
 
+### Stake history — what a source stated before
+
+A claim holds ONE stake, the latest its source stated, and so does the edge:
+until 2026-10 every 13F quarter, 13D/G amendment and register re-read
+overwrote the number before it, a past year showed today's stake, and nothing
+could say when a holder became material. `StakeHistory` rows keep what was
+overwritten ([`app/stake_history.py`](../backend/app/stake_history.py)):
+
+```
+(:StakeHistory {from_id, to_id, source_id, stake_percent: 6.1, previous_percent: 4.8,
+                as_of: '2025-06-30', filing_type: '13F', source_url, recorded_at})
+```
+
+- **Written on a material change only.** Every claim write — `record_claim`, the
+  bulk importer's batched UPSERT, the PSC refresh's — reads the stored claim
+  first and writes a row when the new stake differs from the old AND one side
+  is at or above **5 %** (the SEC 13D/G line: the holders who must disclose).
+  Sub-5 % 13F drift never reaches the table; a crossing of 5 % always does.
+- **The first change also records the statement it replaces.** A claim's first
+  statement writes nothing — the claim holds it and most never change. When one
+  does, the old stake with its own date goes in beside the new, so the series
+  starts where the claim stood (dated by the source's LAST statement of that
+  number — the claim's date moved with each restatement; before it, time travel
+  falls back to the earliest row anyway). One row per change after that. The pre-read is
+  one indexed query per batch; a re-import that restates everything writes
+  nothing.
+- **`as_of` is when the source stated it**: the filing's date of event, else
+  its filing date; a 13D/G stake re-divided by a newer total of the class
+  (`denominator_date` after the statement) is as of that total. `recorded_at`
+  is when we saw it. `previous_percent` null marks the first kept statement.
+- **Read** by time travel (`full-profile?as_of=` shows the stake the source
+  stated on that day — the latest row on or before it, else the earliest, which
+  is what the edge showed before the table existed; `stake_as_of` says which),
+  by the timeline (**only the two crossings** — `stake_reached`, `stake_dropped`
+  — never the drift between, so a company with six quarterly filers does not
+  drown its real transitions), by `/relationships/stake-history` (the whole
+  series behind a holding's row) and by the spreadsheet export (its own sheet).
+- Rows carry the pair's ids and the source, not the claim key: a merge
+  re-points them with the claims (`migrate_claims` → `stake_history.migrate`).
+- Not read by the subsidiary tree: its edges show the current stake at any date.
+
 ## Source tiers, containment and staleness
 
 Sources sit in tiers, encoded by their credibility scores rather than by name so a

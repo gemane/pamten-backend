@@ -372,17 +372,11 @@ def existing_company_ids() -> set[str]:
     return ids
 
 
-def _claim_stmt(k: int, mapped, params: dict, now: str) -> str:
-    """One batched UPSERT for the claim behind a PSC edge.
+def _claim_props(mapped) -> dict:
+    """The claim behind a PSC edge, as `claim_props` builds it."""
+    from app.claims import claim_props
 
-    The refresh previously touched only the edge, so a claim's `last_seen_at`
-    stayed frozen at bulk-import time and a NEW appointment got no claim at
-    all — while `close_vanished` diligently closed claims this path had never
-    created. Same batching as the edge writes, for the same 60s-proxy reason.
-    """
-    from app.claims import claim_key, claim_props
-
-    props = claim_props(
+    return claim_props(
         kind=KIND_OWNS, from_id=mapped.owner_id, to_id=mapped.company_id,
         source_id=mapped.edge_props.get("source_id"),
         stake_percent=mapped.edge_props.get("stake_percent"),
@@ -397,14 +391,22 @@ def _claim_stmt(k: int, mapped, params: dict, now: str) -> str:
         filing_type=mapped.edge_props.get("filing_type"),
         read_from=mapped.edge_props.get("read_from"),
     )
+
+
+def _claim_stmt(k: int, props: dict, params: dict) -> str:
+    """One batched UPSERT for the claim behind a PSC edge.
+
+    The refresh previously touched only the edge, so a claim's `last_seen_at`
+    stayed frozen at bulk-import time and a NEW appointment got no claim at
+    all — while `close_vanished` diligently closed claims this path had never
+    created. Same batching as the edge writes, for the same 60s-proxy reason.
+    """
     sets = []
     for name, value in props.items():
         pk = f"cl_{name}__{k}"
         params[pk] = value
         sets.append(f"{name} = :{pk}")
-    key = claim_key(KIND_OWNS, mapped.owner_id, mapped.company_id,
-                    props["source_id"])
-    params[f"clkey__{k}"] = key
+    params[f"clkey__{k}"] = props["claim_key"]
     return (f"UPDATE Claim SET {', '.join(sets)}, "
             f"first_seen_at = COALESCE(first_seen_at, :cl_last_seen_at__{k}) "
             f"UPSERT WHERE claim_key = :clkey__{k};")
@@ -455,6 +457,7 @@ class _PscEdgeWriter:
 
     def _flush_updates(self, batch: list) -> None:
         stmts, params = [], {}
+        claims: list[dict] = []
         now = _now_iso()
         for k, m in enumerate(batch):
             # until_reason comes with the record ("ceased" with an end, else
@@ -500,7 +503,13 @@ class _PscEdgeWriter:
             # back every night. PSC's claim below is written regardless.
             stmts.append(f"UPDATE OWNS SET {', '.join(sets)} WHERE psc_self_link = :link__{k} "
                          f"AND (source_id = :src__{k} OR source_id IS NULL);")
-            stmts.append(_claim_stmt(k, m, params, now))
+            claims.append(_claim_props(m))
+            stmts.append(_claim_stmt(k, claims[-1], params))
+        # A record whose stated stake band moved keeps the statement it
+        # replaces (app.stake_history): read against the stored claims before
+        # the UPSERTs above land, in the same script.
+        from app.stake_history import create_statements, rows_for_batch
+        stmts.extend(create_statements(rows_for_batch(claims), params))
         _flush_script("\n".join(stmts), params)
         self.counts["updated"] += len(batch)
 
@@ -547,7 +556,7 @@ class _PscEdgeWriter:
             return
         if shared:
             claim_params: dict = {}
-            _flush_script(_claim_stmt(0, mapped, claim_params, _now_iso()), claim_params)
+            _flush_script(_claim_stmt(0, _claim_props(mapped), claim_params), claim_params)
             since = combine_since(shared[0], {"since": mapped.edge_props.get("since"),
                                               "since_basis": mapped.edge_props.get("since_basis")})
             if since["since"] != shared[0].get("since"):
@@ -560,7 +569,7 @@ class _PscEdgeWriter:
             self.counts["claim_only"] = self.counts.get("claim_only", 0) + 1
             return
         cparams: dict = {}
-        _flush_script(_claim_stmt(0, mapped, cparams, _now_iso()), cparams)
+        _flush_script(_claim_stmt(0, _claim_props(mapped), cparams), cparams)
         props = {**mapped.edge_props, "last_scraped_at": _now_iso()}
         sets = ", ".join(f"{k} = :{k}" for k in props)
         run_sql(

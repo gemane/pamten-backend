@@ -130,7 +130,14 @@ def test_owners_rejects_a_limit_over_the_ceiling(client):
 
 # ── history ───────────────────────────────────────────────────────────────────
 
-def test_history_limit_applies_per_category(client, fake_db):
+@pytest.fixture
+def no_stake_history(monkeypatch):
+    # the timeline's 5 % crossings read the StakeHistory table through run_sql,
+    # outside the fake session — none here
+    monkeypatch.setattr("app.stake_history.history_for_entity", lambda eid: [])
+
+
+def test_history_limit_applies_per_category(client, fake_db, no_stake_history):
     # Inbound ownership, outbound ownership and roles are three queries. Limiting
     # the merged total would let one noisy category crowd out the others, so the
     # response can hold up to 3 x limit events.
@@ -141,7 +148,7 @@ def test_history_limit_applies_per_category(client, fake_db):
     assert r.headers[TRUNCATED_HEADER] == "false"
 
 
-def test_history_flags_truncation_from_any_category(client, fake_db):
+def test_history_flags_truncation_from_any_category(client, fake_db, no_stake_history):
     # Only the third query overflows — the flag must still be set.
     fake_db.queue([], [], _role_rows(3))
     r = client.get("/relationships/history/e1", params={"limit": 2})

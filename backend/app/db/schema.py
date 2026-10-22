@@ -120,6 +120,11 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Claim",       "from_id",      "NOTUNIQUE"),
     ("Claim",       "to_id",        "NOTUNIQUE"),
     ("Claim",       "source_id",    "NOTUNIQUE"),
+    # The dated stake statements a claim overwrote (see app/stake_history.py):
+    # read by holder (to_id) for a company's timeline and time travel, by
+    # holding (from_id) for what it owns; a merge re-points both columns.
+    ("StakeHistory", "from_id",     "NOTUNIQUE"),
+    ("StakeHistory", "to_id",       "NOTUNIQUE"),
     # Refresh tokens (see app/auth/refresh.py). token_hash is UNIQUE because it
     # identifies the row on every refresh and two tokens must never collide;
     # user_id and family_id are the revoke-all and replay-response paths.

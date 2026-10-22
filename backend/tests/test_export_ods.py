@@ -216,6 +216,13 @@ SOURCES = [{"name": "SEC EDGAR", "type": "register", "credibility_score": 98, "u
 CLAIMS_TO = [{"kind": "owns", "from_id": "br", "to_id": "ms", "stake_percent": 7.3, "source_id": "sec",
               "source_url": "https://example.com/13g", "first_seen_at": "2026-01-01T00:00:00Z"}]
 CLAIMS_FROM = [{"kind": "owns", "from_id": "ms", "to_id": "li", "stake_percent": 100, "source_id": "sec"}]
+# the kept stake statements, oldest first as the reader returns them
+STAKE_ROWS = [{"from_id": "br", "to_id": "ms", "source_id": "sec", "stake_percent": 4.8, "previous_percent": None,
+               "as_of": "2024-02-13", "filing_type": "13G", "source_url": "https://example.com/13g",
+               "recorded_at": "2026-09-11T12:48:35Z"},
+              {"from_id": "br", "to_id": "ms", "source_id": "sec", "stake_percent": 7.3, "previous_percent": 4.8,
+               "as_of": "2025-02-13", "filing_type": "13G/A", "source_url": "https://example.com/13ga",
+               "recorded_at": "2026-09-11T12:48:35Z"}]
 
 
 @pytest.fixture
@@ -244,6 +251,7 @@ def readers(monkeypatch):
     monkeypatch.setattr(sources, "get_sources_for_entity", lambda eid: SOURCES)
     monkeypatch.setattr(claims, "claims_for", claims_for)
     monkeypatch.setattr(mod, "source_names", lambda: {"sec": "SEC EDGAR"})
+    monkeypatch.setattr("app.stake_history.history_for_entity", lambda eid: STAKE_ROWS)
     return calls
 
 
@@ -253,10 +261,11 @@ def column(rows, name):
 
 
 class TestTheWorkbook:
-    def test_seven_sheets_from_the_uncapped_readers(self, readers):
+    def test_eight_sheets_from_the_uncapped_readers(self, readers):
         filename, data = build_workbook("ms", ExportOptions())
         s = sheets_of(data)
-        assert list(s) == ["Overview", "Owners", "Subsidiaries", "Roles", "Timeline", "Sources", "Claims"]
+        assert list(s) == ["Overview", "Owners", "Subsidiaries", "Roles", "Timeline", "Sources", "Claims",
+                           "Stake history"]
         assert filename == "MICROSOFT CORPORATION.ods"
         assert readers["profile"] == ("ms", mod.EXPORT_SECTION_LIMIT, None)
         assert readers["history"][1] >= 2_000                   # the history's own maximum
@@ -341,6 +350,19 @@ class TestTheWorkbook:
                                                                  ("MICROSOFT CORPORATION", "LinkedIn")]
         assert column(s["Claims"], "Source") == [("string", "SEC EDGAR"), ("string", "SEC EDGAR")]
         assert column(s["Claims"], "First seen") == [("string", "2026-01-01T00:00:00Z"), (None, "")]
+
+    def test_the_stake_history_sheet_lists_every_kept_statement_oldest_first(self, readers):
+        _, data = build_workbook("ms", ExportOptions())
+        s = sheets_of(data)
+        assert s["Stake history"][0][:6] == [("string", "Kind"), ("string", "Owner"), ("string", "Company"),
+                                             ("string", "As of"), ("string", "Stake"), ("string", "Previous")]
+        assert [r[:6] for r in s["Stake history"][1:]] == [
+            [("string", "Owned by"), ("string", "BlackRock"), ("string", "MICROSOFT CORPORATION"),
+             ("date", "2024-02-13"), ("percentage", "4.8 %"), (None, "")],
+            [("string", "Owned by"), ("string", "BlackRock"), ("string", "MICROSOFT CORPORATION"),
+             ("date", "2025-02-13"), ("percentage", "7.3 %"), ("percentage", "4.8 %")]]
+        assert column(s["Stake history"], "Source") == [("string", "SEC EDGAR"), ("string", "SEC EDGAR")]
+        assert column(s["Stake history"], "Filing") == [("string", "13G"), ("string", "13G/A")]
 
     def test_the_filename_is_safe_and_names_the_year(self, readers):
         PROFILE["entity"]["name"] = 'A/B "Co" <x>'

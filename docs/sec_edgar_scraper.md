@@ -179,8 +179,10 @@ on the old HTML covers — and the filing date (`source_date`) is when it was
 said, often weeks later. It is stored as `event_date` on every 13D/G edge (the
 holder's, a voting group's, a filer's own holdings), replaced by each newer
 filing and cleared when one states none; an unreadable date is `None`, never a
-guess. Only the latest amendment is kept, so the count has an as-of day but no
-history — time travel shows a past year with today's stake.
+guess. The edge and the claim keep only the latest amendment; a change in a
+holding at or above 5 % keeps the overwritten statement as stake history
+(data-model, *Stake history*), which time travel and the timeline's 5 %
+crossings read — a sub-5 % holding still shows today's stake in a past year.
 
 **So older holdings are restated** (`_restate_against_newest_denominator`, at the
 end of `fetch_ownership_filings`). Among the schedules about one issuer, the
