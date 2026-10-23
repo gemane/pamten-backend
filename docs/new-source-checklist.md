@@ -77,6 +77,16 @@ parser. Anything that does not map is either a new property (document it) or noi
       test alone made it AB InBev's majority owner. And never *derive* other holders'
       voting from someone's bloc: pooled votes dilute nobody; only extra votes per share
       (a dual-class issuer) do, and then only the source's own class votes say by how much.
+- [ ] **One holding, two figures: of record versus beneficial.** A source can state the
+      same holding in two documents that answer different questions. Musk's Form 4 counts
+      what is registered to him (1,123 M Tesla shares, 28.4 % — "controlling" by the 20 %
+      line); his 13G/A of the same day counts what he beneficially owns (699.6 M, 19.9 %),
+      the 423.7 M restricted award shares disclaimed under an irrevocable proxy. Both are
+      faithful; only one is the stake. Decide which document wins AT THE WRITE SITE
+      (`sec_writer.stated_by_13dg`: a 13D/G statement is the whole stake, the Form 4
+      speaks only for insiders who file none, an exited 13D/G no longer speaks), never
+      by the order of the loops — "last writer wins" made him a 28 % controlling holder
+      and flipped the figure on every run.
 - [ ] **Store the count beside the percentage, and say whose denominator it is.** A stake
       is `shares / shares_outstanding`, and only the count belongs to the holder; the total
       moves with every issue and buy-back. Bevco's last 13D/A (2020) said 5.9 % of AB InBev;
@@ -87,9 +97,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       representing one ordinary share" are the ordinary shares).
       **The count must be the whole holding** before anything divides it again: a filer
       alone holds its sole AND its shared rows (SoftBank's Alibaba stake is 3.8 M sole
-      + 627 M through subsidiaries; the sole row alone became 0.02 %). Check that
-      `shares ÷` its own total gives back the filed percentage, and don't recalculate
-      a row where it doesn't.
+      + 627 M through subsidiaries; the sole row alone became 0.02 %) — and never
+      MORE than its stated aggregate: Musk's Tesla 13G/A lists the same 699,580,882
+      shares as sole AND shared, and the sum stored twice his holding. Row 9 is the
+      union of the power rows; a sum above it is the same shares counted twice. Check
+      that `shares ÷` its own total gives back the filed percentage, and don't
+      recalculate a row where it doesn't.
       **A denominator needs a date, and a count needs its class.** A total that is the
       latest value of a series the issuer stopped keeping is not its current count:
       Berkshire's plain XBRL series ended in 2011 and its last value, 941,481 Class A
@@ -426,7 +439,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         (`event_date`, else `source_date`). Below 5 % an edge still holds only the
         latest numbers, so a past year shows today's stake. If the source publishes
         history (amendments, annual lists, archived snapshots), say in the source doc
-        what is kept and what is lost.
+        what is kept and what is lost. **A run must state a holding once**: two
+        documents of one source written into the one claim per (pair, source) in a
+        single run — the 13G/A, then the Form 4 — recorded a 28 → 20 → 28 flap as
+        history on every run, a ping-pong that had been silent before history
+        existed. Wrap the runner's write phase in `one_statement_per_run()`
+        (`app.stake_history`): the stored claim is read once, the rows are computed
+        at the end against the run's LAST write. Any runner that can write a claim
+        twice per run needs it. And a statement dated BEFORE the one it replaces
+        writes no replaced row — history is ordered by `as_of`, not by when you ran.
       - **The timeline words what you write.** The panel's Timeline tells
         transitions (a start, an end, the day a holding stopped being confirmed),
         and every sentence it shows comes from a code on the edge:
@@ -664,6 +685,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       every new variable.
 - [ ] **`/scraper/status` reports the new flag**, so "is it on?" is answerable without a
       deploy.
+- [ ] **Run it once on dev and read what it wrote to `StakeHistory`.** The flap above
+      passed every unit test, mutant and integration test; the first real run on dev
+      showed it as three history rows for one holder in one run. After a new source's
+      first run, list its rows (`SELECT FROM StakeHistory WHERE source_id = …`): more
+      than one row per pair from one run, or a `previous_percent` that equals an older
+      row's figure, is the writer stating a holding twice. Fix the writer; the rows are
+      then deleted and the source re-run (the delete is a dev write — the user's word).
 - [ ] **`register()` validates against the catalogue** — the `KNOWN_SOURCES` entry must
       exist, the kind must match, and the settings flag must be real (Pydantic rejects
       unknown fields, so a test cannot monkeypatch a flag that was never declared). Patch
