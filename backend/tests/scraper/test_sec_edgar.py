@@ -2388,6 +2388,41 @@ class TestALoneFilersHoldingIsBothRows:
         assert _shares_held({}, 5000, in_group=False) == 5000
         assert _shares_held({"sole_dispositive": 0, "shared_dispositive": 0}, None, in_group=False) is None
 
+
+class TestTheSameSharesInBothRows:
+    """Musk's Tesla 13G/A (amendment 17, June 2026) lists its 699,580,882
+    shares as sole AND shared power, voting and dispositive alike, with the
+    aggregate at the same 699,580,882. The lone-filer rule added the two rows
+    and stored 1,399,161,764 — twice the holding, 35 % of Tesla by count
+    beside the filed 19.9 %. The aggregate is the union of the power rows and
+    caps the sum."""
+
+    def test_the_real_filing(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml, _shares_held, _stake_from_person
+        d = _parse_13dg_xml(_fixture("13ga_musk_tesla.xml"))
+        assert len(d["persons"]) == 1 and d["schedule"] == "13G"
+        p = d["persons"][0]
+        assert p["aggregate"] == 699_580_882
+        assert p["sole_dispositive"] == p["shared_dispositive"] == 699_580_882
+        rows = {k: p[k] for k in ("sole_voting", "shared_voting", "sole_dispositive",
+                                  "shared_dispositive") if p.get(k) is not None}
+        assert _shares_held(rows, p["aggregate"], in_group=False) == 699_580_882
+        stake, voting = _stake_from_person(d, p)
+        assert stake == 19.9 and voting is None
+
+    def test_the_aggregate_caps_the_sum_only_when_the_rows_overlap(self):
+        from app.scraper.sec_edgar import _shares_held
+        # overlapping rows: a sum above the aggregate is the aggregate
+        assert _shares_held({"sole_dispositive": 100, "shared_dispositive": 60}, 120, in_group=False) == 120
+        # disjoint rows (SoftBank's shape): the sum IS the aggregate
+        assert _shares_held({"sole_dispositive": 100, "shared_dispositive": 900}, 1000, in_group=False) == 1000
+        # an aggregate above the sum is no cap: dispositive power is the holding
+        assert _shares_held({"sole_dispositive": 100, "shared_dispositive": 100}, 500, in_group=False) == 200
+        # nothing to cap against
+        assert _shares_held({"sole_dispositive": 100, "shared_dispositive": 100}, None, in_group=False) == 200
+        # a bloc member is untouched: sole where it has any
+        assert _shares_held({"sole_dispositive": 100, "shared_dispositive": 100}, 100, in_group=True) == 100
+
     def test_the_scrape_result_carries_the_whole_holding(self):
         from unittest.mock import patch
         from app.scraper import sec_edgar

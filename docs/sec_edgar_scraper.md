@@ -215,7 +215,13 @@ when neither row is given. That is the rule for a **member of a bloc**, whose
 shared rows are the group's. A filer **alone** holds both rows: SoftBank's
 Alibaba 13G/A has 3,788,048 sole and 627,002,296 shared (through its
 subsidiaries) — 630,790,344, its 3.3 %; the sole row alone made it 0.02 %
-wherever the count was divided again. Zero is not a holding: absent stays absent, because a
+wherever the count was divided again. The aggregate (row 9) is the union of the
+power rows and **caps that sum**: Musk's Tesla 13G/A lists its 699,580,882 shares
+as sole *and* shared, voting and dispositive alike, and the sum stored twice his
+holding (1,399,161,764 — 35 % of Tesla by count beside the filed 19.9 %). A sum
+above the aggregate counts the same shares twice, so the aggregate is the holding;
+a sum below it stands, since the aggregate may include shares the filer only
+votes. Zero is not a holding: absent stays absent, because a
 nil position and an unstated one are different facts.
 
 Form 3/4 states an insider's holding exactly, and that count is now kept too —
