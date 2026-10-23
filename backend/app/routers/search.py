@@ -740,6 +740,10 @@ def get_full_profile(
         for sub in subsidiaries:
             _attach_corroboration(sub["relationship"], claims,
                                   entity_id, sub["entity"].get("id"), "owns")
+        # Which holdings have stake history (the row offers it), and — on a
+        # date — the stake the source stated that day (app.stake_history).
+        # Before the summary below, which must add up the numbers the rows show.
+        _attach_stake_history(entity_id, owners, subsidiaries, as_of)
         descendants_truncated = _attach_descendants(entity_id, subsidiaries, as_of)
 
         execs_by: dict[tuple, dict] = {}
@@ -800,6 +804,34 @@ def get_full_profile(
             "succeeded_by": _succession_rows(record["succeeded_by"], hidden),
             "replaces": _succession_rows(record["replaces"], hidden),
         }
+
+
+def _attach_stake_history(entity_id: str, owners: list[dict], subsidiaries: list[dict],
+                          as_of: str | None) -> None:
+    """Mark each holding that has stake history (`stake_history: true` — the
+    client offers the series behind the row) and, on a date, replace its stake
+    with the one its source stated on `as_of` (`stake_as_of` = that statement's
+    date). A holding without rows keeps the edge's number: its source never
+    changed it. Best-effort — the profile stands without its garnish."""
+    from app.stake_history import history_for_entity, stakes_as_of
+    try:
+        rows = history_for_entity(entity_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("stake history unreadable for %s: %s", entity_id, exc)
+        return
+    if not rows:
+        return
+    pairs = {(r.get("from_id"), r.get("to_id")) for r in rows}
+    in_force = stakes_as_of(rows, as_of) if as_of else {}
+    for party_key, items, pair_of in (("owner", owners, lambda i: (i["owner"].get("id"), entity_id)),
+                                      ("entity", subsidiaries, lambda i: (entity_id, i["entity"].get("id")))):
+        for item in items:
+            rel, pair = item["relationship"], pair_of(item)
+            if pair in pairs:
+                rel["stake_history"] = True
+            hit = in_force.get((*pair, rel.get("source_id")))
+            if hit:
+                rel["stake_percent"], rel["stake_as_of"] = hit["stake_percent"], hit["as_of"]
 
 
 def _attach_descendants(entity_id: str, subsidiaries: list[dict], as_of: str | None) -> bool:

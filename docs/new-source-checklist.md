@@ -420,10 +420,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         the false positives before shipping (Barclays Bank: its subsidiaries were
         wrong, not its parent record) and choose the failure that weakens a fact
         rather than one that asserts a false one.
-      - **What it can't do yet**: an edge holds the latest amendment's numbers, so a
-        past year shows today's stake. If the source publishes history (amendments,
-        annual lists, archived snapshots), say in the source doc what is kept and
-        what is lost.
+      - **Stake history comes for free — above 5 %.** Every claim write keeps the
+        statement it overwrites when a holding at or above 5 % changes (data-model,
+        *Stake history*); you need do nothing but pass the statement's date
+        (`event_date`, else `source_date`). Below 5 % an edge still holds only the
+        latest numbers, so a past year shows today's stake. If the source publishes
+        history (amendments, annual lists, archived snapshots), say in the source doc
+        what is kept and what is lost.
       - **The timeline words what you write.** The panel's Timeline tells
         transitions (a start, an end, the day a holding stopped being confirmed),
         and every sentence it shows comes from a code on the edge:

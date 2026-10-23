@@ -102,6 +102,30 @@ class TestPermissionGuards:
             with pytest.raises(PermissionError, match="SEC EDGAR"):
                 run_scrape_sec_edgar("Tesla")
 
+    def test_run_scrape_sec_edgar_writes_inside_one_statement_per_run(self):
+        """The write phase runs inside app.stake_history.one_statement_per_run, so a
+        holder's 13D/G figure and then their Form 4 figure count as one statement."""
+        events = []
+
+        @contextmanager
+        def fake_run():
+            events.append("enter")
+            yield
+            events.append("exit")
+        data = {"name": "Tesla, Inc.", "cik": "0001318605"}
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.scraper_registry.get_source_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
+             patch("app.scraper.runner.one_statement_per_run", fake_run), \
+             patch("app.scraper.runner._write_sec_edgar",
+                   side_effect=lambda *a: (events.append("write"), {"status": "ok"})[1]) as write:
+            assert run_scrape_sec_edgar("Tesla, Inc.") == {"status": "ok"}
+        assert events == ["enter", "write", "exit"]
+        write.assert_called_once_with("Tesla, Inc.", data, "US")
+
     def test_run_scrape_oc_requires_master_flag(self):
         with patch.object(settings, "SCRAPER_ENABLED", False):
             with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):
@@ -860,6 +884,7 @@ def test_sec_insider_with_shares_gets_owns_edge():
     with patch("app.scraper.runner.get_source_enabled", return_value=True), \
          patch("app.scraper.runner.db.get_session", ctx), \
          patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+         patch("app.scraper.runner.stated_by_13dg", return_value=False), \
          patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)):
         result = run_scrape_sec_edgar("BlackRock")
 
@@ -894,11 +919,110 @@ def test_sec_person_centric_insider_owns():
          patch("app.scraper.sec_edgar.fetch_insider_holding",
                return_value={"shares_owned": 2000, "stake_percent": 2.0,
                              "source_url": "https://sec.gov/f4", "source_date": "2024-02-01"}), \
+         patch("app.scraper.runner.stated_by_13dg", return_value=False), \
          patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)):
         run_scrape_sec_edgar("BlackRock")
 
     assert len(owns) == 1
     assert owns[0]["owner_id"] == "fink" and owns[0]["stake_percent"] == 2.0
+
+
+# ── Of record versus beneficial: a 13D/G statement beats the Form 4 count ────
+
+class TestForm4YieldsTo13dg:
+    """At each of the three Form 4 write sites the runner asks
+    sec_writer.stated_by_13dg(owner, company, source) and, when the holder has an
+    active 13D/G statement, writes nothing and notes it in the run."""
+
+    YIELDED = "insider owner (13D/G states the holding)"
+
+    def _run(self, data, stated, **extra):
+        from app.scraper.runner import run_scrape_sec_edgar
+        owns, asked = [], []
+
+        def fake_stated(owner, company, source):
+            asked.append(owner)
+            return owner in stated
+        ctx, _ = _make_session_mock()
+        patches = [
+            patch("app.scraper.runner.get_source_enabled", return_value=True),
+            patch("app.scraper.runner._ensure_source", return_value="sec"),
+            patch("app.scraper.runner.db.get_session", extra.pop("ctx", ctx)),
+            patch("app.scraper.sec_edgar.scrape_company", return_value=data),
+            patch("app.scraper.runner.stated_by_13dg", side_effect=fake_stated),
+            patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)),
+        ] + [patch(k, **v) for k, v in extra.items()]
+        for p in patches:
+            p.start()
+        try:
+            result = run_scrape_sec_edgar("Tesla")
+        finally:
+            for p in patches:
+                p.stop()
+        return owns, asked, result
+
+    def test_an_officer_with_a_13dg_statement_gets_no_form_4_write(self):
+        data = {"cik": "0001318605", "name": "Tesla",
+                "ownership_filings": [],
+                "executives": [
+                    {"name": "Musk Elon", "role": "CEO", "shares_owned": 1123324786,
+                     "stake_percent": 28.4188, "source_url": "https://sec.gov/f4", "source_date": "2026-06-17"},
+                    {"name": "Taneja Vaibhav", "role": "CFO", "shares_owned": 100000,
+                     "stake_percent": 0.003, "source_url": "https://sec.gov/f4b", "source_date": "2026-06-17"},
+                ]}
+        with patch("app.scraper.runner._upsert_person_by_name", side_effect=lambda name, **kw: name.split()[0].lower()), \
+             patch("app.scraper.runner._upsert_entity_by_name", return_value="tsla"), \
+             patch("app.scraper.runner._upsert_role_sec"):
+            owns, asked, result = self._run(data, stated={"musk"})
+        assert asked == ["musk", "taneja"]
+        assert [(o["owner_id"], o["stake_percent"], o["filing_type"]) for o in owns] == [("taneja", 0.003, "Form 4")]
+        yielded = [r for r in result["scraped"] if r["role"] == self.YIELDED]
+        assert [r["name"] for r in yielded] == ["Musk Elon"]
+
+    def test_a_company_form_4_filer_with_a_13dg_statement_gets_no_form_4_write(self):
+        data = {"cik": "0000070858", "name": "Bank of America",
+                "ownership_filings": [],
+                "executives": [
+                    {"name": "Berkshire Hathaway Inc", "role": "Director", "shares_owned": 600000000,
+                     "stake_percent": 8.1, "source_url": "https://sec.gov/f4", "source_date": "2026-06-17"},
+                ]}
+        with patch("app.scraper.runner._upsert_entity_by_name",
+                   side_effect=lambda name, **kw: "brk" if name.startswith("Berkshire") else "bac"):
+            owns, asked, result = self._run(data, stated={"brk"})
+        assert asked == ["brk"] and owns == []
+        assert [r["name"] for r in result["scraped"] if r["role"] == self.YIELDED] == ["Berkshire Hathaway Inc"]
+
+    def test_the_person_centric_pass_yields_too(self):
+        from contextlib import contextmanager
+        data = {"cik": "0001318605", "name": "Tesla", "ownership_filings": [],
+                "executives": [], "shares_outstanding": 3952757946.0}
+
+        @contextmanager
+        def fake_ctx():
+            sess = MagicMock()
+            sess.run.return_value = [{"id": "musk", "name": "Elon Musk"}]
+            yield sess
+        owns, asked, result = self._run(
+            data, stated={"musk"}, ctx=fake_ctx,
+            **{"app.scraper.runner._upsert_entity_by_name": {"return_value": "tsla"},
+               "app.scraper.sec_edgar.fetch_insider_holding": {"return_value": {
+                   "shares_owned": 1123324786, "stake_percent": 28.4188,
+                   "source_url": "https://sec.gov/f4", "source_date": "2026-06-17"}}})
+        assert asked == ["musk"] and owns == []
+        assert [r["name"] for r in result["scraped"] if r["role"] == self.YIELDED] == ["Elon Musk"]
+
+    def test_without_a_13dg_statement_the_form_4_writes_as_before(self):
+        data = {"cik": "0001318605", "name": "Tesla", "ownership_filings": [],
+                "executives": [{"name": "Musk Elon", "role": "CEO", "shares_owned": 1123324786,
+                                "stake_percent": 28.4188, "source_url": "https://sec.gov/f4",
+                                "source_date": "2026-06-17"}]}
+        with patch("app.scraper.runner._upsert_person_by_name", return_value="musk"), \
+             patch("app.scraper.runner._upsert_entity_by_name", return_value="tsla"), \
+             patch("app.scraper.runner._upsert_role_sec"):
+            owns, asked, result = self._run(data, stated=set())
+        assert asked == ["musk"]
+        assert [(o["owner_id"], o["stake_percent"], o["filing_type"]) for o in owns] == [("musk", 28.4188, "Form 4")]
+        assert not [r for r in result["scraped"] if r["role"] == self.YIELDED]
 
 
 # ── source_id stamping on entity nodes (provenance for the node panel) ─────────

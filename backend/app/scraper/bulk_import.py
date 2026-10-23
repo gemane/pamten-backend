@@ -308,6 +308,11 @@ class _BatchWriter:
         """
         if not self._claims:
             return
+        from app.stake_history import create_statements, rows_for_batch
+        # Against the stored claims, before the UPSERTs replace them: a material
+        # stake change keeps the overwritten statement (app.stake_history). One
+        # indexed pre-read per batch; rows are rare (a re-import mostly restates).
+        history = rows_for_batch(self._claims)
         stmts, params = [], {}
         for k, claim in enumerate(self._claims):
             sets = []
@@ -318,6 +323,7 @@ class _BatchWriter:
             sets.append(f"first_seen_at = COALESCE(first_seen_at, :c_last_seen_at__{k})")
             stmts.append(
                 f"UPDATE Claim SET {', '.join(sets)} UPSERT WHERE claim_key = :c_claim_key__{k};")
+        stmts.extend(create_statements(history, params))
         _flush_script("\n".join(stmts), params)
 
     def _flush_edges(self) -> None:

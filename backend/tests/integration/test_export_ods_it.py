@@ -60,7 +60,8 @@ def test_the_present_direct_export(it_db, client):
     assert r.headers["content-type"].startswith("application/vnd.oasis.opendocument.spreadsheet")
     assert r.headers["content-disposition"].startswith('attachment; filename="Microsoft.ods"')
     s = sheets_of(r.content)
-    assert list(s) == ["Overview", "Owners", "Subsidiaries", "Roles", "Timeline", "Sources", "Claims"]
+    assert list(s) == ["Overview", "Owners", "Subsidiaries", "Roles", "Timeline", "Sources", "Claims",
+                       "Stake history"]
 
     overview = {row[0][1]: row[1][1] for row in s["Overview"][1:] if row[0][1]}
     assert overview["Name"] == "Microsoft" and overview["Owners"] == "1" and overview["Subsidiaries (direct)"] == "2"

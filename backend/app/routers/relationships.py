@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -17,6 +18,8 @@ from app.claims import ACQUISITION_FILING_TYPES, KIND_OWNS, record_claim
 from app.former_names import rename_events
 from app.routers.search import _NOT_A_SHORTCUT
 from app.scraper.owns_merge import started_by_clause
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/relationships", tags=["Relationships"])
 
@@ -649,6 +652,55 @@ def _end(r) -> dict:
             "source_url": r.get("source_url")}
 
 
+def _nodes_by_id(ids: set[str]) -> dict[str, dict]:
+    """Entity or Person records for these ids — the counterparties of stake
+    rows, which carry ids only. Two indexed lookups, never an unlabelled scan."""
+    from app.db.arcadedb import run_sql
+    out: dict[str, dict] = {}
+    ids = {i for i in ids if i}
+    if not ids:
+        return out
+    for label in ("Entity", "Person"):
+        for r in run_sql(f"SELECT FROM {label} WHERE id IN :ids", {"ids": sorted(ids)}):
+            out[r["id"]] = {k: v for k, v in r.items() if not k.startswith("@")}
+    return out
+
+
+def _stake_crossing_events(entity_id: str) -> list[dict]:
+    """Timeline entries for every 5 % crossing about this entity: a holder
+    reaching the line (`stake_reached`) or dropping below it (`stake_dropped`),
+    inbound and outbound, dated by the statement (`since` = the row's `as_of`
+    so the timeline sorts it with everything else)."""
+    from app.stake_history import crossings, history_for_entity
+    try:
+        rows = crossings(history_for_entity(entity_id))
+    except Exception as exc:  # noqa: BLE001 - the timeline must not fall with its garnish
+        log.warning("stake history unreadable for %s, crossings left out: %s", entity_id, exc)
+        return []
+    if not rows:
+        return []
+    nodes = _nodes_by_id({r["from_id"] for r in rows} | {r["to_id"] for r in rows})
+    events = []
+    for r in rows:
+        inbound = r["to_id"] == entity_id
+        party_id = r["from_id"] if inbound else r["to_id"]
+        events.append({
+            "kind": "stake_reached" if r["crossing"] == "reached" else "stake_dropped",
+            "direction": "in" if inbound else "out",
+            "party": nodes.get(party_id) or {"id": party_id},
+            "since": r.get("as_of"),
+            "since_basis": None,
+            "until": None,
+            "active": None,
+            "stake_percent": r.get("stake_percent"),
+            "previous_percent": r.get("previous_percent"),
+            "source_id": r.get("source_id"),
+            "filing_type": r.get("filing_type"),
+            "source_url": r.get("source_url"),
+        })
+    return events
+
+
 def ownership_history_of(
     entity_id: str, limit: int = HISTORY_DEFAULT_LIMIT,
 ) -> tuple[list[dict], bool]:
@@ -750,11 +802,40 @@ def ownership_history_of(
             events.extend({**ev, "party": None}
                           for ev in rename_events(rec.get("name"), rec.get("former_names")))
 
+    # A holding crossing the 5 % line — reached, or dropped below — the only
+    # stake movement the timeline tells; the quarterly drift between stays in
+    # the holding's own history (app.stake_history), where it cannot flood this.
+    events.extend(_stake_crossing_events(entity_id))
+
     # Dated events first (desc), undated at bottom
     def sort_key(e):
         return e["since"] or ""
 
     return sorted(events, key=sort_key, reverse=True), truncated
+
+
+@router.get("/stake-history")
+def get_stake_history(
+    from_id: Annotated[str, Query(min_length=1, description="The holder (entity or person id)")],
+    to_id: Annotated[str, Query(min_length=1, description="The company held")],
+):
+    """Every dated stake statement kept for one holding, every source, newest
+    first — what sits behind the holding's row when the reader opens it. Empty
+    when no source ever changed its number for the pair (the edge holds the one
+    statement). Only holdings at or above 5 % are kept (app.stake_history)."""
+    from app.stake_history import history_for_pair
+    from app.merged_ids import canonical_id
+    sources = _source_names()
+    rows = history_for_pair(canonical_id(from_id), canonical_id(to_id))
+    return [{**r, "source_name": sources.get(r.get("source_id"))} for r in rows]
+
+
+def _source_names() -> dict[str, str]:
+    from app.db.arcadedb import run_sql
+    try:
+        return {r["id"]: r.get("name") for r in run_sql("SELECT id, name FROM Source")}
+    except Exception:  # noqa: BLE001 - a name is a nicety, the id is the fact
+        return {}
 
 
 @router.get("/history/{entity_id:path}")

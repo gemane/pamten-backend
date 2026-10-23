@@ -2636,7 +2636,14 @@ def _shares_held(rows: dict, aggregate: int | None, in_group: bool = True) -> in
         # rows are its holding: SoftBank's Alibaba 13G/A has 3,788,048 sole and
         # 627,002,296 shared (its subsidiaries), and the sole figure alone made
         # a 3.3 % holder a 0.02 % one wherever the count was divided again.
-        return (sole or 0) + (shared or 0)
+        held = (sole or 0) + (shared or 0)
+        # ...unless the rows overlap. The aggregate (row 9) is the union of
+        # the power rows, so a sum above it counts the same shares twice:
+        # Musk's Tesla 13G/A lists its 699,580,882 shares as sole AND shared,
+        # voting and dispositive alike, and the sum stored twice his holding.
+        if aggregate and held > aggregate:
+            return aggregate
+        return held
     if sole:
         return sole
     if shared:

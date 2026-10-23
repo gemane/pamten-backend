@@ -447,6 +447,16 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
                    c.get("read_from")]
                   for c in claims]
 
+    # Every kept stake statement about the company's holders and holdings —
+    # the full series the timeline deliberately shows only the crossings of.
+    from app.stake_history import history_for_entity
+    stake_rows = [["Owned by" if h.get("to_id") == entity_id else "Owns",
+                   names.get(h.get("from_id"), h.get("from_id")), names.get(h.get("to_id"), h.get("to_id")),
+                   h.get("as_of"), _pct(h.get("stake_percent")), _pct(h.get("previous_percent")),
+                   _source(h.get("source_id"), sources), h.get("filing_type"),
+                   Link(h["source_url"]) if h.get("source_url") else None, h.get("recorded_at")]
+                  for h in history_for_entity(entity_id)]
+
     counts = profile.get("counts") or {}
     stake_label = ("any" if not opt.min_stake else
                    f"{'>' if opt.min_stake_exclusive else '>='} {_num(opt.min_stake)} %")
@@ -486,6 +496,8 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
         Sheet("Claims", ["Kind", "From", "To", "Role", "Ownership type", "Stake", "Voting power", "Since",
                          "Since basis", "Until", "Source", "Filing", "Source URL", "Source date", "Credibility",
                          "First seen", "Last seen"], claim_rows),
+        Sheet("Stake history", ["Kind", "Owner", "Company", "As of", "Stake", "Previous", "Source", "Filing",
+                                "Source URL", "Recorded"], stake_rows),
     ]
     suffix = f" as of {opt.as_of[:4]}" if opt.as_of and _ISO_DATE.match(opt.as_of) else ""
     filename = re.sub(r"[^\w .()&-]+", "_", name).strip() or "company"

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13g" xmlns:com="http://www.sec.gov/edgar/common">
+  <schemaVersion>X0202</schemaVersion>
+<headerData>
+    <submissionType>SCHEDULE 13G/A</submissionType>
+    <filerInfo>
+      <filer>
+        <filerCredentials>
+          <!-- Field: Pseudo-Tag; ID: Name; Data: Musk Elon -->
+          <cik>0001494730</cik>
+          <ccc>XXXXXXXX</ccc>
+        </filerCredentials>
+      </filer>
+      <liveTestFlag>LIVE</liveTestFlag>
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <coverPageHeader>
+      <amendmentNo>17</amendmentNo>
+      <securitiesClassTitle>Common Stock, $0.001 par value per share</securitiesClassTitle>
+      <eventDateRequiresFilingThisStatement>06/16/2026</eventDateRequiresFilingThisStatement>
+      <issuerInfo>
+        <issuerCik>0001318605</issuerCik>
+        <issuerName>Tesla, Inc.</issuerName>
+        <issuerCusips>
+          <issuerCusipNumber>88160R101</issuerCusipNumber>
+        </issuerCusips>
+        <issuerPrincipalExecutiveOfficeAddress>
+          <com:street1>1 Tesla Road</com:street1>
+          <com:city>Austin</com:city>
+          <com:stateOrCountry>TX</com:stateOrCountry>
+          <com:zipCode>78725</com:zipCode>
+        </issuerPrincipalExecutiveOfficeAddress>
+      </issuerInfo>
+      <designateRulesPursuantThisScheduleFiled>
+        <designateRulePursuantThisScheduleFiled>Rule 13d-1(d)</designateRulePursuantThisScheduleFiled>
+      </designateRulesPursuantThisScheduleFiled>
+    </coverPageHeader>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>Elon R. Musk</reportingPersonName>
+      <memberGroup>b</memberGroup>
+      <citizenshipOrOrganization>X1</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>699580882.00</soleVotingPower>
+        <sharedVotingPower>699580882.00</sharedVotingPower>
+        <soleDispositivePower>699580882.00</soleDispositivePower>
+        <sharedDispositivePower>699580882.00</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>699580882.00</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>19.9</classPercent>
+      <typeOfReportingPerson>IN</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <items>
+      <item1>
+        <issuerName>Tesla, Inc.</issuerName>
+        <issuerPrincipalExecutiveOfficeAddress>1 Tesla Road, Austin, TX 78725</issuerPrincipalExecutiveOfficeAddress>
+      </item1>
+      <item2>
+        <filingPersonName>Elon R. Musk</filingPersonName>
+        <principalBusinessOfficeOrResidenceAddress>c/o Tesla, Inc., 1 Tesla Road, Austin, TX 78725</principalBusinessOfficeOrResidenceAddress>
+        <citizenship>United States</citizenship>
+      </item2>
+      <item4>
+        <amountBeneficiallyOwned>699,580,882 shares, which includes (i) 413,152,109 shares of Tesla, Inc. common stock ("Common Stock") held by the Elon Musk Revocable Trust dated July 22, 2003 and (ii) 286,428,773 shares of restricted Common Stock that are subject to a service-based vesting condition in accordance with the terms of an implementation agreement, dated April 21, 2026 (the "Implementation Agreement"), but are otherwise issued and outstanding and carry voting rights that may be exercised by Mr. Musk. Amounts do not include 423,743,904 shares in the performance-based restricted stock award granted to Mr. Musk in 2025 (the "2025 CEO Performance Award") over which Mr. Musk disclaims beneficial ownership, which shares are subject to a voting agreement (the "Voting Agreement") and over which an irrevocable proxy has been given to Tesla's secretary to vote the shares proportionately to the votes of other shareholders, including Mr. Musk, in accordance with the terms of the Voting Agreement. As such, Mr. Musk does not have dispositive or voting control over these shares.</amountBeneficiallyOwned>
+        <classPercent>19.9% (percentage ownership is calculated based on 3,755,723,871 shares of Common Stock outstanding as of April 16, 2026, with an addition of the 286,428,773 shares of restricted Common Stock that Mr. Musk received upon exercise of the stock option award granted to Mr. Musk in 2018 and are subject to the Implementation Agreement, a deduction of the 96,000,000 shares of restricted Common Stock issued to Mr. Musk (the "2025 CEO Interim Award") over which Mr. Musk disclaimed beneficial ownership, which were forfeited on April 21, 2026 as a result of a Tornetta Decision Event (as defined in the 2025 CEO Interim Award) and a deduction of the shares of restricted stock under the 2025 CEO Performance Award to reflect the impact of the Voting Agreement).</classPercent>
+        <numberOfSharesPersonHas>
+          <solePowerOrDirectToVote>699,580,882</solePowerOrDirectToVote>
+          <sharedPowerOrDirectToVote>699,580,882</sharedPowerOrDirectToVote>
+          <solePowerOrDirectToDispose>699,580,882</solePowerOrDirectToDispose>
+          <sharedPowerOrDirectToDispose>699,580,882</sharedPowerOrDirectToDispose>
+        </numberOfSharesPersonHas>
+      </item4>
+      <item6>
+        <notApplicableFlag>Y</notApplicableFlag>
+      </item6>
+      <item7>
+        <notApplicableFlag>Y</notApplicableFlag>
+      </item7>
+      <item8>
+        <notApplicableFlag>Y</notApplicableFlag>
+      </item8>
+      <item9>
+        <notApplicableFlag>Y</notApplicableFlag>
+      </item9>
+      <item10>
+        <notApplicableFlag>Y</notApplicableFlag>
+      </item10>
+    </items>
+    <signatureInformation>
+      <reportingPersonName>Elon R. Musk</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Elon R. Musk</signature>
+        <title>Elon R. Musk</title>
+        <date>06/17/2026</date>
+      </signatureDetails>
+    </signatureInformation>
+  </formData>
+</edgarSubmission>
