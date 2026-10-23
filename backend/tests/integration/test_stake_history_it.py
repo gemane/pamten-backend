@@ -155,3 +155,31 @@ def test_the_export_carries_every_row(graph, it_client):
     assert 'table:name="Stake history"' in content
     assert content.count("BlackRock") >= 3
     assert history_for_entity("ms") and len(history_for_entity("ms")) == 3
+
+
+# ── One statement per run ────────────────────────────────────────────────────
+
+def test_one_run_writing_a_claim_twice_states_only_its_last_value(it_db):
+    from app.stake_history import one_statement_per_run
+    record_claim(kind=KIND_OWNS, from_id="em", to_id="tsla", source_id="sec",
+                 stake_percent=28.4419, filing_type="Form 4", source_date="2026-06-17",
+                 denominator_date="2026-07-16")
+    with one_statement_per_run():             # the SEC company scrape: 13G/A, then Form 4
+        record_claim(kind=KIND_OWNS, from_id="em", to_id="tsla", source_id="sec",
+                     stake_percent=19.9, filing_type="13G/A", event_date="2026-06-16",
+                     source_date="2026-06-17")
+        record_claim(kind=KIND_OWNS, from_id="em", to_id="tsla", source_id="sec",
+                     stake_percent=28.4188, filing_type="Form 4", source_date="2026-06-17",
+                     denominator_date="2026-10-15")
+        assert _rows() == []
+    rows = history_for_pair("em", "tsla")
+    assert [(r["stake_percent"], r["previous_percent"], r["as_of"], r["filing_type"]) for r in rows] == [
+        (28.4188, 28.4419, "2026-10-15", "Form 4"), (28.4419, None, "2026-07-16", "Form 4")]
+    claim = run_sql("SELECT stake_percent, filing_type FROM Claim WHERE from_id = 'em' AND to_id = 'tsla'")
+    assert (claim[0]["stake_percent"], claim[0]["filing_type"]) == (28.4188, "Form 4")
+    with one_statement_per_run():             # the next run: the same two statements
+        record_claim(kind=KIND_OWNS, from_id="em", to_id="tsla", source_id="sec",
+                     stake_percent=19.9, filing_type="13G/A", event_date="2026-06-16")
+        record_claim(kind=KIND_OWNS, from_id="em", to_id="tsla", source_id="sec",
+                     stake_percent=28.4188, filing_type="Form 4", denominator_date="2026-10-15")
+    assert len(_rows()) == 2

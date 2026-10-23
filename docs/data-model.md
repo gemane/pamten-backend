@@ -156,6 +156,14 @@ overwritten ([`app/stake_history.py`](../backend/app/stake_history.py)):
   falls back to the earliest row anyway). One row per change after that. The pre-read is
   one indexed query per batch; a re-import that restates everything writes
   nothing.
+- **One statement per run.** A scrape that writes the same claim twice in one
+  run states its LAST value, compared with the claim stored before the run: the
+  SEC company scrape puts a holder's 13D/G figure and then their Form 4 figure
+  into the one claim (Musk → Tesla: 19.9 % of the class, then 28.4 % computed),
+  and before this rule every run recorded a flap. A runner wraps its write
+  phase in `one_statement_per_run()`; `record_claim` defers inside it, the
+  stored claim is read once at a key's first write, the rows are written when
+  the run ends. The bulk importers batch anyway and state each claim once.
 - **`as_of` is when the source stated it**: the filing's date of event, else
   its filing date; a 13D/G stake re-divided by a newer total of the class
   (`denominator_date` after the statement) is as of that total. `recorded_at`

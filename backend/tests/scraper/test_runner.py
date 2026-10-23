@@ -102,6 +102,30 @@ class TestPermissionGuards:
             with pytest.raises(PermissionError, match="SEC EDGAR"):
                 run_scrape_sec_edgar("Tesla")
 
+    def test_run_scrape_sec_edgar_writes_inside_one_statement_per_run(self):
+        """The write phase runs inside app.stake_history.one_statement_per_run, so a
+        holder's 13D/G figure and then their Form 4 figure count as one statement."""
+        events = []
+
+        @contextmanager
+        def fake_run():
+            events.append("enter")
+            yield
+            events.append("exit")
+        data = {"name": "Tesla, Inc.", "cik": "0001318605"}
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.scraper_registry.get_source_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
+             patch("app.scraper.runner.one_statement_per_run", fake_run), \
+             patch("app.scraper.runner._write_sec_edgar",
+                   side_effect=lambda *a: (events.append("write"), {"status": "ok"})[1]) as write:
+            assert run_scrape_sec_edgar("Tesla, Inc.") == {"status": "ok"}
+        assert events == ["enter", "write", "exit"]
+        write.assert_called_once_with("Tesla, Inc.", data, "US")
+
     def test_run_scrape_oc_requires_master_flag(self):
         with patch.object(settings, "SCRAPER_ENABLED", False):
             with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):

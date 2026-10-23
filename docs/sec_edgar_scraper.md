@@ -183,6 +183,11 @@ guess. The edge and the claim keep only the latest amendment; a change in a
 holding at or above 5 % keeps the overwritten statement as stake history
 (data-model, *Stake history*), which time travel and the timeline's 5 %
 crossings read — a sub-5 % holding still shows today's stake in a past year.
+A holder who files both — Musk's 13G/A says 19.9 % of the class, his Form 4
+holdings compute to 28.4 % — has ONE claim from this source, written twice per
+run with the Form 4 last; the company scrape runs inside
+`one_statement_per_run()`, so only that last figure counts and the history
+never records the 13G/A → Form 4 flap.
 
 **So older holdings are restated** (`_restate_against_newest_denominator`, at the
 end of `fetch_ownership_filings`). Among the schedules about one issuer, the

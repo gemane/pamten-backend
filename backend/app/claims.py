@@ -205,7 +205,7 @@ def record_claim(**kwargs) -> None:
     so `claims` stays importable by pure-logic tests without a database layer.
     """
     from app.db.arcadedb import run_sql
-    from app.stake_history import record_rows, rows_for_batch
+    from app.stake_history import deferred, record_rows, rows_for_batch
 
     props = claim_props(**kwargs)
     if not props["source_id"]:
@@ -213,8 +213,9 @@ def record_claim(**kwargs) -> None:
     sets = ", ".join(_LISTING_DATE_KEPT.get(name, f"{name} = :{name}") for name in props)
     try:
         # Read the stored stake BEFORE the upsert replaces it: a material change
-        # keeps the overwritten statement (app.stake_history).
-        history = rows_for_batch([props]) if props["kind"] == KIND_OWNS else []
+        # keeps the overwritten statement (app.stake_history). Inside a runner's
+        # `one_statement_per_run()` the rows wait for the run's last write.
+        history = [] if props["kind"] != KIND_OWNS or deferred(props) else rows_for_batch([props])
         run_sql(
             f"UPDATE Claim SET {sets}, first_seen_at = COALESCE(first_seen_at, :last_seen_at) "
             f"UPSERT WHERE claim_key = :claim_key",

@@ -23,6 +23,7 @@ from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.claims import record_claim, KIND_ROLE
+from app.stake_history import one_statement_per_run
 from app.scraper.wikidata import (search_entity, search_entity_in_country,
                                   fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
@@ -1720,9 +1721,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         )
 
     # Import here to avoid circular imports and to keep the cold-start fast
-    from app.scraper.sec_edgar import (fetch_departures, fetch_filer_country,
-                                       fetch_filer_headquarters, fetch_filer_website,
-                                       scrape_company)
+    from app.scraper.sec_edgar import fetch_filer_country, scrape_company
 
     log.info("SEC EDGAR runner: starting scrape for %r", company_name)
     data = scrape_company(company_name)
@@ -1744,6 +1743,18 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
                  data["name"], filer_country, country)
         return country_mismatch(company_name, filer_country, country)
 
+    # One statement per claim per run: a holder's 13D/G figure and then their
+    # Form 4 figure go into the one claim, and only the last is the answer —
+    # without this every run recorded a stake flap (app.stake_history).
+    with one_statement_per_run():
+        return _write_sec_edgar(company_name, data, filer_country)
+
+
+def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -> dict:
+    """The write phase of `run_scrape_sec_edgar`: the filer, its holders, its
+    insiders and officers, from the scraped `data`."""
+    from app.scraper.sec_edgar import (fetch_departures, fetch_filer_headquarters,
+                                       fetch_filer_website)
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     scraped: list[dict] = []
 

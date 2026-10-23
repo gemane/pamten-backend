@@ -390,3 +390,136 @@ class TestTimeTravelStake:
         owners = [{"owner": {"id": "br"}, "relationship": {"stake_percent": 7.3, "source_id": "sec"}}]
         _attach_stake_history("ms", owners, [], "2024-12-31")
         assert owners[0]["relationship"] == {"stake_percent": 7.3, "source_id": "sec"}
+
+
+# ── One statement per run ────────────────────────────────────────────────────
+
+class TestOneStatementPerRun:
+    """A runner that writes the same claim twice in one run (the SEC company
+    scrape: a holder's 13D/G figure, then their Form 4 figure) states the LAST
+    value against the pre-run claim — never a flap through the first."""
+
+    @staticmethod
+    def _write(stake, **kw):
+        from app.claims import KIND_OWNS, record_claim
+        record_claim(kind=KIND_OWNS, from_id="em", to_id="tsla", source_id="sec",
+                     stake_percent=stake, **kw)
+
+    @staticmethod
+    def _creates(calls):
+        return [(p["sh_stake_percent__0"], p["sh_previous_percent__0"], p["sh_filing_type__0"])
+                for s, p in calls if s.startswith("CREATE VERTEX StakeHistory")]
+
+    def _stored(self, stake=28.4419):
+        from app.claims import KIND_OWNS, claim_key
+        key = claim_key(KIND_OWNS, "em", "tsla", "sec")
+        return claim(stake, claim_key=key, from_id="em", to_id="tsla", filing_type="Form 4",
+                     source_date="2026-06-17", denominator_date="2026-07-16")
+
+    def test_the_last_write_is_the_statement_and_the_flap_is_never_recorded(self):
+        from app.stake_history import one_statement_per_run
+        fake, calls = sql_recorder(stored=self._stored())
+        with patch("app.db.arcadedb.run_sql", fake):
+            with one_statement_per_run():
+                self._write(19.9, filing_type="13G/A", event_date="2026-06-16")
+                self._write(28.4188, filing_type="Form 4", source_date="2026-06-17",
+                            denominator_date="2026-10-15")
+                assert not any(s.startswith("CREATE") for s, _ in calls)   # nothing until the end
+        verbs = [s.split()[0] + (" claim" if "FROM Claim WHERE claim_key IN" in s else
+                                 " history" if "StakeHistory" in s else "") for s, _ in calls]
+        assert verbs == ["SELECT claim", "UPDATE", "UPDATE", "SELECT history",
+                         "CREATE history", "CREATE history"]
+        assert self._creates(calls) == [(28.4419, None, "Form 4"), (28.4188, 28.4419, "Form 4")]
+        assert not any(p.get("sh_stake_percent__0") == 19.9 for _, p in calls)
+        assert [p["sh_as_of__0"] for s, p in calls if s.startswith("CREATE")] == ["2026-07-16", "2026-10-15"]
+
+    def test_a_flap_back_to_the_stored_number_writes_nothing(self):
+        from app.stake_history import one_statement_per_run
+        fake, calls = sql_recorder(stored=self._stored())
+        with patch("app.db.arcadedb.run_sql", fake):
+            with one_statement_per_run():
+                self._write(19.9, filing_type="13G/A")
+                self._write(28.4419, filing_type="Form 4")
+        assert [s.split()[0] for s, _ in calls] == ["SELECT", "UPDATE", "UPDATE"]
+
+    def test_the_stored_claim_is_read_once_per_key_at_its_first_write(self):
+        from app.claims import KIND_OWNS, record_claim
+        from app.stake_history import one_statement_per_run
+        fake, calls = sql_recorder(stored=self._stored())
+        with patch("app.db.arcadedb.run_sql", fake):
+            with one_statement_per_run():
+                self._write(19.9, filing_type="13G/A")
+                record_claim(kind=KIND_OWNS, from_id="x", to_id="tsla", source_id="sec",
+                             stake_percent=6.0, filing_type="13G")
+                self._write(27.0, filing_type="Form 4")
+                self._write(26.0, filing_type="Form 4")
+        pre_reads = [p["keys"] for s, p in calls if "FROM Claim WHERE claim_key IN" in s]
+        assert len(pre_reads) == 2 and all(len(k) == 1 for k in pre_reads)
+        assert self._creates(calls) == [(28.4419, None, "Form 4"), (26.0, 28.4419, "Form 4")]
+
+    def test_outside_the_block_history_is_immediate_again(self):
+        from app.stake_history import one_statement_per_run
+        fake, calls = sql_recorder(stored=self._stored())
+        with patch("app.db.arcadedb.run_sql", fake):
+            with one_statement_per_run():
+                pass
+            self._write(19.9, filing_type="13G/A")
+        assert [s.split()[0] for s, _ in calls] == ["SELECT", "SELECT", "UPDATE", "CREATE", "CREATE"]
+
+    def test_a_failed_pre_read_skips_that_key_only_and_raises_nothing(self):
+        from app.claims import KIND_OWNS, record_claim
+        from app.stake_history import one_statement_per_run
+        inner, calls = sql_recorder(stored=self._stored())
+
+        def fake(sql, params=None, **kw):
+            if "FROM Claim WHERE claim_key IN" in sql and self._stored()["claim_key"] not in params["keys"]:
+                raise RuntimeError("db away")
+            return inner(sql, params, **kw)
+        with patch("app.db.arcadedb.run_sql", fake):
+            with one_statement_per_run():
+                record_claim(kind=KIND_OWNS, from_id="x", to_id="tsla", source_id="sec",
+                             stake_percent=6.0, filing_type="13G")
+                self._write(27.0, filing_type="Form 4")
+        assert self._creates(calls) == [(28.4419, None, "Form 4"), (27.0, 28.4419, "Form 4")]
+
+    def test_an_exception_in_the_run_still_writes_the_rows_of_what_landed(self):
+        from app.stake_history import one_statement_per_run
+        fake, calls = sql_recorder(stored=self._stored())
+        with patch("app.db.arcadedb.run_sql", fake):
+            with pytest.raises(RuntimeError, match="later"):
+                with one_statement_per_run():
+                    self._write(27.0, filing_type="Form 4")
+                    raise RuntimeError("later")
+        assert self._creates(calls) == [(28.4419, None, "Form 4"), (27.0, 28.4419, "Form 4")]
+
+    def test_nested_blocks_join_the_outer_run(self):
+        from app.stake_history import one_statement_per_run
+        fake, calls = sql_recorder(stored=self._stored())
+        with patch("app.db.arcadedb.run_sql", fake):
+            with one_statement_per_run():
+                with one_statement_per_run():
+                    self._write(19.9, filing_type="13G/A")
+                assert not any(s.startswith("CREATE") for s, _ in calls)
+                self._write(28.4419, filing_type="Form 4")
+        assert not any(s.startswith("CREATE") for s, _ in calls)
+
+    def test_usable_as_a_decorator(self):
+        from app.stake_history import one_statement_per_run
+
+        @one_statement_per_run()
+        def scrape():
+            self._write(19.9, filing_type="13G/A")
+            self._write(28.4188, filing_type="Form 4")
+        fake, calls = sql_recorder(stored=self._stored())
+        with patch("app.db.arcadedb.run_sql", fake):
+            scrape()
+        assert self._creates(calls) == [(28.4419, None, "Form 4"), (28.4188, 28.4419, "Form 4")]
+
+    def test_a_role_claim_inside_the_run_is_written_and_ignored(self):
+        from app.claims import KIND_ROLE, record_claim
+        from app.stake_history import one_statement_per_run
+        fake, calls = sql_recorder()
+        with patch("app.db.arcadedb.run_sql", fake):
+            with one_statement_per_run():
+                record_claim(kind=KIND_ROLE, from_id="p", to_id="tsla", source_id="sec", role="CEO")
+        assert [s.split()[0] for s, _ in calls] == ["UPDATE"]

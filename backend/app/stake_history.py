@@ -40,10 +40,21 @@ The edge and the claim are unchanged. Readers:
 
 Rows carry `from_id` / `to_id` / `source_id`, not the claim key: a merge
 re-points them with the claims (`migrate`), and the key would go stale.
+
+**One statement per run.** A scrape that writes the same claim twice in one
+run — the SEC company scrape puts a holder's 13D/G figure and then their Form 4
+figure into the one claim, and the second is the answer — states the LAST
+value, not a flap through the first (Musk → Tesla read 28.4 → 19.9 → 28.4 on
+every run before this rule). A runner wraps its writes in
+`one_statement_per_run()`; inside it `record_claim` defers, the stored claim
+is read once at the first write of a key, and the rows are computed at the end
+against that pre-run claim and the key's last write.
 """
 from __future__ import annotations
 
 import logging
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
@@ -225,35 +236,108 @@ def has_history(from_id: str, to_id: str, source_id: str) -> bool:
     return bool(rows and rows[0].get("n"))
 
 
+def _owns_with_keys(claims: list[dict]) -> list[dict]:
+    return [c for c in claims if c.get("kind", "owns") == "owns" and c.get("claim_key")]
+
+
+def _rows_against(stored: dict[str, dict], owns: list[dict]) -> list[dict]:
+    """The rows these writes produce against the claims in `stored` (by key)."""
+    rows: list[dict] = []
+    seen_history: set[tuple] = set()
+    for c in owns:
+        old = stored.get(c["claim_key"])
+        if old is None:
+            stored[c["claim_key"]] = c        # a twin later in the batch compares to this
+            continue
+        if not changed(old.get("stake_percent"), c.get("stake_percent")) \
+                or not material(old.get("stake_percent"), c.get("stake_percent")):
+            stored[c["claim_key"]] = {**old, **c}
+            continue
+        key = _series_key(c)
+        had = key in seen_history or has_history(*key)
+        rows.extend(rows_for(old, c, had))
+        seen_history.add(key)
+        stored[c["claim_key"]] = {**old, **c}
+    return rows
+
+
 def rows_for_batch(claims: list[dict]) -> list[dict]:
     """The history rows a batch of claim writes produces, read against the
     stored claims BEFORE the writes land. Best-effort: a failed pre-read logs
     and writes no history — the claim and the edge still go through."""
-    owns = [c for c in claims if c.get("kind", "owns") == "owns" and c.get("claim_key")]
+    owns = _owns_with_keys(claims)
     if not owns:
         return []
     try:
-        stored = previous_claims([c["claim_key"] for c in owns])
-        rows: list[dict] = []
-        seen_history: set[tuple] = set()
-        for c in owns:
-            old = stored.get(c["claim_key"])
-            if old is None:
-                stored[c["claim_key"]] = c        # a twin later in the batch compares to this
-                continue
-            if not changed(old.get("stake_percent"), c.get("stake_percent")) \
-                    or not material(old.get("stake_percent"), c.get("stake_percent")):
-                stored[c["claim_key"]] = {**old, **c}
-                continue
-            key = _series_key(c)
-            had = key in seen_history or has_history(*key)
-            rows.extend(rows_for(old, c, had))
-            seen_history.add(key)
-            stored[c["claim_key"]] = {**old, **c}
-        return rows
+        return _rows_against(previous_claims([c["claim_key"] for c in owns]), owns)
     except Exception as exc:  # noqa: BLE001 - history must never break a write
         log.warning("stake history: pre-read failed, rows skipped for this batch: %s", exc)
         return []
+
+
+# ── One statement per run ────────────────────────────────────────────────────
+
+_UNREAD = object()      # the pre-read of this key failed: no history for it this run
+_run_state = threading.local()
+
+
+class _Run:
+    def __init__(self) -> None:
+        self.before: dict[str, object] = {}     # claim_key → stored claim | None | _UNREAD
+        self.last: dict[str, dict] = {}         # claim_key → the key's last write
+        self.order: list[str] = []
+
+
+def deferred(props: dict) -> bool:
+    """`record_claim` asks before it computes history: inside
+    `one_statement_per_run()` the write is noted and its rows wait for the end
+    of the run (True); outside, history is immediate (False)."""
+    run = getattr(_run_state, "run", None)
+    if run is None:
+        return False
+    if props.get("kind", "owns") != "owns" or not props.get("claim_key"):
+        return True
+    key = props["claim_key"]
+    if key not in run.before:
+        try:
+            run.before[key] = previous_claims([key]).get(key)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("stake history: pre-read of %s failed, no history this run: %s", key, exc)
+            run.before[key] = _UNREAD
+        run.order.append(key)
+    run.last[key] = props
+    return True
+
+
+def _flush(run: _Run) -> list[dict]:
+    stored = {k: v for k, v in run.before.items() if isinstance(v, dict)}
+    writes = [run.last[k] for k in run.order if run.before[k] is not _UNREAD]
+    try:
+        return _rows_against(stored, writes)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("stake history: rows skipped for this run: %s", exc)
+        return []
+
+
+@contextmanager
+def one_statement_per_run():
+    """Inside: every `record_claim` of one key counts once, as its LAST write
+    against the claim stored BEFORE the run. Nested blocks join the outer one.
+    Usable as a decorator. The rows are written when the block ends, also when
+    it ends by an exception — the claims it wrote have landed."""
+    outer = getattr(_run_state, "run", None)
+    if outer is not None:
+        yield outer
+        return
+    run = _Run()
+    _run_state.run = run
+    try:
+        yield run
+    finally:
+        _run_state.run = None
+        rows = _flush(run)
+        if rows:
+            record_rows(rows)
 
 
 def record_rows(rows: list[dict]) -> None:
