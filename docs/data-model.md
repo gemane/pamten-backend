@@ -157,13 +157,19 @@ overwritten ([`app/stake_history.py`](../backend/app/stake_history.py)):
   one indexed query per batch; a re-import that restates everything writes
   nothing.
 - **One statement per run.** A scrape that writes the same claim twice in one
-  run states its LAST value, compared with the claim stored before the run: the
-  SEC company scrape puts a holder's 13D/G figure and then their Form 4 figure
-  into the one claim (Musk → Tesla: 19.9 % of the class, then 28.4 % computed),
-  and before this rule every run recorded a flap. A runner wraps its write
-  phase in `one_statement_per_run()`; `record_claim` defers inside it, the
-  stored claim is read once at a key's first write, the rows are written when
-  the run ends. The bulk importers batch anyway and state each claim once.
+  run states its LAST value, compared with the claim stored before the run. The
+  SEC company scrape used to put a holder's 13D/G figure and then their Form 4
+  figure into the one claim (Musk → Tesla: 19.9 % beneficially owned, then
+  28.4 % of record), and every run recorded a flap; the Form 4 now yields to
+  the 13D/G statement (sec_edgar_scraper, *Of record versus beneficial*) and
+  this rule stays as the safety net. A runner wraps its write phase in
+  `one_statement_per_run()`; `record_claim` defers inside it, the stored claim
+  is read once at a key's first write, the rows are written when the run ends.
+  The bulk importers batch anyway and state each claim once.
+- **A statement dated before the one it replaces** (that 13G/A of 16 June
+  taking over from a Form 4 count restated against an October total) writes no
+  replaced-statement row: the series must not carry a later-dated number the
+  claim no longer states. Its `previous_percent` still says what the claim held.
 - **`as_of` is when the source stated it**: the filing's date of event, else
   its filing date; a 13D/G stake re-divided by a newer total of the class
   (`denominator_date` after the statement) is as of that total. `recorded_at`

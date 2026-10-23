@@ -42,13 +42,17 @@ Rows carry `from_id` / `to_id` / `source_id`, not the claim key: a merge
 re-points them with the claims (`migrate`), and the key would go stale.
 
 **One statement per run.** A scrape that writes the same claim twice in one
-run — the SEC company scrape puts a holder's 13D/G figure and then their Form 4
-figure into the one claim, and the second is the answer — states the LAST
-value, not a flap through the first (Musk → Tesla read 28.4 → 19.9 → 28.4 on
-every run before this rule). A runner wraps its writes in
+run states the LAST value, not a flap through the first. The SEC company
+scrape used to put a holder's 13D/G figure and then their Form 4 figure into
+the one claim (Musk → Tesla read 28.4 → 19.9 → 28.4 on every run); the Form 4
+now yields to a 13D/G statement (`sec_writer.stated_by_13dg`), and this rule
+stays as the safety net for any runner. A runner wraps its writes in
 `one_statement_per_run()`; inside it `record_claim` defers, the stored claim
 is read once at the first write of a key, and the rows are computed at the end
 against that pre-run claim and the key's last write.
+
+**A statement dated before the one it replaces** writes no replaced-statement
+row: the series must not carry a later-dated number the claim no longer states.
 """
 from __future__ import annotations
 
@@ -147,12 +151,17 @@ def rows_for(old: dict | None, new: dict, had_history: bool,
     if not changed(o, n) or not material(o, n):
         return []
     recorded_at = now or datetime.now(timezone.utc).isoformat()
+    old_day = statement_date(old) or _day(old.get("first_seen_at")) or recorded_at[:10]
+    new_day = statement_date(new) or recorded_at[:10]
     rows = []
-    if _pct(o) is not None and not had_history:
-        rows.append(_row(old, o, None,
-                         statement_date(old) or _day(old.get("first_seen_at")) or recorded_at[:10],
-                         recorded_at))
-    rows.append(_row(new, n, o, statement_date(new) or recorded_at[:10], recorded_at))
+    # The replaced statement is kept only when it precedes the new one: a
+    # statement dated BEFORE the one it replaces (a holder's 13G/A beneficial
+    # ownership taking over from their later-dated Form 4 count of record) must
+    # not leave a later-dated number in the series that the claim no longer
+    # states — time travel would show it after the new statement's day.
+    if _pct(o) is not None and not had_history and old_day <= new_day:
+        rows.append(_row(old, o, None, old_day, recorded_at))
+    rows.append(_row(new, n, o, new_day, recorded_at))
     return rows
 
 

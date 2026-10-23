@@ -184,10 +184,11 @@ holding at or above 5 % keeps the overwritten statement as stake history
 (data-model, *Stake history*), which time travel and the timeline's 5 %
 crossings read — a sub-5 % holding still shows today's stake in a past year.
 A holder who files both — Musk's 13G/A says 19.9 % of the class, his Form 4
-holdings compute to 28.4 % — has ONE claim from this source, written twice per
-run with the Form 4 last; the company scrape runs inside
-`one_statement_per_run()`, so only that last figure counts and the history
-never records the 13G/A → Form 4 flap.
+holdings compute to 28.4 % — has ONE claim from this source: the 13D/G
+statement, which the Form 4 never overwrites (*Of record versus beneficial*,
+under Form 4 below). The company scrape also runs inside
+`one_statement_per_run()`, so a run that did write a claim twice would still
+record only its last figure, never a flap.
 
 **So older holdings are restated** (`_restate_against_newest_denominator`, at the
 end of `fetch_ownership_filings`). Among the schedules about one issuer, the
@@ -655,6 +656,35 @@ largest percentage (`share_class`), the count of that class (`shares_outstanding
 and the cover's date (`denominator_date`). A title naming no class, or a class the
 issuer does not state, gets no percentage on a multi-class issuer; an unclassed
 issuer total divides any title, as before. The 13F path keeps the total.
+
+### Of record versus beneficial — a 13D/G statement beats the Form 4 count
+
+A Form 4 reports what is registered to the insider; a Schedule 13D/G reports
+what they *beneficially own* — voting and dispositive power, the number the
+SEC's own 5 % and 10 % lines are measured against, with the filer's
+disclaimers applied. The two can differ a lot. Elon Musk's Form 4 of 17 June
+2026 leaves him 1,123,324,786 Tesla shares: 413.2 M in his trust, 286.4 M
+restricted shares from the 2018 award he had just exercised, and 423.7 M
+restricted shares of the 2025 CEO Performance Award. His 13G/A (amendment 17,
+same day) states 699,580,882 shares, **19.9 %**, and says why the 423.7 M are
+left out: he disclaims beneficial ownership, they sit under a voting agreement
+with an irrevocable proxy to Tesla's secretary, and they vest in 2033 or 2035
+only if the tranches are earned. Divided by the 10-Q count the Form 4 figure is
+28.4 %, "controlling" by the 20 % line — a control he does not have. The Form 4
+reader cannot read that footnote; the 13D/G already has.
+
+So **where the holder has filed a 13D/G that has not ended, that is the stake**
+(`sec_writer.stated_by_13dg`, asked at all three Form 4 write sites in the
+runner: the officer/director with shares, the 10 % owner that is a company, the
+person-centric pass). The Form 4 sets the stake only for insiders who file no
+13D/G — most officers and directors. The 13D/G is then the whole statement,
+count and percentage and date: a Form 4 count beside a 13D/G percentage would
+not add up. The cost is that a trade shows only when the next 13D/G amendment
+lands (within 45 days of a year-end for passive filers; promptly for a 13D
+filer's material change), which is right for a map of control. A 13D/G that
+reported an exit (`until`) no longer speaks for the pair, and the Form 4 writes
+again. The run notes each yielded holding (`insider owner (13D/G states the
+holding)`), writes nothing for it.
 
 ### Fetching Form 3/4 filings
 

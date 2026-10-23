@@ -523,3 +523,30 @@ class TestOneStatementPerRun:
             with one_statement_per_run():
                 record_claim(kind=KIND_ROLE, from_id="p", to_id="tsla", source_id="sec", role="CEO")
         assert [s.split()[0] for s, _ in calls] == ["UPDATE"]
+
+
+class TestStatementDatedBeforeTheOneItReplaces:
+    """Musk → Tesla: the Form 4 claim (28.4 % of record, restated against the
+    10-Q total of 2026-10-15) is replaced by his 13G/A statement (19.9 %, as of
+    2026-06-16). The replaced statement is dated AFTER the new one, so it is not
+    kept as a prior row — time travel would show it after the 13G/A's day."""
+
+    OLD = dict(stake=28.4188, filing_type="Form 4", event_date=None, source_date="2026-06-17",
+               denominator_date="2026-10-15")
+    NEW = dict(stake=19.9, filing_type="13G/A", event_date="2026-06-16", source_date="2026-06-17",
+               denominator_date=None)
+
+    def test_no_replaced_row_but_the_previous_number_is_kept(self):
+        rows = rows_for(claim(**self.OLD), claim(**self.NEW), had_history=False, now=NOW)
+        assert [(r["stake_percent"], r["previous_percent"], r["as_of"], r["filing_type"]) for r in rows] == [
+            (19.9, 28.4188, "2026-06-16", "13G/A")]
+        assert stakes_as_of(rows, "2026-12-31")[("br", "ms", "sec")]["stake_percent"] == 19.9
+
+    def test_a_same_day_replacement_keeps_the_replaced_statement(self):
+        old = claim(28.4188, filing_type="Form 4", source_date="2026-06-16", denominator_date=None)
+        rows = rows_for(old, claim(**self.NEW), had_history=False, now=NOW)
+        assert [(r["stake_percent"], r["as_of"]) for r in rows] == [(28.4188, "2026-06-16"), (19.9, "2026-06-16")]
+
+    def test_the_later_statement_still_keeps_the_earlier_one(self):
+        rows = rows_for(claim(**self.NEW), claim(**self.OLD), had_history=False, now=NOW)
+        assert [(r["stake_percent"], r["as_of"]) for r in rows] == [(19.9, "2026-06-16"), (28.4188, "2026-10-15")]

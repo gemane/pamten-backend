@@ -47,6 +47,7 @@ from app.scraper.sec_writer import (
     _same_member, _split_member_key,                                             # noqa: F401
     _upsert_group_membership, _upsert_owns_sec,                                  # noqa: F401
     _upsert_role_sec, _upsert_voting_group, _close_role_sec,                                      # noqa: F401
+    stated_by_13dg,                                                              # noqa: F401
     write_acquisition_sec,                                                       # noqa: F401
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
@@ -1688,6 +1689,14 @@ def _denominator_of(exec_rec: dict, data: dict) -> float | None:
     return data.get("shares_outstanding")
 
 
+def _note_form4_yields(scraped: list[dict], holder: str, company: str) -> None:
+    """The holder's Form 4 count is of record; their 13D/G statement is the
+    stake (`sec_writer.stated_by_13dg`). Noted in the run, written nowhere."""
+    scraped.append({"type": "owns", "name": holder, "role": "insider owner (13D/G states the holding)"})
+    log.info("SEC EDGAR: %r → %r stated by a 13D/G; the Form 4 count is of record, not written",
+             holder, company)
+
+
 def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.
@@ -1962,6 +1971,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             if shares and shares > 0:
                 ent_id = _upsert_entity_by_name(name=name, entity_type="company",
                                                 source_id=source_id)
+                if stated_by_13dg(ent_id, target_id, source_id):
+                    _note_form4_yields(scraped, name, data["name"])
+                    continue
                 stake = exec_rec.get("stake_percent")
                 _upsert_owns_sec(
                     owner_id=ent_id, owned_id=target_id, source_id=source_id,
@@ -2014,6 +2026,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         # shares outstanding were readable; else it's a minority holding.
         shares = exec_rec.get("shares_owned")
         if shares and shares > 0:
+            if stated_by_13dg(person_id, target_id, source_id):
+                _note_form4_yields(scraped, name, data["name"])
+                continue
             stake = exec_rec.get("stake_percent")
             _upsert_owns_sec(
                 owner_id=person_id,
@@ -2096,6 +2111,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 continue
             holding = fetch_insider_holding(pname, cik, shares_out)
             if not holding:
+                continue
+            if stated_by_13dg(pid, target_id, source_id):
+                _note_form4_yields(scraped, pname, data["name"])
                 continue
             stake = holding.get("stake_percent")
             _upsert_owns_sec(

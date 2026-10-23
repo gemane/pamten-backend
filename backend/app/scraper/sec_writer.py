@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.roles import canonical_role
-from app.claims import KIND_OWNS, KIND_ROLE, record_claim
+from app.claims import KIND_OWNS, KIND_ROLE, claims_for, record_claim
 from app.database import db
 from app.db.anchors import label_or_entity
 from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, STALE_CLEAR, STALE_CLEAR_CYPHER, edge_create_clause, owns_props
@@ -217,6 +217,40 @@ def _retire_superseded_bloc_edge(filer_id: str, subject_id: str, source_id: str,
                   AND (r.filing_type IS NULL OR r.filing_type STARTS WITH '13D')
                 DELETE r""",
             fid=filer_id, sid=subject_id, src=source_id)
+
+
+BENEFICIAL_OWNERSHIP_FORMS = ("13D", "13G")
+
+
+def is_beneficial_ownership_filing(filing_type: str | None) -> bool:
+    """A Schedule 13D or 13G, original or amendment, however the type is spelt
+    (`13G/A`, `SC 13D`, `SCHEDULE 13G/A`): the holder's own statement of
+    beneficial ownership."""
+    ft = (filing_type or "").upper().replace("SCHEDULE ", "").replace("SC ", "").strip()
+    return ft.startswith(BENEFICIAL_OWNERSHIP_FORMS)
+
+
+def stated_by_13dg(owner_id: str, owned_id: str, source_id: str) -> bool:
+    """Whether this source holds the pair as a 13D/G statement that has not
+    ended — in which case a Form 4 count must not overwrite it.
+
+    Of record versus beneficial: a Form 4 reports what is registered to the
+    insider, a 13D/G what they beneficially own — voting and dispositive power,
+    the number the SEC's own 5 % and 10 % lines are measured against, with the
+    filer's disclaimers applied. Musk's June 2026 Form 4 leaves him 1,123 M
+    Tesla shares (28.4 %); his 13G/A of the same day states 699.6 M (19.9 %),
+    excluding the 423.7 M restricted shares of the 2025 CEO award that sit
+    under an irrevocable proxy to Tesla's secretary until they vest in 2033.
+    The Form 4 reader cannot read that footnote; the 13D/G already has. So
+    where the holder has filed a 13D/G, that is the stake, and the Form 4 sets
+    it only for insiders who file none. The 13D/G is the whole statement —
+    count, percentage, date — because a Form 4 count beside a 13D/G percentage
+    would not add up (`shares` / `shares_outstanding` ≠ `stake_percent`).
+    A 13D/G that reported an exit (`until`) no longer speaks for the pair.
+    """
+    return any(c.get("source_id") == source_id and not c.get("until")
+               and is_beneficial_ownership_filing(c.get("filing_type"))
+               for c in claims_for(from_id=owner_id, to_id=owned_id, kind=KIND_OWNS))
 
 
 def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
