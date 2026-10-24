@@ -102,6 +102,42 @@ _UPSERT_REDIRECT = """
 """
 
 
+#: Every property store that carries a node id, with its columns. Graph edges
+#: never store an id (they follow their vertices), but these rows do, and a
+#: merge or a rename that leaves them behind points a moderator's decision —
+#: a flag, a pin, a suppression — or a run-log entry at a node that no longer
+#: exists. Claims, stake history and industry statements are re-keyed by
+#: `app.claims.migrate_claims` (their keys hash the ids); these are plain
+#: re-points. Until 2026-10-24 only the rename path knew the first three and
+#: neither merge path knew any.
+REFERENCE_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Flag",        ("from_id", "to_id", "node_id")),
+    ("Suppression", ("from_id", "to_id", "node_id")),
+    ("Pin",         ("from_id", "to_id")),
+    ("ScrapeRun",   ("entity_id",)),
+)
+
+
+def _updated(rows) -> int:
+    """The row count an ArcadeDB UPDATE reports (`[{"count": n}]`)."""
+    return sum(int(r.get("count") or 0) for r in rows or [] if isinstance(r, dict))
+
+
+def repoint_references(old_id: str, new_id: str) -> int:
+    """Point every stored reference to ``old_id`` at ``new_id``; returns the rows
+    moved. Idempotent — a second pass finds nothing. Every column is indexed
+    (app.db.schema), so each statement is a lookup, not a scan."""
+    if not old_id or not new_id or old_id == new_id:
+        return 0
+    from app.db.arcadedb import run_sql
+    moved = 0
+    for table, cols in REFERENCE_COLUMNS:
+        for col in cols:
+            moved += _updated(run_sql(f"UPDATE {table} SET {col} = :new WHERE {col} = :old",
+                                      {"new": new_id, "old": old_id}))
+    return moved
+
+
 def _params(old_id: str, new_id: str, kind: str) -> dict:
     return {
         "old": old_id, "new": new_id, "kind": kind,
@@ -123,6 +159,7 @@ def record_merge(session, old_id: str, new_id: str, kind: str = "Entity") -> Non
     session.run(_REPOINT_CHAIN, old=p["old"], new=p["new"], now=p["now"])
     session.run(_UPSERT_REDIRECT, **p)
     invalidate_forwarding_cache()
+    _repoint_best_effort(old_id, new_id)
 
 
 def record_merge_sql(old_id: str, new_id: str, kind: str = "Entity") -> None:
@@ -143,6 +180,44 @@ def record_merge_sql(old_id: str, new_id: str, kind: str = "Entity") -> None:
         invalidate_forwarding_cache()
     except Exception as exc:  # noqa: BLE001
         log.warning("could not record merge redirect %s -> %s: %s", old_id, new_id, exc)
+    _repoint_best_effort(old_id, new_id)
+
+
+def _repoint_best_effort(old_id: str, new_id: str) -> None:
+    """The references follow the forwarding row, with the same rule as the row
+    itself: the nodes are already merged, so a failure here must not fail the
+    merge — it degrades to a stale reference, which `heal_merged_references`
+    picks up later."""
+    try:
+        repoint_references(old_id, new_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not re-point references %s -> %s: %s", old_id, new_id, exc)
+
+
+def heal_merged_references(apply: bool = True) -> dict:
+    """Re-point every stored reference still carrying an id a merge folded
+    away — moderation records and scrape runs left behind by the merges that
+    ran before 2026-10-24, when only `rename_node_id` moved them. Walks the
+    MergedId table (small: one row per merge) and, per redirect, every column
+    of `REFERENCE_COLUMNS` — each an indexed lookup. Dry run counts only."""
+    from app.db.arcadedb import run_sql
+    counts = {"redirects": 0, "stale": 0, "moved": 0, "applied": bool(apply)}
+    for r in run_sql("SELECT old_id, new_id FROM MergedId"):
+        old, new = r.get("old_id"), r.get("new_id")
+        if not old or not new or old == new:
+            continue
+        counts["redirects"] += 1
+        for table, cols in REFERENCE_COLUMNS:
+            for col in cols:
+                n = run_sql(f"SELECT count(*) AS n FROM {table} WHERE {col} = :old", {"old": old})
+                stale = int((n[0].get("n") if n else 0) or 0)
+                if not stale:
+                    continue
+                counts["stale"] += stale
+                if apply:
+                    counts["moved"] += _updated(run_sql(
+                        f"UPDATE {table} SET {col} = :new WHERE {col} = :old", {"new": new, "old": old}))
+    return counts
 
 
 def resolve_current_id(session, old_id: str) -> str | None:
@@ -173,14 +248,12 @@ def resolve_current_id(session, old_id: str) -> str | None:
 def rename_node_id(session, label: str, old_id: str, new_id: str) -> bool:
     """Give a node a new id, everywhere the old one lives.
 
-    The node itself, every property store that carries node ids (Claim, Flag,
-    Suppression, Pin), and a MergedId forwarding row so every old link keeps
-    resolving — the same machinery a merge uses. Graph edges never store the
-    id, so they need nothing. Refuses (returns False) when the new id is
+    The node itself, every property store that carries node ids (the claims,
+    then `REFERENCE_COLUMNS`), and a MergedId forwarding row so every old link
+    keeps resolving — the same machinery a merge uses. Graph edges never store
+    the id, so they need nothing. Refuses (returns False) when the new id is
     already taken: that is a merge, not a rename.
     """
-    from app.db.arcadedb import run_sql
-
     clash = session.run(f"MATCH (n:{label} {{id: $id}}) RETURN n.id AS id LIMIT 1",
                         id=new_id).single()
     if clash:
@@ -191,11 +264,6 @@ def rename_node_id(session, label: str, old_id: str, new_id: str) -> bool:
     # and the next scrape wrote a second claim for the same assertion.
     from app.claims import migrate_claims
     migrate_claims(old_id, new_id)
-    for table, cols in (("Flag", ("from_id", "to_id", "node_id")),
-                        ("Suppression", ("from_id", "to_id")),
-                        ("Pin", ("from_id", "to_id"))):
-        for col in cols:
-            run_sql(f"UPDATE {table} SET {col} = :new WHERE {col} = :old",
-                    {"new": new_id, "old": old_id})
+    # record_merge re-points REFERENCE_COLUMNS (flags, suppressions, pins, runs)
     record_merge(session, old_id, new_id, kind=label)
     return True

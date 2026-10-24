@@ -12,7 +12,23 @@ type (4.2M rows on the dev database) on every by-id miss.
 """
 from unittest.mock import MagicMock
 
+import pytest
+
+import app.merged_ids as merged_ids
 from app.merged_ids import record_merge, resolve_current_id
+
+_REAL_REPOINT = merged_ids.repoint_references
+
+
+@pytest.fixture(autouse=True)
+def repointed(monkeypatch):
+    """`record_merge` re-points the stored references (flags, pins, …) through
+    SQL; here that is recorded, not run — the SQL itself is tested below and
+    against a real database in tests/integration/test_merge_repoints_references_it.py."""
+    calls: list[tuple] = []
+    monkeypatch.setattr(merged_ids, "repoint_references",
+                        lambda old, new: calls.append((old, new)) or 0)
+    return calls
 
 
 class _Session:
@@ -86,6 +102,104 @@ class TestRecordMerge:
         record_merge(s, old_id="", new_id="keep")
         record_merge(s, old_id="dup", new_id="")
         assert s.writes == []
+
+    def test_the_stored_references_follow_the_forwarding_row(self, repointed):
+        """A flag, a pin, a suppression or a scrape run that named the loser
+        names the survivor afterwards — the merge paths never did this until
+        2026-10-24, only the rename did."""
+        record_merge(_Session(), old_id="dup", new_id="keep")
+        assert repointed == [("dup", "keep")]
+
+    def test_a_self_merge_repoints_nothing(self, repointed):
+        record_merge(_Session(), old_id="same", new_id="same")
+        assert repointed == []
+
+    def test_the_sql_path_repoints_too(self, repointed, monkeypatch):
+        monkeypatch.setattr("app.db.arcadedb.run_command", lambda *a, **k: [])
+        merged_ids.record_merge_sql("dup", "keep", kind="Entity")
+        assert repointed == [("dup", "keep")]
+
+    def test_a_failed_repoint_does_not_fail_the_merge(self, monkeypatch):
+        def boom(old, new):
+            raise RuntimeError("db away")
+        monkeypatch.setattr(merged_ids, "repoint_references", boom)
+        s = _Session()
+        record_merge(s, old_id="dup", new_id="keep")       # no raise
+        assert any("MERGE (m:MergedId" in c for c, _ in s.writes)
+
+
+class TestRepointReferences:
+    """The SQL behind it: one indexed UPDATE per (table, column) of
+    REFERENCE_COLUMNS, and the moved rows summed from what ArcadeDB reports."""
+
+    @pytest.fixture(autouse=True)
+    def real_function(self, monkeypatch):
+        # the module fixture replaced it; this class tests the real one
+        monkeypatch.setattr(merged_ids, "repoint_references", _REAL_REPOINT)
+
+    def test_every_reference_column_is_updated_and_the_counts_add_up(self, monkeypatch):
+        issued = []
+
+        def fake_run_sql(sql, params=None):
+            issued.append((sql, params))
+            return [{"count": 2}] if "Flag" in sql else [{"count": 0}]
+        monkeypatch.setattr("app.db.arcadedb.run_sql", fake_run_sql)
+        moved = merged_ids.repoint_references("dup", "keep")
+        assert moved == 6                                  # three Flag columns × 2
+        assert [s for s, _ in issued] == [
+            "UPDATE Flag SET from_id = :new WHERE from_id = :old",
+            "UPDATE Flag SET to_id = :new WHERE to_id = :old",
+            "UPDATE Flag SET node_id = :new WHERE node_id = :old",
+            "UPDATE Suppression SET from_id = :new WHERE from_id = :old",
+            "UPDATE Suppression SET to_id = :new WHERE to_id = :old",
+            "UPDATE Suppression SET node_id = :new WHERE node_id = :old",
+            "UPDATE Pin SET from_id = :new WHERE from_id = :old",
+            "UPDATE Pin SET to_id = :new WHERE to_id = :old",
+            "UPDATE ScrapeRun SET entity_id = :new WHERE entity_id = :old",
+        ]
+        assert all(p == {"new": "keep", "old": "dup"} for _, p in issued)
+
+    def test_nothing_runs_for_a_self_merge_or_a_missing_id(self, monkeypatch):
+        monkeypatch.setattr("app.db.arcadedb.run_sql", lambda *a, **k: pytest.fail("ran SQL"))
+        assert merged_ids.repoint_references("same", "same") == 0
+        assert merged_ids.repoint_references("", "keep") == 0
+
+
+class TestHealMergedReferences:
+    """The one-off for the merges that ran before the re-point existed."""
+
+    ROWS = [{"old_id": "a", "new_id": "k"}, {"old_id": "b", "new_id": "k"},
+            {"old_id": "k", "new_id": "k"}]
+
+    def _fake(self, stale_for):
+        issued = []
+
+        def run_sql(sql, params=None):
+            issued.append((sql, params))
+            if sql.startswith("SELECT old_id"):
+                return self.ROWS
+            if sql.startswith("SELECT count"):
+                return [{"n": stale_for.get((sql.split(" FROM ")[1].split(" ")[0], params["old"]), 0)}]
+            return [{"count": 1}]
+        return run_sql, issued
+
+    def test_a_dry_run_counts_the_stale_rows_and_writes_nothing(self, monkeypatch):
+        run_sql, issued = self._fake({("Flag", "a"): 3, ("Pin", "b"): 1})
+        monkeypatch.setattr("app.db.arcadedb.run_sql", run_sql)
+        res = merged_ids.heal_merged_references(apply=False)
+        assert res == {"redirects": 2, "stale": 3 * 3 + 1 * 2, "moved": 0, "applied": False}
+        assert not any(s.startswith("UPDATE") for s, _ in issued)
+
+    def test_apply_updates_only_where_something_is_stale(self, monkeypatch):
+        run_sql, issued = self._fake({("Flag", "a"): 3})
+        monkeypatch.setattr("app.db.arcadedb.run_sql", run_sql)
+        res = merged_ids.heal_merged_references(apply=True)
+        updates = [(s, p) for s, p in issued if s.startswith("UPDATE")]
+        assert [s for s, _ in updates] == ["UPDATE Flag SET from_id = :new WHERE from_id = :old",
+                                           "UPDATE Flag SET to_id = :new WHERE to_id = :old",
+                                           "UPDATE Flag SET node_id = :new WHERE node_id = :old"]
+        assert all(p == {"new": "k", "old": "a"} for _, p in updates)
+        assert res["moved"] == 3 and res["applied"] is True
 
 
 class TestForwardingMap:
