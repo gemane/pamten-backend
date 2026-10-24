@@ -240,3 +240,18 @@ def test_import_resolves_and_creates_with_register_id(fake_db):
     assert "register_id:$rid" in create
     _, params = next((c, p) for c, p in fake_db.calls if c.startswith("CREATE"))
     assert params["rid"] == "RA000123:55"
+
+
+def test_import_folds_a_peer_s_single_nationality_into_the_list(fake_db):
+    """A peer on older code still exports the scalar; the list is the one field
+    here (2026-10-25), so the scalar joins it and the CREATE writes no scalar."""
+    from app.routers import federation
+    fn = getattr(federation, "_upsert_person", None) or getattr(federation, "_import_person")
+    fake_db.queue([])            # no match by any id or name: create
+    fake_db.queue([])
+    fake_db.queue([])
+    fn(fake_db, {"full_name": "Jean Randle", "first_name": "Jean", "last_name": "Randle",
+                 "nationality": "GB", "nationalities": ["IE"]}, "peer:x")
+    create, params = next((c, p) for c, p in fake_db.calls if c.startswith("CREATE (p:Person"))
+    assert "nationalities:$nats" in create and "nationality:" not in create.replace("nationalities:", "")
+    assert params["nats"] == ["IE", "GB"]

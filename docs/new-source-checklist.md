@@ -192,6 +192,14 @@ parser. Anything that does not map is either a new property (document it) or noi
 - [ ] **Keep values as the source gave them.** Do not strip a legitimate `C/O …` line or
       "normalise" a name to make a downstream tool happy — fix the tool-facing side. A
       stored value that no source ever said is a lie the graph cannot walk back.
+- [ ] **One fact, one field — never a scalar beside its list.** `nationality` sat beside
+      `nationalities` and `country` beside `countries`; two writers each filled the half
+      they knew, and 204 persons showed no nationality in a panel that read the list
+      first (2026-10-25; `founded` / `founded_date` was the same disease the day before).
+      Write the list (`app.field_twins.merge_*` folds a single value in); where a scalar
+      must stay as a filter key (`country`), the list always contains it. A flag is
+      `true` or `false`, never unset: since ArcadeDB 26.10.1 a `<>` on a null is false,
+      and an unset `stale` dropped 1,274 edges out of every filter. Stamp `false`.
 - [ ] **Dates carry their real precision.** UK PSC publishes month and year only; storing
       a fabricated day makes two different people look like the same one.
 - [ ] **A new edge property goes into `edge_schema.OWNS_PROPS` first.** `owns_props()`

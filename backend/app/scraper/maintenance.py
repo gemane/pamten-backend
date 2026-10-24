@@ -1808,32 +1808,47 @@ def nationality_to_iso2(raw: str | None) -> str | None:
 
 
 def normalize_person_nationalities() -> dict:
-    """Convert Person.nationality to ISO-2 codes where the value can be recognised.
+    """Convert every entry of Person.nationalities to an ISO-2 code where the
+    value can be recognised.
 
     Idempotent — codes pass through unchanged. Values that cannot be mapped are
     **left exactly as they are** and returned in `unmapped`, so the residue is
     visible and the table can be extended rather than the data quietly lost. A
     long tail is expected: PSC nationality is free text typed by the filer.
+    Walks the persons by id page (app.db.paging) and rewrites a changed list
+    by @rid — the scalar `nationality` this used to rewrite is gone (2026-10-25).
     """
-    rows = run_query(
-        "MATCH (p:Person) WHERE p.nationality IS NOT NULL AND p.nationality <> '' "
-        "RETURN DISTINCT p.nationality AS nat")
-    converted: list[dict] = []
-    unmapped: list[str] = []
-    unchanged = 0
-    for r in rows:
-        raw = r["nat"]
-        code = nationality_to_iso2(raw)
-        if code is None:
-            unmapped.append(raw)
-        elif code == raw:
-            unchanged += 1
-        else:
-            run_command("MATCH (p:Person) WHERE p.nationality = $old SET p.nationality = $new",
-                        {"old": raw, "new": code})
-            converted.append({"from": raw, "to": code})
-    return {"converted": converted, "unchanged": unchanged,
-            "unmapped": sorted(unmapped), "distinct_values": len(rows)}
+    from app.db import paging
+    converted: dict[str, str] = {}
+    unmapped: set[str] = set()
+    unchanged: set[str] = set()
+    for page in paging.iter_id_pages("Person", columns="id, @rid AS rid, nationalities"):
+        updates: list[tuple[str, list[str]]] = []
+        for r in page:
+            raw_list = [v for v in (r.get("nationalities") or []) if v]
+            if not raw_list:
+                continue
+            new_list: list[str] = []
+            for raw in raw_list:
+                code = nationality_to_iso2(raw)
+                if code is None:
+                    unmapped.add(raw)
+                    code = raw
+                elif code == raw:
+                    unchanged.add(raw)
+                else:
+                    converted[raw] = code
+                if code not in new_list:
+                    new_list.append(code)
+            if new_list != raw_list and r.get("rid"):
+                updates.append((str(r["rid"]), new_list))
+        for i in range(0, len(updates), 500):
+            chunk = updates[i:i + 500]
+            run_sqlscript("\n".join(f"UPDATE {rid} SET nationalities = :v{k};" for k, (rid, _) in enumerate(chunk)),
+                          {f"v{k}": v for k, (_, v) in enumerate(chunk)})
+    return {"converted": [{"from": a, "to": b} for a, b in sorted(converted.items())],
+            "unchanged": len(unchanged), "unmapped": sorted(unmapped),
+            "distinct_values": len(converted) + len(unchanged) + len(unmapped)}
 
 
 # ── Country backfill ──────────────────────────────────────────────────────────

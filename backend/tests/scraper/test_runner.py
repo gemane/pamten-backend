@@ -830,8 +830,29 @@ class TestUpsertPersonDetail:
         assert "wikipedia_url: $wikipedia" in create.args[0]
         assert create.kwargs["aliases"] == ["Elon"]
         assert create.kwargs["nats"] == ["US", "CA"]
-        # single nationality is derived from the first of the list when not given
-        assert create.kwargs["nat"] == "US"
+        # one field: the scalar twin is neither written nor derived (2026-10-25)
+        assert "nat" not in create.kwargs and "nationality" not in create.args[0]
+
+    def test_the_countries_list_always_carries_the_country(self):
+        from app.scraper.runner import _upsert_entity
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value=None):
+            _upsert_entity("Heineken N.V.", "company", "NL", None, None, "", "Q2", countries=[])
+        create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
+        assert create.kwargs["countries"] == ["NL"]
+
+    def test_a_single_nationality_folds_into_the_list(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_person("Satya Nadella", nationality="US", description=None, wikidata_id="Q3",
+                           nationalities=["IN"])
+        create = self._create_call(session)
+        assert create.kwargs["nats"] == ["IN", "US"]
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_person("Jean Randle", nationality="GB", description=None, wikidata_id=None)
+        assert self._create_call(session).kwargs["nats"] == ["GB"]
 
     def test_existing_person_backfills_detail(self):
         ctx, session = _make_session_mock(single_returns=[{"id": "p-1"}])

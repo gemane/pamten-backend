@@ -421,7 +421,7 @@ class TestCollapseThroughTheImporter:
         assert written[0]["direct_or_indirect"] == "direct"
         # filing_type rides in extra on every RR edge — it is what finally
         # distinguishes RR provenance from LEI-CDF in the stored graph.
-        assert written[0]["extra"] == {"also_ultimate": True, "filing_type": "RR"}
+        assert written[0]["extra"] == {"stale": False, "also_ultimate": True, "filing_type": "RR"}
 
     def test_the_records_may_be_far_apart_in_the_file(self, tmp_path, monkeypatch):
         res, written = self._run(tmp_path, monkeypatch, [
@@ -453,7 +453,7 @@ class TestCollapseThroughTheImporter:
         ])
             # "nothing to record" means no fold artifacts — the constant RR tag is
         # deliberate and carries no nulls.
-        assert written[0]["extra"] == {"filing_type": "RR"}
+        assert written[0]["extra"] == {"stale": False, "filing_type": "RR"}   # a flag is never unset
 
     def test_a_lapsed_record_draws_a_stale_edge(self, tmp_path, monkeypatch):
         res, written = self._run(tmp_path, monkeypatch, [
@@ -464,7 +464,7 @@ class TestCollapseThroughTheImporter:
         by_child = {w["owned_id"]: w["extra"] for w in written}
         assert by_child["lei:CHILD"] == {"filing_type": "RR", "stale": True,
                                          "stale_reason": "lei_lapsed", "stale_since": None}
-        assert by_child["lei:OTHER"] == {"filing_type": "RR"}
+        assert by_child["lei:OTHER"] == {"stale": False, "filing_type": "RR"}
 
     def test_a_maintained_ultimate_record_keeps_the_folded_pair_fresh(self, tmp_path, monkeypatch):
         res, written = self._run(tmp_path, monkeypatch, [
@@ -472,7 +472,7 @@ class TestCollapseThroughTheImporter:
             ("CHILD", "PARENT", "IS_ULTIMATELY_CONSOLIDATED_BY", "PUBLISHED"),
         ])
         assert res["edges"] == 1 and res["unmaintained"] == 0
-        assert "stale" not in written[0]["extra"]
+        assert written[0]["extra"]["stale"] is False
 
     def test_the_stated_share_is_written_and_an_implausible_one_refused(self, tmp_path, monkeypatch):
         res, written = self._run(tmp_path, monkeypatch, [
@@ -497,10 +497,10 @@ class TestCollapseThroughTheImporter:
         ])
         assert res["entity_supplied"] == 1
         by_child = {w["owned_id"]: w["extra"] for w in written}
-        assert by_child["lei:CHILD"] == {"filing_type": "RR", "validation_sources": "ENTITY_SUPPLIED_ONLY",
+        assert by_child["lei:CHILD"] == {"stale": False, "filing_type": "RR", "validation_sources": "ENTITY_SUPPLIED_ONLY",
                                          "validation_documents": "OTHER_OFFICIAL_DOCUMENTS"}
         assert by_child["lei:OTHER"]["validation_sources"] == "FULLY_CORROBORATED"
-        assert by_child["lei:THIRD"] == {"filing_type": "RR"}
+        assert by_child["lei:THIRD"] == {"stale": False, "filing_type": "RR"}
         # not a credibility change
         assert {w["credibility_score"] for w in written} == {92}
 

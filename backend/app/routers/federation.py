@@ -39,6 +39,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.field_twins import merge_nationalities
 from app.auth.dependencies import require_admin, require_contributor
 from app.config import settings
 from app.claims import KIND_OWNS, record_claim
@@ -232,11 +233,11 @@ def build_export() -> dict:
         persons = [
             {"full_name": r.get("full_name"), "first_name": r.get("first"), "last_name": r.get("last"),
              "wikidata_id": r.get("wd"), "sec_cik": r.get("cik"), "birth_date": r.get("bd"),
-             "birth_place": r.get("bp"), "nationality": r.get("nat")}
+             "birth_place": r.get("bp"), "nationalities": list(r.get("nats") or [])}
             for r in session.run(
                 "MATCH (p:Person) RETURN p.full_name AS full_name, p.first_name AS first, "
                 "p.last_name AS last, p.wikidata_id AS wd, p.sec_cik AS cik, "
-                "p.birth_date AS bd, p.birth_place AS bp, p.nationality AS nat")
+                "p.birth_date AS bd, p.birth_place AS bp, p.nationalities AS nats")
         ]
         ownerships: list[dict] = []
         for owner_kind, pat in (("entity", "(a:Entity)-[r:OWNS]->(b:Entity)"),
@@ -338,7 +339,7 @@ def _upsert_entity(session, ref: dict, source_id: str, credibility: int = 60) ->
         "CREATE (e:Entity {id:$id, name:$name, name_normalized:$nn, "
         "search_text:$stext, type:$type, "
         "country:$country, wikidata_id:$wd, sec_cik:$cik, lei_id:$lei, "
-        "companies_house_id:$ch, register_id:$rid, source_id:$sid, verified:false, "
+        "companies_house_id:$ch, register_id:$rid, source_id:$sid, "
         "is_nominee:false, name_credibility:$namecred, created_at:$created_at})",
         id=eid, name=name, nn=nn, stext=name, type=ref.get("type") or "company",
         created_at=datetime.now(timezone.utc).isoformat(),
@@ -365,11 +366,13 @@ def _upsert_person(session, ref: dict, source_id: str) -> str | None:
         "CREATE (p:Person {id:$id, full_name:$full, first_name:$first, last_name:$last, "
         "search_text:$stext, "
         "wikidata_id:$wd, sec_cik:$cik, birth_date:$bd, birth_place:$bp, "
-        "nationality:$nat, source_id:$sid, alias:[], verified:false, created_at:$created_at})",
+        "nationalities:$nats, source_id:$sid, alias:[], created_at:$created_at})",
         id=pid, full=full, stext=full, first=ref.get("first_name"), last=ref.get("last_name"),
         created_at=datetime.now(timezone.utc).isoformat(),
         wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"), bd=ref.get("birth_date"),
-        bp=ref.get("birth_place"), nat=ref.get("nationality"), sid=source_id)
+        bp=ref.get("birth_place"), sid=source_id,
+        # a peer on older code still sends the scalar
+        nats=merge_nationalities(ref.get("nationalities"), ref.get("nationality")))
     return pid
 
 

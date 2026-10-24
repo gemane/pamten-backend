@@ -34,7 +34,7 @@ def test_upsert_person_stores_and_backfills_detail(it_db):
         p = s.run("MATCH (p:Person {id: $id}) RETURN p", id=pid).single()["p"]
     assert p["birth_date"] == "1971-06-28"
     assert p["description"] == "entrepreneur"
-    assert p["nationality"] == "US"                      # derived from nationalities[0]
+    assert p.get("nationality") is None                  # one field: the scalar twin is gone (2026-10-25)
     assert list(p["alias"]) == ["Elon", "Technoking"]
     assert list(p["nationalities"]) == ["US", "CA"]
 

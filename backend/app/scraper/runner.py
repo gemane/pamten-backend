@@ -52,6 +52,7 @@ from app.scraper.sec_writer import (
     write_acquisition_sec,                                                       # noqa: F401
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
+from app.field_twins import merge_countries, merge_nationalities
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
                                      weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
@@ -238,6 +239,10 @@ def _upsert_entity(
     # companies it adds never enter the search index.
     search_text = " ".join(p for p in (
         name, description or "", " ".join(aliases or [])) if p).strip()
+    # The list of countries always carries the country: 17 dev entities had
+    # `countries: []` beside a filled `country` (2026-10-25), and every reader
+    # that prefers the list then showed nothing.
+    countries = merge_countries(countries, country)
     with db.get_session() as session:
         # Sequential indexed lookups — an OR across these fields full-scans the
         # Entity type on ArcadeDB (see app.entity_resolution).
@@ -388,9 +393,10 @@ def _upsert_person(
 ) -> str:
     first_name, last_name = parse_full_name(full_name)
     aliases       = aliases or []
-    nationalities = nationalities or []
-    # Prefer an explicit single nationality; else the first of the list.
-    nat = nationality or (nationalities[0] if nationalities else "")
+    # One fact, one field: a caller's single `nationality` (Wikidata's CEO
+    # row, a PSC record) joins the list — the scalar twin was dropped on
+    # 2026-10-25 after 204 persons sat with a filled scalar and an empty list.
+    nationalities = merge_nationalities(nationalities, nationality)
     with db.get_session() as session:
         # Sequential indexed lookups (wikidata_id then full_name) — an OR across
         # them full-scans the Person type, which matters once UK PSC loads
@@ -419,7 +425,6 @@ def _upsert_person(
                     p.image_url    = COALESCE(p.image_url, $image),
                     p.wikipedia_url = COALESCE(p.wikipedia_url, $wikipedia),
                     p.description   = CASE WHEN COALESCE(p.description, '') = '' THEN $desc ELSE p.description END,
-                    p.nationality   = CASE WHEN COALESCE(p.nationality, '') = '' THEN $nat  ELSE p.nationality END,
                     p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
                     p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 THEN p.nationalities ELSE $nats END,
                     p.source_id     = COALESCE(p.source_id, $source_id),
@@ -428,7 +433,7 @@ def _upsert_person(
                     p.search_text   = $search_text
                 """,
                 id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
-                image=image_url, wikipedia=wikipedia_url, desc=description or "", nat=nat,
+                image=image_url, wikipedia=wikipedia_url, desc=description or "",
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities, source_id=source_id,
             )
@@ -439,7 +444,7 @@ def _upsert_person(
             """
             CREATE (p:Person {
                 id: $id, first_name: $first, last_name: $last,
-                full_name: $full, nationality: $nat,
+                full_name: $full,
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
                 image_url: $image, wikipedia_url: $wikipedia,
@@ -453,7 +458,6 @@ def _upsert_person(
             last=last_name,
             full=full_name,
             search_text=_person_search_text(full_name, aliases),
-            nat=nat,
             desc=description or "",
             wid=wikidata_id,
             bdate=birth_date,

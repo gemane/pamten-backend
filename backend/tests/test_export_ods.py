@@ -193,7 +193,7 @@ PROFILE = {
          "relationship": {"ownership_type": "unknown", "source_id": "sec", "descendants": 0}},   # no stake stated
     ],
     "executives": [
-        {"person": {"id": "sn", "full_name": "Satya Nadella", "nationality": "US"},
+        {"person": {"id": "sn", "full_name": "Satya Nadella", "nationalities": ["US"]},
          "role": {"role": "CEO", "since": "2014-02-04", "source_id": "sec"}},
     ],
 }
