@@ -70,6 +70,17 @@ parser. Anything that does not map is either a new property (document it) or noi
       flush, like `ch-company-data`). A new scheme is a bundle entry (its code list
       and its NACE mapping, `scripts/build_industry_bundle.py`) before any writer.
       The tree the reader sees is NACE Rev. 2 only; the source's code stays beside it.
+      Lessons from the first two schemes (BE #416, 2026-10-24):
+      - **Serve every statement with its own derived path**, not the principal's alone.
+        The reader wanted every branch (Wienerberger's bricks AND its wholesale code) the
+        same day; `profile_for` gives each statement a `tree`.
+      - **Keep the source's own title beside the derived node.** A crosswalk often stops
+        high — EDGAR's 7370 reaches section J only — and the SEC's "Services-Computer
+        Programming, Data Processing, Etc." is what the reader hangs under it.
+      - **A catch-all maps to nothing by design** (7389 "services NEC", 0000) and many
+        filers carry no code at all (13D/G investors, trusts: 82 of 189 CIKs on dev). A
+        backfill reports *candidates*, *stated* and *placed* as three numbers; "107 of
+        189" is not a bug.
 - [ ] **Ownership** — `stake_percent`, `ownership_type`, and `since`/`until` where the
       source states them. Bands ("more than 25%") are common: store what is stated, do not
       invent a midpoint.
@@ -484,6 +495,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
           is what reads "Acquired … for $X bn".
       - **Test it**: one IT that writes the source's edges and reads the profile
         with an `as_of` before, inside and after the dated range.
+- [ ] **A source link needs its identifier.** A URL template filled with an empty
+      number is a page that does not exist (`…/company/`), and it looks like a bug in
+      the panel, not in the data. Build the link only when the number is known, fall
+      back to the number inside the node id (`gb-coh:05299520`), and otherwise store
+      no URL at all (`industry.ch_company_url`). Test the empty case.
 - [ ] **Instant sources stamp the target** with `set_scrape_target`, or the freshness gate
       cannot tell a scraped company from an untouched one and will re-scrape forever.
 - [ ] **Wrap the run in `record_run`** so it appears in `GET /scraper/runs`. That log, not
@@ -757,6 +773,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       result. Run the unmutated suite again at the end. A mutant that loops
       forever needs a per-run `timeout`, and stopping a hung run means killing
       its exact PID, never a `pkill -f` pattern (it matched the shell itself).
+
+- [ ] **Preview with real identifiers.** A seeded preview with a made-up company number
+      sent the register link to a 404 and the first review round was spent proving the
+      link format right (Wienerberger Ltd is 05299520, not 01010101). Seed the real
+      number of anything the panel links to, and restart the preview backend after a
+      backend change — the frontend's fallbacks hid a field the old process did not
+      serve, and the reviewer saw "still showing the name".
 
 ## 9. Documentation
 
