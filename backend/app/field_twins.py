@@ -3,11 +3,13 @@
 A scalar beside its list (`nationality` / `nationalities`, `country` /
 `countries`) is one fact stored twice, and two writers each fill the half
 they know: on 2026-10-25 all 371 dev persons carried both fields, 204 of them
-a filled scalar beside an EMPTY list (the PSC and SEC writers set the
-scalar, the Wikidata path the list), and 17 entities a filled `country`
-beside `countries: []`. The panel reads the list first, so those persons
-showed no nationality at all. The same disease as `founded` /
-`founded_date` (see `app.incorporation`).
+an EMPTY list beside the scalar — 7 (the PSC writer's) with the nationality
+only in the scalar, 197 (the SEC writer's) with an empty string there, so no
+nationality in either field — while the Wikidata path filled the list and
+copied its first entry. The panel fell back to the scalar, so nothing was
+lost on screen; what was wrong is two fields for one fact, each writer
+choosing one. 17 entities had a filled `country` beside `countries: []`.
+The same disease as `founded` / `founded_date` (see `app.incorporation`).
 
 The rule now: `nationalities` is the field, the scalar is gone; `countries`,
 when written, always contains `country`. `merge_*` enforce it at every
