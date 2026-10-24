@@ -14,6 +14,14 @@ script per chunk, sets each value to null and then to itself as a
 parameter of the declared shape (a float for DOUBLE, an int for LONG).
 Whole-type scans on unindexed columns: run straight against ArcadeDB
 (`--db-url`), not through the proxy's 60 s.
+
+The heal converts to the type the CODE declares, so it first checks that
+the server declares the same: a property declared with another type
+(`shares_outstanding` was LONG on dev for a day) coerces every rewrite
+straight back, and the heal would report the same rows rewritten forever.
+Such a group is skipped and reported; the schema bootstrap (`init-schema`,
+or an API start) drops and redeclares the property, after which the heal
+converts the rows.
 """
 from __future__ import annotations
 
@@ -37,11 +45,30 @@ def convertible() -> list[tuple[str, str, str]]:
     return [(t, p, k) for t, p, k in typed_properties() if k in _CONVERT]
 
 
+def declared_types() -> dict[tuple[str, str], str | None]:
+    """{(type, property): type} as the server's catalog declares them."""
+    out: dict = {}
+    for t in run_sql("SELECT name, properties FROM schema:types") or []:
+        for p in t.get("properties") or []:
+            if isinstance(p, dict) and p.get("name"):
+                out[(t.get("name"), p["name"])] = p.get("type")
+    return out
+
+
 def heal(apply: bool = True) -> dict:
     """Rewrite every stored value whose type is not its declared one. Returns
-    {"Type.property": rows} for what was (or would be) rewritten."""
-    out: dict = {"converted": {}, "applied": bool(apply)}
+    {"converted": {"Type.property": rows}} for what was (or would be)
+    rewritten and {"misdeclared": {"Type.property": {"server", "code"}}} for
+    the groups left alone because the server declares another type (or
+    none) — run the schema bootstrap first for those."""
+    out: dict = {"converted": {}, "misdeclared": {}, "applied": bool(apply)}
+    live = declared_types()
     for vtype, prop, ptype in convertible():
+        if live.get((vtype, prop)) != ptype:
+            out["misdeclared"][f"{vtype}.{prop}"] = {"server": live.get((vtype, prop)), "code": ptype}
+            log.warning("%s.%s is declared %s on the server, %s in the code — not converted",
+                        vtype, prop, live.get((vtype, prop)), ptype)
+            continue
         rows = run_sql(f"SELECT @rid AS rid, {prop} AS v FROM {vtype} "
                        f"WHERE {prop} IS NOT NULL AND {prop}.type() <> '{ptype}'",
                        timeout=_SCAN_TIMEOUT)
