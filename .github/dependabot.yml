@@ -1,0 +1,22 @@
+# Dependabot: security updates only. open-pull-requests-limit 0 switches the
+# routine version-bump PRs off; a PR is still opened for a locked package with a
+# known vulnerability (needs Dependabot alerts enabled in the repository
+# settings — done 2026-10-24). No target-branch: security PRs go to the default
+# branch (develop), and a target-branch here would silence them.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
