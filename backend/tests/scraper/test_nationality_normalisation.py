@@ -71,3 +71,23 @@ class TestTheImporter:
         # The person record writes this field directly; None would become "None".
         assert _nationality(None) == ""
         assert isinstance(_nationality("British"), str)
+
+
+class TestTheNormaliserWalksTheList:
+    """`normalize-nationalities` rewrites every entry of `nationalities` — the
+    scalar it used to rewrite is gone (2026-10-25)."""
+
+    def test_demonyms_in_the_list_become_codes_and_the_rest_is_reported(self, monkeypatch):
+        from app.scraper import maintenance as m
+        rows = [{"id": "p1", "rid": "#1:0", "nationalities": ["British", "GB"]},
+                {"id": "p2", "rid": "#1:1", "nationalities": ["Martian"]},
+                {"id": "p3", "rid": "#1:2", "nationalities": ["US"]},
+                {"id": "p4", "rid": "#1:3", "nationalities": []}]
+        monkeypatch.setattr("app.db.paging.iter_id_pages", lambda label, **k: iter([rows]))
+        scripts = []
+        monkeypatch.setattr(m, "run_sqlscript", lambda s, p: scripts.append((s, p)))
+        res = m.normalize_person_nationalities()
+        assert res["converted"] == [{"from": "British", "to": "GB"}]
+        assert res["unmapped"] == ["Martian"] and res["unchanged"] == 2 and res["distinct_values"] == 4
+        # only the changed row is written, de-duplicated after the mapping
+        assert scripts == [("UPDATE #1:0 SET nationalities = :v0;", {"v0": ["GB"]})]

@@ -486,11 +486,15 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             return None
         name, first, last = parts
         owner_id, owner_label = psc_slug_id(self_link), "Person"
+        nationality = _nationality(data.get("nationality"))
         owner_props = {
             "first_name": first, "last_name": last, "full_name": name,
-            "search_text": name, "nationality": _nationality(data.get("nationality")),
+            "search_text": name,
             "birth_date": _birth_date(data), "description": "",
-            "alias": [], "nationalities": [],
+            "alias": [], "nationalities": [nationality] if nationality else [],
+            # The corporate branch passes it to `_entity`; this one built its
+            # props without it, and 7 dev persons had no source (2026-10-25).
+            "source_id": source_id,
         }
         kind_cat = "person"
     else:
@@ -555,6 +559,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
         edge_props={
             "filing_type": "PSC",
             "read_from": READ_FIELD,   # the snapshot's natures_of_control field
+            "stale": False,            # a flag is true or false, never unset
             "stake_percent": stake, "voting_power_pct": voting, "ownership_type": otype,
             "interest_types": interest_types, "direct_or_indirect": None,
             "since": since, "since_basis": since_basis, "until": until,

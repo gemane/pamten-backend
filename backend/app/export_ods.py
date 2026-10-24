@@ -409,7 +409,8 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
                      *_rel_cells(s["relationship"], sources)] for s in subs]
         sub_columns = ["Company", *ENTITY_COLUMNS, "Companies below", *REL_COLUMNS]
 
-    role_rows = [[_name(x["person"]), x["role"].get("role"), x["person"].get("nationality"),
+    role_rows = [[_name(x["person"]), x["role"].get("role"),
+                  ", ".join(x["person"].get("nationalities") or []) or None,
                   x["role"].get("since"), x["role"].get("until"), _source(x["role"].get("source_id"), sources),
                   Link(x["role"]["source_url"]) if x["role"].get("source_url") else None,
                   x["role"].get("source_date"), ", ".join(x["role"].get("asserted_by") or []) or None]

@@ -1037,6 +1037,27 @@ def cmd_heal_property_types(args):
               f"— run init-schema (or let the API start) first, then this heal again")
 
 
+def cmd_heal_model_gaps(args):
+    """The 2026-10-25 survey's four gaps (app.field_twins): fold the scalar
+    `nationality` into `nationalities` and drop it, put `country` into every
+    `countries` list that lacks it, stamp `source_id` on the PSC persons written
+    without one, and set `stale = false` where the flag was unset. Dry run
+    unless --apply; the edge pass scans OWNS — run with --db-url."""
+    _apply_direct_db_url(args)
+    from app.field_twins import heal_all
+    res = heal_all(apply=args.apply)
+    verb = "" if args.apply else " (dry run — add --apply)"
+    n = res["nationalities"]
+    print(f"Persons: {n['dropped']} scalar nationality dropped, {n['folded']} folded into the list, "
+          f"of {n['scanned']}{verb}")
+    c = res["countries"]
+    print(f"Entities: {c['fixed']} countries lists given their country, of {c['scanned']}{verb}")
+    s = res["person_sources"]
+    print(f"Persons: {s['stamped']} PSC persons stamped source_id {s['source_id']!r}{verb}")
+    e = res["stale_flags"]
+    print(f"OWNS: {e['fixed']} edges given stale = false{verb}")
+
+
 def cmd_init_schema(args):
     from app.db.schema import ensure_indexes
     result = ensure_indexes()
@@ -1350,6 +1371,14 @@ def _build_parser():
     p_hpt.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hpt.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hpt.set_defaults(func=cmd_heal_property_types)
+
+    p_hmg = subparsers.add_parser('heal-model-gaps',
+        help="Fold Person.nationality into nationalities and drop it, put country into countries, "
+             "stamp source_id on PSC persons, set stale = false where unset (2026-10-25). "
+             "Scans OWNS: run with --db-url. Dry run unless --apply")
+    p_hmg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hmg.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
+    p_hmg.set_defaults(func=cmd_heal_model_gaps)
 
     p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
     p_schema.set_defaults(func=cmd_init_schema)

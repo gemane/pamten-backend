@@ -198,12 +198,17 @@ class TestNoDeadFlag:
         import pathlib
         app = pathlib.Path(__file__).resolve().parents[2] / "app"
         offenders = []
+        import re
+        # a literal true/false written into a node: the peer Source's
+        # `verified:$v` (a real, parameterised flag) is not that
+        dead = re.compile(r"""verified\s*:\s*(false|true)\b|["']verified["']\s*:\s*(False|True)\b""")
         for path in app.rglob("*.py"):
-            if "auth" in path.parts or path.name in ("federation.py",):
-                continue                      # user accounts and peers have their own `verified`
-            text = path.read_text()
-            if "verified: false" in text or "verified: true" in text or '"verified": False' in text:
+            if "auth" in path.parts:
+                continue                      # user accounts have their own `verified`
+            if dead.search(path.read_text()):
                 offenders.append(str(path.relative_to(app)))
+        # federation.py was excluded by name until 2026-10-25 and kept two
+        # `verified:false` writes (an Entity and a Person CREATE) for a day
         assert offenders == []
 
 

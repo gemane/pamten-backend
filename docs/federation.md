@@ -42,7 +42,7 @@ wanted.
   "entities":  [ { "name", "type", "country", "founded",
                    "wikidata_id", "sec_cik", "lei_id", "companies_house_id" } ],
   "persons":   [ { "full_name", "first_name", "last_name",
-                   "wikidata_id", "sec_cik", "birth_date", "birth_place", "nationality" } ],
+                   "wikidata_id", "sec_cik", "birth_date", "birth_place", "nationalities" } ],
   "ownerships":[ { "owner": {ref}, "owned": {ref},
                    "stake_percent", "ownership_type", "source_url", "source_date" } ],
   // signature envelope (present only when a signing key is configured):

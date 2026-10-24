@@ -651,14 +651,12 @@ def merge_person_records(keep: str, dup: str) -> None:
             MATCH (keep:Person {{id:$keep}})
             SET {bio_set},
                 keep.description   = CASE WHEN COALESCE(keep.description, '') = '' THEN $description ELSE keep.description END,
-                keep.nationality   = CASE WHEN COALESCE(keep.nationality, '') = '' THEN $nationality ELSE keep.nationality END,
                 keep.alias         = $alias,
                 keep.nationalities = CASE WHEN size(COALESCE(keep.nationalities, [])) > 0 THEN keep.nationalities ELSE $nationalities END,
                 keep.created_at    = $created_at
         """, keep=keep,
              created_at=_earliest_birth(keep, dup),
              description=dup_node.get("description") or "",
-             nationality=dup_node.get("nationality") or "",
              alias=alias_union,
              nationalities=dup_node.get("nationalities") or [],
              **{p: dup_node.get(p) for p in BIO_COALESCE})
@@ -701,7 +699,6 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
             last_name: $last_name,
             full_name: $full_name,
             alias: $alias,
-            nationality: $nationality,
             nationalities: $nationalities,
             birth_date: $birth_date,
             death_date: $death_date,
@@ -771,7 +768,6 @@ def update_person(person_id: str, person: PersonCreate, _: dict = Depends(requir
             last_name: $last_name,
             full_name: $full_name,
             alias: $alias,
-            nationality: $nationality,
             nationalities: $nationalities,
             birth_date: $birth_date,
             death_date: $death_date,
