@@ -228,7 +228,7 @@ class TestTypedProperties:
             schema.ensure_indexes()
         issued = [c.args[0] for c in m.call_args_list]
         for stmt in ("CREATE PROPERTY OWNS.stake_percent IF NOT EXISTS DOUBLE",
-                     "CREATE PROPERTY OWNS.shares IF NOT EXISTS LONG",
+                     "CREATE PROPERTY OWNS.shares IF NOT EXISTS DOUBLE",
                      "CREATE PROPERTY Claim.stake_percent IF NOT EXISTS DOUBLE",
                      "CREATE PROPERTY Entity.founded IF NOT EXISTS INTEGER",
                      "CREATE PROPERTY Entity.is_nominee IF NOT EXISTS BOOLEAN",
@@ -248,7 +248,7 @@ class TestTypedProperties:
         assert schema._statements((types, indexes, declared)) == []
         # one typed property missing from the catalog → exactly its declaration
         declared.discard("OWNS.shares")
-        assert schema._statements((types, indexes, declared)) == ["CREATE PROPERTY OWNS.shares IF NOT EXISTS LONG"]
+        assert schema._statements((types, indexes, declared)) == ["CREATE PROPERTY OWNS.shares IF NOT EXISTS DOUBLE"]
 
     def test_an_older_two_part_catalog_still_works_and_declares_the_types(self):
         types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
@@ -271,7 +271,13 @@ class TestTypedProperties:
             assert ptype != "DATE" and ptype != "DATETIME"
             assert not prop.endswith(("_date", "_at", "since", "until")), prop
 
+    def test_share_counts_are_doubles_not_longs(self):
+        # a Form 4 reports fractional shares; a LONG declaration is refused over one
+        for _, prop, ptype in schema._TYPED_PROPERTIES:
+            if prop in ("shares", "shares_outstanding", "voting_shares"):
+                assert ptype == "DOUBLE", prop
+
     def test_typed_properties_lists_every_declared_non_string(self):
         rows = schema.typed_properties()
-        assert ("Person", "alias", "LIST") in rows and ("OWNS", "shares", "LONG") in rows
+        assert ("Person", "alias", "LIST") in rows and ("OWNS", "shares", "DOUBLE") in rows
         assert len({(t, p) for t, p, _ in rows}) == len(rows)

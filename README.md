@@ -603,7 +603,7 @@ Deployed on Render as a web service. Any push to **`develop`** triggers an autom
 
 ### Schema & indexes
 
-Every number, flag and list a writer sets has a **declared type** (`app/db/schema.py`, `_TYPED_PROPERTIES`: `stake_percent` DOUBLE, `shares` LONG, `founded` INTEGER, `is_nominee` BOOLEAN, `aliases` LIST, …), so ArcadeDB coerces every write and refuses one it cannot convert; dates stay strings because the writers keep a source's precision (`2019-00-00`). The bootstrap below declares them; `manage.py heal-property-types` rewrites rows stored before a declaration.
+Every number, flag and list a writer sets has a **declared type** (`app/db/schema.py`, `_TYPED_PROPERTIES`: `stake_percent` and `shares` DOUBLE (a Form 4 reports fractional shares), `founded` INTEGER, `is_nominee` BOOLEAN, `aliases` LIST, …), so ArcadeDB coerces every write and refuses one it cannot convert; dates stay strings because the writers keep a source's precision (`2019-00-00`). The bootstrap below declares them; `manage.py heal-property-types` rewrites rows stored before a declaration.
 
 Lookup indexes (on `id`, `name`, `name_normalized`, `wikidata_id`, `sec_cik`, and a unique `User.email`) are created automatically on startup — the app runs an idempotent, best-effort bootstrap that is a no-op once they exist. To (re)create them explicitly, e.g. against a fresh database:
 

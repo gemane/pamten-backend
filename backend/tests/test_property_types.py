@@ -25,7 +25,7 @@ class TestHeal:
     def test_each_mismatched_row_is_rewritten_as_a_parameter_of_the_declared_shape(self, monkeypatch):
         run_sql, issued, scripts, run_script = self._fake({
             ("OWNS", "stake_percent"): [{"rid": "#9:0", "v": 20}, {"rid": "#9:1", "v": 35}],
-            ("OWNS", "shares"): [{"rid": "#9:2", "v": 150000000.0}],
+            ("OWNS", "shares"): [{"rid": "#9:2", "v": 150000000}],
         })
         monkeypatch.setattr(m, "run_sql", run_sql)
         monkeypatch.setattr(m, "run_sqlscript", run_script)
@@ -40,7 +40,7 @@ class TestHeal:
                                    "UPDATE #9:1 SET stake_percent = null;", "UPDATE #9:1 SET stake_percent = :v1;"]
         assert p1 == {"v0": 20.0, "v1": 35.0} and all(isinstance(v, float) for v in p1.values())
         assert s2.splitlines() == ["UPDATE #9:2 SET shares = null;", "UPDATE #9:2 SET shares = :v0;"]
-        assert p2 == {"v0": 150000000} and isinstance(p2["v0"], int)
+        assert p2 == {"v0": 150000000.0} and isinstance(p2["v0"], float)   # a count is a DOUBLE
 
     def test_a_dry_run_counts_and_writes_nothing(self, monkeypatch):
         run_sql, issued, scripts, run_script = self._fake({("Claim", "shares"): [{"rid": "#3:0", "v": 1.0}]})

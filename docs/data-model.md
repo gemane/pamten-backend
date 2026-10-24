@@ -11,9 +11,11 @@ and where it is registered are different places and the map can show either.
 
 Every number, flag and list a writer sets is **declared** on its type
 (`app/db/schema.py`, `_TYPED_PROPERTIES`, since 2026-10-24): `stake_percent`,
-`voting_power_pct`, `value_usd`, `revenue` and the coordinates are DOUBLE; `shares`,
-`shares_outstanding` and `voting_shares` LONG (16 billion Apple shares exceed a
-32-bit INTEGER); `founded`, `employees`, `credibility_score`, `position` INTEGER;
+`voting_power_pct`, `value_usd`, `revenue` and the coordinates are DOUBLE, and so are
+`shares`, `shares_outstanding` and `voting_shares` — a Form 4 reports fractional shares
+(562,701.427 sat on a dev edge and ArcadeDB refused a LONG over it), and a double holds
+every whole count a filing states exactly; `founded`, `employees`, `credibility_score`,
+`position` INTEGER;
 `is_nominee`, `active`, `stale`, `shortcut`, `also_ultimate`, `enabled` BOOLEAN;
 `aliases`, `other_names`, `former_names`, `interest_types` and the other lists LIST.
 ArcadeDB then coerces every write (an int into `stake_percent` is stored `20.0`, a

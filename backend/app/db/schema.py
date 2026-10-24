@@ -221,9 +221,14 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     # OWNS — the stake and the counts behind it
     ("OWNS", "stake_percent",      "DOUBLE"),
     ("OWNS", "voting_power_pct",   "DOUBLE"),
-    ("OWNS", "shares",             "LONG"),      # 16 billion Apple shares exceed INTEGER
-    ("OWNS", "shares_outstanding", "LONG"),
-    ("OWNS", "voting_shares",      "LONG"),
+    # Share counts are DOUBLE, not LONG: a Form 4 reports fractional shares
+    # (dividend reinvestment, plan units — 562,701.427 sat on a dev edge and
+    # ArcadeDB refused the LONG declaration over it, the first deploy of the
+    # types), and a double holds every whole count a filing states exactly
+    # (16 billion Apple shares is far below 2^53).
+    ("OWNS", "shares",             "DOUBLE"),
+    ("OWNS", "shares_outstanding", "DOUBLE"),
+    ("OWNS", "voting_shares",      "DOUBLE"),
     ("OWNS", "value_usd",          "DOUBLE"),
     ("OWNS", "credibility_score",  "INTEGER"),
     ("OWNS", "stale",              "BOOLEAN"),
@@ -236,9 +241,9 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     # Claim — the same facts a source asserts, typed alike
     ("Claim", "stake_percent",      "DOUBLE"),
     ("Claim", "voting_power_pct",   "DOUBLE"),
-    ("Claim", "shares",             "LONG"),
-    ("Claim", "shares_outstanding", "LONG"),
-    ("Claim", "voting_shares",      "LONG"),
+    ("Claim", "shares",             "DOUBLE"),
+    ("Claim", "shares_outstanding", "DOUBLE"),
+    ("Claim", "voting_shares",      "DOUBLE"),
     ("Claim", "credibility_score",  "INTEGER"),
     ("StakeHistory", "stake_percent",    "DOUBLE"),
     ("StakeHistory", "previous_percent", "DOUBLE"),
