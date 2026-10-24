@@ -7,6 +7,24 @@ its registered address (`address`, `reg_lat`, `reg_lng`), so the map reads one
 record instead of traversing. Both are geocoded, because where a company is run
 and where it is registered are different places and the map can show either.
 
+## Property types
+
+Every number, flag and list a writer sets is **declared** on its type
+(`app/db/schema.py`, `_TYPED_PROPERTIES`, since 2026-10-24): `stake_percent`,
+`voting_power_pct`, `value_usd`, `revenue` and the coordinates are DOUBLE; `shares`,
+`shares_outstanding` and `voting_shares` LONG (16 billion Apple shares exceed a
+32-bit INTEGER); `founded`, `employees`, `credibility_score`, `position` INTEGER;
+`is_nominee`, `active`, `stale`, `shortcut`, `also_ultimate`, `enabled` BOOLEAN;
+`aliases`, `other_names`, `former_names`, `interest_types` and the other lists LIST.
+ArcadeDB then coerces every write (an int into `stake_percent` is stored `20.0`, a
+numeric string into `employees` is parsed) and refuses one it cannot convert.
+Schemaless, a value took whatever type the writer's JSON carried: `stake_percent` sat
+as DOUBLE on 974 edges and INTEGER on 20, `shares` as DOUBLE, INTEGER and LONG side by
+side. **Dates stay STRING** on purpose — the writers keep a source's precision
+(`2019-00-00` is a Wikidata year, `1951-08` a UK PSC month of birth), which no DATE
+type holds, and ISO strings compare correctly as strings. A declaration never touches
+the rows already stored; `manage.py heal-property-types` rewrites those.
+
 ## Nodes
 
 | Label | Key properties |
