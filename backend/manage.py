@@ -695,6 +695,17 @@ def cmd_heal_sec_dates(args):
           f"{res['first_reported']} 13F holdings given their quarter as a lower-bound start.")
 
 
+def cmd_heal_merged_references(args):
+    """Re-point flags, suppressions, pins and scrape runs still carrying an id a
+    merge folded away (`app.merged_ids.heal_merged_references`); the merges
+    before 2026-10-24 left them behind. `--dry-run` only counts."""
+    from app.merged_ids import heal_merged_references
+    res = heal_merged_references(apply=not args.dry_run)
+    verb = "would move" if args.dry_run else "moved"
+    print(f"{res['redirects']} merge redirects read; {res['stale']} stale references found, "
+          f"{verb} {res['moved'] if not args.dry_run else res['stale']}.")
+
+
 def cmd_heal_read_from(args):
     """Stamp `read_from` (how surely a value was read) on edges and claims
     written before the grade existed (`app.scraper.read_from_heal`). Fill-only,
@@ -1684,6 +1695,12 @@ def _build_parser():
              "(time travel shows them dimmed otherwise); --dry-run counts")
     p_hrd.add_argument('--dry-run', action='store_true', help='Count, change nothing')
     p_hrd.set_defaults(func=cmd_heal_role_dates)
+
+    p_hmr = subparsers.add_parser('heal-merged-references',
+        help="Re-point flags, suppressions, pins and scrape runs still carrying an id a merge "
+             "folded away (merges before 2026-10-24 left them behind); --dry-run counts")
+    p_hmr.add_argument('--dry-run', action='store_true', help='Count, change nothing')
+    p_hmr.set_defaults(func=cmd_heal_merged_references)
 
     p_hck = subparsers.add_parser('heal-claim-keys',
         help="Re-key claims whose key does not match their content and fold the doubles "
