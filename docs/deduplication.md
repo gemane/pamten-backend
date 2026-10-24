@@ -164,7 +164,11 @@ Medium/low and father/son cases are left for a human, deliberately.
    panel loses that evidence (six were stranded the first time the fixed
    auto-dedup ran on dev).
 5. **Log + delete** — write a `MergeLog` row and a `MergedId` forwarding row,
-   then `DETACH DELETE` the dup.
+   re-point every stored reference to the dup's id (flags, suppressions, pins,
+   scrape runs — `merged_ids.REFERENCE_COLUMNS`, done by the forwarding-row
+   write so no merge path can skip it; the merges before 2026-10-24 did, and
+   `manage.py heal-merged-references` moves what they left), then
+   `DETACH DELETE` the dup.
 
 **Which node is kept** (`suggested_keep_id`): prefer a Wikidata node, then the
 most-connected, then the shortest name.

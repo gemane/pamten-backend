@@ -394,11 +394,11 @@ undoes that once (dry run unless `--apply`; the parts move under `reg_*`, the pi
 
 Duplicate companies are folded together by `deduplicate_entities` (shared LEI / Companies House id / CIK / Wikidata id) and, after every scrape, `deduplicate_entities_for` on just the entities that scrape touched — high-confidence groups only, the rest left for review.
 
-The survivor is the highest-`name_credibility` node (then verified, then the lexically smallest id), so a register-sourced node with its stable `lei:` id normally wins over a scraped UUID. A merge carries three things across before deleting the loser:
+The survivor is the highest-`name_credibility` node (then verified, then the lexically smallest id), so a register-sourced node with its stable `lei:` id normally wins over a scraped UUID. A merge carries four things across before deleting the loser:
 
 - **its edges** — owners, subsidiaries and roles, skipping any the survivor already has;
 - **its data** — identifiers (`wikidata_id`, `sec_cik`, …) and descriptive fields, filling gaps only; the survivor's own values always win, its name never changes, and the loser's name is added as an alias so the company stays findable under it;
-- **a forwarding address** for its id (see below).
+- **a forwarding address** for its id (see below) — and with it every stored reference to that id: a moderator's flags, pins and suppressions and the scrape-run log move to the survivor (`merged_ids.REFERENCE_COLUMNS`; the merges before 2026-10-24 left them behind — `manage.py heal-merged-references` moves those).
 
 Carrying the data across is not cosmetic. Edges alone would drop the loser's `wikidata_id` — which is what marks a company "notable" in search ranking and the key a later Wikidata scrape resolves on — along with its description, revenue and headcount.
 
