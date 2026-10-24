@@ -177,39 +177,108 @@ _EDGE_INDEXES: list[tuple[str, str, str]] = [
 #: got String") — the property type is part of the contract, not decoration.
 _PROPERTY_TYPES: dict[tuple[str, str], str] = {
     ("Person", "alias"): "LIST",
-    # One issuer circulates under several 13F CUSIPs (SpaceX: 84615Q103 beside
-    # 69608A108) — every one seen becomes a search term on the next run.
-    ("Entity", "cusips"): "LIST",
-    # Register pairs the entity USED to carry (Tesla was Delaware before
-    # Texas) — recovered from GLEIF snapshot archives and maintained by the
-    # daily delta; joins the hard-id dedup so a source that knew the company
-    # under its previous register can still merge.
-    ("Entity", "former_register_ids"): "LIST",
-    # The register's own other names for the entity (alternative-language
-    # legal names, previous names, transliterations) — GLEIF-owned, folded
-    # into search_text; separate from the Wikidata/SEC-owned aliases.
-    ("Entity", "other_names"): "LIST",
 }
 
+#: Declared types for the properties that are not strings, indexed or not —
+#: every number, flag and list a writer sets (2026-10-24). ArcadeDB stores a
+#: schemaless value in whatever type the writer's JSON happened to carry:
+#: `stake_percent` sat as DOUBLE on 974 edges and INTEGER on 20, `shares` as
+#: DOUBLE, INTEGER and LONG side by side. A declared type makes the server
+#: coerce every write (an int into a DOUBLE property is stored 20.0; a
+#: numeric string into an INTEGER is parsed; a value that cannot convert is
+#: refused, which is what we want of "abc" for a year). Declaring a type
+#: never touches the rows already stored — `manage.py heal-property-types`
+#: rewrites those. Dates stay STRING on purpose: the writers keep a source's
+#: precision ("2019-00-00" is a Wikidata year), which no DATE type can hold.
+_TYPED_PROPERTIES: list[tuple[str, str, str]] = [
+    # Entity — numbers
+    ("Entity", "founded",          "INTEGER"),   # the year the business began
+    ("Entity", "employees",        "INTEGER"),
+    ("Entity", "employees_as_of",  "INTEGER"),
+    ("Entity", "name_credibility", "INTEGER"),
+    ("Entity", "scrape_depth",     "INTEGER"),
+    ("Entity", "revenue",          "DOUBLE"),
+    ("Entity", "hq_lat",           "DOUBLE"),
+    ("Entity", "hq_lng",           "DOUBLE"),
+    ("Entity", "reg_lat",          "DOUBLE"),
+    ("Entity", "reg_lng",          "DOUBLE"),
+    # Entity — flags
+    ("Entity", "is_nominee",        "BOOLEAN"),
+    ("Entity", "active",            "BOOLEAN"),
+    ("Entity", "on_demand_scraped", "BOOLEAN"),
+    # Entity — lists
+    ("Entity", "aliases",              "LIST"),
+    ("Entity", "countries",            "LIST"),
+    ("Entity", "hq_locations",         "LIST"),
+    ("Entity", "former_names",         "LIST"),
+    ("Entity", "other_names",          "LIST"),   # GLEIF's other names, folded into search_text
+    ("Entity", "uk_sic_codes",         "LIST"),
+    ("Entity", "cusips",               "LIST"),   # one issuer, several 13F CUSIPs
+    ("Entity", "former_register_ids",  "LIST"),   # register pairs it used to carry
+    ("Entity", "source_statement_ids", "LIST"),
+    # Person
+    ("Person", "nationalities", "LIST"),
+    # OWNS — the stake and the counts behind it
+    ("OWNS", "stake_percent",      "DOUBLE"),
+    ("OWNS", "voting_power_pct",   "DOUBLE"),
+    ("OWNS", "shares",             "LONG"),      # 16 billion Apple shares exceed INTEGER
+    ("OWNS", "shares_outstanding", "LONG"),
+    ("OWNS", "voting_shares",      "LONG"),
+    ("OWNS", "value_usd",          "DOUBLE"),
+    ("OWNS", "credibility_score",  "INTEGER"),
+    ("OWNS", "stale",              "BOOLEAN"),
+    ("OWNS", "shortcut",           "BOOLEAN"),
+    ("OWNS", "also_ultimate",      "BOOLEAN"),
+    ("OWNS", "interest_types",     "LIST"),
+    ("HAS_ROLE",     "credibility_score", "INTEGER"),
+    ("RELATED_TO",   "credibility_score", "INTEGER"),
+    ("SUCCEEDED_BY", "credibility_score", "INTEGER"),
+    # Claim — the same facts a source asserts, typed alike
+    ("Claim", "stake_percent",      "DOUBLE"),
+    ("Claim", "voting_power_pct",   "DOUBLE"),
+    ("Claim", "shares",             "LONG"),
+    ("Claim", "shares_outstanding", "LONG"),
+    ("Claim", "voting_shares",      "LONG"),
+    ("Claim", "credibility_score",  "INTEGER"),
+    ("StakeHistory", "stake_percent",    "DOUBLE"),
+    ("StakeHistory", "previous_percent", "DOUBLE"),
+    ("IndustryCode", "position", "INTEGER"),
+    ("Source", "credibility_score", "INTEGER"),
+    ("Source", "enabled",           "BOOLEAN"),
+]
 
-def _statements(existing: tuple[set, set] | None = None) -> list[str]:
+
+def typed_properties() -> list[tuple[str, str, str]]:
+    """Every declared non-string property as (type, property, ArcadeDB type) —
+    the indexed ones from `_PROPERTY_TYPES` and the rest from
+    `_TYPED_PROPERTIES`; what the heal converts stored rows to."""
+    out = [(t, p, k) for (t, p), k in _PROPERTY_TYPES.items()]
+    out += [row for row in _TYPED_PROPERTIES if (row[0], row[1]) not in _PROPERTY_TYPES]
+    return out
+
+
+def _statements(existing: tuple | None = None) -> list[str]:
     """The DDL the schema needs — all of it, or only what `existing` lacks.
 
-    `existing` is (type names, index names) as the server reports them. Even an
-    `IF NOT EXISTS` statement takes the exclusive schema lock, and on a large
-    database that lock is held for an hour at a time by an index compaction:
-    the API's startup used to issue thirty of them, each timing out on the
-    client but queuing on the server, and every request — searches, profiles
-    — waited behind that queue. With the catalog in hand a complete schema
-    means no DDL at all.
+    `existing` is (type names, index names, declared "Type.property" names)
+    as the server reports them (the third may be missing from an older
+    caller). Even an `IF NOT EXISTS` statement takes the exclusive schema
+    lock, and on a large database that lock is held for an hour at a time by
+    an index compaction: the API's startup used to issue thirty of them,
+    each timing out on the client but queuing on the server, and every
+    request — searches, profiles — waited behind that queue. With the
+    catalog in hand a complete schema means no DDL at all.
     """
-    types, indexes = existing if existing else (None, None)
+    types, indexes, props = (tuple(existing) + (None,))[:3] if existing else (None, None, None)
 
     def has_type(name: str) -> bool:
         return types is not None and name in types
 
     def has_index(vtype: str, prop: str) -> bool:
         return indexes is not None and f"{vtype}[{prop}]" in indexes
+
+    def has_property(vtype: str, prop: str) -> bool:
+        return props is not None and f"{vtype}.{prop}" in props
 
     stmts: list[str] = []
     for vtype in sorted({t for t, _, _ in _INDEXES}):
@@ -237,18 +306,33 @@ def _statements(existing: tuple[set, set] | None = None) -> list[str]:
             continue
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT")
+    # The typed, unindexed properties: a declaration each, nothing to index.
+    for vtype, prop, ptype in _TYPED_PROPERTIES:
+        if (vtype, prop) in _PROPERTY_TYPES or has_property(vtype, prop):
+            continue
+        stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS {ptype}")
     return stmts
 
 
-def _existing_schema() -> tuple[set, set] | None:
-    """(type names, index names) from the server's catalog, or None when it
-    cannot be read — then the full idempotent DDL runs, as it always did."""
-    types = run_sql("SELECT name FROM schema:types")
+def _existing_schema() -> tuple[set, set, set] | None:
+    """(type names, index names, declared "Type.property" names) from the
+    server's catalog, or None when it cannot be read — then the full
+    idempotent DDL runs, as it always did."""
+    types = run_sql("SELECT name, properties FROM schema:types")
     indexes = run_sql("SELECT name FROM schema:indexes")
     if not isinstance(types, list) or not isinstance(indexes, list):
         return None
+    declared: set = set()
+    for r in types:
+        if not isinstance(r, dict):
+            continue
+        for p in r.get("properties") or []:
+            name = p.get("name") if isinstance(p, dict) else p
+            if name:
+                declared.add(f"{r.get('name')}.{name}")
     return ({r.get("name") for r in types if isinstance(r, dict)},
-            {r.get("name") for r in indexes if isinstance(r, dict)})
+            {r.get("name") for r in indexes if isinstance(r, dict)},
+            declared)
 
 
 def _fulltext_index_names(vtype: str, prop: str) -> list[str]:

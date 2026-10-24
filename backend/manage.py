@@ -1019,6 +1019,21 @@ def cmd_seed(args):
     import seed
     seed.main(region=args.region)
 
+def cmd_heal_property_types(args):
+    """Rewrite every stored number whose type is not its declared one
+    (app.db.schema._TYPED_PROPERTIES; app.property_types) — the rows written
+    before the types were declared on 2026-10-24. Whole-type scans: run with
+    --db-url straight at ArcadeDB. Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.property_types import heal
+    res = heal(apply=args.apply)
+    verb = "Rewrote" if res["applied"] else "Would rewrite (dry run — add --apply)"
+    if not res["converted"]:
+        print("Every stored value already has its declared type.")
+    for key, n in res["converted"].items():
+        print(f"{verb} {n} {key} values")
+
+
 def cmd_init_schema(args):
     from app.db.schema import ensure_indexes
     result = ensure_indexes()
@@ -1326,6 +1341,13 @@ def _build_parser():
     p_seed.set_defaults(func=cmd_seed)
 
     # init-schema command
+    p_hpt = subparsers.add_parser('heal-property-types',
+        help="Rewrite every stored number whose type is not its declared one (rows from before the "
+             "types were declared on 2026-10-24). Whole-type scans: run with --db-url. Dry run unless --apply")
+    p_hpt.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hpt.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
+    p_hpt.set_defaults(func=cmd_heal_property_types)
+
     p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
     p_schema.set_defaults(func=cmd_init_schema)
 

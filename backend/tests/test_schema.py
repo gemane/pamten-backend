@@ -50,10 +50,12 @@ def test_is_idempotent_all_ddl_uses_if_not_exists():
             continue                      # the two catalog reads are not DDL
         assert "IF NOT EXISTS" in s, s
         if s.startswith("CREATE PROPERTY"):
-            # The type follows IF NOT EXISTS; it is STRING unless _PROPERTY_TYPES
-            # overrides it (Person.alias is a LIST — declared STRING, ArcadeDB
-            # rejects `$name IN p.alias`).
-            assert re.search(r"IF NOT EXISTS (STRING|LIST)$", s), s
+            # The type follows IF NOT EXISTS: STRING for an indexed lookup
+            # column unless _PROPERTY_TYPES says otherwise (Person.alias is a
+            # LIST — declared STRING, ArcadeDB rejects `$name IN p.alias`),
+            # and the declared type for every number, flag and list a writer
+            # sets (_TYPED_PROPERTIES).
+            assert re.search(r"IF NOT EXISTS (STRING|LIST|INTEGER|LONG|DOUBLE|BOOLEAN)$", s), s
 
 
 def test_declared_property_types_are_rendered():
@@ -162,21 +164,26 @@ class TestStartupIssuesNoDdlWhenTheSchemaIsComplete:
     request waited behind them. The catalog is read first, DDL only for gaps."""
 
     @staticmethod
-    def _catalog(types, indexes):
+    def _catalog(types, indexes, declared=()):
+        """The catalog as the server reports it: types with their declared
+        properties (`declared` = "Type.prop" names), and the indexes."""
         def run(sql, *a, **kw):
-            if sql == "SELECT name FROM schema:types":
-                return [{"name": t} for t in types]
+            if sql == "SELECT name, properties FROM schema:types":
+                return [{"name": t, "properties": [{"name": d.split(".", 1)[1]} for d in declared
+                                                   if d.split(".", 1)[0] == t]} for t in types]
             if sql == "SELECT name FROM schema:indexes":
                 return [{"name": i} for i in indexes]
             return []
         return run
+
+    _TYPED = {f"{t}.{p}" for t, p, _ in schema._TYPED_PROPERTIES}
 
     def test_a_complete_schema_issues_nothing(self):
         types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
         indexes = ({f"{t}[{p}]" for t, p, _ in schema._INDEXES}
                    | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES}
                    | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES})
-        with _run(self._catalog(types, indexes)) as m:
+        with _run(self._catalog(types, indexes, self._TYPED)) as m:
             res = schema.ensure_indexes()
         issued = [c.args[0] for c in m.call_args_list]
         assert not any(s.startswith("CREATE") for s in issued), issued
@@ -187,7 +194,7 @@ class TestStartupIssuesNoDdlWhenTheSchemaIsComplete:
         indexes = ({f"{t}[{p}]" for t, p, _ in schema._INDEXES}
                    | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES}
                    | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}) - {"Entity[search_text]"}
-        with _run(self._catalog(types, indexes)) as m:
+        with _run(self._catalog(types, indexes, self._TYPED)) as m:
             schema.ensure_indexes()
         creates = [c.args[0] for c in m.call_args_list if c.args[0].startswith("CREATE")]
         assert creates == ["CREATE PROPERTY Entity.search_text IF NOT EXISTS STRING",
@@ -195,7 +202,7 @@ class TestStartupIssuesNoDdlWhenTheSchemaIsComplete:
 
     def test_an_unreadable_catalog_falls_back_to_the_full_ddl(self):
         def run(sql, *a, **kw):
-            if sql.startswith("SELECT name FROM schema:"):
+            if sql.startswith("SELECT name"):
                 raise RuntimeError("no such type schema:types")
             return []
         with _run(run) as m:
@@ -210,3 +217,61 @@ class TestStartupIssuesNoDdlWhenTheSchemaIsComplete:
         with _run(run):
             res = schema.ensure_indexes()
         assert res["skipped"] is True
+
+
+class TestTypedProperties:
+    """Every number, flag and list a writer sets has a declared type, on vertex
+    and edge types alike; a complete catalog issues no DDL for them."""
+
+    def test_the_numbers_flags_and_lists_are_declared(self):
+        with _run() as m:
+            schema.ensure_indexes()
+        issued = [c.args[0] for c in m.call_args_list]
+        for stmt in ("CREATE PROPERTY OWNS.stake_percent IF NOT EXISTS DOUBLE",
+                     "CREATE PROPERTY OWNS.shares IF NOT EXISTS LONG",
+                     "CREATE PROPERTY Claim.stake_percent IF NOT EXISTS DOUBLE",
+                     "CREATE PROPERTY Entity.founded IF NOT EXISTS INTEGER",
+                     "CREATE PROPERTY Entity.is_nominee IF NOT EXISTS BOOLEAN",
+                     "CREATE PROPERTY Entity.aliases IF NOT EXISTS LIST",
+                     "CREATE PROPERTY Entity.cusips IF NOT EXISTS LIST",
+                     "CREATE PROPERTY Person.nationalities IF NOT EXISTS LIST",
+                     "CREATE PROPERTY Source.enabled IF NOT EXISTS BOOLEAN"):
+            assert stmt in issued, stmt
+        # an indexed LIST is declared once, by the index loop, never twice
+        assert issued.count("CREATE PROPERTY Person.alias IF NOT EXISTS LIST") == 1
+
+    def test_a_declared_property_issues_no_ddl(self):
+        types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES) | {"Claim", "StakeHistory", "IndustryCode"}
+        indexes = {f"{t}[{p}]" for t, p, _ in schema._INDEXES} | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES} \
+            | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}
+        declared = {f"{t}.{p}" for t, p, _ in schema._TYPED_PROPERTIES}
+        assert schema._statements((types, indexes, declared)) == []
+        # one typed property missing from the catalog → exactly its declaration
+        declared.discard("OWNS.shares")
+        assert schema._statements((types, indexes, declared)) == ["CREATE PROPERTY OWNS.shares IF NOT EXISTS LONG"]
+
+    def test_an_older_two_part_catalog_still_works_and_declares_the_types(self):
+        types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
+        indexes = {f"{t}[{p}]" for t, p, _ in schema._INDEXES} | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES} \
+            | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}
+        stmts = schema._statements((types, indexes))
+        assert all(s.startswith("CREATE PROPERTY") for s in stmts) and len(stmts) == len(schema._TYPED_PROPERTIES)
+
+    def test_the_catalog_read_reports_declared_properties(self):
+        rows = {"SELECT name, properties FROM schema:types": [
+                    {"name": "OWNS", "properties": [{"name": "stake_percent", "type": "DOUBLE"}]},
+                    {"name": "Entity", "properties": []}],
+                "SELECT name FROM schema:indexes": [{"name": "Entity[id]"}]}
+        with _run(side_effect=lambda sql, *a, **k: rows[sql]):
+            types, indexes, declared = schema._existing_schema()
+        assert types == {"OWNS", "Entity"} and indexes == {"Entity[id]"} and declared == {"OWNS.stake_percent"}
+
+    def test_dates_are_not_typed(self):
+        for _, prop, ptype in schema._TYPED_PROPERTIES:
+            assert ptype != "DATE" and ptype != "DATETIME"
+            assert not prop.endswith(("_date", "_at", "since", "until")), prop
+
+    def test_typed_properties_lists_every_declared_non_string(self):
+        rows = schema.typed_properties()
+        assert ("Person", "alias", "LIST") in rows and ("OWNS", "shares", "LONG") in rows
+        assert len({(t, p) for t, p, _ in rows}) == len(rows)
