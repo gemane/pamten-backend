@@ -769,8 +769,12 @@ Company **names, addresses, incorporation dates and former names** are filled in
 the companion `manage.py ch-company-data` importer from the Companies House
 **BasicCompanyData** product (the full UK register, monthly). That importer is a
 pure *enrichment* pass — it only `UPDATE`s companies already in the graph (matched
-on `gb-coh:{number}`), so the 5.6M-row register never creates isolated company
-nodes; former names land in `aliases` + `search_text`, and with their change-of-name
+on `gb-coh:{number}`, and since 2026-10-24 also on the `companies_house_id` a node
+under another id carries: GLEIF keys a UK company `lei:…` with its number as a
+property, and the external-id dedup merges a later `gb-coh:` twin into that node or
+never sees one, a listed company having no PSC — 207 of dev's 238 UK companies,
+Barclays and Rolls-Royce among them, had been reached by no register row), so the
+5.6M-row register never creates isolated company nodes; former names land in `aliases` + `search_text`, and with their change-of-name
 dates (`PreviousName_n.CONDATE`) in `former_names` — the register of record for its own
 companies, so its dated list replaces what stood there (a bulk `UPDATE` cannot union;
 the entity merge unions a SEC twin's list in). Individuals become `Person`

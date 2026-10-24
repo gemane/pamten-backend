@@ -288,6 +288,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       company twice from two sources is the normal case, not an error.
 - [ ] **Never write past a merge.** A merged node leaves a `MergedId` forwarding row and
       by-id reads follow it; resolve before writing rather than resurrecting the loser.
+      The quiet twin of this: an enrichment addressed to a *constructed* id
+      (`UPDATE … WHERE id = 'gb-coh:{number}'`) is a silent no-op on the node that
+      holds the number under another id — the survivor of a merge, or a GLEIF node
+      that never had a twin. `ch-company-data` missed 207 of dev's 238 UK companies
+      that way for a year, unnoticed until the SIC codes were the first field nothing
+      else supplied (2026-10-24). Look the identifier up and address every holder;
+      count the rows that went to one, so the log shows the path is alive.
 - [ ] **One edge per pair.** Re-asserting an existing relationship updates it; it does not
       add a second one.
 - [ ] **Structured "person" fields still carry companies.** Form D's relatedPersonInfo
