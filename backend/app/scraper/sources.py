@@ -1,8 +1,22 @@
 """
-Per-source scraper toggles, stored as ScraperSource nodes in ArcadeDB.
-These are independent of the master SCRAPER_ENABLED env flag.
+The source catalogue and its one node per source.
+
+Every source this instance draws on has ONE `Source` node, keyed by a stable
+id (`gleif`, `sec-edgar`, `uk-psc`, `wikidata`, `opencorporates`) — the same
+id in dev, in production and across federation peers — carrying its
+provenance fields (name, url, credibility, type) AND its run-time switches
+(`enabled`, `data_mode`). Until 2026-10-24 those were two node types: a
+`Source` with a random uuid per environment (so a claim's `source_id` meant
+nothing outside the database that minted it) and a `ScraperSource` keyed by
+the catalogue slug for the toggle; `manage.py heal-source-ids` folds a
+database written that way.
+
+The catalogue KEY (`sec_edgar`, `bods_gleif`, …) stays the toggle name in the
+API and the config flags; the node's `id` is the entry's `id`.
+The switches are independent of the master SCRAPER_ENABLED env flag.
 """
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Depends
 from app.database import db
@@ -25,12 +39,14 @@ router = APIRouter(prefix="/scraper/sources", tags=["Scraper"])
 # the same relationship (see app/claims.py). `quality` is the band it belongs to,
 # which is what the UI shows: a bare "98" says nothing without "legally mandated".
 #
-# ⚠️ `enabled` (a per-source toggle, stored on the ScraperSource node) governs whether
+# ⚠️ `enabled` (a per-source toggle, stored on the Source node) governs whether
 # a source RUNS — it says nothing about whether its data is already in the graph. Both
 # bulk sources are toggled off while their data is loaded and in active use. Do not
 # present the toggle as "this source is not used".
 KNOWN_SOURCES = {
     "wikidata": {
+        "id": "wikidata",
+        "type": "knowledge_base",
         "kind": "instant",
         "label": "Wikidata",
         "url": "https://www.wikidata.org",
@@ -42,6 +58,8 @@ KNOWN_SOURCES = {
                     "companies — the soft layer no register carries",
     },
     "sec_edgar": {
+        "id": "sec-edgar",
+        "type": "register",
         "kind": "instant",
         "label": "SEC EDGAR",
         "url": "https://www.sec.gov/edgar",
@@ -54,6 +72,8 @@ KNOWN_SOURCES = {
                     "subsidiary lists — and private-company boards from Form D",
     },
     "open_corporates": {
+        "id": "opencorporates",
+        "type": "register",
         "kind": "instant",
         "label": "OpenCorporates",
         "url": "https://opencorporates.com",
@@ -65,6 +85,8 @@ KNOWN_SOURCES = {
                     "for jurisdictions this platform does not read directly",
     },
     "bods_gleif": {
+        "id": "gleif",
+        "type": "register",
         "kind": "bulk",
         "label": "GLEIF",
         "url": "https://www.gleif.org",
@@ -77,6 +99,8 @@ KNOWN_SOURCES = {
                     "consolidation relationships (who consolidates whom)",
     },
     "bods_uk_psc": {
+        "id": "uk-psc",
+        "type": "register",
         "kind": "bulk",
         "label": "UK PSC",
         "url": "https://www.gov.uk/government/publications/persons-with-significant-control-register",
@@ -89,6 +113,39 @@ KNOWN_SOURCES = {
                     "control over UK-registered companies",
     },
 }
+
+
+#: catalogue key → the Source node's stable id, and back
+SOURCE_ID: dict[str, str] = {key: meta["id"] for key, meta in KNOWN_SOURCES.items()}
+_KEY_BY_ID: dict[str, str] = {meta["id"]: key for key, meta in KNOWN_SOURCES.items()}
+_KEY_BY_LABEL: dict[str, str] = {meta["label"]: key for key, meta in KNOWN_SOURCES.items()}
+
+
+def source_key_for(label_or_id: str | None) -> str | None:
+    """The catalogue key behind a Source node's label ("GLEIF") or id ("gleif");
+    None for a source outside the catalogue (a peer, a manual one)."""
+    if not label_or_id:
+        return None
+    return _KEY_BY_ID.get(label_or_id) or _KEY_BY_LABEL.get(label_or_id)
+
+
+def slug_id(name: str) -> str:
+    """A stable id for a source outside the catalogue, from its name:
+    lower-case, runs of anything but letters and digits become one hyphen
+    ("Peer: Signed" → "peer-signed"). The same name gives the same id on
+    every instance, which is the point."""
+    return re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-") or "source"
+
+
+def source_id_for(name: str, type_: str | None = None) -> str:
+    """The id a Source node named `name` gets: the catalogue's for a catalogue
+    label, `peer:<slug>` for a federation peer, else the slug of the name."""
+    key = source_key_for(name)
+    if key:
+        return SOURCE_ID[key]
+    if type_ == "peer":
+        return "peer:" + slug_id(re.sub(r"^peer:\s*", "", name, flags=re.I))
+    return slug_id(name)
 
 
 _DATA_MODES = ("full", "claims_only")
@@ -114,28 +171,36 @@ def default_data_mode(name: str) -> str:
     return mode
 
 
+#: The MERGE every catalogue entry's node goes through: the switches filled
+#: only where empty (an admin's later flip in the UI survives restarts, and a
+#: node the WRITER created first — stamping provenance before anything listed
+#: the catalogue — gets its defaults on the first listing), the catalogue
+#: fields refreshed every time.
+_ENSURE_SOURCE = """
+    MERGE (s:Source {id: $id})
+    SET s.enabled = COALESCE(s.enabled, true), s.data_mode = COALESCE(s.data_mode, $mode),
+        s.registry_key = $key, s.name = $label, s.url = $url,
+        s.credibility_score = $cred, s.type = $type, s.kind = $kind,
+        s.description = $desc
+"""
+
+
 def _ensure_sources():
-    """Create default ScraperSource nodes if they don't exist."""
+    """One Source node per catalogue entry, keyed by its stable id."""
     with db.get_session() as session:
-        for name, meta in KNOWN_SOURCES.items():
-            session.run(
-                """
-                MERGE (s:ScraperSource {name: $name})
-                ON CREATE SET s.enabled = true, s.description = $desc,
-                              s.data_mode = $mode
-                SET s.kind = $kind
-                """,
-                name=name, desc=meta["description"], kind=meta["kind"],
-                mode=default_data_mode(name),
-            )
+        for key, meta in KNOWN_SOURCES.items():
+            session.run(_ENSURE_SOURCE, id=meta["id"], key=key, label=meta["label"],
+                        url=meta["url"], cred=meta["credibility"], type=meta["type"],
+                        kind=meta["kind"], desc=meta["description"],
+                        mode=default_data_mode(key))
 
 
 def get_source_enabled(name: str) -> bool:
     _ensure_sources()
     with db.get_session() as session:
         rec = session.run(
-            "MATCH (s:ScraperSource {name: $name}) RETURN s.enabled AS enabled",
-            name=name,
+            "MATCH (s:Source {id: $id}) RETURN s.enabled AS enabled",
+            id=SOURCE_ID.get(name, name),
         ).single()
         return bool(rec["enabled"]) if rec else False
 
@@ -145,7 +210,8 @@ def list_sources():
     _ensure_sources()
     with db.get_session() as session:
         records = session.run(
-            "MATCH (s:ScraperSource) RETURN s.name AS name, s.enabled AS enabled, "
+            "MATCH (s:Source) WHERE s.registry_key IS NOT NULL "
+            "RETURN s.registry_key AS name, s.id AS id, s.enabled AS enabled, "
             "s.description AS description, s.kind AS kind, s.data_mode AS data_mode"
         )
         rows = []
@@ -153,6 +219,7 @@ def list_sources():
             meta = KNOWN_SOURCES.get(r["name"], {})
             rows.append({
                 "name": r["name"],
+                "id": r.get("id") or meta.get("id"),
                 "enabled": bool(r["enabled"]),
                 "description": r["description"],
                 # `kind` may be null on rows created before this field existed → fall
@@ -196,31 +263,26 @@ _MODE_CACHE_TTL = 60.0
 def _mode_by_source_id() -> dict:
     """Source-node id → data_mode, for every catalogue source.
 
-    Edges carry the Source NODE's uuid, not the catalogue slug; the bridge is
-    the label (Source.name == KNOWN_SOURCES[slug]["label"]). Unknown labels
-    (a peer's federated source, say) read as full — restriction is opt-in.
-    A catalogue source with no row yet, or a row with no mode, runs in its
-    configured default (`default_data_mode`): a rebuilt database obeys
-    SCRAPER_WIKIDATA_DATA_MODE from its first write, before any request has
-    seeded the rows."""
+    One read of the Source nodes: a row's own mode when it has one, else the
+    source's configured default (`default_data_mode`) — so a rebuilt database
+    obeys SCRAPER_WIKIDATA_DATA_MODE from its first write, when the writer
+    has created the node but nothing has listed or toggled it yet. A node
+    outside the catalogue (a peer's) reads as full — restriction is opt-in.
+    The catalogue key is read from the node (`registry_key`) and, on a node
+    the writer created before that field existed, from its label."""
     import time
     now = time.monotonic()
     if _MODE_CACHE["at"] is not None and now - _MODE_CACHE["at"] < _MODE_CACHE_TTL:
         return _MODE_CACHE["by_source_id"]
     by_id: dict = {}
     try:
-        label_to_mode = {meta["label"]: default_data_mode(slug)
-                         for slug, meta in KNOWN_SOURCES.items()}
         with db.get_session() as session:
-            for r in session.run("MATCH (s:ScraperSource) RETURN s.name AS name, "
-                                 "s.data_mode AS data_mode"):
-                meta = KNOWN_SOURCES.get(r["name"])
-                if meta and r["data_mode"]:
-                    label_to_mode[meta["label"]] = r["data_mode"]
-            for r in session.run("MATCH (s:Source) RETURN s.id AS id, s.name AS name"):
-                mode = label_to_mode.get(r["name"])
-                if mode:
-                    by_id[r["id"]] = mode
+            for r in session.run("MATCH (s:Source) RETURN s.id AS id, s.name AS name, "
+                                 "s.registry_key AS key, s.data_mode AS data_mode"):
+                key = r.get("key") or source_key_for(r.get("name"))
+                if not key:
+                    continue
+                by_id[r["id"]] = r.get("data_mode") or default_data_mode(key)
     except Exception:  # noqa: BLE001 - fail open, and CACHE the failure:
         # a mocked suite (or a flaky DB) must produce one failed read per TTL,
         # not one per edge — repeated failed reads are how the ArcadeDB
@@ -263,9 +325,9 @@ def set_source_mode(name: str, mode: str, _: dict = Depends(require_admin)):
     _ensure_sources()
     with db.get_session() as session:
         rec = session.run(
-            "MATCH (s:ScraperSource {name: $name}) SET s.data_mode = $mode "
+            "MATCH (s:Source {id: $id}) SET s.data_mode = $mode "
             "RETURN s.data_mode AS data_mode",
-            name=name, mode=mode).single()
+            id=SOURCE_ID[name], mode=mode).single()
         if not rec:
             raise HTTPException(status_code=404, detail="Source not found")
     _MODE_CACHE["at"] = None   # a mode flip should not wait out the cache
@@ -305,11 +367,11 @@ def toggle_source(name: str, _: dict = Depends(require_admin)):
     with db.get_session() as session:
         rec = session.run(
             """
-            MATCH (s:ScraperSource {name: $name})
+            MATCH (s:Source {id: $id})
             SET s.enabled = NOT s.enabled
             RETURN s.enabled AS enabled
             """,
-            name=name,
+            id=SOURCE_ID[name],
         ).single()
         if not rec:
             raise HTTPException(status_code=404, detail="Source not found")

@@ -35,7 +35,7 @@ _RUNLOG_LABELS = {
 
 
 def _source_toggles() -> dict:
-    """DB toggle per catalogue source, in ONE read. The per-name
+    """DB toggle per catalogue source (its Source node), in ONE read. The per-name
     `get_source_enabled` runs `_ensure_sources()` every call - five MERGEs
     plus a point read per source, ~30 round trips per poll once a panel
     refreshes every 15 seconds. Health only reads; absent rows read as
@@ -45,8 +45,8 @@ def _source_toggles() -> dict:
 
     def read() -> dict:
         with db.get_session() as session:
-            rows = session.run("MATCH (s:ScraperSource) RETURN s.name AS name, "
-                               "s.enabled AS enabled")
+            rows = session.run("MATCH (s:Source) WHERE s.registry_key IS NOT NULL "
+                               "RETURN s.registry_key AS name, s.enabled AS enabled")
             return {r["name"]: bool(r["enabled"]) for r in rows}
 
     toggles = read()

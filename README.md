@@ -149,7 +149,7 @@ backend/
 ## Data model
 
 Nodes (`Entity`, `Person`, `Source`, `Claim`, `MergeLog`, `Peer`, `ScrapeRun`,
-`ScraperSource`, `User`) and their edges (`OWNS`, `HAS_ROLE`, `RELATED_TO`,
+`User`) and their edges (`OWNS`, `HAS_ROLE`, `RELATED_TO`,
 `NOT_DUPLICATE`, `DUAL_LISTED_WITH`, location edges) with all properties:
 **[`docs/data-model.md`](docs/data-model.md)**.
 
@@ -616,6 +616,7 @@ python3 manage.py init-schema
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
 | `seed` | Seed the built-in company list |
 | `wipe-source` | Delete **one source's** data — its edges + the nodes only it created (nodes another source still references are kept); keeps user accounts, schema, and other sources. Finishes with `REBUILD INDEX *` to clear the stale index entries the batched deletes leave behind (else a later re-import can 500). There is **no** whole-DB wipe — drop the database for a fresh start. Requires `--source <name>` plus `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB; add `--db-url http://localhost:2480` so the reindex isn't cut off by a proxy timeout, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-source --source "UK PSC" --confirm-database owlgraph --db-url http://localhost:2480` |
+| `heal-source-ids` | Give every `Source` node its stable id (`gleif`, `sec-edgar`, `uk-psc`, `wikidata`, `opencorporates`, `peer:<slug>`), re-point every entity, edge, claim and statement that carried the old per-database uuid, fold the `ScraperSource` toggles into the `Source` node and re-key the claims. Whole-type scans — run with `--db-url` straight at ArcadeDB. Dry run unless `--apply` |
 | `geocode` | Backfill coordinates via Nominatim for **both** of a company's places: its headquarters (`hq_address` → `hq_lat/hq_lng`) and its registered office (`address` → `reg_lat/reg_lng`). They differ exactly where it is interesting — BARCLAYS CAPITAL (CAYMAN) is registered at its agent's door on Grand Cayman and run from London — and the map's Registered/Headquarters switch draws one or the other. `--target hq\|registered` runs a single pass; each is resumable on its own missing coordinate. |
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `backfill-person-images` | Store the Wikidata portrait (P18) as `Person.image_url` and the English Wikipedia article (the sitelink) as `Person.wikipedia_url` for every person with a Wikidata id lacking either — the two pointers `GET /media/person/{id}` resolves (the article is the fallback when the item has no P18). New scrapes write both; this catches up the persons from before. `--limit N` |

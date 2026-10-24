@@ -49,7 +49,7 @@ class TestModeEndpoint:
 
 
 class TestEdgeWritesSuppressed:
-    def test_maps_source_node_id_through_the_label(self):
+    def test_reads_the_mode_by_the_source_node_id(self):
         with patch.object(src_mod, "_mode_by_source_id",
                           return_value={"src-uuid-1": "claims_only"}):
             assert edge_writes_suppressed("src-uuid-1") is True
@@ -95,17 +95,17 @@ class TestSweepEndpoint:
 
 
 class _Session:
-    """A session whose `run` answers by the statement's first word pair and
-    records every call — enough for the catalogue reads and the seed MERGE."""
+    """A session whose `run` answers every read of the Source nodes with the
+    same rows and records every call — enough for the catalogue reads and
+    the seed MERGE (one node type since 2026-10-24: a Source node carries
+    its switches; `source_rows` are what `MATCH (s:Source)` returns)."""
 
-    def __init__(self, scraper_rows, source_rows):
-        self.scraper_rows, self.source_rows, self.calls = scraper_rows, source_rows, []
+    def __init__(self, source_rows):
+        self.source_rows, self.calls = source_rows, []
 
     def run(self, stmt, **params):
         self.calls.append((stmt, params))
-        if "ScraperSource" in stmt and "MERGE" not in stmt:
-            return list(self.scraper_rows)
-        if "(s:Source)" in stmt:
+        if "(s:Source)" in stmt and "MERGE" not in stmt:
             return list(self.source_rows)
         return []
 
@@ -150,42 +150,51 @@ class TestConfiguredDefaultMode:
 
     def test_a_fresh_database_is_seeded_with_the_configured_mode(self, monkeypatch):
         monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
-        session = _Session([], [])
+        session = _Session([])
         with _with_session(session):
             src_mod._ensure_sources()
-        seeds = {p["name"]: p["mode"] for stmt, p in session.calls if "MERGE (s:ScraperSource" in stmt}
+        merges = [(stmt, p) for stmt, p in session.calls if "MERGE (s:Source {id: $id})" in stmt]
+        seeds = {p["key"]: p["mode"] for _, p in merges}
         assert seeds["wikidata"] == "claims_only"
         assert {m for n, m in seeds.items() if n != "wikidata"} == {"full"}
-        assert all("ON CREATE SET" in stmt and "s.data_mode = $mode" in stmt
-                   for stmt, _ in session.calls if "MERGE (s:ScraperSource" in stmt), \
-            "the seed is ON CREATE only — an admin's later flip in the UI must survive restarts"
+        assert all("s.data_mode = COALESCE(s.data_mode, $mode)" in stmt
+                   and "s.enabled = COALESCE(s.enabled, true)" in stmt for stmt, _ in merges), \
+            "the seed fills only an empty switch — an admin's later flip in the UI must survive restarts"
+        # one node per source, keyed by its stable id, carrying the catalogue key
+        assert {p["id"] for _, p in merges} == {"wikidata", "sec-edgar", "opencorporates", "gleif", "uk-psc"}
+        assert all("s.registry_key = $key" in stmt for stmt, _ in merges)
 
     def test_writers_obey_the_setting_before_any_row_exists(self, monkeypatch):
         # A rebuild's scrape chain writes before any request has seeded the
-        # catalogue rows: no ScraperSource row at all, only the Source node
-        # the writer stamped on its edges.
+        # catalogue: only the Source node the writer created, no mode on it
+        # — and, on a node from before the fold, not even the catalogue key:
+        # the label is enough.
         monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
-        session = _Session([], [{"id": "wd-uuid", "name": "Wikidata"},
-                                {"id": "sec-uuid", "name": "SEC EDGAR"}])
+        session = _Session([{"id": "wd-uuid", "name": "Wikidata"},
+                            {"id": "sec-edgar", "name": "SEC EDGAR", "key": "sec_edgar"}])
         with _with_session(session):
             assert edge_writes_suppressed("wd-uuid") is True
-            assert edge_writes_suppressed("sec-uuid") is False
+            assert edge_writes_suppressed("sec-edgar") is False
 
     def test_a_row_with_a_mode_wins_over_the_setting_a_row_without_one_does_not(self, monkeypatch):
         monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
-        rows = [{"name": "wikidata", "data_mode": "full"}]
-        with _with_session(_Session(rows, [{"id": "wd-uuid", "name": "Wikidata"}])):
-            assert edge_writes_suppressed("wd-uuid") is False, "the admin's flip to full is the live control"
+        rows = [{"id": "wikidata", "name": "Wikidata", "key": "wikidata", "data_mode": "full"}]
+        with _with_session(_Session(rows)):
+            assert edge_writes_suppressed("wikidata") is False, "the admin's flip to full is the live control"
         src_mod._MODE_CACHE["at"] = None
-        rows = [{"name": "wikidata", "data_mode": None}]
-        with _with_session(_Session(rows, [{"id": "wd-uuid", "name": "Wikidata"}])):
-            assert edge_writes_suppressed("wd-uuid") is True, "a pre-field row reads as the default"
+        rows = [{"id": "wikidata", "name": "Wikidata", "key": "wikidata", "data_mode": None}]
+        with _with_session(_Session(rows)):
+            assert edge_writes_suppressed("wikidata") is True, "a pre-field row reads as the default"
+        src_mod._MODE_CACHE["at"] = None
+        with _with_session(_Session([{"id": "peer:x", "name": "Peer: X", "data_mode": None}])):
+            assert edge_writes_suppressed("peer:x") is False, "outside the catalogue reads as full"
 
     def test_the_listing_shows_the_default_for_a_row_without_a_mode(self, client, monkeypatch):
         monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
-        rows = [{"name": "wikidata", "enabled": True, "description": "", "kind": "instant", "data_mode": None},
-                {"name": "sec_edgar", "enabled": True, "description": "", "kind": "instant", "data_mode": None}]
-        with patch.object(src_mod, "_ensure_sources"), _with_session(_Session(rows, [])):
+        rows = [{"name": "wikidata", "id": "wikidata", "enabled": True, "description": "", "kind": "instant", "data_mode": None},
+                {"name": "sec_edgar", "id": "sec-edgar", "enabled": True, "description": "", "kind": "instant", "data_mode": None}]
+        with patch.object(src_mod, "_ensure_sources"), _with_session(_Session(rows)):
             r = client.get("/v1/scraper/sources")
         assert r.status_code == 200
         assert {s["name"]: s["data_mode"] for s in r.json()} == {"wikidata": "claims_only", "sec_edgar": "full"}
+        assert {s["name"]: s["id"] for s in r.json()} == {"wikidata": "wikidata", "sec_edgar": "sec-edgar"}

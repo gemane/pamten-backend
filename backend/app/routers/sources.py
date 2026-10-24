@@ -2,14 +2,16 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.source import SourceCreate, SourceResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
-import uuid
 
 router = APIRouter(prefix="/sources", tags=["Sources"])
 
 
 @router.post("/", response_model=SourceResponse)
 def create_source(source: SourceCreate, _: dict = Depends(require_contributor)):
-    source_id = str(uuid.uuid4())
+    """A source keyed by the slug of its name — stable across instances, like
+    the catalogue's; a second source of the same name is a 409, not a twin."""
+    from app.scraper.sources import source_id_for
+    source_id = source_id_for(source.name, getattr(source.type, "value", str(source.type)))
 
     query = """
         CREATE (s:Source {
@@ -23,10 +25,15 @@ def create_source(source: SourceCreate, _: dict = Depends(require_contributor)):
     """
 
     with db.get_session() as session:
-        result = session.run(query,
-            id=source_id,
-            **source.model_dump()
-        )
+        try:
+            result = session.run(query,
+                id=source_id,
+                **source.model_dump()
+            )
+        except Exception as exc:  # noqa: BLE001 - the UNIQUE id index says "exists"
+            if "duplicate" in str(exc).lower() or "unique" in str(exc).lower():
+                raise HTTPException(status_code=409, detail=f"Source {source_id} already exists")
+            raise
         record = result.single()
         if not record:
             raise HTTPException(status_code=500, detail="Failed to create source")
@@ -86,10 +93,10 @@ _PROVENANCE_QUERIES = (
 # Each hard identifier an entity carries → the source that assigns it + a deep link to the
 # specific record (not the source's home page). Order = display priority within a source.
 _ID_SOURCES = (
-    ("wikidata_id",        "Wikidata",  "https://www.wikidata.org/wiki/{}"),
-    ("sec_cik",            "SEC EDGAR", "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={}"),
-    ("lei_id",             "GLEIF",     "https://search.gleif.org/#/record/{}"),
-    ("companies_house_id", "UK PSC",    "https://find-and-update.company-information.service.gov.uk/company/{}"),
+    ("wikidata_id",        "wikidata",  "Wikidata",  "https://www.wikidata.org/wiki/{}"),
+    ("sec_cik",            "sec-edgar", "SEC EDGAR", "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={}"),
+    ("lei_id",             "gleif",     "GLEIF",     "https://search.gleif.org/#/record/{}"),
+    ("companies_house_id", "uk-psc",    "UK PSC",    "https://find-and-update.company-information.service.gov.uk/company/{}"),
 )
 
 
@@ -109,13 +116,15 @@ def _entity_own_source_rows(session, entity_id: str) -> list[dict]:
     date, lsa = rec.get("source_date"), rec.get("last_scraped_at")
 
     rows: list[dict] = []
-    for field, sname, tmpl in _ID_SOURCES:
+    for field, sid, sname, tmpl in _ID_SOURCES:
         val = rec.get(field)
         if not val:
             continue
-        s = session.run(
-            "MATCH (s:Source {name: $n}) RETURN s.id AS id, s.type AS type, "
-            "s.credibility_score AS cred, s.url AS home", n=sname).single()
+        # by its stable id; by name on a database the heal has not re-keyed yet
+        s = (session.run("MATCH (s:Source {id: $i}) RETURN s.id AS id, s.type AS type, "
+                         "s.credibility_score AS cred, s.url AS home", i=sid).single()
+             or session.run("MATCH (s:Source {name: $n}) RETURN s.id AS id, s.type AS type, "
+                            "s.credibility_score AS cred, s.url AS home", n=sname).single())
         if not s:
             continue
         rows.append({"id": s.get("id"), "name": sname, "type": s.get("type"),

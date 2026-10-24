@@ -18,8 +18,8 @@ def pair(it_db):
     # SCRAPER_WIKIDATA_DATA_MODE default), so ask: a row with a mode wins over
     # the default. Without this the tests passed only while the 60-second mode
     # cache still held an earlier test's `full` row — and failed in CI.
-    it_db.run_command("MERGE (s:ScraperSource {name: 'wikidata'}) SET s.data_mode = 'full', "
-                      "s.enabled = true, s.kind = 'instant'")
+    it_db.run_command("MERGE (s:Source {id: 'wikidata'}) SET s.registry_key = 'wikidata', s.name = 'Wikidata', "
+                      "s.data_mode = 'full', s.enabled = true, s.kind = 'instant'")
     src_mod._MODE_CACHE["at"] = None
     it_db.run_command("CREATE (:Entity {id:'o', name:'Owner', type:'company'})")
     it_db.run_command("CREATE (:Entity {id:'c', name:'Company', type:'company'})")

@@ -212,25 +212,34 @@ def _now_iso() -> str:
 # ── Database helpers ──────────────────────────────────────────────────────────
 
 def _ensure_source(name: str, url: str, credibility: int, type_: str = "register") -> str:
-    """Get or create a Source node by name, return its id. One helper for every
-    source (Wikidata / SEC / OpenCorporates / GLEIF / UK PSC) — pass its constants;
-    Wikidata is the lone ``knowledge_base``, the rest are ``register``."""
+    """The id of the Source node for `name`, creating the node when it is new.
+
+    One helper for every source (Wikidata / SEC / OpenCorporates / GLEIF /
+    UK PSC) — pass its constants. The id is STABLE (`sources.source_id_for`:
+    the catalogue's id for a catalogue label, a slug of the name otherwise),
+    the same on every instance; a node keyed the old way — a random uuid,
+    before 2026-10-24 — is found by its name and keeps its id until
+    `manage.py heal-source-ids` re-keys it, so nothing is ever created twice."""
+    from app.scraper.sources import KNOWN_SOURCES, source_id_for, source_key_for
+    key = source_key_for(name)
+    meta = KNOWN_SOURCES.get(key) if key else None
+    source_id = source_id_for(name, type_)
     with db.get_session() as session:
-        rec = session.run(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id", name=name,
-        ).single()
+        rec = session.run("MATCH (s:Source {id: $id}) RETURN s.id AS id", id=source_id).single()
         if rec:
             return rec["id"]
-
-        source_id = str(uuid.uuid4())
+        rec = session.run("MATCH (s:Source {name: $name}) RETURN s.id AS id", name=name).single()
+        if rec:
+            return rec["id"]
         session.run(
             """
             CREATE (s:Source {
                 id: $id, name: $name, url: $url,
-                credibility_score: $score, type: $type
+                credibility_score: $score, type: $type, registry_key: $key
             })
             """,
-            id=source_id, name=name, url=url, score=credibility, type=type_,
+            id=source_id, name=name, url=url, score=credibility,
+            type=(meta or {}).get("type", type_), key=key,
         )
         return source_id
 
