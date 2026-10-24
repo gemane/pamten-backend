@@ -1239,3 +1239,49 @@ class TestIdentifierBridge:
         assert len(create) == 1
         assert "lei_id: $lei" in create[0].args[0]
         assert create[0].kwargs["lei"] == "INR2EJN1ERAN0W5ZP974"
+
+
+class TestSecIndustry:
+    """EDGAR's SIC code becomes the SEC's statement of the filer's industry
+    (app.industry), for the target, its filing investors, and the holdings
+    scrape's filer and subjects — every entity upserted with a CIK."""
+
+    def test_the_filers_sic_is_recorded_with_its_provenance(self):
+        from app.scraper.runner import _record_sec_industry
+        with patch("app.scraper.sec_edgar.fetch_filer_sic", return_value=("3711", "Motor Vehicles & Passenger Car Bodies")), \
+             patch("app.scraper.runner.industry.record") as rec:
+            _record_sec_industry("e1", "0001318605", "src")
+        rec.assert_called_once()
+        args, kw = rec.call_args
+        assert args == ("e1", "us-sic", "3711", "Motor Vehicles & Passenger Car Bodies")
+        assert kw["source_id"] == "src" and "CIK=0001318605" in kw["source_url"]
+        assert len(kw["source_date"]) == 10
+
+    def test_no_cik_or_no_code_writes_nothing(self):
+        from app.scraper.runner import _record_sec_industry
+        with patch("app.scraper.sec_edgar.fetch_filer_sic", return_value=None) as fetch, \
+             patch("app.scraper.runner.industry.record") as rec:
+            _record_sec_industry("e1", None, "src")
+            fetch.assert_not_called()
+            _record_sec_industry("e1", "0000000001", "src")
+            fetch.assert_called_once()
+        rec.assert_not_called()
+
+    def test_the_company_scrape_records_the_target(self):
+        """The write phase records the target's SIC right after upserting it."""
+        from app.scraper import runner
+        data = {"name": "Tesla, Inc.", "cik": "0001318605", "ownership_filings": [], "executives": []}
+        recorded = []
+        with patch("app.scraper.sec_edgar.fetch_filer_headquarters", return_value=None), \
+             patch("app.scraper.sec_edgar.fetch_filer_website", return_value=None), \
+             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch.object(runner, "_ensure_source", return_value="src"), \
+             patch.object(runner, "_upsert_entity_by_name", return_value="tesla-id"), \
+             patch.object(runner, "_record_sec_industry", side_effect=lambda *a: recorded.append(a)), \
+             patch.object(runner, "db") as fake_db:
+            fake_db.get_session.return_value.__enter__.return_value.run.return_value = []
+            try:
+                runner._write_sec_edgar("Tesla, Inc.", data, "US")
+            except Exception:  # noqa: BLE001 - later phases need more fakes; the record comes first
+                pass
+        assert recorded[0] == ("tesla-id", "0001318605", "src")

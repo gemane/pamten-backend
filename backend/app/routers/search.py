@@ -13,6 +13,7 @@ from app.scraper.mapper import normalize_entity_name
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 from app.merged_ids import resolve_current_id
+from app import industry
 
 logger = logging.getLogger(__name__)
 
@@ -788,6 +789,9 @@ def get_full_profile(
 
         return {
             "entity": dict(record["e"]),
+            # The sector tree and the statements behind it (app.industry)
+            "industry": industry.profile_for(entity_id, dict(record["e"]).get("nace_code"),
+                                             _source_names()),
             "group_members": group_members,
             "voting_groups": voting_groups,
             # True totals, independent of the per-section row limit above.
@@ -804,6 +808,13 @@ def get_full_profile(
             "succeeded_by": _succession_rows(record["succeeded_by"], hidden),
             "replaces": _succession_rows(record["replaces"], hidden),
         }
+
+
+def _source_names() -> dict[str, str]:
+    """Source id → name, for the industry statements (relationships' helper;
+    imported late because that router imports this one)."""
+    from app.routers.relationships import _source_names as names
+    return names()
 
 
 def _attach_stake_history(entity_id: str, owners: list[dict], subsidiaries: list[dict],

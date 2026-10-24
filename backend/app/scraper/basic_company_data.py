@@ -31,6 +31,7 @@ from app.scraper.bulk_import import (
     _rebuild_indexes,
 )
 from app import former_names
+from app.industry import parse_uk_sic, sync_uk_sic
 from app.scraper.companies_house_psc import mark_first_year_lower_bounds
 from app.scraper.mapper import is_nominee_name, normalize_entity_name
 
@@ -50,6 +51,13 @@ _ADDRESS_KEYS = (
 def _company_type(category: str | None) -> str:
     c = (category or "").lower()
     return "nonprofit" if any(h in c for h in _NONPROFIT_HINTS) else "company"
+
+
+def _snapshot_date(entry_name: str) -> str | None:
+    """'BasicCompanyDataAsOneFile-2026-07-01.csv' → '2026-07-01' (None when unnamed)."""
+    import re
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", entry_name or "")
+    return m.group(1) if m else None
 
 
 def _founded(incorp: str | None) -> str | None:
@@ -91,6 +99,19 @@ def _reg_address_parts(row: dict) -> dict:
     parts = {"address": _reg_address(row), "reg_street": street, "reg_city": city,
              "reg_postcode": postcode}
     return {k: v for k, v in parts.items() if v}
+
+
+def _sic_codes(row: dict) -> list[str]:
+    """SICCode.SicText_1..4 as the register writes them ("23320 - Manufacture
+    of bricks…"), in order — the first is the principal activity. A cell that
+    is no code ("None Supplied", blank) is dropped. Kept on the entity as
+    `uk_sic_codes`; `industry.sync_uk_sic` turns them into statements."""
+    out: list[str] = []
+    for i in range(1, 5):
+        text = (row.get(f"SICCode.SicText_{i}") or "").strip()
+        if parse_uk_sic(text):
+            out.append(text)
+    return out
 
 
 def _prev_names(row: dict, current: str) -> list[str]:
@@ -256,6 +277,8 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "former_names": _former_names(row, name),
                     "is_nominee": is_nominee_name(name),
                     "name_credibility": credibility_score,
+                    # What the company does, as filed (app.industry)
+                    "uk_sic_codes": _sic_codes(row),
                     "last_scraped_at": _now_iso(),
                     # the registered office in parts, both pins (see _reg_address_parts)
                     **_reg_address_parts(row),
@@ -280,6 +303,11 @@ def import_basic_company_data(filepath: str, credibility_score: int,
     # to the companies this run enriched; a full run walks every gb-coh company.
     counts["first_year_bounds"] = mark_first_year_lower_bounds(
         company_ids=[f"gb-coh:{n}" for n in sorted(matched)] if only_companies is not None else None)
+    # The SIC codes just stored become the register's industry statements,
+    # dated by the snapshot (app.industry); same scope as above.
+    counts["industry"] = sync_uk_sic(
+        entity_ids=[f"gb-coh:{n}" for n in sorted(matched)] if only_companies is not None else None,
+        snapshot_date=_snapshot_date(entry))
 
     log.info("CH BasicData import done: %s", counts)
     return counts

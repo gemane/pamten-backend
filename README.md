@@ -250,7 +250,7 @@ Imports corporate ownership data via SPARQL. For a company it fetches subsidiari
 - 400 ms delay between requests (Wikidata rate limit)
 
 ### SEC EDGAR
-Imports investor data from SC 13D/13G ownership filings, executive data from Form 3/4 XML, statutory subsidiary lists from the 10-K's Exhibit 21 (`manage.py sec-ex21`), acquisitions from the acquirer's own 10-K/10-Q XBRL facts — the closing date as a stated start and the price paid (`manage.py sec-acquisitions`) — and private-company boards from Form D (`manage.py sec-formd`) — all manual-first. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`. With `SEC_CACHE_DIR` set, every filing fetched is kept gzipped on disk and served from there on the next rebuild, `--force` or second pass — the EDGAR golden copy (`manage.py sec-cache stats`). With the object store configured the same filings are also kept in the shared bucket, so Render (no disk) and every other machine read one common copy.
+Imports investor data from SC 13D/13G ownership filings, executive data from Form 3/4 XML, the filer's SIC code as its industry (shown as a NACE Rev. 2 sector tree — see *Industry classification* in [`docs/data-model.md`](docs/data-model.md)), statutory subsidiary lists from the 10-K's Exhibit 21 (`manage.py sec-ex21`), acquisitions from the acquirer's own 10-K/10-Q XBRL facts — the closing date as a stated start and the price paid (`manage.py sec-acquisitions`) — and private-company boards from Form D (`manage.py sec-formd`) — all manual-first. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`. With `SEC_CACHE_DIR` set, every filing fetched is kept gzipped on disk and served from there on the next rebuild, `--force` or second pass — the EDGAR golden copy (`manage.py sec-cache stats`). With the object store configured the same filings are also kept in the shared bucket, so Render (no disk) and every other machine read one common copy.
 
 **Two directions.** Those filings name the company as the *subject* — who owns it, who its insiders are. An institutional investor has none: Vanguard is privately held and isn't a listed issuer, so scraping it by name finds nothing however often you try. What it has is ~3,400 filings it makes **about others**, so the scraper also reads the filer side and writes `OWNS` edges pointing *out* of the company:
 
@@ -296,6 +296,11 @@ they run from the **CLI** (`manage.py gleif-lei-cdf` / `gleif-rr` / `gleif-succe
 over HTTP. Both
 sources still appear in `/scraper/sources` with independent on/off toggles, and
 `/scraper/bods/status` reports their enabled state.
+
+`ch-company-data` also stores each UK company's **SIC codes** as the register files
+them and turns them into industry statements, so every UK company — subsidiaries
+included — gets its sector in the NACE Rev. 2 tree (the UK code is the NACE class
+plus a digit). See *Industry classification* in [`docs/data-model.md`](docs/data-model.md).
 
 > These replaced the OpenOwnership **BODS** exports (GLEIF + UK PSC), which were
 > frozen at 2025-03. The BODS importer and its `/scraper/bods/*/run` endpoints have
@@ -612,6 +617,7 @@ python3 manage.py init-schema
 | `geocode` | Backfill coordinates via Nominatim for **both** of a company's places: its headquarters (`hq_address` → `hq_lat/hq_lng`) and its registered office (`address` → `reg_lat/reg_lng`). They differ exactly where it is interesting — BARCLAYS CAPITAL (CAYMAN) is registered at its agent's door on Grand Cayman and run from London — and the map's Registered/Headquarters switch draws one or the other. `--target hq\|registered` runs a single pass; each is resumable on its own missing coordinate. |
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `backfill-person-images` | Store the Wikidata portrait (P18) as `Person.image_url` and the English Wikipedia article (the sitelink) as `Person.wikipedia_url` for every person with a Wikidata id lacking either — the two pointers `GET /media/person/{id}` resolves (the article is the fallback when the item has no P18). New scrapes write both; this catches up the persons from before. `--limit N` |
+| `backfill-industry` | Give every company a sector its sources already know: SEC filers' SIC code from EDGAR, UK companies' SIC codes from the stored register snapshot — `IndustryCode` statements plus the `nace_code` the panel's sector tree is drawn from. Fill-only; `--limit` caps the EDGAR fetches. |
 | `backfill-sec-headquarters` | Fill SEC filers' `hq_address`/`hq_city`/`hq_country` from EDGAR's **business address** — where a company is *run*. Deliberately separate from the country repair: a business address is poor evidence of a **domicile** (a foreign filer often files through a US office, which is why `sec_country` refuses to read one from it) and good evidence of a **headquarters**. The scraper had been fetching that address to read a single state code out of it and discarding the rest, leaving 40 of 43 SEC companies with no headquarters at all. |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers) — see *GLEIF sourcing* in [`docs/data-model.md`](docs/data-model.md) |
@@ -650,6 +656,15 @@ for full details.
 
 This dual licence model follows the same approach as
 [OpenStreetMap](https://www.openstreetmap.org/copyright).
+
+### Bundled reference data
+Code lists shipped under `backend/app/scraper/data/`, each under its publisher's
+open terms: GLEIF's ELF and Registration Authority lists (CC0); Eurostat's NACE
+Rev. 2 codelist with its EN/DE labels (free re-use with attribution, CC BY 4.0);
+the SEC's SIC code list and the US Census SIC/NAICS/ISIC concordances (US
+government works, public domain); Companies House's SIC 2007 list (Open
+Government Licence v3); the UN Statistics Division's ISIC Rev. 4 – NACE Rev. 2
+correspondence. `scripts/build_industry_bundle.py` records where each came from.
 
 ---
 

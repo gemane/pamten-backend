@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
+from app import industry
 from app.claims import record_claim, KIND_ROLE
 from app.stake_history import one_statement_per_run
 from app.scraper.wikidata import (search_entity, search_entity_in_country,
@@ -1612,6 +1613,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
                                       country=fetch_filer_country(cik),
                                       headquarters=fetch_filer_headquarters(cik),
                                       website=fetch_filer_website(cik))
+    _record_sec_industry(filer_id, cik, source_id)
 
     holdings = fetch_filer_holdings(cik, limit=limit)
     written = closed = 0
@@ -1625,6 +1627,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             country=fetch_filer_country(h["subject_cik"]) if h.get("subject_cik") else None,
             headquarters=fetch_filer_headquarters(h["subject_cik"]) if h.get("subject_cik") else None,
             website=fetch_filer_website(h["subject_cik"]) if h.get("subject_cik") else None)
+        _record_sec_industry(subject_id, h.get("subject_cik"), source_id)
         _upsert_owns_sec(
             owner_id=filer_id, owned_id=subject_id, source_id=source_id,
             read_from=READ_FIELD,  # filer-side 13D/G: XML only, see fetch_filer_holdings
@@ -1759,6 +1762,20 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         return _write_sec_edgar(company_name, data, filer_country)
 
 
+def _record_sec_industry(entity_id: str, cik: str | None, source_id: str) -> None:
+    """EDGAR's SIC code for a filer, as the SEC's statement of its industry
+    (app.industry). The submissions document is the one the name, country
+    and address were read from. Nothing for an entity without a CIK."""
+    if not cik:
+        return
+    from app.scraper.sec_edgar import fetch_filer_sic
+    sic = fetch_filer_sic(cik)
+    if sic:
+        industry.record(entity_id, "us-sic", sic[0], sic[1], source_id=source_id,
+                        source_url=f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}",
+                        source_date=datetime.now(timezone.utc).date().isoformat())
+
+
 def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -> dict:
     """The write phase of `run_scrape_sec_edgar`: the filer, its holders, its
     insiders and officers, from the scraped `data`."""
@@ -1782,6 +1799,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         website=fetch_filer_website(data["cik"]) if data.get("cik") else None,
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
+    _record_sec_industry(target_id, data.get("cik"), source_id)
 
     # Ownership filings → investor nodes + OWNS edges
     # CUSIP from the first schedule that states one — fill-if-missing, so a
@@ -1823,6 +1841,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 source_id=source_id,
             )
             scraped.append({"type": "entity", "name": investor_name, "role": "investor"})
+            _record_sec_industry(investor_node_id, filing.get("investor_cik"), source_id)
 
         # A group of parties acting together, filed on one schedule. The bloc
         # belongs to the group, not to whoever submitted the form — hanging

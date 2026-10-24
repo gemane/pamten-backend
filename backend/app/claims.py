@@ -378,8 +378,11 @@ def migrate_claims(dead_id: str, keep_id: str) -> int:
             rekey_claim(r, **{end: keep_id})
             moved += 1
     # The stake rows behind those claims follow them (they carry the ids, not
-    # the key, so a plain re-point is enough).
+    # the key, so a plain re-point is enough), and so do the industry
+    # statements (re-keyed: their key hashes the entity id).
     migrate_stake_history(dead_id, keep_id)
+    from app.industry import migrate as migrate_industry
+    migrate_industry(dead_id, keep_id)
     return moved
 
 

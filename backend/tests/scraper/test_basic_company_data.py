@@ -19,7 +19,8 @@ def _no_first_year_pass():
     graph; these tests have no graph (the one that pins the call patches it
     again with a recorder)."""
     with patch("app.scraper.basic_company_data.mark_first_year_lower_bounds",
-               lambda company_ids=None, **k: {"edges": 0}):
+               lambda company_ids=None, **k: {"edges": 0}), \
+         patch("app.scraper.basic_company_data.sync_uk_sic", lambda **k: 0):
         yield
 
 
@@ -228,3 +229,54 @@ class TestFieldParsing:
         }
         assert _prev_names(row, "Current Ltd") == ["OLD NAME LTD", "OLDER NAME LTD"]
         assert _prev_names({}, "X") == []
+
+
+class TestSicCodes:
+    """The register's SIC codes ride on the row into `uk_sic_codes`, as
+    written, and the import ends by turning them into industry statements
+    dated by the snapshot (app.industry)."""
+
+    def _zip(self, tmp_path, *sic):
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["CompanyName", "CompanyNumber", "CompanyCategory", "IncorporationDate",
+                    "SICCode.SicText_1", "SICCode.SicText_2", "SICCode.SicText_3", "SICCode.SicText_4"])
+        w.writerow(["WIENERBERGER LTD", "00000002", "Private Limited Company", "01/01/2000", *sic])
+        zpath = tmp_path / "basic.zip"
+        with zipfile.ZipFile(zpath, "w") as zf:
+            zf.writestr("BasicCompanyDataAsOneFile-2026-07-01.csv", buf.getvalue())
+        return str(zpath)
+
+    def test_the_codes_are_kept_as_written_and_in_order(self, tmp_path):
+        from app.scraper.basic_company_data import _sic_codes
+        assert _sic_codes({"SICCode.SicText_1": "23320 - Manufacture of bricks, tiles and construction products, in baked clay",
+                           "SICCode.SicText_2": "46730 - Wholesale of wood, construction materials and sanitary equipment",
+                           "SICCode.SicText_3": "", "SICCode.SicText_4": "None Supplied"}) == [
+            "23320 - Manufacture of bricks, tiles and construction products, in baked clay",
+            "46730 - Wholesale of wood, construction materials and sanitary equipment"]
+        assert _sic_codes({}) == []
+
+    def test_the_update_carries_them(self, tmp_path):
+        captured = {}
+        with patch("app.scraper.basic_company_data._flush_script",
+                   side_effect=lambda script, params: captured.update(params) or []):
+            import_basic_company_data(self._zip(tmp_path, "23320 - Manufacture of bricks", "", "", ""), 97)
+        assert captured["uk_sic_codes__0"] == ["23320 - Manufacture of bricks"]
+
+    def test_the_statements_follow_the_flush_scoped_and_dated(self, tmp_path):
+        calls = []
+        with patch("app.scraper.basic_company_data._flush_script", lambda *a, **k: []), \
+             patch("app.scraper.basic_company_data.sync_uk_sic",
+                   side_effect=lambda **k: calls.append(k) or 1):
+            counts = import_basic_company_data(self._zip(tmp_path, "23320 - Manufacture of bricks", "", "", ""), 97,
+                                               only_companies={"00000002"})
+        assert calls == [{"entity_ids": ["gb-coh:00000002"], "snapshot_date": "2026-07-01"}]
+        assert counts["industry"] == 1
+
+    def test_a_full_run_syncs_every_uk_company(self, tmp_path):
+        calls = []
+        with patch("app.scraper.basic_company_data._flush_script", lambda *a, **k: []), \
+             patch("app.scraper.basic_company_data.sync_uk_sic",
+                   side_effect=lambda **k: calls.append(k) or 0):
+            import_basic_company_data(self._zip(tmp_path, "23320 - Manufacture of bricks", "", "", ""), 97)
+        assert calls[0]["entity_ids"] is None and calls[0]["snapshot_date"] == "2026-07-01"

@@ -64,6 +64,12 @@ parser. Anything that does not map is either a new property (document it) or noi
 - [ ] **Identifiers first** — LEI, CIK, Companies House number, Wikidata QID. These are
       what make the record findable and mergeable later; a company with a name and nothing
       else is a duplicate waiting to happen.
+- [ ] **The industry code, if the source assigns one** — EDGAR's SIC, a register's
+      NACE/SIC/NAF — as the source writes it, into an `IndustryCode` statement
+      (`app.industry.record`; a bulk importer stores the cells and syncs after the
+      flush, like `ch-company-data`). A new scheme is a bundle entry (its code list
+      and its NACE mapping, `scripts/build_industry_bundle.py`) before any writer.
+      The tree the reader sees is NACE Rev. 2 only; the source's code stays beside it.
 - [ ] **Ownership** — `stake_percent`, `ownership_type`, and `since`/`until` where the
       source states them. Bands ("more than 25%") are common: store what is stated, do not
       invent a midpoint.
