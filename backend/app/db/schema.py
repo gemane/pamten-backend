@@ -11,7 +11,11 @@ Design notes
 ------------
 - Idempotent: vertex types and indexes use `IF NOT EXISTS`; property
   statements are guarded by the per-statement try/except (ArcadeDB does
-  not support `IF NOT EXISTS` on `CREATE PROPERTY`).
+  not support `IF NOT EXISTS` on `CREATE PROPERTY`). The rules
+  (`constraints()`: mandatory ids, vocabularies, ISO-2 countries, 0–100
+  percentages, a flag's default) are `ALTER PROPERTY` statements issued
+  only where the catalog does not already hold them; the server refuses
+  one while a stored row breaks it, which the log then shows.
 - Fault-tolerant: each statement is guarded individually, so a single
   failure never aborts the rest, and an unreachable DB is skipped with one
   warning rather than crashing the caller. This lets it run best-effort on
@@ -262,6 +266,79 @@ def typed_properties() -> list[tuple[str, str, str]]:
     return out
 
 
+#: Properties that carry a rule below but no type declaration elsewhere (a
+#: rule needs a declared property; these are strings).
+_RULED_STRINGS: list[tuple[str, str]] = [
+    ("Entity", "hq_country"),
+    ("OWNS", "ownership_type"), ("OWNS", "read_from"),
+    ("Claim", "kind"), ("Claim", "read_from"),
+    ("HAS_ROLE", "read_from"),
+]
+
+#: catalog key per ALTER PROPERTY attribute, as `schema:types` reports it
+_RULE_KEYS = {"MANDATORY": "mandatory", "NOTNULL": "notNull", "REGEXP": "regexp",
+              "MIN": "min", "MAX": "max", "DEFAULT": "default"}
+
+_ISO2 = "^[A-Z]{2}$"
+
+
+def _vocab(values) -> str:
+    return "^(" + "|".join(str(getattr(v, "value", v)) for v in values) + ")$"
+
+
+def constraints() -> list[tuple[str, str, str, str]]:
+    """The rules the server enforces beyond a property's type, as
+    (type, property, ATTRIBUTE, value) for `ALTER PROPERTY`: the ids and claim
+    keys a row cannot exist without, the vocabularies (built from the enums
+    the code already validates against, so a new value needs no second
+    list), the ISO-2 shape of a country, the 0–100 range of a percentage, and
+    `stale`'s default. ArcadeDB refuses a write that breaks one with a clear
+    message, and refuses to declare a rule while any stored row breaks it —
+    so a heal runs before its rule, never after (2026-10-25). A rule leaves a
+    null alone (`notnull` is the one that does not)."""
+    from app.claims import KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
+    from app.models.entity import EntityType
+    from app.models.relationship import OwnershipType
+    from app.scraper.edge_schema import READ_GRADES
+    grades = _vocab(READ_GRADES)
+    pct = [("MIN", "0"), ("MAX", "100")]
+    rules: list[tuple[str, str, str, str]] = []
+    # Not `Claim.source_id`: the SEC writer records a claim for an edge whose
+    # source is unknown (its key then has no source part), and the merge
+    # paths carry such claims — the IT suite exercises both.
+    for vtype, prop in (("Entity", "id"), ("Person", "id"), ("Source", "id"),
+                        ("Claim", "claim_key"), ("Claim", "kind"), ("Claim", "from_id"),
+                        ("Claim", "to_id")):
+        rules += [(vtype, prop, "MANDATORY", "true"), (vtype, prop, "NOTNULL", "true")]
+    rules += [
+        ("Claim", "kind", "REGEXP", _vocab((KIND_OWNS, KIND_ROLE, KIND_SUCCESSION))),
+        ("Entity", "type", "REGEXP", _vocab(EntityType)),
+        ("Entity", "country", "REGEXP", _ISO2),
+        ("Entity", "hq_country", "REGEXP", _ISO2),
+        ("OWNS", "ownership_type", "REGEXP", _vocab(OwnershipType)),
+        ("OWNS", "read_from", "REGEXP", grades),
+        ("Claim", "read_from", "REGEXP", grades),
+        ("HAS_ROLE", "read_from", "REGEXP", grades),
+        ("OWNS", "stale", "DEFAULT", "false"),
+    ]
+    for vtype, prop in (("OWNS", "stake_percent"), ("OWNS", "voting_power_pct"),
+                        ("Claim", "stake_percent"), ("Claim", "voting_power_pct"),
+                        ("StakeHistory", "stake_percent"), ("StakeHistory", "previous_percent")):
+        rules += [(vtype, prop, attr, v) for attr, v in pct]
+    return rules
+
+
+def _rule_sql(vtype: str, prop: str, attr: str, value: str) -> str:
+    lit = f"'{value}'" if attr == "REGEXP" else value
+    return f"ALTER PROPERTY {vtype}.{prop} {attr} {lit}"
+
+
+def _same_rule(live, value: str) -> bool:
+    """The catalog reports `min`/`max`/`default` as strings and the flags as
+    booleans; compare on the lower-cased text."""
+    return live is not None and str(live).strip().lower() == value.strip().lower()
+
+
 def _statements(existing: tuple | None = None) -> list[str]:
     """The DDL the schema needs — all of it, or only what `existing` lacks.
 
@@ -275,7 +352,7 @@ def _statements(existing: tuple | None = None) -> list[str]:
     request — searches, profiles — waited behind that queue. With the
     catalog in hand a complete schema means no DDL at all.
     """
-    types, indexes, props = (tuple(existing) + (None,))[:3] if existing else (None, None, None)
+    types, indexes, props, rules = (tuple(existing) + (None, None))[:4] if existing else (None, None, None, None)
 
     def has_type(name: str) -> bool:
         return types is not None and name in types
@@ -342,28 +419,44 @@ def _statements(existing: tuple | None = None) -> list[str]:
             log.warning("%s.%s is declared %s on the server, %s in the code; it is indexed, "
                         "so the bootstrap leaves it — redeclare it by hand (drop the index, "
                         "the property, then init-schema)", vtype, prop, live, ptype)
+    # The rules (see `constraints`): a declaration for the strings nothing else
+    # declares, then one ALTER per rule the catalog does not already hold.
+    for vtype, prop in _RULED_STRINGS:
+        if not has_property(vtype, prop):
+            stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
+    for vtype, prop, attr, value in constraints():
+        live = (rules or {}).get(f"{vtype}.{prop}", {}).get(_RULE_KEYS[attr]) if rules is not None else None
+        if rules is not None and _same_rule(live, value):
+            continue
+        stmts.append(_rule_sql(vtype, prop, attr, value))
     return stmts
 
 
-def _existing_schema() -> tuple[set, set, dict] | None:
-    """(type names, index names, {"Type.property": declared type}) from the
-    server's catalog, or None when it cannot be read — then the full
-    idempotent DDL runs, as it always did."""
+def _existing_schema() -> tuple[set, set, dict, dict] | None:
+    """(type names, index names, {"Type.property": declared type},
+    {"Type.property": {rule key: value}}) from the server's catalog, or None
+    when it cannot be read — then the full idempotent DDL runs, as it always
+    did."""
     types = run_sql("SELECT name, properties FROM schema:types")
     indexes = run_sql("SELECT name FROM schema:indexes")
     if not isinstance(types, list) or not isinstance(indexes, list):
         return None
     declared: dict = {}
+    rules: dict = {}
     for r in types:
         if not isinstance(r, dict):
             continue
         for p in r.get("properties") or []:
             name = p.get("name") if isinstance(p, dict) else p
-            if name:
-                declared[f"{r.get('name')}.{name}"] = p.get("type") if isinstance(p, dict) else None
+            if not name:
+                continue
+            key = f"{r.get('name')}.{name}"
+            declared[key] = p.get("type") if isinstance(p, dict) else None
+            if isinstance(p, dict):
+                rules[key] = {k: p[k] for k in _RULE_KEYS.values() if p.get(k) is not None}
     return ({r.get("name") for r in types if isinstance(r, dict)},
             {r.get("name") for r in indexes if isinstance(r, dict)},
-            declared)
+            declared, rules)
 
 
 def _fulltext_index_names(vtype: str, prop: str) -> list[str]:

@@ -92,7 +92,7 @@ class TestSecSharesTheEdge:
         _draw(it_db, "fund", "dj", source_id="psc", credibility_score=97, stake_percent=30.0,
               since="2016-04-06", filing_type="PSC")
         # a 13D dates the stake and states one: it outranks and brings its date
-        _upsert_owns_sec("fund", "dj", "sec", "significant", "2011-03-01", 31.0,
+        _upsert_owns_sec("fund", "dj", "sec", "controlling", "2011-03-01", 31.0,   # a vocabulary value: the server enforces the enum
                          filing_type="SC 13D")
         [edge] = _edges(it_db, "fund", "dj")
         assert (edge["source_id"], edge["stake_percent"], edge["since"]) == ("sec", 31.0, "2011-03-01")

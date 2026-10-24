@@ -221,6 +221,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       `heal-property-types` then converts the stored rows — and it skips a group whose
       live declaration still differs, because a stale declaration coerces every
       converted row straight back (47 rows on dev looped that way for a day).
+- [ ] **The database refuses what breaks a rule — add the value to the enum, not a
+      workaround.** `Entity.type`, `OWNS.ownership_type`, `read_from` and a claim's `kind`
+      are restricted at the server to the vocabularies built from `EntityType`,
+      `OwnershipType`, `READ_GRADES` and `KIND_*`; `country` must be ISO-2; a percentage
+      0–100 (`schema.constraints()`, 2026-10-25). A writer that sends anything else fails
+      the scrape with "does not match the regular expression" — which is the point. A
+      new category goes into the enum (one place; the rule follows), a non-ISO country
+      into `country_registered`, never into `country`.
 - [ ] **If the source's records are filings, stamp `filing_type`** ("13G/A", "13F", "RR",
       "PSC") — the source names the register, this names the *rulebook* the fact lives
       under, which is what a reader needs to judge it.
