@@ -11,7 +11,7 @@ succession from the LEI-CDF succession importer.
 Entities are keyed `lei:{LEI}` (the same key the RR/succession importers use),
 so they all upsert the same nodes. It refreshes name/country/
 address/legal-form-type + is_nominee, and leaves enrichment from other sources
-(description, wikidata_id, hq_lat, revenue, verified) untouched.
+(description, wikidata_id, hq_lat, revenue) untouched.
 
 Each record also states how far GLEIF checked it (`ValidationSources`), which
 scales the credibility stamped on the entity — see `_validated_credibility`.
@@ -388,9 +388,10 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     # like the PSC import (gb-coh:{number}) → GLEIF and PSC nodes merge on this id.
     if reg_code == _COMPANIES_HOUSE_RA and reg_number:
         props["companies_house_id"] = reg_number
-    legal_type = _legal_form_type(_v((entity.get("LegalForm") or {}).get("OtherLegalForm")))
-    if legal_type:
-        props["type"] = legal_type
+    # The legal form names a fund or a foundation; an ordinary company gets no
+    # statement, and the bulk writer then keeps what stands or defaults to
+    # `company` (bulk_import._DEFAULTED_FIELDS) — never an empty type.
+    props["type"] = _legal_form_type(_v((entity.get("LegalForm") or {}).get("OtherLegalForm")))
     return f"lei:{lei}", props
 
 

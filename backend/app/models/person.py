@@ -18,7 +18,6 @@ class PersonCreate(BaseModel):
 class PersonResponse(PersonCreate):
     id: str
     full_name: str
-    verified: bool = False
 
 
 class PersonMergeRequest(BaseModel):

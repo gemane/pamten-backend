@@ -130,6 +130,26 @@ class TestBatchWriter:
         assert "CREATE EDGE OWNS" in joined
         assert joined.index("UPDATE Entity") < joined.index("CREATE EDGE OWNS")
 
+    def test_a_defaulted_field_fills_what_is_empty_and_never_blanks(self):
+        """`type`: a stated legal form replaces, no statement keeps what another
+        source set, nothing at all becomes `company` — an ordinary GLEIF record
+        used to leave the type empty (1,089 entities on dev, 2026-10-24)."""
+        from app.scraper.bulk_import import _BatchWriter
+
+        captured: dict = {}
+        with patch("app.scraper.bulk_import.run_sqlscript",
+                   side_effect=lambda script, params=None: captured.update(script=script, params=params)):
+            b = _BatchWriter(batch_size=100)
+            b.entity("lei:1", {"name": "Plain AG", "type": None})
+            b.entity("lei:2", {"name": "Fund SICAV", "type": "fund"})
+            b.flush()
+        script, params = captured["script"], captured["params"]
+        assert "type = COALESCE(:type__0, type, :type_default__0)" in script
+        assert "type = COALESCE(:type__1, type, :type_default__1)" in script
+        assert params["type__0"] is None and params["type__1"] == "fund"
+        assert params["type_default__0"] == params["type_default__1"] == "company"
+        assert "type = :type__" not in script          # never a plain overwrite
+
     def test_empty_flush_issues_no_request(self):
         from app.scraper.bulk_import import _BatchWriter
 

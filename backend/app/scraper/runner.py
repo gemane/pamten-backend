@@ -338,7 +338,7 @@ def _upsert_entity(
                 revenue: $revenue, employees: $employees, employees_as_of: $employees_as_of,
                 description: $desc,
                 wikidata_id: $wid, lei_id: $lei, sec_cik: $sec_cik,
-                verified: false, source_id: $source_id,
+                source_id: $source_id,
                 is_nominee: $is_nominee,
                 aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
@@ -443,7 +443,7 @@ def _upsert_person(
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
                 image_url: $image, wikipedia_url: $wikipedia,
-                verified: false, alias: $aliases, nationalities: $nats,
+                alias: $aliases, nationalities: $nats,
                 source_id: $source_id, search_text: $search_text
             })
             """,

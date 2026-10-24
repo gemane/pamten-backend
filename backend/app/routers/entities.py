@@ -24,8 +24,7 @@ def create_entity(entity: EntityCreate, _: dict = Depends(require_contributor)):
             country: $country,
             founded: $founded,
             revenue: $revenue,
-            description: $description,
-            verified: false
+            description: $description
         })
         RETURN e
     """

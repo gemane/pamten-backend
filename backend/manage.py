@@ -370,6 +370,27 @@ def cmd_psc_first_year_bounds(args):
     print(f"{verb}: {res['edges']} OWNS edges and {res['claims']} claims as lower bounds "
           f"({res['companies_before_register']} companies incorporated before the register)")
 
+def cmd_heal_entity_types(args):
+    """Give every typeless entity `type = 'company'` (the GLEIF bulk writer left
+    an ordinary company's type empty until 2026-10-24). Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.scraper.maintenance import heal_entity_types
+    res = heal_entity_types(apply=args.apply)
+    verb = "Typed" if res["applied"] else "Would type (dry run — add --apply)"
+    print(f"{verb}: {res['matched']} of {res['scanned']} entities had no type")
+
+
+def cmd_drop_verified_flag(args):
+    """Remove the never-true `verified` property from every Entity and Person
+    (dropped from the writers on 2026-10-24). Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.scraper.maintenance import drop_verified_flag
+    res = drop_verified_flag(apply=args.apply)
+    for label, c in res.items():
+        verb = "Removed from" if c["applied"] else "Would remove from (dry run — add --apply)"
+        print(f"{verb} {c['matched']} of {c['scanned']} {label} nodes")
+
+
 def cmd_clear_copied_uk_hq(args):
     """Clear the headquarters fields the UK importers copied from the registered
     office until 2026-10-18 (moving the parts and the pin under `reg_*`) and fill
@@ -1568,6 +1589,20 @@ def _build_parser():
     p_pfy.set_defaults(func=cmd_psc_first_year_bounds)
 
     # clear-copied-uk-hq command (one-off heal; the UK importers stopped copying 2026-10-18)
+    # heal-entity-types (one-off; the bulk writer defaults `type` since 2026-10-24)
+    p_het = subparsers.add_parser('heal-entity-types',
+                                  help="Give every typeless entity type = 'company' (the GLEIF bulk writer left ordinary companies untyped until 2026-10-24). Dry run unless --apply")
+    p_het.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_het.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_het.set_defaults(func=cmd_heal_entity_types)
+
+    # drop-verified-flag (one-off; the writers stopped stamping it on 2026-10-24)
+    p_dvf = subparsers.add_parser('drop-verified-flag',
+                                  help='Remove the never-true `verified` property from every Entity and Person. Dry run unless --apply')
+    p_dvf.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_dvf.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_dvf.set_defaults(func=cmd_drop_verified_flag)
+
     p_cuh = subparsers.add_parser('clear-copied-uk-hq',
                                   help='Clear the hq_* fields ch-psc/ch-company-data copied from the registered office (the parts move under reg_*, the pin is cleared for `geocode --target registered`; the display address is filled). Dry run unless --apply')
     p_cuh.add_argument('--apply', action='store_true', help='Write the change (default: count only)')

@@ -36,7 +36,7 @@ def test_existing_entity_gains_former_names_without_losing_existing_aliases(it_d
     # A pre-existing (e.g. Wikidata) node with its own alias, matched by CIK.
     it_db.run_command(
         "CREATE (:Entity {id: 'wd', name: 'Meta Platforms, Inc.', sec_cik: '1326801', "
-        "aliases: ['Meta'], type: 'company', verified: true})"
+        "aliases: ['Meta'], type: 'company', description: 'kept'})"
     )
 
     _upsert_entity_by_name(
@@ -44,9 +44,9 @@ def test_existing_entity_gains_former_names_without_losing_existing_aliases(it_d
         former_names=["Facebook Inc"],
     )
 
-    row = it_db.run_sql("SELECT aliases, verified FROM Entity WHERE id = 'wd'")[0]
+    row = it_db.run_sql("SELECT aliases, description FROM Entity WHERE id = 'wd'")[0]
     assert set(row["aliases"]) == {"Meta", "Facebook Inc"}   # union — nothing lost
-    assert row["verified"] is True                            # unrelated fields preserved
+    assert row["description"] == "kept"                       # unrelated fields preserved
 
 
 def test_dated_former_names_are_stored_merged_and_become_rename_events(it_db):

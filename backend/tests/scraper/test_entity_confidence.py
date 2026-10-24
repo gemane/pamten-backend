@@ -139,10 +139,6 @@ class TestMergeEntityProps:
         assert _merge_entity_props(self.KEEP, self.DEAD)["name_credibility"] == 92
         assert _merge_entity_props(self.DEAD, self.KEEP)["name_credibility"] == 92
 
-    def test_verified_survives_from_either_side(self):
-        assert _merge_entity_props(self.KEEP, {**self.DEAD, "verified": True})["verified"] is True
-        assert _merge_entity_props({**self.KEEP, "verified": True}, self.DEAD)["verified"] is True
-
     def test_empty_values_do_not_overwrite_with_blanks(self):
         keep = {**self.KEEP, "description": "kept"}
         dead = {**self.DEAD, "description": "", "employees": None}

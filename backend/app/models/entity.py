@@ -28,6 +28,5 @@ class EntityCreate(BaseModel):
 
 class EntityResponse(EntityCreate):
     id: str
-    verified: bool = False
 
     model_config = ConfigDict(from_attributes=True)
