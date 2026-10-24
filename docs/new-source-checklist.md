@@ -199,6 +199,19 @@ parser. Anything that does not map is either a new property (document it) or noi
       lists from the schema — a property added to a writer but not the schema is silently
       stripped by the next merge. Check the sources endpoint's `_COLS` too: it is a
       sibling of the same vocabulary.
+- [ ] **A new number, flag or list is declared in `schema._TYPED_PROPERTIES`** (DOUBLE /
+      INTEGER / BOOLEAN / LIST — dates stay STRING, they keep a source's precision).
+      Undeclared, a value is stored in whatever type the writer's JSON carried, and
+      `stake_percent` sat as DOUBLE on 974 edges and INTEGER on 20 until 2026-10-24.
+      Declared, the server coerces every write and REFUSES one it cannot convert, so
+      send a convertible value or none. Choose the type for what a source may *state*,
+      not what it usually states: share counts are DOUBLE because a Form 4 reports
+      562,701.427 shares and a LONG declaration is refused over it. Changing a type
+      later is not a one-line edit: the bootstrap drops and redeclares an unindexed
+      property whose server type differs (ArcadeDB has no `ALTER PROPERTY … TYPE`),
+      `heal-property-types` then converts the stored rows — and it skips a group whose
+      live declaration still differs, because a stale declaration coerces every
+      converted row straight back (47 rows on dev looped that way for a day).
 - [ ] **If the source's records are filings, stamp `filing_type`** ("13G/A", "13F", "RR",
       "PSC") — the source names the register, this names the *rulebook* the fact lives
       under, which is what a reader needs to judge it.
