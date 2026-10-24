@@ -272,6 +272,7 @@ class _BatchWriter:
         # write.)
         from app.merged_ids import canonical_id
         stmts, params = [], {}
+        now = _now_iso()
         k = 0
         for node_id, props in buf:
             if canonical_id(node_id) != node_id:
@@ -301,6 +302,11 @@ class _BatchWriter:
                 pk = f"{name}__{k}"
                 params[pk] = val
                 sets.append(f"{name} = :{pk}")
+            # When the node entered the graph: set once, kept by every later
+            # UPSERT (a re-import is not a birth). Every creation site stamps
+            # it — tests/test_created_at.py keeps the list complete.
+            params[f"created_at__{k}"] = now
+            sets.append(f"created_at = COALESCE(created_at, :created_at__{k})")
             params[f"id__{k}"] = node_id
             stmts.append(f"UPDATE {label} SET {', '.join(sets)} UPSERT WHERE id = :id__{k};")
             k += 1

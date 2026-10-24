@@ -556,6 +556,15 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
     return {"message": "Persons merged", "keep_id": data.keep_id, "removed_id": data.dup_id}
 
 
+def _earliest_birth(keep_id: str, dup_id: str) -> str | None:
+    """When the merged person entered the graph: the earlier `created_at` of
+    the two, read through SQL (Cypher returns a datetime-looking string
+    coerced — see app.created_at.earliest) and decided in Python."""
+    from app.created_at import earliest
+    rows = run_sql("SELECT id, created_at FROM Person WHERE id IN :ids", {"ids": [keep_id, dup_id]})
+    return earliest(*(r.get("created_at") for r in rows))
+
+
 def merge_person_records(keep: str, dup: str) -> None:
     """
     Fold person `dup` into person `keep` (see merge_persons). Raises ValueError if
@@ -644,8 +653,10 @@ def merge_person_records(keep: str, dup: str) -> None:
                 keep.description   = CASE WHEN COALESCE(keep.description, '') = '' THEN $description ELSE keep.description END,
                 keep.nationality   = CASE WHEN COALESCE(keep.nationality, '') = '' THEN $nationality ELSE keep.nationality END,
                 keep.alias         = $alias,
-                keep.nationalities = CASE WHEN size(COALESCE(keep.nationalities, [])) > 0 THEN keep.nationalities ELSE $nationalities END
+                keep.nationalities = CASE WHEN size(COALESCE(keep.nationalities, [])) > 0 THEN keep.nationalities ELSE $nationalities END,
+                keep.created_at    = $created_at
         """, keep=keep,
+             created_at=_earliest_birth(keep, dup),
              description=dup_node.get("description") or "",
              nationality=dup_node.get("nationality") or "",
              alias=alias_union,
@@ -696,7 +707,8 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
             death_date: $death_date,
             birth_place: $birth_place,
             description: $description,
-            wikipedia_url: $wikipedia_url
+            wikipedia_url: $wikipedia_url,
+            created_at: $created_at
         })
         RETURN p
     """
@@ -704,6 +716,7 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
     with db.get_session() as session:
         result = session.run(query,
             id=person_id,
+            created_at=datetime.now(timezone.utc).isoformat(),
             full_name=full_name,
             **person.model_dump()
         )

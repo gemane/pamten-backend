@@ -820,10 +820,11 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 description: null, wikidata_id: null,
                 hq_address: $hq_address, hq_city: $hq_city, hq_country: $hq_country,
                 hq_street: $hq_street, hq_postcode: $hq_postcode,
-                website: $website
+                website: $website, created_at: $created_at
             })
             """,
             id=entity_id, name=name, name_norm=name_norm, website=website,
+            created_at=_now_iso(),
             cred=credibility_score, type=entity_type, cik=cik, lei=lei, source_id=source_id,
             country=country, jurisdiction_code=jurisdiction_code,
             **_hq_params(headquarters),
@@ -895,11 +896,12 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, nationality: '', description: '',
                 wikidata_id: null, sec_cik: $cik, source_id: $source_id,
-                alias: [], nationalities: [], search_text: $search_text
+                alias: [], nationalities: [], search_text: $search_text,
+                created_at: $created_at
             })
             """,
             id=person_id, first=first_name, last=last_name, full=full_name,
-            cik=sec_cik,
+            cik=sec_cik, created_at=_now_iso(),
             search_text=_person_search_text(full_name, None),
             source_id=source_id,
         )
