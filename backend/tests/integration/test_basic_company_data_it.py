@@ -2,7 +2,7 @@
 Real-ArcadeDB test for the Companies House BasicCompanyData importer: pre-creates
 a number-keyed (un-named) company node the way the PSC import would, then imports a
 tiny synthetic BasicCompanyData CSV and asserts the node is enriched (name, type,
-founded, former-name aliases, searchable) — and that a register row for a company
+incorporated, former-name aliases, searchable) — and that a register row for a company
 NOT already in the graph is a no-op (enrichment only, no isolated nodes created).
 
 Skipped unless ARCADEDB_IT_URL is set — see conftest.py.
@@ -60,7 +60,7 @@ def test_enriches_existing_company_only(it_db, tmp_path):
     rec = it_db.run_command(
         "MATCH (e:Entity {id:'gb-coh:09446231'}) "
         "RETURN e.name AS name, e.type AS type, e.founded AS founded, "
-        "e.founded_date AS founded_date, "
+        "e.incorporated_on AS incorporated_on, "
         "e.aliases AS aliases, e.search_text AS st, e.registered_address AS addr, "
         "e.reg_street AS rs, e.reg_city AS rc, e.reg_postcode AS rp, e.address AS a, "
         "e.hq_address AS ha, e.hq_city AS hc, e.hq_country AS hk, e.hq_street AS hs, e.hq_postcode AS hp")
@@ -74,8 +74,8 @@ def test_enriches_existing_company_only(it_db, tmp_path):
     assert (row["ha"], row["hc"], row["hk"], row["hs"], row["hp"]) == (None,) * 5
     assert row["name"] == "MONZO BANK LIMITED"
     assert row["type"] == "company"
-    assert row["founded"] == 2015                 # headline = year
-    assert row["founded_date"] == "2015-02-24"    # full date in Details
+    assert row["incorporated_on"] == "2015-02-24"   # the legal entity's start, in Details
+    assert row["founded"] is None                    # the business's origin is not the register's to say
     assert "MONDO LTD" in (row["aliases"] or [])
     assert "MONDO LTD" in (row["st"] or "")          # former name is searchable
     assert "EC2A 2DA" in (row["addr"] or "")
@@ -105,7 +105,7 @@ def test_a_company_held_under_a_gleif_id_is_enriched_too(it_db, tmp_path):
 
     row = it_db.run_command(
         "MATCH (e:Entity {id:'lei:2138007AJRLHRVQZLD07'}) "
-        "RETURN e.founded_date AS fd, e.registered_address AS addr, e.uk_sic_codes AS sic, "
+        "RETURN e.incorporated_on AS fd, e.registered_address AS addr, e.uk_sic_codes AS sic, "
         "e.name_credibility AS nc, e.nace_code AS nace")[0]
     assert row["fd"] == "2005-01-18"
     assert "EC2V 6DN" in row["addr"]

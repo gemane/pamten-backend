@@ -18,7 +18,7 @@ def _seed(it_db):
     # was named at incorporation — a real start); blank: not enriched yet
     for cid, founded in (("gb-coh:00000001", "1903-08-28"), ("gb-coh:00000002", "2016-09-01"),
                          ("gb-coh:00000003", None)):
-        f = f", founded_date:'{founded}'" if founded else ""
+        f = f", incorporated_on:'{founded}'" if founded else ""
         it_db.run_command(f"CREATE (:Entity {{id:'{cid}', companies_house_id:'{cid[7:]}'{f}}})")
     it_db.run_command("CREATE (:Entity {id:'owner', name:'Owner Ltd'})")
     edges = (("gb-coh:00000001", "2016-07-04", None, "PSC"),        # first year, old company → bound

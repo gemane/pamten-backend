@@ -320,12 +320,12 @@ def _resolve(leis: set[str]) -> tuple[dict[str, str], dict[str, tuple]]:
     regs: dict[str, tuple] = {}
     ordered = sorted(leis)
     for i in range(0, len(ordered), _CHUNK):
-        rows = run_sql("SELECT id, lei_id, lei_registration_date, founded_date FROM Entity "
+        rows = run_sql("SELECT id, lei_id, lei_registration_date, incorporated_on FROM Entity "
                        "WHERE lei_id IN :l", {"l": ordered[i:i + _CHUNK]})
         for r in rows or []:
             if r.get("lei_id") and r.get("id"):
                 out.setdefault(r["lei_id"], r["id"])
-                regs.setdefault(r["lei_id"], (r.get("lei_registration_date"), r.get("founded_date")))
+                regs.setdefault(r["lei_id"], (r.get("lei_registration_date"), r.get("incorporated_on")))
     return out, regs
 
 
@@ -459,10 +459,10 @@ def plan_history(periods: Iterable[dict], ids: dict[str, str],
                     "source_url": f"https://search.gleif.org/#/record/{child}",
                     "source_date": p["last_seen"], "filing_type": "RR",
                 }
-                registered, founded = (regs or {}).get(child, (None, None))
+                registered, incorporated = (regs or {}).get(child, (None, None))
                 if not stated:
                     props["since_basis"] = SINCE_BASIS
-                elif stated == registered and stated != founded:
+                elif stated == registered and stated != incorporated:
                     props["since_basis"] = REGISTRATION_DAY
                 if refuted:
                     props["since_not_before"] = refuted

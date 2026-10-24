@@ -463,6 +463,7 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
     overview_rows: list[list[Cell]] = [
         ["Name", name], ["Type", entity.get("type")], ["Country", entity.get("country")],
         ["Legal form", entity.get("legal_form")], ["Founded", entity.get("founded")],
+        ["Incorporated", entity.get("incorporated_on")],
         ["Revenue", entity.get("revenue")], ["Employees", entity.get("employees")],
         ["Headquarters", ", ".join(p for p in (entity.get("hq_city"), entity.get("hq_country")) if p) or None],
         ["Address", entity.get("address")],

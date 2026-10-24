@@ -2419,17 +2419,17 @@ def run_scrape_open_corporates(company_name: str, country: str | None = None) ->
     _stamp_registration(target_id, data.get("jurisdiction_code"), data.get("company_number"))
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
     # The register's incorporation date was fetched and thrown away, so time
-    # travel never knew when the company began. Founding dates only move
-    # EARLIER (the same rule as the bulk importers).
+    # travel never knew when the company began. It only moves EARLIER (the
+    # same rule as the bulk importers) and it is the legal entity's start,
+    # not the business's: `founded` (the year of origin) is left to Wikidata.
     inc = (data.get("incorporation_date") or "")[:10]
     if len(inc) == 10 and inc[4] == "-" and inc[7] == "-":
         with db.get_session() as session:
             session.run(
                 "MATCH (e:Entity {id: $id}) "
-                "SET e.founded_date = CASE WHEN e.founded_date IS NULL OR $d < e.founded_date "
-                "THEN $d ELSE e.founded_date END, "
-                "e.founded = CASE WHEN e.founded IS NULL OR $y < e.founded THEN $y ELSE e.founded END",
-                id=target_id, d=inc, y=int(inc[:4]))
+                "SET e.incorporated_on = CASE WHEN e.incorporated_on IS NULL OR $d < e.incorporated_on "
+                "THEN $d ELSE e.incorporated_on END",
+                id=target_id, d=inc)
 
     # Registered address → geocoded onto the entity itself.
     address = data.get("registered_address") or {}

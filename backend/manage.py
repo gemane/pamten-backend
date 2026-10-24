@@ -753,6 +753,19 @@ def cmd_heal_role_dates(args):
           "by the day their source last listed them.")
 
 
+def cmd_heal_incorporated_on(args):
+    """Rename `founded_date` to `incorporated_on` on every entity and clear a
+    `founded` that only repeated the incorporation year on a node no other
+    source dated (app.incorporation). For a database written before
+    2026-10-24. Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.incorporation import heal
+    res = heal(apply=args.apply)
+    verb = "Healed" if res["applied"] else "Would heal (dry run — add --apply)"
+    print(f"{verb}: {res['renamed']} founded_date → incorporated_on, {res['dropped_old_field']} old fields dropped, "
+          f"{res['cleared_founded']} register-only `founded` years cleared, of {res['scanned']} entities")
+
+
 def cmd_dedupe_role_synonyms(args):
     """Merge HAS_ROLE edges that name the SAME position in different words.
 
@@ -1733,6 +1746,13 @@ def _build_parser():
     p_acq.add_argument('--max-filings', type=int, default=None,
                        help='10-K / 10-Q filings to read, newest first (default 8; ~2 requests each)')
     p_acq.set_defaults(func=cmd_sec_acquisitions)
+
+    p_hio = subparsers.add_parser('heal-incorporated-on',
+        help="Rename founded_date to incorporated_on on every entity and clear a founded year that only "
+             "repeated the incorporation date on a node no other source dated (before 2026-10-24). Dry run unless --apply")
+    p_hio.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hio.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_hio.set_defaults(func=cmd_heal_incorporated_on)
 
     p_hsd = subparsers.add_parser('heal-sec-dates',
         help="Repair SEC start/end dates written before the time-travel fixes "

@@ -102,9 +102,9 @@ class TestFirstYearLowerBounds:
                                            run_sqlscript=lambda s, p=None: scripts.append((s, p)))
         return res, sql, scripts
 
-    PAGE = [{"id": "gb-coh:1", "rid": "#1:1", "founded_date": "1903-08-28"},   # predates the register
-            {"id": "gb-coh:2", "rid": "#1:2", "founded_date": "2016-09-01"},   # named its PSC at incorporation
-            {"id": "gb-coh:3", "rid": "#1:3", "founded_date": None}]           # not enriched yet
+    PAGE = [{"id": "gb-coh:1", "rid": "#1:1", "incorporated_on": "1903-08-28"},   # predates the register
+            {"id": "gb-coh:2", "rid": "#1:2", "incorporated_on": "2016-09-01"},   # named its PSC at incorporation
+            {"id": "gb-coh:3", "rid": "#1:3", "incorporated_on": None}]           # not enriched yet
     EDGES = [{"rid": "#9:1", "i": "#1:1", "s": "2016-07-04"},
              {"rid": "#9:2", "i": "#1:1", "s": "2016-07-04"},                  # a second PSC, same day
              {"rid": "#9:3", "i": "#1:1", "s": "2016-10-13"}]
@@ -136,7 +136,7 @@ class TestFirstYearLowerBounds:
 
     def test_scoped_ids_are_read_by_id_list_and_nothing_is_expanded_without_old_companies(self):
         res, sql, scripts = self._run(self.PAGE[1:], [], company_ids=("gb-coh:2", "gb-coh:3", "it's"))
-        assert sql == ["SELECT id, @rid AS rid, founded_date FROM Entity "
+        assert sql == ["SELECT id, @rid AS rid, incorporated_on FROM Entity "
                        "WHERE id IN ['gb-coh:2', 'gb-coh:3', 'it\\'s']"]
         assert res["companies_before_register"] == 0 and scripts == []
 
@@ -147,7 +147,7 @@ class TestFirstYearLowerBounds:
                             lambda vtype, prefix="", page=5000, columns="": seen.update(
                                 vtype=vtype, prefix=prefix, columns=columns) or iter([self.PAGE]))
         res, sql, _ = self._run(self.PAGE, self.EDGES, company_ids=None)
-        assert seen == {"vtype": "Entity", "prefix": "gb-coh:", "columns": "id, @rid AS rid, founded_date"}
+        assert seen == {"vtype": "Entity", "prefix": "gb-coh:", "columns": "id, @rid AS rid, incorporated_on"}
         assert res["edges"] == 3 and not any("WHERE id IN" in c for c in sql)
 
 

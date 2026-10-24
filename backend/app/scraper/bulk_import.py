@@ -64,7 +64,7 @@ def _tmp_dir() -> str | None:
 _FLUSH_ATTEMPTS = 4
 
 #: Node fields a bulk write may only move EARLIER, never blank (see _flush_nodes).
-_EARLIEST_FIELDS = frozenset({"founded", "founded_date"})
+_EARLIEST_FIELDS = frozenset({"founded", "incorporated_on"})
 #: Node fields with a fallback: the source's value when it has one, else what
 #: stands, else the default. GLEIF knows the legal form of a fund or a
 #: foundation but says nothing about an ordinary company, and the generic

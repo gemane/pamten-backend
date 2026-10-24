@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from app.scraper.basic_company_data import (
-    _company_type, _founded, _prev_names, _reg_address, import_basic_company_data,
+    _company_type, _prev_names, _reg_address, _uk_date, import_basic_company_data,
 )
 
 
@@ -122,8 +122,8 @@ class TestOnlyCompanies:
                           lambda self, nid, props: captured.update(props)), \
              patch("app.scraper.basic_company_data._flush_script"):
             import_basic_company_data(str(zpath), 97)
-        assert captured["founded"] == 2012             # headline = year (was a full date)
-        assert captured["founded_date"] == "2012-09-11"  # full date for the Details section
+        assert captured["incorporated_on"] == "2012-09-11"   # the legal entity's start, as stated
+        assert "founded" not in captured                      # the business's origin is Wikidata's to say
         # the registered office in parts, under the registered pin only
         assert (captured["reg_street"], captured["reg_city"], captured["reg_postcode"]) == (
             "1 HIGH STREET, SUITE 2", "HARROGATE", "HG1 1AA")
@@ -175,12 +175,12 @@ class TestFieldParsing:
         assert _company_type("Community Interest Company") == "nonprofit"
         assert _company_type(None) == "company"
 
-    def test_founded_parses_uk_date(self):
-        assert _founded("11/09/2012") == "2012-09-11"
-        assert _founded("1/2/2020") == "2020-02-01"
-        assert _founded("") is None
-        assert _founded(None) is None
-        assert _founded("2012") is None
+    def test_uk_date_parses_the_registers_format(self):
+        assert _uk_date("11/09/2012") == "2012-09-11"
+        assert _uk_date("1/2/2020") == "2020-02-01"
+        assert _uk_date("") is None
+        assert _uk_date(None) is None
+        assert _uk_date("2012") is None
 
     def test_reg_address_joins_present_parts(self):
         row = {
