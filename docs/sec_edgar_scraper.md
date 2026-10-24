@@ -829,6 +829,23 @@ are two edges, which is what the timeline exists to show.
 
 ---
 
+## Industry — the filer's SIC code
+
+EDGAR assigns every filer a Standard Industrial Classification code, in the
+submissions document as `sic` and `sicDescription` ("3711", "Motor Vehicles &
+Passenger Car Bodies") — the same document the name, former names, LEI, country,
+address and website are read from, so it costs no request. `fetch_filer_sic`
+reads it and the runner records it (`_record_sec_industry`) for every entity it
+upserts with a CIK: the target, its 13D/G investors, a holdings scrape's filer
+and subjects. The statement keeps the SEC's own title; the NACE Rev. 2 node
+beside it comes from the bundled crosswalk (data-model, *Industry classification*
+— a 1987 SIC code reaches NACE through NAICS and ISIC, so a catch-all like 7370
+stops at a section while 3711 reaches class 29.10). The SEC's list uses rounded
+group codes (3250 for the 325x industries) and a few codes of its own that no
+industry classification has — 6770 blank checks, 8880 ADRs, 8888 foreign
+governments — which show the SEC's title and no tree. `manage.py
+backfill-industry` fetches the code for filers scraped before this existed.
+
 ## Request Budget per Company
 
 | Step | Requests |

@@ -125,6 +125,13 @@ _INDEXES: list[tuple[str, str, str]] = [
     # holding (from_id) for what it owns; a merge re-points both columns.
     ("StakeHistory", "from_id",     "NOTUNIQUE"),
     ("StakeHistory", "to_id",       "NOTUNIQUE"),
+    # A source's statement of what a company does (app.industry): one row per
+    # (entity, scheme, position), keyed by their hash; read per entity.
+    ("IndustryCode", "key",         "UNIQUE"),
+    ("IndustryCode", "entity_id",   "NOTUNIQUE"),
+    # The NACE node the panel draws the sector tree from — indexed so "every
+    # company in 23.32" is a lookup, not a scan.
+    ("Entity",       "nace_code",   "NOTUNIQUE"),
     # Refresh tokens (see app/auth/refresh.py). token_hash is UNIQUE because it
     # identifies the row on every refresh and two tokens must never collide;
     # user_id and family_id are the revoke-all and replay-response paths.

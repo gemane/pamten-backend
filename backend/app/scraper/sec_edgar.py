@@ -365,6 +365,19 @@ def fetch_filer_website(cik: str) -> str | None:
         return None
 
 
+def fetch_filer_sic(cik: str) -> tuple[str, str] | None:
+    """The filer's SIC code and title from EDGAR — the SEC's own statement of
+    what the company does (`sic` / `sicDescription` in the submissions
+    document; "3711", "Motor Vehicles & Passenger Car Bodies"). None when
+    the filer has none. See app.industry."""
+    from app.industry import us_sic_from_submissions
+    try:
+        return us_sic_from_submissions(_submissions(cik))
+    except Exception as exc:  # noqa: BLE001 - a sector is a nicety, not worth aborting a scrape
+        log.warning("SEC EDGAR: SIC lookup failed for CIK=%s: %s", cik, exc)
+        return None
+
+
 def fetch_filer_country(cik: str) -> str | None:
     """The filer's country from EDGAR, or None if it cannot be determined."""
     try:

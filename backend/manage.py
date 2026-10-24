@@ -1151,6 +1151,17 @@ def cmd_backfill_countries(args):
           f"({result['still_unknown']} still unknown — the source has none either)")
 
 
+def cmd_backfill_industry(args):
+    """Give every company a sector its sources already know (app.industry):
+    EDGAR's SIC code for SEC filers, the register's SIC codes for UK companies."""
+    from app.industry import backfill
+    res = backfill(limit=args.limit)
+    for c in res["sec_changes"][:20]:
+        print(f"  {c['name'][:40]:42} SIC {c['code']}  → NACE {c['nace'] or '—'}")
+    print(f"SEC: {res['sec_filled']} of {res['sec_candidates']} filers given a code; "
+          f"UK: {res['uk_statements']} statements for {res['uk_companies']} companies")
+
+
 def cmd_backfill_sec_headquarters(args):
     """Fill in SEC filers' headquarters from EDGAR's business address.
 
@@ -1337,6 +1348,13 @@ def _build_parser():
     p_nat = subparsers.add_parser('normalize-nationalities',
                                   help='Convert Person.nationality demonyms ("British") to ISO-2 codes')
     p_nat.set_defaults(func=cmd_normalize_nationalities)
+
+    # backfill-industry: EDGAR's SIC + the UK register's SIC codes -> IndustryCode statements + nace_code
+    p_ind = subparsers.add_parser('backfill-industry',
+        help="Give every company a sector its sources already know: SEC filers' SIC from EDGAR, "
+             "UK companies' SIC codes from the stored register snapshot (NACE Rev. 2 tree)")
+    p_ind.add_argument('--limit', type=int, help='Max SEC filers to fetch this run')
+    p_ind.set_defaults(func=cmd_backfill_industry)
 
     # backfill-sec-headquarters: EDGAR's business address -> hq_* (where it is RUN)
     p_hq = subparsers.add_parser('backfill-sec-headquarters',
