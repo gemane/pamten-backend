@@ -265,9 +265,10 @@ def typed_properties() -> list[tuple[str, str, str]]:
 def _statements(existing: tuple | None = None) -> list[str]:
     """The DDL the schema needs — all of it, or only what `existing` lacks.
 
-    `existing` is (type names, index names, declared "Type.property" names)
-    as the server reports them (the third may be missing from an older
-    caller). Even an `IF NOT EXISTS` statement takes the exclusive schema
+    `existing` is (type names, index names, declared properties — a
+    {"Type.property": type} map, or bare names from an older caller) as the
+    server reports them (the third may be missing altogether). A declared
+    property whose type differs from the code's is dropped and declared again. Even an `IF NOT EXISTS` statement takes the exclusive schema
     lock, and on a large database that lock is held for an hour at a time by
     an index compaction: the API's startup used to issue thirty of them,
     each timing out on the client but queuing on the server, and every
@@ -284,6 +285,11 @@ def _statements(existing: tuple | None = None) -> list[str]:
 
     def has_property(vtype: str, prop: str) -> bool:
         return props is not None and f"{vtype}.{prop}" in props
+
+    def declared_type(vtype: str, prop: str) -> str | None:
+        """The type the server declares for the property, when the catalog
+        says (an older caller may pass bare names)."""
+        return props.get(f"{vtype}.{prop}") if isinstance(props, dict) else None
 
     stmts: list[str] = []
     for vtype in sorted({t for t, _, _ in _INDEXES}):
@@ -313,28 +319,48 @@ def _statements(existing: tuple | None = None) -> list[str]:
         stmts.append(f"CREATE INDEX IF NOT EXISTS ON {vtype} ({prop}) FULL_TEXT")
     # The typed, unindexed properties: a declaration each, nothing to index.
     for vtype, prop, ptype in _TYPED_PROPERTIES:
-        if (vtype, prop) in _PROPERTY_TYPES or has_property(vtype, prop):
+        if (vtype, prop) in _PROPERTY_TYPES:
             continue
+        if has_property(vtype, prop):
+            live = declared_type(vtype, prop)
+            if live is None or live == ptype:
+                continue
+            # The server declares another type (shares_outstanding was LONG for a
+            # day before it became DOUBLE). ArcadeDB has no `ALTER PROPERTY …
+            # TYPE`; dropping the declaration touches no row, and the fresh one
+            # coerces every write from then on — heal-property-types rewrites
+            # the rows that still carry the old type.
+            log.info("redeclaring %s.%s: %s on the server, %s in the code", vtype, prop, live, ptype)
+            stmts.append(f"DROP PROPERTY {vtype}.{prop}")
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS {ptype}")
+    # An indexed property declared with another type cannot be redeclared
+    # without dropping and rebuilding its index — a full reindex on a large
+    # database — so it is only reported.
+    for (vtype, prop), ptype in _PROPERTY_TYPES.items():
+        live = declared_type(vtype, prop)
+        if live is not None and live != ptype:
+            log.warning("%s.%s is declared %s on the server, %s in the code; it is indexed, "
+                        "so the bootstrap leaves it — redeclare it by hand (drop the index, "
+                        "the property, then init-schema)", vtype, prop, live, ptype)
     return stmts
 
 
-def _existing_schema() -> tuple[set, set, set] | None:
-    """(type names, index names, declared "Type.property" names) from the
+def _existing_schema() -> tuple[set, set, dict] | None:
+    """(type names, index names, {"Type.property": declared type}) from the
     server's catalog, or None when it cannot be read — then the full
     idempotent DDL runs, as it always did."""
     types = run_sql("SELECT name, properties FROM schema:types")
     indexes = run_sql("SELECT name FROM schema:indexes")
     if not isinstance(types, list) or not isinstance(indexes, list):
         return None
-    declared: set = set()
+    declared: dict = {}
     for r in types:
         if not isinstance(r, dict):
             continue
         for p in r.get("properties") or []:
             name = p.get("name") if isinstance(p, dict) else p
             if name:
-                declared.add(f"{r.get('name')}.{name}")
+                declared[f"{r.get('name')}.{name}"] = p.get("type") if isinstance(p, dict) else None
     return ({r.get("name") for r in types if isinstance(r, dict)},
             {r.get("name") for r in indexes if isinstance(r, dict)},
             declared)

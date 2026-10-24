@@ -264,7 +264,62 @@ class TestTypedProperties:
                 "SELECT name FROM schema:indexes": [{"name": "Entity[id]"}]}
         with _run(side_effect=lambda sql, *a, **k: rows[sql]):
             types, indexes, declared = schema._existing_schema()
-        assert types == {"OWNS", "Entity"} and indexes == {"Entity[id]"} and declared == {"OWNS.stake_percent"}
+        assert types == {"OWNS", "Entity"} and indexes == {"Entity[id]"}
+        assert declared == {"OWNS.stake_percent": "DOUBLE"} and "OWNS.stake_percent" in declared
+
+    @staticmethod
+    def _complete():
+        types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES) | {"Claim", "StakeHistory", "IndustryCode"}
+        indexes = {f"{t}[{p}]" for t, p, _ in schema._INDEXES} | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES} \
+            | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}
+        declared = {f"{t}.{p}": k for t, p, k in schema._TYPED_PROPERTIES}
+        declared.update({f"{t}.{p}": k for (t, p), k in schema._PROPERTY_TYPES.items()})
+        return types, indexes, declared
+
+    def test_a_property_declared_with_another_type_is_dropped_and_declared_again(self):
+        # shares_outstanding was declared LONG by the deploy of the day before it
+        # became DOUBLE; ArcadeDB has no ALTER PROPERTY … TYPE, and a declaration
+        # that stays LONG coerces every healed row straight back
+        types, indexes, declared = self._complete()
+        assert schema._statements((types, indexes, declared)) == []
+        declared["OWNS.shares_outstanding"] = "LONG"
+        declared["Claim.voting_shares"] = "LONG"
+        assert schema._statements((types, indexes, declared)) == [
+            "DROP PROPERTY OWNS.shares_outstanding",
+            "CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE",
+            "DROP PROPERTY Claim.voting_shares",
+            "CREATE PROPERTY Claim.voting_shares IF NOT EXISTS DOUBLE",
+        ]
+
+    def test_a_catalog_without_types_is_trusted_as_it_was(self):
+        # an older caller passes bare names: nothing to compare, nothing dropped
+        types, indexes, declared = self._complete()
+        stmts = schema._statements((types, indexes, set(declared)))
+        assert stmts == [] and not any(s.startswith("DROP") for s in stmts)
+
+    def test_an_indexed_property_declared_with_another_type_is_only_reported(self, caplog):
+        types, indexes, declared = self._complete()
+        declared["Person.alias"] = "STRING"             # indexed: a redeclare means a reindex
+        with caplog.at_level("WARNING", logger="app.db.schema"):
+            stmts = schema._statements((types, indexes, declared))
+        assert stmts == []
+        assert any("Person.alias is declared STRING" in r.message for r in caplog.records)
+
+    def test_ensure_indexes_runs_the_redeclaration(self):
+        types, indexes, declared = self._complete()
+        declared["OWNS.shares_outstanding"] = "LONG"
+        rows = {"SELECT name, properties FROM schema:types": [
+                    {"name": t, "properties": [{"name": k.split(".", 1)[1], "type": v}
+                                               for k, v in declared.items() if k.split(".", 1)[0] == t]}
+                    for t in types],
+                "SELECT name FROM schema:indexes": [{"name": i} for i in indexes]}
+        with _run(side_effect=lambda sql, *a, **k: rows.get(sql, [])) as m:
+            res = schema.ensure_indexes()
+        issued = [c.args[0] for c in m.call_args_list]
+        assert res["ok"] == ["DROP PROPERTY OWNS.shares_outstanding",
+                             "CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE"]
+        assert issued.index("DROP PROPERTY OWNS.shares_outstanding") \
+            < issued.index("CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE")
 
     def test_dates_are_not_typed(self):
         for _, prop, ptype in schema._TYPED_PROPERTIES:

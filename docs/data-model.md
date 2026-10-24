@@ -27,6 +27,19 @@ side. **Dates stay STRING** on purpose — the writers keep a source's precision
 type holds, and ISO strings compare correctly as strings. A declaration never touches
 the rows already stored; `manage.py heal-property-types` rewrites those.
 
+A declaration the server holds with **another type** than the code's is dropped and
+declared again by the schema bootstrap (`init-schema`, every API start): ArcadeDB has
+no `ALTER PROPERTY … TYPE`, and `DROP PROPERTY` removes only the declaration, never a
+value. The case that taught this: `shares_outstanding` and `voting_shares` were LONG for
+a day (2026-10-24) before a Form 4's fractional shares made them DOUBLE, and the deploy
+that followed left the LONG declarations standing — the bootstrap only ever added what
+was missing — so the heal rewrote 47 rows as doubles, the declaration coerced them back
+to LONG, and the next dry run found the same 47. The heal now compares the server's
+declaration with the code's first and **skips and reports** a group that differs
+("run init-schema first") instead of converting it. An *indexed* property declared with
+another type is only logged: redeclaring it would mean dropping and rebuilding its
+index, which is a full reindex on a large database and a decision to take by hand.
+
 ## Nodes
 
 | Label | Key properties |

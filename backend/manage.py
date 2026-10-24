@@ -1028,10 +1028,13 @@ def cmd_heal_property_types(args):
     from app.property_types import heal
     res = heal(apply=args.apply)
     verb = "Rewrote" if res["applied"] else "Would rewrite (dry run — add --apply)"
-    if not res["converted"]:
+    if not res["converted"] and not res["misdeclared"]:
         print("Every stored value already has its declared type.")
     for key, n in res["converted"].items():
         print(f"{verb} {n} {key} values")
+    for key, d in res["misdeclared"].items():
+        print(f"Skipped {key}: the server declares it {d['server'] or 'not at all'}, the code {d['code']} "
+              f"— run init-schema (or let the API start) first, then this heal again")
 
 
 def cmd_init_schema(args):
