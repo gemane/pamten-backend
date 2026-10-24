@@ -5,7 +5,7 @@ import json
 import zipfile
 
 from app.scraper.gleif_lei_cdf import (
-    _country, _entity_props, _founded, _validated_credibility, _validation_sources,
+    _country, _entity_props, _incorporated_on, _validated_credibility, _validation_sources,
     import_lei_cdf_entities,
 )
 
@@ -97,8 +97,8 @@ class TestCountry:
 
 class TestFounded:
     def test_year_from_creation_date(self):
-        assert _founded({"EntityCreationDate": _w("1997-03-01T00:00:00Z")}) == 1997
-        assert _founded({}) is None
+        assert _incorporated_on({"EntityCreationDate": _w("1997-03-01T00:00:00Z")}) == "1997-03-01"
+        assert _incorporated_on({}) is None
 
 
 class TestEntityProps:
@@ -112,8 +112,8 @@ class TestEntityProps:
         assert props["name"] == "Acme AG"
         assert props["country"] == "DE"
         assert props["lei_id"] == "LEI123"
-        assert props["founded"] == 1990                 # headline = year
-        assert props["founded_date"] == "1990-01-01"    # full date for the Details section
+        assert props["incorporated_on"] == "1990-01-01"  # the legal entity's start, as stated
+        assert "founded" not in props                     # the business's origin is Wikidata's to say
         assert "main st 1" in props["registered_address"] and props["registered_address"].endswith("de")
         assert props["is_nominee"] is False
         assert props["source_url"] == "https://search.gleif.org/#/record/LEI123"  # deep link, not home page

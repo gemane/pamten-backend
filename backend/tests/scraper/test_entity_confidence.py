@@ -41,6 +41,15 @@ class TestWikidataGleifBridge:
         verdict = _group_confidence([self.GLEIF, self.WIKIDATA])
         assert verdict != "definitive"
 
+    def test_two_register_nodes_reach_medium_on_the_incorporation_year(self):
+        # A register node no longer carries `founded` (the business's year is
+        # Wikidata's); its incorporation year stands in for the signal.
+        a = dict(country="GB", incorporated_on="1896-07-20")
+        b = dict(country="GB", founded=1896)
+        assert _group_confidence([a, b]) == "medium"
+        assert _group_confidence([a, dict(country="GB", incorporated_on="1896-01-01")]) == "medium"   # both register-only
+        assert _group_confidence([a, dict(country="GB", incorporated_on="2013-03-05")]) == "low"
+
     def test_lei_from_wikidata_makes_the_pair_definitive(self):
         # With P1278 read from Wikidata the two carry the same lei_id, which is
         # exactly the signal the dedup already looks for.

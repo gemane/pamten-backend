@@ -95,8 +95,8 @@ def test_opencorporates_incorporation_dates_the_company(it_db):
          patch("app.scraper.open_corporates.scrape_company", return_value=data):
         runner.run_scrape_open_corporates("Example Trading Ltd")
     row = it_db.run_command("MATCH (e:Entity) WHERE e.name = 'Example Trading Ltd' "
-                            "RETURN e.founded_date AS d, e.founded AS y")[0]
-    assert (row["d"], row["y"]) == ("1987-02-03", 1987)
+                            "RETURN e.incorporated_on AS d, e.founded AS y")[0]
+    assert (row["d"], row["y"]) == ("1987-02-03", None)    # the register's date; the year is Wikidata's
 
 
 def test_proxy_voting_power_gets_the_proxys_date(it_db):

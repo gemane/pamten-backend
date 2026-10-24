@@ -139,21 +139,21 @@ class TestDelta:
 
 def test_a_bulk_write_never_blanks_or_postpones_a_founding_date(it_db):
     from app.scraper.bulk_import import _BatchWriter
-    it_db.run_command("CREATE (:Entity {id:'lei:X', name:'X', founded:1975, founded_date:'1975-04-04'})")
-    for props in ({"founded": None, "founded_date": None, "name": "X Corp"},     # nothing stated
-                  {"founded": 1993, "founded_date": "1993-06-01"}):              # a re-registration
+    it_db.run_command("CREATE (:Entity {id:'lei:X', name:'X', founded:1975, incorporated_on:'1975-04-04'})")
+    for props in ({"founded": None, "incorporated_on": None, "name": "X Corp"},     # nothing stated
+                  {"founded": 1993, "incorporated_on": "1993-06-01"}):              # a re-registration
         b = _BatchWriter()
         b.entity("lei:X", props)
         b.flush()
     row = it_db.run_command("MATCH (e:Entity {id:'lei:X'}) RETURN e.founded AS y, "
-                            "e.founded_date AS d, e.name AS n")[0]
+                            "e.incorporated_on AS d, e.name AS n")[0]
     assert (row["y"], row["d"], row["n"]) == (1975, "1975-04-04", "X Corp")
     b = _BatchWriter()
-    b.entity("lei:X", {"founded": 1960, "founded_date": "1960-01-02"})          # an earlier one wins
+    b.entity("lei:X", {"founded": 1960, "incorporated_on": "1960-01-02"})          # an earlier one wins
     b.flush()
-    row = it_db.run_command("MATCH (e:Entity {id:'lei:X'}) RETURN e.founded AS y, e.founded_date AS d")[0]
+    row = it_db.run_command("MATCH (e:Entity {id:'lei:X'}) RETURN e.founded AS y, e.incorporated_on AS d")[0]
     assert (row["y"], row["d"]) == (1960, "1960-01-02")
     b = _BatchWriter()
-    b.entity("lei:NEW", {"name": "New", "founded": 2001, "founded_date": "2001-02-03"})
+    b.entity("lei:NEW", {"name": "New", "founded": 2001, "incorporated_on": "2001-02-03"})
     b.flush()
     assert it_db.run_command("MATCH (e:Entity {id:'lei:NEW'}) RETURN e.founded AS y")[0]["y"] == 2001

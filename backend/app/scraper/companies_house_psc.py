@@ -407,7 +407,7 @@ def mark_first_year_lower_bounds(company_ids: list[str] | None = None, apply: bo
     counts = {"companies_before_register": 0, "edges": 0, "claims": 0, "applied": bool(apply)}
 
     def pages():
-        cols = "id, @rid AS rid, founded_date"
+        cols = "id, @rid AS rid, incorporated_on"
         if company_ids is None:
             yield from paging.iter_id_pages("Entity", prefix="gb-coh:", columns=cols)
             return
@@ -418,7 +418,7 @@ def mark_first_year_lower_bounds(company_ids: list[str] | None = None, apply: bo
 
     for page in pages():
         old = {r["rid"]: r["id"] for r in page
-               if r.get("rid") and r.get("founded_date") and str(r["founded_date"]) < PSC_REGISTER_START}
+               if r.get("rid") and r.get("incorporated_on") and str(r["incorporated_on"]) < PSC_REGISTER_START}
         counts["companies_before_register"] += len(old)
         if not old:
             continue

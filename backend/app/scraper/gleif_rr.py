@@ -56,7 +56,7 @@ REGISTRATION_DAY = "gleif_registration_day"
 _REG_DAY_MATCH = (
     "WHERE r.filing_type = 'RR' AND r.since IS NOT NULL AND r.since_basis IS NULL "
     "AND r.since = b.lei_registration_date "
-    "AND (b.founded_date IS NULL OR r.since <> b.founded_date) ")
+    "AND (b.incorporated_on IS NULL OR r.since <> b.incorporated_on) ")
 
 
 def mark_registration_day(parent_id: str | None = None, child_id: str | None = None,

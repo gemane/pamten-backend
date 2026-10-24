@@ -25,7 +25,9 @@ and former names overwrite what GLEIF put there, as they do on a merged node.
 
 Per matched company it sets: ``name`` / ``name_normalized`` / ``search_text``
 (name + former names, FULL_TEXT-indexed), ``type`` (from CompanyCategory),
-``country`` (``GB``), ``founded`` (IncorporationDate), ``registered_address`` /
+``country`` (``GB``), ``incorporated_on`` (IncorporationDate — the legal entity's
+registration, never the headline ``founded`` year, which is the business's origin
+and Wikidata's to state), ``registered_address`` /
 ``address`` (and the registered office in parts — ``reg_street`` / ``reg_city`` /
 ``reg_postcode``; nothing under ``hq_*``, the register does not say where a
 company is run),
@@ -73,7 +75,7 @@ def _snapshot_date(entry_name: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _founded(incorp: str | None) -> str | None:
+def _uk_date(incorp: str | None) -> str | None:
     """IncorporationDate 'DD/MM/YYYY' -> ISO 'YYYY-MM-DD' (None if unparseable)."""
     parts = (incorp or "").strip().split("/")
     if len(parts) == 3 and all(parts):
@@ -151,7 +153,7 @@ def _former_names(row: dict, current: str) -> list[str]:
         n = (row.get(f"PreviousName_{i}.CompanyName") or "").strip()
         if not n or n.lower() == cur:
             continue
-        e = former_names.entry(n, _founded(row.get(f"PreviousName_{i}.CONDATE")))
+        e = former_names.entry(n, _uk_date(row.get(f"PreviousName_{i}.CONDATE")))
         if e and e not in out:
             out.append(e)
     return out
@@ -308,18 +310,17 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     matched.add(number)
                 aliases = _prev_names(row, name)
                 search_text = name if not aliases else name + " " + " ".join(aliases)
-                # `founded` is the year (consistent with GLEIF); the full incorporation
-                # date goes in `founded_date` for the Details section.
-                founded_date = _founded(row.get("IncorporationDate"))
-                founded_year = int(founded_date[:4]) if founded_date else None
+                # The register's incorporation date is the legal entity's start,
+                # not the business's: it goes in `incorporated_on` and leaves
+                # `founded` (the year of origin, Wikidata's) alone.
+                incorporated_on = _uk_date(row.get("IncorporationDate"))
                 props = {
                     "name": name,
                     "name_normalized": normalize_entity_name(name),
                     "search_text": search_text,
                     "type": _company_type(row.get("CompanyCategory")),
                     "country": "GB",
-                    "founded": founded_year,
-                    "founded_date": founded_date,
+                    "incorporated_on": incorporated_on,
                     "registered_address": _reg_address(row),
                     # Nothing under hq_*: the register states the registered
                     # office, not where the company is run (_reg_address_parts).

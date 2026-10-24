@@ -361,7 +361,7 @@ def _group_confidence(members: list[dict]) -> str:
       definitive — they share a wikidata_id / sec_cik / companies_house_id /
                    lei_id / register_id (a hard external identifier ⇒ same entity).
       high       — same registered_address (GLEIF registered office).
-      medium     — same country AND same founded year.
+      medium     — same country AND same founding (or incorporation) year.
       low        — name only (differing address/country ⇒ probably different).
     """
     def _shared(field: str) -> bool:
@@ -374,7 +374,10 @@ def _group_confidence(members: list[dict]) -> str:
     if _shared("registered_address"):
         return "high"
     countries = {m.get("country") for m in members if m.get("country")}
-    founded = {m.get("founded") for m in members if m.get("founded")}
+    # the year the member began: the business's (`founded`) or, for a register
+    # node that states only its registration, the incorporation year
+    founded = {str(m.get("founded") or str(m.get("incorporated_on") or "")[:4])
+               for m in members if m.get("founded") or m.get("incorporated_on")}
     if len(countries) == 1 and len(founded) == 1 and (countries or founded):
         return "medium"
     return "low"
@@ -391,7 +394,7 @@ def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = N
     out = []
     for name_norm, cnt in groups:
         members = run_sql(
-            "SELECT id, name, country, founded, lei_id, companies_house_id, "
+            "SELECT id, name, country, founded, incorporated_on, lei_id, companies_house_id, "
             "sec_cik, wikidata_id, register_id, registered_address FROM Entity "
             "WHERE name_normalized = :nn LIMIT 25", {"nn": name_norm})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
@@ -1411,7 +1414,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     review = 0
     for nn in names:
         members = run_sql(
-            "SELECT id, name, country, founded, lei_id, companies_house_id, sec_cik, "
+            "SELECT id, name, country, founded, incorporated_on, lei_id, companies_house_id, sec_cik, "
             "wikidata_id, register_id, registered_address, COALESCE(name_credibility, 0) AS cred "
             "FROM Entity "
             f"WHERE name_normalized = :nn AND {not_a_voting_group()} LIMIT 50", {"nn": nn})

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.integration
 
 def _company(it_db, eid, registered=None, founded=None):
     it_db.run_command("CREATE (:Entity {id: $id, name: $id, type: 'company', lei_id: $id, "
-                      "lei_registration_date: $r, founded_date: $f})",
+                      "lei_registration_date: $r, incorporated_on: $f})",
                       {"id": eid, "r": registered, "f": founded})
 
 

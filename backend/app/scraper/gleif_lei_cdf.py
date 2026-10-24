@@ -254,16 +254,14 @@ def _validated_credibility(rec: dict, credibility_score: int) -> int:
     return max(0, credibility_score + penalty)
 
 
-def _founded(entity: dict) -> int | None:
-    d = _v(entity.get("EntityCreationDate"))
-    if d and len(d) >= 4 and d[:4].isdigit():
-        return int(d[:4])
-    return None
-
-
-def _founded_date(entity: dict) -> str | None:
-    """Full YYYY-MM-DD creation date (EntityCreationDate) for the Details section —
-    `_founded` keeps just the year for the headline, consistent across sources."""
+def _incorporated_on(entity: dict) -> str | None:
+    """The legal entity's creation date (EntityCreationDate, YYYY-MM-DD) — when
+    this registration began, which is not when the business did: Barclays PLC
+    was incorporated in 1896 and traces to 1690. The register states the
+    former, so that is all it writes; `founded` (the year of origin) is
+    Wikidata's to say (until 2026-10-24 both importers wrote the incorporation
+    year into `founded` too, and the two fields contradicted each other on
+    22 dev entities)."""
     d = _v(entity.get("EntityCreationDate"))
     if d and len(d) >= 10 and d[4] == "-" and d[7] == "-":
         return d[:10]
@@ -340,8 +338,7 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         # and register_id also covers the Scottish/NI registers (RA000587/586)
         # that the companies_house_id special case never did.
         "register_id": make_register_id(reg_code, reg_number),
-        "founded": _founded(entity),
-        "founded_date": _founded_date(entity),
+        "incorporated_on": _incorporated_on(entity),
         "lei_registration_date": _lei_registration_date(rec),
         # The register's own word on the record, stamped by BOTH the full load
         # and the daily delta: until 2026-10-13 only the delta did, so a rebuilt
