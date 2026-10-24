@@ -47,6 +47,8 @@ Both branches are protected by a repository **ruleset** (Settings → Rules → 
 
 CI runs on pushes and PRs to both branches.
 
+**Security updates** (since 2026-10-24). The server patches itself (`deploy/setup-server.sh` installs `unattended-upgrades`; no automatic reboot). Containers are pinned (`ARCADEDB_VERSION`, `CADDY_VERSION`, `APP_VERSION`) and move only through `ops.sh upgrade`. The Python locks are watched two ways: the CI job `Dependency audit` runs `pip-audit` over `requirements.txt` and `requirements-dev.txt` on every push and PR (not a required check, so an advisory without a fixed release does not block unrelated work — the red job stays visible until the lock moves), and Dependabot opens a PR against `develop` for a locked package with a known vulnerability (`.github/dependabot.yml`: security updates only, no version-bump PRs; it needs Dependabot alerts on in the repository settings, which they are). To clear a finding by hand: `pip-compile --upgrade-package <name> --no-emit-index-url --strip-extras --output-file=requirements.txt requirements.in`, the same for the `-dev` pair, then `pip install -r requirements-dev.txt` in the venv.
+
 ---
 
 ## Tech stack

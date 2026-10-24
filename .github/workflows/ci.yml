@@ -120,3 +120,26 @@ jobs:
 
       - name: Run ruff
         run: ruff check backend/app --select E,F,W --ignore E501
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    # Known vulnerabilities in the two pip-tools locks (PyPI advisory database).
+    # --no-deps: a lock is complete, so nothing is resolved or installed; the
+    # pinned versions are looked up as written. Not a required check on the
+    # rulesets: an advisory with no fixed release yet must not block every
+    # unrelated PR, but the red job is visible on each one until the lock moves.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Audit the locks
+        run: |
+          pip install pip-audit
+          cd backend
+          pip-audit -r requirements.txt --no-deps --strict --desc off
+          pip-audit -r requirements-dev.txt --no-deps --strict --desc off
