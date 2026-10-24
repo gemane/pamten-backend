@@ -40,6 +40,26 @@ declaration with the code's first and **skips and reports** a group that differs
 another type is only logged: redeclaring it would mean dropping and rebuilding its
 index, which is a full reindex on a large database and a decision to take by hand.
 
+## Rules the database enforces
+
+Beyond a type, a property can carry a rule, and since 2026-10-25 the bootstrap declares
+them (`app/db/schema.py`, `constraints()`, as `ALTER PROPERTY`): an `Entity`, `Person`
+or `Source` cannot exist without its `id`, a `Claim` not without `claim_key`, `kind`,
+`from_id`, `to_id` and `source_id` (mandatory, not null); `Entity.type`, `Claim.kind`,
+`OWNS.ownership_type` and `read_from` (on OWNS, Claim and HAS_ROLE) are restricted to
+their vocabularies — built from the enums the code validates against (`EntityType`,
+`OwnershipType`, `READ_GRADES`), so a new value is added once; `country` and
+`hq_country` match `^[A-Z]{2}$`; `stake_percent`, `voting_power_pct` and the
+StakeHistory percentages lie between 0 and 100; `OWNS.stale` defaults to `false`. The
+server refuses a write that breaks a rule with a clear message ("does not match the
+regular expression", "is greater than 100", "is mandatory"), which turns a quietly wrong
+row into a failed scrape that the run log shows. A rule leaves a null alone (`country`
+unknown is allowed; `notnull` is the one rule that does not), a default applies to new
+rows only, and ArcadeDB **refuses to declare a rule while any stored row breaks it** —
+so a heal runs before its rule, and `init-schema`'s `failed` list names the rule that
+still waits. `name` carries no rule on purpose: a GLEIF relationship record creates a
+placeholder `lei:` node that a later import names.
+
 ## Nodes
 
 | Label | Key properties |

@@ -11,6 +11,16 @@ def _run(side_effect=None):
     return patch.object(schema, "run_sql", side_effect=side_effect)
 
 
+def _held_rules():
+    """Every rule of `constraints()` as the catalog reports it: the flags as
+    booleans, min/max/default as strings (probed on 26.10.1)."""
+    held: dict = {}
+    for vtype, prop, attr, value in schema.constraints():
+        key = schema._RULE_KEYS[attr]
+        held.setdefault(f"{vtype}.{prop}", {})[key] = (value == "true") if key in ("mandatory", "notNull") else value
+    return held
+
+
 def test_creates_every_vertex_type_once():
     with _run() as m:
         schema.ensure_indexes()
@@ -164,19 +174,26 @@ class TestStartupIssuesNoDdlWhenTheSchemaIsComplete:
     request waited behind them. The catalog is read first, DDL only for gaps."""
 
     @staticmethod
-    def _catalog(types, indexes, declared=()):
+    def _catalog(types, indexes, declared=(), rules=None):
         """The catalog as the server reports it: types with their declared
-        properties (`declared` = "Type.prop" names), and the indexes."""
+        properties (`declared` = "Type.prop" names), the rules each holds
+        (`rules` = {"Type.prop": {catalog key: value}}; None = every rule of
+        `constraints()` as the server would report it), and the indexes."""
+        rules = _held_rules() if rules is None else rules
+
         def run(sql, *a, **kw):
             if sql == "SELECT name, properties FROM schema:types":
-                return [{"name": t, "properties": [{"name": d.split(".", 1)[1]} for d in declared
-                                                   if d.split(".", 1)[0] == t]} for t in types]
+                return [{"name": t, "properties": [{"name": d.split(".", 1)[1], **rules.get(d, {})}
+                                                   for d in declared if d.split(".", 1)[0] == t]}
+                        for t in types]
             if sql == "SELECT name FROM schema:indexes":
                 return [{"name": i} for i in indexes]
             return []
         return run
 
-    _TYPED = {f"{t}.{p}" for t, p, _ in schema._TYPED_PROPERTIES}
+    _TYPED = ({f"{t}.{p}" for t, p, _ in schema._TYPED_PROPERTIES}
+              | {f"{t}.{p}" for t, p in schema._RULED_STRINGS}
+              | {f"{t}.{p}" for t, p, _ in schema._INDEXES} | {f"{t}.{p}" for t, p, _ in schema._EDGE_INDEXES})
 
     def test_a_complete_schema_issues_nothing(self):
         types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
@@ -241,21 +258,21 @@ class TestTypedProperties:
         assert issued.count("CREATE PROPERTY Person.alias IF NOT EXISTS LIST") == 1
 
     def test_a_declared_property_issues_no_ddl(self):
-        types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES) | {"Claim", "StakeHistory", "IndustryCode"}
-        indexes = {f"{t}[{p}]" for t, p, _ in schema._INDEXES} | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES} \
-            | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}
-        declared = {f"{t}.{p}" for t, p, _ in schema._TYPED_PROPERTIES}
-        assert schema._statements((types, indexes, declared)) == []
+        types, indexes, declared, rules = self._complete()
+        assert schema._statements((types, indexes, declared, rules)) == []
         # one typed property missing from the catalog → exactly its declaration
-        declared.discard("OWNS.shares")
-        assert schema._statements((types, indexes, declared)) == ["CREATE PROPERTY OWNS.shares IF NOT EXISTS DOUBLE"]
+        del declared["OWNS.shares"]
+        assert schema._statements((types, indexes, declared, rules)) == ["CREATE PROPERTY OWNS.shares IF NOT EXISTS DOUBLE"]
 
     def test_an_older_two_part_catalog_still_works_and_declares_the_types(self):
         types = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
         indexes = {f"{t}[{p}]" for t, p, _ in schema._INDEXES} | {f"{t}[{p}]" for t, p, _ in schema._EDGE_INDEXES} \
             | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}
         stmts = schema._statements((types, indexes))
-        assert all(s.startswith("CREATE PROPERTY") for s in stmts) and len(stmts) == len(schema._TYPED_PROPERTIES)
+        creates = [s for s in stmts if s.startswith("CREATE PROPERTY")]
+        assert len(creates) == len(schema._TYPED_PROPERTIES) + len(schema._RULED_STRINGS)
+        # the rules cannot be compared without the catalog: every one is issued
+        assert len([s for s in stmts if s.startswith("ALTER PROPERTY")]) == len(schema.constraints())
 
     def test_the_catalog_read_reports_declared_properties(self):
         rows = {"SELECT name, properties FROM schema:types": [
@@ -263,9 +280,10 @@ class TestTypedProperties:
                     {"name": "Entity", "properties": []}],
                 "SELECT name FROM schema:indexes": [{"name": "Entity[id]"}]}
         with _run(side_effect=lambda sql, *a, **k: rows[sql]):
-            types, indexes, declared = schema._existing_schema()
+            types, indexes, declared, rules = schema._existing_schema()
         assert types == {"OWNS", "Entity"} and indexes == {"Entity[id]"}
         assert declared == {"OWNS.stake_percent": "DOUBLE"} and "OWNS.stake_percent" in declared
+        assert rules == {"OWNS.stake_percent": {}}
 
     @staticmethod
     def _complete():
@@ -274,17 +292,20 @@ class TestTypedProperties:
             | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}
         declared = {f"{t}.{p}": k for t, p, k in schema._TYPED_PROPERTIES}
         declared.update({f"{t}.{p}": k for (t, p), k in schema._PROPERTY_TYPES.items()})
-        return types, indexes, declared
+        declared.update({f"{t}.{p}": "STRING" for t, p in schema._RULED_STRINGS})
+        # the indexed strings the rules sit on are declared by the index loop
+        declared.update({f"{t}.{p}": "STRING" for t, p, _ in schema._INDEXES if f"{t}.{p}" not in declared})
+        return types, indexes, declared, _held_rules()
 
     def test_a_property_declared_with_another_type_is_dropped_and_declared_again(self):
         # shares_outstanding was declared LONG by the deploy of the day before it
         # became DOUBLE; ArcadeDB has no ALTER PROPERTY … TYPE, and a declaration
         # that stays LONG coerces every healed row straight back
-        types, indexes, declared = self._complete()
-        assert schema._statements((types, indexes, declared)) == []
+        types, indexes, declared, rules = self._complete()
+        assert schema._statements((types, indexes, declared, rules)) == []
         declared["OWNS.shares_outstanding"] = "LONG"
         declared["Claim.voting_shares"] = "LONG"
-        assert schema._statements((types, indexes, declared)) == [
+        assert schema._statements((types, indexes, declared, rules)) == [
             "DROP PROPERTY OWNS.shares_outstanding",
             "CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE",
             "DROP PROPERTY Claim.voting_shares",
@@ -293,23 +314,23 @@ class TestTypedProperties:
 
     def test_a_catalog_without_types_is_trusted_as_it_was(self):
         # an older caller passes bare names: nothing to compare, nothing dropped
-        types, indexes, declared = self._complete()
-        stmts = schema._statements((types, indexes, set(declared)))
+        types, indexes, declared, rules = self._complete()
+        stmts = schema._statements((types, indexes, set(declared), rules))
         assert stmts == [] and not any(s.startswith("DROP") for s in stmts)
 
     def test_an_indexed_property_declared_with_another_type_is_only_reported(self, caplog):
-        types, indexes, declared = self._complete()
+        types, indexes, declared, rules = self._complete()
         declared["Person.alias"] = "STRING"             # indexed: a redeclare means a reindex
         with caplog.at_level("WARNING", logger="app.db.schema"):
-            stmts = schema._statements((types, indexes, declared))
+            stmts = schema._statements((types, indexes, declared, rules))
         assert stmts == []
         assert any("Person.alias is declared STRING" in r.message for r in caplog.records)
 
     def test_ensure_indexes_runs_the_redeclaration(self):
-        types, indexes, declared = self._complete()
+        types, indexes, declared, rules = self._complete()
         declared["OWNS.shares_outstanding"] = "LONG"
         rows = {"SELECT name, properties FROM schema:types": [
-                    {"name": t, "properties": [{"name": k.split(".", 1)[1], "type": v}
+                    {"name": t, "properties": [{"name": k.split(".", 1)[1], "type": v, **rules.get(k, {})}
                                                for k, v in declared.items() if k.split(".", 1)[0] == t]}
                     for t in types],
                 "SELECT name FROM schema:indexes": [{"name": i} for i in indexes]}
@@ -336,3 +357,74 @@ class TestTypedProperties:
         rows = schema.typed_properties()
         assert ("Person", "alias", "LIST") in rows and ("OWNS", "shares", "DOUBLE") in rows
         assert len({(t, p) for t, p, _ in rows}) == len(rows)
+
+
+class TestConstraints:
+    """The rules the server enforces beyond type (`constraints()`): built from
+    the enums the code validates against, issued only where the catalog lacks
+    them, refused by the server while a row breaks them."""
+
+    def test_the_vocabularies_come_from_the_enums(self):
+        from app.models.entity import EntityType
+        from app.models.relationship import OwnershipType
+        from app.scraper.edge_schema import READ_GRADES
+        rules = {(t, p, a): v for t, p, a, v in schema.constraints()}
+        assert rules[("Entity", "type", "REGEXP")] == "^(" + "|".join(e.value for e in EntityType) + ")$"
+        assert rules[("OWNS", "ownership_type", "REGEXP")] == "^(" + "|".join(e.value for e in OwnershipType) + ")$"
+        assert rules[("OWNS", "read_from", "REGEXP")] == "^(" + "|".join(READ_GRADES) + ")$"
+        assert rules[("Claim", "kind", "REGEXP")] == "^(owns|role|succession)$"
+        assert rules[("Entity", "country", "REGEXP")] == "^[A-Z]{2}$"
+        assert rules[("OWNS", "stake_percent", "MIN")] == "0" and rules[("OWNS", "stake_percent", "MAX")] == "100"
+        assert rules[("OWNS", "stale", "DEFAULT")] == "false"
+        for key in (("Entity", "id"), ("Person", "id"), ("Claim", "claim_key"), ("Claim", "source_id")):
+            assert rules[(*key, "MANDATORY")] == "true" and rules[(*key, "NOTNULL")] == "true"
+
+    def test_names_and_dates_carry_no_rule(self):
+        # a placeholder `lei:` node is created without a name and named by a
+        # later import; a date keeps its source's precision
+        for vtype, prop, _, _ in schema.constraints():
+            assert prop not in ("name", "full_name", "name_normalized"), (vtype, prop)
+            assert not prop.endswith(("_date", "_at", "since", "until")), (vtype, prop)
+
+    def test_every_ruled_property_is_declared_by_something(self):
+        declared = ({(t, p) for t, p, _ in schema._TYPED_PROPERTIES} | set(schema._PROPERTY_TYPES)
+                    | {(t, p) for t, p, _ in schema._INDEXES} | {(t, p) for t, p, _ in schema._EDGE_INDEXES}
+                    | set(schema._RULED_STRINGS))
+        for vtype, prop, _, _ in schema.constraints():
+            assert (vtype, prop) in declared, (vtype, prop)
+
+    def test_a_held_rule_issues_nothing_and_a_missing_one_its_alter(self):
+        types, indexes, declared, rules = TestTypedProperties._complete()
+        assert schema._statements((types, indexes, declared, rules)) == []
+        del rules["Entity.country"]["regexp"]
+        rules["OWNS.stake_percent"]["max"] = "1"             # held with another value
+        rules["Claim.claim_key"]["mandatory"] = False
+        assert schema._statements((types, indexes, declared, rules)) == [
+            "ALTER PROPERTY Claim.claim_key MANDATORY true",
+            "ALTER PROPERTY Entity.country REGEXP '^[A-Z]{2}$'",
+            "ALTER PROPERTY OWNS.stake_percent MAX 100",
+        ]
+
+    def test_the_catalog_s_strings_and_booleans_compare_as_the_code_s_text(self):
+        assert schema._same_rule("0", "0") and schema._same_rule(True, "true") and schema._same_rule("False", "false")
+        assert not schema._same_rule(None, "true") and not schema._same_rule("1", "100")
+
+    def test_an_undeclared_ruled_string_is_declared_before_its_rule(self):
+        types, indexes, declared, rules = TestTypedProperties._complete()
+        del declared["OWNS.read_from"]
+        del rules["OWNS.read_from"]
+        stmts = schema._statements((types, indexes, declared, rules))
+        assert stmts == ["CREATE PROPERTY OWNS.read_from IF NOT EXISTS STRING",
+                         "ALTER PROPERTY OWNS.read_from REGEXP '^(field|table|form|layout|prose|narrative)$'"]
+
+    def test_the_catalog_read_reports_the_rules(self):
+        rows = {"SELECT name, properties FROM schema:types": [
+                    {"name": "T", "properties": [
+                        {"name": "id", "type": "STRING", "mandatory": True, "notNull": True, "custom": {}},
+                        {"name": "stake", "type": "DOUBLE", "min": "0", "max": "100"},
+                        {"name": "free", "type": "STRING"}]}],
+                "SELECT name FROM schema:indexes": []}
+        with _run(side_effect=lambda sql, *a, **k: rows[sql]):
+            *_, rules = schema._existing_schema()
+        assert rules == {"T.id": {"mandatory": True, "notNull": True},
+                         "T.stake": {"min": "0", "max": "100"}, "T.free": {}}
