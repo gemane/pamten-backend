@@ -179,7 +179,7 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
                     id: $id, name: $name, name_normalized: $norm, search_text: $stext,
                     type: '{VOTING_GROUP_TYPE}', member_keys: $roster,
                     source_id: $src, last_scraped_at: $now,
-                    description: $desc
+                    created_at: $now, description: $desc
                 }})""",
             id=gid, name=name, norm=norm, stext=search_text,
             roster=roster, src=source_id, now=now,

@@ -1198,6 +1198,22 @@ def cmd_backfill_sec_headquarters(args):
           f"({res['still_unknown']} EDGAR could not place)")
 
 
+def cmd_backfill_created_at(args):
+    """Give every Entity and Person without `created_at` the oldest date anything
+    recorded about it — the oldest claim naming it, else its own last_scraped_at,
+    else nothing (app.created_at). For a database written before 2026-10-24,
+    when the creation sites began stamping it. Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.created_at import backfill
+    res = backfill(apply=args.apply)
+    verb = "Dated" if res["applied"] else "Would date (dry run — add --apply)"
+    for label in ("Entity", "Person"):
+        c = res[label]
+        print(f"{label}: {c['missing']} of {c['scanned']} without created_at — {verb} "
+              f"{c['from_claims']} from their oldest claim, {c['from_scrape']} from last_scraped_at; "
+              f"{c['unknown']} stay unknown")
+
+
 def cmd_backfill_person_images(args):
     """Store the Wikidata portrait (P18) and English Wikipedia article of persons lacking them."""
     from app.scraper.maintenance import backfill_person_images
@@ -1382,6 +1398,13 @@ def _build_parser():
         help="Fill SEC filers' hq_address/hq_city/hq_country from EDGAR's business address")
     p_hq.add_argument('--limit', type=int, help='Max entities to process this run')
     p_hq.set_defaults(func=cmd_backfill_sec_headquarters)
+
+    # backfill-created-at (one-off; every creation site stamps it since 2026-10-24)
+    p_bca = subparsers.add_parser('backfill-created-at',
+                                  help="Give every Entity and Person without created_at the oldest date anything recorded about it (oldest claim, else last_scraped_at, else nothing). Dry run unless --apply")
+    p_bca.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_bca.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_bca.set_defaults(func=cmd_backfill_created_at)
 
     # backfill-person-images: Wikidata P18 -> Person.image_url (what /media/person/{id} serves)
     p_pimg = subparsers.add_parser('backfill-person-images',

@@ -335,8 +335,9 @@ def _upsert_entity(session, ref: dict, source_id: str, credibility: int = 60) ->
         "search_text:$stext, type:$type, "
         "country:$country, wikidata_id:$wd, sec_cik:$cik, lei_id:$lei, "
         "companies_house_id:$ch, register_id:$rid, source_id:$sid, verified:false, "
-        "is_nominee:false, name_credibility:$namecred})",
+        "is_nominee:false, name_credibility:$namecred, created_at:$created_at})",
         id=eid, name=name, nn=nn, stext=name, type=ref.get("type") or "company",
+        created_at=datetime.now(timezone.utc).isoformat(),
         country=ref.get("country"), wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"),
         lei=ref.get("lei_id"), ch=ref.get("companies_house_id"),
         rid=ref.get("register_id"), sid=source_id,
@@ -360,8 +361,9 @@ def _upsert_person(session, ref: dict, source_id: str) -> str | None:
         "CREATE (p:Person {id:$id, full_name:$full, first_name:$first, last_name:$last, "
         "search_text:$stext, "
         "wikidata_id:$wd, sec_cik:$cik, birth_date:$bd, birth_place:$bp, "
-        "nationality:$nat, source_id:$sid, alias:[], verified:false})",
+        "nationality:$nat, source_id:$sid, alias:[], verified:false, created_at:$created_at})",
         id=pid, full=full, stext=full, first=ref.get("first_name"), last=ref.get("last_name"),
+        created_at=datetime.now(timezone.utc).isoformat(),
         wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"), bd=ref.get("birth_date"),
         bp=ref.get("birth_place"), nat=ref.get("nationality"), sid=source_id)
     return pid

@@ -102,8 +102,9 @@ def _ensure_lei_node(lei: str, source_id: str) -> str:
     survivor = canonical_id(node_id)
     if survivor != node_id:
         return survivor
-    run_sql("UPDATE Entity SET lei_id = :lei, source_id = :src UPSERT WHERE id = :id",
-            {"lei": lei, "src": source_id, "id": node_id})
+    run_sql("UPDATE Entity SET lei_id = :lei, source_id = :src, "
+            "created_at = COALESCE(created_at, :now) UPSERT WHERE id = :id",
+            {"lei": lei, "src": source_id, "id": node_id, "now": _now_iso()})
     return node_id
 
 

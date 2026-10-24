@@ -308,6 +308,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       count the rows that went to one, so the log shows the path is alive.
 - [ ] **One edge per pair.** Re-asserting an existing relationship updates it; it does not
       add a second one.
+- [ ] **A new node is stamped `created_at`.** Every CREATE carries it; an UPSERT writes
+      `created_at = COALESCE(created_at, :now)` so a re-import is not a birth. The
+      bulk writer does this for every node it flushes; a writer with its own CREATE
+      adds it by hand — `tests/test_created_at.py` lists every creation site and
+      fails on one that forgets.
 - [ ] **Structured "person" fields still carry companies.** Form D's relatedPersonInfo
       has firstName/lastName — and fund filings put their GP LLC in them, with a literal
       `N/A` first name. Field structure is not a person guarantee: strip the filler,

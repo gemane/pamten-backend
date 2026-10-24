@@ -598,6 +598,7 @@ _MERGE_SKIP_PROPS = frozenset({
     "name_normalized",   # derived from name
     "search_text",       # rebuilt below from the merged name + description + aliases
     "name_credibility",  # handled explicitly (max)
+    "created_at",        # handled explicitly (the earlier of the two)
     "aliases", "countries", "hq_locations",   # lists — unioned, not replaced
     "former_names",                            # dated names — unioned by (name, date)
 })
@@ -660,6 +661,11 @@ def _merge_entity_props(keep: dict, dead: dict) -> dict:
 
     out["name_credibility"] = max(keep.get("name_credibility") or 0,
                                   dead.get("name_credibility") or 0)
+    # The merged node entered the graph when the first of the two did.
+    from app.created_at import earliest
+    born = earliest(keep.get("created_at"), dead.get("created_at"))
+    if born and born != keep.get("created_at"):
+        out["created_at"] = born
 
     # Keep the FULL_TEXT column consistent with the merged aliases, or the company
     # stops being findable under a name it just absorbed. The registration number

@@ -24,7 +24,8 @@ def create_entity(entity: EntityCreate, _: dict = Depends(require_contributor)):
             country: $country,
             founded: $founded,
             revenue: $revenue,
-            description: $description
+            description: $description,
+            created_at: $created_at
         })
         RETURN e
     """
@@ -32,6 +33,7 @@ def create_entity(entity: EntityCreate, _: dict = Depends(require_contributor)):
     with db.get_session() as session:
         result = session.run(query,
             id=entity_id,
+            created_at=datetime.now(timezone.utc).isoformat(),
             **entity.model_dump()
         )
         record = result.single()

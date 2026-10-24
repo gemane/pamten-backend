@@ -344,10 +344,10 @@ def _upsert_entity(
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
                 hq_city: $hq_city, hq_country: $hq_country,
                 website: $website,
-                logo_url: $logo_url
+                logo_url: $logo_url, created_at: $created_at
             })
             """,
-            id=entity_id,
+            id=entity_id, created_at=_now_iso(),
             name=name,
             name_norm=name_norm,
             search_text=search_text,
@@ -444,10 +444,11 @@ def _upsert_person(
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
                 image_url: $image, wikipedia_url: $wikipedia,
                 alias: $aliases, nationalities: $nats,
-                source_id: $source_id, search_text: $search_text
+                source_id: $source_id, search_text: $search_text,
+                created_at: $created_at
             })
             """,
-            id=person_id,
+            id=person_id, created_at=_now_iso(),
             first=first_name,
             last=last_name,
             full=full_name,
