@@ -490,7 +490,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             "first_name": first, "last_name": last, "full_name": name,
             "search_text": name, "nationality": _nationality(data.get("nationality")),
             "birth_date": _birth_date(data), "description": "",
-            "verified": False, "alias": [], "nationalities": [],
+            "alias": [], "nationalities": [],
         }
         kind_cat = "person"
     else:

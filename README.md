@@ -394,7 +394,7 @@ undoes that once (dry run unless `--apply`; the parts move under `reg_*`, the pi
 
 Duplicate companies are folded together by `deduplicate_entities` (shared LEI / Companies House id / CIK / Wikidata id) and, after every scrape, `deduplicate_entities_for` on just the entities that scrape touched — high-confidence groups only, the rest left for review.
 
-The survivor is the highest-`name_credibility` node (then verified, then the lexically smallest id), so a register-sourced node with its stable `lei:` id normally wins over a scraped UUID. A merge carries three things across before deleting the loser:
+The survivor is the highest-`name_credibility` node (then the lexically smallest id), so a register-sourced node with its stable `lei:` id normally wins over a scraped UUID. A merge carries three things across before deleting the loser:
 
 - **its edges** — owners, subsidiaries and roles, skipping any the survivor already has;
 - **its data** — identifiers (`wikidata_id`, `sec_cik`, …) and descriptive fields, filling gaps only; the survivor's own values always win, its name never changes, and the loser's name is added as an alias so the company stays findable under it;
@@ -620,6 +620,8 @@ python3 manage.py init-schema
 | `normalize-countries` | Convert country values to canonical ISO-2 codes |
 | `backfill-person-images` | Store the Wikidata portrait (P18) as `Person.image_url` and the English Wikipedia article (the sitelink) as `Person.wikipedia_url` for every person with a Wikidata id lacking either — the two pointers `GET /media/person/{id}` resolves (the article is the fallback when the item has no P18). New scrapes write both; this catches up the persons from before. `--limit N` |
 | `backfill-industry` | Give every company a sector its sources already know: SEC filers' SIC code from EDGAR, UK companies' SIC codes from the stored register snapshot — `IndustryCode` statements plus the `nace_code` the panel's sector tree is drawn from. Fill-only; `--limit` caps the EDGAR fetches. |
+| `heal-entity-types` | Give every typeless entity `type = 'company'` — the GLEIF bulk writer left an ordinary company's type empty until 2026-10-24 (1,089 of 6,138 on dev); the writer now defaults it. Dry run unless `--apply` |
+| `drop-verified-flag` | Remove the `verified` property from every Entity and Person: stamped false by every writer, never set true by anything, dropped from the writers and the dedup on 2026-10-24. Dry run unless `--apply` |
 | `backfill-sec-headquarters` | Fill SEC filers' `hq_address`/`hq_city`/`hq_country` from EDGAR's **business address** — where a company is *run*. Deliberately separate from the country repair: a business address is poor evidence of a **domicile** (a foreign filer often files through a US office, which is why `sec_country` refuses to read one from it) and good evidence of a **headquarters**. The scraper had been fetching that address to read a single state code out of it and discarding the rest, leaving 40 of 43 SEC companies with no headquarters at all. |
 | `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](#federation) |
 | `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers) — see *GLEIF sourcing* in [`docs/data-model.md`](docs/data-model.md) |

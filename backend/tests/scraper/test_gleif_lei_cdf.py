@@ -117,7 +117,9 @@ class TestEntityProps:
         assert "main st 1" in props["registered_address"] and props["registered_address"].endswith("de")
         assert props["is_nominee"] is False
         assert props["source_url"] == "https://search.gleif.org/#/record/LEI123"  # deep link, not home page
-        assert "type" not in props            # generic → type left untouched
+        # generic → no statement: the bulk writer keeps what stands or defaults
+        # to `company` (bulk_import._DEFAULTED_FIELDS); never an empty type
+        assert "type" in props and props["type"] is None
 
     def test_the_registers_own_word_on_the_record(self):
         """`active` + `gleif_registration_status` on the FULL load, not only the

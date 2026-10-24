@@ -189,6 +189,24 @@ class TestEdgeProvenance:
 
 # ── 3. Minimum fields captured from the source ───────────────────────────────
 
+class TestNoDeadFlag:
+    """`verified` was stamped false by every node writer and never set true by
+    anything (removed 2026-10-24). A writer that brings it back would make the
+    heal that dropped it a lie."""
+
+    def test_no_node_writer_stamps_verified(self):
+        import pathlib
+        app = pathlib.Path(__file__).resolve().parents[2] / "app"
+        offenders = []
+        for path in app.rglob("*.py"):
+            if "auth" in path.parts or path.name in ("federation.py",):
+                continue                      # user accounts and peers have their own `verified`
+            text = path.read_text()
+            if "verified: false" in text or "verified: true" in text or '"verified": False' in text:
+                offenders.append(str(path.relative_to(app)))
+        assert offenders == []
+
+
 ENTITY_WRITERS = [
     ("wikidata entity", "runner", lambda: runner._upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")),
 ]
