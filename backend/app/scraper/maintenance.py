@@ -598,7 +598,6 @@ _MERGE_SKIP_PROPS = frozenset({
     "name_normalized",   # derived from name
     "search_text",       # rebuilt below from the merged name + description + aliases
     "name_credibility",  # handled explicitly (max)
-    "verified",          # handled explicitly (either)
     "aliases", "countries", "hq_locations",   # lists — unioned, not replaced
     "former_names",                            # dated names — unioned by (name, date)
 })
@@ -661,8 +660,6 @@ def _merge_entity_props(keep: dict, dead: dict) -> dict:
 
     out["name_credibility"] = max(keep.get("name_credibility") or 0,
                                   dead.get("name_credibility") or 0)
-    if keep.get("verified") or dead.get("verified"):
-        out["verified"] = True
 
     # Keep the FULL_TEXT column consistent with the merged aliases, or the company
     # stops being findable under a name it just absorbed. The registration number
@@ -1386,7 +1383,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
 
     Scoped via indexed id/name lookups over the (small) touched set, so it never
     runs the full-DB same-name aggregation (``_duplicate_name_groups``). The
-    survivor is the highest ``name_credibility`` node (then verified, then smallest
+    survivor is the highest ``name_credibility`` node (then the smallest
     id), and the loser's edges are migrated onto it before it's deleted.
     """
     if not entity_ids:
@@ -1409,8 +1406,8 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     for nn in names:
         members = run_sql(
             "SELECT id, name, country, founded, lei_id, companies_house_id, sec_cik, "
-            "wikidata_id, register_id, registered_address, COALESCE(name_credibility, 0) AS cred, "
-            "COALESCE(verified, false) AS verified FROM Entity "
+            "wikidata_id, register_id, registered_address, COALESCE(name_credibility, 0) AS cred "
+            "FROM Entity "
             f"WHERE name_normalized = :nn AND {not_a_voting_group()} LIMIT 50", {"nn": nn})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
         if len(members) < 2:
@@ -1418,7 +1415,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
         if _group_confidence(members) not in ("definitive", "high"):
             review += 1
             continue
-        members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
+        members.sort(key=lambda m: (-(m.get("cred") or 0), m["id"]))
         keep = members[0]
         for dead in members[1:]:
             # Never merge a pair a human has confirmed is two different companies.
@@ -1472,7 +1469,7 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     HTTP/proxy request timeout — call repeatedly until ``remaining`` is 0, or pass
     ``limit=None`` to process every group in one go (used by the background job,
     which isn't bound by the request timeout). For each group the survivor is the
-    highest ``name_credibility`` node (then verified, then the lexically-smallest
+    highest ``name_credibility`` node (then the lexically-smallest
     id, for a deterministic result).
     """
     # All duplicate groups across every hard external identifier (cheap aggregation).
@@ -1505,18 +1502,17 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
                 members += run_query(
                     "MATCH (e:Entity) WHERE e.id = $id "
                     "RETURN e.id AS id, e.name AS name, "
-                    "COALESCE(e.name_credibility, 0) AS cred, "
-                    "COALESCE(e.verified, false) AS verified", {"id": mid})
+                    "COALESCE(e.name_credibility, 0) AS cred", {"id": mid})
         else:
             members = run_query(
                 f"MATCH (e:Entity) WHERE e.{key_prop} = $key "
                 f"RETURN e.id AS id, e.name AS name, "
-                f"COALESCE(e.name_credibility, 0) AS cred, COALESCE(e.verified, false) AS verified",
+                f"COALESCE(e.name_credibility, 0) AS cred",
                 {"key": key},
             )
         if len(members) < 2:
             continue
-        members.sort(key=lambda m: (-(m.get("cred") or 0), not m.get("verified"), m["id"]))
+        members.sort(key=lambda m: (-(m.get("cred") or 0), m["id"]))
         keep = members[0]
         for dead in members[1:]:
             if frozenset((dead["id"], keep["id"])) in kept_separate:
@@ -2110,3 +2106,54 @@ def find_cross_holdings(limit: int = 100) -> list[dict]:
         f"LIMIT {int(limit)}"
     )
     return [dict(r) for r in rows]
+
+
+# ── Model heals (2026-10-24) ───────────────────────────────────────────────────
+
+def _walk_nodes(label: str, columns: str, pick, set_clause: str, apply: bool,
+                chunk: int = 500) -> dict:
+    """Walk every `label` node by its id index (app.db.paging — the one walk
+    that survives a full-size database), collect the rows `pick` selects and
+    apply `set_clause` to them by @rid in chunks. A whole-table UPDATE with a
+    WHERE on an unindexed predicate is a scan per batch and dies behind the
+    proxy timeout; this is a page read plus a direct write per chunk."""
+    from app.db import paging
+    counts = {"scanned": 0, "matched": 0, "updated": 0, "applied": bool(apply)}
+    for page in paging.iter_id_pages(label, columns=f"id, @rid AS rid, {columns}"):
+        counts["scanned"] += len(page)
+        rids = [str(r["rid"]) for r in page if r.get("rid") and pick(r)]
+        counts["matched"] += len(rids)
+        if not apply:
+            continue
+        for i in range(0, len(rids), chunk):
+            run_sql(f"UPDATE [{', '.join(rids[i:i + chunk])}] {set_clause}")
+            counts["updated"] += len(rids[i:i + chunk])
+    return counts
+
+
+def heal_entity_types(apply: bool = True) -> dict:
+    """Give every typeless entity `type = 'company'`.
+
+    The GLEIF bulk writer set `type` only when the legal form named a fund, a
+    foundation or an association; an ordinary company got nothing, and the
+    type filters (`/entities/by-country`, the map, the quality report) did not
+    see it — 1,089 of 6,138 entities on dev. The writer now defaults the
+    field (bulk_import._DEFAULTED_FIELDS); this is the one-off for a database
+    loaded before 2026-10-24. Voting groups and every typed node are untouched."""
+    return _walk_nodes("Entity", "type", lambda r: not r.get("type"),
+                       "SET type = 'company'", apply)
+
+
+def drop_verified_flag(apply: bool = True) -> dict:
+    """Remove the `verified` property from every Entity and Person.
+
+    Every writer stamped the flag false at creation and nothing ever set it
+    true — no endpoint, no moderator action, no import. It survived as a
+    tie-break in the dedup (always equal) and as a merge rule (always false):
+    a field that carries one value carries no information. Removed from the
+    writers, the models and the dedup on 2026-10-24; this clears the rows."""
+    out = {}
+    for label in ("Entity", "Person"):
+        out[label] = _walk_nodes(label, "verified", lambda r: r.get("verified") is not None,
+                                 "REMOVE verified", apply)
+    return out

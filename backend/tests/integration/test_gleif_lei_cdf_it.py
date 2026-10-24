@@ -41,7 +41,7 @@ def test_imports_entities_and_names_existing_placeholder(it_db, tmp_path):
 
     # a nameless LEI-only node, as the RR importer leaves behind
     it_db.run_command("CREATE (:Entity {id:'lei:RRCHILDLEI00000000003', "
-                      "lei_id:'RRCHILDLEI00000000003', type:'holding', verified:true})")
+                      "lei_id:'RRCHILDLEI00000000003', type:'holding', description:'kept'})")
 
     result = import_lei_cdf_entities(_lei_cdf_zip(tmp_path), "gleif", 92)
     assert result["records"] == 3 and result["entities"] == 3
@@ -53,10 +53,12 @@ def test_imports_entities_and_names_existing_placeholder(it_db, tmp_path):
     assert fund["type"] == "fund"          # refined from the legal form
 
     # the pre-existing placeholder gained a name; its other fields are preserved
-    child = it_db.run_sql("SELECT name, type, verified FROM Entity WHERE id='lei:RRCHILDLEI00000000003'")[0]
+    child = it_db.run_sql("SELECT name, type, description FROM Entity WHERE id='lei:RRCHILDLEI00000000003'")[0]
     assert child["name"] == "Nestlé Subsidiary SA"
     assert child["type"] == "holding"      # not clobbered (no legal-form refinement)
-    assert child["verified"] is True       # preserved
+    assert child["description"] == "kept"  # preserved
+    # an ordinary company's record states no type: it is `company`, never empty
+    assert it_db.run_sql("SELECT type FROM Entity WHERE id='lei:PLAINLEI0000000000001'")[0]["type"] == "company"
 
 
 def test_the_full_load_stamps_the_registers_own_status(it_db, tmp_path):

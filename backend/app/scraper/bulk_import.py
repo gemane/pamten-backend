@@ -65,6 +65,12 @@ _FLUSH_ATTEMPTS = 4
 
 #: Node fields a bulk write may only move EARLIER, never blank (see _flush_nodes).
 _EARLIEST_FIELDS = frozenset({"founded", "founded_date"})
+#: Node fields with a fallback: the source's value when it has one, else what
+#: stands, else the default. GLEIF knows the legal form of a fund or a
+#: foundation but says nothing about an ordinary company, and the generic
+#: record used to leave `type` empty — 1,089 of 6,138 entities on dev, every
+#: one invisible to a type filter (2026-10-24).
+_DEFAULTED_FIELDS: dict[str, str] = {"type": "company"}
 _FLUSH_BASE_DELAY = 2.0
 
 
@@ -283,6 +289,15 @@ class _BatchWriter:
                     sets.append(f"{name} = CASE WHEN {name} IS NULL OR {name} > :{pk} "
                                 f"THEN :{pk} ELSE {name} END")
                     continue
+                if name in _DEFAULTED_FIELDS:
+                    # A stated value (a legal form that says "fund") replaces;
+                    # no statement keeps what another source set; nothing at
+                    # all becomes the default — never an empty type.
+                    pk = f"{name}__{k}"
+                    params[pk] = val
+                    params[f"{name}_default__{k}"] = _DEFAULTED_FIELDS[name]
+                    sets.append(f"{name} = COALESCE(:{pk}, {name}, :{name}_default__{k})")
+                    continue
                 pk = f"{name}__{k}"
                 params[pk] = val
                 sets.append(f"{name} = :{pk}")
@@ -495,7 +510,6 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         "companies_house_id": companies_house_id,
         "registered_address": registered_address,
         "is_nominee": is_nominee_name(name),   # holder-of-record, not a beneficial owner
-        "verified": False,
     }
     if hq_city:
         props["hq_city"] = hq_city

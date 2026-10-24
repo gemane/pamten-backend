@@ -696,8 +696,7 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
             death_date: $death_date,
             birth_place: $birth_place,
             description: $description,
-            wikipedia_url: $wikipedia_url,
-            verified: false
+            wikipedia_url: $wikipedia_url
         })
         RETURN p
     """

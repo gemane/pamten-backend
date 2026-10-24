@@ -178,7 +178,7 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
             f"""CREATE (g:Entity {{
                     id: $id, name: $name, name_normalized: $norm, search_text: $stext,
                     type: '{VOTING_GROUP_TYPE}', member_keys: $roster,
-                    source_id: $src, verified: false, last_scraped_at: $now,
+                    source_id: $src, last_scraped_at: $now,
                     description: $desc
                 }})""",
             id=gid, name=name, norm=norm, stext=search_text,

@@ -67,14 +67,14 @@ def test_does_not_clobber_existing_entity_fields(it_db, tmp_path):
     it_db.run_command("CREATE (:Source {id: 'gleif-src', name: 'GLEIF', type: 'register'})")
     it_db.run_command(
         "CREATE (:Entity {id: 'lei:XCORPLEI000000000002', name: 'X Corp.', "
-        "type: 'holding', country: 'US', verified: true})"
+        "type: 'holding', country: 'US', description: 'kept'})"
     )
 
     import_lei_cdf_succession(_lei_cdf_zip(tmp_path), "gleif-src", 92)
 
     row = it_db.run_sql(
-        "SELECT type, country, verified FROM Entity WHERE id = 'lei:XCORPLEI000000000002'"
+        "SELECT type, country, description FROM Entity WHERE id = 'lei:XCORPLEI000000000002'"
     )[0]
     assert row["type"] == "holding"      # preserved
     assert row["country"] == "US"        # preserved
-    assert row["verified"] is True       # preserved
+    assert row["description"] == "kept"  # preserved

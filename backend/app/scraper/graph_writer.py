@@ -813,7 +813,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 id: $id, name: $name, name_normalized: $name_norm,
                 name_credibility: $cred, search_text: $search_text, aliases: $aliases,
                 former_names: $former_names,
-                type: $type, sec_cik: $cik, lei_id: $lei, verified: false, source_id: $source_id,
+                type: $type, sec_cik: $cik, lei_id: $lei, source_id: $source_id,
                 is_nominee: $is_nominee,
                 country: $country, jurisdiction_code: $jurisdiction_code,
                 founded: null, revenue: null,
@@ -894,7 +894,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
             CREATE (p:Person {
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, nationality: '', description: '',
-                wikidata_id: null, sec_cik: $cik, verified: false, source_id: $source_id,
+                wikidata_id: null, sec_cik: $cik, source_id: $source_id,
                 alias: [], nationalities: [], search_text: $search_text
             })
             """,
