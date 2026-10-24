@@ -10,6 +10,19 @@ CSV snapshot). We do **not** want 5.6M isolated company nodes, so this is a pure
 ``gb-coh:{CompanyNumber}`` — companies not already in the graph (no PSC / no other
 reference) are silent no-ops. Nothing here creates nodes or edges.
 
+A UK company does not always live under that id. GLEIF keys its node ``lei:…``
+and stores the Companies House number in ``companies_house_id``; the external-id
+dedup then merges a later ``gb-coh:`` twin INTO the LEI node, or never sees one
+(a listed company has no PSC). Addressed by ``gb-coh:`` alone, the row for such a
+company was a silent no-op too — 207 of the 238 UK companies on dev, Barclays and
+Rolls-Royce among them, had never received their register name, address or codes
+(found 2026-10-24, when the SIC codes became the first field nothing else
+supplies). So the run starts by reading the numbers held under another id
+(``_survivors_by_number``, through the ``companies_house_id`` index, BEFORE a
+bulk load drops it) and addresses each row to the ``gb-coh:`` id and to every
+such survivor. The register is the record of a UK company, so its name, address
+and former names overwrite what GLEIF put there, as they do on a merged node.
+
 Per matched company it sets: ``name`` / ``name_normalized`` / ``search_text``
 (name + former names, FULL_TEXT-indexed), ``type`` (from CompanyCategory),
 ``country`` (``GB``), ``founded`` (IncorporationDate), ``registered_address`` /
@@ -179,6 +192,43 @@ def _prefiltered_lines(lines: Iterator[str], targets: set[str]) -> Iterator[str]
             yield line
 
 
+def _survivors_by_number(page: int = 5000) -> dict[str, list[str]]:
+    """``{companies_house_id: [entity ids]}`` for every entity that holds a Companies
+    House number under an id other than ``gb-coh:{number}`` — the GLEIF node a
+    ``gb-coh:`` twin was merged into, or that never had one.
+
+    Walked through the ``companies_house_id`` index as a two-sided range with a
+    keyset cursor (the shape `app.db.paging` proved on the full-size database); the
+    index is NOTUNIQUE, so the page's last value is re-read in full — a boundary
+    shared by two nodes loses neither. ~160k numbers on a full GLEIF load, a few
+    seconds; must run before ``_drop_secondary_indexes``."""
+    from app.db.arcadedb import run_sql
+    from app.db.paging import ID_CEILING
+    cols = "id, companies_house_id AS n"
+    found: dict[str, set[str]] = {}
+    after = ""
+    while True:
+        rows = run_sql(f"SELECT {cols} FROM Entity WHERE companies_house_id > :lo "
+                       "AND companies_house_id < :hi ORDER BY companies_house_id LIMIT :page",
+                       {"lo": after, "hi": ID_CEILING, "page": page})
+        if not rows:
+            break
+        last = str(rows[-1]["n"])
+        rows = rows + run_sql(f"SELECT {cols} FROM Entity WHERE companies_house_id = :n", {"n": last})
+        for r in rows:
+            number, node_id = r.get("n"), r.get("id")
+            if number and node_id and node_id != f"gb-coh:{number}":
+                found.setdefault(str(number), set()).add(node_id)
+        after = last
+    return {n: sorted(ids) for n, ids in found.items()}
+
+
+def _targets(number: str, survivors: dict[str, list[str]]) -> list[str]:
+    """The ids a register row is written to: the number-keyed node (a no-op when it
+    was merged away or never created) and every survivor holding the number."""
+    return [f"gb-coh:{number}", *survivors.get(number, ())]
+
+
 class _UpdateBatch:
     """Buffers UPDATE-only (no UPSERT) statements keyed on id, flushed via a single
     ``sqlscript`` per batch. Rows whose id isn't already in the graph are silent
@@ -225,8 +275,12 @@ def import_basic_company_data(filepath: str, credibility_score: int,
     log.info("CH BasicData: reading %s (%s bytes)", entry, f"{total_bytes:,}")
     raw: IO[bytes] = zf.open(entry)
 
-    counts = {"rows": 0, "companies": 0, "errors": 0}
+    counts = {"rows": 0, "companies": 0, "survivors": 0, "errors": 0}
     matched: set[str] = set()
+    # Numbers held under another id (merged into / first seen by GLEIF): read
+    # through the companies_house_id index, so before a bulk load drops it.
+    survivors = _survivors_by_number()
+    log.info("CH BasicData: %s company numbers held under another id", f"{len(survivors):,}")
     if bulk_load:
         _drop_secondary_indexes()
     batch = _UpdateBatch(batch_size=batch_size)
@@ -258,7 +312,7 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                 # date goes in `founded_date` for the Details section.
                 founded_date = _founded(row.get("IncorporationDate"))
                 founded_year = int(founded_date[:4]) if founded_date else None
-                batch.update(f"gb-coh:{number}", {
+                props = {
                     "name": name,
                     "name_normalized": normalize_entity_name(name),
                     "search_text": search_text,
@@ -282,8 +336,12 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "last_scraped_at": _now_iso(),
                     # the registered office in parts, both pins (see _reg_address_parts)
                     **_reg_address_parts(row),
-                })
+                }
+                for target in _targets(number, survivors):
+                    batch.update(target, props)
                 counts["companies"] += 1
+                if number in survivors:
+                    counts["survivors"] += 1
             except Exception as exc:  # noqa: BLE001 - one bad row mustn't abort
                 counts["errors"] += 1
                 if counts["errors"] <= 5:
@@ -291,7 +349,8 @@ def import_basic_company_data(filepath: str, credibility_score: int,
             if only_companies is not None and len(matched) >= len(only_companies):
                 break                             # all target companies enriched
         batch.flush()
-        bar.finish(f"{counts['rows']:,} rows, {counts['companies']:,} companies enriched")
+        bar.finish(f"{counts['rows']:,} rows, {counts['companies']:,} companies enriched, "
+                   f"{counts['survivors']:,} of them held under another id")
     finally:
         raw.close()
         if bulk_load:
@@ -300,14 +359,21 @@ def import_basic_company_data(filepath: str, credibility_score: int,
     # Now the incorporation dates are in: a PSC notified in the register's first
     # year on a company that predates it is a lower bound, which the PSC import
     # could not know (companies_house_psc.mark_first_year_lower_bounds). Scoped
-    # to the companies this run enriched; a full run walks every gb-coh company.
-    counts["first_year_bounds"] = mark_first_year_lower_bounds(
-        company_ids=[f"gb-coh:{n}" for n in sorted(matched)] if only_companies is not None else None)
+    # to the companies this run enriched — under whichever id they live; a full
+    # run walks every gb-coh company, then the survivors held under another id.
+    scope = None
+    if only_companies is not None:
+        scope = [t for n in sorted(matched) for t in _targets(n, survivors)]
+    counts["first_year_bounds"] = mark_first_year_lower_bounds(company_ids=scope)
+    if scope is None and survivors:
+        extra = mark_first_year_lower_bounds(
+            company_ids=sorted({i for ids in survivors.values() for i in ids}))
+        for key in ("companies_before_register", "edges", "claims"):
+            counts["first_year_bounds"][key] = counts["first_year_bounds"].get(key, 0) + extra.get(key, 0)
     # The SIC codes just stored become the register's industry statements,
-    # dated by the snapshot (app.industry); same scope as above.
-    counts["industry"] = sync_uk_sic(
-        entity_ids=[f"gb-coh:{n}" for n in sorted(matched)] if only_companies is not None else None,
-        snapshot_date=_snapshot_date(entry))
+    # dated by the snapshot (app.industry); same scope (a full run reads every
+    # entity carrying codes, whatever its id).
+    counts["industry"] = sync_uk_sic(entity_ids=scope, snapshot_date=_snapshot_date(entry))
 
     log.info("CH BasicData import done: %s", counts)
     return counts

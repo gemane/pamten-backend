@@ -2665,9 +2665,10 @@ def run_import_basic_company_data(local_file: str, limit: int | None = None,
                                   bulk_load: bool = False, batch_size: int = 400,
                                   only_companies: set[str] | None = None) -> dict:
     """
-    Enrich number-keyed UK companies (gb-coh:{number}) with names/addresses/former
-    names from a Companies House BasicCompanyData snapshot — the companion to the
-    PSC import, which leaves controlled companies un-named. Enrichment only (no
+    Enrich UK companies — number-keyed (gb-coh:{number}) or holding the number
+    under a GLEIF id — with names/addresses/former names/SIC codes from a Companies
+    House BasicCompanyData snapshot — the companion to the PSC import, which leaves
+    controlled companies un-named. Enrichment only (no
     nodes/edges created), so no _post_bods_import housekeeping is needed. Gated on
     SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED (same UK-data switch as PSC).
     """

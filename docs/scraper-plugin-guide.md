@@ -466,6 +466,11 @@ python manage.py ch-company-data --file /data/companies-house-basic/basic-compan
 `ch-psc` creates controlled companies keyed on their number (`gb-coh:{number}`);
 `ch-company-data` fills in their names/addresses/former-names by enriching those
 existing nodes (it never creates isolated companies for the ~5.6M-row register).
+A UK company GLEIF keyed `lei:…` is reached through the `companies_house_id` it
+carries — the importer reads those numbers through their index before a
+`--bulk-load` drops it, so run it after the GLEIF import and the dedup, and again
+after either changes which node holds a number (its log line says how many rows
+went to such a node).
 
 ### Curated test subset (`--only` / `--only-file`)
 

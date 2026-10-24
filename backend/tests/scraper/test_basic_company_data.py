@@ -20,7 +20,8 @@ def _no_first_year_pass():
     again with a recorder)."""
     with patch("app.scraper.basic_company_data.mark_first_year_lower_bounds",
                lambda company_ids=None, **k: {"edges": 0}), \
-         patch("app.scraper.basic_company_data.sync_uk_sic", lambda **k: 0):
+         patch("app.scraper.basic_company_data.sync_uk_sic", lambda **k: 0), \
+         patch("app.scraper.basic_company_data._survivors_by_number", lambda: {}):
         yield
 
 
@@ -44,10 +45,14 @@ class TestBulkLoad:
                    side_effect=lambda: order.append("drop")), \
              patch("app.scraper.basic_company_data._rebuild_indexes",
                    side_effect=lambda: order.append("rebuild")), \
+             patch("app.scraper.basic_company_data._survivors_by_number",
+                   side_effect=lambda: order.append("survivors") or {}), \
              patch("app.scraper.basic_company_data._flush_script",
                    side_effect=lambda *a, **k: order.append("load")):
             import_basic_company_data(_one_row_zip(tmp_path), 97, bulk_load=True)
-        assert order == ["drop", "load", "rebuild"]   # drop before load, rebuild after
+        # the survivor lookup reads the companies_house_id index, so before the
+        # drop; drop before load, rebuild after
+        assert order == ["survivors", "drop", "load", "rebuild"]
 
     def test_no_index_changes_without_bulk_load(self, tmp_path):
         with patch("app.scraper.basic_company_data._drop_secondary_indexes") as drop, \
@@ -280,3 +285,100 @@ class TestSicCodes:
                    side_effect=lambda **k: calls.append(k) or 0):
             import_basic_company_data(self._zip(tmp_path, "23320 - Manufacture of bricks", "", "", ""), 97)
         assert calls[0]["entity_ids"] is None and calls[0]["snapshot_date"] == "2026-07-01"
+
+
+class TestSurvivors:
+    """A UK company held under another id (GLEIF's `lei:` node, which a `gb-coh:` twin
+    was merged into or that never had one) carries its number in companies_house_id.
+    Addressed by `gb-coh:` alone, its register row was a silent no-op — 207 of 238 UK
+    companies on dev never got their name, address or codes (2026-10-24)."""
+
+    _SURVIVORS = {"00000002": ["lei:2138007AJRLHRVQZLD07"]}
+
+    def test_the_row_is_written_to_the_number_id_and_to_every_survivor(self, tmp_path):
+        from app.scraper import basic_company_data as m
+        written = []
+        with patch.object(m._UpdateBatch, "update",
+                          lambda self, nid, props: written.append((nid, props["name"]))), \
+             patch("app.scraper.basic_company_data._flush_script"), \
+             patch("app.scraper.basic_company_data._survivors_by_number", lambda: self._SURVIVORS):
+            counts = import_basic_company_data(
+                _multi_row_zip(tmp_path, ["00000001", "00000002", "00000003"]), 97)
+        assert written == [("gb-coh:00000001", "CO 00000001 LTD"),
+                           ("gb-coh:00000002", "CO 00000002 LTD"),
+                           ("lei:2138007AJRLHRVQZLD07", "CO 00000002 LTD"),
+                           ("gb-coh:00000003", "CO 00000003 LTD")]
+        assert counts["companies"] == 3 and counts["survivors"] == 1
+
+    def test_the_scoped_passes_follow_the_survivor(self, tmp_path):
+        from app.scraper import basic_company_data as m
+        bounds, industry = [], []
+        with patch.object(m._UpdateBatch, "update", lambda self, nid, props: None), \
+             patch("app.scraper.basic_company_data._flush_script"), \
+             patch("app.scraper.basic_company_data._survivors_by_number", lambda: self._SURVIVORS), \
+             patch("app.scraper.basic_company_data.mark_first_year_lower_bounds",
+                   lambda company_ids=None, **k: bounds.append(company_ids) or {"edges": 0}), \
+             patch("app.scraper.basic_company_data.sync_uk_sic",
+                   side_effect=lambda **k: industry.append(k["entity_ids"]) or 0):
+            import_basic_company_data(_multi_row_zip(tmp_path, ["00000001", "00000002"]), 97,
+                                      only_companies={"00000002"})
+        assert bounds == [["gb-coh:00000002", "lei:2138007AJRLHRVQZLD07"]]
+        assert industry == [["gb-coh:00000002", "lei:2138007AJRLHRVQZLD07"]]
+
+    def test_a_full_run_walks_the_survivors_after_the_number_keyed_companies(self, tmp_path):
+        """mark_first_year_lower_bounds' full walk is by the gb-coh: prefix, so the
+        survivors need a pass of their own; the counts add up. sync_uk_sic's full
+        run reads every entity carrying codes, so one call."""
+        from app.scraper import basic_company_data as m
+        bounds, industry = [], []
+        with patch.object(m._UpdateBatch, "update", lambda self, nid, props: None), \
+             patch("app.scraper.basic_company_data._flush_script"), \
+             patch("app.scraper.basic_company_data._survivors_by_number",
+                   lambda: {"00000002": ["lei:B", "lei:A"], "00000009": ["lei:A"]}), \
+             patch("app.scraper.basic_company_data.mark_first_year_lower_bounds",
+                   lambda company_ids=None, **k: bounds.append(company_ids) or {"edges": 2, "claims": 1}), \
+             patch("app.scraper.basic_company_data.sync_uk_sic",
+                   side_effect=lambda **k: industry.append(k["entity_ids"]) or 0):
+            counts = import_basic_company_data(_multi_row_zip(tmp_path, ["00000002"]), 97)
+        assert bounds == [None, ["lei:A", "lei:B"]]
+        assert counts["first_year_bounds"]["edges"] == 4 and counts["first_year_bounds"]["claims"] == 2
+        assert industry == [None]
+
+
+
+class TestSurvivorLookup:
+    """The index walk itself, against a fake run_sql (the module-level fixture
+    patches the lookup away for the import tests; this class wants the real one)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_first_year_pass(self):
+        yield
+
+    def test_the_lookup_pages_the_index_and_keeps_a_shared_boundary(self):
+        """Keyset pages over the NOTUNIQUE companies_house_id index; the page's last
+        value is re-read in full so a number held by two nodes at the boundary loses
+        neither; the node keyed gb-coh:{number} itself is not a survivor."""
+        from app.scraper.basic_company_data import _survivors_by_number
+        pages = {
+            "": [{"id": "gb-coh:00000001", "n": "00000001"},
+                 {"id": "lei:X", "n": "00000002"}],
+            "00000002": [{"id": "lei:Z", "n": "00000003"}],
+            "00000003": [],
+        }
+        boundary = {
+            "00000002": [{"id": "lei:X", "n": "00000002"}, {"id": "lei:Y", "n": "00000002"}],
+            "00000003": [{"id": "lei:Z", "n": "00000003"}, {"id": "gb-coh:00000003", "n": "00000003"}],
+        }
+        queries = []
+
+        def fake_run_sql(sql, params=None):
+            queries.append(sql)
+            if "ORDER BY" in sql:
+                assert "companies_house_id > :lo AND companies_house_id < :hi" in sql
+                return pages[params["lo"]]
+            return boundary[params["n"]]
+
+        with patch("app.db.arcadedb.run_sql", fake_run_sql):
+            assert _survivors_by_number(page=2) == {"00000002": ["lei:X", "lei:Y"],
+                                                     "00000003": ["lei:Z"]}
+        assert sum("ORDER BY" in q for q in queries) == 3
