@@ -1094,6 +1094,23 @@ def cmd_rebuild_search(args):
           f"ok={res.get('ok')} failed={res.get('failed')}")
 
 
+def cmd_heal_source_ids(args):
+    """Give every Source node its stable id (gleif, sec-edgar, uk-psc, wikidata,
+    opencorporates, peer:<slug>), re-point every entity, edge, claim and
+    statement that carried the old uuid, fold the ScraperSource toggles into
+    the Source node and re-key the claims (app.source_ids). Whole-type scans:
+    run with --db-url straight at ArcadeDB. Dry-run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.source_ids import heal
+    res = heal(apply=args.apply)
+    verb = "Re-keyed" if res["applied"] else "Would re-key (dry run — add --apply)"
+    holders = ", ".join(f"{k} {v}" for k, v in res["holders"].items()) or "nothing"
+    print(f"{verb} {res['sources']} source(s); holders: {holders}; "
+          f"{res['toggles_moved']} toggle rows folded in; conflicts: {len(res['conflicts'])}")
+    if res.get("claims"):
+        print(f"claims: {res['claims']}")
+
+
 def cmd_wipe_source(args):
     """Delete ONE source's data (edges + the nodes only it created). There is no
     whole-database wipe — a fresh dev start is a database DROP. Guards mirror the
@@ -1373,6 +1390,13 @@ def _build_parser():
 
     # wipe-source command (replaces the removed whole-DB wipe-data; drop the
     # database for a fresh start instead)
+    p_hsi = subparsers.add_parser('heal-source-ids',
+        help="Give every Source node its stable id and re-point everything that carried the old uuid; "
+             "fold the ScraperSource toggles in; re-key the claims. Dry run unless --apply")
+    p_hsi.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hsi.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
+    p_hsi.set_defaults(func=cmd_heal_source_ids)
+
     p_wipe = subparsers.add_parser('wipe-source',
                                    help="Delete ONE source's data (its edges + the nodes only it created). "
                                         "No whole-DB wipe — drop the database for a fresh start.")

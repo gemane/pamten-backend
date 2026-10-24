@@ -295,12 +295,16 @@ def public_key(_: dict = Depends(require_contributor)):
 # ── Pull (import a peer's snapshot) ───────────────────────────────────────────
 
 def _ensure_peer_source(session, name: str, credibility: int, verified: bool, key_id: str) -> str:
-    rec = session.run("MATCH (s:Source {name:$name}) RETURN s.id AS id", name=name).single()
+    """The peer's Source node, keyed `peer:<slug of its name>` — the same id on
+    every instance that pulls from it (a uuid per database until 2026-10-24)."""
+    from app.scraper.sources import source_id_for
+    sid = source_id_for(name, "peer")
+    rec = (session.run("MATCH (s:Source {id:$id}) RETURN s.id AS id", id=sid).single()
+           or session.run("MATCH (s:Source {name:$name}) RETURN s.id AS id", name=name).single())
     if rec:
         session.run("MATCH (s:Source {id:$id}) SET s.verified=$v, s.key_id=$k",
                     id=rec["id"], v=verified, k=key_id)
         return rec["id"]
-    sid = str(uuid.uuid4())
     session.run(
         "CREATE (s:Source {id:$id, name:$name, type:'peer', credibility_score:$cred, "
         "url:$url, verified:$v, key_id:$k})",

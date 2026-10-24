@@ -165,12 +165,25 @@ Add one entry to `KNOWN_SOURCES`:
 ```python
 KNOWN_SOURCES = {
     ...
-    "my_source": "My Source — short description of what it provides",
+    "my_source": {
+        "id": "my-source",          # the Source node's STABLE id — the same on every instance
+        "type": "register",
+        "kind": "instant",
+        "label": "My Source",
+        "url": "https://…",
+        "credibility": 85,
+        "quality": "official",
+        "description": "My Source — short description of what it provides",
+        "region": "…", "coverage": "…",
+    },
 }
 ```
 
 The key is the toggle name used by `get_source_enabled("my_source")`. It is
-also the URL path component: `PATCH /scraper/sources/my_source/toggle`.
+also the URL path component: `PATCH /scraper/sources/my_source/toggle`. The
+`id` is what every entity, edge and claim the source writes carries as
+`source_id` (`_ensure_source` resolves the label to it) — choose it once, it
+is part of the data.
 
 ---
 
@@ -222,23 +235,16 @@ sources. Assign your source a score based on how authoritative it is.
 **`_ensure_<source>_source() -> str`**
 
 ```python
-def _ensure_mysource_source() -> str:
-    with db.get_session() as session:
-        rec = session.run(
-            "MATCH (s:Source {name: $name}) RETURN s.id AS id",
-            name=MYSOURCE_SOURCE_NAME,
-        ).single()
-        if rec:
-            return rec["id"]
-        source_id = str(uuid.uuid4())
-        session.run(
-            "CREATE (s:Source {id: $id, name: $name, url: $url, "
-            "credibility_score: $score, type: 'register'})",
-            id=source_id, name=MYSOURCE_SOURCE_NAME,
-            url=MYSOURCE_SOURCE_URL, score=MYSOURCE_CREDIBILITY,
-        )
-        return source_id
+from app.scraper.graph_writer import _ensure_source
+
+source_id = _ensure_source(MYSOURCE_SOURCE_NAME, MYSOURCE_SOURCE_URL, MYSOURCE_CREDIBILITY)
+# → the catalogue entry's stable `id` ("my-source"), the same on every instance;
+#   the node is created on first use and carries the catalogue key and switches.
 ```
+
+Never mint a source id yourself: every entity, edge and claim the scraper writes
+carries it as `source_id`, and a per-database uuid (what this looked like until
+2026-10-24) made that provenance meaningless anywhere else.
 
 **`run_scrape_<source>(company_name: str) -> dict`**
 

@@ -788,7 +788,7 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 
 ## 9. Documentation
 
-- [ ] `KNOWN_SOURCES` entry: label, url, description, kind, credibility, quality.
+- [ ] `KNOWN_SOURCES` entry: **id** (the Source node's stable id — part of the data, the same on every instance), type, label, url, description, kind, credibility, quality.
 - [ ] [`data-model.md`](data-model.md) if the source adds a property or a node type.
 - [ ] [`api-reference.md`](api-reference.md) if it adds or changes an endpoint.
 - [ ] A deep-dive under `docs/` if the source needed real research to understand — see

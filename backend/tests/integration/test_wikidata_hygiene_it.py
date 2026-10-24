@@ -16,8 +16,8 @@ def _wikidata_draws(it_db):
     # scrape draws. Wikidata is claims-only unless asked otherwise (the built-in
     # SCRAPER_WIKIDATA_DATA_MODE default), so ask: a row with a mode wins over
     # the default. Without this the file passed only on a warm mode cache.
-    it_db.run_command("MERGE (s:ScraperSource {name: 'wikidata'}) SET s.data_mode = 'full', "
-                      "s.enabled = true, s.kind = 'instant'")
+    it_db.run_command("MERGE (s:Source {id: 'wikidata'}) SET s.registry_key = 'wikidata', s.name = 'Wikidata', "
+                      "s.data_mode = 'full', s.enabled = true, s.kind = 'instant'")
     src_mod._MODE_CACHE["at"] = None
     yield
     src_mod._MODE_CACHE["at"] = None

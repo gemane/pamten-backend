@@ -33,8 +33,8 @@ def _two_companies(it_db, sid=None):
 
 def _set_mode(it_db, mode):
     it_db.run_command(
-        "MERGE (s:ScraperSource {name: 'wikidata'}) SET s.data_mode = $m, "
-        "s.enabled = true, s.kind = 'instant'", {"m": mode})
+        "MERGE (s:Source {id: 'wikidata'}) SET s.registry_key = 'wikidata', s.name = 'Wikidata', "
+        "s.data_mode = $m, s.enabled = true, s.kind = 'instant'", {"m": mode})
     src_mod._MODE_CACHE["at"] = None
 
 
@@ -136,12 +136,12 @@ def test_the_bulk_batch_writer_honours_claims_only_too(it_db):
 
 
 def test_the_configured_default_holds_before_the_catalogue_row_exists(it_db, monkeypatch):
-    """A rebuilt database: no ScraperSource rows yet (nothing has listed or
+    """A rebuilt database: no catalogue row yet (nothing has listed or
     toggled a source), the scrape chain already writing. With
     SCRAPER_WIKIDATA_DATA_MODE=claims_only Wikidata must assert and not draw
     from its very first write; SEC EDGAR, unconfigured, still draws."""
     _two_companies(it_db)
-    it_db.run_command("MATCH (s:ScraperSource) DELETE s")
+    it_db.run_command("MATCH (s:Source) DELETE s")
     monkeypatch.setattr(src_mod.settings, "SCRAPER_WIKIDATA_DATA_MODE", "claims_only")
     src_mod._MODE_CACHE["at"] = None
     wd = _ensure_source("Wikidata", "https://www.wikidata.org", 80)
@@ -160,5 +160,8 @@ def test_the_configured_default_holds_before_the_catalogue_row_exists(it_db, mon
     # Scraper tab shows what the writers did.
     src_mod._ensure_sources()
     rows = {dict(r)["name"]: dict(r)["data_mode"]
-            for r in it_db.run_sql("SELECT name, data_mode FROM ScraperSource")}
+            for r in it_db.run_sql("SELECT registry_key AS name, data_mode FROM Source WHERE registry_key IS NOT NULL")}
     assert rows["wikidata"] == "claims_only" and rows["sec_edgar"] == "full"
+    # the writer's node and the catalogue's are ONE node, under the stable id
+    assert wd == "wikidata" and sec == "sec-edgar"
+    assert it_db.run_sql("SELECT count(*) AS n FROM Source WHERE name = 'Wikidata'")[0]["n"] == 1
