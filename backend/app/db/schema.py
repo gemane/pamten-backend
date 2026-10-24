@@ -303,9 +303,12 @@ def constraints() -> list[tuple[str, str, str, str]]:
     grades = _vocab(READ_GRADES)
     pct = [("MIN", "0"), ("MAX", "100")]
     rules: list[tuple[str, str, str, str]] = []
+    # Not `Claim.source_id`: the SEC writer records a claim for an edge whose
+    # source is unknown (its key then has no source part), and the merge
+    # paths carry such claims — the IT suite exercises both.
     for vtype, prop in (("Entity", "id"), ("Person", "id"), ("Source", "id"),
                         ("Claim", "claim_key"), ("Claim", "kind"), ("Claim", "from_id"),
-                        ("Claim", "to_id"), ("Claim", "source_id")):
+                        ("Claim", "to_id")):
         rules += [(vtype, prop, "MANDATORY", "true"), (vtype, prop, "NOTNULL", "true")]
     rules += [
         ("Claim", "kind", "REGEXP", _vocab((KIND_OWNS, KIND_ROLE, KIND_SUCCESSION))),

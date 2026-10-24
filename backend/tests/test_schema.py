@@ -376,8 +376,11 @@ class TestConstraints:
         assert rules[("Entity", "country", "REGEXP")] == "^[A-Z]{2}$"
         assert rules[("OWNS", "stake_percent", "MIN")] == "0" and rules[("OWNS", "stake_percent", "MAX")] == "100"
         assert rules[("OWNS", "stale", "DEFAULT")] == "false"
-        for key in (("Entity", "id"), ("Person", "id"), ("Claim", "claim_key"), ("Claim", "source_id")):
+        for key in (("Entity", "id"), ("Person", "id"), ("Claim", "claim_key"), ("Claim", "to_id")):
             assert rules[(*key, "MANDATORY")] == "true" and rules[(*key, "NOTNULL")] == "true"
+        # a claim may lack its source (the SEC writer records one for an edge
+        # whose source is unknown); the key then has no source part
+        assert ("Claim", "source_id", "MANDATORY") not in rules
 
     def test_names_and_dates_carry_no_rule(self):
         # a placeholder `lei:` node is created without a name and named by a

@@ -61,10 +61,14 @@ def test_the_server_refuses_what_breaks_a_rule_and_leaves_nulls_alone(it_db):
 
 def test_a_rule_is_refused_while_a_row_breaks_it_so_heals_run_first(it_db):
     from app.db.schema import ensure_indexes
-    it_db.run_sql("ALTER PROPERTY Entity.country REGEXP null")           # the rule lifted, as before 2026-10-25
-    it_db.run_command("CREATE (:Entity {id:'x', name:'X', name_normalized:'x', country:'USA'})")
+    # the state of a database from before the rule: the property undeclared
+    # (`ALTER … REGEXP null` would set the literal text "null"; dropping the
+    # unindexed declaration is how a rule is lifted) and a row that breaks it
+    it_db.run_sql("DROP PROPERTY Entity.hq_country IF EXISTS")
+    it_db.run_command("CREATE (:Entity {id:'x', name:'X', name_normalized:'x', hq_country:'USA'})")
     res = ensure_indexes()
-    assert [f["stmt"] for f in res["failed"]] == ["ALTER PROPERTY Entity.country REGEXP '^[A-Z]{2}$'"]
+    assert "CREATE PROPERTY Entity.hq_country IF NOT EXISTS STRING" in res["ok"]
+    assert [f["stmt"] for f in res["failed"]] == ["ALTER PROPERTY Entity.hq_country REGEXP '^[A-Z]{2}$'"]
     assert "violates it" in res["failed"][0]["error"]
-    it_db.run_command("MATCH (e:Entity {id:'x'}) SET e.country = 'US'")
+    it_db.run_command("MATCH (e:Entity {id:'x'}) SET e.hq_country = 'US'")
     assert ensure_indexes()["failed"] == [] and ensure_indexes().get("complete") is True
