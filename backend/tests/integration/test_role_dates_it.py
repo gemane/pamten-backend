@@ -78,6 +78,8 @@ def test_a_closing_records_the_departure_as_a_claim(it_db, pair):
     _upsert_role_sec("tc", "ap", "CEO", pair)
     _close_role_sec("tc", "ap", "2026-09-01", role="CEO", source_id=pair,
                     source_url="https://www.sec.gov/8k")
+    # the departure is cited beside the appointment (2026-10-25): the seat's own
+    # claim keeps its citation (none was given here) and gains the 8-K as the end's
     rows = it_db.run_command("MATCH (c:Claim) WHERE c.kind = 'role' AND c.until = '2026-09-01' "
-                             "RETURN c.role AS role, c.source_url AS url")
-    assert [(r["role"], r["url"]) for r in rows] == [("CEO", "https://www.sec.gov/8k")]
+                             "RETURN c.role AS role, c.source_url AS url, c.until_source_url AS end_url")
+    assert [(r["role"], r["url"], r["end_url"]) for r in rows] == [("CEO", None, "https://www.sec.gov/8k")]

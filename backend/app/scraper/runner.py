@@ -53,6 +53,7 @@ from app.scraper.sec_writer import (
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.field_twins import merge_countries, merge_nationalities
+from app.roles import end_seats_at_death
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
                                      weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
@@ -439,6 +440,8 @@ def _upsert_person(
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities or None, source_id=source_id,
             )
+            if death_date:
+                end_seats_at_death(rec["id"])      # a seat ends no later than its holder's death
             return _record_touched(rec["id"])
 
         person_id = str(uuid.uuid4())
@@ -471,6 +474,8 @@ def _upsert_person(
             nats=nationalities or None,
             source_id=source_id,
         )
+        if death_date:
+            end_seats_at_death(person_id)
         return _record_touched(person_id)
 
 

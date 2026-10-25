@@ -853,10 +853,16 @@ any later one (`sec_writer.form_label` reads the document type), "Form D" for a
 private company's officers and directors, "8-K" for an Item 5.02 departure — so
 the Sources panel reads "SEC EDGAR · Form 4" beside a seat as beside a holding.
 A departure is recorded on the **same claim** as the appointment (one claim per
-source and position), so the claim's `filing_type`, `source_url` and `read_from`
-become the closing filing's; the seat edge keeps its own. Claims written before
-2026-10-25 carry no filing type; the next scrape of the company rewrites them,
-and `manage.py heal-model-gaps` labels the 8-K and Form D ones meanwhile.
+source and position): the claim keeps the appointment's `filing_type`,
+`source_url` and `read_from` and gains the departure's `until_source_url` and
+`until_read_from` (`claims.close_role_claim`); the seat edge likewise keeps its
+own citation and cites the closing filing in `until_source_url`. A later Form 4
+re-read of the closed seat brings no end and the same start, and leaves the end
+alone (`claims._END_KEPT`) — it used to write "open" over the 8-K's departure.
+A seat of someone since dead is closed on the death date instead, by the
+graph's own rule (`until_reason = death`, see docs/data-model.md). Claims written
+before 2026-10-25 carry no filing type; the next scrape of the company rewrites
+them, and `manage.py heal-model-gaps` labels the 8-K and Form D ones meanwhile.
 
 ---
 

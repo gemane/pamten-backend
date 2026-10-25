@@ -331,6 +331,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "until", "source_url", "source_date", "share_class", "denominator_date", "event_date",
         "filing_type", "since_basis", "since_source_url", "structure_basis", "read_from",
         "validation_sources", "validation_documents", "first_seen_at", "last_seen_at",
+        "until_source_url",
     ),
     "OWNS": (
         "ownership_type", "since", "until", "until_reason", "source_id", "source_url",
@@ -340,7 +341,8 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "validation_documents", "filing_type", "since_basis", "since_source_url",
         "since_not_before", "structure_basis", "read_from",
     ),
-    "HAS_ROLE": ("role", "since", "until", "source_id", "source_url", "source_date", "last_scraped_at", "read_from"),
+    "HAS_ROLE": ("role", "since", "until", "source_id", "source_url", "source_date", "last_scraped_at", "read_from",
+                 "until_source_url"),
     "RELATED_TO": ("relation", "source_id", "last_scraped_at"),
     "SUCCEEDED_BY": ("since", "source_id", "source_url", "source_date", "last_scraped_at"),
     "DUAL_LISTED_WITH": ("source_id", "source_url", "source_date", "last_scraped_at"),
@@ -433,8 +435,8 @@ def undeclared_properties(sample: int = 5000) -> dict[str, dict[str, dict]]:
 _RULED_STRINGS: list[tuple[str, str]] = [
     ("Entity", "hq_country"),
     ("OWNS", "ownership_type"), ("OWNS", "read_from"),
-    ("Claim", "kind"), ("Claim", "read_from"),
-    ("HAS_ROLE", "read_from"),
+    ("Claim", "kind"), ("Claim", "read_from"), ("Claim", "until_read_from"),
+    ("HAS_ROLE", "read_from"), ("HAS_ROLE", "until_reason"),
 ]
 
 #: The dates: ISO `YYYY-MM-DD`, as every writer normalises a source's date, at
@@ -525,6 +527,9 @@ def constraints() -> list[tuple[str, str, str, str]]:
         ("OWNS", "read_from", "REGEXP", grades),
         ("Claim", "read_from", "REGEXP", grades),
         ("HAS_ROLE", "read_from", "REGEXP", grades),
+        ("Claim", "until_read_from", "REGEXP", grades),
+        # the one reason a seat ends that no source stated (app.roles.DEATH)
+        ("HAS_ROLE", "until_reason", "REGEXP", _vocab(("death",))),
         ("OWNS", "stale", "DEFAULT", "false"),
     ]
     for vtype, prop in (("OWNS", "stake_percent"), ("OWNS", "voting_power_pct"),

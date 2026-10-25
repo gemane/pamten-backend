@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from app import former_names as former
 from app.claims import KIND_OWNS, KIND_ROLE, KIND_SUCCESSION, record_claim
-from app.roles import canonical_role, finer_start, same_start
+from app.roles import canonical_role, end_seats_at_death, finer_start, same_start
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.owns_merge import SINCE_FIELDS, combine_since
@@ -578,10 +578,10 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                     WHERE r.role = $role AND r.until IS NULL
                       AND ($since IS NULL OR r.since = $since)
                       AND (r.since IS NULL OR r.since <= $until)
-                    SET r.until = $until
+                    SET r.until = $until, r.until_source_url = $surl
                     """,
                     pid=person_id, eid=entity_id, role=exists["role"], since=stored,
-                    until=until)
+                    until=until, surl=source_url)
             _relabel_if_more_credible(session, person_id, entity_id,
                                       exists["role"], role, exists["cred"],
                                       credibility_score, source_id, read_from)
@@ -615,7 +615,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             """
             MATCH (p:Person {id: $pid}), (e:Entity {id: $eid})
             CREATE (p)-[:HAS_ROLE {
-                role: $role, since: $since, until: $until,
+                role: $role, since: $since, until: $until, until_source_url: $until_surl,
                 source_id: $sid, credibility_score: $score,
                 source_url: $surl, source_date: $sdate, last_scraped_at: $now,
                 read_from: $rfrom
@@ -626,6 +626,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             role=role,
             since=since,
             until=until,
+            until_surl=source_url if until else None,
             sid=source_id,
             score=credibility_score,
             rfrom=read_from,
@@ -635,6 +636,8 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
             sdate=since or now[:10],
             surl=source_url, now=now,
         )
+    if until is None:
+        end_seats_at_death(person_id)      # a seat opened for someone since dead ends at the death
 
 
 def _search_text(name: str, description: str | None, aliases: list[str] | None) -> str:

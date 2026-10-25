@@ -10,8 +10,8 @@ pytestmark = pytest.mark.integration
 
 
 def _claims(it_db, pid):
-    return it_db.run_sql("SELECT role, until, filing_type, read_from FROM Claim WHERE kind = 'role' AND from_id = :p",
-                         {"p": pid})
+    return it_db.run_sql("SELECT role, until, filing_type, read_from, source_url, until_source_url, until_read_from "
+                         "FROM Claim WHERE kind = 'role' AND from_id = :p", {"p": pid})
 
 
 def test_the_writers_stamp_the_filing_and_the_close_keeps_one_claim(it_db):
@@ -27,9 +27,12 @@ def test_the_writers_stamp_the_filing_and_the_close_keeps_one_claim(it_db):
     assert _close_role_sec("p1", "e1", "2026-12-31", role="Director", source_id="sec-edgar",
                            source_url="u8k", filing_type="8-K", read_from="narrative") == 1
     (claim,) = _claims(it_db, "p1")                                   # the same row, now ended
-    assert claim["filing_type"] == "8-K" and claim["until"] == "2026-12-31"
-    edge = it_db.run_sql("SELECT until FROM HAS_ROLE WHERE @out.id = 'p1'")[0]
-    assert edge["until"] == "2026-12-31"
+    assert claim["until"] == "2026-12-31"
+    # the appointment keeps its citation, the departure has its own
+    assert (claim["filing_type"], claim["source_url"], claim["read_from"]) == ("Form 4", "u4", "field")
+    assert (claim["until_source_url"], claim["until_read_from"]) == ("u8k", "narrative")
+    edge = it_db.run_sql("SELECT until, source_url, until_source_url FROM HAS_ROLE WHERE @out.id = 'p1'")[0]
+    assert (edge["until"], edge["source_url"], edge["until_source_url"]) == ("2026-12-31", "u4", "u8k")
 
 
 def test_the_heal_labels_what_the_claim_itself_tells(it_db):

@@ -12,6 +12,7 @@ deliberately conservative: only spellings that are the SAME position merge.
 "Executive Officer" is broader than "CEO" and "Non-Executive Director" says
 more than "Director" — folding either would destroy information, not noise.
 """
+import logging
 import re
 
 _SYNONYMS = {
@@ -116,4 +117,92 @@ def heal_seat_claim_filings(apply: bool = False) -> dict:
     rows = run_sql(f"SELECT count(*) AS n FROM Claim WHERE {base}")
     left = int((rows or [{}])[0].get("n") or 0)
     out["unfilled"] = left if apply else left - out["form_8k"] - out["form_d"]
+    return out
+
+
+# ── A seat ends no later than its holder's death ─────────────────────────────
+
+DEATH = "death"            # HAS_ROLE.until_reason: the seat ended because the holder died
+WIKIDATA_ITEM = "https://www.wikidata.org/wiki/{qid}"
+
+
+def is_founder_role(role: str | None) -> bool:
+    """A founder is not a seat that ends: Steve Jobs founded Apple whether or
+    not he lives. "Founder", "Co-Founder" and their spellings stay open."""
+    return "founder" in canonical_role(role)
+
+
+def end_seats_at_death(person_id: str) -> dict:
+    """Close the person's open seats on their death date — every seat but a
+    founder's, and only a seat that began by then (a start after the death is
+    the source's error, left open and counted in `after_death`). The edge says
+    why (`until_reason = death`) and cites the person's Wikidata item when one
+    is known; the source's claim is NOT touched — it stated no end, and the
+    claim is what the source said. Called by the person writer when a death
+    date arrives and by the seat writers when they open a seat for someone
+    already dead; nothing to do for the living. Two dev directors sat on open
+    boards years after their deaths (2026-10-25)."""
+    from app.db.arcadedb import run_sql
+    out = {"closed": 0, "founders_kept": 0, "after_death": 0}
+    # Best-effort, as `record_claim` is: a scrape that succeeded must not be
+    # reported as failed because this rule could not be applied; the heal
+    # catches up. (The unit tests' mocked sessions never reach here either.)
+    try:
+        rows = run_sql("SELECT death_date, wikidata_id FROM Person WHERE id = :id", {"id": person_id})
+        death = (rows or [{}])[0].get("death_date") if rows else None
+        if not death:
+            return out
+        qid = rows[0].get("wikidata_id")
+        seats = run_sql("SELECT @rid AS rid, role, since FROM HAS_ROLE WHERE until IS NULL AND @out.id = :id",
+                        {"id": person_id})
+        for seat in seats or []:
+            if is_founder_role(seat.get("role")):
+                out["founders_kept"] += 1
+                continue
+            if seat.get("since") and str(seat["since"]) > str(death):
+                out["after_death"] += 1
+                continue
+            sets = "until = :d, until_reason = :why"
+            params = {"d": death, "why": DEATH}
+            if qid:
+                sets += ", until_source_url = :u"
+                params["u"] = WIKIDATA_ITEM.format(qid=qid)
+            run_sql(f"UPDATE {seat['rid']} SET {sets}", params)
+            out["closed"] += 1
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("could not apply the death rule to %s: %s", person_id, exc)
+    return out
+
+
+def heal_seats_at_death(apply: bool = False) -> dict:
+    """Every open seat of a dead person, closed on the death date by
+    `end_seats_at_death` — the rule, applied to a database written before it.
+    Dry run unless `apply`: counts what would close, names the people."""
+    from app.db.arcadedb import run_sql
+    rows = run_sql("SELECT @out.id AS pid, @out.full_name AS person, @out.death_date AS died, "
+                   "@in.name AS company, role, since FROM HAS_ROLE "
+                   "WHERE until IS NULL AND @out.death_date IS NOT NULL")
+    out: dict = {"applied": bool(apply), "closed": 0, "founders_kept": 0, "after_death": 0, "people": []}
+    by_person: dict[str, list] = {}
+    for r in rows or []:
+        by_person.setdefault(r["pid"], []).append(r)
+    for pid, seats in by_person.items():
+        name = seats[0].get("person")
+        if apply:
+            res = end_seats_at_death(pid)
+        else:
+            res = {"closed": 0, "founders_kept": 0, "after_death": 0}
+            for seat in seats:
+                if is_founder_role(seat.get("role")):
+                    res["founders_kept"] += 1
+                elif seat.get("since") and str(seat["since"]) > str(seat.get("died") or ""):
+                    res["after_death"] += 1
+                else:
+                    res["closed"] += 1
+        for k in ("closed", "founders_kept", "after_death"):
+            out[k] += res[k]
+        if res["closed"] or res["after_death"]:
+            out["people"].append(f"{name} († {seats[0].get('died')}): "
+                                 + ", ".join(f"{s.get('role')} @ {s.get('company')}" for s in seats
+                                             if not is_founder_role(s.get("role"))))
     return out
