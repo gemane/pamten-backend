@@ -245,6 +245,26 @@ def cmd_gleif_repex(args):
     if result is not None:
         print(result)
 
+def cmd_merge_entities(args):
+    """Fold one entity into another by hand (maintenance.merge_entities_by_id):
+    for a pair the automatic dedup cannot see — no shared hard id — that a
+    human has judged to be one company. The survivor's values win, its gaps
+    fill from the loser, edges and claims move, a forwarding address is left.
+    Refused on a keep-separate mark. Dry run unless --apply."""
+    from app.scraper.maintenance import merge_entities_by_id
+    try:
+        res = merge_entities_by_id(args.keep, args.dead, apply=args.apply)
+    except ValueError as exc:
+        print(f"refused: {exc}")
+        sys.exit(1)
+    verb = "merged" if args.apply else "would merge (dry run — add --apply)"
+    print(f"{res['dead']['name']!r} ({res['dead']['id']}) {verb} into {res['keep']['name']!r} ({res['keep']['id']})")
+    print(f"  carried onto the survivor: {', '.join(res['carried']) or 'nothing (every field already set)'}")
+    print(f"  edges to move: {res['edges']}, claims to re-key: {res['claims']}")
+    if args.apply:
+        print(f"  moved {res['migrated']} edges; the old id forwards to the survivor")
+
+
 def cmd_dedupe_entities(args):
     """Merge entities that share a hard external id (LEI / Companies House / SEC CIK /
     Wikidata) — the cross-source merge, no name match or Wikidata hub needed. Run after
@@ -1477,6 +1497,14 @@ def _build_parser():
     p_rbs.set_defaults(func=cmd_rebuild_search)
 
     # dedupe-entities command (cross-source merge by shared external id)
+    p_me = subparsers.add_parser('merge-entities',
+        help="Fold one entity into another by hand — a pair with no shared hard id that a human judged "
+             "one company (2026-10-25). Refused on a keep-separate mark. Dry run unless --apply")
+    p_me.add_argument('--keep', required=True, help='Id of the entity that survives')
+    p_me.add_argument('--dead', required=True, help='Id of the entity folded into it and deleted')
+    p_me.add_argument('--apply', action='store_true', help='Merge (default: show what would move)')
+    p_me.set_defaults(func=cmd_merge_entities)
+
     p_de = subparsers.add_parser('dedupe-entities',
         help='Merge entities sharing a hard external id (LEI / CH number / SEC CIK / Wikidata)')
     p_de.add_argument('--limit', type=int, help='Max shared-id groups to process (default: all)')
