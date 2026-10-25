@@ -150,3 +150,21 @@ def test_a_knowledge_base_role_claim_is_dated_by_the_scrape_day(it_db):
     _upsert_role(pid, eid, "CEO", "wikidata", since="2020-01-01")
     rows = it_db.run_sql("SELECT source_date FROM Claim WHERE kind = 'role' AND from_id = :p", {"p": pid})
     assert rows and rows[0]["source_date"] and rows[0]["source_date"] >= "2026-01-01"
+
+
+def test_the_person_merge_and_the_person_api_leave_an_unknown_list_absent(it_db):
+    """The sibling paths: the merge wrote `nationalities: []` onto the kept
+    person when neither side had one (16 on dev after the 2026-10-25 scrape),
+    the API's create and update wrote the model's default `[]`."""
+    from app.models.person import PersonCreate
+    from app.routers.persons import create_person, merge_person_records, update_person
+    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Larry Page', description:''})")
+    it_db.run_command("CREATE (:Person {id:'dup', full_name:'Page Lawrence', description:''})")
+    merge_person_records("keep", "dup")
+    assert "nationalities" not in it_db.run_sql("SELECT FROM Person WHERE id = 'keep'")[0]
+
+    made = create_person(PersonCreate(first_name="Ada", last_name="Lovelace"), _={"role": "contributor"})
+    pid = made["id"] if isinstance(made, dict) else made.id
+    assert "nationalities" not in it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": pid})[0]
+    update_person(pid, PersonCreate(first_name="Ada", last_name="Lovelace", nationalities=["GB"]), _={"role": "contributor"})
+    assert it_db.run_sql("SELECT nationalities FROM Person WHERE id = :id", {"id": pid})[0]["nationalities"] == ["GB"]

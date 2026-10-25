@@ -976,14 +976,13 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         # could land on a stranger.
         ids: dict[str, str] = {}
         sub_ids: list[str | None] = []
-        # A name the list gives in two countries is two nodes, one per country
-        # (the user's call, 2026-10-08): Perfect Corp.'s Japanese, US and French
-        # "Perfect Corp.", but also Ziff Davis' "… Performance Marketing, Inc."
-        # in Delaware and the Philippines, which may be one company's branch.
-        # A parent or co-holder named so is the first of them.
-        countries_of: dict[str, set] = {}
-        for sub in data["subsidiaries"]:
-            countries_of.setdefault(sub["name"].casefold(), set()).add(jurisdiction_country(sub["jurisdiction"]))
+        # A name in two countries is two nodes, one per country (the user's
+        # call, 2026-10-08): Perfect Corp.'s Japanese, US and French "Perfect
+        # Corp.", but also Ziff Davis' "… Performance Marketing, Inc." in
+        # Delaware and the Philippines, which may be one company's branch.
+        # The writer refuses the namesake abroad for every row that states a
+        # jurisdiction (graph_writer._resolve_by_name). A parent or co-holder
+        # named so is the first of them.
         for sub in data["subsidiaries"]:
             sub_ids.append(None)
             country = jurisdiction_country(sub["jurisdiction"])
@@ -996,8 +995,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 name=sub["name"], entity_type="company",
                 country=country,
                 jurisdiction_code=jurisdiction_subdivision(sub["jurisdiction"]),
-                source_id=source_id,
-                country_must_match=len(countries_of[sub["name"].casefold()]) > 1)
+                source_id=source_id)
             if not sub_id or sub_id == company_id:
                 continue
             sub_ids[-1] = sub_id
