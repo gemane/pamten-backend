@@ -254,6 +254,37 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     ("IndustryCode", "position", "INTEGER"),
     ("Source", "credibility_score", "INTEGER"),
     ("Source", "enabled",           "BOOLEAN"),
+    ("Source", "verified",          "BOOLEAN"),   # a federation peer's key check
+    # the rest of the graph and the ops tables (2026-10-25: a survey of dev
+    # found these stored untyped — ints, floats and flags the writers' JSON
+    # happened to carry; a declaration pins them)
+    ("Entity",       "member_keys",       "LIST"),      # a voting group's roster
+    ("Person",       "scrape_depth",      "INTEGER"),
+    ("Person",       "on_demand_scraped", "BOOLEAN"),
+    ("Pin",          "stake_percent",     "DOUBLE"),
+    ("MergeLog",     "count",             "INTEGER"),
+    ("ScrapeRun",    "total",             "INTEGER"),
+    ("GeoCache",     "lat",               "DOUBLE"),
+    ("GeoCache",     "lng",               "DOUBLE"),
+    ("SearchDemand", "searches",          "INTEGER"),
+    ("SearchDemand", "selected",          "INTEGER"),
+    ("SearchDemand", "zero_results",      "INTEGER"),
+    ("SearchWeek",   "searches",          "INTEGER"),
+    ("SearchWeek",   "selected",          "INTEGER"),
+    ("SearchWeek",   "zero_results",      "INTEGER"),
+    ("UsageCounter", "count",             "INTEGER"),
+    ("UsageWeek",    "count",             "INTEGER"),
+    ("EndpointStat", "count",             "INTEGER"),
+    ("ImportState",  "edge_key_version",  "INTEGER"),
+    ("RefreshToken", "expires_at",        "DOUBLE"),    # epoch seconds
+    ("RefreshToken", "issued_at",         "DOUBLE"),
+    ("RefreshToken", "revoked_at",        "DOUBLE"),
+    ("User",         "email_verified",    "BOOLEAN"),
+    ("User",         "mfa_enabled",       "BOOLEAN"),
+    ("User",         "recovery_code_hashes", "LIST"),
+    ("RateLimit",    "timestamps",        "LIST"),
+    ("Peer",         "enabled",           "BOOLEAN"),
+    ("Peer",         "credibility_score", "INTEGER"),
 ]
 
 
@@ -263,6 +294,137 @@ def typed_properties() -> list[tuple[str, str, str]]:
     `_TYPED_PROPERTIES`; what the heal converts stored rows to."""
     out = [(t, p, k) for (t, p), k in _PROPERTY_TYPES.items()]
     out += [row for row in _TYPED_PROPERTIES if (row[0], row[1]) not in _PROPERTY_TYPES]
+    return out
+
+
+#: Every STRING property a writer sets, by type — the ledger (2026-10-25).
+#: Numbers, flags and lists are typed above; the indexed and ruled strings
+#: declare themselves, and are listed here anyway so one list reads as the
+#: model (`string_properties()` filters what another list already declares).
+#: ArcadeDB accepts a property nobody declared — there is no strict mode — so
+#: this is not a gate but a ledger: the catalog then IS the model, and
+#: `undeclared_properties()` (`manage.py schema-audit`) names a stored
+#: property the ledger does not know, which is the shape a typo'd writer
+#: takes. A conformance test holds the writers' own property lists against it.
+_STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
+    "Entity": (
+        "id", "name", "name_normalized", "type", "country", "hq_country", "description",
+        "address", "registered_address", "hq_address", "hq_city", "hq_street", "hq_postcode",
+        "hq_geo_precision", "reg_city", "reg_street", "reg_postcode", "reg_geo_precision",
+        "legal_form", "registration_authority", "registration_authority_code",
+        "registration_number", "register_id", "country_registered", "jurisdiction_code",
+        "cusip", "lei_id", "sec_cik", "companies_house_id", "wikidata_id", "nace_code",
+        "website", "logo_url", "search_text", "source_id", "source_url",
+        "validation_sources", "gleif_registration_status", "lei_registration_date",
+        "incorporated_on", "created_at", "last_scraped_at", "sec_13f_scraped_at",
+        "sec_ex21_ingested", "sec_acquisitions_ingested", "sec_formd_ingested",
+        "no_direct_parent_reason", "no_ultimate_parent_reason",
+    ),
+    "Person": (
+        "id", "full_name", "first_name", "last_name", "birth_date", "death_date", "birth_place",
+        "description", "wikipedia_url", "image_url", "source_id", "wikidata_id", "sec_cik",
+        "search_text", "created_at", "last_scraped_at", "updated_at",
+    ),
+    "Source": ("id", "name", "url", "type", "kind", "description", "registry_key", "data_mode", "key_id"),
+    "Claim": (
+        "claim_key", "kind", "from_id", "to_id", "source_id", "ownership_type", "role", "since",
+        "until", "source_url", "source_date", "share_class", "denominator_date", "event_date",
+        "filing_type", "since_basis", "since_source_url", "structure_basis", "read_from",
+        "validation_sources", "validation_documents", "first_seen_at", "last_seen_at",
+    ),
+    "OWNS": (
+        "ownership_type", "since", "until", "until_reason", "source_id", "source_url",
+        "source_date", "last_scraped_at", "direct_or_indirect", "psc_self_link", "share_class",
+        "denominator_date", "event_date", "stale_since", "stale_reason", "stale_source_url",
+        "ultimate_since", "ultimate_until", "file_date", "validation_sources",
+        "validation_documents", "filing_type", "since_basis", "since_source_url",
+        "since_not_before", "structure_basis", "read_from",
+    ),
+    "HAS_ROLE": ("role", "since", "until", "source_id", "source_url", "source_date", "last_scraped_at", "read_from"),
+    "RELATED_TO": ("relation", "source_id", "last_scraped_at"),
+    "SUCCEEDED_BY": ("since", "source_id", "source_url", "source_date", "last_scraped_at"),
+    "DUAL_LISTED_WITH": ("source_id", "source_url", "source_date", "last_scraped_at"),
+    "NOT_DUPLICATE": ("at",),
+    "StakeHistory": ("from_id", "to_id", "source_id", "as_of", "filing_type", "source_url", "recorded_at"),
+    "IndustryCode": ("key", "entity_id", "scheme", "code", "label", "nace_code", "source_id",
+                     "source_url", "source_date", "first_seen_at", "last_seen_at"),
+    "MergedId": ("old_id", "new_id", "id", "kind", "at"),
+    "MergeLog": ("id", "keep_id", "kind", "keep_name", "dup_id", "dup_name", "at"),
+    "Flag": ("id", "target_kind", "category", "note", "status", "reporter_kind", "reporter_id",
+             "reporter_fp", "from_id", "to_id", "role", "node_id", "created_at", "updated_at"),
+    "Suppression": ("id", "target_kind", "node_id", "from_id", "to_id", "role", "flag_id", "created_at"),
+    "Pin": ("id", "target_kind", "from_id", "to_id", "ownership_type", "flag_id", "created_at", "updated_at"),
+    "ScrapeRun": ("id", "source", "target", "status", "started_at", "finished_at", "error", "reason", "entity_id"),
+    "ScrapeMiss": ("key", "missed_at"),
+    "Peer": ("id", "name", "base_url", "auth_token", "public_key"),
+    "User": ("id", "email", "password_hash", "role", "language", "created_at", "totp_secret", "mfa_pending_secret"),
+    "GeoCache": ("query", "precision", "checked_at"),
+    "SearchDemand": ("key", "query", "country", "first_seen", "last_seen"),
+    "SearchWeek": ("key", "week", "query", "country"),
+    "UsageCounter": ("key", "first_seen", "last_seen"),
+    "UsageWeek": ("key", "week", "event"),
+    "EndpointStat": ("key", "last_seen"),
+    "ImportState": ("key", "scope", "last_publish_date", "last_run_at", "snapshot_date", "holder", "acquired_at"),
+    "RefreshToken": ("id", "token_hash", "user_id", "family_id", "replaced_by"),
+    "AppSetting": ("key", "value", "updated_at"),
+    "RateLimit": ("key",),
+    "WeeklyReport": ("week", "generated_at", "json"),
+}
+
+
+def _declared_elsewhere() -> set[tuple[str, str]]:
+    return ({(t, p) for t, p, _ in _TYPED_PROPERTIES} | set(_PROPERTY_TYPES)
+            | {(t, p) for t, p, _ in _INDEXES} | {(t, p) for t, p, _ in _EDGE_INDEXES}
+            | set(_FULLTEXT_INDEXES) | set(_RULED_STRINGS))
+
+
+def string_properties() -> list[tuple[str, str]]:
+    """The ledger's strings that no other list declares — what the bootstrap
+    issues a `CREATE PROPERTY … STRING` for."""
+    elsewhere = _declared_elsewhere()
+    return [(t, p) for t, props in _STRING_PROPERTIES.items() for p in props if (t, p) not in elsewhere]
+
+
+def all_properties() -> set[tuple[str, str]]:
+    """Every (type, property) the schema declares, by any list."""
+    return _declared_elsewhere() | {(t, p) for t, props in _STRING_PROPERTIES.items() for p in props}
+
+
+def undeclared_properties(sample: int = 5000) -> dict[str, dict[str, dict]]:
+    """{type: {property: {"rows": n, "null_only": bool}}} for what stored rows
+    carry and the catalog does not declare — the audit behind `manage.py
+    schema-audit`. `null_only` marks a key no row gives a value (the leftover
+    of a renamed field — dev kept 97 null `founded_date` keys after the rename
+    to `incorporated_on`), which is removed rather than declared. Reads up to
+    `sample` rows of every type the catalog lists; {} when the catalog cannot
+    be read."""
+    try:
+        existing = _existing_schema()
+    except Exception:  # noqa: BLE001 — an unreadable catalog audits nothing
+        return {}
+    if existing is None:
+        return {}
+    types, _, declared, _ = existing
+    out: dict[str, dict[str, dict]] = {}
+    for vtype in sorted(t for t in types if t):
+        have = {k.split(".", 1)[1] for k in declared if k.startswith(f"{vtype}.")}
+        try:
+            rows = run_sql(f"SELECT FROM {vtype} LIMIT {int(sample)}")
+        except Exception:  # noqa: BLE001 — a type that cannot be read is not drift
+            continue
+        found: dict[str, dict] = {}
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            for k, v in r.items():
+                if k.startswith("@") or k in have:
+                    continue
+                entry = found.setdefault(k, {"rows": 0, "null_only": True})
+                entry["rows"] += 1
+                if v is not None:
+                    entry["null_only"] = False
+        if found:
+            out[vtype] = dict(sorted(found.items()))
     return out
 
 
@@ -465,7 +627,7 @@ def _statements(existing: tuple | None = None) -> list[str]:
                         "the property, then init-schema)", vtype, prop, live, ptype)
     # The rules (see `constraints`): a declaration for the strings nothing else
     # declares, then one ALTER per rule the catalog does not already hold.
-    for vtype, prop in _RULED_STRINGS:
+    for vtype, prop in _RULED_STRINGS + string_properties():
         if not has_property(vtype, prop):
             stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS STRING")
     for vtype, prop, attr, value in constraints():

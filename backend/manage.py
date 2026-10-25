@@ -1049,6 +1049,23 @@ def cmd_heal_role_placeholders(args):
     print(f"Claim:    {res['claims']} placeholder role claims {verb}")
     if res["companies"]:
         print("Re-scrape to write the seats back with their role: " + "; ".join(res["companies"]))
+def cmd_schema_audit(args):
+    """Name every property the stored rows carry that the schema does not
+    declare (app.db.schema.undeclared_properties) — a typo'd writer, a field
+    nobody put into the ledger, or a leftover of a renamed one. Samples
+    --sample rows per type (default 5000). Exit 1 when it finds any."""
+    from app.db.schema import undeclared_properties
+    drift = undeclared_properties(sample=args.sample)
+    if not drift:
+        print("Every stored property is declared.")
+        return
+    def _what(d: dict) -> str:
+        return "null only — a leftover to REMOVE" if d["null_only"] else f"{d['rows']} rows"
+    for vtype, props in drift.items():
+        print(f"{vtype}: " + ", ".join(f"{p} ({_what(d)})" for p, d in props.items()))
+    print(f"\n{sum(len(v) for v in drift.values())} undeclared propert(y|ies) on {len(drift)} type(s) — "
+          "declare them in app/db/schema.py, or remove the leftovers")
+    sys.exit(1)
 
 
 def cmd_heal_model_gaps(args):
@@ -1399,6 +1416,11 @@ def _build_parser():
              "(2026-10-25); re-scrape the companies it names. Dry run unless --apply")
     p_hrp.add_argument('--apply', action='store_true', help='Delete (default: count only)')
     p_hrp.set_defaults(func=cmd_heal_role_placeholders)
+    p_sa = subparsers.add_parser('schema-audit',
+        help="Name every stored property the schema does not declare (a typo'd writer, an "
+             "undeclared field, a leftover). Samples --sample rows per type; exit 1 on drift")
+    p_sa.add_argument('--sample', type=int, default=5000, help='Rows read per type (default 5000)')
+    p_sa.set_defaults(func=cmd_schema_audit)
 
     p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
     p_schema.set_defaults(func=cmd_init_schema)

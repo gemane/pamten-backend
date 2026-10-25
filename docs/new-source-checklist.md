@@ -221,6 +221,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       `heal-property-types` then converts the stored rows — and it skips a group whose
       live declaration still differs, because a stale declaration coerces every
       converted row straight back (47 rows on dev looped that way for a day).
+- [ ] **Every property the writer sets is in the schema's ledger.** ArcadeDB accepts an
+      undeclared property, so nothing stops a typo — the ledger does (`app/db/schema.py`:
+      a string into `_STRING_PROPERTIES`, a number, flag or list into `_TYPED_PROPERTIES`
+      with its type; the conformance test in `tests/test_schema.py` holds every edge and
+      claim property against it). After the first import, `manage.py schema-audit` names
+      what the data carries that the ledger does not (2026-10-25).
 - [ ] **The database refuses what breaks a rule — add the value to the enum, not a
       workaround.** `Entity.type`, `OWNS.ownership_type`, `read_from` and a claim's `kind`
       are restricted at the server to the vocabularies built from `EntityType`,
