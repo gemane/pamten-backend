@@ -194,6 +194,9 @@ def derive_ownership_type(stake_pct: float | None, form_type: str | None = None)
     return OwnershipType.unknown.value
 
 
+#: Two or more single letters separated by single spaces — "s a b", "j p".
+_SPACED_LETTERS = re.compile(r"(?<![^\s])\w(?: \w(?![^\s]))+(?![^\s])")
+
 _LEGAL_SUFFIX_NORM = re.compile(
     r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp)\b\.?",
     re.IGNORECASE,
@@ -227,6 +230,16 @@ def normalize_entity_name(name: str) -> str:
          'BlackRock'       → 'blackrock'
     """
     name = name.lower()
-    name = re.sub(r"[,.]", "", name)
+    name = name.replace(".", "")
+    # A run of spaced single letters is an abbreviation written with spaces:
+    # GLEIF's "GRUPO TELEVISA S A B" is EDGAR's "Grupo Televisa, S.A.B.", and
+    # "J P Morgan" is "J.P. Morgan". Joined BEFORE the suffix strip, so
+    # "CERVECERIA CHILE S A" loses its "sa" like "Cerveceria Chile S.A." does,
+    # and BEFORE the commas go, so a comma still parts a name from its legal
+    # form ("Infraestructura I, S. de R.L." keeps its roman numeral: "i, s" is
+    # not "is"). Dev held the two Televisas as two companies until 2026-10-25.
+    # A lone letter ("Toys R Us") is left alone: one letter is no abbreviation.
+    name = _SPACED_LETTERS.sub(lambda m: m.group(0).replace(" ", ""), name)
+    name = name.replace(",", "")
     name = _LEGAL_SUFFIX_NORM.sub("", name)
     return re.sub(r"\s+", " ", name).strip()

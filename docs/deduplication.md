@@ -485,6 +485,20 @@ repairs what those left behind: every claim whose key does not match its own
 content is re-keyed, and folded where the correctly keyed claim already exists
 (dev: 343 stale keys of 8,678 claims, 119 assertions stored twice).
 
+## Spaced abbreviations are abbreviations
+
+`normalize_entity_name` joins a run of two or more spaced single letters before it strips
+legal forms: GLEIF writes `GRUPO TELEVISA S A B` where EDGAR writes `Grupo Televisa,
+S.A.B.`, and until 2026-10-25 those keyed as `grupo televisa s a b` and `grupo televisa
+sab` — two companies, whose Form 4 officers landed on one and whose LEI sat on the other.
+Joined first, `CERVECERIA CHILE S A` also loses its `sa` exactly as `Cerveceria Chile S.A.`
+does, and `J P Morgan` keys like `J.P. Morgan`. A lone letter (`Toys R Us`) is not an
+abbreviation and stays. The key is stored on the node, so a database written before the
+rule carries the old keys: `manage.py heal-name-keys` recomputes them and names the keys
+two entities now share for the first time (dev: 31 keys changed, one new pair, Televisa),
+which are merged by hand in the app — a same-name pair is a candidate, never an automatic
+merge (see the father/son and Domino's notes).
+
 ## Design note: country-aware legal-form stripping (not built)
 
 `normalize_entity_name` (mapper) strips legal-form words from names with one
