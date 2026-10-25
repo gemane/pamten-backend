@@ -172,6 +172,41 @@ class TestHealEmptyLists:
         # `.size()` reads 0 on an absent property too: the filter must say IS NOT NULL
         assert all("IS NOT NULL AND" in c for c in calls)
 
+    def test_the_dead_keys_are_the_dropped_declarations(self):
+        from app.db import schema
+        from app.scraper.edge_schema import OWNS_PROPS, RELATED_TO_PROPS
+        declared = schema.all_properties()
+        for label, col in m.DEAD_KEYS:
+            assert (label, col) not in declared, f"{label}.{col} is still declared"
+        assert "file_date" not in OWNS_PROPS and "credibility_score" not in RELATED_TO_PROPS
+
+    def test_dead_keys_are_removed_from_every_row_and_counted_first(self):
+        calls = []
+        def run_sql(sql, params=None, timeout=None):
+            calls.append(sql)
+            return [{"n": 3}] if sql.startswith("SELECT") else [{"count": 1}]
+        with patch.object(m, "run_sql", run_sql):
+            res = m.heal_dead_keys(apply=True)
+        assert res == {"applied": True, "OWNS.file_date": 3, "Person.updated_at": 3,
+                       "RELATED_TO.credibility_score": 3}
+        assert [c for c in calls if c.startswith("UPDATE")] == [
+            "UPDATE OWNS REMOVE file_date", "UPDATE Person REMOVE updated_at",
+            "UPDATE RELATED_TO REMOVE credibility_score"]
+        with patch.object(m, "run_sql", run_sql):
+            calls.clear(); m.heal_dead_keys(apply=False)
+        assert not [c for c in calls if c.startswith("UPDATE")]
+
+    def test_undated_role_claims_are_dated_by_their_first_sighting(self):
+        calls = []
+        def run_sql(sql, params=None, timeout=None):
+            calls.append(sql)
+            return [{"n": 290}] if sql.startswith("SELECT") else [{"count": 290}]
+        with patch.object(m, "run_sql", run_sql):
+            assert m.heal_claim_dates(apply=True) == {"applied": True, "claims": 290}
+        update = [c for c in calls if c.startswith("UPDATE")]
+        assert len(update) == 1 and "source_date = first_seen_at.left(10)" in update[0]
+        assert "kind = 'role' AND source_date IS NULL" in update[0]
+
     def test_a_dry_run_counts_and_writes_nothing(self):
         calls = []
         with patch.object(m, "run_sql", self._fake({"Person": 2, "Entity": 4}, calls)):
@@ -184,8 +219,10 @@ class TestHealEmptyLists:
         with patch.object(m, "heal_nationalities", lambda a: "n"), patch.object(m, "heal_countries", lambda a: "c"), \
              patch.object(m, "heal_person_sources", lambda a: "p"), patch.object(m, "heal_stale_flags", lambda a: "s"), \
              patch.object(m, "heal_empty_lists", lambda a: "e"), \
+             patch.object(m, "heal_dead_keys", lambda a: "d"), patch.object(m, "heal_claim_dates", lambda a: "cd"), \
              patch("app.scraper.run_log.heal_placeholders", lambda a: "r"), \
              patch("app.roles.heal_seat_claim_filings", lambda a: "f"):
             res = m.heal_all(apply=False)
-        assert list(res) == names + ["run_log", "seat_filings"]
+        assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates"]
         assert res["run_log"] == "r" and res["seat_filings"] == "f"
+        assert res["dead_keys"] == "d" and res["claim_dates"] == "cd"

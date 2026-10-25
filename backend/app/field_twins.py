@@ -168,13 +168,57 @@ def heal_empty_lists(apply: bool = True) -> dict:
     return out
 
 
+#: Properties the ledger dropped on 2026-10-25 because no writer ever set
+#: them — a merge recreates an edge with every schema key, null included, so
+#: the dead key sits on the rows it touched: `OWNS.file_date` (the runner
+#: passed it, the writer stored it as `source_date`), `Person.updated_at`
+#: (nothing wrote it), `RELATED_TO.credibility_score` (typed, never set).
+DEAD_KEYS: tuple[tuple[str, str], ...] = (
+    ("OWNS", "file_date"), ("Person", "updated_at"), ("RELATED_TO", "credibility_score"))
+
+
+def heal_dead_keys(apply: bool = True) -> dict:
+    """Remove every key of `DEAD_KEYS` from the rows that carry it — null or
+    not, a dropped declaration has nothing to say. A whole-type scan per
+    key — run with --db-url."""
+    out: dict = {"applied": bool(apply)}
+    for label, col in DEAD_KEYS:
+        where = f"{col} IS NOT NULL"
+        rows = run_sql(f"SELECT count(*) AS n FROM {label} WHERE {where}", timeout=3600)
+        out[f"{label}.{col}"] = int((rows or [{}])[0].get("n") or 0)
+        if apply:
+            run_sql(f"UPDATE {label} REMOVE {col}", timeout=3600)
+    log.info("dead keys heal: %s", out)
+    return out
+
+
+#: The claim rows a knowledge-base role write left undated (`_upsert_role`
+#: passed no `source_date` until 2026-10-25; 290 on dev): dated by the day
+#: they were first seen, the closest thing to the day the source said it.
+UNDATED_CLAIMS_WHERE = "kind = 'role' AND source_date IS NULL AND first_seen_at IS NOT NULL"
+
+
+def heal_claim_dates(apply: bool = True) -> dict:
+    """Give every undated role claim a `source_date`: the day of its
+    `first_seen_at`. The owns claims were always dated this way."""
+    rows = run_sql(f"SELECT count(*) AS n FROM Claim WHERE {UNDATED_CLAIMS_WHERE}", timeout=3600)
+    out = {"applied": bool(apply), "claims": int((rows or [{}])[0].get("n") or 0)}
+    if apply and out["claims"]:
+        run_sql(f"UPDATE Claim SET source_date = first_seen_at.left(10) WHERE {UNDATED_CLAIMS_WHERE}",
+                timeout=3600)
+    log.info("claim dates heal: %s", out)
+    return out
+
+
 def heal_all(apply: bool = True) -> dict:
     """Every model-gap heal in one call (`manage.py heal-model-gaps`): the
     2026-10-25 survey's four, then the round-four three — empty lists, the run
-    log's `''` placeholders, the SEC seat claims' filing type."""
+    log's `''` placeholders, the SEC seat claims' filing type — then the
+    round-five two: dead keys, undated role claims."""
     from app.roles import heal_seat_claim_filings
     from app.scraper.run_log import heal_placeholders
     return {"nationalities": heal_nationalities(apply), "countries": heal_countries(apply),
             "person_sources": heal_person_sources(apply), "stale_flags": heal_stale_flags(apply),
             "empty_lists": heal_empty_lists(apply), "run_log": heal_placeholders(apply),
-            "seat_filings": heal_seat_claim_filings(apply)}
+            "seat_filings": heal_seat_claim_filings(apply),
+            "dead_keys": heal_dead_keys(apply), "claim_dates": heal_claim_dates(apply)}

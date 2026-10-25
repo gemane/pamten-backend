@@ -433,9 +433,13 @@ def _upsert_person(
                     p.source_id     = COALESCE(p.source_id, $source_id),
                     // Derived, so it is refreshed rather than blank-filled: this
                     // pass may be the one that brought the aliases.
-                    p.search_text   = $search_text
+                    p.search_text   = $search_text,
+                    // When the person was last written from a source — the
+                    // company scrapes never stamped it, so no person on dev
+                    // had one (954, 2026-10-25); only the person scrape did.
+                    p.last_scraped_at = $now
                 """,
-                id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
+                id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place, now=_now_iso(),
                 image=image_url, wikipedia=wikipedia_url, desc=description or "",
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities or None, source_id=source_id,
@@ -455,7 +459,7 @@ def _upsert_person(
                 image_url: $image, wikipedia_url: $wikipedia,
                 alias: $aliases, nationalities: $nats,
                 source_id: $source_id, search_text: $search_text,
-                created_at: $created_at
+                created_at: $created_at, last_scraped_at: $created_at
             })
             """,
             id=person_id, created_at=_now_iso(),
@@ -2329,10 +2333,11 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
     source_date = the officer's start date, last_scraped_at = now (refreshed on
     re-scrape).
     """
+    now = _now_iso()
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=start_date, until=end_date, source_url=source_url,
+                 source_date=now[:10],
                  credibility_score=credibility_score, read_from=READ_FIELD)
-    now = _now_iso()
     with db.get_session() as session:
         # The same position over a touching period (graph_writer._same_seat);
         # an open one, or a closed spell this entry re-states.

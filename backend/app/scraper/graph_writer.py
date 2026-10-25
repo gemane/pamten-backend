@@ -547,15 +547,20 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     teaches an undated seat its date. Two spells that do not touch stay two
     seats: Larry Page, CEO of Google 1998–2001 and again from 2011.
     """
+    now = _now_iso()
+    # The claim is dated by the day the source said it — the scrape day for
+    # a knowledge base, as the owns claims are; the 290 Wikidata role claims
+    # on dev had no date at all (2026-10-25; `heal-model-gaps` dates them by
+    # their first sighting).
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
+                 source_date=now[:10],
                  credibility_score=credibility_score, read_from=read_from)
     # HAS_ROLE is deliberately NOT gated by claims-only: the mode distrusts a
     # source's OWNERSHIP structure, and people are exactly what the Wikidata
     # verdict wanted kept. Suppressing roles orphaned every Wikidata person
     # (absent from panels) and starved the person dedup of its shared-company
     # corroboration — Bill Gates and "Gates William H Iii" could never merge.
-    now = _now_iso()
     with db.get_session() as session:
         exists = _same_seat(session, person_id, entity_id, role, since, until)
         if exists:
@@ -899,7 +904,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
                 full_name: $full, description: '',
                 wikidata_id: null, sec_cik: $cik, source_id: $source_id,
                 alias: [], search_text: $search_text,
-                created_at: $created_at
+                created_at: $created_at, last_scraped_at: $created_at
             })
             """,
             id=person_id, first=first_name, last=last_name, full=full_name,
@@ -917,9 +922,9 @@ def _cik_conflict(existing: str | None, incoming: str | None) -> bool:
 
 
 def _stamp_person_cik(session, person_id: str, sec_cik: str | None) -> None:
-    """Fill a person's SEC CIK when it was matched by name and had none yet —
-    COALESCE, so a CIK already recorded is never overwritten."""
-    if not sec_cik:
-        return
-    session.run("MATCH (p:Person {id: $id}) SET p.sec_cik = COALESCE(p.sec_cik, $cik)",
-                id=person_id, cik=sec_cik)
+    """A person matched by name: stamp when they were last written from a
+    source, and fill their SEC CIK when they had none yet — COALESCE, so a
+    CIK already recorded is never overwritten."""
+    session.run("MATCH (p:Person {id: $id}) SET p.sec_cik = COALESCE(p.sec_cik, $cik), "
+                "p.last_scraped_at = $now",
+                id=person_id, cik=sec_cik, now=_now_iso())

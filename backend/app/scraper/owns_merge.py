@@ -60,7 +60,7 @@ ANSWER_FIELDS: tuple = (
     "stake_percent", "voting_power_pct", "ownership_type",
     "share_class", "shares", "shares_outstanding", "denominator_date", "event_date", "voting_shares", "value_usd",
     "until", "until_reason",
-    "source_id", "credibility_score", "source_url", "source_date", "file_date",
+    "source_id", "credibility_score", "source_url", "source_date",
     "filing_type",
     # how reliably that source's values were read (edge_schema.READ_GRADES)
     "read_from",
