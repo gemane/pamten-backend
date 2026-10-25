@@ -15,13 +15,13 @@ pytestmark = pytest.mark.integration
 def _seed_group(it_db):
     it_db.run_command("CREATE (:Entity {id:'issuer', name:'Issuer PLC'})")
     it_db.run_command("CREATE (:Person {id:'lemann', full_name:'Jorge Paulo Lemann', aliases: []})")
-    it_db.run_command("CREATE (:Entity {id:'grp', name:'Voting group', type:'voting_group'})")
+    it_db.run_command("CREATE (:VotingGroup {id:'grp', name:'Voting group · 2 parties', type:'voting_group'})")
     it_db.run_command(
-        "MATCH (p:Person {id:'lemann'}), (g:Entity {id:'grp'}) "
-        "CREATE (p)-[:RELATED_TO {relation:'group_member', source_id:'sec'}]->(g)")
+        "MATCH (p:Person {id:'lemann'}), (g:VotingGroup {id:'grp'}) "
+        "CREATE (p)-[:MEMBER_OF {source_id:'sec'}]->(g)")
     it_db.run_command(
-        "MATCH (e:Entity {id:'issuer'}), (g:Entity {id:'grp'}) "
-        "CREATE (e)-[:RELATED_TO {relation:'group_member', source_id:'sec'}]->(g)")
+        "MATCH (e:Entity {id:'issuer'}), (g:VotingGroup {id:'grp'}) "
+        "CREATE (e)-[:MEMBER_OF {source_id:'sec'}]->(g)")
 
 
 class TestVotingGroupsThroughALabelledAnchor:
@@ -62,6 +62,7 @@ class TestNodeLabelAgainstTheRealCatalog:
         with db.get_session() as session:
             assert node_label("lemann", session) == "Person"
             assert node_label("issuer", session) == "Entity"
+            assert node_label("grp", session) == "VotingGroup"        # its own type since 2026-10-26
             assert node_label("nobody", session) is None
         assert node_label("lemann", query=it_db.run_query) == "Person"
 

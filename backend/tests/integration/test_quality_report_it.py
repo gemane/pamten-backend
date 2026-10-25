@@ -159,10 +159,10 @@ class TestIdentity:
 
     def test_a_voting_group_is_not_counted_at_all(self, graph):
         # A filing group is an agreement between parties, not an organisation:
-        # it can never hold an LEI, so counting it would make the graph look
-        # permanently less register-identified than it is.
+        # it can never hold an LEI — and since 2026-10-26 it is its own vertex
+        # type, so the ratio never meets it.
         graph.run_command("MATCH (e {id:'co-a'}) SET e.lei_id = 'L1'")
-        graph.run_command("CREATE (g:Entity {id:'grp', name:'Voting group — Held Co', "
+        graph.run_command("CREATE (g:VotingGroup {id:'grp', name:'Voting group · 2 parties', "
                           "type:'voting_group'})")
         from app.quality import quality_report
         i = quality_report()["identity"]

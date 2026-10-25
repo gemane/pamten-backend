@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 
 from app import former_names as former
 from app.database import db
-from app.db.anchors import not_a_voting_group
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.db.anchors import label_or_entity
 from app.db.paging import iter_id_pages
@@ -322,12 +321,8 @@ def _duplicate_name_groups() -> list[tuple[str, int]]:
     found: list[tuple[str, int]] = []
 
     def _collect(prefix: str) -> None:
-        # Voting groups are excluded: two blocs over one company normalise to
-        # nearly the same name by construction, and they are identified by their
-        # rosters (see _upsert_voting_group), never by name.
         q = ("SELECT FROM (SELECT name_normalized AS k, count(*) AS c FROM Entity "
              "WHERE name_normalized >= :lo AND name_normalized < :hi "
-             f"AND {not_a_voting_group()} "
              "GROUP BY name_normalized) WHERE c > 1")
         try:
             rows = run_sql(q, {"lo": prefix, "hi": prefix + "￿"})
@@ -565,10 +560,35 @@ def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
         )
         migrated += 1
 
+    migrated += _migrate_membership(dead_id, keep_id, "Person")
     from app.claims import migrate_claims
     migrate_claims(dead_id, keep_id)
 
     return migrated
+
+
+def _migrate_membership(dead_id: str, keep_id: str, label: str) -> int:
+    """A party's place in its 13D filing groups follows the surviving node
+    (MEMBER_OF, 2026-10-26 — RELATED_TO {group_member} before): one edge per
+    group, so a membership the survivor already holds is dropped."""
+    from app.scraper.edge_schema import MEMBER_OF_PROPS, edge_return_clause, edge_create_clause, edge_params
+    moved = 0
+    for e in run_query(
+        f"""MATCH (m:{label} {{id: $id}})-[r:MEMBER_OF]->(g:VotingGroup)
+            RETURN g.id AS gid, {edge_return_clause('r', MEMBER_OF_PROPS)}""",
+        {"id": dead_id},
+    ):
+        if run_query(f"MATCH (m:{label} {{id: $k}})-[r:MEMBER_OF]->(g:VotingGroup {{id: $gid}}) RETURN r LIMIT 1",
+                     {"k": keep_id, "gid": e["gid"]}):
+            continue
+        run_command(
+            f"""MATCH (m:{label} {{id: $k}}), (g:VotingGroup {{id: $gid}})
+                CREATE (m)-[:MEMBER_OF {{{edge_create_clause(MEMBER_OF_PROPS)}}}]->(g)""",
+            {"k": keep_id, "gid": e["gid"], **edge_params(e, MEMBER_OF_PROPS)},
+        )
+        moved += 1
+    return moved
+
 
 def deduplicate_person_nodes() -> dict:
     """
@@ -801,7 +821,9 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         {"id": dead_id},
     ):
         slabels = e.get("slabels") or []
-        slabel = slabels[0] if slabels and slabels[0] in ("Entity", "Person") else "Entity"
+        # the owner may be a Person, a VotingGroup (a 13D bloc over the merged
+        # company) or an Entity — its label came back with the row
+        slabel = label_or_entity(slabels[0] if slabels else None)
         migrated += _carry_edge("OWNS", OWNS_PROPS, f"(a:{slabel} {{id: $sid}})", "(t:Entity {id: $k})",
                                 {"sid": e["sid"], "k": keep_id}, e)
 
@@ -841,7 +863,7 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         {"id": dead_id},
     ):
         slabels = e.get("slabels") or []
-        slabel = slabels[0] if slabels and slabels[0] in ("Entity", "Person") else "Entity"
+        slabel = label_or_entity(slabels[0] if slabels else None)
         if run_query(
             f"MATCH (s:{slabel} {{id: $sid}})-[r:RELATED_TO]->(b:Entity {{id: $k}}) "
             "WHERE r.relation = $rel RETURN r LIMIT 1",
@@ -854,6 +876,10 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             {"sid": e["sid"], "k": keep_id, **edge_params(e, RELATED_TO_PROPS)},
         )
         migrated += 1
+
+    # 5. Membership of a 13D filing group — a party merged into another node
+    # keeps its place in the bloc (MEMBER_OF, 2026-10-26).
+    migrated += _migrate_membership(dead_id, keep_id, "Entity")
 
     from app.claims import migrate_claims
     migrate_claims(dead_id, keep_id)
@@ -1299,11 +1325,11 @@ def _duplicate_keys(key_prop: str) -> list[str]:
 
 
 # Edges are single-source (one fact, one source) → deleting by source_id is exact.
-_WIPE_EDGE_TYPES = ["OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY"]
+_WIPE_EDGE_TYPES = ["OWNS", "HAS_ROLE", "RELATED_TO", "MEMBER_OF", "DUAL_LISTED_WITH", "SUCCEEDED_BY"]
 # Nodes carry a single origin source_id; only delete the ones this source created
 # that are left with no edges (degree 0) after its edges go — a node another source
 # still references is kept.
-_WIPE_NODE_TYPES = ["Entity", "Person"]
+_WIPE_NODE_TYPES = ["Entity", "Person", "VotingGroup"]
 
 
 def _batched_delete(where_sql: str, params: dict, batch: int) -> int:
@@ -1558,7 +1584,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
             "SELECT id, name, country, founded, incorporated_on, lei_id, companies_house_id, sec_cik, "
             "wikidata_id, register_id, address_normalized, COALESCE(name_credibility, 0) AS cred "
             "FROM Entity "
-            f"WHERE name_normalized = :nn AND {not_a_voting_group()} LIMIT 50", {"nn": nn})
+            "WHERE name_normalized = :nn LIMIT 50", {"nn": nn})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
         if len(members) < 2:
             continue
@@ -2007,12 +2033,8 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
     from app.scraper.sec_edgar import sec_country
     from app.scraper.wikidata import countries_for
 
-    # A voting group has no country and never will — it is an agreement, not an
-    # organisation — so without this it is a permanent candidate, re-queried on
-    # every run for a fact that does not exist.
     rows = run_query(
         "MATCH (e:Entity) WHERE (e.country IS NULL OR e.country = '') "
-        f"AND {not_a_voting_group('e.')} "
         "RETURN e.id AS id, e.name AS name, e.wikidata_id AS wd, e.sec_cik AS cik")
     if limit:
         rows = rows[:limit]

@@ -274,20 +274,25 @@ def ownership_tree_of(
     edge_filter = ("WHERE ALL(e IN r WHERE "
                    f"COALESCE(e.shortcut, false) <> true{only_direct})")
     query = f"""
-        MATCH path = (:Entity {{id: $entity_id}})-[r:OWNS*1..{safe_depth}]->(subsidiary)
+        MATCH path = (:{{root_label}} {{{{id: $entity_id}}}})-[r:OWNS*1..{safe_depth}]->(subsidiary)
         {edge_filter}
         RETURN nodes(path) AS path_nodes, relationships(path) AS path_rels
         LIMIT {limit + 1}
     """
 
+    def _walk(session, root_label: str) -> list[dict]:
+        result = session.run(query.format(root_label=root_label), entity_id=entity_id, depth=depth)
+        return [{"nodes": [_strip_meta(n) for n in (record["path_nodes"] or [])],
+                 "relationships": [_strip_meta(r) for r in (record["path_rels"] or [])]}
+                for record in result]
+
     with db.get_session() as session:
-        result = session.run(query, entity_id=entity_id, depth=depth)
-        paths = []
-        for record in result:
-            paths.append({
-                "nodes": [_strip_meta(n) for n in (record["path_nodes"] or [])],
-                "relationships": [_strip_meta(r) for r in (record["path_rels"] or [])],
-            })
+        paths = _walk(session, "Entity")
+        # the root may be a 13D filing group (its own vertex type since
+        # 2026-10-26) whose tree is the company it holds — asked only when the
+        # company walk found nothing, by one indexed point read
+        if not paths and session.run("MATCH (g:VotingGroup {id: $id}) RETURN g.id AS id", id=entity_id).single():
+            paths = _walk(session, "VotingGroup")
 
     return paths[:limit], len(paths) > limit
 
@@ -343,6 +348,10 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES,
     """
     from app.db.arcadedb import run_sql
     root = run_sql("SELECT @rid AS rid FROM Entity WHERE id = :id", {"id": entity_id})
+    if not root:
+        # a 13D filing group (its own vertex type since 2026-10-26): its tree is
+        # the company it holds — one more indexed point read, never a scan
+        root = run_sql("SELECT @rid AS rid FROM VotingGroup WHERE id = :id", {"id": entity_id})
     if not root:
         return None
     with db.get_session() as session:
@@ -701,6 +710,110 @@ def _stake_crossing_events(entity_id: str) -> list[dict]:
     return events
 
 
+def _history_pass(session, label: str, entity_id: str, limit: int) -> tuple[list[dict], bool, bool]:
+    """The timeline of one node under one label: (events, truncated, found) —
+    `found` says the node itself answered (the rename/dissolution read)."""
+    events: list[dict] = []
+    truncated = False
+    # Who owns / owned this entity
+    rows = list(session.run(
+        f"""
+        MATCH (e:{label} {{id: $id}})<-[r:OWNS]-(owner)
+        RETURN owner, r, 'ownership_in' AS kind
+        LIMIT {limit + 1}
+        """,
+        id=entity_id,
+    ))
+    truncated = truncated or len(rows) > limit
+    for rec in rows[:limit]:
+        events.append({
+            "kind":          "ownership_in",
+            "party":         dict(rec["owner"]),
+            "since":         rec["r"].get("since"),
+            # "first_listed": since is a LOWER bound (oldest annual subsidiary
+            # list naming it), not the start of the holding
+            "since_basis":   rec["r"].get("since_basis"),
+            "until":         rec["r"].get("until"),
+            "active":        rec["r"].get("until") is None,
+            "stake_percent": rec["r"].get("stake_percent"),
+            "ownership_type": rec["r"].get("ownership_type"),
+            **_staleness(rec["r"]),
+            **_start(rec["r"]),
+            **_end(rec["r"]),
+        })
+
+    # What this entity owns / owned
+    rows = list(session.run(
+        f"""
+        MATCH (e:{label} {{id: $id}})-[r:OWNS]->(owned)
+        RETURN owned, r, 'ownership_out' AS kind
+        LIMIT {limit + 1}
+        """,
+        id=entity_id,
+    ))
+    truncated = truncated or len(rows) > limit
+    for rec in rows[:limit]:
+        events.append({
+            "kind":          "ownership_out",
+            "party":         dict(rec["owned"]),
+            "since":         rec["r"].get("since"),
+            # "first_listed": since is a LOWER bound (oldest annual subsidiary
+            # list naming it), not the start of the holding
+            "since_basis":   rec["r"].get("since_basis"),
+            "until":         rec["r"].get("until"),
+            "active":        rec["r"].get("until") is None,
+            "stake_percent": rec["r"].get("stake_percent"),
+            "ownership_type": rec["r"].get("ownership_type"),
+            **_staleness(rec["r"]),
+            **_start(rec["r"]),
+            **_end(rec["r"]),
+        })
+
+    # Executive roles at this entity
+    rows = list(session.run(
+        f"""
+        MATCH (e:{label} {{id: $id}})<-[r:HAS_ROLE]-(p:Person)
+        RETURN p, r, 'role' AS kind
+        LIMIT {limit + 1}
+        """,
+        id=entity_id,
+    ))
+    truncated = truncated or len(rows) > limit
+    for rec in rows[:limit]:
+        events.append({
+            "kind":   "role",
+            "party":  dict(rec["p"]),
+            "since":  rec["r"].get("since"),
+            "until":  rec["r"].get("until"),
+            "active": rec["r"].get("until") is None,
+            "role":   rec["r"].get("role"),
+            # why it ended when no source said so (`death`), and the
+            # record that stated the end when it is not the seat's own
+            "until_reason": rec["r"].get("until_reason"),
+            "until_source_url": rec["r"].get("until_source_url"),
+        })
+
+    # The company's own renames — the one event here that is not an edge.
+    # `former_names` carries each old name with the last day it applied
+    # (Companies House's change-of-name date, EDGAR's `to`); the event
+    # names what came after it, so the entry reads "X → Y". Not capped:
+    # a company rarely has more than a handful.
+    rec = session.run(
+        f"MATCH (e:{label} {{id: $id}}) RETURN e.name AS name, e.former_names AS former_names, "
+        "e.dissolved_on AS dissolved_on",
+        id=entity_id,
+    ).single()
+    if rec:
+        events.extend({**ev, "party": None}
+                      for ev in rename_events(rec.get("name"), rec.get("former_names")))
+        # The company's own end (app.dissolution): the last event of its
+        # timeline, dated as the source states it
+        if rec.get("dissolved_on"):
+            events.append({"kind": "dissolved", "since": str(rec["dissolved_on"]), "until": None,
+                           "active": False, "party": None})
+    return events, truncated, rec is not None
+
+
 def ownership_history_of(
     entity_id: str, limit: int = HISTORY_DEFAULT_LIMIT,
 ) -> tuple[list[dict], bool]:
@@ -710,107 +823,18 @@ def ownership_history_of(
     outbound ownership and roles are three separate queries — so the result can
     hold up to 3 × `limit` events. Limiting the merged total would mean one noisy
     category could crowd the others out of the timeline entirely.
+
+    The id names an Entity — or a 13D filing group, its own vertex type since
+    2026-10-26, whose timeline is the bloc it holds: read as an Entity first,
+    and only when nothing answers, as a VotingGroup (no extra round trip for
+    the common case, no unlabelled scan ever — app/db/anchors.py).
     """
-    events = []
-    truncated = False
-
     with db.get_session() as session:
-        # Who owns / owned this entity
-        rows = list(session.run(
-            f"""
-            MATCH (e:Entity {{id: $id}})<-[r:OWNS]-(owner)
-            RETURN owner, r, 'ownership_in' AS kind
-            LIMIT {limit + 1}
-            """,
-            id=entity_id,
-        ))
-        truncated = truncated or len(rows) > limit
-        for rec in rows[:limit]:
-            events.append({
-                "kind":          "ownership_in",
-                "party":         dict(rec["owner"]),
-                "since":         rec["r"].get("since"),
-                # "first_listed": since is a LOWER bound (oldest annual subsidiary
-                # list naming it), not the start of the holding
-                "since_basis":   rec["r"].get("since_basis"),
-                "until":         rec["r"].get("until"),
-                "active":        rec["r"].get("until") is None,
-                "stake_percent": rec["r"].get("stake_percent"),
-                "ownership_type": rec["r"].get("ownership_type"),
-                **_staleness(rec["r"]),
-                **_start(rec["r"]),
-                **_end(rec["r"]),
-            })
-
-        # What this entity owns / owned
-        rows = list(session.run(
-            f"""
-            MATCH (e:Entity {{id: $id}})-[r:OWNS]->(owned)
-            RETURN owned, r, 'ownership_out' AS kind
-            LIMIT {limit + 1}
-            """,
-            id=entity_id,
-        ))
-        truncated = truncated or len(rows) > limit
-        for rec in rows[:limit]:
-            events.append({
-                "kind":          "ownership_out",
-                "party":         dict(rec["owned"]),
-                "since":         rec["r"].get("since"),
-                # "first_listed": since is a LOWER bound (oldest annual subsidiary
-                # list naming it), not the start of the holding
-                "since_basis":   rec["r"].get("since_basis"),
-                "until":         rec["r"].get("until"),
-                "active":        rec["r"].get("until") is None,
-                "stake_percent": rec["r"].get("stake_percent"),
-                "ownership_type": rec["r"].get("ownership_type"),
-                **_staleness(rec["r"]),
-                **_start(rec["r"]),
-                **_end(rec["r"]),
-            })
-
-        # Executive roles at this entity
-        rows = list(session.run(
-            f"""
-            MATCH (e:Entity {{id: $id}})<-[r:HAS_ROLE]-(p:Person)
-            RETURN p, r, 'role' AS kind
-            LIMIT {limit + 1}
-            """,
-            id=entity_id,
-        ))
-        truncated = truncated or len(rows) > limit
-        for rec in rows[:limit]:
-            events.append({
-                "kind":   "role",
-                "party":  dict(rec["p"]),
-                "since":  rec["r"].get("since"),
-                "until":  rec["r"].get("until"),
-                "active": rec["r"].get("until") is None,
-                "role":   rec["r"].get("role"),
-                # why it ended when no source said so (`death`), and the
-                # record that stated the end when it is not the seat's own
-                "until_reason": rec["r"].get("until_reason"),
-                "until_source_url": rec["r"].get("until_source_url"),
-            })
-
-        # The company's own renames — the one event here that is not an edge.
-        # `former_names` carries each old name with the last day it applied
-        # (Companies House's change-of-name date, EDGAR's `to`); the event
-        # names what came after it, so the entry reads "X → Y". Not capped:
-        # a company rarely has more than a handful.
-        rec = session.run(
-            "MATCH (e:Entity {id: $id}) RETURN e.name AS name, e.former_names AS former_names, "
-            "e.dissolved_on AS dissolved_on",
-            id=entity_id,
-        ).single()
-        if rec:
-            events.extend({**ev, "party": None}
-                          for ev in rename_events(rec.get("name"), rec.get("former_names")))
-            # The company's own end (app.dissolution): the last event of its
-            # timeline, dated as the source states it
-            if rec.get("dissolved_on"):
-                events.append({"kind": "dissolved", "since": str(rec["dissolved_on"]), "until": None,
-                               "active": False, "party": None})
+        events, truncated, found = _history_pass(session, "Entity", entity_id, limit)
+        if not found and not events:
+            events2, truncated2, found2 = _history_pass(session, "VotingGroup", entity_id, limit)
+            if found2:
+                events, truncated = events2, truncated2
 
     # A holding crossing the 5 % line — reached, or dropped below — the only
     # stake movement the timeline tells; the quarterly drift between stays in

@@ -44,7 +44,6 @@ from app.auth.dependencies import require_admin, require_contributor
 from app.config import settings
 from app.claims import KIND_OWNS, record_claim
 from app.database import db
-from app.db.anchors import not_a_voting_group
 from app.db.anchors import label_or_entity
 from app.entity_resolution import resolve_entity_id
 from app.models.federation import PeerCreate
@@ -221,11 +220,10 @@ def build_export() -> dict:
              "lei_id": r.get("lei"), "companies_house_id": r.get("ch"),
              "register_id": r.get("rid")}
             for r in session.run(
-                # Voting groups are not exported: they carry no identifier, so a
-                # peer importing one would resolve it by normalised name onto
-                # whatever it already has under that name. They are also local
-                # derivations from SEC filings, which any peer can derive itself.
-                f"MATCH (e:Entity) WHERE {not_a_voting_group('e.')} "
+                # Voting groups are not exported: they are their own vertex type
+                # (2026-10-26), carry no identifier, and are local derivations
+                # from SEC filings, which any peer can derive itself.
+                "MATCH (e:Entity) "
                 "RETURN e.name AS name, e.type AS type, e.country AS country, "
                 "e.founded AS founded, e.wikidata_id AS wd, e.sec_cik AS cik, "
                 "e.lei_id AS lei, e.companies_house_id AS ch, e.register_id AS rid")

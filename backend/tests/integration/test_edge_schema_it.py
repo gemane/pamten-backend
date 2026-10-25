@@ -115,17 +115,23 @@ class TestEveryPropertySurvivesAPersonMerge:
 
     def test_a_person_keeps_group_membership(self, graph):
         # Lemann, Sicupira and Telles are all Person group members; a person
-        # merge used to sever them from their bloc.
+        # merge used to sever them from their bloc. MEMBER_OF since 2026-10-26,
+        # recreated from `MEMBER_OF_PROPS`.
+        from app.scraper.edge_schema import MEMBER_OF_PROPS
         from app.scraper.maintenance import _migrate_person_edges
         graph.run_command("CREATE (p:Person {id:'p-dead', full_name:'Dupe'})")
         graph.run_command("CREATE (p:Person {id:'p-keep', full_name:'Real'})")
-        _create_edge(graph, "RELATED_TO", RELATED_TO_PROPS, frm="p-dead",
-                     from_label="Person")
+        graph.run_command("CREATE (g:VotingGroup {id:'grp', name:'Voting group · 3 parties', type:'voting_group'})")
+        clause = ", ".join(f"{p}: ${p}" for p in MEMBER_OF_PROPS)
+        graph.run_command(f"MATCH (a:Person {{id:'p-dead'}}), (g:VotingGroup {{id:'grp'}}) "
+                          f"CREATE (a)-[:MEMBER_OF {{{clause}}}]->(g)", {p: _SAMPLE[p] for p in MEMBER_OF_PROPS})
         _migrate_person_edges("p-dead", "p-keep")
         rows = graph.run_command(
-            "MATCH (p {id:'p-keep'})-[r:RELATED_TO]->(b {id:'target'}) "
-            "RETURN r.relation AS rel")
-        assert [r["rel"] for r in rows] == ["group_member"]
+            "MATCH (p:Person {id:'p-keep'})-[r:MEMBER_OF]->(g:VotingGroup {id:'grp'}) "
+            + "RETURN " + ", ".join(f"r.{p} AS {p}" for p in MEMBER_OF_PROPS))
+        assert len(rows) == 1
+        for p in MEMBER_OF_PROPS:
+            assert rows[0][p] == _SAMPLE[p], f"{p} stripped by the person merge"
 
 
 class TestClaimsFollowTheSurvivor:

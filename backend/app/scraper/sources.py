@@ -353,7 +353,7 @@ def sweep_source_edges(name: str, confirm: str, _: dict = Depends(require_admin)
         # Ownership STRUCTURE only — HAS_ROLE stays, mirroring what claims-only
         # suppresses (people are not structure; see graph_writer._upsert_role).
         result = wipe_source_edges(label, edge_types=[
-            "OWNS", "SUCCEEDED_BY", "RELATED_TO", "DUAL_LISTED_WITH"])
+            "OWNS", "SUCCEEDED_BY", "RELATED_TO", "MEMBER_OF", "DUAL_LISTED_WITH"])
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return {"name": name, "source": label, **result}

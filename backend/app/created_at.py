@@ -61,7 +61,7 @@ def _oldest_edge_date(rid: str) -> str | None:
     return str(t) if t else None
 
 
-def backfill(apply: bool = True, labels: tuple[str, ...] = ("Entity", "Person")) -> dict:
+def backfill(apply: bool = True, labels: tuple[str, ...] = ("Entity", "Person", "VotingGroup")) -> dict:
     """Give every node without `created_at` the oldest date anything recorded
     about it. Walks the id index (app.db.paging). Returns per-label counts:
     scanned, missing, from_claims, from_scrape, from_edges, unknown, written."""

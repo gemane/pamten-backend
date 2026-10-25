@@ -739,9 +739,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **A `<>` on a nullable property needs an `IS NULL OR` beside it.** ArcadeDB 26.10.1
       made comparisons three-valued, as SQL has them: `type <> 'voting_group'` no longer
       matches a row with no type (26.7.3 matched it), and five readers silently dropped the
-      1,298 typeless entities of the dev graph. Use `anchors.not_a_voting_group()` for that
-      fence, and write any other negative test on a property that may be absent as
-      `(p IS NULL OR p <> …)`.
+      1,298 typeless entities of the dev graph. That fence is gone — a voting group is its
+      own vertex type since 2026-10-26, which is the better fix: a thing that is not an
+      entity should not be one — but the rule stays for any negative test on a property
+      that may be absent: write it as `(p IS NULL OR p <> …)`.
 
 - [ ] **Not found returns `None`/an empty result, never an exception.** Auth problems
       raise `PermissionError` with a message that says which flag or key is wrong.

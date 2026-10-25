@@ -398,6 +398,11 @@ class TestConstraints:
         assert rules[("OWNS", "stake_percent", "MIN")] == "0" and rules[("OWNS", "stake_percent", "MAX")] == "100"
         assert rules[("OWNS", "stale", "DEFAULT")] == "false"
         assert rules[("HAS_ROLE", "until_reason", "REGEXP")] == "^(death|dissolution)$"
+        # a 13D filing group is its own vertex type (2026-10-26): out of the
+        # entity vocabulary, its own `type` pinned to the one node kind
+        assert "voting_group" not in rules[("Entity", "type", "REGEXP")]
+        assert rules[("VotingGroup", "type", "REGEXP")] == "^voting_group$"
+        assert rules[("VotingGroup", "id", "MANDATORY")] == "true"
         assert rules[("Entity", "dissolved_on", "REGEXP")] == rules[("Entity", "incorporated_on", "REGEXP")]
         # every flag that means "not asserted" (2026-10-25); `active` stays three-valued
         for key in (("OWNS", "shortcut"), ("OWNS", "also_ultimate"), ("Entity", "is_nominee"),
@@ -522,6 +527,11 @@ class TestTheLedger:
             assert ("HAS_ROLE", prop) in ledger, prop
         for prop in edge_schema.RELATED_TO_PROPS:
             assert ("RELATED_TO", prop) in ledger, prop
+        for prop in edge_schema.MEMBER_OF_PROPS:
+            assert ("MEMBER_OF", prop) in ledger, prop
+        assert "MEMBER_OF" in schema._EDGE_TYPES and ("VotingGroup", "id", "UNIQUE") in schema._INDEXES
+        assert ("VotingGroup", "search_text") in schema._FULLTEXT_INDEXES
+        assert ("VotingGroup", "member_keys", "LIST") in schema._TYPED_PROPERTIES
         bag = claims.claim_props(kind="owns", from_id="a", to_id="b", source_id="s")
         for prop in list(bag) + ["first_seen_at"]:
             assert ("Claim", prop) in ledger, prop

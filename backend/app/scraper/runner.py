@@ -1909,6 +1909,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
 
             _upsert_owns_sec(
                 owner_id=group_id, owned_id=target_id, source_id=source_id,
+                owner_label="VotingGroup",
                 read_from=filing.get("read_from"),
                 ownership_type=filing.get("ownership_type", "unknown"),
                 file_date=filing.get("file_date"),
