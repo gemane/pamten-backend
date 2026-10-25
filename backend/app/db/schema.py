@@ -390,10 +390,14 @@ def all_properties() -> set[tuple[str, str]]:
     return _declared_elsewhere() | {(t, p) for t, props in _STRING_PROPERTIES.items() for p in props}
 
 
-def undeclared_properties(sample: int = 5000) -> dict[str, list[str]]:
-    """{type: [property, …]} that stored rows carry and the catalog does not
-    declare — the audit behind `manage.py schema-audit`. Reads up to `sample`
-    rows of every type the catalog lists; {} when the catalog cannot be read."""
+def undeclared_properties(sample: int = 5000) -> dict[str, dict[str, dict]]:
+    """{type: {property: {"rows": n, "null_only": bool}}} for what stored rows
+    carry and the catalog does not declare — the audit behind `manage.py
+    schema-audit`. `null_only` marks a key no row gives a value (the leftover
+    of a renamed field — dev kept 97 null `founded_date` keys after the rename
+    to `incorporated_on`), which is removed rather than declared. Reads up to
+    `sample` rows of every type the catalog lists; {} when the catalog cannot
+    be read."""
     try:
         existing = _existing_schema()
     except Exception:  # noqa: BLE001 — an unreadable catalog audits nothing
@@ -401,17 +405,26 @@ def undeclared_properties(sample: int = 5000) -> dict[str, list[str]]:
     if existing is None:
         return {}
     types, _, declared, _ = existing
-    out: dict[str, list[str]] = {}
+    out: dict[str, dict[str, dict]] = {}
     for vtype in sorted(t for t in types if t):
         have = {k.split(".", 1)[1] for k in declared if k.startswith(f"{vtype}.")}
         try:
             rows = run_sql(f"SELECT FROM {vtype} LIMIT {int(sample)}")
         except Exception:  # noqa: BLE001 — a type that cannot be read is not drift
             continue
-        found = sorted({k for r in rows if isinstance(r, dict) for k in r
-                        if not k.startswith("@") and k not in have})
+        found: dict[str, dict] = {}
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            for k, v in r.items():
+                if k.startswith("@") or k in have:
+                    continue
+                entry = found.setdefault(k, {"rows": 0, "null_only": True})
+                entry["rows"] += 1
+                if v is not None:
+                    entry["null_only"] = False
         if found:
-            out[vtype] = found
+            out[vtype] = dict(sorted(found.items()))
     return out
 
 

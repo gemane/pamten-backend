@@ -534,8 +534,8 @@ class TestTheLedger:
 
     def test_the_audit_names_what_the_rows_carry_beyond_the_catalog(self):
         types, indexes, declared, rules = TestTypedProperties._complete()
-        rows = {"Entity": [{"@rid": "#1:0", "id": "a", "name": "A", "countrry": "US"},
-                           {"@rid": "#1:1", "id": "b", "legal_form": "PLC"}],
+        rows = {"Entity": [{"@rid": "#1:0", "id": "a", "name": "A", "countrry": "US", "founded_date": None},
+                           {"@rid": "#1:1", "id": "b", "legal_form": "PLC", "founded_date": None}],
                 "OWNS": [{"@rid": "#2:0", "stake_percent": 10.0, "stakke": 10}],
                 "Person": []}
         asked = []
@@ -552,7 +552,10 @@ class TestTheLedger:
                     return r
             return []
         with _run(run):
-            assert schema.undeclared_properties(sample=7) == {"Entity": ["countrry"], "OWNS": ["stakke"]}
+            assert schema.undeclared_properties(sample=7) == {
+                "Entity": {"countrry": {"rows": 1, "null_only": False},
+                           "founded_date": {"rows": 2, "null_only": True}},     # a leftover of the rename
+                "OWNS": {"stakke": {"rows": 1, "null_only": False}}}
         assert "SELECT FROM Entity LIMIT 7" in asked and "SELECT FROM Person LIMIT 7" in asked
 
     def test_the_audit_is_empty_without_a_catalog(self):

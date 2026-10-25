@@ -1059,10 +1059,12 @@ def cmd_schema_audit(args):
     if not drift:
         print("Every stored property is declared.")
         return
+    def _what(d: dict) -> str:
+        return "null only — a leftover to REMOVE" if d["null_only"] else f"{d['rows']} rows"
     for vtype, props in drift.items():
-        print(f"{vtype}: " + ", ".join(props))
+        print(f"{vtype}: " + ", ".join(f"{p} ({_what(d)})" for p, d in props.items()))
     print(f"\n{sum(len(v) for v in drift.values())} undeclared propert(y|ies) on {len(drift)} type(s) — "
-          "declare them in app/db/schema.py (or remove the leftovers)")
+          "declare them in app/db/schema.py, or remove the leftovers")
     sys.exit(1)
 
 
