@@ -42,8 +42,13 @@ side. **Dates stay STRING** on purpose — the writers keep a source's precision
 type holds, and ISO strings compare correctly as strings. A declaration never touches
 the rows already stored; `manage.py heal-property-types` rewrites those.
 
-A declaration the server holds with **another type** than the code's is dropped and
-declared again by the schema bootstrap (`init-schema`, every API start): ArcadeDB has
+The bootstrap sends its DDL to the server in **scripts of 60 statements**, not one request
+each: a fresh database takes 520 statements (2026-10-25), which is 5.5 s of HTTP round trips
+one by one and 0.4 s batched — the integration suite creates a database per test, and that
+difference was 20 minutes of CI. Every statement is idempotent, so a script the server
+refuses is re-issued statement by statement and the one statement refused is still named in
+`init-schema`'s report. A declaration the server holds with **another type** than the code's
+is dropped and declared again by the schema bootstrap (`init-schema`, every API start): ArcadeDB has
 no `ALTER PROPERTY … TYPE`, and `DROP PROPERTY` removes only the declaration, never a
 value. The case that taught this: `shares_outstanding` and `voting_shares` were LONG for
 a day (2026-10-24) before a Form 4's fractional shares made them DOUBLE, and the deploy
