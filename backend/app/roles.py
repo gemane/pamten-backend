@@ -60,3 +60,33 @@ def same_start(a: str | None, b: str | None) -> bool:
 def finer_start(a: str, b: str) -> str:
     """Of two `same_start` dates, the more precise one."""
     return a if len(_date_parts(a)) >= len(_date_parts(b)) else b
+
+
+#: Form 4's officer-title placeholder ("See Remarks" — the title is in the
+#: filing's remarks box), which reached the graph as a role before the reader
+#: learned to look there (2026-10-25). Matched case-blind on the prefix: dev
+#: carried both "See Remarks" and "See remarks".
+PLACEHOLDER_ROLE_PREFIX = "see remarks"
+
+
+def heal_placeholder_roles(apply: bool = False) -> dict:
+    """Delete every HAS_ROLE edge and role claim whose role is the placeholder.
+
+    The seat is real but its role was never read, and a re-scrape of the
+    company (the reader now reads the remarks) writes it back with the role
+    the filing states. Renaming the rows "Officer" instead would leave a
+    second, roleless seat beside that one for good — the writers keep one
+    edge per (person, company, canonical role), and "Officer" is not "CFO".
+    Dry run unless `apply`; the result names the companies to re-scrape."""
+    from app.db.arcadedb import run_sql
+    where = f"role IS NOT NULL AND role.toLowerCase() LIKE '{PLACEHOLDER_ROLE_PREFIX}%'"
+    edges = run_sql(f"SELECT @out.full_name AS person, @in.name AS company FROM HAS_ROLE WHERE {where}")
+    claims = run_sql(f"SELECT count(*) AS n FROM Claim WHERE kind = 'role' AND {where}")
+    out = {"edges": len(edges),
+           "claims": int(claims[0]["n"]) if claims else 0,
+           "companies": sorted({e["company"] for e in edges if e.get("company")}),
+           "applied": bool(apply)}
+    if apply:
+        run_sql(f"DELETE FROM HAS_ROLE WHERE {where}")
+        run_sql(f"DELETE FROM Claim WHERE kind = 'role' AND {where}")
+    return out

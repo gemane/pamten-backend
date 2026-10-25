@@ -177,7 +177,7 @@ class TestParseForm34Xml:
     """_parse_form34_xml extracts name/role from Form 3/4 XML."""
 
     def _make_xml(self, name: str, is_officer: str = "0", is_director: str = "0",
-                   title: str = "") -> str:
+                   title: str = "", remarks: str = "") -> str:
         return textwrap.dedent(f"""
             <?xml version="1.0"?>
             <ownershipDocument>
@@ -191,6 +191,7 @@ class TestParseForm34Xml:
                   <officerTitle>{title}</officerTitle>
                 </reportingOwnerRelationship>
               </reportingOwner>
+              <remarks>{remarks}</remarks>
             </ownershipDocument>
         """).strip()
 
@@ -201,6 +202,34 @@ class TestParseForm34Xml:
         assert result["name"] == "Elon Musk"
         assert result["role"] == "CEO"
         assert result["title"] == "Chief Executive Officer"
+
+    # Berkshire's 2026 Form 4s (accessions 0001193125-26-349555 / -349574):
+    # the title box says "See Remarks", the remarks box holds the title.
+    def test_see_remarks_reads_the_role_off_the_remarks_box(self):
+        xml = self._make_xml("Chang Charles C", is_officer="1", title="See Remarks",
+                             remarks="Senior Vice President and Chief Financial Officer")
+        result = _parse_form34_xml(xml)
+        assert result["role"] == "CFO"
+        assert result["title"] == "Senior Vice President and Chief Financial Officer"
+        xml = self._make_xml("O'Sullivan Michael J.", is_officer="1", title="See remarks below",
+                             remarks="Senior Vice President, General Counsel and Secretary")
+        assert _parse_form34_xml(xml)["role"] == "General Counsel"
+
+    def test_see_remarks_never_becomes_a_role_and_a_remarks_paragraph_never_a_title(self):
+        from app.scraper.sec_edgar import _officer_role
+        # remarks that name no role we know: a plain officer, not the paragraph
+        xml = self._make_xml("DOE JANE", is_officer="1", title="See Remarks",
+                             remarks="Senior Vice President - Insurance Operations. The reporting "
+                                     "person disclaims beneficial ownership of the shares held by the trust.")
+        result = _parse_form34_xml(xml)
+        assert result["role"] == "Officer"
+        # no remarks at all: still never the placeholder
+        assert _parse_form34_xml(self._make_xml("DOE JANE", is_officer="1", title="See Remarks"))["role"] == "Officer"
+        assert _officer_role("See Remarks", "") == "Officer"
+        assert _officer_role("see remarks", "Vice Chairman - Non-Insurance Operations") == "Chairman"
+        # an ordinary title box is read as before, remarks or not
+        assert _officer_role("Chief Executive Officer", "unrelated remarks") == "CEO"
+        assert _officer_role("Treasurer", "Chief Financial Officer") == "Treasurer"
 
     def test_director(self):
         xml = self._make_xml("KIMBAL MUSK", is_director="1")

@@ -441,6 +441,28 @@ def _normalize_sec_name(raw: str) -> str:
     return raw.title()
 
 
+#: Form 4's officer-title box when the filer wrote the title in the remarks
+#: box instead — EDGAR's own placeholder, not a position ("See Remarks",
+#: "See remarks below").
+_SEE_REMARKS = re.compile(r"^\s*see\s+remarks?\b", re.IGNORECASE)
+
+#: The roles `_title_to_role` names on its own. Anything else it returns is the
+#: title as written — fine for a title box, never for a remarks paragraph.
+_NAMED_ROLES = frozenset({"CEO", "CFO", "COO", "CTO", "General Counsel", "Chairman", "President"})
+
+
+def _officer_role(title: str, remarks: str = "") -> str:
+    """An officer's role from the title box — or, when the box says "See
+    Remarks", from the remarks when they name a role we know ("Senior Vice
+    President and Chief Financial Officer" → CFO), else plain "Officer". The
+    placeholder itself reached the graph as a role on five dev edges, in two
+    spellings, until 2026-10-25."""
+    if not _SEE_REMARKS.match(title):
+        return _title_to_role(title)
+    role = _title_to_role(remarks)
+    return role if role in _NAMED_ROLES else "Officer"
+
+
 def _title_to_role(title: str) -> str:
     """Map an officer title string to a canonical role."""
     t = title.lower()
@@ -1663,7 +1685,8 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
       reportingOwner/reportingOwnerId/rptOwnerName       — person's name
       reportingOwner/reportingOwnerRelationship/isOfficer   — "1" or "0"
       reportingOwner/reportingOwnerRelationship/isDirector  — "1" or "0"
-      reportingOwner/reportingOwnerRelationship/officerTitle — e.g. "Chief Executive Officer"
+      reportingOwner/reportingOwnerRelationship/officerTitle — e.g. "Chief Executive Officer",
+          or "See Remarks" when the title is in the filing-level <remarks> box
 
     The result carries `issuer_cik` so the caller can check the form is about
     the company being scraped. A company's submissions feed also lists forms it
@@ -1695,6 +1718,7 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
     is_officer    = _xml_flag(rel, "isOfficer")
     officer_title = (rel.findtext("officerTitle") or "").strip()
     other_text    = (rel.findtext("otherText")    or "").strip()
+    remarks       = (root.findtext(".//remarks")  or "").strip()
     document_type = (root.findtext(".//documentType") or "").strip() or None
     # Form 3: the date the person BECAME an insider — the appointment date.
     # Form 4: the transaction date, which says nothing about tenure.
@@ -1712,7 +1736,9 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
         former_role = _title_to_role(m.group("title").strip()) if m.group("title").strip() else "Officer"
 
     name = _normalize_sec_name(name_elem.text.strip())
-    role = former_role or (_title_to_role(officer_title) if is_officer else "Director")
+    role = former_role or (_officer_role(officer_title, remarks) if is_officer else "Director")
+    if is_officer and _SEE_REMARKS.match(officer_title):
+        officer_title = remarks or officer_title          # the title as the filer actually wrote it
     # The reporting owner's own CIK — a hard person key, one per filer across
     # every filing and spelling. Padded to 10 like every CIK we store.
     owner_cik_raw = (owner.findtext(".//rptOwnerCik") or "").strip()

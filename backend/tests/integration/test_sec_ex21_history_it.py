@@ -27,7 +27,7 @@ def _seed(it_db):
             "since:$since, until:$until, source_date:'2026-08-07', source_id:'sec'}]->(b)",
             {"id": sid, "ft": ft, "since": since, "until": until})
         it_db.run_sql("INSERT INTO Claim SET claim_key = :k, kind = 'owns', from_id = 'nc', to_id = :id, "
-                      "filing_type = :ft, since = :since, source_date = '2026-08-07'",
+                      "source_id = 'sec', filing_type = :ft, since = :since, source_date = '2026-08-07'",
                       {"k": f"owns|nc|{sid}", "id": sid, "ft": ft, "since": since})
 
 

@@ -275,6 +275,44 @@ _RULED_STRINGS: list[tuple[str, str]] = [
     ("HAS_ROLE", "read_from"),
 ]
 
+#: The dates: ISO `YYYY-MM-DD`, as every writer normalises a source's date, at
+#: the precision the source states — a Wikidata year is `2019-00-00` or
+#: `2019`, a PSC birth month `1965-04` — so the rule checks the SHAPE and never
+#: the calendar (that stays with the writers). What it refuses is a date in
+#: another notation ("4 March 2019", "03/04/2019") or a timestamp in a date
+#: field — either of which would sort wrongly against every other row, since
+#: the readers compare dates as text. No backslash in the pattern: it travels
+#: inside an SQL string literal.
+_DATE_PATTERN = "^[0-9]{4}(-[0-9]{2}){0,2}$"
+_DATES: list[tuple[str, str]] = [
+    ("Entity", "incorporated_on"), ("Entity", "lei_registration_date"),
+    ("Person", "birth_date"), ("Person", "death_date"),
+    ("OWNS", "since"), ("OWNS", "until"), ("OWNS", "since_not_before"),
+    ("OWNS", "ultimate_since"), ("OWNS", "ultimate_until"),
+    ("OWNS", "source_date"), ("OWNS", "event_date"), ("OWNS", "denominator_date"),
+    ("OWNS", "stale_since"), ("OWNS", "file_date"),
+    ("HAS_ROLE", "since"), ("HAS_ROLE", "until"), ("HAS_ROLE", "source_date"),
+    ("Claim", "since"), ("Claim", "until"), ("Claim", "source_date"),
+    ("Claim", "event_date"), ("Claim", "denominator_date"),
+    ("StakeHistory", "as_of"),
+    ("IndustryCode", "source_date"),
+]
+#: The timestamps: ISO 8601 with a time AND an offset — what
+#: `datetime.now(timezone.utc).isoformat()` writes (`+00:00`; a few hundred
+#: older rows carry `Z`, which is the same instant). A naive timestamp is
+#: refused: without its offset it is not a point in time.
+_TIMESTAMP_PATTERN = ("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?"
+                      "(Z|[+-][0-9]{2}:[0-9]{2})$")
+_TIMESTAMPS: list[tuple[str, str]] = [
+    ("Entity", "created_at"), ("Entity", "last_scraped_at"), ("Entity", "sec_13f_scraped_at"),
+    ("Person", "created_at"),
+    ("OWNS", "last_scraped_at"), ("HAS_ROLE", "last_scraped_at"), ("RELATED_TO", "last_scraped_at"),
+    ("Claim", "first_seen_at"), ("Claim", "last_seen_at"),
+    ("StakeHistory", "recorded_at"),
+    ("IndustryCode", "first_seen_at"), ("IndustryCode", "last_seen_at"),
+]
+_RULED_STRINGS += _DATES + _TIMESTAMPS
+
 #: catalog key per ALTER PROPERTY attribute, as `schema:types` reports it
 _RULE_KEYS = {"MANDATORY": "mandatory", "NOTNULL": "notNull", "REGEXP": "regexp",
               "MIN": "min", "MAX": "max", "DEFAULT": "default"}
@@ -289,9 +327,10 @@ def _vocab(values) -> str:
 def constraints() -> list[tuple[str, str, str, str]]:
     """The rules the server enforces beyond a property's type, as
     (type, property, ATTRIBUTE, value) for `ALTER PROPERTY`: the ids and claim
-    keys a row cannot exist without, the vocabularies (built from the enums
-    the code already validates against, so a new value needs no second
-    list), the ISO-2 shape of a country, the 0–100 range of a percentage, and
+    keys a row cannot exist without (a claim's source among them), the
+    vocabularies (built from the enums the code already validates against, so
+    a new value needs no second list), the ISO-2 shape of a country, the shape
+    of every date and timestamp, the 0–100 range of a percentage, and
     `stale`'s default. ArcadeDB refuses a write that breaks one with a clear
     message, and refuses to declare a rule while any stored row breaks it —
     so a heal runs before its rule, never after (2026-10-25). A rule leaves a
@@ -303,13 +342,15 @@ def constraints() -> list[tuple[str, str, str, str]]:
     grades = _vocab(READ_GRADES)
     pct = [("MIN", "0"), ("MAX", "100")]
     rules: list[tuple[str, str, str, str]] = []
-    # Not `Claim.source_id`: the SEC writer records a claim for an edge whose
-    # source is unknown (its key then has no source part), and the merge
-    # paths carry such claims — the IT suite exercises both.
+    # `Claim.source_id` too (since 2026-10-25): a claim IS what one source
+    # says, `record_claim` has always dropped one without a source, and no
+    # database held one — the rule makes the writer's refusal the server's.
     for vtype, prop in (("Entity", "id"), ("Person", "id"), ("Source", "id"),
                         ("Claim", "claim_key"), ("Claim", "kind"), ("Claim", "from_id"),
-                        ("Claim", "to_id")):
+                        ("Claim", "to_id"), ("Claim", "source_id")):
         rules += [(vtype, prop, "MANDATORY", "true"), (vtype, prop, "NOTNULL", "true")]
+    rules += [(vtype, prop, "REGEXP", _DATE_PATTERN) for vtype, prop in _DATES]
+    rules += [(vtype, prop, "REGEXP", _TIMESTAMP_PATTERN) for vtype, prop in _TIMESTAMPS]
     rules += [
         ("Claim", "kind", "REGEXP", _vocab((KIND_OWNS, KIND_ROLE, KIND_SUCCESSION))),
         ("Entity", "type", "REGEXP", _vocab(EntityType)),

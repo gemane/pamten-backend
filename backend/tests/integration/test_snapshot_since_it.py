@@ -62,7 +62,7 @@ class TestTheRepair:
                 {"a": a, "b": b, "ft": ft, "since": since, "asof": asof, "basis": basis})
             it_db.run_sql(
                 "INSERT INTO Claim SET claim_key = :k, kind = 'owns', from_id = :a, to_id = :b, "
-                "filing_type = :ft, since = :since, source_date = :asof, since_basis = :basis",
+                "source_id = 'sec', filing_type = :ft, since = :since, source_date = :asof, since_basis = :basis",
                 {"k": f"owns|{a}|{b}", "a": a, "b": b, "ft": ft, "since": since, "asof": asof,
                  "basis": basis})
 
