@@ -40,7 +40,7 @@ export ARCADEDB_IT_URL=http://localhost:2480
 export ARCADEDB_IT_USERNAME=root
 export ARCADEDB_IT_PASSWORD='RootPass123!'
 
-pytest tests/integration -v
+pytest tests/integration -v -n auto     # one worker per core; each test owns its database
 ```
 
 Each test gets a fresh, isolated database (`owlgraph_it_<random>`) that is dropped
