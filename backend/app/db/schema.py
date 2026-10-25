@@ -44,6 +44,10 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Entity",   "country",            "NOTUNIQUE"),
     ("Entity",   "type",               "NOTUNIQUE"),
     ("Person",   "id",              "UNIQUE"),
+    # A 13D filing group: its own vertex type since 2026-10-26 (it was an
+    # Entity of type `voting_group`, which every query that assumes an entity
+    # is a legal person had to filter out — eight did, the rest forgot)
+    ("VotingGroup", "id",            "UNIQUE"),
     ("Person",   "full_name",       "NOTUNIQUE"),
     ("Person",   "wikidata_id",     "NOTUNIQUE"),
     ("Person",   "sec_cik",         "NOTUNIQUE"),
@@ -148,7 +152,7 @@ _INDEXES: list[tuple[str, str, str]] = [
 # Edge types the app creates via Cypher and needs to exist up front (init-schema
 # and the startup bootstrap create them).
 _EDGE_TYPES: list[str] = [
-    "OWNS", "HAS_ROLE", "RELATED_TO", "DUAL_LISTED_WITH", "SUCCEEDED_BY",
+    "OWNS", "HAS_ROLE", "RELATED_TO", "MEMBER_OF", "DUAL_LISTED_WITH", "SUCCEEDED_BY",
     "NOT_DUPLICATE",
 ]
 
@@ -162,6 +166,7 @@ _EDGE_TYPES: list[str] = [
 _FULLTEXT_INDEXES: list[tuple[str, str]] = [
     ("Entity", "search_text"),
     ("Person", "search_text"),
+    ("VotingGroup", "search_text"),     # "anheuser voting" finds the bloc
 ]
 
 
@@ -258,7 +263,7 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     # the rest of the graph and the ops tables (2026-10-25: a survey of dev
     # found these stored untyped — ints, floats and flags the writers' JSON
     # happened to carry; a declaration pins them)
-    ("Entity",       "member_keys",       "LIST"),      # a voting group's roster
+    ("VotingGroup",  "member_keys",       "LIST"),      # the group's roster (cik|name per party)
     ("Person",       "scrape_depth",      "INTEGER"),
     ("Person",       "on_demand_scraped", "BOOLEAN"),
     ("Pin",          "stake_percent",     "DOUBLE"),
@@ -344,7 +349,17 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     ),
     "HAS_ROLE": ("role", "since", "until", "source_id", "source_url", "source_date", "last_scraped_at", "read_from",
                  "until_source_url"),
-    "RELATED_TO": ("relation", "source_id", "last_scraped_at"),
+    # `source_url` / `source_date`: the 13F affiliate writer stamps them
+    # (`runner._upsert_affiliate`); the ledger lacked them until 2026-10-26
+    "RELATED_TO": ("relation", "source_id", "source_url", "source_date", "last_scraped_at"),
+    # A party of a 13D filing group pointing at the group (2026-10-26; was
+    # RELATED_TO {relation: group_member})
+    "MEMBER_OF": ("source_id", "last_scraped_at"),
+    # A 13D filing group. `type` is always `voting_group`: the API's node
+    # kind, which the client reads off every node it draws — the vertex type
+    # says the same thing to the database
+    "VotingGroup": ("id", "name", "name_normalized", "search_text", "description", "type",
+                    "source_id", "created_at", "last_scraped_at"),
     "SUCCEEDED_BY": ("since", "source_id", "source_url", "source_date", "last_scraped_at"),
     "DUAL_LISTED_WITH": ("source_id", "source_url", "source_date", "last_scraped_at"),
     "NOT_DUPLICATE": ("at",),
@@ -434,7 +449,7 @@ def undeclared_properties(sample: int = 5000) -> dict[str, dict[str, dict]]:
 #: Properties that carry a rule below but no type declaration elsewhere (a
 #: rule needs a declared property; these are strings).
 _RULED_STRINGS: list[tuple[str, str]] = [
-    ("Entity", "hq_country"),
+    ("Entity", "hq_country"), ("VotingGroup", "type"),
     ("OWNS", "ownership_type"), ("OWNS", "read_from"),
     ("Claim", "kind"), ("Claim", "read_from"), ("Claim", "until_read_from"),
     ("HAS_ROLE", "read_from"), ("HAS_ROLE", "until_reason"),
@@ -474,7 +489,9 @@ _TIMESTAMP_PATTERN = ("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}([
 _TIMESTAMPS: list[tuple[str, str]] = [
     ("Entity", "created_at"), ("Entity", "last_scraped_at"), ("Entity", "sec_13f_scraped_at"),
     ("Person", "created_at"),
+    ("VotingGroup", "created_at"), ("VotingGroup", "last_scraped_at"),
     ("OWNS", "last_scraped_at"), ("HAS_ROLE", "last_scraped_at"), ("RELATED_TO", "last_scraped_at"),
+    ("MEMBER_OF", "last_scraped_at"),
     ("Claim", "first_seen_at"), ("Claim", "last_seen_at"),
     ("StakeHistory", "recorded_at"),
     ("IndustryCode", "first_seen_at"), ("IndustryCode", "last_seen_at"),
@@ -520,7 +537,7 @@ def constraints() -> list[tuple[str, str, str, str]]:
     # `Claim.source_id` too (since 2026-10-25): a claim IS what one source
     # says, `record_claim` has always dropped one without a source, and no
     # database held one — the rule makes the writer's refusal the server's.
-    for vtype, prop in (("Entity", "id"), ("Person", "id"), ("Source", "id"),
+    for vtype, prop in (("Entity", "id"), ("Person", "id"), ("VotingGroup", "id"), ("Source", "id"),
                         ("Claim", "claim_key"), ("Claim", "kind"), ("Claim", "from_id"),
                         ("Claim", "to_id"), ("Claim", "source_id")):
         rules += [(vtype, prop, "MANDATORY", "true"), (vtype, prop, "NOTNULL", "true")]
@@ -529,6 +546,7 @@ def constraints() -> list[tuple[str, str, str, str]]:
     rules += [
         ("Claim", "kind", "REGEXP", _vocab((KIND_OWNS, KIND_ROLE, KIND_SUCCESSION))),
         ("Entity", "type", "REGEXP", _vocab(EntityType)),
+        ("VotingGroup", "type", "REGEXP", "^voting_group$"),
         ("Entity", "country", "REGEXP", _ISO2),
         ("Entity", "hq_country", "REGEXP", _ISO2),
         ("OWNS", "ownership_type", "REGEXP", _vocab(OwnershipType)),

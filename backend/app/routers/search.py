@@ -228,9 +228,15 @@ def search(
                for node in _entity_candidate_rows(q_lower, nn, country)]
 
     person_sql = "SELECT FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 15"
+    # A 13D filing group ("anheuser voting") — its own vertex type since
+    # 2026-10-26, reported as an Entity result whose node `type` is
+    # `voting_group`, the shape the client has always drawn it in
+    group_sql = "SELECT FROM VotingGroup WHERE search_text CONTAINSTEXT :q LIMIT 10"
     if not country:
         for row in run_sql(person_sql, {"q": q_lower}):
             results.append({"node": _clean(row), "score": 1.0, "type": "Person"})
+        for row in run_sql(group_sql, {"q": q_lower}):
+            results.append({"node": _clean(row), "score": 1.0, "type": "Entity"})
 
     # Hide moderator-suppressed nodes from search.
     with db.get_session() as session:
@@ -390,8 +396,7 @@ def _voting_groups_of(session, node_id: str, hidden: set, label: str) -> list[di
     """
     out = []
     for g in session.run(
-            f"""MATCH (m:{label_or_entity(label)} {{id: $id}})-[r:RELATED_TO]->(g:Entity)
-               WHERE r.relation = 'group_member'
+            f"""MATCH (m:{label_or_entity(label)} {{id: $id}})-[r:MEMBER_OF]->(g:VotingGroup)
                RETURN g""", id=node_id):
         node = dict(g["g"])
         if node.get("id") not in hidden:
@@ -542,23 +547,23 @@ _NODE_EDGE_SECTIONS = {
     # client still re-sorts for display, the ORDER here only decides WHO
     # survives the cap.
     "owners": (
-        "MATCH (e:Entity {{id: $id}})<-[owns_r:OWNS]-(owner) WHERE {active} "
+        "MATCH (e:{label} {{id: $id}})<-[owns_r:OWNS]-(owner) WHERE {active} "
         "AND " + _NOT_A_SHORTCUT.format(rel="owns_r") + " "
         "WITH owner, owns_r ORDER BY coalesce(owns_r.stake_percent, -1) DESC LIMIT {limit} "
         "RETURN owner AS node, collect(owns_r) AS rels"),
     "subsidiaries": (
-        "MATCH (e:Entity {{id: $id}})-[sub_r:OWNS]->(subsidiary) WHERE {active} "
+        "MATCH (e:{label} {{id: $id}})-[sub_r:OWNS]->(subsidiary) WHERE {active} "
         "AND " + _NOT_A_SHORTCUT.format(rel="sub_r") + " "
         "WITH subsidiary, sub_r ORDER BY coalesce(sub_r.stake_percent, -1) DESC LIMIT {limit} "
         "RETURN subsidiary AS node, collect(sub_r) AS rels"),
     "executives": (
-        "MATCH (e:Entity {{id: $id}})<-[role_r:HAS_ROLE]-(p:Person) WHERE {active} "
+        "MATCH (e:{label} {{id: $id}})<-[role_r:HAS_ROLE]-(p:Person) WHERE {active} "
         "WITH p, collect(role_r) AS rels RETURN p AS node, rels LIMIT {limit}"),
     "succeeded_by": (
-        "MATCH (e:Entity {{id: $id}})-[succ_r:SUCCEEDED_BY]->(succ:Entity) "
+        "MATCH (e:{label} {{id: $id}})-[succ_r:SUCCEEDED_BY]->(succ:Entity) "
         "WITH succ, collect(succ_r) AS rels RETURN succ AS node, rels LIMIT {limit}"),
     "replaces": (
-        "MATCH (e:Entity {{id: $id}})<-[pred_r:SUCCEEDED_BY]-(pred:Entity) "
+        "MATCH (e:{label} {{id: $id}})<-[pred_r:SUCCEEDED_BY]-(pred:Entity) "
         "WITH pred, collect(pred_r) AS rels RETURN pred AS node, rels LIMIT {limit}"),
 }
 
@@ -579,19 +584,19 @@ _NODE_EDGE_SECTIONS = {
 # follow the edge outward or inward. The unanchored inbound form measured 589 ms
 # against 15 ms.
 _SECTION_COUNTS = {
-    "owners": ("MATCH (e:Entity {{id: $id}})<-[r:OWNS]-(owner) WHERE {active} "
+    "owners": ("MATCH (e:{label} {{id: $id}})<-[r:OWNS]-(owner) WHERE {active} "
                "AND " + _NOT_A_SHORTCUT.format(rel="r") + " "
                "RETURN count(DISTINCT owner) AS n"),
-    "subsidiaries": ("MATCH (e:Entity {{id: $id}})-[r:OWNS]->(sub) WHERE {active} "
+    "subsidiaries": ("MATCH (e:{label} {{id: $id}})-[r:OWNS]->(sub) WHERE {active} "
                      "AND " + _NOT_A_SHORTCUT.format(rel="r") + " "
                      "RETURN count(DISTINCT sub) AS n"),
-    "executives": ("MATCH (e:Entity {{id: $id}})<-[r:HAS_ROLE]-(p:Person) WHERE {active} "
+    "executives": ("MATCH (e:{label} {{id: $id}})<-[r:HAS_ROLE]-(p:Person) WHERE {active} "
                    "RETURN count(DISTINCT p) AS n"),
-    "dual_listed": ("MATCH (e:Entity {{id: $id}})-[:DUAL_LISTED_WITH]->(d:Entity) "
+    "dual_listed": ("MATCH (e:{label} {{id: $id}})-[:DUAL_LISTED_WITH]->(d:Entity) "
                     "RETURN count(DISTINCT d) AS n"),
-    "succeeded_by": ("MATCH (e:Entity {{id: $id}})-[:SUCCEEDED_BY]->(s:Entity) "
+    "succeeded_by": ("MATCH (e:{label} {{id: $id}})-[:SUCCEEDED_BY]->(s:Entity) "
                      "RETURN count(DISTINCT s) AS n"),
-    "replaces": ("MATCH (e:Entity {{id: $id}})<-[:SUCCEEDED_BY]-(pr:Entity) "
+    "replaces": ("MATCH (e:{label} {{id: $id}})<-[:SUCCEEDED_BY]-(pr:Entity) "
                  "RETURN count(DISTINCT pr) AS n"),
 }
 
@@ -603,13 +608,13 @@ def _as_of_params(entity_id: str, as_of: str | None) -> dict:
     return {"id": entity_id, **({"as_of": as_of} if as_of else {})}
 
 
-def _section_counts(session, entity_id: str, as_of: str | None = None) -> dict:
+def _section_counts(session, entity_id: str, as_of: str | None = None, label: str = "Entity") -> dict:
     """True size of each section, whatever the row limit returned — as of the
     same date as the sections, so "shown N of M" compares like with like."""
     out = {}
     for name, cypher in _SECTION_COUNTS.items():
         try:
-            rec = session.run(cypher.format(active=_active_clause("r", as_of)),
+            rec = session.run(cypher.format(active=_active_clause("r", as_of), label=label),
                               **_as_of_params(entity_id, as_of if name in _SECTION_REL else None)).single()
             out[name] = int(rec["n"]) if rec and rec["n"] is not None else 0
         except Exception:  # noqa: BLE001 — a missing count must not lose the profile
@@ -620,7 +625,7 @@ def _section_counts(session, entity_id: str, as_of: str | None = None) -> dict:
 # Sections that are bare nodes with no edge properties to carry.
 _NODE_ONLY_SECTIONS = {
     "dual_listed": (
-        "MATCH (e:Entity {{id: $id}})-[:DUAL_LISTED_WITH]->(dlc:Entity) "
+        "MATCH (e:{label} {{id: $id}})-[:DUAL_LISTED_WITH]->(dlc:Entity) "
         "WITH DISTINCT dlc RETURN dlc AS node LIMIT {limit}"),
 }
 
@@ -653,16 +658,25 @@ def get_full_profile(
     # HQ lives on the Entity itself (hq_locations / hq_city / hq_country /
     # hq_lat / hq_lng). The Location vertex it used to be read from was a
     # parallel representation of the same fact, and the client never used it.
-    head_query = "MATCH (e:Entity {id: $id}) RETURN e LIMIT 1"
+    # The id names an Entity — or a 13D filing group, its own vertex type
+    # since 2026-10-26, which the client opens through this same route: the
+    # payload shape is one, the node's `type` says which it is. Two indexed
+    # point reads, never an unlabelled scan (app/db/anchors.py).
+    head_query = "MATCH (e:{label} {{id: $id}}) RETURN e LIMIT 1"
+    label = "Entity"
     with db.get_session() as session:
-        head = session.run(head_query, id=entity_id).single()
+        head = session.run(head_query.format(label=label), id=entity_id).single()
         if not head:
+            label = "VotingGroup"
+            head = session.run(head_query.format(label=label), id=entity_id).single()
+        if not head:
+            label = "Entity"
             # A merge may have folded this id away — follow the forwarding
             # address so a shared link to the old node still opens the company.
             # Only on a miss; the section queries below then use the survivor's id.
             merged_into = resolve_current_id(session, entity_id)
             if merged_into:
-                head = session.run(head_query, id=merged_into).single()
+                head = session.run(head_query.format(label=label), id=merged_into).single()
                 if head:
                     entity_id = merged_into
         if not head:
@@ -670,16 +684,16 @@ def get_full_profile(
 
         grouped = {
             name: list(session.run(
-                sql.format(limit=limit, active=_active_clause(_SECTION_REL.get(name, "r"), as_of)),
+                sql.format(limit=limit, active=_active_clause(_SECTION_REL.get(name, "r"), as_of), label=label),
                 **_as_of_params(entity_id, as_of if name in _SECTION_REL else None)))
             for name, sql in _NODE_EDGE_SECTIONS.items()
         }
         plain = {
-            name: [r["node"] for r in session.run(sql.format(limit=limit), id=entity_id)]
+            name: [r["node"] for r in session.run(sql.format(limit=limit, label=label), id=entity_id)]
             for name, sql in _NODE_ONLY_SECTIONS.items()
         }
 
-        counts = _section_counts(session, entity_id, as_of)
+        counts = _section_counts(session, entity_id, as_of, label)
 
         # Same keys the single-query version produced, so the post-processing
         # below is unchanged.
@@ -765,14 +779,13 @@ def get_full_profile(
         sub_ids = {s["entity"]["id"] for s in subsidiaries}
         cross_holdings = [o["owner"] for o in owners if o["owner"].get("id") in sub_ids]
 
-        # The parties to a filing group. They join by RELATED_TO, not OWNS —
+        # The parties to a filing group. They join by MEMBER_OF, not OWNS —
         # membership is not ownership — so nothing in the owners query above can
         # see them, and the group's panel would otherwise list nobody.
         group_members = []
-        if (dict(record["e"]).get("type") or "") == "voting_group":
+        if label == "VotingGroup":
             for m in session.run(
-                    """MATCH (m)-[r:RELATED_TO]->(g:Entity {id: $id})
-                       WHERE r.relation = 'group_member'
+                    """MATCH (m)-[r:MEMBER_OF]->(g:VotingGroup {id: $id})
                        RETURN m, labels(m)[0] AS label""", id=entity_id):
                 node = dict(m["m"])
                 if node.get("id") in hidden:
@@ -785,7 +798,7 @@ def get_full_profile(
         # without it a member's profile has no idea it belongs to a bloc, so
         # centring Altria could never draw the agreement it votes in — the
         # payload simply lacked the fact.
-        voting_groups = _voting_groups_of(session, entity_id, hidden, "Entity")
+        voting_groups = _voting_groups_of(session, entity_id, hidden, label)
 
         return {
             "entity": dict(record["e"]),

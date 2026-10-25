@@ -77,10 +77,11 @@ def test_the_backfill_dates_from_claims_then_scrapes_and_guesses_nothing(it_db):
                       "last_scraped_at:'2026-05-05T00:00:00+00:00'})")
     it_db.run_command("CREATE (:Entity {id:'silent', name:'N', name_normalized:'n'})")
     it_db.run_command("CREATE (:Person {id:'p-claimed', full_name:'P'})")
-    # a 13D group member: never scraped itself, no claim names it, one RELATED_TO edge
+    # a 13D group member: never scraped itself, no claim names it, one MEMBER_OF edge
     it_db.run_command("CREATE (:Entity {id:'grouped', name:'G', name_normalized:'g'})")
-    it_db.run_command("MATCH (a:Entity {id:'grouped'}), (b:Entity {id:'claimed'}) "
-                      "CREATE (a)-[:RELATED_TO {relation:'voting_group', last_scraped_at:'2026-10-06T22:56:41+00:00'}]->(b)")
+    it_db.run_command("CREATE (:VotingGroup {id:'grp', name:'Voting group · 2 parties', type:'voting_group'})")
+    it_db.run_command("MATCH (a:Entity {id:'grouped'}), (g:VotingGroup {id:'grp'}) "
+                      "CREATE (a)-[:MEMBER_OF {last_scraped_at:'2026-10-06T22:56:41+00:00'}]->(g)")
     for key, frm, to, seen in (("k1", "owner", "claimed", "2025-06-01T00:00:00+00:00"),
                                ("k2", "claimed", "sub", "2025-02-01T00:00:00+00:00"),
                                ("k3", "p-claimed", "claimed", "2025-09-01T00:00:00+00:00")):

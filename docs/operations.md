@@ -138,9 +138,11 @@ The REPEATABLE_READ regressions (#9070/#9620) do not apply: we use the default i
 (SQL and Cypher, `!=` and `NOT (… = …)` alike) no longer matches a row whose `type` is null,
 where 26.7.3 matched it. 1,298 of the dev graph's 6,064 entities have no type, and the
 quality report, the duplicate scan, the country backfill, the missing-country list and the
-federation export all went silent on them. Fixed in the app (`anchors.not_a_voting_group`,
-`tests/integration/test_null_type_it.py` runs on both engines); the rule for every new query:
-a `<>` on a nullable property needs an `IS NULL OR` beside it.
+federation export all went silent on them. Fixed in the app first with an `IS NULL OR`
+fence (`anchors.not_a_voting_group`), then by removing the need for it: since 2026-10-26 a
+voting group is its own vertex type and no entity query fences anything off
+(`tests/integration/test_null_type_it.py` runs on both engines); the rule for every new
+query stays: a `<>` on a nullable property needs an `IS NULL OR` beside it.
 
 ## Backups
 

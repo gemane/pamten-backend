@@ -131,7 +131,7 @@ class TestTheSitesThatScanned:
 
     def test_the_entity_profile_passes_entity_and_the_person_profile_person(self):
         src = (APP / "routers" / "search.py").read_text(encoding="utf-8")
-        assert '_voting_groups_of(session, entity_id, hidden, "Entity")' in src
+        assert '_voting_groups_of(session, entity_id, hidden, label)' in src     # Entity or VotingGroup
         assert '_voting_groups_of(session, person_id, hidden, "Person")' in src
 
     def test_mark_stale_ownership_writes_with_the_owners_label(self, fake_db, monkeypatch):

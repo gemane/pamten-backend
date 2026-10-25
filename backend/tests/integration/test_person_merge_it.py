@@ -153,22 +153,21 @@ def test_a_person_merge_takes_the_claims_with_it(it_db):
 
 
 def test_a_person_merge_keeps_voting_group_membership(it_db):
-    """RELATED_TO carries `last_scraped_at` too — it was one of three properties
-    the hand-written list knew about, and the schema knows all of them."""
+    """Membership is MEMBER_OF (2026-10-26) and carries `last_scraped_at`
+    too — the merge recreates it from the schema's list, so it survives."""
     from app.routers.persons import merge_person_records
 
     it_db.run_command("CREATE (:Person {id:'keep', full_name:'Jorge Paulo Lemann', aliases: []})")
     it_db.run_command("CREATE (:Person {id:'dup', full_name:'Lemann Jorge Paulo', aliases: []})")
-    it_db.run_command("CREATE (:Entity {id:'grp', name:'Voting group', type:'voting_group'})")
+    it_db.run_command("CREATE (:VotingGroup {id:'grp', name:'Voting group · 3 parties', type:'voting_group'})")
     it_db.run_command(
-        "MATCH (p:Person {id:'dup'}), (g:Entity {id:'grp'}) CREATE (p)-[:RELATED_TO "
-        "{relation:'group_member', source_id:'sec', last_scraped_at:'2026-08-28T00:00Z'}]->(g)")
+        "MATCH (p:Person {id:'dup'}), (g:VotingGroup {id:'grp'}) CREATE (p)-[:MEMBER_OF "
+        "{source_id:'sec', last_scraped_at:'2026-08-28T00:00Z'}]->(g)")
 
     merge_person_records("keep", "dup")
 
     rows = it_db.run_command(
-        "MATCH (:Person {id:'keep'})-[r:RELATED_TO]->(:Entity {id:'grp'}) "
-        "RETURN r.relation AS rel, r.source_id AS sid, r.last_scraped_at AS seen")
+        "MATCH (:Person {id:'keep'})-[r:MEMBER_OF]->(:VotingGroup {id:'grp'}) "
+        "RETURN r.source_id AS sid, r.last_scraped_at AS seen")
     assert len(rows) == 1
-    assert rows[0]["rel"] == "group_member" and rows[0]["sid"] == "sec"
-    assert rows[0]["seen"] == "2026-08-28T00:00Z"
+    assert rows[0]["sid"] == "sec" and rows[0]["seen"] == "2026-08-28T00:00Z"

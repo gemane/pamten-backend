@@ -32,7 +32,6 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from app.db.anchors import not_a_voting_group
 from app.db.arcadedb import run_sql
 from app.database import db
 from app.scraper.edge_schema import READ_GRADES
@@ -119,10 +118,10 @@ def _corroboration() -> dict:
     }
 
 
-#: Not a legal organisation, so it cannot appear in a ratio about registration.
-#: A voting group is a contract between parties; it will never hold an LEI, and
-#: counting it would make the graph look permanently less identified than it is.
-_NOT_A_LEGAL_ENTITY = not_a_voting_group()
+#: Every Entity is a legal organisation since 2026-10-26: a 13D voting group
+#: — a contract between parties that never holds an LEI — is its own vertex
+#: type (VotingGroup), so the registration ratio no longer fences anything off.
+_NOT_A_LEGAL_ENTITY = "1 = 1"
 
 
 def _identity() -> dict:

@@ -153,7 +153,8 @@ by hand (recreate the relative, move their seats and claims, keep-separate).
 1. **Re-home edges** — `OWNS` folds onto the kept person's edge to the same
    target with `COALESCE` (blanks backfilled, existing values kept); `HAS_ROLE`
    is created (distinct tenures dedupe on display); `RELATED_TO` folds in both
-   directions, which is how a merged person keeps their voting-group membership.
+   directions and `MEMBER_OF` is carried one edge per group, which is how a merged
+   person keeps their voting-group membership (2026-10-26).
    The property lists come from `scraper/edge_schema.py` — this is the **fifth**
    edge-recreate block, and until 2026-08-28 it was the one the edge-schema audit
    missed: it carried a hand-written 11 of the 25 OWNS properties, silently
@@ -455,11 +456,14 @@ carry per-relationship provenance).
 
 ## What a merge carries
 
-`_migrate_entity_edges` moves **OWNS**, **HAS_ROLE** and **RELATED_TO** (both
-directions) from the losing node onto the survivor. RELATED_TO was added late:
-it carries filing-group membership and 13F fund affiliation, and until then a
-merge destroyed it without trace — a party merged into another node simply
-vanished from the group it belongs to.
+`_migrate_entity_edges` moves **OWNS**, **HAS_ROLE**, **RELATED_TO** (both
+directions) and **MEMBER_OF** from the losing node onto the survivor. RELATED_TO was
+added late: it carried filing-group membership and 13F fund affiliation, and until
+then a merge destroyed it without trace — a party merged into another node simply
+vanished from the group it belongs to. Membership is `MEMBER_OF` since 2026-10-26
+(`_migrate_membership`, shared with the person merge); an incoming OWNS from a
+`VotingGroup` — the bloc over a merged company — follows the survivor like any
+owner's, its label read off the edge.
 
 **An OWNS edge is recreated, not moved**, so its property list decides what
 survives — and hand-written lists here fell behind **four separate times**, the
@@ -513,9 +517,10 @@ sab` — two companies, whose Form 4 officers landed on one and whose LEI sat on
 Joined first, `CERVECERIA CHILE S A` also loses its `sa` exactly as `Cerveceria Chile S.A.`
 does, and `J P Morgan` keys like `J.P. Morgan`. A lone letter (`Toys R Us`) is not an
 abbreviation and stays. The key is stored on the node, so a database written before the
-rule carries the old keys: `manage.py heal-name-keys` recomputes them (a 13D voting group is
-left alone — its key is the writer's own, "voting group <issuer>", not its display name's;
-the first dev run rewrote three of those and had to be restored) and names the keys
+rule carries the old keys: `manage.py heal-name-keys` recomputes them (a 13D voting group
+was once left alone here — its key is the writer's own, "voting group <issuer>", not its
+display name's, and the first dev run rewrote three of those; since 2026-10-26 a group is its
+own vertex type and the Entity scan never meets one) and names the keys
 two entities now share for the first time (dev: 31 keys changed, one new pair, Televisa),
 which are merged by hand — `manage.py merge-entities --keep ID --dead ID --apply`, since the
 app has no entity-merge button; a same-name pair is a candidate, never an automatic merge (see

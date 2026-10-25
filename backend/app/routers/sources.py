@@ -112,6 +112,12 @@ def _entity_own_source_rows(session, entity_id: str) -> list[dict]:
         "e.source_url AS source_url, e.source_date AS source_date, e.last_scraped_at AS last_scraped_at",
         id=entity_id).single()
     if not rec:
+        # a 13D filing group (its own vertex type since 2026-10-26) carries the
+        # one source that derived it — the filings' register
+        rec = session.run(
+            "MATCH (g:VotingGroup {id: $id}) RETURN g.source_id AS source_id, g.last_scraped_at AS last_scraped_at",
+            id=entity_id).single()
+    if not rec:
         return []
     date, lsa = rec.get("source_date"), rec.get("last_scraped_at")
 

@@ -25,9 +25,11 @@ from app.scraper.owns_merge import ANSWER_FIELDS, SINCE_FIELDS, combine_since, o
 log = logging.getLogger(__name__)
 
 #: A filing group is not a legal person: it holds no LEI, has no country, and
-#: cannot be geocoded or deduplicated like a company. Everything that assumes an
-#: Entity is a real organisation filters this type out — see `app/quality.py`
-#: and the country/dedup passes in `app/scraper/maintenance.py`.
+#: cannot be geocoded or deduplicated like a company. Since 2026-10-26 it is
+#: its own vertex type, `VotingGroup`, so nothing that assumes an Entity is a
+#: legal organisation has to filter it out (eight queries did; the rest
+#: forgot). `type` on the node is the API's node kind — what the client draws
+#: and labels by — and reads `voting_group` on every VotingGroup.
 VOTING_GROUP_TYPE = "voting_group"
 
 #: Item 8 codes meaning a human being, mirrored from sec_edgar so the writer can
@@ -130,8 +132,8 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
     now = _now_iso()
     with db.get_session() as session:
         existing = list(session.run(
-            f"""MATCH (g:Entity {{type: '{VOTING_GROUP_TYPE}'}})-[:OWNS]->(s:Entity {{id: $sid}})
-                RETURN g.id AS id, g.member_keys AS roster""",
+            """MATCH (g:VotingGroup)-[:OWNS]->(s:Entity {id: $sid})
+               RETURN g.id AS id, g.member_keys AS roster""",
             sid=subject_id))
 
         best, best_shared = None, 0
@@ -150,13 +152,11 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
         # sit in the name, where it is the most useful thing to say.
         name = _voting_group_name(len(roster))
         # The DISPLAY name says what the thing is and how big it is, and that is
-        # all a reader wants on a row. But two nine-party groups over different
-        # companies would then share a `name_normalized`, which is the field
-        # `resolve_entity_id` matches on — so the matching key carries the
-        # subject even though the label does not. Deliberately not
+        # all a reader wants on a row; the matching key carries the subject, so
+        # two nine-party groups over different companies never share one
+        # (search's exact-name path reads it). Deliberately not
         # `normalize_entity_name(name)`: display and identity answer different
-        # questions here, and conflating them is how one company's bloc would
-        # resolve onto another's.
+        # questions here.
         norm = f"voting group {normalize_entity_name(subject_name) or subject_name.lower()}"
         # Searchable by the company too — "anheuser voting" should find it, and
         # a bare "Voting group · 9 parties" in a result list says nothing about
@@ -166,7 +166,7 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
         if best:
             # Same agreement, new roster: parties join and leave, and the node
             # should follow rather than fork. The name follows the count.
-            session.run("""MATCH (g:Entity {id: $id})
+            session.run("""MATCH (g:VotingGroup {id: $id})
                            SET g.member_keys = $roster, g.name = $name,
                                g.name_normalized = $norm, g.search_text = $stext,
                                g.last_scraped_at = $now""",
@@ -175,7 +175,7 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
             return best
         gid = str(uuid.uuid4())
         session.run(
-            f"""CREATE (g:Entity {{
+            f"""CREATE (g:VotingGroup {{
                     id: $id, name: $name, name_normalized: $norm, search_text: $stext,
                     type: '{VOTING_GROUP_TYPE}', member_keys: $roster,
                     source_id: $src, last_scraped_at: $now,
@@ -190,13 +190,13 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
 
 def _upsert_group_membership(member_id: str, group_id: str, member_label: str,
                              source_id: str) -> None:
-    """A party belongs to a filing group. NOT ownership — the same shape and the
-    same reasoning as `_upsert_affiliate` below, which already models 13F fund
-    groups as `RELATED_TO` rather than inventing an ownership edge."""
+    """A party belongs to a filing group: `MEMBER_OF`, its own edge type
+    since 2026-10-26 (RELATED_TO {relation: 'group_member'} before, beside
+    the 13F affiliates). NOT ownership — the bloc's holding is the group's."""
     with db.get_session() as session:
         session.run(
-            f"""MATCH (m:{member_label} {{id: $mid}}), (g:Entity {{id: $gid}})
-                MERGE (m)-[r:RELATED_TO {{relation: 'group_member'}}]->(g)
+            f"""MATCH (m:{member_label} {{id: $mid}}), (g:VotingGroup {{id: $gid}})
+                MERGE (m)-[r:MEMBER_OF]->(g)
                 SET r.source_id = $src, r.last_scraped_at = $now""",
             mid=member_id, gid=group_id, src=source_id, now=_now_iso())
 
@@ -351,7 +351,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     from app.scraper.sources import edge_writes_suppressed
     if edge_writes_suppressed(source_id):
         return None
-    owner_label = owner_label if owner_label in ("Entity", "Person") else "Entity"
+    owner_label = label_or_entity(owner_label)        # Entity, Person or VotingGroup
     now = datetime.now(timezone.utc).isoformat()
     # The full schema bag: every OWNS property, None where this filing did not
     # say. The CREATE clause is generated from the same schema, so the write

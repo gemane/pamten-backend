@@ -1133,6 +1133,22 @@ def cmd_schema_audit(args):
     sys.exit(1)
 
 
+def cmd_heal_voting_groups(args):
+    """Move every Entity of type `voting_group` to the VotingGroup vertex
+    type (app.voting_groups.heal_voting_group_type, 2026-10-26): same id,
+    RELATED_TO {group_member} → MEMBER_OF, the OWNS edge recreated from the
+    new vertex, the old node deleted. Run BEFORE `init-schema` re-declares the
+    Entity.type vocabulary, which no longer has `voting_group` in it. Dry run
+    unless --apply."""
+    from app.voting_groups import heal_voting_group_type
+    res = heal_voting_group_type(apply=args.apply)
+    verb = "moved" if args.apply else "would move (dry run — add --apply)"
+    print(f"{res['groups']} voting groups {verb} to their own vertex type, "
+          f"with {res['members']} memberships and {res['holdings']} holdings")
+    for line in res["names"]:
+        print("  " + line)
+
+
 def cmd_heal_name_keys(args):
     """Recompute Entity.name_normalized where the normaliser's answer changed
     (app.name_keys.heal_name_keys) and name the keys two entities now share
@@ -1505,6 +1521,12 @@ def _build_parser():
     p_hpt.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hpt.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hpt.set_defaults(func=cmd_heal_property_types)
+
+    p_hvg = subparsers.add_parser('heal-voting-groups',
+        help="Move every Entity of type voting_group to the VotingGroup vertex type (2026-10-26); "
+             "run before init-schema. Dry run unless --apply")
+    p_hvg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hvg.set_defaults(func=cmd_heal_voting_groups)
 
     p_hnk = subparsers.add_parser('heal-name-keys',
         help="Recompute Entity.name_normalized where the normaliser changed (2026-10-25: spaced "

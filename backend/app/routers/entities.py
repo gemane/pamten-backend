@@ -2,7 +2,6 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.entity import EntityCreate, EntityResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
-from app.db.anchors import not_a_voting_group
 from app.merged_ids import resolve_current_id
 from app.models.person import KeepSeparateRequest
 from datetime import datetime, timezone
@@ -139,11 +138,9 @@ def get_entities_without_country(
     segment that a real country code could one day collide with.
     """
     prop = _basis_property(basis)
-    # A voting group has no country by nature, so listing it here as work to be
-    # done would never stop being true.
     query = f"""
         MATCH (e:Entity)
-        WHERE ({prop} IS NULL OR {prop} = '') AND {not_a_voting_group('e.')}
+        WHERE ({prop} IS NULL OR {prop} = '')
         RETURN e.id AS id, e.name AS name, e.type AS type
         ORDER BY e.name
         LIMIT $limit

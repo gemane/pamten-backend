@@ -43,7 +43,7 @@ class TestGroupNodeIdentity:
         from app.scraper.runner import _upsert_voting_group
         gid = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*ABI_ROSTER), "sec")
         rows = graph.run_command(
-            "MATCH (g:Entity) WHERE g.type = 'voting_group' "
+            "MATCH (g:VotingGroup) "
             "RETURN g.id AS id, g.name AS name, g.type AS type")
         assert len(rows) == 1 and rows[0]["id"] == gid
         # Named for what it is and how many are in it — the panel already says
@@ -56,22 +56,22 @@ class TestGroupNodeIdentity:
         # has to exist before the second call can find the first node.
         from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
         first = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*ABI_ROSTER), "sec")
-        _upsert_owns_sec(first, "abi", "sec", "unknown", "2025-01-01", None,
+        _upsert_owns_sec(first, "abi", "sec", "unknown", "2025-01-01", None, owner_label="VotingGroup",
                          voting_power_pct=52.3)
         # Filed by a different member, one party gone, one added.
         later = ABI_ROSTER[1:] + (("Fonds Baillet Latour CV", None),)
         second = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*later), "sec")
         assert second == first, "a changed filer and roster forked the group"
         assert len(graph.run_command(
-            "MATCH (g:Entity) WHERE g.type = 'voting_group' RETURN g.id AS id")) == 1
+            "MATCH (g:VotingGroup) RETURN g.id AS id")) == 1
 
     def test_the_roster_is_replaced_by_the_newer_one(self, graph):
         from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
         gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
-        _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-01-01", None,
+        _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-01-01", None, owner_label="VotingGroup",
                          voting_power_pct=52.3)
         _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER[:4]), "sec")
-        rows = graph.run_command("MATCH (g:Entity) WHERE g.type = 'voting_group' "
+        rows = graph.run_command("MATCH (g:VotingGroup) "
                                  "RETURN g.member_keys AS member_keys")
         assert len(rows[0]["member_keys"]) == 4
 
@@ -83,11 +83,11 @@ class TestGroupNodeIdentity:
         from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
         graph.run_command("CREATE (e:Entity {id:'other', name:'Other Co', type:'company'})")
         a = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*ABI_ROSTER), "sec")
-        _upsert_owns_sec(a, "abi", "sec", "unknown", "2025-01-01", None, voting_power_pct=52.3)
+        _upsert_owns_sec(a, "abi", "sec", "unknown", "2025-01-01", None, owner_label="VotingGroup", voting_power_pct=52.3)
         b = _upsert_voting_group("other", "Other Co", _roster(*ABI_ROSTER), "sec")
 
         rows = graph.run_command(
-            "MATCH (g:Entity) WHERE g.type = 'voting_group' "
+            "MATCH (g:VotingGroup) "
             "RETURN g.name AS name, g.name_normalized AS norm, g.search_text AS st")
         assert len({r["name"] for r in rows}) == 1, "the display names should match"
         assert len({r["norm"] for r in rows}) == 2, "the matching keys must not"
@@ -101,7 +101,7 @@ class TestGroupNodeIdentity:
         # agreement, overlapping only on the Stichting.
         from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
         first = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*ABI_ROSTER), "sec")
-        _upsert_owns_sec(first, "abi", "sec", "unknown", "2025-01-01", None,
+        _upsert_owns_sec(first, "abi", "sec", "unknown", "2025-01-01", None, owner_label="VotingGroup",
                          voting_power_pct=52.3)
         altria = _roster(("Altria Group, Inc.", "764180"), ("Bevco Lux S.a.r.l.", None),
                          ("Stichting Anheuser-Busch InBev", None))
@@ -109,14 +109,14 @@ class TestGroupNodeIdentity:
                                       "sec")
         assert second != first
         names = sorted(r["name"] for r in graph.run_command(
-            "MATCH (g:Entity) WHERE g.type = 'voting_group' RETURN g.name AS name"))
+            "MATCH (g:VotingGroup) RETURN g.name AS name"))
         assert names == ["Voting group · 3 parties", "Voting group · 5 parties"]
 
     def test_the_same_roster_over_another_company_is_another_group(self, graph):
         from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
         graph.run_command("CREATE (e:Entity {id:'other', name:'Other Co', type:'company'})")
         a = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
-        _upsert_owns_sec(a, "abi", "sec", "unknown", "2025-01-01", None, voting_power_pct=52.3)
+        _upsert_owns_sec(a, "abi", "sec", "unknown", "2025-01-01", None, owner_label="VotingGroup", voting_power_pct=52.3)
         b = _upsert_voting_group("other", "Other Co", _roster(*ABI_ROSTER), "sec")
         assert a != b
 
@@ -142,9 +142,9 @@ class TestMembershipLeavesMembersAlone:
         gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
         _upsert_group_membership("stichting", gid, "Entity", "sec")
         rows = graph.run_command(
-            "MATCH (a {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) RETURN r.relation AS rel",
+            "MATCH (a {id:'stichting'})-[r:MEMBER_OF]->(g {id:$g}) RETURN r",
             {"g": gid})
-        assert [r["rel"] for r in rows] == ["group_member"]
+        assert len(rows) == 1
         assert graph.run_command(
             "MATCH (a {id:'stichting'})-[r:OWNS]->(g {id:$g}) RETURN r", {"g": gid}) == []
 
@@ -154,12 +154,12 @@ class TestMembershipLeavesMembersAlone:
         for _ in range(2):
             _upsert_group_membership("stichting", gid, "Entity", "sec")
         rows = graph.run_command(
-            "MATCH (a {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) RETURN r", {"g": gid})
+            "MATCH (a {id:'stichting'})-[r:MEMBER_OF]->(g {id:$g}) RETURN r", {"g": gid})
         assert len(rows) == 1
 
 
 class TestTheProfileShowsTheParties:
-    """Members join by RELATED_TO, so nothing in the owners query can see them.
+    """Members join by MEMBER_OF, so nothing in the owners query can see them.
     Without this the group's panel listed nobody — the section was there and
     empty, which is how it shipped the first time."""
 
@@ -205,7 +205,7 @@ class TestTheProfileShowsTheParties:
         from app.routers.search import get_full_profile
         graph.run_command(
             "MATCH (m {id:'stichting'}), (c {id:'abi'}) "
-            "CREATE (m)-[:RELATED_TO {relation:'group_member'}]->(c)")
+            "CREATE (m)-[:MEMBER_OF {source_id:'sec'}]->(c)")
         assert get_full_profile("abi")["group_members"] == []
 
     def test_only_membership_edges_count(self, graph):
@@ -267,11 +267,10 @@ def test_the_group_edge_carries_the_blocs_count(graph):
     from app.scraper.runner import _upsert_voting_group, _upsert_owns_sec
     from app.database import db as _db
     gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
-    _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-02-07", None,
+    _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-02-07", None, owner_label="VotingGroup",
                      voting_power_pct=52.3, voting_shares=1033081237)
     with _db.get_session() as s:
-        r = list(s.run("""MATCH (g:Entity)-[r:OWNS]->(b {id:'abi'})
-                          WHERE g.type = 'voting_group'
+        r = list(s.run("""MATCH (g:VotingGroup)-[r:OWNS]->(b {id:'abi'})
                           RETURN r.voting_shares AS vs, r.shares AS sh,
                                  r.voting_power_pct AS vp"""))[0]
     assert r["vs"] == 1033081237
@@ -288,7 +287,7 @@ def test_the_bloc_does_not_enter_the_disclosed_total(graph):
     from app.routers.search import get_full_profile
 
     gid = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*ABI_ROSTER), "sec")
-    _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-02-07", None,
+    _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-02-07", None, owner_label="VotingGroup",
                      voting_power_pct=52.3)
     graph.run_command("CREATE (e:Entity {id:'altria', name:'Altria', type:'company'})")
     graph.run_command(
@@ -348,13 +347,13 @@ class TestTheWholeScrapeWritesTheGroup:
         self._scrape(graph, self.FILING)
 
         groups = graph.run_command(
-            "MATCH (g:Entity) WHERE g.type = 'voting_group' RETURN g.id AS id, g.name AS name")
+            "MATCH (g:VotingGroup) RETURN g.id AS id, g.name AS name")
         assert len(groups) == 1
         gid = groups[0]["id"]
 
         # Four parties: the filer plus its three co-filers.
         members = graph.run_command(
-            "MATCH (m)-[r:RELATED_TO]->(g {id:$g}) WHERE r.relation = 'group_member' "
+            "MATCH (m)-[r:MEMBER_OF]->(g {id:$g}) "
             "RETURN COALESCE(m.name, m.full_name) AS n", {"g": gid})
         assert len(members) == 4
         assert "BRC S.a R.L." in {m["n"] for m in members}
@@ -371,7 +370,7 @@ class TestTheWholeScrapeWritesTheGroup:
         # holdings and put the company over 100% of itself.
         self._scrape(graph, self.FILING)
         rows = graph.run_command(
-            "MATCH (g:Entity)-[r:OWNS]->(b:Entity) WHERE g.type = 'voting_group' "
+            "MATCH (g:VotingGroup)-[r:OWNS]->(b:Entity) "
             "RETURN r.stake_percent AS stake, r.voting_power_pct AS vote, "
             "r.voting_shares AS vshares")
         assert len(rows) == 1
@@ -425,9 +424,8 @@ class TestTheWholeScrapeWritesTheGroup:
             "MATCH (p:Person) WHERE p.full_name = 'Stichting Anheuser-Busch InBev' "
             "RETURN p.id AS id") == [], "a foundation was created as a person"
         linked = graph.run_command(
-            "MATCH (m:Entity {id:'stichting'})-[r:RELATED_TO]->(g:Entity) "
-            "WHERE g.type = 'voting_group' RETURN r.relation AS rel")
-        assert [r["rel"] for r in linked] == ["group_member"], \
+            "MATCH (m:Entity {id:'stichting'})-[r:MEMBER_OF]->(g:VotingGroup) RETURN r")
+        assert len(linked) == 1, \
             "the existing Stichting node was not the one joined to the group"
 
     def test_an_insiders_form_4_holding_keeps_its_share_count(self, graph):
@@ -539,7 +537,7 @@ class TestTheWholeScrapeWritesTheGroup:
                    "investor_name": "State Street Corporation"}
         self._scrape(graph, passive)
         assert graph.run_command(
-            "MATCH (g:Entity) WHERE g.type = 'voting_group' RETURN g.id AS id") == []
+            "MATCH (g:VotingGroup) RETURN g.id AS id") == []
         # It keeps an ordinary edge of its own instead.
         assert graph.run_command(
             "MATCH (a:Entity)-[r:OWNS]->(b:Entity) WHERE a.name = 'State Street Corporation' "
@@ -548,9 +546,10 @@ class TestTheWholeScrapeWritesTheGroup:
 
 class TestAMergeDoesNotLoseMembership:
     """`_migrate_entity_edges` moved OWNS and HAS_ROLE only, so a merge
-    destroyed RELATED_TO without trace — a party merged into another node simply
-    vanished from the group it belongs to. It predates voting groups (13F fund
-    affiliation used the same edge) but membership now depends on it."""
+    destroyed membership without trace — a party merged into another node simply
+    vanished from the group it belongs to. Membership is MEMBER_OF since
+    2026-10-26 (`_migrate_membership`, shared by the person merge). A group
+    itself is never merged: its identity is its roster, not a name."""
 
     def _merge(self, dead: str, keep: str):
         from app.scraper.maintenance import _migrate_entity_edges
@@ -564,9 +563,8 @@ class TestAMergeDoesNotLoseMembership:
 
         self._merge("dupe", "stichting")
         rows = graph.run_command(
-            "MATCH (m {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) "
-            "RETURN r.relation AS rel", {"g": gid})
-        assert [r["rel"] for r in rows] == ["group_member"], \
+            "MATCH (m {id:'stichting'})-[r:MEMBER_OF]->(g {id:$g}) RETURN r", {"g": gid})
+        assert len(rows) == 1, \
             "the merged party lost its place in the group"
 
     def test_the_direction_is_preserved(self, graph):
@@ -578,22 +576,8 @@ class TestAMergeDoesNotLoseMembership:
         _upsert_group_membership("dupe", gid, "Entity", "sec")
         self._merge("dupe", "stichting")
         assert graph.run_command(
-            "MATCH (g {id:$g})-[r:RELATED_TO]->(m {id:'stichting'}) RETURN r",
+            "MATCH (g {id:$g})-[r:MEMBER_OF]->(m {id:'stichting'}) RETURN r",
             {"g": gid}) == []
-
-    def test_a_group_keeps_its_parties_when_the_group_is_merged(self, graph):
-        # The other direction: the surviving group must inherit the incoming
-        # membership edges of the one merged away.
-        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership
-        graph.run_command("CREATE (e:Entity {id:'other', name:'Other Co', type:'company'})")
-        keep = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
-        dead = _upsert_voting_group("other", "Other Co", _roster(*ABI_ROSTER[:3]), "sec")
-        _upsert_group_membership("stichting", dead, "Entity", "sec")
-
-        self._merge(dead, keep)
-        rows = graph.run_command(
-            "MATCH (m {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) RETURN r", {"g": keep})
-        assert len(rows) == 1
 
     def test_an_edge_the_survivor_already_has_is_not_duplicated(self, graph):
         from app.scraper.runner import _upsert_voting_group, _upsert_group_membership
@@ -603,7 +587,7 @@ class TestAMergeDoesNotLoseMembership:
         _upsert_group_membership("stichting", gid, "Entity", "sec")
         self._merge("dupe", "stichting")
         rows = graph.run_command(
-            "MATCH (m {id:'stichting'})-[r:RELATED_TO]->(g {id:$g}) RETURN r", {"g": gid})
+            "MATCH (m {id:'stichting'})-[r:MEMBER_OF]->(g {id:$g}) RETURN r", {"g": gid})
         assert len(rows) == 1
 
 
@@ -630,3 +614,68 @@ def test_a_merge_keeps_the_share_counts(graph):
     assert r["sh"] == 159121937
     assert r["tot"] == 1975847422
     assert r["vs"] == 1020598157
+
+
+class TestAGroupIsItsOwnVertexType:
+    """Since 2026-10-26 a 13D filing group is a `VotingGroup`, not an Entity
+    of type `voting_group` — so nothing that walks the entities meets one,
+    while the client still opens it through the entity routes and reads
+    `type = voting_group` off it, the node kind it has always drawn."""
+
+    def _group(self, graph):
+        from app.scraper.runner import (_upsert_voting_group, _upsert_group_membership,
+                                        _upsert_owns_sec)
+        gid = _upsert_voting_group("abi", "Anheuser-Busch InBev", _roster(*ABI_ROSTER), "sec")
+        _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-02-07", None, owner_label="VotingGroup",
+                         voting_power_pct=52.3, source_url="https://sec.example.test/13d")
+        _upsert_group_membership("stichting", gid, "Entity", "sec")
+        return gid
+
+    def test_the_node_is_a_voting_group_and_no_entity(self, graph):
+        gid = self._group(graph)
+        assert graph.run_command("MATCH (g:VotingGroup {id:$g}) RETURN g.type AS t", {"g": gid})[0]["t"] == "voting_group"
+        assert graph.run_command("MATCH (e:Entity {id:$g}) RETURN e", {"g": gid}) == []
+        # the entity walks no longer need a fence: the quality ratio counts entities only
+        from app.quality import _identity
+        assert _identity()["entities"] == 2                     # abi and the Stichting
+
+    def test_the_profile_the_history_and_the_tree_open_a_group(self, graph):
+        from app.routers.search import get_full_profile
+        from app.routers.sources import get_sources_for_entity
+        from app.routers.relationships import ownership_history_of, ownership_tree_of, subsidiary_tree_of
+        gid = self._group(graph)
+        prof = get_full_profile(gid)
+        assert prof["entity"]["type"] == "voting_group" and prof["entity"]["id"] == gid
+        assert [s["entity"]["id"] for s in prof["subsidiaries"]] == ["abi"]
+        assert [m["party"]["id"] for m in prof["group_members"]] == ["stichting"]
+        assert prof["counts"]["subsidiaries"] == 1
+        # the company's side: the group among its owners, with its node kind
+        owners = get_full_profile("abi")["owners"]
+        bloc = next(o for o in owners if o["owner"]["id"] == gid)
+        assert bloc["owner"]["type"] == "voting_group" and bloc["relationship"]["voting_power_pct"] == 52.3
+        events, _ = ownership_history_of(gid)
+        assert [e["kind"] for e in events] == ["ownership_out"] and events[0]["party"]["id"] == "abi"
+        paths, _ = ownership_tree_of(gid, depth=2)
+        assert [p["nodes"][-1]["id"] for p in paths] == ["abi"]
+        tree = subsidiary_tree_of(gid)
+        assert tree["root_id"] == gid and [n["entity"]["id"] for n in tree["nodes"]] == ["abi"]
+        # and its Sources panel names the register that derived it
+        assert [s["id"] for s in get_sources_for_entity(gid)] == ["sec"]
+
+    def test_search_finds_the_group_by_the_company_it_holds(self, graph):
+        from app.routers.search import search
+        gid = self._group(graph)
+        hits = search(q="anheuser voting", country=None, limit=20)
+        found = [h for h in hits if h["node"].get("id") == gid]
+        assert found and found[0]["type"] == "Entity" and found[0]["node"]["type"] == "voting_group"
+
+    def test_a_merged_company_keeps_the_bloc_over_it(self, graph):
+        """The group's OWNS edge follows the company it holds through a merge
+        (`_migrate_entity_edges` reads the owner's label off the edge)."""
+        from app.scraper.maintenance import _migrate_entity_edges
+        gid = self._group(graph)
+        graph.run_command("CREATE (e:Entity {id:'abi2', name:'AB InBev (survivor)', type:'company'})")
+        _migrate_entity_edges("abi", "abi2")
+        rows = graph.run_command("MATCH (g:VotingGroup {id:$g})-[r:OWNS]->(b:Entity {id:'abi2'}) "
+                                 "RETURN r.voting_power_pct AS v", {"g": gid})
+        assert [r["v"] for r in rows] == [52.3]

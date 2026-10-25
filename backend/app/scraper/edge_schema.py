@@ -167,6 +167,15 @@ def weakest_reading(*grades: str | None) -> str | None:
 RELATED_TO_PROPS: tuple = (
     "relation",
     "source_id",
+    "source_url",
+    "source_date",
+    "last_scraped_at",
+)
+
+#: A party of a 13D filing group pointing at its VotingGroup (2026-10-26;
+#: membership was RELATED_TO {relation: 'group_member'} before)
+MEMBER_OF_PROPS: tuple = (
+    "source_id",
     "last_scraped_at",
 )
 

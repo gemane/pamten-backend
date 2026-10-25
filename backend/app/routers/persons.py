@@ -663,6 +663,11 @@ def merge_person_records(keep: str, dup: str) -> None:
                     keep=keep, target=e["target"],
                     **{p: e[p] for p in RELATED_TO_PROPS})
 
+        # Membership of a 13D filing group (MEMBER_OF, 2026-10-26) — the
+        # merges' shared helper, one edge per group.
+        from app.scraper.maintenance import _migrate_membership
+        _migrate_membership(dup, keep, "Person")
+
         # Backfill blank bio fields on the kept person from the duplicate's values.
         bio_set = ", ".join(f"keep.{p} = COALESCE(keep.{p}, ${p})" for p in BIO_COALESCE)
         session.run(f"""

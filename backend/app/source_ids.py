@@ -25,8 +25,8 @@ from app.db.arcadedb import run_sql
 log = logging.getLogger(__name__)
 
 #: Every record type that stores a Source node's id.
-HOLDERS: tuple[str, ...] = ("Entity", "Person", "OWNS", "HAS_ROLE", "RELATED_TO",
-                            "SUCCEEDED_BY", "DUAL_LISTED_WITH", "Claim", "StakeHistory",
+HOLDERS: tuple[str, ...] = ("Entity", "Person", "VotingGroup", "OWNS", "HAS_ROLE", "RELATED_TO",
+                            "MEMBER_OF", "SUCCEEDED_BY", "DUAL_LISTED_WITH", "Claim", "StakeHistory",
                             "IndustryCode")
 _SCAN_TIMEOUT = 6 * 3600
 

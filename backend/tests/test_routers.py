@@ -510,7 +510,9 @@ def test_sources_for_entity_excludes_subsidiaries(client, fake_db):
     r = client.get("/sources/entity/e1")
     assert r.status_code == 200
     cyphers = [c for c, _ in fake_db.calls]
-    assert len(cyphers) == 2  # relationship claims + entity-self
+    # relationship claims + entity-self (+ the VotingGroup read the fake's empty
+    # entity answer triggers, 2026-10-26); never a walk over OWNS
+    assert len(cyphers) == 3 and not any("OWNS" in c for c in cyphers)
     assert any("MATCH (c:Claim {to_id: $entity_id})" in c for c in cyphers)
     assert not any("from_id: $entity_id" in c for c in cyphers)
 
@@ -610,7 +612,7 @@ def test_close_owns_unknown_owner_is_404_without_a_scan(client, fake_db, make_to
         headers=auth(make_token, "contributor"),
     )
     assert r.status_code == 404
-    assert len(fake_db.calls) == 2      # two indexed lookups, no unlabelled MATCH
+    assert len(fake_db.calls) == 3      # three indexed lookups (Entity, Person, VotingGroup), no unlabelled MATCH
 
 
 def test_create_owns_records_the_claim(client, fake_db, make_token):

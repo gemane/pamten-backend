@@ -63,10 +63,14 @@ def test_the_server_refuses_what_breaks_a_rule_and_leaves_nulls_alone(it_db):
     row = it_db.run_sql("SELECT stale, shortcut, also_ultimate, stake_percent FROM OWNS")[0]
     assert row["stale"] is False and row["stake_percent"] == 20.0
     assert row["shortcut"] is False and row["also_ultimate"] is False
-    # a node too: a voting group is created without the nominee flag
-    it_db.run_command("CREATE (:Entity {id:'vg', name:'Voting group', type:'voting_group'})")
-    row = it_db.run_sql("SELECT is_nominee, on_demand_scraped, active FROM Entity WHERE id = 'vg'")[0]
+    # a node too: an entity created without the flags
+    it_db.run_command("CREATE (:Entity {id:'plain', name:'Plain Co', type:'company'})")
+    row = it_db.run_sql("SELECT is_nominee, on_demand_scraped, active FROM Entity WHERE id = 'plain'")[0]
     assert row["is_nominee"] is False and row["on_demand_scraped"] is False and row["active"] is None
+    # a 13D filing group is its own vertex type (2026-10-26): no Entity carries that type any more
+    assert "does not match" in _refused(it_db, "CREATE (:Entity {id:'vg', name:'Voting group', type:'voting_group'})")
+    it_db.run_command("CREATE (:VotingGroup {id:'vg', name:'Voting group · 2 parties', type:'voting_group'})")
+    assert "does not match" in _refused(it_db, "CREATE (:VotingGroup {id:'vg2', name:'X', type:'company'})")
     assert "mandatory" in _refused(it_db, "CREATE (:Claim {kind:'owns', from_id:'a', to_id:'b', source_id:'s'})")
     assert "does not match" in _refused(
         it_db, "CREATE (:Claim {claim_key:'k', kind:'ownership', from_id:'a', to_id:'b', source_id:'s'})")
