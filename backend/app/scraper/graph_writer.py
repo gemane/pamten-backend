@@ -670,6 +670,24 @@ def _hq_params(headquarters: dict | None) -> dict:
             "hq_postcode": hq.get("postcode") or None}
 
 
+def _resolve_by_name(session, name: str, name_norm: str, country: str | None) -> str | None:
+    """The node a name alone can stand for. With a ``country``: the node of
+    that name (exact, then by name key) registered THERE, else one of that
+    name whose country is unknown; a namesake registered elsewhere is a
+    company of its own, so None rather than it. Without a country: any node
+    of that name, as `resolve_entity_id` finds it."""
+    if not country:
+        return resolve_entity_id(session, name=name, name_normalized=name_norm)
+    for field, value in (("name", name), ("name_normalized", name_norm)):
+        for where in ("e.country = $country", "e.country IS NULL"):
+            rec = session.run(
+                f"MATCH (e:Entity) WHERE e.{field} = $v AND {where} RETURN e.id AS id LIMIT 1",
+                v=value, country=country).single()
+            if rec:
+                return rec["id"]
+    return None
+
+
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None,
                             source_id: str | None = None,
@@ -679,14 +697,18 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             jurisdiction_code: str | None = None,
                             headquarters: dict | None = None,
                             website: str | None = None,
-                            credibility_score: int = 98,
-                            country_must_match: bool = False) -> str:
+                            credibility_score: int = 98) -> str:
     """Find or create an Entity node matched by CIK, exact name, or normalized name.
 
-    ``country_must_match``: for a name a subsidiary list gives in two
-    countries (Lavoro's "Agrointegral Andina S.A.S." in Colombia and in
-    Ecuador) — the node of that name in THIS country, else one of that name
-    without a country, else a new node; never the namesake abroad.
+    A name says which company only together with where it is registered
+    (`_resolve_by_name`): a row that states a ``country`` takes the node of
+    that name there, else one of that name without a country (which learns
+    it), else a new node — never the namesake abroad. Lavoro's "Agrointegral
+    Andina S.A.S." in Colombia and in Ecuador; and, since 2026-10-25 for
+    every dated row, Chubb's "Chubb Company Services Limited" (England),
+    "Chubb Services Limited" (Cayman) and "Chubb Services Corporation"
+    (Illinois), one name key once "Company", "Services" and the suffix are
+    dropped, which had become one node with three parents at 100 %.
 
     ``source_id`` (the calling scraper's Source node — SEC EDGAR or
     OpenCorporates) is stamped so the entity's own provenance shows in the node
@@ -707,24 +729,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     one or the other. Only ever fills a blank."""
     name_norm = normalize_entity_name(name)
     with db.get_session() as session:
-        entity_id = None
-        if country_must_match and country:
-            rec = session.run("MATCH (e:Entity) WHERE e.name = $name AND e.country = $country "
-                              "RETURN e.id AS id LIMIT 1", name=name, country=country).single()
-            entity_id = rec["id"] if rec else None
-        # Indexed lookups first (an OR full-scans the Entity type on ArcadeDB).
-        entity_id = entity_id or resolve_entity_id(
-            session, sec_cik=cik, name=name, name_normalized=name_norm,
-        )
-        if entity_id and country_must_match and country:
-            rec = session.run("MATCH (e:Entity {id: $id}) RETURN e.country AS country",
-                              id=entity_id).single()
-            if rec and rec["country"] not in (None, country):
-                entity_id = None                  # the namesake abroad: a company of its own
-        # Fuzzy CIK fallback: an EDGAR filer whose stored normalized name is a
-        # prefix of this one. This can't use an index (variable-length prefix of
-        # the *parameter*), so only run it as a last resort when a CIK is known
-        # and the indexed lookups missed.
+        entity_id = (resolve_entity_id(session, sec_cik=cik) if cik else None) \
+            or _resolve_by_name(session, name, name_norm, country)
         if not entity_id and cik:
             # The prefix must end on a WORD boundary, and the candidate must not
             # already belong to a different filer.

@@ -460,6 +460,63 @@ def test_namesakes_of_the_filer_abroad_are_its_subsidiaries(it_db):
 
 
 
+def test_one_name_key_in_three_countries_is_three_nodes(it_db):
+    # Chubb's list: "Chubb Company Services Limited" (England), "Chubb Services
+    # Limited" (Cayman) and "Chubb Services Corporation" (Illinois) share the
+    # name key once "Company", "Services" and the suffix are dropped — dev drew
+    # one node with three parents at 100 % (2026-10-25). The key stays what it
+    # is; the writer refuses the namesake abroad for every dated row.
+    it_db.run_command(
+        "CREATE (:Entity {id: 'chubb', name: 'Chubb Limited', name_normalized: 'chubb', country: 'CH', "
+        "search_text: 'Chubb Limited', type: 'company', sec_cik: '0000896159'})")
+    data = {"subsidiaries": [{"name": "Chubb Company Services Limited", "jurisdiction": "England & Wales"},
+                             {"name": "Chubb Services Limited", "jurisdiction": "Cayman Islands"},
+                             {"name": "Chubb Services Corporation", "jurisdiction": "USA (Illinois)"}],
+            "form": "10-K", "filing_date": "2026-02-27",
+            "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000005/cb-12312025xex211.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        assert runner.run_sec_ex21("Chubb")["total"] == 3
+        runner.run_sec_ex21("Chubb", force=True)
+    rows = it_db.run_command(
+        "MATCH (:Entity {id: 'chubb'})-[:OWNS]->(b:Entity) RETURN b.name AS name, b.country AS country")
+    assert sorted((r["name"], r["country"]) for r in rows) == [
+        ("Chubb Company Services Limited", "GB"), ("Chubb Services Corporation", "US"),
+        ("Chubb Services Limited", "KY")]
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'chubb services'")[0]["n"] == 3
+
+
+def test_a_row_without_a_jurisdiction_still_folds_onto_the_namesake(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id: 'chubb', name: 'Chubb Limited', name_normalized: 'chubb', country: 'CH', "
+        "search_text: 'Chubb Limited', type: 'company', sec_cik: '0000896159'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'svc', name: 'Chubb Services Corporation', name_normalized: 'chubb services', "
+        "country: 'US', search_text: 'Chubb Services Corporation', type: 'company'})")
+    data = {"subsidiaries": [{"name": "Chubb Services Corporation", "jurisdiction": ""}],
+            "form": "10-K", "filing_date": "2026-02-27",
+            "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000005/cb-12312025xex211.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        runner.run_sec_ex21("Chubb")
+    rows = it_db.run_command("MATCH (:Entity {id: 'chubb'})-[:OWNS]->(b:Entity) RETURN b.id AS id")
+    assert [r["id"] for r in rows] == ["svc"]
+
+
+def test_a_namesake_without_a_country_learns_it_rather_than_being_doubled(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id: 'chubb', name: 'Chubb Limited', name_normalized: 'chubb', country: 'CH', "
+        "search_text: 'Chubb Limited', type: 'company', sec_cik: '0000896159'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'svc', name: 'Chubb Services Corporation', name_normalized: 'chubb services', "
+        "search_text: 'Chubb Services Corporation', type: 'company'})")
+    data = {"subsidiaries": [{"name": "Chubb Services Corporation", "jurisdiction": "USA (Illinois)"}],
+            "form": "10-K", "filing_date": "2026-02-27",
+            "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000005/cb-12312025xex211.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        runner.run_sec_ex21("Chubb")
+    rows = it_db.run_command("MATCH (:Entity {id: 'chubb'})-[:OWNS]->(b:Entity) RETURN b.id AS id, b.country AS c")
+    assert [(r["id"], r["c"]) for r in rows] == [("svc", "US")]
+
+
 def test_lead_in_headings_draw_the_tree_and_an_unlisted_one_keeps_the_stake(it_db):
     # Interactive Brokers heads each table "The following is a list of
     # subsidiaries of IBG LLC:"; a heading naming a company the list does not

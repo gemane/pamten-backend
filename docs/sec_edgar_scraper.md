@@ -1115,9 +1115,16 @@ from readers removed again the same day, so 11 remain):
       a page footer "… Form 20-F 2025" is no company (BAT's country rows).
     - **One name in two countries is two nodes** (the user's call, 2026-10-08):
       Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador. The list
-      keeps one entry per name and place; the writer matches such a name in its
+      keeps one entry per name and place; the writer matches a name in its
       own country — the node of that name there, else one without a country,
-      else a new node, never the namesake abroad. Across the 1,062 filings ten
+      else a new node, never the namesake abroad. Since 2026-10-25 that holds
+      for EVERY row that states a jurisdiction, not only a name the list
+      repeats: the name key drops "Company", "Services" and the legal suffix,
+      so Chubb's "Chubb Company Services Limited" (England), "Chubb Services
+      Limited" (Cayman) and "Chubb Services Corporation" (Illinois) had become
+      one node with three parents at 100 %, likewise "Rain and Hail Insurance
+      Service, Inc." (Iowa) and ", Ltd." (Canada). A row without a jurisdiction
+      still folds onto the namesake. Across the 1,062 filings ten
       lists do this. Some are two companies (Perfect Corp.'s Japanese, US and
       French "Perfect Corp.", which as one entry had resolved onto the filer
       itself and vanished); some read like one company's branch or foreign

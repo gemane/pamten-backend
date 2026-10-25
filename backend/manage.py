@@ -1164,6 +1164,9 @@ def cmd_heal_model_gaps(args):
     f = res["seat_filings"]
     print(f"SEC seat claims given a filing_type: {f['form_8k']} 8-K, {f['form_d']} Form D; "
           f"{f['unfilled']} left for the next scrape of their company{verb}")
+    d = {k: v for k, v in res["dead_keys"].items() if k != "applied"}
+    print("Dead keys removed: " + ", ".join(f"{k} {v}" for k, v in d.items()) + verb)
+    print(f"Role claims dated by their first sighting: {res['claim_dates']['claims']}{verb}")
 
 
 def cmd_init_schema(args):
