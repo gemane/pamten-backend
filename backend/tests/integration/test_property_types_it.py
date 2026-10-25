@@ -79,7 +79,7 @@ def test_a_property_declared_with_another_type_is_redeclared_by_the_bootstrap(it
 
     # the bootstrap drops and redeclares — without touching the row
     boot = ensure_indexes()
-    assert boot["failed"] == [] and "DROP PROPERTY OWNS.shares_outstanding" in boot["ok"]
+    assert boot["failed"] == [] and "DROP PROPERTY OWNS.shares_outstanding IF EXISTS" in boot["ok"]
     declared = {(t["name"], p["name"]): p["type"]
                 for t in it_db.run_sql("SELECT name, properties FROM schema:types")
                 for p in (t.get("properties") or [])}

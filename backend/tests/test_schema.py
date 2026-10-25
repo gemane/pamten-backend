@@ -1,14 +1,30 @@
 """Tests for the schema/index bootstrap (SQL layer mocked)."""
 
 import re
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from app.db import schema
 
 
+@contextmanager
 def _run(side_effect=None):
-    """Patch run_sql, returning the mock that recorded the issued statements."""
-    return patch.object(schema, "run_sql", side_effect=side_effect)
+    """Patch run_sql AND run_sqlscript; yield the run_sql mock, whose call list
+    is every statement issued — a script counts as its statements, once. The
+    script double behaves like the server: if any statement in it would be
+    refused (`side_effect` raises for it), the whole script is refused and
+    nothing in it is recorded; the bootstrap then re-issues the chunk
+    statement by statement through run_sql, which records each once."""
+    with patch.object(schema, "run_sql", side_effect=side_effect) as m:
+        def script(text, params=None):
+            stmts = schema._statements_of(text)
+            if side_effect is not None:
+                for stmt in stmts:
+                    side_effect(stmt)
+            for stmt in stmts:
+                m(stmt)
+        with patch.object(schema, "run_sqlscript", side_effect=script):
+            yield m
 
 
 def _held_rules():
@@ -309,9 +325,9 @@ class TestTypedProperties:
         declared["OWNS.shares_outstanding"] = "LONG"
         declared["Claim.voting_shares"] = "LONG"
         assert schema._statements((types, indexes, declared, rules)) == [
-            "DROP PROPERTY OWNS.shares_outstanding",
+            "DROP PROPERTY OWNS.shares_outstanding IF EXISTS",
             "CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE",
-            "DROP PROPERTY Claim.voting_shares",
+            "DROP PROPERTY Claim.voting_shares IF EXISTS",
             "CREATE PROPERTY Claim.voting_shares IF NOT EXISTS DOUBLE",
         ]
 
@@ -340,9 +356,9 @@ class TestTypedProperties:
         with _run(side_effect=lambda sql, *a, **k: rows.get(sql, [])) as m:
             res = schema.ensure_indexes()
         issued = [c.args[0] for c in m.call_args_list]
-        assert res["ok"] == ["DROP PROPERTY OWNS.shares_outstanding",
+        assert res["ok"] == ["DROP PROPERTY OWNS.shares_outstanding IF EXISTS",
                              "CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE"]
-        assert issued.index("DROP PROPERTY OWNS.shares_outstanding") \
+        assert issued.index("DROP PROPERTY OWNS.shares_outstanding IF EXISTS") \
             < issued.index("CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE")
 
     def test_dates_are_not_typed(self):
@@ -563,3 +579,51 @@ class TestTheLedger:
             raise RuntimeError("no such type schema:types")
         with _run(run):
             assert schema.undeclared_properties() == {}
+
+
+class TestTheBootstrapIsBatched:
+    """The DDL goes to the server in scripts, not one request per statement
+    (520 statements: 5.5 s singly, 0.4 s in nine scripts on 26.10.1); a
+    refused script is re-issued statement by statement so the one statement
+    the server refuses is still named and the rest still apply."""
+
+    def test_a_fresh_database_gets_scripts_of_at_most_sixty_statements(self):
+        scripts = []
+        with patch.object(schema, "run_sql"), \
+                patch.object(schema, "run_sqlscript", side_effect=lambda t, p=None: scripts.append(t)):
+            res = schema.ensure_indexes()
+        stmts = schema._statements(None)
+        assert len(scripts) == -(-len(stmts) // schema._SCRIPT_SIZE) and len(scripts) < len(stmts) / 10
+        assert all(len(schema._statements_of(t)) <= schema._SCRIPT_SIZE for t in scripts)
+        assert [s for t in scripts for s in schema._statements_of(t)] == stmts     # every one, once, in order
+        assert res["ok"] == stmts and res["failed"] == []
+
+    def test_a_refused_script_falls_back_to_single_statements_and_names_the_one_refused(self):
+        bad = "CREATE INDEX IF NOT EXISTS ON User (email) UNIQUE"
+
+        def run(sql, *a, **kw):
+            if sql == bad:
+                raise RuntimeError("refused")
+            return []
+        with _run(run) as m:
+            res = schema.ensure_indexes()
+        issued = [c.args[0] for c in m.call_args_list]
+        assert [f["stmt"] for f in res["failed"]] == [bad]
+        assert issued.count(bad) == 1 and len(issued) == len(set(issued))    # nothing issued twice
+        assert set(res["ok"]) | {bad} == set(s for s in issued if s.startswith(("CREATE", "ALTER", "DROP")))
+
+    def test_a_script_and_its_statements_round_trip(self):
+        stmts = ["CREATE VERTEX TYPE X IF NOT EXISTS", "ALTER PROPERTY X.c REGEXP '^(a|b)$'",
+                 "CREATE PROPERTY X.d IF NOT EXISTS STRING"]
+        assert schema._statements_of(schema._script(stmts)) == stmts
+        assert schema._script(stmts).count(";") == 3
+        for s in schema._statements(None):
+            assert ";" not in s, s                                           # the separator is never inside one
+
+    def test_an_unreachable_server_inside_a_script_still_skips(self):
+        def run(sql, *a, **kw):
+            if sql.startswith("CREATE"):
+                raise ConnectionError("down")
+            raise RuntimeError("no such type schema:types")
+        with _run(run):
+            assert schema.ensure_indexes()["skipped"] is True

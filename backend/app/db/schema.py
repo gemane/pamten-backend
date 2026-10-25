@@ -23,7 +23,7 @@ Design notes
 """
 import logging
 
-from app.db.arcadedb import run_sql
+from app.db.arcadedb import run_sql, run_sqlscript
 
 log = logging.getLogger(__name__)
 
@@ -614,7 +614,7 @@ def _statements(existing: tuple | None = None) -> list[str]:
             # coerces every write from then on — heal-property-types rewrites
             # the rows that still carry the old type.
             log.info("redeclaring %s.%s: %s on the server, %s in the code", vtype, prop, live, ptype)
-            stmts.append(f"DROP PROPERTY {vtype}.{prop}")
+            stmts.append(f"DROP PROPERTY {vtype}.{prop} IF EXISTS")
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS {ptype}")
     # An indexed property declared with another type cannot be redeclared
     # without dropping and rebuilding its index — a full reindex on a large
@@ -761,16 +761,54 @@ def ensure_indexes() -> dict:
     if existing is not None and not stmts:
         log.info("Schema complete — no DDL issued")
         return {"ok": ok, "failed": failed, "skipped": False, "complete": True}
-    for stmt in stmts:
+    # The DDL goes to the server in scripts of `_SCRIPT_SIZE` statements, not
+    # one request each: a fresh database takes 520 statements (2026-10-25),
+    # which is 5.5 s of HTTP round trips one by one and 0.4 s batched — the
+    # difference between an integration suite of 20 minutes and one of a few,
+    # and a faster API start. Every statement is idempotent (IF NOT EXISTS,
+    # IF EXISTS, ALTER to the same value), so a script that fails is simply
+    # re-run statement by statement, which keeps the per-statement report:
+    # the one statement the server refuses is named, the rest still apply.
+    for chunk in _chunks(stmts, _SCRIPT_SIZE):
         try:
-            run_sql(stmt)
-            ok.append(stmt)
+            run_sqlscript(_script(chunk))
+            ok.extend(chunk)
+            continue
         except ConnectionError as exc:
-            # DB not reachable — don't spam a warning per statement.
             log.warning("Schema bootstrap skipped — ArcadeDB unreachable: %s", exc)
             return {"ok": ok, "failed": failed, "skipped": True}
-        except Exception as exc:  # noqa: BLE001 - best-effort DDL
-            log.warning("Schema statement failed (%s): %s", stmt, exc)
-            failed.append({"stmt": stmt, "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - one of the chunk's statements is refused: find it
+            log.info("Schema script of %d statements refused (%s) — re-issuing one by one", len(chunk), exc)
+        for stmt in chunk:
+            try:
+                run_sql(stmt)
+                ok.append(stmt)
+            except ConnectionError as exc:
+                # DB not reachable — don't spam a warning per statement.
+                log.warning("Schema bootstrap skipped — ArcadeDB unreachable: %s", exc)
+                return {"ok": ok, "failed": failed, "skipped": True}
+            except Exception as exc:  # noqa: BLE001 - best-effort DDL
+                log.warning("Schema statement failed (%s): %s", stmt, exc)
+                failed.append({"stmt": stmt, "error": str(exc)})
     log.info("Schema bootstrap complete: %d applied, %d failed", len(ok), len(failed))
     return {"ok": ok, "failed": failed, "skipped": False}
+
+
+#: Statements per bootstrap script. 60 of 520 took 0.4 s in nine requests on
+#: 26.10.1; the chunking also bounds what a refused script re-issues singly.
+_SCRIPT_SIZE = 60
+
+
+def _chunks(stmts: list[str], size: int) -> list[list[str]]:
+    return [stmts[i:i + size] for i in range(0, len(stmts), size)]
+
+
+def _script(stmts: list[str]) -> str:
+    """One ArcadeDB SQL script: the statements terminated and separated by
+    ';' on their own lines — no statement of ours contains a ';'."""
+    return ";\n".join(stmts) + ";"
+
+
+def _statements_of(script: str) -> list[str]:
+    """The inverse of `_script` (the test double splits a script with it)."""
+    return [s[:-1] if s.endswith(";") else s for s in script.split(";\n") if s.strip()]
