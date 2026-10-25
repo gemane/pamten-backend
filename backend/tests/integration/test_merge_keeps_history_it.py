@@ -106,6 +106,88 @@ class TestEntityMerge:
         assert len(roles) == 1 and roles[0]["since"] == "2012-01-01"
 
 
+class TestSeatsFoldByPosition:
+    """The auto-dedup's person merge matched a seat by its label, so the
+    Wikidata person's "Board Member" landed beside the SEC person's
+    "Director" on every merged board (12 pairs on dev, 2026-10-25). A seat
+    is the same position over a touching period, in any words."""
+
+    @pytest.fixture
+    def board(self, it_db):
+        it_db.run_command("CREATE (:Person {id:'keep', full_name:'Enrique Hernandez Jr', description:''})")
+        it_db.run_command("CREATE (:Person {id:'dup', full_name:'Enrique Hernandez, Jr.', description:''})")
+        it_db.run_command("CREATE (:Entity {id:'cvx', name:'Chevron', type:'company'})")
+        return it_db
+
+    def _seat(self, db):
+        return [{k: v for k, v in r.items() if not k.startswith("@")} for r in db.run_command(
+            "MATCH (:Person {id:'keep'})-[r:HAS_ROLE]->(:Entity {id:'cvx'}) RETURN r.role AS role, "
+            "r.since AS since, r.until AS until, r.source_id AS src, r.credibility_score AS cred")]
+
+    def test_the_auto_merge_folds_board_member_into_director(self, board):
+        from app.scraper.maintenance import _migrate_person_edges
+        board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Director', since:'2008-12-10', source_id:'sec-edgar', credibility_score:98}]->(e)")
+        board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Board Member', since:'2008-12-00', source_id:'wikidata', credibility_score:80}]->(e)")
+        _migrate_person_edges("dup", "keep")
+        assert self._seat(board) == [{"role": "Director", "since": "2008-12-10", "until": None,
+                                      "src": "sec-edgar", "cred": 98}]
+
+    def test_the_more_credible_word_takes_over_when_the_survivor_is_the_community_node(self, board):
+        from app.scraper.maintenance import _migrate_person_edges
+        board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Board Member', since:'2016-00-00', source_id:'wikidata', credibility_score:80}]->(e)")
+        board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Director', source_id:'sec-edgar', credibility_score:98}]->(e)")
+        _migrate_person_edges("dup", "keep")
+        assert self._seat(board) == [{"role": "Director", "since": "2016-00-00", "until": None,
+                                      "src": "sec-edgar", "cred": 98}]
+
+    def test_the_manual_merge_folds_a_day_apart_seat_to_the_earlier_day(self, board):
+        from app.routers.persons import merge_person_records
+        board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Director', since:'2022-07-14', source_id:'sec-edgar', credibility_score:98}]->(e)")
+        board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Board Member', since:'2022-07-11', source_id:'wikidata', credibility_score:80}]->(e)")
+        merge_person_records("keep", "dup")
+        assert [(r["role"], r["since"]) for r in self._seat(board)] == [("Director", "2022-07-11")]
+
+    def test_an_ended_spell_that_does_not_touch_the_open_seat_is_carried_as_history(self, board):
+        from app.scraper.maintenance import _migrate_person_edges
+        board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'CEO', since:'2011-04-04', source_id:'sec-edgar', credibility_score:98}]->(e)")
+        board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Chief Executive Officer', since:'1998-01-01', until:'2001-08-01', "
+                          "source_id:'wikidata', credibility_score:80}]->(e)")
+        _migrate_person_edges("dup", "keep")
+        assert sorted((r["since"], r["until"]) for r in self._seat(board)) == [
+            ("1998-01-01", "2001-08-01"), ("2011-04-04", None)]
+
+    def test_an_ended_spell_touching_the_open_seat_ends_it(self, board):
+        from app.scraper.maintenance import _migrate_person_edges
+        board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Director', since:'2022-07-11', source_id:'sec-edgar', credibility_score:98}]->(e)")
+        board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Board Member', since:'2022-07-14', until:'2025-03-01', "
+                          "source_url:'https://www.wikidata.org/wiki/Q1', source_id:'wikidata', credibility_score:80}]->(e)")
+        _migrate_person_edges("dup", "keep")
+        rows = board.run_command("MATCH (:Person {id:'keep'})-[r:HAS_ROLE]->(:Entity {id:'cvx'}) "
+                                 "RETURN r.since AS since, r.until AS until, r.until_source_url AS u")
+        assert [(r["since"], r["until"], r["u"]) for r in rows] == [
+            ("2022-07-11", "2025-03-01", "https://www.wikidata.org/wiki/Q1")]
+
+    def test_the_entity_merge_folds_seats_the_same_way(self, board):
+        from app.scraper.maintenance import _migrate_entity_edges
+        board.run_command("CREATE (:Entity {id:'cvx2', name:'Chevron Corp', type:'company'})")
+        board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Director', since:'2008-12-10', source_id:'sec-edgar', credibility_score:98}]->(e)")
+        board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx2'}) CREATE (p)-[:HAS_ROLE "
+                          "{role:'Board Member', since:'2008-12-00', source_id:'wikidata', credibility_score:80}]->(e)")
+        _migrate_entity_edges("cvx2", "cvx")
+        assert [(r["role"], r["since"]) for r in self._seat(board)] == [("Director", "2008-12-10")]
+
+
 class TestPersonMerges:
     @pytest.fixture
     def people(self, it_db):

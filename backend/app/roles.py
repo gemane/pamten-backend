@@ -63,6 +63,43 @@ def finer_start(a: str, b: str) -> str:
     return a if len(_date_parts(a)) >= len(_date_parts(b)) else b
 
 
+def combined_start(a: str | None, b: str | None) -> str | None:
+    """The start of one seat two assertions date: the finer of one date at two
+    precisions, else the EARLIEST — a Form 3 filed three days after Wikidata's
+    appointment day states the same seat, and the seat began on the earlier
+    day. An undated side yields to the dated one."""
+    if not a or not b:
+        return a or b
+    return finer_start(a, b) if same_start(a, b) else min(a, b)
+
+
+def _before_or_within(a: str, b: str) -> bool:
+    """Whether date `a` is no later than date `b`, at their stated precision:
+    a month is no later than any of its days, a year no later than its
+    months ('2020' ≤ '2020-03-01'; '2020-03' ≤ '2020-03-15')."""
+    pa, pb = _date_parts(a), _date_parts(b)
+    if pa == pb or pa.startswith(pb + "-") or pb.startswith(pa + "-"):
+        return True
+    return pa < pb
+
+
+def periods_overlap(a_since: str | None, a_until: str | None,
+                    b_since: str | None, b_until: str | None) -> bool:
+    """Whether two assertions of one position can be the SAME seat: their
+    periods touch. Nobody holds the same post at the same company twice at
+    once, so an open seat and a later open assertion are one seat however
+    the two sources date its start (Wikidata's appointment day, the SEC's
+    Form 3 three days on), and an end stated for an overlapping period ends
+    that seat. Two spells that do not touch — CEO 1998–2001, CEO again from
+    2011 — stay two seats. An undated side is open on that side: an undated
+    assertion matches any spell, which is how a seat learns its date."""
+    if a_until and b_since and not _before_or_within(b_since, a_until):
+        return False
+    if b_until and a_since and not _before_or_within(a_since, b_until):
+        return False
+    return True
+
+
 #: Form 4's officer-title placeholder ("See Remarks" — the title is in the
 #: filing's remarks box), which reached the graph as a role before the reader
 #: learned to look there (2026-10-25). Matched case-blind on the prefix: dev

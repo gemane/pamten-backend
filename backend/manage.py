@@ -790,17 +790,19 @@ def cmd_dedupe_role_synonyms(args):
     """Merge HAS_ROLE edges that name the SAME position in different words.
 
     Before the writers matched roles canonically, "Director" (SEC) and "Board
-    Member" (Wikidata) each drew an edge — one seat, two rows. For every
-    (person, company, canonical role) with multiple open edges this keeps the
-    most credible one (backfilling since/source_url/source_date from the
-    losers) and deletes the rest. Claims are untouched: every source's
+    Member" (Wikidata) each drew an edge — one seat, two rows; until
+    2026-10-25 the person merge matched a seat by its label and the Wikidata
+    writer took a different day for a different seat, so the twins came back
+    with every scrape. For every (person, company, canonical role) with
+    multiple open edges this keeps the most credible one (backfilling
+    since/source_url/source_date from the losers) and deletes the rest. Claims are untouched: every source's
     assertion stays on record and now corroborates the surviving edge.
 
     Also folds one seat held twice at two date precisions (Wikidata's
     "2020-06-01" and "June 2020" for the same CEO statement; SEC's day beside
     Wikidata's year) — the start kept is the finer of the two."""
     from app.database import db as _db
-    from app.roles import canonical_role, finer_start, same_start
+    from app.roles import canonical_role, combined_start
 
     with _db.get_session() as session:
         rows = list(session.run(
@@ -841,12 +843,7 @@ def cmd_dedupe_role_synonyms(args):
                 # Onto the winner's OPEN seat only (a closed spell of the same
                 # role must not take a later start than its end). One date at
                 # two precisions keeps the finer; else the EARLIEST start.
-                theirs = lost.get("since")
-                if kept and theirs:
-                    start = (finer_start(kept, theirs) if same_start(kept, theirs)
-                             else min(kept, theirs))
-                else:
-                    start = kept or theirs
+                start = combined_start(kept, lost.get("since"))
                 session.run(
                     "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
                     "WHERE r.role = $role AND r.until IS NULL "

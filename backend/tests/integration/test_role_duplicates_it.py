@@ -10,7 +10,10 @@ scraped from both directions. Two causes, both here:
   does not, and the dedup key was role **plus** since — so an undated assertion
   of a role already recorded created a second edge beside it.
 
-A dated tenure is still its own edge: people do hold the same post twice.
+A spell that ended before the next began is still its own edge: people do
+hold the same post twice. Two OPEN assertions of one post are one seat,
+however the two sources date its start (2026-10-25): a Form 3 filed three
+days after Wikidata's appointment day used to open a second "Director" seat.
 """
 import pytest
 
@@ -54,14 +57,42 @@ class TestOneRoleOneEdge:
         # leaving an undated edge behind.
         assert _roles(person) == [("Board Member", "1998-01-01")]
 
-    def test_a_second_dated_tenure_is_still_its_own_edge(self, graph):
+    def test_a_second_tenure_after_an_ended_one_is_its_own_edge(self, graph):
         # Larry Page really was CEO of Google twice. Collapsing those would lose
         # the fact the timeline is drawn from.
         runner, person, entity = graph
-        runner._upsert_role(person, entity, "CEO", "s1", since="1998-01-01")
+        runner._upsert_role(person, entity, "CEO", "s1", since="1998-01-01", until="2001-08-01")
         runner._upsert_role(person, entity, "CEO", "s1", since="2011-04-04")
 
         assert _roles(person) == [("CEO", "1998-01-01"), ("CEO", "2011-04-04")]
+
+    def test_two_open_assertions_days_apart_are_one_seat_from_the_earlier_day(self, graph):
+        # R. Martin Chávez: the SEC's Form 3 dates his Alphabet seat 2022-07-11,
+        # Wikidata 2022-07-14. Dev drew two open "Director" rows.
+        runner, person, entity = graph
+        runner._upsert_role(person, entity, "Director", "s1", since="2022-07-11")
+        runner._upsert_role(person, entity, "Board Member", "s2", since="2022-07-14")
+
+        assert _roles(person) == [("Director", "2022-07-11")]
+
+    def test_in_the_other_order_too(self, graph):
+        runner, person, entity = graph
+        runner._upsert_role(person, entity, "Board Member", "s2", since="2022-07-14")
+        runner._upsert_role(person, entity, "Director", "s1", since="2022-07-11")
+
+        assert _roles(person) == [("Board Member", "2022-07-11")]
+
+    def test_an_end_stated_for_a_touching_period_ends_the_open_seat(self, graph):
+        runner, person, entity = graph
+        runner._upsert_role(person, entity, "Director", "s1", since="2022-07-11")
+        runner._upsert_role(person, entity, "Board Member", "s2",
+                            since="2022-07-14", until="2025-03-01")
+
+        from app.database import db
+        with db.get_session() as s:
+            rows = list(s.run("MATCH (p:Person {id:$id})-[r:HAS_ROLE]->() "
+                              "RETURN r.since AS since, r.until AS until", id=person))
+        assert [(r["since"], r["until"]) for r in rows] == [("2022-07-11", "2025-03-01")]
 
     def test_different_roles_stay_apart(self, graph):
         runner, person, entity = graph

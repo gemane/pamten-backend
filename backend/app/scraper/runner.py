@@ -36,7 +36,7 @@ from app.scraper.graph_writer import (
     # multi-scraper refactor deferred); re-exported here so existing imports and
     # test patch targets — `app.scraper.runner._upsert_owns` and friends — keep
     # working unchanged.
-    _ensure_source, _matching_role, _merge_aliases, _now_iso,        # noqa: F401
+    _ensure_source, _merge_aliases, _now_iso, _same_seat,            # noqa: F401
     _person_search_text, _relabel_if_more_credible,                   # noqa: F401
     _upsert_entity_by_name, _upsert_person_by_name,                  # noqa: F401
     _upsert_owns, _upsert_role, _upsert_succession,                  # noqa: F401
@@ -53,7 +53,7 @@ from app.scraper.sec_writer import (
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.field_twins import merge_countries, merge_nationalities
-from app.roles import end_seats_at_death
+from app.roles import combined_start, end_seats_at_death
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
                                      weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
@@ -2334,24 +2334,28 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
                  credibility_score=credibility_score, read_from=READ_FIELD)
     now = _now_iso()
     with db.get_session() as session:
-        matches = _matching_role(session, person_id, entity_id, role)
-        existing = matches[0] if matches else None
+        # The same position over a touching period (graph_writer._same_seat);
+        # an open one, or a closed spell this entry re-states.
+        existing = _same_seat(session, person_id, entity_id, role, start_date, end_date)
         if existing:
             # OpenCorporates' resignation date reaches the open seat — it was
             # ignored here, so a resigned officer stayed current. Only a seat
-            # that began by then.
+            # that began by then. The start: the earlier of the two.
             session.run(
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-                WHERE r.role = $role AND r.until IS NULL
+                WHERE r.role = $role
+                  AND (($stored_until IS NULL AND r.until IS NULL) OR r.until = $stored_until)
                 SET r.last_scraped_at = $now,
                     r.source_url = COALESCE($surl, r.source_url),
-                    r.until = CASE WHEN $until IS NOT NULL
-                                    AND (r.since IS NULL OR r.since <= $until)
+                    r.since = $start,
+                    r.until = CASE WHEN r.until IS NULL AND $until IS NOT NULL
+                                    AND ($start IS NULL OR $start <= $until)
                                THEN $until ELSE r.until END
                 """,
                 pid=person_id, eid=entity_id, role=existing["role"], now=now,
-                surl=source_url, until=end_date,
+                stored_until=existing.get("until"), surl=source_url, until=end_date,
+                start=combined_start(existing.get("since"), start_date),
             )
             _relabel_if_more_credible(session, person_id, entity_id,
                                       existing["role"], role, existing["cred"],
