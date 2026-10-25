@@ -787,6 +787,10 @@ def ownership_history_of(
                 "until":  rec["r"].get("until"),
                 "active": rec["r"].get("until") is None,
                 "role":   rec["r"].get("role"),
+                # why it ended when no source said so (`death`), and the
+                # record that stated the end when it is not the seat's own
+                "until_reason": rec["r"].get("until_reason"),
+                "until_source_url": rec["r"].get("until_source_url"),
             })
 
         # The company's own renames — the one event here that is not an edge.

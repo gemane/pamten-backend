@@ -126,6 +126,11 @@ ROLE_PROPS: tuple = (
     "role",
     "since",
     "until",
+    # why the seat ended when it was not the source that said so — `death`
+    # (app.roles.end_seats_at_death) — and the record that stated the end
+    # when it is not the one that stated the seat (an 8-K after a Form 4)
+    "until_reason",
+    "until_source_url",
     "source_id",
     "credibility_score",
     "source_url",

@@ -40,13 +40,15 @@ class TestTheWritersPassIt:
         assert rc.call_args.kwargs["filing_type"] == "Form 4"
         assert rc.call_args.kwargs["role"] == "Director"
 
-    def test_a_departure_records_the_filing_on_the_closing_claim(self):
+    def test_a_departure_hands_the_filing_to_the_closing_claim(self):
         _, ctx = _session(rows=[{"role": "CEO"}])
-        with patch.object(sec_writer, "record_claim") as rc, patch.object(sec_writer.db, "get_session", ctx):
+        with patch.object(sec_writer, "close_role_claim") as cc, patch.object(sec_writer.db, "get_session", ctx):
             closed = sec_writer._close_role_sec("p1", "e1", "2026-01-01", role="CEO", source_id="sec-edgar",
                                                 source_url="u", filing_type="8-K", read_from="narrative")
         assert closed == 1
-        assert rc.call_args.kwargs["filing_type"] == "8-K" and rc.call_args.kwargs["until"] == "2026-01-01"
+        kw = cc.call_args.kwargs
+        assert kw["filing_type"] == "8-K" and kw["until"] == "2026-01-01"
+        assert kw["until_source_url"] == "u" and kw["until_read_from"] == "narrative"
 
     def test_without_one_the_claim_says_nothing(self):
         _, ctx = _session()

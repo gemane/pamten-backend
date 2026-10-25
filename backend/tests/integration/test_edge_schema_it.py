@@ -42,6 +42,7 @@ _SAMPLE = {
     "read_from": "table",
     "validation_sources": "FULLY_CORROBORATED", "validation_documents": "ACCOUNTS_FILING",
     "role": "CEO", "relation": "group_member",
+    "until_source_url": "https://sec.example.test/8k-item-502",
 }
 
 

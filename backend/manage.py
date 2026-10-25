@@ -1069,6 +1069,22 @@ def cmd_heal_role_placeholders(args):
     print(f"Claim:    {res['claims']} placeholder role claims {verb}")
     if res["companies"]:
         print("Re-scrape to write the seats back with their role: " + "; ".join(res["companies"]))
+def cmd_heal_seats_at_death(args):
+    """Close every open seat of a dead person on the death date
+    (app.roles.heal_seats_at_death): the rule the writers apply since
+    2026-10-25, for a database written before it. Founders stay open; a seat
+    that began after the death is the source's error and is reported, not
+    closed. Dry run unless --apply."""
+    from app.roles import heal_seats_at_death
+    res = heal_seats_at_death(apply=args.apply)
+    verb = "closed" if args.apply else "would close (dry run — add --apply)"
+    print(f"HAS_ROLE: {res['closed']} open seats of dead holders {verb}; "
+          f"{res['founders_kept']} founder roles kept open; "
+          f"{res['after_death']} seats that begin after the death left open")
+    for line in res["people"]:
+        print("  " + line)
+
+
 def cmd_schema_audit(args):
     """Name every property the stored rows carry that the schema does not
     declare (app.db.schema.undeclared_properties) — a typo'd writer, a field
@@ -1467,6 +1483,12 @@ def _build_parser():
     p_hmg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hmg.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hmg.set_defaults(func=cmd_heal_model_gaps)
+
+    p_hsd = subparsers.add_parser('heal-seats-at-death',
+        help="Close every open seat of a dead person on the death date (until_reason = death); "
+             "founders stay open. Dry run unless --apply")
+    p_hsd.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hsd.set_defaults(func=cmd_heal_seats_at_death)
 
     p_hrp = subparsers.add_parser('heal-role-placeholders',
         help="Delete HAS_ROLE edges and role claims whose role is Form 4's \"See Remarks\" placeholder "

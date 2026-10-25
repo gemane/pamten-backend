@@ -120,6 +120,8 @@ def claim_props(
     read_from: str | None = None,
     validation_sources: str | None = None,
     validation_documents: str | None = None,
+    until_source_url: str | None = None,
+    until_read_from: str | None = None,
 ) -> dict:
     """The property bag for one claim, ready to UPSERT on `claim_key`.
 
@@ -172,6 +174,11 @@ def claim_props(
         # READ_GRADES: field > table > form > layout > prose > narrative) — the claim's own, so a
         # conflict can prefer the surer reading among equals.
         "read_from": read_from,
+        # Where the END was read, when a seat's departure is stated by another
+        # record than its appointment (an 8-K after a Form 4): the appointment
+        # keeps `source_url`/`read_from`, the departure has its own (2026-10-25).
+        "until_source_url": until_source_url,
+        "until_read_from": until_read_from,
         "last_seen_at": now_iso(),
     }
 
@@ -187,10 +194,22 @@ def claim_props(
 # The order of the three assignments does not matter: when the date is kept
 # `since_basis` is kept too, so each CASE sees the same stored value either way.
 _KEEP = ":since IS NULL AND :since_basis IS NULL AND since_basis IS NOT NULL"
+# A seat's END is kept the same way: a Form 4 re-read of a seat an 8-K closed
+# brings no end, and wrote null over the departure — the claim said "open"
+# while the edge stayed closed. A write with no end and the SAME start (or no
+# start) leaves the end alone; a different start is a new spell (Steve Jobs's
+# second CEO tenure) and replaces it. Role claims only: an ownership claim
+# that re-asserts a holding without an end does mean it is held again.
+_END_KEPT = (":until IS NULL AND :kind = 'role' AND until IS NOT NULL "
+             "AND (:since IS NULL OR :since = since)")
+_END_RULES = ("until", "until_source_url", "until_read_from")
 _LISTING_DATE_KEPT = {
     "since": f"since = CASE WHEN {_KEEP} THEN since ELSE :since END",
     "since_source_url": f"since_source_url = CASE WHEN {_KEEP} THEN since_source_url ELSE :since_source_url END",
     "since_basis": f"since_basis = CASE WHEN {_KEEP} THEN since_basis ELSE :since_basis END",
+    "until": f"until = CASE WHEN {_END_KEPT} THEN until ELSE :until END",
+    "until_source_url": f"until_source_url = CASE WHEN {_END_KEPT} THEN until_source_url ELSE :until_source_url END",
+    "until_read_from": f"until_read_from = CASE WHEN {_END_KEPT} THEN until_read_from ELSE :until_read_from END",
 }
 
 
@@ -210,7 +229,12 @@ def record_claim(**kwargs) -> None:
     props = claim_props(**kwargs)
     if not props["source_id"]:
         return
-    sets = ", ".join(_LISTING_DATE_KEPT.get(name, f"{name} = :{name}") for name in props)
+    # ArcadeDB applies the assignments in order, each seeing the ones before
+    # it: the end rules read the STORED start, so they go first — after
+    # `since = :since` the comparison would see the new start and keep an end
+    # a new spell should replace.
+    names = sorted(props, key=lambda n: 0 if n in _END_RULES else 1)
+    sets = ", ".join(_LISTING_DATE_KEPT.get(name, f"{name} = :{name}") for name in names)
     try:
         # Read the stored stake BEFORE the upsert replaces it: a material change
         # keeps the overwritten statement (app.stake_history). Inside a runner's
@@ -227,6 +251,37 @@ def record_claim(**kwargs) -> None:
         logging.getLogger(__name__).warning(
             "could not record %s claim %s->%s from %s: %s",
             props["kind"], props["from_id"], props["to_id"], props["source_id"], exc)
+
+
+def close_role_claim(*, from_id: str, to_id: str, source_id: str, role: str, until: str,
+                     until_source_url: str | None = None, until_read_from: str | None = None,
+                     source_date: str | None = None, filing_type: str | None = None,
+                     credibility_score: int = 80) -> None:
+    """Record that `source_id` states the end of a seat. The source's own
+    claim for the position, when it has one, is UPDATED — it keeps the
+    appointment's citation (`source_url`, `read_from`, `filing_type`) and
+    gains the departure's (`until`, `until_source_url`, `until_read_from`).
+    Until 2026-10-25 the close went through `record_claim` and so overwrote
+    the Form 4's citation with the 8-K's. A source that never asserted the
+    seat (an 8-K closing a Wikidata-drawn seat) gets a claim stating only the
+    end, cited by the closing record."""
+    from app.db.arcadedb import run_sql
+    key = claim_key(KIND_ROLE, from_id, to_id, source_id, role_key=canonical_role(role))
+    try:
+        rows = run_sql(
+            "UPDATE Claim SET until = :until, until_source_url = :u, until_read_from = :r, "
+            "last_seen_at = :now WHERE claim_key = :key",
+            {"until": until, "u": until_source_url, "r": until_read_from, "now": now_iso(), "key": key})
+    except Exception as exc:  # noqa: BLE001 - as record_claim: losing provenance beats failing the scrape
+        logging.getLogger(__name__).warning("could not close role claim %s->%s from %s: %s",
+                                            from_id, to_id, source_id, exc)
+        return
+    if int((rows or [{}])[0].get("count") or 0):
+        return
+    record_claim(kind=KIND_ROLE, from_id=from_id, to_id=to_id, source_id=source_id, role=role,
+                 until=until, source_url=until_source_url, source_date=source_date,
+                 credibility_score=credibility_score, read_from=until_read_from, filing_type=filing_type,
+                 until_source_url=until_source_url, until_read_from=until_read_from)
 
 
 def claims_for(from_id: str | None = None, to_id: str | None = None,

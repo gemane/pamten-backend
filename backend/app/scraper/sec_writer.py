@@ -13,8 +13,8 @@ import unicodedata
 import uuid
 from datetime import datetime, timezone
 
-from app.roles import canonical_role
-from app.claims import KIND_OWNS, KIND_ROLE, claims_for, record_claim
+from app.roles import canonical_role, end_seats_at_death
+from app.claims import KIND_OWNS, KIND_ROLE, claims_for, close_role_claim, record_claim
 from app.database import db
 from app.db.anchors import label_or_entity
 from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, STALE_CLEAR, STALE_CLEAR_CYPHER, edge_create_clause, owns_props
@@ -777,6 +777,8 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
             sid=source_id, score=credibility_score, rfrom=read_from,
             surl=source_url, sdate=source_date, now=now,
         )
+    if until is None:
+        end_seats_at_death(person_id)      # an old Form 4 of someone since dead opens no seat
 
 
 def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None = None,
@@ -813,22 +815,24 @@ def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None
         seats = [r["role"] for r in rows
                  if want is None or canonical_role(r["role"] or "") == want]
         for seat in seats:
+            # The seat keeps the citation of whoever drew it; the departure
+            # is cited beside it (`until_source_url`). Until 2026-10-25 the
+            # closing filing's URL and date replaced the seat's own.
             session.run(
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role AND r.until IS NULL
                   AND (r.since IS NULL OR r.since <= $until)
                 SET r.until = $until, r.last_scraped_at = $now,
-                    r.source_url  = COALESCE($surl,  r.source_url),
-                    r.source_date = COALESCE($sdate, r.source_date)
+                    r.until_source_url = COALESCE($surl, r.until_source_url)
                 """,
                 pid=person_id, eid=entity_id, role=seat, until=until, now=now,
-                surl=source_url, sdate=source_date)
+                surl=source_url)
     if seats and source_id:
-        record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
-                     role=seats[0], until=until, source_url=source_url,
-                     source_date=source_date, credibility_score=credibility_score,
-                     read_from=read_from, filing_type=filing_type)
+        close_role_claim(from_id=person_id, to_id=entity_id, source_id=source_id, role=seats[0],
+                         until=until, until_source_url=source_url, until_read_from=read_from,
+                         source_date=source_date, filing_type=filing_type,
+                         credibility_score=credibility_score)
     return len(seats)
 
 
