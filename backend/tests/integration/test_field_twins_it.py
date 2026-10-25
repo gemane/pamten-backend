@@ -18,6 +18,11 @@ def test_the_heals_bring_an_older_database_to_one_field(it_db):
     it_db.run_command("CREATE (:Entity {id:'e2', name:'E2', name_normalized:'e2', country:'US', countries:['US']})")
     it_db.run_command("MATCH (a:Entity {id:'e1'}), (b:Entity {id:'e2'}) CREATE (a)-[:OWNS {until:null}]->(b)")
     it_db.run_command("MATCH (a:Entity {id:'e2'}), (b:Entity {id:'e1'}) CREATE (a)-[:OWNS {until:null, stale:true}]->(b)")
+    # `OWNS.stale` defaults to false since #430, so a fresh edge is never unset;
+    # the older database this heal exists for is made by clearing the flag after
+    # the write (an UPDATE to null leaves null — the default applies to new rows)
+    it_db.run_command("MATCH (a:Entity {id:'e1'})-[r:OWNS]->(b:Entity {id:'e2'}) SET r.stale = null")
+    assert it_db.run_sql("SELECT count(*) AS n FROM OWNS WHERE stale IS NULL")[0]["n"] == 1
 
     dry = heal_all(apply=False)
     assert dry["nationalities"]["dropped"] == 2 and dry["nationalities"]["folded"] == 1
