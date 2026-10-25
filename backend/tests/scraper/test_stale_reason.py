@@ -11,8 +11,46 @@ class TestTheVocabulary:
             assert f in STALE_CLEAR and f"r.{f} = null" in STALE_CLEAR_CYPHER
         assert STALE_CLEAR["stale"] is False and "r.stale = false" in STALE_CLEAR_CYPHER
 
-    def test_the_four_reasons(self):
-        assert set(STALE_REASONS) == {"13f_not_confirmed", "ex21_not_listed", "unconfirmed", "lei_lapsed"}
+    def test_the_five_reasons(self):
+        assert set(STALE_REASONS) == {"13f_not_confirmed", "ex21_not_listed", "unconfirmed",
+                                      "lei_lapsed", "not_restated"}
+
+    def test_the_sql_clear_names_the_same_four_fields(self):
+        from app.scraper.edge_schema import STALE_CLEAR_SQL
+        for f in STALE_CLEAR:
+            assert f"{f} = " in STALE_CLEAR_SQL
+
+
+class TestTheRestatementWindow:
+    """A Schedule 13G is restated every February while it lasts, a 13D only on
+    a material change; a statement older than its window no longer speaks
+    for the holding — dimmed, never closed."""
+    def setup_method(self):
+        from app.scraper.maintenance import RESTATEMENT_WINDOW_DAYS, restated, restatement_family
+        self.restated, self.family, self.windows = restated, restatement_family, RESTATEMENT_WINDOW_DAYS
+
+    def test_the_families(self):
+        assert self.family("13G") == "13G" and self.family("13G/A") == "13G"
+        assert self.family("13D/A") == "13D"
+        assert self.family("EX-21") is None and self.family("13F") is None
+        assert self.family("Form 4") is None and self.family(None) is None
+
+    def test_a_13g_speaks_for_fifteen_months(self):
+        assert self.windows["13G"] == 455
+        assert self.restated("13G/A", "2025-11-14", "2026-10-25") is True
+        assert self.restated("13G/A", "2014-02-14", "2026-10-25") is False
+        assert self.restated("13G", "2025-07-27", "2026-10-25") is True     # 455 days
+        assert self.restated("13G", "2025-07-26", "2026-10-25") is False
+
+    def test_a_13d_speaks_for_five_years(self):
+        assert self.windows["13D"] == 1826
+        assert self.restated("13D/A", "2022-01-01", "2026-10-25") is True
+        assert self.restated("13D", "2009-04-30", "2026-10-25") is False
+
+    def test_other_records_and_undated_ones_are_not_judged(self):
+        assert self.restated("EX-21", "2014-02-14", "2026-10-25") is None
+        assert self.restated("13G", None, "2026-10-25") is None
+        assert self.restated("13G", "2014", "2026-10-25") is None
 
 
 class TestTheWriters:

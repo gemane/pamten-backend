@@ -364,10 +364,13 @@ def cmd_flag_nominees(args):
 def cmd_mark_stale(args):
     """Mark community-tier OWNS edges nothing has confirmed in --days as stale."""
     _apply_direct_db_url(args)
-    from app.scraper.maintenance import mark_stale_ownership
+    from app.scraper.maintenance import mark_not_restated, mark_stale_ownership
     res = mark_stale_ownership(days=args.days)
     print(f"Marked {res['marked']} stale, cleared {res['cleared']} "
           f"(of {res['community_edges']} community-tier edges; cutoff {res['cutoff'][:10]})")
+    res = mark_not_restated()
+    print(f"Schedule 13D/G not restated: marked {res['marked']}, cleared {res['cleared']} "
+          f"(of {res['judged']} open 13D/G holdings; windows {res['windows']} days from the filing date)")
 
 def cmd_clear_snapshot_since(args):
     """Remove the start date list-style SEC filings (Exhibit 21/8.1, 13F) used to
@@ -1837,7 +1840,7 @@ def _build_parser():
 
     # mark-stale command
     p_ms = subparsers.add_parser('mark-stale',
-                                 help='Mark community-tier OWNS edges unconfirmed for --days as stale (dimmed, never deleted). Register-tier and register-vouched edges are exempt')
+                                 help='Mark community-tier OWNS edges unconfirmed for --days as stale (dimmed, never deleted); register-tier and register-vouched edges are exempt. Also dims a Schedule 13D/G holding whose last statement is older than its restatement window (13G 15 months, 13D 5 years)')
     p_ms.add_argument('--days', type=int, default=180,
                       help='Confirmation age that counts as stale (default 180)')
     p_ms.add_argument('--db-url',

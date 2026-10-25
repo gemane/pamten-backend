@@ -16,7 +16,7 @@ from app.db.anchors import label_or_entity
 from app.db.paging import iter_id_pages
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 from app.merged_ids import record_merge_sql
-from app.scraper.edge_schema import OWNS_PROPS, STALE_CLEAR_CYPHER
+from app.scraper.edge_schema import OWNS_PROPS, STALE_CLEAR_CYPHER, STALE_CLEAR_SQL
 from app.scraper.owns_merge import fold as _fold_edges
 
 log = logging.getLogger(__name__)
@@ -944,6 +944,73 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
                 run_sqlscript(";".join(stmts), params)
     log.info("UK copied headquarters: %s", counts)
     return counts
+
+
+#: How long a Schedule 13D/G statement speaks for a holding before it is
+#: dimmed as not restated, by form family, in days from its filing date. A
+#: 13G holder restates every February (an annual amendment within 45 days of
+#: the year end while anything changed; quarterly since the 2024 rules) — 15
+#: months covers a cycle and its grace. A 13D is amended only on a material
+#: change, so its silence says less: five years. Neither closes the holding:
+#: a 13G/A that reports an exit does that (sec_writer), and silence is not a
+#: sale. Dev had 101 13G and 24 13D holdings from before 2015 drawn at full
+#: strength on 2026-10-25 — VeriSign's holders summed to 106 %, Sirius XM's
+#: to 202 % — because the register tier is exempt from `mark_stale_ownership`.
+RESTATEMENT_WINDOW_DAYS: dict[str, int] = {"13G": 455, "13D": 1826}
+NOT_RESTATED = "not_restated"
+
+
+def restatement_family(filing_type: str | None) -> str | None:
+    """'13G' for "13G" and "13G/A", '13D' likewise; None for any other record."""
+    family = (filing_type or "").split("/")[0].strip().upper()
+    return family if family in RESTATEMENT_WINDOW_DAYS else None
+
+
+def restated(filing_type: str | None, filed: str | None, today: str) -> bool | None:
+    """Whether a 13D/G filed on `filed` still speaks for the holding on
+    `today`: None when the record is not a 13D/G or carries no filing date
+    (nothing to judge), else whether it is younger than its family's window."""
+    from datetime import date
+    family = restatement_family(filing_type)
+    if family is None or not filed or len(str(filed)) < 10:
+        return None
+    try:
+        age = (date.fromisoformat(today[:10]) - date.fromisoformat(str(filed)[:10])).days
+    except ValueError:
+        return None
+    return age <= RESTATEMENT_WINDOW_DAYS[family]
+
+
+def mark_not_restated(today: str | None = None) -> dict:
+    """Dim every open Schedule 13D/G holding whose last statement is older
+    than its form's restatement window (`RESTATEMENT_WINDOW_DAYS`), and
+    clear the mark where a newer filing has since refreshed the edge. The
+    holding's `source_date` is its last restatement — each newer amendment
+    replaces it (sec_writer) — so `stale_since` is that filing date. An
+    edge dimmed for another reason is left to that reason. Never closes."""
+    from datetime import datetime, timezone
+    today = today or datetime.now(timezone.utc).date().isoformat()
+    rows = run_sql(
+        "SELECT @rid AS rid, filing_type, source_date, stale, stale_reason FROM OWNS "
+        "WHERE until IS NULL AND source_id = :sid AND filing_type IS NOT NULL",
+        {"sid": "sec-edgar"})
+    marked = cleared = 0
+    judged = 0
+    for r in rows:
+        fresh = restated(r.get("filing_type"), r.get("source_date"), today)
+        if fresh is None:
+            continue
+        judged += 1
+        if not fresh and not r.get("stale"):
+            run_sql(f"UPDATE {r['rid']} SET stale = true, stale_reason = :reason, "
+                    "stale_since = :since, stale_source_url = null",
+                    {"reason": NOT_RESTATED, "since": str(r["source_date"])[:10]})
+            marked += 1
+        elif fresh and r.get("stale") and r.get("stale_reason") == NOT_RESTATED:
+            run_sql(f"UPDATE {r['rid']} SET {STALE_CLEAR_SQL}")
+            cleared += 1
+    return {"today": today, "judged": judged, "marked": marked, "cleared": cleared,
+            "windows": dict(RESTATEMENT_WINDOW_DAYS)}
 
 
 def mark_stale_ownership(days: int = STALE_AFTER_DAYS) -> dict:
