@@ -45,21 +45,30 @@ index, which is a full reindex on a large database and a decision to take by han
 Beyond a type, a property can carry a rule, and since 2026-10-25 the bootstrap declares
 them (`app/db/schema.py`, `constraints()`, as `ALTER PROPERTY`): an `Entity`, `Person`
 or `Source` cannot exist without its `id`, a `Claim` not without `claim_key`, `kind`,
-`from_id` and `to_id` (mandatory, not null — not `source_id`: the SEC writer records a claim
-for an edge whose source is unknown); `Entity.type`, `Claim.kind`,
-`OWNS.ownership_type` and `read_from` (on OWNS, Claim and HAS_ROLE) are restricted to
-their vocabularies — built from the enums the code validates against (`EntityType`,
-`OwnershipType`, `READ_GRADES`), so a new value is added once; `country` and
-`hq_country` match `^[A-Z]{2}$`; `stake_percent`, `voting_power_pct` and the
-StakeHistory percentages lie between 0 and 100; `OWNS.stale` defaults to `false`. The
-server refuses a write that breaks a rule with a clear message ("does not match the
-regular expression", "is greater than 100", "is mandatory"), which turns a quietly wrong
-row into a failed scrape that the run log shows. A rule leaves a null alone (`country`
-unknown is allowed; `notnull` is the one rule that does not), a default applies to new
-rows only, and ArcadeDB **refuses to declare a rule while any stored row breaks it** —
-so a heal runs before its rule, and `init-schema`'s `failed` list names the rule that
-still waits. `name` carries no rule on purpose: a GLEIF relationship record creates a
-placeholder `lei:` node that a later import names.
+`from_id`, `to_id` and `source_id` (mandatory, not null — a claim *is* what one source
+says; `record_claim` had always dropped a sourceless one, and no database held any);
+`Entity.type`, `Claim.kind`, `OWNS.ownership_type` and `read_from` (on OWNS, Claim and
+HAS_ROLE) are restricted to their vocabularies — built from the enums the code validates
+against (`EntityType`, `OwnershipType`, `READ_GRADES`), so a new value is added once;
+`country` and `hq_country` match `^[A-Z]{2}$`; **every date** matches
+`^[0-9]{4}(-[0-9]{2}){0,2}$` and **every timestamp**
+`YYYY-MM-DDTHH:MM[:SS[.ffffff]]` with an offset (`+00:00`, or `Z`; seconds optional because
+ArcadeDB parses a Cypher `…T00:00:00Z` into a datetime and stores it back as `…T00:00Z`) — the shape, never
+the calendar: a Wikidata year stays `2019-00-00`, a PSC birth month `1965-04`, but
+"4 March 2019", "03/04/2019", a timestamp in a date field and a naive timestamp are
+refused, because the readers compare dates as text and any other notation sorts into
+the wrong place (`_DATES` / `_TIMESTAMPS` list the fields; a new one is added there);
+`stake_percent`, `voting_power_pct` and the StakeHistory percentages lie between 0 and
+100; `OWNS.stale` defaults to `false`. The server refuses a write that breaks a rule
+with a clear message ("does not match the regular expression", "is greater than 100",
+"is mandatory"), which turns a quietly wrong row into a failed scrape that the run log
+shows. A rule leaves a null alone (`country` unknown is allowed; `notnull` is the one
+rule that does not), a default applies to new rows only, and ArcadeDB **refuses to
+declare a rule while any stored row breaks it** — so a heal runs before its rule, and
+`init-schema`'s `failed` list names the rule that still waits. `name` carries no rule on
+purpose: a GLEIF relationship record creates a placeholder `lei:` node that a later
+import names. A pattern travels inside an SQL string literal, so it is written without
+backslashes (`[0-9]`, `[.]`).
 
 ## Nodes
 

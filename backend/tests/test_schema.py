@@ -378,16 +378,61 @@ class TestConstraints:
         assert rules[("OWNS", "stale", "DEFAULT")] == "false"
         for key in (("Entity", "id"), ("Person", "id"), ("Claim", "claim_key"), ("Claim", "to_id")):
             assert rules[(*key, "MANDATORY")] == "true" and rules[(*key, "NOTNULL")] == "true"
-        # a claim may lack its source (the SEC writer records one for an edge
-        # whose source is unknown); the key then has no source part
-        assert ("Claim", "source_id", "MANDATORY") not in rules
+        # a claim is what one source says: it cannot exist without naming it
+        assert rules[("Claim", "source_id", "MANDATORY")] == "true"
+        assert rules[("Claim", "source_id", "NOTNULL")] == "true"
 
-    def test_names_and_dates_carry_no_rule(self):
+    def test_names_carry_no_rule(self):
         # a placeholder `lei:` node is created without a name and named by a
-        # later import; a date keeps its source's precision
+        # later import
         for vtype, prop, _, _ in schema.constraints():
             assert prop not in ("name", "full_name", "name_normalized"), (vtype, prop)
-            assert not prop.endswith(("_date", "_at", "since", "until")), (vtype, prop)
+
+    def test_every_date_and_timestamp_carries_its_shape(self):
+        rules = {(t, p, a): v for t, p, a, v in schema.constraints()}
+        for vtype, prop in schema._DATES:
+            assert rules[(vtype, prop, "REGEXP")] == schema._DATE_PATTERN, (vtype, prop)
+        for vtype, prop in schema._TIMESTAMPS:
+            assert rules[(vtype, prop, "REGEXP")] == schema._TIMESTAMP_PATTERN, (vtype, prop)
+        # the fields the writers set, by name — none forgotten
+        for key in (("OWNS", "since"), ("OWNS", "until"), ("OWNS", "source_date"), ("OWNS", "stale_since"),
+                    ("Claim", "since"), ("Claim", "source_date"), ("HAS_ROLE", "since"),
+                    ("Entity", "incorporated_on"), ("Person", "birth_date"), ("StakeHistory", "as_of")):
+            assert key in schema._DATES, key
+        for key in (("Entity", "created_at"), ("Entity", "last_scraped_at"), ("OWNS", "last_scraped_at"),
+                    ("Claim", "first_seen_at"), ("Claim", "last_seen_at"), ("StakeHistory", "recorded_at")):
+            assert key in schema._TIMESTAMPS, key
+        assert not set(schema._DATES) & set(schema._TIMESTAMPS)
+
+    def test_the_date_shape_keeps_a_sources_precision_and_refuses_another_notation(self):
+        import re
+        date = re.compile(schema._DATE_PATTERN)
+        for ok in ("2019-03-04", "2019-00-00", "2019-03", "2019", "2026-08-07"):
+            assert date.match(ok), ok
+        for bad in ("2019-3-4", "4 March 2019", "03/04/2019", "2019-03-04T00:00:00+00:00",
+                    "", " 2019-03-04", "2019-03-04 ", "20190304", "2019-03-04-05"):
+            assert not date.match(bad), bad
+
+    def test_the_timestamp_shape_needs_a_time_and_an_offset(self):
+        import re
+        from datetime import datetime, timezone
+        ts = re.compile(schema._TIMESTAMP_PATTERN)
+        assert ts.match(datetime.now(timezone.utc).isoformat())        # what every writer sends
+        for ok in ("2026-10-25T10:00:00+00:00", "2026-10-25T10:00:00.123456+00:00",
+                   "2026-10-25T10:00:00.123456Z", "2026-10-25T10:00:00Z", "2026-10-25T12:00:00+02:00",
+                   "2020-01-01T00:00Z"):                 # ArcadeDB's own spelling of a parsed instant
+            assert ts.match(ok), ok
+        for bad in ("2026-10-25", "2026-10-25T10:00:00", "2026-10-25T10:00", "2026-10-25 10:00:00+00:00",
+                    "yesterday", ""):
+            assert not ts.match(bad), bad
+
+    def test_a_pattern_travels_inside_an_sql_string_literal(self):
+        # `ALTER PROPERTY … REGEXP '<pattern>'`: no quote to end the literal
+        # early, no backslash for the SQL parser to interpret
+        for vtype, prop, attr, value in schema.constraints():
+            if attr == "REGEXP":
+                assert "'" not in value and "\\" not in value, (vtype, prop, value)
+                assert schema._rule_sql(vtype, prop, attr, value) == f"ALTER PROPERTY {vtype}.{prop} REGEXP '{value}'"
 
     def test_every_ruled_property_is_declared_by_something(self):
         declared = ({(t, p) for t, p, _ in schema._TYPED_PROPERTIES} | set(schema._PROPERTY_TYPES)

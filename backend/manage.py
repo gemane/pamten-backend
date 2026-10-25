@@ -1037,6 +1037,20 @@ def cmd_heal_property_types(args):
               f"— run init-schema (or let the API start) first, then this heal again")
 
 
+def cmd_heal_role_placeholders(args):
+    """Delete the HAS_ROLE edges and role claims whose role is Form 4's "See
+    Remarks" placeholder (app.roles.heal_placeholder_roles); re-scrape the
+    companies it names and the reader writes the seats back with their real
+    role. Dry run unless --apply."""
+    from app.roles import heal_placeholder_roles
+    res = heal_placeholder_roles(apply=args.apply)
+    verb = "deleted" if args.apply else "would delete (dry run — add --apply)"
+    print(f"HAS_ROLE: {res['edges']} placeholder edges {verb}")
+    print(f"Claim:    {res['claims']} placeholder role claims {verb}")
+    if res["companies"]:
+        print("Re-scrape to write the seats back with their role: " + "; ".join(res["companies"]))
+
+
 def cmd_heal_model_gaps(args):
     """The 2026-10-25 survey's four gaps (app.field_twins): fold the scalar
     `nationality` into `nationalities` and drop it, put `country` into every
@@ -1379,6 +1393,12 @@ def _build_parser():
     p_hmg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hmg.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hmg.set_defaults(func=cmd_heal_model_gaps)
+
+    p_hrp = subparsers.add_parser('heal-role-placeholders',
+        help="Delete HAS_ROLE edges and role claims whose role is Form 4's \"See Remarks\" placeholder "
+             "(2026-10-25); re-scrape the companies it names. Dry run unless --apply")
+    p_hrp.add_argument('--apply', action='store_true', help='Delete (default: count only)')
+    p_hrp.set_defaults(func=cmd_heal_role_placeholders)
 
     p_schema = subparsers.add_parser('init-schema', help='Create vertex types and indexes')
     p_schema.set_defaults(func=cmd_init_schema)

@@ -30,6 +30,10 @@ def test_the_bootstrap_declares_the_rules_once(it_db):
     assert rules[("OWNS", "read_from")]["regexp"] == "^(field|table|form|layout|prose|narrative)$"
     assert rules[("OWNS", "stale")]["default"] == "false"
     assert rules[("Claim", "claim_key")]["mandatory"] is True
+    assert rules[("Claim", "source_id")]["mandatory"] is True and rules[("Claim", "source_id")]["notNull"] is True
+    assert rules[("OWNS", "since")]["regexp"] == "^[0-9]{4}(-[0-9]{2}){0,2}$"
+    assert rules[("Person", "birth_date")]["regexp"] == rules[("OWNS", "since")]["regexp"]
+    assert rules[("Claim", "last_seen_at")]["regexp"].startswith("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")
     assert ensure_indexes().get("complete") is True          # nothing left to issue
 
 
@@ -57,6 +61,34 @@ def test_the_server_refuses_what_breaks_a_rule_and_leaves_nulls_alone(it_db):
     assert "mandatory" in _refused(it_db, "CREATE (:Claim {kind:'owns', from_id:'a', to_id:'b', source_id:'s'})")
     assert "does not match" in _refused(
         it_db, "CREATE (:Claim {claim_key:'k', kind:'ownership', from_id:'a', to_id:'b', source_id:'s'})")
+    # a claim names its source
+    assert "mandatory" in _refused(it_db, "CREATE (:Claim {claim_key:'k2', kind:'owns', from_id:'a', to_id:'b'})")
+
+
+def test_a_date_keeps_its_shape_at_any_precision_and_a_timestamp_its_offset(it_db):
+    it_db.run_command("CREATE (:Entity {id:'a', name:'A', name_normalized:'a'})")
+    it_db.run_command("CREATE (:Entity {id:'b', name:'B', name_normalized:'b'})")
+    # the precisions the sources state — a Wikidata year, a PSC birth month
+    for ok in ("2019-03-04", "2019-00-00", "2019-03", "2019"):
+        it_db.run_command("MATCH (a:Entity {id:'a'}) SET a.incorporated_on = $d", {"d": ok})
+        assert it_db.run_sql("SELECT incorporated_on AS d FROM Entity WHERE id = 'a'")[0]["d"] == ok
+    for bad in ("4 March 2019", "03/04/2019", "2019-3-4", "2019-03-04T00:00:00+00:00"):
+        assert "does not match" in _refused(it_db, "MATCH (a:Entity {id:'a'}) SET a.incorporated_on = $d", {"d": bad}), bad
+    it_db.run_command("MATCH (a:Entity {id:'a'}), (b:Entity {id:'b'}) "
+                      "CREATE (a)-[:OWNS {since:'2020-01-01', source_date:'2026-08-07', until:null}]->(b)")
+    assert "does not match" in _refused(
+        it_db, "MATCH (a:Entity {id:'a'}), (b:Entity {id:'b'}) CREATE (a)-[:OWNS {since:'Jan 2020', until:null}]->(b)")
+    assert "does not match" in _refused(
+        it_db, "MATCH (a:Entity {id:'a'}) SET a.incorporated_on = '2019-03-04', a.created_at = '2019-03-04'")
+    # a timestamp: what the writers send, with either spelling of UTC; never naive
+    for ok in ("2026-10-25T10:00:00.123456+00:00", "2026-10-25T10:00:00Z", "2026-10-25T12:00:00+02:00",
+               "2020-01-01T00:00Z"):                     # what the server makes of a parsed `…T00:00:00Z`
+        it_db.run_command("MATCH (a:Entity {id:'a'}) SET a.last_scraped_at = $t", {"t": ok})
+        assert it_db.run_sql("SELECT last_scraped_at AS t FROM Entity WHERE id = 'a'")[0]["t"] == ok
+    for bad in ("2026-10-25", "2026-10-25T10:00:00", "yesterday"):
+        assert "does not match" in _refused(it_db, "MATCH (a:Entity {id:'a'}) SET a.last_scraped_at = $t", {"t": bad}), bad
+    # a null still passes: the date unknown is allowed
+    it_db.run_command("MATCH (a:Entity {id:'a'}) SET a.incorporated_on = null, a.last_scraped_at = null")
 
 
 def test_a_rule_is_refused_while_a_row_breaks_it_so_heals_run_first(it_db):

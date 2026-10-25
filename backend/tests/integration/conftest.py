@@ -85,6 +85,15 @@ def it_db(monkeypatch):
     monkeypatch.setattr(settings, "ARCADEDB_DATABASE", dbname)
     arcadedb.close_client()
 
+    # The data-mode cache (app.scraper.sources._MODE_CACHE) outlives a test
+    # database: a map read from the previous test's Source nodes within its
+    # 60-second TTL answered for this one, so the Wikidata person tests
+    # passed or failed with the order and the clock. A fresh database starts
+    # with an empty cache.
+    from app.scraper import sources
+    sources._MODE_CACHE["at"] = None
+    sources._MODE_CACHE["by_source_id"] = {}
+
     try:
         ensure_indexes()  # vertex types + id indexes (Entity, Source, Person, ...)
         # Edge types aren't part of the app's index bootstrap — create them here.

@@ -758,6 +758,16 @@ Key fields in Form 3/4 XML:
 </reportingOwner>
 ```
 
+The title box can say **"See Remarks"** — EDGAR's own pointer to the filing-level
+`<remarks>` element, where the filer wrote the title (Berkshire's 2026 Form 4s:
+`<officerTitle>See Remarks</officerTitle>` … `<remarks>Senior Vice President and Chief
+Financial Officer</remarks>`). The reader then maps the remarks (→ CFO, General Counsel,
+Chairman, …) and, when they name no role it knows, records a plain "Officer" — never the
+placeholder and never the remarks paragraph (`_officer_role`). Until 2026-10-25 the
+pointer itself reached the graph as a role on five dev seats, in two spellings;
+`manage.py heal-role-placeholders` removes such seats and names the companies to
+re-scrape.
+
 Names are stored as `LAST FIRST [MIDDLE]` in all caps. The scraper converts
 them to `First [Middle] Last` in title case. The relationship flags are written
 as `1` by older filings and as `true` by newer ones (Apple's 2026 Form 3 for its

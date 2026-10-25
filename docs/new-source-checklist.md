@@ -225,10 +225,19 @@ parser. Anything that does not map is either a new property (document it) or noi
       workaround.** `Entity.type`, `OWNS.ownership_type`, `read_from` and a claim's `kind`
       are restricted at the server to the vocabularies built from `EntityType`,
       `OwnershipType`, `READ_GRADES` and `KIND_*`; `country` must be ISO-2; a percentage
-      0–100 (`schema.constraints()`, 2026-10-25). A writer that sends anything else fails
-      the scrape with "does not match the regular expression" — which is the point. A
-      new category goes into the enum (one place; the rule follows), a non-ISO country
-      into `country_registered`, never into `country`.
+      0–100; every date `YYYY-MM-DD` (or the year / year-month a source states — the
+      shape, not the calendar) and every timestamp ISO with an offset; a claim must
+      name its source (`schema.constraints()`, 2026-10-25). A writer that sends anything
+      else fails the scrape with "does not match the regular expression" — which is the
+      point. A new category goes into the enum (one place; the rule follows), a non-ISO
+      country into `country_registered`, never into `country`; a new date field goes
+      into `schema._DATES` (or `_TIMESTAMPS`) so it carries the rule too.
+- [ ] **A placeholder in a field is not a value.** Form 4's title box says "See Remarks"
+      when the title is in the remarks box; five dev seats carried the placeholder as
+      their role until 2026-10-25 (`sec_edgar._officer_role` now reads the remarks, and
+      falls back to "Officer" rather than ever storing the pointer). Look for the
+      source's own "see elsewhere" / "not applicable" / "other" tokens before storing
+      a free-text field as a fact.
 - [ ] **If the source's records are filings, stamp `filing_type`** ("13G/A", "13F", "RR",
       "PSC") — the source names the register, this names the *rulebook* the fact lives
       under, which is what a reader needs to judge it.

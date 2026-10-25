@@ -165,10 +165,13 @@ def _nationality(raw: str | None) -> str:
     return nationality_to_iso2(raw) or (raw or "").strip()
 
 
-def _birth_date(data: dict) -> str:
+def _birth_date(data: dict) -> str | None:
+    """The register's month and year of birth, `YYYY-MM` (or `YYYY`); None when
+    it publishes none — never "": an empty string is not a date, and the
+    schema's date rule refuses it (2026-10-25)."""
     dob = data.get("date_of_birth") or {}
     y, m = dob.get("year"), dob.get("month")
-    return f"{y:04d}-{m:02d}" if y and m else (f"{y:04d}" if y else "")
+    return f"{y:04d}-{m:02d}" if y and m else (f"{y:04d}" if y else None)
 
 
 def psc_slug_id(self_link: str) -> str:

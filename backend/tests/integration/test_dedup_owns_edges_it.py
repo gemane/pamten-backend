@@ -202,13 +202,13 @@ def test_a_re_import_s_newer_statement_replaces_the_same_source_s_old_one(it_db)
         "CREATE (p)-[:OWNS{until:null, source_id:'psc', credibility_score:97, stake_percent:75, "
         "source_date:'2016-04-06', since:'2016-04-06', since_basis:'register_start', "
         "source_url:'https://find-and-update.example.test/psc/2016', "
-        "direct_or_indirect:'direct', last_scraped_at:'2025-01-01T00:00:00'}]->(c)")
+        "direct_or_indirect:'direct', last_scraped_at:'2025-01-01T00:00:00+00:00'}]->(c)")
     it_db.run_command(
         "MATCH (p:Entity{id:'p'}),(c:Entity{id:'c'}) "
         "CREATE (p)-[:OWNS{until:null, source_id:'psc', credibility_score:97, stake_percent:50, "
         "source_date:'2026-10-16', since:'2016-04-06', since_basis:'register_start', "
         "source_url:'https://find-and-update.example.test/psc/2026', "
-        "last_scraped_at:'2026-10-18T00:00:00'}]->(c)")
+        "last_scraped_at:'2026-10-18T00:00:00+00:00'}]->(c)")
 
     res = maintenance.deduplicate_owns_edges()
     assert (res["duplicates_removed"], res["survivors_folded"]) == (1, 1)

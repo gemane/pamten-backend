@@ -147,10 +147,10 @@ class TestTheRepair:
         assert (again["claims"], again["stale"]) == (3, 0)
 
 
-def test_a_claim_without_a_source_does_not_break_a_merge(it_db):
-    """Such a row should not exist (record_claim refuses it), but a merge must not die on one."""
-    from app.claims import migrate_claims
-    it_db.run_sql("INSERT INTO Claim SET claim_key = 'legacy', kind = 'owns', from_id = 'dead', to_id = 'x'")
-    assert migrate_claims("dead", "keep") == 1
-    [c] = _claims(it_db)
-    assert c["from_id"] == "keep" and c["claim_key"] != "legacy"
+def test_a_claim_without_a_source_is_refused_by_the_server(it_db):
+    """`record_claim` has always dropped a sourceless claim; since 2026-10-25 the
+    schema refuses one outright (`Claim.source_id` mandatory), so no merge ever
+    meets one — and a seeded "legacy" row cannot even be planted."""
+    with pytest.raises(Exception, match="mandatory"):
+        it_db.run_sql("INSERT INTO Claim SET claim_key = 'legacy', kind = 'owns', from_id = 'dead', to_id = 'x'")
+    assert _claims(it_db) == []
