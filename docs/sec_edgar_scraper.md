@@ -833,7 +833,12 @@ statements of a departure exist on EDGAR, and both now close the seat
   Hoffman's "decided not to stand for re-election at the annual meeting" leaves
   him serving until a meeting whose date the text does not give. Where the
   sentence names the seat ("from his role as Chief Executive Officer to Executive
-  Chair"), only that seat closes; Tim Cook keeps his board seat. A **succession**
+  Chair"), only that seat closes; Tim Cook keeps his board seat. The item's statutory
+  heading ("Departure of Directors or Certain Officers; Election of Directors; …") is
+  stripped before reading and a lettered paragraph ("b) On May 4, 2025 …") starts its
+  own sentence: until 2026-10-25 the heading stayed glued to paragraph b) of Berkshire's
+  May-2025 8-K, its word "Departure" made that paragraph a departure, and Greg Abel —
+  named in it as the *appointed* CEO — was closed on the day his seat began. A **succession**
   names two people — "Mr. Borders succeeds Chris Kondo in the role of Principal
   Accounting Officer", "following a transition of duties from Kate Adams" — and
   only the person named *after* the verb is leaving; the successor before it stays

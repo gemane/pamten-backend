@@ -2027,8 +2027,23 @@ _ROLE_AS_RX = re.compile(
     r"(?=\s+(?:to|and|of\s+the|effective|at|,)|[.;])")
 _ITEM_502_RX = re.compile(r"Item\s*5\.02\.?(?P<text>.*?)(?=Item\s*\d\.\d\d|SIGNATURES?\b)",
                           re.IGNORECASE | re.DOTALL)
-#: Sentence ends — but not the dot of an honorific ("Mr. Cook").
-_SENTENCE_RX = re.compile(r"(?<!\bMr\.)(?<!\bMs\.)(?<!\bMrs\.)(?<!\bDr\.)(?<=[.!?])\s+(?=[A-Z(“\"])")
+#: The item's statutory heading, which every 8-K repeats after "Item 5.02" in
+#: some subset — "Departure of Directors or Certain Officers; Election of
+#: Directors; Appointment of Certain Officers; Compensatory Arrangements of
+#: Certain Officers." It is not a sentence about anyone, but its first word
+#: is "Departure": glued to the first sentence it marked that sentence a
+#: departure, and everyone named in it was closed at the sentence's
+#: effective date — Berkshire's May-2025 8-K closed Greg Abel's CEO seat on
+#: the day it began, 2026-01-01 (found 2026-10-25).
+_ITEM_502_HEADING_RX = re.compile(
+    r"^\s*(?:(?:Departure\s+of\s+Directors(?:\s+or\s+Certain\s+Officers)?|Election\s+of\s+Directors|"
+    r"Appointment\s+of\s+Certain\s+Officers|Compensatory\s+Arrangements\s+of\s+Certain\s+Officers)"
+    r"\s*[;,.]?\s*)+", re.IGNORECASE)
+#: Sentence ends — but not the dot of an honorific ("Mr. Cook"). A lettered
+#: enumerator "(b) On May 4, 2025 …" / "b) …" starts a sentence too: the item's
+#: sub-paragraphs are lettered, and a lowercase "b)" after a period used to
+#: glue two paragraphs into one sentence.
+_SENTENCE_RX = re.compile(r"(?<!\bMr\.)(?<!\bMs\.)(?<!\bMrs\.)(?<!\bDr\.)(?<=[.!?])\s+(?=[A-Z(“\"]|\(?[a-z]\)\s)")
 
 
 def _iso_from_words(m) -> str:
@@ -2036,8 +2051,9 @@ def _iso_from_words(m) -> str:
 
 
 def _item_502_text(html_text: str) -> str | None:
+    """The item's prose, without its statutory heading."""
     m = _ITEM_502_RX.search(_plain_text(html_text))
-    return m.group("text").strip() if m else None
+    return _ITEM_502_HEADING_RX.sub("", m.group("text")).strip() if m else None
 
 
 def _name_rx(full_name: str) -> re.Pattern | None:
