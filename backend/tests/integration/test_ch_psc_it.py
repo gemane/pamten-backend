@@ -91,14 +91,14 @@ def test_imports_person_and_corporate_pscs(it_db, tmp_path):
         "MATCH (e:Entity {id:'gb-coh:00686734'})-[o:OWNS]->(c:Entity {companies_house_id:'07434180'}) "
         "RETURN e.name AS name, o.ownership_type AS t, e.country AS co, e.country_registered AS cr, "
         "e.reg_city AS city, e.reg_street AS street, e.reg_postcode AS pc, e.address AS a, "
-        "e.registered_address AS ra, e.hq_address AS ha, e.hq_city AS hc, e.hq_street AS hs")
+        "e.address_normalized AS ra, e.hq_address AS ha, e.hq_city AS hc, e.hq_street AS hs")
     assert corp and corp[0]["name"] == "Robert Hitchins Limited" and corp[0]["t"] == "controlling"
     assert (corp[0]["co"], corp[0]["cr"]) == ("GB", None)       # a code, and no words beside it
     # its own address in parts, for a structured geocode of the REGISTERED pin
     # (dropped until 2026-10-18), and as the panel's display address
     assert (corp[0]["city"], corp[0]["street"], corp[0]["pc"]) == (
         "Cheltenham", "The Manor, Boddington Lane", "GL51 0TJ")
-    assert corp[0]["a"] == corp[0]["ra"] and "The Manor" in corp[0]["a"]
+    assert "The Manor" in corp[0]["a"] and corp[0]["ra"].startswith("the manor boddington lane")
     # and no headquarters: the register says where it is registered, not where it is run
     assert (corp[0]["ha"], corp[0]["hc"], corp[0]["hs"]) == (None, None, None)
     # a filer's country that resolves to no code stays as words, never in `country`

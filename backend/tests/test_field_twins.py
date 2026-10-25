@@ -193,7 +193,8 @@ class TestHealEmptyLists:
             "UPDATE OWNS REMOVE file_date", "UPDATE Person REMOVE updated_at",
             "UPDATE RELATED_TO REMOVE credibility_score"]
         with patch.object(m, "run_sql", run_sql):
-            calls.clear(); m.heal_dead_keys(apply=False)
+            calls.clear()
+            m.heal_dead_keys(apply=False)
         assert not [c for c in calls if c.startswith("UPDATE")]
 
     def test_undated_role_claims_are_dated_by_their_first_sighting(self):
@@ -220,9 +221,53 @@ class TestHealEmptyLists:
              patch.object(m, "heal_person_sources", lambda a: "p"), patch.object(m, "heal_stale_flags", lambda a: "s"), \
              patch.object(m, "heal_empty_lists", lambda a: "e"), \
              patch.object(m, "heal_dead_keys", lambda a: "d"), patch.object(m, "heal_claim_dates", lambda a: "cd"), \
+             patch.object(m, "heal_address_keys", lambda a: "ak"), \
              patch("app.scraper.run_log.heal_placeholders", lambda a: "r"), \
              patch("app.roles.heal_seat_claim_filings", lambda a: "f"):
             res = m.heal_all(apply=False)
-        assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates"]
+        assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates", "address_keys"]
         assert res["run_log"] == "r" and res["seat_filings"] == "f"
         assert res["dead_keys"] == "d" and res["claim_dates"] == "cd"
+
+
+class TestHealAddressKeys:
+    """`registered_address` → `address_normalized`: GLEIF's rows carried the
+    key, the Companies House rows the readable string (and company-data rows
+    no `address` at all)."""
+    def _run(self, rows, apply=True):
+        scripts = []
+        with patch("app.db.paging.iter_id_pages", lambda vtype, columns="", **kw: iter([rows])), \
+             patch.object(m, "run_sqlscript", lambda script, params=None: scripts.append((script, params))):
+            res = m.heal_address_keys(apply=apply)
+        return res, scripts
+
+    def test_a_gleif_row_keeps_its_key_under_the_new_name_and_loses_the_old(self):
+        rows = [{"id": "lei:1", "rid": "#1:1", "address": "1 Example Street, London, EC1A 1BB, GB",
+                 "registered_address": "1 example street london ec1a 1bb gb", "address_normalized": None}]
+        res, scripts = self._run(rows)
+        assert res == {"applied": True, "scanned": 1, "keyed": 1, "addresses_moved": 0, "removed": 1}
+        script, params = scripts[0]
+        assert script == "UPDATE #1:1 SET address_normalized = :address_normalized_0 REMOVE registered_address"
+        assert params == {"address_normalized_0": "1 example street london ec1a 1bb gb"}
+
+    def test_a_readable_value_found_only_in_the_old_field_moves_to_address(self):
+        rows = [{"id": "gb-coh:1", "rid": "#1:2", "address": None,
+                 "registered_address": "1 HIGH STREET, HARROGATE, HG1 1AA", "address_normalized": None}]
+        res, scripts = self._run(rows)
+        assert (res["keyed"], res["addresses_moved"], res["removed"]) == (1, 1, 1)
+        script, params = scripts[0]
+        assert "address = :address_0" in script and "REMOVE registered_address" in script
+        assert params == {"address_0": "1 HIGH STREET, HARROGATE, HG1 1AA",
+                          "address_normalized_0": "1 high street harrogate hg1 1aa"}
+
+    def test_a_row_already_keyed_and_one_without_an_address_are_left_alone(self):
+        rows = [{"id": "a", "rid": "#1:3", "address": "X Street, Town", "registered_address": None,
+                 "address_normalized": "x street town"},
+                {"id": "b", "rid": "#1:4", "address": None, "registered_address": None, "address_normalized": None}]
+        res, scripts = self._run(rows)
+        assert (res["keyed"], res["removed"]) == (0, 0) and scripts == []
+
+    def test_a_dry_run_counts_and_writes_nothing(self):
+        rows = [{"id": "lei:1", "rid": "#1:1", "address": "A, B", "registered_address": "a b", "address_normalized": None}]
+        res, scripts = self._run(rows, apply=False)
+        assert res["keyed"] == 1 and res["applied"] is False and scripts == []

@@ -18,9 +18,9 @@ class TestGroupConfidence:
         assert _group_confidence([_m(companies_house_id="07434180"),
                                   _m(companies_house_id="07434180")]) == "definitive"
 
-    def test_same_registered_address_is_high(self):
-        assert _group_confidence([_m(registered_address="1 a st london gb"),
-                                  _m(registered_address="1 a st london gb")]) == "high"
+    def test_same_address_normalized_is_high(self):
+        assert _group_confidence([_m(address_normalized="1 a st london gb"),
+                                  _m(address_normalized="1 a st london gb")]) == "high"
 
     def test_distinct_ids_not_definitive(self):
         # different LEIs with nothing else in common ⇒ not a confident merge
@@ -30,7 +30,7 @@ class TestGroupConfidence:
 class TestWikidataGleifBridge:
     """The Microsoft case: why the pair used to sit unmerged, and what changes."""
 
-    GLEIF    = dict(lei_id="INR2EJN1ERAN0W5ZP974", country="US", registered_address="One Microsoft Way")
+    GLEIF    = dict(lei_id="INR2EJN1ERAN0W5ZP974", country="US", address_normalized="One Microsoft Way")
     WIKIDATA = dict(wikidata_id="Q2283", sec_cik="0000789019", country="US")
 
     def test_pair_without_a_shared_id_is_not_auto_merged(self):

@@ -242,3 +242,17 @@ class TestIsNomineeName:
         assert infer_entity_type(["Q783794", "Q157031"]) == "foundation"
         assert infer_entity_type(["Q4830453", "Q845477"]) == "fund"
         assert infer_entity_type(["Q783794", "Q1802419"]) == "government"
+
+
+class TestNormalizeAddress:
+    """`address_normalized`: the matching key every importer derives from the
+    readable address, as GLEIF's `registered_address` was built since the start."""
+    def test_lowercases_strips_punctuation_and_collapses_spaces(self):
+        from app.scraper.mapper import normalize_address
+        assert normalize_address("1 Example Street, London, EC1A 1BB, GB") == "1 example street london ec1a 1bb gb"
+        assert normalize_address("C/O  Maples,  George Town") == "c o maples george town"
+
+    def test_blank_is_none(self):
+        from app.scraper.mapper import normalize_address
+        assert normalize_address(None) is None and normalize_address("") is None
+        assert normalize_address(" , ") is None

@@ -48,9 +48,9 @@ def test_confidence_tiers(it_db):
     # definitive: two "Foo" nodes share a sec_cik
     it_db.run_command("CREATE (:Entity {id:'lei:F1', name:'Foo', name_normalized:'foo', lei_id:'F1', sec_cik:'0001'})")
     it_db.run_command("CREATE (:Entity {id:'lei:F2', name:'Foo Inc', name_normalized:'foo', lei_id:'F2', sec_cik:'0001'})")
-    # high: two "Bar" nodes share a registered_address
-    it_db.run_command("CREATE (:Entity {id:'lei:B1', name:'Bar', name_normalized:'bar', lei_id:'B1', registered_address:'1 king st'})")
-    it_db.run_command("CREATE (:Entity {id:'lei:B2', name:'Bar Ltd', name_normalized:'bar', lei_id:'B2', registered_address:'1 king st'})")
+    # high: two "Bar" nodes share a address_normalized
+    it_db.run_command("CREATE (:Entity {id:'lei:B1', name:'Bar', name_normalized:'bar', lei_id:'B1', address_normalized:'1 king st'})")
+    it_db.run_command("CREATE (:Entity {id:'lei:B2', name:'Bar Ltd', name_normalized:'bar', lei_id:'B2', address_normalized:'1 king st'})")
     # low: two "Qux" nodes share only the name (different countries)
     it_db.run_command("CREATE (:Entity {id:'lei:Q1', name:'Qux', name_normalized:'qux', lei_id:'Q1', country:'US'})")
     it_db.run_command("CREATE (:Entity {id:'lei:Q2', name:'Qux', name_normalized:'qux', lei_id:'Q2', country:'DE'})")

@@ -210,6 +210,46 @@ def heal_claim_dates(apply: bool = True) -> dict:
     return out
 
 
+def heal_address_keys(apply: bool = True) -> dict:
+    """`registered_address` → `address_normalized` for a database written
+    before 2026-10-25. GLEIF filled the old field with a lowercased matching
+    key, the Companies House importers with the readable address (and left
+    `address` empty on the company-data rows): every entity with an address
+    gets `address_normalized` = the key of its readable `address`; a readable
+    value found only in the old field moves to `address` first; the old key
+    is removed. Pages the id index; batched scripts; dry run unless `apply`."""
+    from app.db.paging import iter_id_pages
+    from app.scraper.mapper import normalize_address
+    out = {"applied": bool(apply), "scanned": 0, "keyed": 0, "addresses_moved": 0, "removed": 0}
+    for page in iter_id_pages("Entity", columns="id, @rid AS rid, address, registered_address, address_normalized"):
+        out["scanned"] += len(page)
+        stmts: list[str] = []
+        params: dict = {}
+        for k, r in enumerate(page):
+            old = r.get("registered_address")
+            readable = r.get("address") or (old if old and normalize_address(old) != old else None)
+            sets: dict = {}
+            if readable and not r.get("address"):
+                sets["address"] = readable
+                out["addresses_moved"] += 1
+            key = normalize_address(readable or old)
+            if key and key != r.get("address_normalized"):
+                sets["address_normalized"] = key
+                out["keyed"] += 1
+            if old is not None:
+                out["removed"] += 1
+            if not sets and old is None:
+                continue
+            assigns = ", ".join(f"{f} = :{f}_{k}" for f in sets)
+            params.update({f"{f}_{k}": v for f, v in sets.items()})
+            stmts.append(f"UPDATE {r['rid']}" + (f" SET {assigns}" if assigns else "")
+                         + (" REMOVE registered_address" if old is not None else ""))
+        if apply and stmts:
+            run_sqlscript(";".join(stmts), params)
+    log.info("address keys heal: %s", out)
+    return out
+
+
 def heal_all(apply: bool = True) -> dict:
     """Every model-gap heal in one call (`manage.py heal-model-gaps`): the
     2026-10-25 survey's four, then the round-four three — empty lists, the run
@@ -221,4 +261,5 @@ def heal_all(apply: bool = True) -> dict:
             "person_sources": heal_person_sources(apply), "stale_flags": heal_stale_flags(apply),
             "empty_lists": heal_empty_lists(apply), "run_log": heal_placeholders(apply),
             "seat_filings": heal_seat_claim_filings(apply),
-            "dead_keys": heal_dead_keys(apply), "claim_dates": heal_claim_dates(apply)}
+            "dead_keys": heal_dead_keys(apply), "claim_dates": heal_claim_dates(apply),
+            "address_keys": heal_address_keys(apply)}

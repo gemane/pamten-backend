@@ -27,8 +27,8 @@ Per matched company it sets: ``name`` / ``name_normalized`` / ``search_text``
 (name + former names, FULL_TEXT-indexed), ``type`` (from CompanyCategory),
 ``country`` (``GB``), ``incorporated_on`` (IncorporationDate — the legal entity's
 registration, never the headline ``founded`` year, which is the business's origin
-and Wikidata's to state), ``registered_address`` /
-``address`` (and the registered office in parts — ``reg_street`` / ``reg_city`` /
+and Wikidata's to state), ``address`` + its matching key ``address_normalized``
+(and the registered office in parts — ``reg_street`` / ``reg_city`` /
 ``reg_postcode``; nothing under ``hq_*``, the register does not say where a
 company is run),
 ``aliases`` (PreviousName_1..10), ``former_names`` (the same names, each with
@@ -48,14 +48,14 @@ from app.scraper.bulk_import import (
 from app import former_names
 from app.industry import parse_uk_sic, sync_uk_sic
 from app.scraper.companies_house_psc import mark_first_year_lower_bounds
-from app.scraper.mapper import is_nominee_name, normalize_entity_name
+from app.scraper.mapper import is_nominee_name, normalize_address, normalize_entity_name
 
 log = logging.getLogger(__name__)
 
 # CompanyCategory substrings that mean "not an ordinary company".
 _NONPROFIT_HINTS = ("charitable", "community interest")
 
-# RegAddress.* columns assembled (in order) into a single registered_address.
+# RegAddress.* columns assembled (in order) into the single `address` string.
 _ADDRESS_KEYS = (
     "RegAddress.CareOf", "RegAddress.POBox", "RegAddress.AddressLine1",
     "RegAddress.AddressLine2", "RegAddress.PostTown", "RegAddress.County",
@@ -321,7 +321,9 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "type": _company_type(row.get("CompanyCategory")),
                     "country": "GB",
                     "incorporated_on": incorporated_on,
-                    "registered_address": _reg_address(row),
+                    # the register's address string is set by _reg_address_parts;
+                    # this is its matching key for the same-name dedup
+                    "address_normalized": normalize_address(_reg_address(row)),
                     # Nothing under hq_*: the register states the registered
                     # office, not where the company is run (_reg_address_parts).
                     "companies_house_id": number,

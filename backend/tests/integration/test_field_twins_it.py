@@ -168,3 +168,26 @@ def test_the_person_merge_and_the_person_api_leave_an_unknown_list_absent(it_db)
     assert "nationalities" not in it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": pid})[0]
     update_person(pid, PersonCreate(first_name="Ada", last_name="Lovelace", nationalities=["GB"]), _={"role": "contributor"})
     assert it_db.run_sql("SELECT nationalities FROM Person WHERE id = :id", {"id": pid})[0]["nationalities"] == ["GB"]
+
+
+def test_the_address_key_heal_rekeys_an_older_database(it_db):
+    from app.field_twins import heal_address_keys
+    it_db.run_command("CREATE (:Entity {id:'lei:1', name:'Acme', address:'1 Example Street, London, EC1A 1BB, GB', "
+                      "registered_address:'1 example street london ec1a 1bb gb'})")
+    it_db.run_command("CREATE (:Entity {id:'gb-coh:1', name:'Harrogate Co', "
+                      "registered_address:'1 HIGH STREET, HARROGATE, HG1 1AA'})")
+    it_db.run_command("CREATE (:Entity {id:'chpsc:1', name:'Manor Ltd', address:'The Manor, Cheltenham, GL51 0TJ', "
+                      "registered_address:'The Manor, Cheltenham, GL51 0TJ'})")
+    it_db.run_command("CREATE (:Entity {id:'wd:1', name:'No Address Inc'})")
+    res = heal_address_keys(apply=False)
+    assert (res["scanned"], res["keyed"], res["addresses_moved"], res["removed"]) == (4, 3, 1, 3)
+    assert "registered_address" in it_db.run_sql("SELECT FROM Entity WHERE id = 'lei:1'")[0], "a dry run wrote"
+    assert heal_address_keys(apply=True)["keyed"] == 3
+    rows = {r["id"]: r for r in it_db.run_sql("SELECT id, address, address_normalized, registered_address FROM Entity")}
+    assert rows["lei:1"]["address_normalized"] == "1 example street london ec1a 1bb gb"
+    assert rows["gb-coh:1"]["address"] == "1 HIGH STREET, HARROGATE, HG1 1AA"
+    assert rows["gb-coh:1"]["address_normalized"] == "1 high street harrogate hg1 1aa"
+    assert rows["chpsc:1"]["address_normalized"] == "the manor cheltenham gl51 0tj"
+    assert all(r.get("registered_address") is None for r in rows.values())
+    assert "address_normalized" not in it_db.run_sql("SELECT FROM Entity WHERE id = 'wd:1'")[0]
+    assert heal_address_keys(apply=True)["keyed"] == 0

@@ -61,15 +61,16 @@ def test_enriches_existing_company_only(it_db, tmp_path):
         "MATCH (e:Entity {id:'gb-coh:09446231'}) "
         "RETURN e.name AS name, e.type AS type, e.founded AS founded, "
         "e.incorporated_on AS incorporated_on, "
-        "e.aliases AS aliases, e.search_text AS st, e.registered_address AS addr, "
+        "e.aliases AS aliases, e.search_text AS st, e.address_normalized AS addr, "
         "e.reg_street AS rs, e.reg_city AS rc, e.reg_postcode AS rp, e.address AS a, "
         "e.hq_address AS ha, e.hq_city AS hc, e.hq_country AS hk, e.hq_street AS hs, e.hq_postcode AS hp")
     assert rec, "existing company should be enriched"
     row = rec[0]
     # the registered office in parts under the registered pin (dropped until 2026-10-18)
     assert (row["rs"], row["rc"], row["rp"]) == ("BROADWALK HOUSE", "LONDON", "EC2A 2DA")
-    # the display address is the same string as the dedup corroborator
-    assert row["a"] == row["addr"]
+    # the display address, and its matching key for the same-name dedup
+    from app.scraper.mapper import normalize_address
+    assert row["addr"] == normalize_address(row["a"]) and "ec2a 2da" in row["addr"]
     # and nothing under hq_*: the register does not say where the company is run
     assert (row["ha"], row["hc"], row["hk"], row["hs"], row["hp"]) == (None,) * 5
     assert row["name"] == "MONZO BANK LIMITED"
@@ -78,7 +79,7 @@ def test_enriches_existing_company_only(it_db, tmp_path):
     assert row["founded"] is None                    # the business's origin is not the register's to say
     assert "MONDO LTD" in (row["aliases"] or [])
     assert "MONDO LTD" in (row["st"] or "")          # former name is searchable
-    assert "EC2A 2DA" in (row["addr"] or "")
+    assert "ec2a 2da" in (row["addr"] or "")
 
     # the register row for a company not already in the graph must NOT create a node
     missing = it_db.run_command("MATCH (e:Entity {id:'gb-coh:99999999'}) RETURN e.id AS id")
@@ -105,7 +106,7 @@ def test_a_company_held_under_a_gleif_id_is_enriched_too(it_db, tmp_path):
 
     row = it_db.run_command(
         "MATCH (e:Entity {id:'lei:2138007AJRLHRVQZLD07'}) "
-        "RETURN e.incorporated_on AS fd, e.registered_address AS addr, e.uk_sic_codes AS sic, "
+        "RETURN e.incorporated_on AS fd, e.address AS addr, e.uk_sic_codes AS sic, "
         "e.name_credibility AS nc, e.nace_code AS nace")[0]
     assert row["fd"] == "2005-01-18"
     assert "EC2V 6DN" in row["addr"]

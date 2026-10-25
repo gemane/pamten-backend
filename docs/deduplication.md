@@ -566,14 +566,18 @@ OOMs the heap) and tags each group with a **confidence** it's the same company:
 | Confidence | Signal |
 |---|---|
 | `definitive` | members share a `wikidata_id` / `sec_cik` / `companies_house_id` / `lei_id` / `register_id` |
-| `high` | same `registered_address` (GLEIF registered office) |
+| `high` | same `address_normalized` (the registered office's matching key) |
 | `medium` | same `country` **and** `founded` year |
 | `low` | name only — differing address/country ⇒ probably *different* firms |
 
-`registered_address` is captured at import from GLEIF `recordDetails.addresses`
-(`bods._registered_address`, normalized, indexed) — it's the discriminator: same
-name **+ same registered address** ⇒ merge; same name **+ different address** ⇒
-leave alone. It populates on the next import.
+`address_normalized` is the matching key of the readable `address`
+(`mapper.normalize_address`: lowercased, punctuation stripped), written by every
+importer — GLEIF, Companies House PSC and company data — and indexed; it's the
+discriminator: same name **+ same registered address** ⇒ merge; same name
+**+ different address** ⇒ leave alone. Until 2026-10-25 the field was
+`registered_address`, which GLEIF filled with the key and the Companies House
+importers with the readable string, so a UK company never corroborated its
+GLEIF twin; `heal-model-gaps` re-keys an older database.
 
 The **full-DB** scan **detects, it does not auto-merge** (a name clash isn't a
 duplicate). Surfaced in the BODS import result as `duplicate_names`, via

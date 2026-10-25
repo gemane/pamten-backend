@@ -19,7 +19,8 @@ class TestPscAddress:
                 "address_line_2": "Boddington", "locality": "Cheltenham",
                 "country": "England", "postal_code": "GL51 0TJ"}
         out = _psc_address(addr)
-        assert out["registered_address"] == "The Manor, Boddington Lane, Boddington, Cheltenham, GL51 0TJ, England"
+        assert out["address"] == "The Manor, Boddington Lane, Boddington, Cheltenham, GL51 0TJ, England"
+        assert out["address_normalized"] == "the manor boddington lane boddington cheltenham gl51 0tj england"
         # the parts, for a structured geocode of the REGISTERED pin: the street
         # is the lines joined in the register's order, the postcode its own field
         assert out["reg_street"] == "The Manor, Boddington Lane, Boddington"
@@ -28,12 +29,12 @@ class TestPscAddress:
         assert not any(k.startswith("hq_") for k in out), "a registered office is not a headquarters"
 
     def test_empty_address(self):
-        assert _psc_address(None) == {"registered_address": None, "reg_street": None,
+        assert _psc_address(None) == {"address": None, "address_normalized": None, "reg_street": None,
                                       "reg_city": None, "reg_postcode": None}
 
     def test_blank_parts_are_none_not_empty_strings(self):
         out = _psc_address({"premises": " ", "locality": "Leeds", "postal_code": ""})
-        assert (out["reg_street"], out["reg_postcode"], out["registered_address"]) == (None, None, "Leeds")
+        assert (out["reg_street"], out["reg_postcode"], out["address"]) == (None, None, "Leeds")
 
     def test_iso2_maps_uk_subdivisions_and_foreign(self):
         assert _iso2_country("England & Wales") == "GB"
@@ -56,10 +57,10 @@ class TestPscAddress:
             "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
         }}
         assert m._process(rec, m._BatchWriter(), "src", 97) == "entity"
-        assert "The Manor" in captured["registered_address"]
+        assert captured["address_normalized"].startswith("the manor boddington lane")
         # the display address and the parts reach the writer (the parts were
         # mapped and dropped until 2026-10-18)
-        assert captured["extra"]["address"] == captured["registered_address"]
+        assert "The Manor" in captured["extra"]["address"]
         assert captured["extra"]["reg_street"] == "The Manor, Boddington Lane"
         assert captured["extra"]["reg_city"] == "Cheltenham"
         assert captured["extra"]["reg_postcode"] == "GL51 0TJ"
