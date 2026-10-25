@@ -47,11 +47,12 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Person",   "full_name",       "NOTUNIQUE"),
     ("Person",   "wikidata_id",     "NOTUNIQUE"),
     ("Person",   "sec_cik",         "NOTUNIQUE"),
-    # Element-wise over the LIST: `$name IN p.alias` is how the scoped
+    # Element-wise over the LIST: `$name IN p.aliases` is how the scoped
     # post-scrape dedup finds a node recorded under another of its names.
     # Typed LIST below — declared STRING, ArcadeDB rejects the comparison with
-    # "IN requires a list on the right side, got String".
-    ("Person",   "alias",           "NOTUNIQUE"),
+    # "IN requires a list on the right side, got String". `alias` until
+    # 2026-10-25 — one name for the one list on both node types now.
+    ("Person",   "aliases",         "NOTUNIQUE"),
     ("Source",   "id",              "UNIQUE"),
     ("User",     "id",              "UNIQUE"),
     ("User",     "email",           "UNIQUE"),
@@ -176,11 +177,11 @@ _EDGE_INDEXES: list[tuple[str, str, str]] = [
     ("OWNS", "psc_self_link", "NOTUNIQUE"),
 ]
 
-#: Indexed properties that are NOT strings. Declaring `alias` STRING makes
-#: ArcadeDB reject `$name IN p.alias` ("IN requires a list on the right side,
+#: Indexed properties that are NOT strings. Declaring `aliases` STRING makes
+#: ArcadeDB reject `$name IN p.aliases` ("IN requires a list on the right side,
 #: got String") — the property type is part of the contract, not decoration.
 _PROPERTY_TYPES: dict[tuple[str, str], str] = {
-    ("Person", "alias"): "LIST",
+    ("Person", "aliases"): "LIST",
 }
 
 #: Declared types for the properties that are not strings, indexed or not —

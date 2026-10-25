@@ -33,7 +33,7 @@ def runner(it_db, monkeypatch):
 
 def _person(full_name):
     from app.db.arcadedb import run_sql
-    rows = run_sql("SELECT full_name, search_text, alias FROM Person WHERE full_name = :n",
+    rows = run_sql("SELECT full_name, search_text, aliases FROM Person WHERE full_name = :n",
                    {"n": full_name})
     return rows[0] if rows else None
 

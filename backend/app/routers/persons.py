@@ -136,7 +136,7 @@ _PERSON_RETURN = (
     "RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id, "
     "p.sec_cik AS sec_cik, "
     "p.birth_date AS birth_date, p.birth_place AS birth_place, "
-    "p.first_name AS first_name, p.last_name AS last_name, p.alias AS alias"
+    "p.first_name AS first_name, p.last_name AS last_name, p.aliases AS aliases"
 )
 
 
@@ -145,7 +145,7 @@ def _person_row(r) -> dict:
             "sec_cik": r.get("sec_cik"),
             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
             "first_name": r.get("first_name"), "last_name": r.get("last_name"),
-            "alias": r.get("alias") or []}
+            "aliases": r.get("aliases") or []}
 
 
 def _all_persons(session) -> list[dict]:
@@ -178,9 +178,9 @@ def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
     plus existing persons sharing an exact full_name/alias or wikidata_id with a seed.
     Uses per-value equality (index-backed) — ArcadeDB does NOT use the index for an
     `IN` over a parameter LIST, which full-scans, so on a multi-million-person DB
-    that would defeat the point. (`$name IN p.alias` is the other direction — one
+    that would defeat the point. (`$name IN p.aliases` is the other direction — one
     value against a stored list — and is served by the element-wise index on
-    Person.alias declared in db/schema.py.)
+    Person.aliases declared in db/schema.py.)
     Cross-spelling matches against *pre-existing* persons (surname/birth signals) are
     left to the periodic full scan; the common within-scrape cross-source duplicates
     are all in the seed set and grouped here."""
@@ -190,7 +190,7 @@ def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
         if r:
             rows[pid] = _person_row(r)
     # Expand from the SEEDS only (one hop) — exact full_name/alias and wikidata_id.
-    names = {n for p in rows.values() for n in [p["full_name"], *p["alias"]] if n}
+    names = {n for p in rows.values() for n in [p["full_name"], *p["aliases"]] if n}
     names |= {v for n in list(names) for v in _name_lookup_variants(n)}
     wids  = {p["wikidata_id"] for p in rows.values() if p["wikidata_id"]}
     for name in names:
@@ -202,7 +202,7 @@ def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
         # "Page Lawrence", Wikidata's "Larry Page" carries it only as an alias,
         # the full_name lookup matches nothing, and the pair survives every
         # scrape until somebody runs the periodic full scan by hand.
-        for r in session.run(f"MATCH (p:Person) WHERE $n IN p.alias {_PERSON_RETURN}", n=name):
+        for r in session.run(f"MATCH (p:Person) WHERE $n IN p.aliases {_PERSON_RETURN}", n=name):
             rows.setdefault(r.get("id"), _person_row(r))
     for wid in wids:
         for r in session.run(f"MATCH (p:Person) WHERE p.wikidata_id = $w {_PERSON_RETURN}", w=wid):
@@ -250,7 +250,7 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             # Index under the full name AND every alias, so a node whose full
             # name is one variant links to one recorded only as another person's
             # alias (SEC "Gates William H Iii" ↔ "Bill Gates" / "William H. Gates III").
-            name_keys = {nk for name in [p["full_name"], *p["alias"]] if (nk := _name_key(name))}
+            name_keys = {nk for name in [p["full_name"], *p["aliases"]] if (nk := _name_key(name))}
             for nk in name_keys:
                 by_name[nk].append(p)
             if p["birth_date"] and p["birth_place"]:
@@ -295,7 +295,7 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             # "…, Jr." across a member's name and aliases — are a father and
             # son by name alone (app.generations; Thomas Murphy, 2026-10-25).
             present_qids = [m.get("wikidata_id") for m in members if m.get("wikidata_id")]
-            marks = [generation_marks(m.get("full_name"), *(m.get("alias") or [])) for m in members]
+            marks = [generation_marks(m.get("full_name"), *(m.get("aliases") or [])) for m in members]
             distinct_by = None
             if len(set(present_ciks)) >= 2:
                 distinct_by = "but DIFFERENT SEC CIKs — distinct filers"
@@ -618,7 +618,7 @@ def merge_person_records(keep: str, dup: str) -> None:
         keep_full = (keep_node.get("full_name") or "").strip()
         alias_union: list[str] = []
         seen_alias = {keep_full.lower()}
-        for a in (keep_node.get("alias") or []) + [dup_node.get("full_name")] + (dup_node.get("alias") or []):
+        for a in (keep_node.get("aliases") or []) + [dup_node.get("full_name")] + (dup_node.get("aliases") or []):
             a = (a or "").strip()
             if a and a.lower() not in seen_alias:
                 seen_alias.add(a.lower())
@@ -669,7 +669,7 @@ def merge_person_records(keep: str, dup: str) -> None:
             MATCH (keep:Person {{id:$keep}})
             SET {bio_set},
                 keep.description   = CASE WHEN COALESCE(keep.description, '') = '' THEN $description ELSE keep.description END,
-                keep.alias         = $alias,
+                keep.aliases       = $alias,
                 keep.nationalities = CASE WHEN size(COALESCE(keep.nationalities, [])) > 0 THEN keep.nationalities ELSE $nationalities END,
                 keep.created_at    = $created_at
         """, keep=keep,
@@ -716,7 +716,7 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
             first_name: $first_name,
             last_name: $last_name,
             full_name: $full_name,
-            alias: $alias,
+            aliases: $aliases,
             nationalities: $nationalities,
             birth_date: $birth_date,
             death_date: $death_date,
@@ -785,7 +785,7 @@ def update_person(person_id: str, person: PersonCreate, _: dict = Depends(requir
             first_name: $first_name,
             last_name: $last_name,
             full_name: $full_name,
-            alias: $alias,
+            aliases: $aliases,
             nationalities: $nationalities,
             birth_date: $birth_date,
             death_date: $death_date,

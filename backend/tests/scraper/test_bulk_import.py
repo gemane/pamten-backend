@@ -346,7 +346,7 @@ class TestBulkLoad:
         assert res["failed"] == []
         # the property is declared before its index, with the schema's type
         props = [c for c, _t in issued if c.startswith("CREATE PROPERTY")]
-        assert any("Person.alias IF NOT EXISTS LIST" in c for c in props)
+        assert any("Person.aliases IF NOT EXISTS LIST" in c for c in props)
         # types + the small indexes still go through the bootstrap, after the big ones
         ens.assert_called_once()
         assert issued[-1][0].startswith("CREATE INDEX")   # the bootstrap is a mock; ours came first

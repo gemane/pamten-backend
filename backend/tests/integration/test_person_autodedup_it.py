@@ -64,7 +64,7 @@ def _alphabet_pair(it_db):
     it_db.run_command("CREATE (:Entity {id:'goog', name:'Alphabet Inc.', type:'company'})")
     it_db.run_command(
         "CREATE (:Person {id:'larry', full_name:'Larry Page', wikidata_id:'Q4934', "
-        "alias:['Lawrence Page', 'Page Lawrence']})")
+        "aliases: ['Lawrence Page', 'Page Lawrence']})")
     it_db.run_command("CREATE (:Person {id:'sec-larry', full_name:'Page Lawrence'})")
     it_db.run_command(
         "CREATE (:Person {id:'eric', full_name:'Eric Schmidt', first_name:'Eric', "
@@ -158,9 +158,9 @@ def test_two_wikidata_items_are_two_people(it_db):
     from app.routers.persons import deduplicate_high_confidence
     _berkshire(it_db)
     it_db.run_command("CREATE (:Person {id:'sr', full_name:'Thomas Murphy', wikidata_id:'Q3525537', "
-                      "alias:['Thomas S. Murphy']})")
+                      "aliases: ['Thomas S. Murphy']})")
     it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas S. Murphy, Jr.', wikidata_id:'Q124988340', "
-                      "alias:['Thomas Murphy', 'Tom Murphy']})")
+                      "aliases: ['Thomas Murphy', 'Tom Murphy']})")
     _seat(it_db, "sr")
     _seat(it_db, "jr")
 
@@ -174,8 +174,8 @@ def test_two_wikidata_items_are_two_people(it_db):
 def test_sr_against_jr_is_definitive_without_any_id(it_db):
     from app.routers.persons import deduplicate_high_confidence
     _berkshire(it_db)
-    it_db.run_command("CREATE (:Person {id:'sr', full_name:'Thomas Murphy', alias:['Thomas Murphy, Sr.']})")
-    it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas Murphy', alias:['Thomas Murphy, Jr.']})")
+    it_db.run_command("CREATE (:Person {id:'sr', full_name:'Thomas Murphy', aliases: ['Thomas Murphy, Sr.']})")
+    it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas Murphy', aliases: ['Thomas Murphy, Jr.']})")
     _seat(it_db, "sr")
     _seat(it_db, "jr")
 
@@ -189,7 +189,7 @@ def test_a_mark_on_one_side_only_waits_for_a_human(it_db):
     from app.routers.persons import deduplicate_high_confidence
     _berkshire(it_db)
     it_db.run_command("CREATE (:Person {id:'plain', full_name:'Thomas Murphy', wikidata_id:'Q3525537'})")
-    it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas S Murphy Jr', alias:['Thomas Murphy']})")
+    it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas S Murphy Jr', aliases: ['Thomas Murphy']})")
     _seat(it_db, "plain")
     _seat(it_db, "jr")
 
@@ -206,7 +206,7 @@ def test_the_same_mark_on_both_sides_still_merges(it_db):
     working."""
     from app.routers.persons import deduplicate_high_confidence
     it_db.run_command("CREATE (:Entity {id:'msft', name:'Microsoft', type:'company'})")
-    it_db.run_command("CREATE (:Person {id:'bg', full_name:'Bill Gates', wikidata_id:'Q5284', alias:['William H. Gates III']})")
+    it_db.run_command("CREATE (:Person {id:'bg', full_name:'Bill Gates', wikidata_id:'Q5284', aliases: ['William H. Gates III']})")
     it_db.run_command("CREATE (:Person {id:'sec', full_name:'Gates William H Iii'})")
     for pid in ("bg", "sec"):
         it_db.run_command("MATCH (p:Person {id:$p}),(e:Entity{id:'msft'}) CREATE (p)-[:HAS_ROLE {role:'Director'}]->(e)",

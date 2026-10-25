@@ -428,7 +428,7 @@ def _upsert_person(
                     p.image_url    = COALESCE(p.image_url, $image),
                     p.wikipedia_url = COALESCE(p.wikipedia_url, $wikipedia),
                     p.description   = CASE WHEN COALESCE(p.description, '') = '' THEN $desc ELSE p.description END,
-                    p.alias         = CASE WHEN size(COALESCE(p.alias, [])) > 0 THEN p.alias ELSE $aliases END,
+                    p.aliases       = CASE WHEN size(COALESCE(p.aliases, [])) > 0 THEN p.aliases ELSE $aliases END,
                     p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 THEN p.nationalities ELSE $nats END,
                     p.source_id     = COALESCE(p.source_id, $source_id),
                     // Derived, so it is refreshed rather than blank-filled: this
@@ -457,7 +457,7 @@ def _upsert_person(
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
                 image_url: $image, wikipedia_url: $wikipedia,
-                alias: $aliases, nationalities: $nats,
+                aliases: $aliases, nationalities: $nats,
                 source_id: $source_id, search_text: $search_text,
                 created_at: $created_at, last_scraped_at: $created_at
             })

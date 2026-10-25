@@ -221,11 +221,12 @@ class TestHealEmptyLists:
              patch.object(m, "heal_person_sources", lambda a: "p"), patch.object(m, "heal_stale_flags", lambda a: "s"), \
              patch.object(m, "heal_empty_lists", lambda a: "e"), \
              patch.object(m, "heal_dead_keys", lambda a: "d"), patch.object(m, "heal_claim_dates", lambda a: "cd"), \
-             patch.object(m, "heal_address_keys", lambda a: "ak"), \
+             patch.object(m, "heal_address_keys", lambda a: "ak"), patch.object(m, "heal_person_aliases", lambda a: "pa"), \
              patch("app.scraper.run_log.heal_placeholders", lambda a: "r"), \
              patch("app.roles.heal_seat_claim_filings", lambda a: "f"):
             res = m.heal_all(apply=False)
-        assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates", "address_keys"]
+        assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates", "address_keys", "person_aliases"]
+        assert res["person_aliases"] == "pa"
         assert res["run_log"] == "r" and res["seat_filings"] == "f"
         assert res["dead_keys"] == "d" and res["claim_dates"] == "cd"
 
@@ -271,3 +272,20 @@ class TestHealAddressKeys:
         rows = [{"id": "lei:1", "rid": "#1:1", "address": "A, B", "registered_address": "a b", "address_normalized": None}]
         res, scripts = self._run(rows, apply=False)
         assert res["keyed"] == 1 and res["applied"] is False and scripts == []
+
+
+class TestHealPersonAliases:
+    def test_copies_the_list_then_removes_the_old_key(self):
+        calls = []
+        def run_sql(sql, params=None, timeout=None):
+            calls.append(sql)
+            return [{"n": 911}] if sql.startswith("SELECT") else [{"count": 911}]
+        with patch.object(m, "run_sql", run_sql):
+            assert m.heal_person_aliases(apply=True) == {"applied": True, "persons": 911}
+        updates = [c for c in calls if c.startswith("UPDATE")]
+        assert updates == ["UPDATE Person SET aliases = alias WHERE alias IS NOT NULL AND aliases IS NULL",
+                           "UPDATE Person REMOVE alias"]
+        with patch.object(m, "run_sql", run_sql):
+            calls.clear()
+            m.heal_person_aliases(apply=False)
+        assert not [c for c in calls if c.startswith("UPDATE")]

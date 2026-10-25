@@ -25,7 +25,7 @@ def test_person_search_matches_alias(it_db):
 
     it_db.run_command(
         "CREATE (:Person {id:'p', full_name:'Larry Page', "
-        "alias:['Lawrence Page','Lawrence Edward Page']})"
+        "aliases: ['Lawrence Page','Lawrence Edward Page']})"
     )
     _backfill()   # composes search_text = full_name + aliases
 
@@ -37,7 +37,7 @@ def test_person_search_matches_alias(it_db):
 def test_person_search_still_matches_full_name(it_db):
     from app.routers.search import search
 
-    it_db.run_command("CREATE (:Person {id:'p2', full_name:'Larry Page', alias:[]})")
+    it_db.run_command("CREATE (:Person {id:'p2', full_name:'Larry Page', aliases: []})")
     _backfill()
 
     names = [r["node"].get("full_name") for r in search(q="larry", country=None)

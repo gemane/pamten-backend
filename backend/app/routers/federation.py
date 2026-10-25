@@ -366,7 +366,7 @@ def _upsert_person(session, ref: dict, source_id: str) -> str | None:
         "CREATE (p:Person {id:$id, full_name:$full, first_name:$first, last_name:$last, "
         "search_text:$stext, "
         "wikidata_id:$wd, sec_cik:$cik, birth_date:$bd, birth_place:$bp, "
-        "nationalities:$nats, source_id:$sid, alias:[], created_at:$created_at})",
+        "nationalities:$nats, source_id:$sid, aliases:[], created_at:$created_at})",
         id=pid, full=full, stext=full, first=ref.get("first_name"), last=ref.get("last_name"),
         created_at=datetime.now(timezone.utc).isoformat(),
         wd=ref.get("wikidata_id"), cik=ref.get("sec_cik"), bd=ref.get("birth_date"),

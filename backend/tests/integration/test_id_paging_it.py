@@ -16,7 +16,7 @@ def _seed(it_db):
     for eid in ("lei:A1", "lei:A2", "lei:B1", "gb-coh:00000001", "gb-coh:SC899546",
                 "chpsc:00031438:x", "wd:Q312", "lei;tricky", "lej:0"):
         it_db.run_command("CREATE (:Entity {id: $id, name: $id})", {"id": eid})
-    it_db.run_command("CREATE (:Person {id: 'chpsc:p1', full_name: 'P One', alias: []})")
+    it_db.run_command("CREATE (:Person {id: 'chpsc:p1', full_name: 'P One', aliases: []})")
 
 
 class TestPrefixWalk:

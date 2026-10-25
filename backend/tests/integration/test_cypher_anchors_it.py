@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 
 def _seed_group(it_db):
     it_db.run_command("CREATE (:Entity {id:'issuer', name:'Issuer PLC'})")
-    it_db.run_command("CREATE (:Person {id:'lemann', full_name:'Jorge Paulo Lemann', alias:[]})")
+    it_db.run_command("CREATE (:Person {id:'lemann', full_name:'Jorge Paulo Lemann', aliases: []})")
     it_db.run_command("CREATE (:Entity {id:'grp', name:'Voting group', type:'voting_group'})")
     it_db.run_command(
         "MATCH (p:Person {id:'lemann'}), (g:Entity {id:'grp'}) "
@@ -72,7 +72,7 @@ class TestThe13FStaleMarkerWithLabelledFilers:
 
         it_db.run_command("CREATE (:Entity {id:'apple', name:'Apple Inc.'})")
         it_db.run_command("CREATE (:Entity {id:'vanguard', name:'Vanguard Group'})")
-        it_db.run_command("CREATE (:Person {id:'cook', full_name:'Tim Cook', alias:[]})")
+        it_db.run_command("CREATE (:Person {id:'cook', full_name:'Tim Cook', aliases: []})")
         for oid, label in (("vanguard", "Entity"), ("cook", "Person")):
             it_db.run_command(
                 f"MATCH (a:{label} {{id:'{oid}'}}), (b:Entity {{id:'apple'}}) "

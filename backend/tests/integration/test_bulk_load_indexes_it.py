@@ -32,7 +32,7 @@ class TestDropLoadRebuild:
             "search_text:'Nestlé S.A. nestle', country:'CH'})")
         it_db.run_command(
             "CREATE (:Person {id:'p1', full_name:'Ulf Mark Schneider', "
-            "search_text:'Ulf Mark Schneider', alias:['U. M. Schneider']})")
+            "search_text:'Ulf Mark Schneider', aliases: ['U. M. Schneider']})")
 
         res = _rebuild_indexes()
 

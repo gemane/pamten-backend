@@ -24,7 +24,7 @@ def _wikidata_like():
                 "type = 'company' UPSERT WHERE id = :id",
                 {"n": query, "nn": normalize_entity_name(query), "st": query.lower(), "id": CO})
         run_sql("UPDATE Person SET first_name='Larry', last_name='Page', full_name='Larry Page', "
-                "alias=:al, source_id='wd' UPSERT WHERE id='p-larry'", {"al": ["Lawrence Page"]})
+                "aliases=:al, source_id='wd' UPSERT WHERE id='p-larry'", {"al": ["Lawrence Page"]})
         run_command("MATCH (p:Person {id:'p-larry'}) MATCH (e:Entity {id:$c}) "
                     "CREATE (p)-[:OWNS {ownership_type:'controlling'}]->(e)", {"c": CO})
         _record_touched("p-larry")

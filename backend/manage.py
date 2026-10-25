@@ -1170,6 +1170,7 @@ def cmd_heal_model_gaps(args):
     a = res["address_keys"]
     print(f"Address keys: {a['keyed']} address_normalized set, {a['addresses_moved']} readable addresses moved, "
           f"{a['removed']} registered_address removed, of {a['scanned']} entities{verb}")
+    print(f"Person.alias renamed to aliases on {res['person_aliases']['persons']} persons{verb}")
 
 
 def cmd_init_schema(args):
@@ -1211,7 +1212,7 @@ def cmd_backfill_search(args):
     # re-match `search_text IS NULL` and loop forever.
     specs = [
         ("Entity", "ifnull(name, '') + ' ' + ifnull(description, '') + ' ' + ifnull(aliases, []).join(' ')"),
-        ("Person", "ifnull(full_name, '') + ' ' + ifnull(alias, []).join(' ')"),
+        ("Person", "ifnull(full_name, '') + ' ' + ifnull(aliases, []).join(' ')"),
     ]
     for t, expr in specs:
         total = 0

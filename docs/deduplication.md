@@ -119,8 +119,8 @@ created/updated (tracked via a context-local collector in the scraper). The scan
 then restricted to those seeds plus existing persons sharing an exact full-name /
 alias / `wikidata_id` (index-backed equality lookups — ArcadeDB does **not** use an
 index for an `IN` over a parameter list, so candidates are probed per value;
-`$name IN p.alias` is the other direction, one value against a stored list, served
-by the element-wise index on `Person.alias`).
+`$name IN p.aliases` is the other direction, one value against a stored list, served
+by the element-wise index on `Person.aliases`).
 
 Two things make that candidate set actually reach its targets, both fixed
 2026-08-28 after "Eric Schmidt / Eric E. Schmidt" and "Larry Page / Page Lawrence"
