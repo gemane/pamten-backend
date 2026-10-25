@@ -47,7 +47,7 @@ from app.scraper.sec_writer import (
     _retire_superseded_bloc_edge, _roster_overlap, _rosters_match,               # noqa: F401
     _same_member, _split_member_key,                                             # noqa: F401
     _upsert_group_membership, _upsert_owns_sec,                                  # noqa: F401
-    _upsert_role_sec, _upsert_voting_group, _close_role_sec,                                      # noqa: F401
+    _upsert_role_sec, _upsert_voting_group, _close_role_sec, form_label,                          # noqa: F401
     stated_by_13dg,                                                              # noqa: F401
     write_acquisition_sec,                                                       # noqa: F401
 )
@@ -299,7 +299,7 @@ def _upsert_entity(
                     e.search_text     = $search_text,
                     e.name_normalized = $name_norm,
                     e.aliases         = CASE WHEN size($aliases) > 0 THEN $aliases ELSE COALESCE(e.aliases, []) END,
-                    e.countries       = CASE WHEN size($countries) > 0 THEN $countries ELSE COALESCE(e.countries, []) END,
+                    e.countries       = CASE WHEN size(COALESCE($countries, [])) > 0 THEN $countries ELSE e.countries END,
                     e.hq_locations    = CASE WHEN size($hq_locations) > 0 THEN $hq_locations ELSE COALESCE(e.hq_locations, []) END,
                     e.hq_lat          = COALESCE(e.hq_lat, $hq_lat),
                     e.hq_lng          = COALESCE(e.hq_lng, $hq_lng),
@@ -326,7 +326,7 @@ def _upsert_entity(
                 cred=credibility_score,
                 employees=employees, employees_as_of=employees_as_of,
                 aliases=aliases or [],
-                countries=countries or [], hq_locations=hq_locations or [],
+                countries=countries or None, hq_locations=hq_locations or [],
                 hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
                 website=website, logo_url=logo_url,
             )
@@ -368,7 +368,7 @@ def _upsert_entity(
             source_id=source_id,
             is_nominee=is_nominee_name(name),
             aliases=aliases or [],
-            countries=countries or [], hq_locations=hq_locations or [],
+            countries=countries or None, hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
             website=website, logo_url=logo_url,
         )
@@ -396,6 +396,8 @@ def _upsert_person(
     # One fact, one field: a caller's single `nationality` (Wikidata's CEO
     # row, a PSC record) joins the list — the scalar twin was dropped on
     # 2026-10-25 after 204 persons sat with a filled scalar and an empty list.
+    # An empty list is written as no list: what no source stated is absent,
+    # as a blank scalar is (196 dev persons carried `[]` on 2026-10-25).
     nationalities = merge_nationalities(nationalities, nationality)
     with db.get_session() as session:
         # Sequential indexed lookups (wikidata_id then full_name) — an OR across
@@ -435,7 +437,7 @@ def _upsert_person(
                 id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place,
                 image=image_url, wikipedia=wikipedia_url, desc=description or "",
                 search_text=_person_search_text(full_name, aliases),
-                aliases=aliases, nats=nationalities, source_id=source_id,
+                aliases=aliases, nats=nationalities or None, source_id=source_id,
             )
             return _record_touched(rec["id"])
 
@@ -466,7 +468,7 @@ def _upsert_person(
             image=image_url,
             wikipedia=wikipedia_url,
             aliases=aliases,
-            nats=nationalities,
+            nats=nationalities or None,
             source_id=source_id,
         )
         return _record_touched(person_id)
@@ -922,6 +924,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                           "scrape (13D/G + Form 4) first."}
 
     with record_run("sec-ex21", company) as run:
+        run["entity_id"] = company_id
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
                                    SEC_EDGAR_CREDIBILITY)
         data = fetch_subsidiaries(entity["sec_cik"], registrant=entity.get("name"))
@@ -1275,6 +1278,7 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
                                       "sec-ex21 first."}
 
     with record_run("sec-ex21-history", company) as run:
+        run["entity_id"] = company_id
         history = fetch_subsidiary_history(entity["sec_cik"], max_filings or HISTORY_MAX_FILINGS)
         read = [h for h in history if h["names"] is not None]
         if not read:
@@ -1338,6 +1342,7 @@ def run_sec_formd(company: str, force: bool = False) -> dict:
                           "scrape first."}
 
     with record_run("sec-formd", company) as run:
+        run["entity_id"] = company_id
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
                                    SEC_EDGAR_CREDIBILITY)
         data = latest_form_d(entity["sec_cik"])
@@ -1381,6 +1386,7 @@ def run_sec_formd(company: str, force: bool = False) -> dict:
                 _upsert_role_sec(person_id, company_id, role, source_id,
                                  source_url=data["url"],
                                  source_date=data["filing_date"],
+                                 filing_type="Form D",
                                  read_from=READ_FIELD)  # Form D primary_doc.xml
                 written += 1
             scraped.append({"type": "person", "name": name,
@@ -1478,6 +1484,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
             window_days = min(window_days, days_since + 7)
 
     with record_run("sec-13f", company) as run:
+        run["entity_id"] = company_id
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
                                    SEC_EDGAR_CREDIBILITY)
         known_cusips = [c for c in (entity.get("cusips") or
@@ -2027,6 +2034,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                                          source_id=source_id,
                                          source_url=exec_rec.get("source_url"),
                                          source_date=exec_rec.get("source_date"),
+                                         filing_type=form_label(exec_rec.get("document_type")),
                                          read_from=READ_FIELD)
                 if closed:
                     scraped.append({"type": "person", "name": name, "role": f"former {role}"})
@@ -2039,7 +2047,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         _upsert_role_sec(person_id, target_id, role, source_id,
                          source_url=exec_rec.get("source_url"),
                          source_date=exec_rec.get("source_date"),
-                         since=exec_rec.get("since"), read_from=READ_FIELD)
+                         since=exec_rec.get("since"),
+                         filing_type=form_label(exec_rec.get("document_type")),
+                         read_from=READ_FIELD)
         role_holders[name] = person_id
         scraped.append({"type": "person", "name": name, "role": role})
         log.info("SEC EDGAR: wrote HAS_ROLE %r → %r (%s%s)", name, data["name"], role,
@@ -2105,6 +2115,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                                      role=dep.get("role"), source_id=source_id,
                                      source_url=dep.get("source_url"),
                                      source_date=dep.get("source_date"),
+                                     filing_type="8-K",
                                      read_from=READ_NARRATIVE)  # Item 5.02's sentences
             if closed:
                 scraped.append({"type": "person", "name": dep["name"],

@@ -847,6 +847,17 @@ statements of a departure exist on EDGAR, and both now close the seat
 A closed seat is a new spell if reasserted later: Steve Jobs's two CEO tenures
 are two edges, which is what the timeline exists to show.
 
+**Which record said so.** Every seat claim names its filing in `filing_type`, as
+the ownership claims always did: "Form 3" for an initial statement, "Form 4" for
+any later one (`sec_writer.form_label` reads the document type), "Form D" for a
+private company's officers and directors, "8-K" for an Item 5.02 departure — so
+the Sources panel reads "SEC EDGAR · Form 4" beside a seat as beside a holding.
+A departure is recorded on the **same claim** as the appointment (one claim per
+source and position), so the claim's `filing_type`, `source_url` and `read_from`
+become the closing filing's; the seat edge keeps its own. Claims written before
+2026-10-25 carry no filing type; the next scrape of the company rewrites them,
+and `manage.py heal-model-gaps` labels the 8-K and Form D ones meanwhile.
+
 ---
 
 ## Industry — the filer's SIC code

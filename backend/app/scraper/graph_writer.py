@@ -905,7 +905,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
                 id: $id, first_name: $first, last_name: $last,
                 full_name: $full, description: '',
                 wikidata_id: null, sec_cik: $cik, source_id: $source_id,
-                alias: [], nationalities: [], search_text: $search_text,
+                alias: [], search_text: $search_text,
                 created_at: $created_at
             })
             """,

@@ -90,3 +90,30 @@ def heal_placeholder_roles(apply: bool = False) -> dict:
         run_sql(f"DELETE FROM HAS_ROLE WHERE {where}")
         run_sql(f"DELETE FROM Claim WHERE kind = 'role' AND {where}")
     return out
+
+
+SEC_SOURCE_ID = "sec-edgar"
+
+
+def heal_seat_claim_filings(apply: bool = False) -> dict:
+    """Give the SEC seat claims written before 2026-10-25 the `filing_type`
+    the claim itself can still tell: a `narrative` reading with an end date
+    is an 8-K Item 5.02 departure, a `primary_doc.xml` URL is a Form D. The
+    insider filings' claims (a Form 3 or 4 — the index URL does not say
+    which) are left for the next scrape of their company, which rewrites the
+    claim with its form; `unfilled` counts them. Dry run unless `apply`.
+    """
+    from app.db.arcadedb import run_sql
+    base = f"kind = 'role' AND source_id = '{SEC_SOURCE_ID}' AND filing_type IS NULL"
+    rules = (("form_8k", "8-K", "read_from = 'narrative' AND until IS NOT NULL"),
+             ("form_d", "Form D", "source_url LIKE '%/primary_doc.xml'"))
+    out: dict = {"applied": bool(apply)}
+    for key, label, where in rules:
+        rows = run_sql(f"SELECT count(*) AS n FROM Claim WHERE {base} AND {where}")
+        out[key] = int((rows or [{}])[0].get("n") or 0)
+        if apply and out[key]:
+            run_sql(f"UPDATE Claim SET filing_type = '{label}' WHERE {base} AND {where}")
+    rows = run_sql(f"SELECT count(*) AS n FROM Claim WHERE {base}")
+    left = int((rows or [{}])[0].get("n") or 0)
+    out["unfilled"] = left if apply else left - out["form_8k"] - out["form_d"]
+    return out

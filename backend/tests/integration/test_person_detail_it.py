@@ -21,7 +21,7 @@ def test_upsert_person_stores_and_backfills_detail(it_db):
     with db.get_session() as s:
         p = s.run("MATCH (p:Person {id: $id}) RETURN p", id=pid).single()["p"]
     assert list(p["alias"]) == []
-    assert list(p["nationalities"]) == []
+    assert "nationalities" not in p                      # no source named one: absent, not [] (2026-10-25)
 
     # Re-scrape, now enriched: same wikidata_id → backfills the blanks and must
     # return the SAME id (no duplicate person).

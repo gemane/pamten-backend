@@ -1110,7 +1110,10 @@ def cmd_heal_model_gaps(args):
     """The 2026-10-25 survey's four gaps (app.field_twins): fold the scalar
     `nationality` into `nationalities` and drop it, put `country` into every
     `countries` list that lacks it, stamp `source_id` on the PSC persons written
-    without one, and set `stale = false` where the flag was unset. Dry run
+    without one, and set `stale = false` where the flag was unset — and the
+    round-four three: drop empty `nationalities`/`countries` lists, drop the run
+    log's `''` placeholders, give the SEC seat claims a `filing_type` where the
+    claim itself says which record (an 8-K departure, a Form D). Dry run
     unless --apply; the edge pass scans OWNS — run with --db-url."""
     _apply_direct_db_url(args)
     from app.field_twins import heal_all
@@ -1125,6 +1128,13 @@ def cmd_heal_model_gaps(args):
     print(f"Persons: {s['stamped']} PSC persons stamped source_id {s['source_id']!r}{verb}")
     e = res["stale_flags"]
     print(f"OWNS: {e['fixed']} edges given stale = false{verb}")
+    lists = {k: v for k, v in res["empty_lists"].items() if k != "applied"}
+    print("Empty lists removed: " + ", ".join(f"{k} {v}" for k, v in lists.items()) + verb)
+    r = {k: v for k, v in res["run_log"].items() if k != "applied"}
+    print("ScrapeRun '' placeholders removed: " + ", ".join(f"{k} {v}" for k, v in r.items()) + verb)
+    f = res["seat_filings"]
+    print(f"SEC seat claims given a filing_type: {f['form_8k']} 8-K, {f['form_d']} Form D; "
+          f"{f['unfilled']} left for the next scrape of their company{verb}")
 
 
 def cmd_init_schema(args):
@@ -1350,7 +1360,7 @@ def cmd_backfill_sec_headquarters(args):
 def cmd_backfill_created_at(args):
     """Give every Entity and Person without `created_at` the oldest date anything
     recorded about it — the oldest claim naming it, else its own last_scraped_at,
-    else nothing (app.created_at). For a database written before 2026-10-24,
+    else the oldest edge touching it, else nothing (app.created_at). For a database written before 2026-10-24,
     when the creation sites began stamping it. Dry-run unless --apply."""
     _apply_direct_db_url(args)
     from app.created_at import backfill
@@ -1359,8 +1369,8 @@ def cmd_backfill_created_at(args):
     for label in ("Entity", "Person"):
         c = res[label]
         print(f"{label}: {c['missing']} of {c['scanned']} without created_at — {verb} "
-              f"{c['from_claims']} from their oldest claim, {c['from_scrape']} from last_scraped_at; "
-              f"{c['unknown']} stay unknown")
+              f"{c['from_claims']} from their oldest claim, {c['from_scrape']} from last_scraped_at, "
+              f"{c['from_edges']} from their oldest edge; {c['unknown']} stay unknown")
 
 
 def cmd_backfill_person_images(args):
@@ -1451,7 +1461,8 @@ def _build_parser():
 
     p_hmg = subparsers.add_parser('heal-model-gaps',
         help="Fold Person.nationality into nationalities and drop it, put country into countries, "
-             "stamp source_id on PSC persons, set stale = false where unset (2026-10-25). "
+             "stamp source_id on PSC persons, set stale = false where unset, drop empty lists and "
+             "the run log's '' placeholders, give SEC seat claims their filing_type (2026-10-25). "
              "Scans OWNS: run with --db-url. Dry run unless --apply")
     p_hmg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hmg.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
@@ -1599,7 +1610,7 @@ def _build_parser():
 
     # backfill-created-at (one-off; every creation site stamps it since 2026-10-24)
     p_bca = subparsers.add_parser('backfill-created-at',
-                                  help="Give every Entity and Person without created_at the oldest date anything recorded about it (oldest claim, else last_scraped_at, else nothing). Dry run unless --apply")
+                                  help="Give every Entity and Person without created_at the oldest date anything recorded about it (oldest claim, else last_scraped_at, else oldest edge, else nothing). Dry run unless --apply")
     p_bca.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_bca.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_bca.set_defaults(func=cmd_backfill_created_at)

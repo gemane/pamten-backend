@@ -10,8 +10,10 @@ is not a birth) and a merge keeps the earlier of the two
 `backfill` is the one-off for the nodes written before then. It is honest
 about what it knows: the oldest claim that names the node (claims have had
 `first_seen_at` since they exist), else the node's own `last_scraped_at`,
-else nothing — the day a bulk import ran is not recorded anywhere, and a
-guessed date would be read as a fact.
+else the oldest edge touching it (a 13D group member hangs on a RELATED_TO
+edge alone — no claim names it, and the node itself was never scraped; 19
+dev nodes on 2026-10-25), else nothing — the day a bulk import ran is not
+recorded anywhere, and a guessed date would be read as a fact.
 """
 from __future__ import annotations
 
@@ -51,14 +53,23 @@ def _oldest_claim_dates(ids: list[str]) -> dict[str, str]:
     return oldest
 
 
+def _oldest_edge_date(rid: str) -> str | None:
+    """The oldest `last_scraped_at` of any edge touching the node, in or out,
+    of any type — one read per node, and only for a node nothing else dated."""
+    rows = run_sql(f"SELECT min(last_scraped_at) AS t FROM (SELECT expand(bothE()) FROM {rid})")
+    t = (rows or [{}])[0].get("t")
+    return str(t) if t else None
+
+
 def backfill(apply: bool = True, labels: tuple[str, ...] = ("Entity", "Person")) -> dict:
     """Give every node without `created_at` the oldest date anything recorded
     about it. Walks the id index (app.db.paging). Returns per-label counts:
-    scanned, missing, from_claims, from_scrape, unknown, written."""
+    scanned, missing, from_claims, from_scrape, from_edges, unknown, written."""
     from app.db import paging
     out: dict = {"applied": bool(apply)}
     for label in labels:
-        c = {"scanned": 0, "missing": 0, "from_claims": 0, "from_scrape": 0, "unknown": 0, "written": 0}
+        c = {"scanned": 0, "missing": 0, "from_claims": 0, "from_scrape": 0, "from_edges": 0,
+             "unknown": 0, "written": 0}
         for page in paging.iter_id_pages(label, columns="id, @rid AS rid, created_at, last_scraped_at"):
             c["scanned"] += len(page)
             missing = [r for r in page if not r.get("created_at") and r.get("rid")]
@@ -75,8 +86,11 @@ def backfill(apply: bool = True, labels: tuple[str, ...] = ("Entity", "Person"))
                     when = str(r["last_scraped_at"])
                     c["from_scrape"] += 1
                 else:
-                    c["unknown"] += 1
-                    continue
+                    when = _oldest_edge_date(str(r["rid"]))
+                    if not when:
+                        c["unknown"] += 1
+                        continue
+                    c["from_edges"] += 1
                 values.append((str(r["rid"]), when))
             if not apply:
                 continue
