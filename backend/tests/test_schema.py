@@ -397,6 +397,8 @@ class TestConstraints:
         assert rules[("Entity", "country", "REGEXP")] == "^[A-Z]{2}$"
         assert rules[("OWNS", "stake_percent", "MIN")] == "0" and rules[("OWNS", "stake_percent", "MAX")] == "100"
         assert rules[("OWNS", "stale", "DEFAULT")] == "false"
+        assert rules[("HAS_ROLE", "until_reason", "REGEXP")] == "^(death|dissolution)$"
+        assert rules[("Entity", "dissolved_on", "REGEXP")] == rules[("Entity", "incorporated_on", "REGEXP")]
         # every flag that means "not asserted" (2026-10-25); `active` stays three-valued
         for key in (("OWNS", "shortcut"), ("OWNS", "also_ultimate"), ("Entity", "is_nominee"),
                     ("Entity", "on_demand_scraped"), ("Person", "on_demand_scraped")):

@@ -134,6 +134,33 @@ class TestOnlyCompanies:
         # not where it is run (copied there until 2026-10-18 — finding #7)
         assert not any(k.startswith("hq_") for k in captured)
 
+    def test_the_registers_status_is_kept_as_worded_and_says_the_company_lives(self, tmp_path):
+        """`company_status` / `active` / `dissolved_on` (app.dissolution). The
+        snapshot lists live companies only, so "Dissolved" never comes; the
+        columns are read all the same."""
+        from app.scraper import basic_company_data as m
+        rows = [["ACME LTD", "00000001", "Liquidation", "", "11/09/2012"],
+                ["OLD LTD", "00000002", "Dissolved", "03/04/2020", "11/09/2012"],
+                ["BARE LTD", "00000003", "", "", "11/09/2012"]]
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["CompanyName", "CompanyNumber", "CompanyStatus", "DissolutionDate", "IncorporationDate"])
+        w.writerows(rows)
+        zpath = tmp_path / "s.zip"
+        with zipfile.ZipFile(zpath, "w") as zf:
+            zf.writestr("BasicCompanyData.csv", buf.getvalue())
+        seen = {}
+        with patch.object(m._UpdateBatch, "update",
+                          lambda self, nid, props: seen.__setitem__(nid, props)), \
+             patch("app.scraper.basic_company_data._flush_script"):
+            import_basic_company_data(str(zpath), 97)
+        acme, old, bare = seen["gb-coh:00000001"], seen["gb-coh:00000002"], seen["gb-coh:00000003"]
+        assert acme["company_status"] == "Liquidation" and acme["active"] is True
+        assert "dissolved_on" not in acme                            # absent, never '' or null
+        assert old["company_status"] == "Dissolved" and old["active"] is False
+        assert old["dissolved_on"] == "2020-04-03"
+        assert bare["active"] is True and "company_status" not in bare and "dissolved_on" not in bare
+
     def test_a_row_without_address_columns_writes_no_parts(self):
         """Only the parts the row has: a SET of null would blank GLEIF's."""
         from app.scraper.basic_company_data import _reg_address_parts

@@ -104,6 +104,15 @@ class TestAggregate:
         result = _aggregate("Q1", [APPLE_ROW])
         assert result["founded"] == 1976
 
+    def test_parses_the_dissolution_date_at_its_precision(self):
+        """P576 as `dissolved_on` (app.dissolution): a year stays a year."""
+        year = _row(itemLabel="Compaq", dissolved="2002-01-01T00:00:00Z", dissolvedP="9")
+        assert _aggregate("Q1", [year])["dissolved_on"] == "2002-00-00"
+        day = _row(itemLabel="Twitter, Inc.", dissolved="2023-03-15T00:00:00Z", dissolvedP="11")
+        assert _aggregate("Q1", [day])["dissolved_on"] == "2023-03-15"
+        assert _aggregate("Q1", [APPLE_ROW])["dissolved_on"] is None          # a living company: absent
+        assert _aggregate("Q1", [_row(itemLabel="X", dissolved="http://www.wikidata.org/.well-known/genid/1")])["dissolved_on"] is None
+
     def test_parses_revenue_as_float(self):
         result = _aggregate("Q1", [APPLE_ROW])
         assert result["revenue"] == pytest.approx(394328000000.0)

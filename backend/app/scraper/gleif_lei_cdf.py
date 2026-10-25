@@ -263,6 +263,17 @@ def _incorporated_on(entity: dict) -> str | None:
     return None
 
 
+def _dissolved_on(entity: dict) -> str | None:
+    """`EntityExpirationDate` (YYYY-MM-DD): the day the entity ceased, when
+    the record states one — it rarely does (none in the first 120k records
+    of the 2026-10-06 golden copy; INACTIVE alone sets `active = false`).
+    `app.dissolution` closes what the company still holds."""
+    d = _v(entity.get("EntityExpirationDate"))
+    if d and len(d) >= 10 and d[4] == "-" and d[7] == "-":
+        return d[:10]
+    return None
+
+
 def _other_names(entity: dict, legal_name: str) -> list[str]:
     """Every other name the register publishes for the entity, deduped.
 
@@ -355,6 +366,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     validation = _validation_sources(rec)
     if validation:
         props["validation_sources"] = validation
+    dissolved = _dissolved_on(entity)
+    if dissolved:
+        props["dissolved_on"] = dissolved      # only when stated: a re-import never blanks it
     # Real operating location (top of the node). Only set when GLEIF has an HQ address,
     # so we never clobber an existing (e.g. Wikidata) HQ with a null.
     hq_city, hq_country = _hq_location(entity)

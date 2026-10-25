@@ -54,6 +54,7 @@ from app.scraper.sec_writer import (
 from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.field_twins import merge_countries, merge_nationalities
 from app.roles import combined_start, end_seats_at_death
+from app.dissolution import end_at_dissolution
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
                                      weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
@@ -223,6 +224,7 @@ def _upsert_entity(
     sec_cik: str | None = None,              # P5531 — bridge to a SEC EDGAR node
     website: str | None = None,              # P856 — official site (display only)
     logo_url: str | None = None,             # P154/P18 → direct Commons thumb (display only)
+    dissolved_on: str | None = None,         # P576 — the day the entity ceased (app.dissolution)
 ) -> str:
     """
     Find entity by wikidata_id or name, update it if found, create if not.
@@ -308,6 +310,8 @@ def _upsert_entity(
                     e.hq_country      = COALESCE(e.hq_country, $hq_country),
                     e.website         = COALESCE(e.website, $website),
                     e.logo_url        = COALESCE(e.logo_url, $logo_url),
+                    e.dissolved_on    = COALESCE(e.dissolved_on, $dissolved_on),
+                    e.active          = CASE WHEN $dissolved_on IS NOT NULL THEN false ELSE e.active END,
                     e.name            = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $name ELSE e.name END,
                     e.name_credibility = CASE WHEN COALESCE(e.name_credibility, 0) <= $cred THEN $cred ELSE e.name_credibility END,
                     e.source_id       = COALESCE(e.source_id, $source_id)
@@ -329,8 +333,10 @@ def _upsert_entity(
                 aliases=aliases or [],
                 countries=countries or None, hq_locations=hq_locations or [],
                 hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
-                website=website, logo_url=logo_url,
+                website=website, logo_url=logo_url, dissolved_on=dissolved_on,
             )
+            if dissolved_on:
+                end_at_dissolution(entity_id)      # nothing of a dissolved company stays open
             return _record_touched_entity(entity_id)
 
         entity_id = str(uuid.uuid4())
@@ -350,7 +356,8 @@ def _upsert_entity(
                 hq_lat: $hq_lat, hq_lng: $hq_lng,
                 hq_city: $hq_city, hq_country: $hq_country,
                 website: $website,
-                logo_url: $logo_url, created_at: $created_at
+                logo_url: $logo_url, created_at: $created_at,
+                dissolved_on: $dissolved_on, active: $active
             })
             """,
             id=entity_id, created_at=_now_iso(),
@@ -372,7 +379,12 @@ def _upsert_entity(
             countries=countries or None, hq_locations=hq_locations or [],
             hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
             website=website, logo_url=logo_url,
+            # a dissolved company is not active; a living one is not asserted
+            # active by a knowledge base (null = no register has said)
+            dissolved_on=dissolved_on, active=False if dissolved_on else None,
         )
+        if dissolved_on:
+            end_at_dissolution(entity_id)          # the sibling path of the update above
         return _record_touched_entity(entity_id)
 
 
@@ -553,6 +565,7 @@ def _scrape_node(
         employees=data.get("employees"),
         website=data.get("website"),
         logo_url=data.get("logo_url"),
+        dissolved_on=data.get("dissolved_on"),
         employees_as_of=data.get("employees_as_of"),
         hq_lat=data.get("hq_lat"),
         hq_lng=data.get("hq_lng"),
