@@ -36,7 +36,7 @@ from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
     _ProgressBar, _rebuild_indexes,
 )
-from app.scraper.mapper import derive_ownership_type, parse_full_name
+from app.scraper.mapper import derive_ownership_type, normalize_address, parse_full_name
 from app.scraper.edge_schema import READ_FIELD
 
 log = logging.getLogger(__name__)
@@ -318,8 +318,8 @@ def _iso2_country(name: str | None) -> str | None:
 def _psc_address(addr: dict | None) -> dict:
     """A corporate PSC's ``address`` (the register's "registered or principal
     office address" of the owner) as the Entity props it fills: the string
-    ``registered_address`` (also ``address``, the panel's "Registered address"
-    row), and the PARTS ``reg_street`` (premises + address lines, joined — the
+    ``address`` (the panel's "Registered address" row) with its matching key
+    ``address_normalized`` (the same-name dedup's corroborator), and the PARTS ``reg_street`` (premises + address lines, joined — the
     register puts a building and a street across them and only their order
     says which is which), ``reg_city`` and ``reg_postcode``, so the geocoder
     runs a structured query for the REGISTERED pin instead of re-parsing the
@@ -339,7 +339,8 @@ def _psc_address(addr: dict | None) -> dict:
 
     lines = [p for p in (_v("premises"), _v("address_line_1"), _v("address_line_2")) if p]
     parts = lines + [p for p in (_v("locality"), _v("region"), _v("postal_code"), _v("country")) if p]
-    return {"registered_address": ", ".join(parts) or None,
+    address = ", ".join(parts) or None
+    return {"address": address, "address_normalized": normalize_address(address),
             "reg_street": ", ".join(lines) or None, "reg_city": _v("locality"),
             "reg_postcode": _v("postal_code")}
 
@@ -539,10 +540,10 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             "name": name, "entity_type": "company",
             "country": iso2,
             "country_registered": None if iso2 else country_text,
-            "companies_house_id": chid, "registered_address": address["registered_address"],
-            # the same string as the panel's display address; no hq_* — the
-            # register does not say where the owner is run (see _psc_address)
-            "address": address["registered_address"],
+            "companies_house_id": chid, "address_normalized": address["address_normalized"],
+            # the panel's display address; no hq_* — the register does not say
+            # where the owner is run (see _psc_address)
+            "address": address["address"],
             "reg_street": address["reg_street"], "reg_city": address["reg_city"],
             "reg_postcode": address["reg_postcode"],
             "registration_number": reg_number,
@@ -591,7 +592,7 @@ def write_entity_owner(batch, mapped: PscMapped, source_id: str, credibility_sco
             country=props["country"], founded=None, lei_id=None,
             companies_house_id=props["companies_house_id"],
             source_id=source_id, credibility_score=credibility_score,
-            registered_address=props["registered_address"],
+            address_normalized=props["address_normalized"],
             extra={"registration_number": props["registration_number"],
                    "registration_authority": props["registration_authority"],
                    "register_id": props["register_id"],

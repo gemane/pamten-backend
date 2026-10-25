@@ -32,7 +32,7 @@ from app.scraper.bulk_import import (
 from app.scraper.gleif_reference import (
     legal_form_name, make_register_id, registration_authority_name)
 from app.scraper.gleif_succession import _iter_lei_records, _legal_name, _v
-from app.scraper.mapper import is_nominee_name, normalize_entity_name
+from app.scraper.mapper import is_nominee_name, normalize_address, normalize_entity_name
 
 log = logging.getLogger(__name__)
 
@@ -70,18 +70,6 @@ def _jurisdiction_code(entity: dict) -> str | None:
     if not j or "-" not in j:
         return None
     return j.strip().upper()
-
-
-def _registered_address(entity: dict) -> str | None:
-    """Normalized LegalAddress (line + city + postcode + country), lowercased —
-    for same-company dedup matching, NOT display (see _display_address)."""
-    addr = entity.get("LegalAddress") or {}
-    parts = [_v(addr.get("FirstAddressLine")), _v(addr.get("City")),
-             _v(addr.get("PostalCode")), _v(addr.get("Country"))]
-    raw = " ".join(p for p in parts if p)
-    norm = re.sub(r"[^\w\s]", " ", raw.lower())
-    norm = re.sub(r"\s+", " ", norm).strip()
-    return norm or None
 
 
 def _address_lines(addr: dict) -> list[str]:
@@ -157,6 +145,13 @@ def _address_parts(addr: dict | None) -> dict:
         "postcode": postcode or None,
         "country": (country[:2].upper() if country else None),
     }.items() if v}
+
+
+def _legal_form_code(entity: dict) -> str | None:
+    """The ISO 20275 ELF code as GLEIF states it (H0PO, 8888 for "other") —
+    beside the resolved name, so a filter can group the 171 spellings the
+    names come in (local-language and case variants on dev, 2026-10-25)."""
+    return _v((entity.get("LegalForm") or {}).get("EntityLegalFormCode"))
 
 
 def _legal_form(entity: dict) -> str | None:
@@ -327,9 +322,10 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "name_credibility": _validated_credibility(rec, credibility_score),
         "country": _country(entity),
         "jurisdiction_code": _jurisdiction_code(entity),
-        "registered_address": _registered_address(entity),
         "address": _display_address(entity),
+        "address_normalized": normalize_address(_display_address(entity)),
         "legal_form": _legal_form(entity),
+        "legal_form_code": _legal_form_code(entity),
         "registration_authority": reg_authority,
         "registration_authority_code": reg_code,
         "registration_number": reg_number,

@@ -114,7 +114,7 @@ class TestEntityProps:
         assert props["lei_id"] == "LEI123"
         assert props["incorporated_on"] == "1990-01-01"  # the legal entity's start, as stated
         assert "founded" not in props                     # the business's origin is Wikidata's to say
-        assert "main st 1" in props["registered_address"] and props["registered_address"].endswith("de")
+        assert "main st 1" in props["address_normalized"] and props["address_normalized"].endswith("de")
         assert props["is_nominee"] is False
         assert props["source_url"] == "https://search.gleif.org/#/record/LEI123"  # deep link, not home page
         # generic → no statement: the bulk writer keeps what stands or defaults
@@ -171,9 +171,9 @@ class TestDetailFields:
         assert props["registration_number"] == "07428111"
         # RA000585 is Companies House → key the CH number like the PSC import does
         assert props["companies_house_id"] == "07428111"
-        # display address keeps original case, comma-joined (contrast registered_address)
+        # display address keeps original case, comma-joined; its matching key beside it
         assert props["address"] == "1 Example Street, London, EC1A 1BB, GB"
-        assert props["registered_address"] == "1 example street london ec1a 1bb gb"
+        assert props["address_normalized"] == "1 example street london ec1a 1bb gb"
 
     def test_multiline_address_keeps_all_lines(self):
         # AdditionalAddressLine is a LIST in the CDF — every line must survive
@@ -216,6 +216,12 @@ class TestDetailFields:
         # unlisted code, no free text → the raw code, not None (nothing silently dropped)
         _, p2 = _entity_props(_rec("L3", "Y", elf_code="ZZZZ"), "gleif", 92)
         assert p2["legal_form"] == "ZZZZ"
+
+    def test_the_elf_code_is_kept_beside_the_name(self):
+        _, p = _entity_props(_rec("L4", "Z", elf_code="H0PO"), "gleif", 92)
+        assert p["legal_form_code"] == "H0PO" and p["legal_form"] != "H0PO"
+        _, p = _entity_props(_rec("L5", "W", other_form="Sociedad X"), "gleif", 92)
+        assert p["legal_form_code"] is None
 
     def test_missing_detail_fields_are_none(self):
         _, props = _entity_props(_rec("L4", "Plain Co"), "gleif", 92)

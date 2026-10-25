@@ -32,8 +32,8 @@ def test_entity_autodedup_scoped_high_confidence(it_db):
                       "CREATE (o)-[:OWNS {source_id:'s'}]->(e)")
 
     # high: same normalized name + same registered address, different LEIs
-    _entity(it_db, "beta-1", "beta", registered_address="1 main st", lei_id="L1")
-    _entity(it_db, "beta-2", "beta", registered_address="1 main st", lei_id="L2")
+    _entity(it_db, "beta-1", "beta", address_normalized="1 main st", lei_id="L1")
+    _entity(it_db, "beta-2", "beta", address_normalized="1 main st", lei_id="L2")
 
     # medium: same name + same country/year only → left for review, NOT merged
     _entity(it_db, "gamma-1", "gamma", country="US", founded="1990")

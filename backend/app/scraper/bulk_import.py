@@ -491,7 +491,7 @@ def _legal_form_type(details: str | None) -> str | None:
 
 def _entity(batch, node_id, name, entity_type, country, founded,
             lei_id, companies_house_id, source_id, credibility_score,
-            registered_address=None, source_statement_ids=None,
+            address_normalized=None, source_statement_ids=None,
             hq_city=None, hq_country=None, hq_address=None, extra=None):
     """Enqueue an Entity upsert (keyed on the stable node id) and return the id.
 
@@ -514,7 +514,7 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         "founded": founded,
         "lei_id": lei_id,
         "companies_house_id": companies_house_id,
-        "registered_address": registered_address,
+        "address_normalized": address_normalized,
         "is_nominee": is_nominee_name(name),   # holder-of-record, not a beneficial owner
     }
     if hq_city:

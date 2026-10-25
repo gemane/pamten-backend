@@ -82,7 +82,7 @@ class TestRegisteredPass:
         assert "e.reg_lat IS NULL" in q.call_args[0][0]
 
     def test_reads_the_display_address_not_the_normalised_one(self):
-        """`registered_address` is lowercased and punctuation-stripped for dedup —
+        """`address_normalized` is lowercased and punctuation-stripped for dedup —
         "c o maples corporate services limited george town" geocodes worse than the
         display form it was derived from."""
         with patch.object(geocode_backfill, "run_query", return_value=[]) as q, \
@@ -90,7 +90,7 @@ class TestRegisteredPass:
             geocode_backfill.backfill(target="registered")
         sql = q.call_args[0][0]
         assert "e.address AS full" in sql
-        assert "registered_address" not in sql
+        assert "address_normalized" not in sql
 
     def test_does_NOT_fall_back_to_the_country(self):
         """No pin beats a wrong one.

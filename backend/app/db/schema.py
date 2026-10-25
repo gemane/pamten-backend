@@ -38,7 +38,7 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("Entity",   "companies_house_id", "NOTUNIQUE"),
     ("Entity",   "register_id",        "NOTUNIQUE"),  # "{RA code}:{number}" hard id
     ("Entity",   "cusip",              "NOTUNIQUE"),  # 13F info-table join key (NOT a dedup id)
-    ("Entity",   "registered_address", "NOTUNIQUE"),  # dup-detection corroborator
+    ("Entity",   "address_normalized", "NOTUNIQUE"),  # dup-detection corroborator (was registered_address until 2026-10-25)
     # Filtered on every map drill-down (/entities/by-country/{country}) and by the
     # country-scoped search; without an index each one scans every Entity.
     ("Entity",   "country",            "NOTUNIQUE"),
@@ -308,9 +308,9 @@ def typed_properties() -> list[tuple[str, str, str]]:
 _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "Entity": (
         "id", "name", "name_normalized", "type", "country", "hq_country", "description",
-        "address", "registered_address", "hq_address", "hq_city", "hq_street", "hq_postcode",
+        "address", "address_normalized", "hq_address", "hq_city", "hq_street", "hq_postcode",
         "hq_geo_precision", "reg_city", "reg_street", "reg_postcode", "reg_geo_precision",
-        "legal_form", "registration_authority", "registration_authority_code",
+        "legal_form", "legal_form_code", "registration_authority", "registration_authority_code",
         "registration_number", "register_id", "country_registered", "jurisdiction_code",
         "cusip", "lei_id", "sec_cik", "companies_house_id", "wikidata_id", "nace_code",
         "website", "logo_url", "search_text", "source_id", "source_url",

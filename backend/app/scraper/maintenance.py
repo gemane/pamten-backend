@@ -360,7 +360,7 @@ def _group_confidence(members: list[dict]) -> str:
     """How sure are we the same-name members are the SAME company?
       definitive — they share a wikidata_id / sec_cik / companies_house_id /
                    lei_id / register_id (a hard external identifier ⇒ same entity).
-      high       — same registered_address (GLEIF registered office).
+      high       — same address_normalized (the registered office's matching key).
       medium     — same country AND same founding (or incorporation) year.
       low        — name only (differing address/country ⇒ probably different).
     """
@@ -371,7 +371,7 @@ def _group_confidence(members: list[dict]) -> str:
     if any(_shared(f) for f in ("lei_id", "wikidata_id", "sec_cik",
                                 "companies_house_id", "register_id")):
         return "definitive"
-    if _shared("registered_address"):
+    if _shared("address_normalized"):
         return "high"
     countries = {m.get("country") for m in members if m.get("country")}
     # the year the member began: the business's (`founded`) or, for a register
@@ -395,7 +395,7 @@ def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = N
     for name_norm, cnt in groups:
         members = run_sql(
             "SELECT id, name, country, founded, incorporated_on, lei_id, companies_house_id, "
-            "sec_cik, wikidata_id, register_id, registered_address FROM Entity "
+            "sec_cik, wikidata_id, register_id, address_normalized FROM Entity "
             "WHERE name_normalized = :nn LIMIT 25", {"nn": name_norm})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
         confidence = _group_confidence(members)
@@ -920,7 +920,7 @@ _COPIED_HQ_FIELDS = ("hq_address", "hq_city", "hq_country", "hq_street", "hq_pos
 #: Northampton, registered office in Wolverhampton — the moved pin put its
 #: registered office in Northampton). The registered pass re-geocodes it.
 _HQ_TO_REG = (("hq_street", "reg_street"), ("hq_city", "reg_city"), ("hq_postcode", "reg_postcode"))
-_UK_HEAL_COLUMNS = ("id, @rid AS rid, address, registered_address, "
+_UK_HEAL_COLUMNS = ("id, @rid AS rid, address, "
                     + ", ".join(_COPIED_HQ_FIELDS) + ", "
                     + ", ".join(reg for _, reg in _HQ_TO_REG))
 
@@ -930,32 +930,30 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
     headquarters fields (PSC checklist finding #7, decided 2026-10-18).
 
     `ch-psc` and `ch-company-data` wrote a company's registered office — and a
-    corporate PSC's own address — under `hq_*` as well as `registered_address`,
+    corporate PSC's own address — under `hq_*` as well as `address`,
     so the map's Headquarters pin drew an accountant's or agent's door and a
     bulk SET replaced the real HQ GLEIF or Wikidata had put on a merged node.
     The register states where a company is REGISTERED; where it is run comes
     only from a source that says so.
 
-    Signature of the copy: `hq_address` equal to `registered_address` on a
-    `gb-coh:` or `chpsc:` node (GLEIF's `registered_address` is a lowercased
-    normalised form, so a GLEIF headquarters never matches). On such a node
+    Signature of the copy: `hq_address` equal to `address` on a `gb-coh:` or
+    `chpsc:` node (until 2026-10-25 the readable string sat in
+    `registered_address`, which `heal-model-gaps` moved to `address` and
+    replaced by the matching key `address_normalized`). On such a node
     the headquarters fields are cleared; the street, city and postcode were
     made from the registered office, so each moves under `reg_*` where
     nothing stands there yet. The geocoded pin is cleared, not moved: the
     geocoder fills `hq_lat` only where empty, so a pin that predates the copy
     is another source's headquarters point, and `manage.py geocode --target
-    registered` draws the registered pin afresh from the parts. Independently,
-    `address` — the panel's "Registered address"
-    row, which the importers never filled — is set from `registered_address`
-    where empty. A node whose headquarters came from GLEIF does NOT get it
+    registered` draws the registered pin afresh from the parts. A node whose
+    headquarters came from GLEIF does NOT get it
     back from a GLEIF bulk pass: the batch writer skips a merged-away `lei:`
     id by design, so it is refilled from the LEI-CDF record by hand (the
     importer's mapping, fill-if-missing) — a full rebuild loads GLEIF first
     and never needs this. Walks the id index a page at a time; dry-run by
     default.
     """
-    counts = {"nodes": 0, "copied": 0, "pins_cleared": 0, "addresses_filled": 0,
-              "applied": bool(apply)}
+    counts = {"nodes": 0, "copied": 0, "pins_cleared": 0, "applied": bool(apply)}
     for prefix in ("gb-coh:", "chpsc:"):
         for page in iter_id_pages("Entity", prefix=prefix, columns=_UK_HEAL_COLUMNS):
             counts["nodes"] += len(page)
@@ -963,7 +961,7 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
             params: dict = {}
             for k, r in enumerate(page):
                 sets: dict = {}
-                if r.get("hq_address") and r.get("hq_address") == r.get("registered_address"):
+                if r.get("hq_address") and r.get("hq_address") == r.get("address"):
                     counts["copied"] += 1
                     for hq, reg in _HQ_TO_REG:
                         if r.get(hq) is not None and r.get(reg) is None:
@@ -972,9 +970,6 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
                         counts["pins_cleared"] += 1
                     for f in _COPIED_HQ_FIELDS:
                         sets[f] = None
-                if not r.get("address") and r.get("registered_address"):
-                    counts["addresses_filled"] += 1
-                    sets["address"] = r["registered_address"]
                 if not sets or not r.get("rid"):
                     continue
                 assignments = []
@@ -1561,7 +1556,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     for nn in names:
         members = run_sql(
             "SELECT id, name, country, founded, incorporated_on, lei_id, companies_house_id, sec_cik, "
-            "wikidata_id, register_id, registered_address, COALESCE(name_credibility, 0) AS cred "
+            "wikidata_id, register_id, address_normalized, COALESCE(name_credibility, 0) AS cred "
             "FROM Entity "
             f"WHERE name_normalized = :nn AND {not_a_voting_group()} LIMIT 50", {"nn": nn})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]

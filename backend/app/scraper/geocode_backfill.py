@@ -48,8 +48,8 @@ _PASSES = {
     REGISTERED: {
         "lat": "reg_lat", "lng": "reg_lng", "precision": "reg_geo_precision",
         "street": "reg_street", "postcode": "reg_postcode",
-        # `address` is the human-readable legal address; `registered_address` is
-        # the normalised lowercase form kept for dedup, which geocodes worse.
+        # `address` is the human-readable legal address; `address_normalized` is
+        # the lowercased matching key kept for dedup, which geocodes worse.
         #
         # NO country fallback: the address resolves or there is no pin. Geocoding
         # a bare country returns its centroid, and the first run of this pass put

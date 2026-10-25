@@ -127,9 +127,9 @@ class TestOnlyCompanies:
         # the registered office in parts, under the registered pin only
         assert (captured["reg_street"], captured["reg_city"], captured["reg_postcode"]) == (
             "1 HIGH STREET, SUITE 2", "HARROGATE", "HG1 1AA")
-        # as a string twice: the dedup corroborator and the panel's display address
-        assert captured["address"] == captured["registered_address"] == \
-            "1 HIGH STREET, SUITE 2, HARROGATE, ENGLAND, HG1 1AA"
+        # the panel's display address, and its matching key for the same-name dedup
+        assert captured["address"] == "1 HIGH STREET, SUITE 2, HARROGATE, ENGLAND, HG1 1AA"
+        assert captured["address_normalized"] == "1 high street suite 2 harrogate england hg1 1aa"
         # and NOTHING under hq_*: the register says where a company is registered,
         # not where it is run (copied there until 2026-10-18 — finding #7)
         assert not any(k.startswith("hq_") for k in captured)

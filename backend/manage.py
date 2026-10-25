@@ -1167,6 +1167,9 @@ def cmd_heal_model_gaps(args):
     d = {k: v for k, v in res["dead_keys"].items() if k != "applied"}
     print("Dead keys removed: " + ", ".join(f"{k} {v}" for k, v in d.items()) + verb)
     print(f"Role claims dated by their first sighting: {res['claim_dates']['claims']}{verb}")
+    a = res["address_keys"]
+    print(f"Address keys: {a['keyed']} address_normalized set, {a['addresses_moved']} readable addresses moved, "
+          f"{a['removed']} registered_address removed, of {a['scanned']} entities{verb}")
 
 
 def cmd_init_schema(args):

@@ -221,6 +221,21 @@ def coherent_ownership_type(stake_pct: float | None, ownership_type: str | None)
         return derive_ownership_type(stake_pct)
     return ownership_type or "unknown"
 
+def normalize_address(text: str | None) -> str | None:
+    """The matching key of an address: lowercased, punctuation to spaces,
+    whitespace collapsed — `address_normalized`, derived from the readable
+    `address` by every importer (GLEIF, Companies House PSC and company data)
+    and indexed as the same-name dedup's corroborator. Until 2026-10-25 the
+    field was `registered_address`, which GLEIF filled with this key and the
+    Companies House importers with the readable address — one field, two
+    meanings, so a UK company never corroborated its GLEIF twin."""
+    if not text:
+        return None
+    norm = re.sub(r"[^\w\s]", " ", text.lower())
+    norm = re.sub(r"\s+", " ", norm).strip()
+    return norm or None
+
+
 def normalize_entity_name(name: str) -> str:
     """
     Canonical form of a company name for cross-source deduplication.
