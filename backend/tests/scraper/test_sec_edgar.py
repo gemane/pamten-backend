@@ -2247,12 +2247,45 @@ class TestDeparturesFromEightK:
         text = "On May 1, 2026, the Company's head of Cook County operations resigned."
         assert _departures_in_text(text, ["Timothy D Cook"], "2026-05-02") == []
 
-    def test_the_item_is_cut_out_of_the_whole_filing(self):
+    def test_the_item_is_cut_out_of_the_whole_filing_without_its_heading(self):
         from app.scraper.sec_edgar import _item_502_text
         html = ("<p>Item 2.02 Results.</p><p>Item 5.02 Departure of Directors. "
                 + self.COOK + "</p><p>Item 9.01 Exhibits.</p><p>SIGNATURES</p>")
         text = _item_502_text(html)
-        assert text.startswith("Departure of Directors") and "Exhibits" not in text
+        assert text.startswith("On April 20, 2026") and "Exhibits" not in text
+        full = ("<p>Item 5.02 Departure of Directors or Certain Officers; Election of Directors; "
+                "Appointment of Certain Officers; Compensatory Arrangements of Certain Officers. "
+                "(b) On June 2, 2026, Jane Doe resigned.</p><p>SIGNATURES</p>")
+        assert _item_502_text(full) == "(b) On June 2, 2026, Jane Doe resigned."
+
+    # Berkshire's 8-K of 2025-05-08 (accession 0001193125-25-115695), as the
+    # reader saw it: the heading glued to paragraph b), whose "Departure"
+    # closed Abel's CEO seat at the day it began, 2026-01-01 (dev, 2026-10-25).
+    BERKSHIRE = ("Departure of Directors or Certain Officers; Election of Directors; Appointment of Certain "
+                 "Officers; Compensatory Arrangements of Certain Officers. b) On May 3, 2025, Mr. Warren "
+                 "Buffett, Berkshire’s Chairman and CEO, announced that he was going to recommend to "
+                 "Berkshire’s Board of Directors at its meeting to be held on May 4, 2025 that Mr. Greg Abel, "
+                 "Berkshire’s Vice Chairman – Non-Insurance Operations, be appointed Berkshire’s Chief "
+                 "Executive Officer to become effective on January 1, 2026. c) On May 4, 2025, Berkshire’s "
+                 "Board of Directors voted unanimously to appoint Mr. Abel to become Berkshire’s President "
+                 "and CEO effective on January 1, 2026. Mr. Abel, age 62, has been a director of the "
+                 "Corporation and the Corporation’s Vice Chairman – Non-Insurance Operations since 2018.")
+
+    def test_the_heading_s_departure_closes_nobody(self):
+        from app.scraper.sec_edgar import _ITEM_502_HEADING_RX, _departures_in_text
+        text = _ITEM_502_HEADING_RX.sub("", self.BERKSHIRE)
+        assert text.startswith("b) On May 3, 2025")
+        # an appointment is not a departure: nobody in this 8-K leaves
+        assert _departures_in_text(text, ["Gregory E Abel", "Warren E Buffett"], "2025-05-08") == []
+
+    def test_a_lettered_paragraph_starts_its_own_sentence(self):
+        # "2026. b) Ms. Doe …" — a lowercase enumerator after a period used to
+        # glue the appointment onto the resignation before it.
+        from app.scraper.sec_edgar import _departures_in_text
+        text = ("a) Mr. Roe resigned effective March 1, 2026. b) Ms. Doe was appointed Chief "
+                "Financial Officer effective March 1, 2026. (c) Mr. Poe was elected a director.")
+        out = _departures_in_text(text, ["Richard Roe", "Jane Doe", "Edgar Poe"], "2026-03-05")
+        assert [(d["name"], d["until"]) for d in out] == [("Richard Roe", "2026-03-01")]
 
     def test_end_to_end_only_8ks_with_item_502_are_opened(self):
         from unittest.mock import patch
