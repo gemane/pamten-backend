@@ -799,12 +799,18 @@ def ownership_history_of(
         # names what came after it, so the entry reads "X → Y". Not capped:
         # a company rarely has more than a handful.
         rec = session.run(
-            "MATCH (e:Entity {id: $id}) RETURN e.name AS name, e.former_names AS former_names",
+            "MATCH (e:Entity {id: $id}) RETURN e.name AS name, e.former_names AS former_names, "
+            "e.dissolved_on AS dissolved_on",
             id=entity_id,
         ).single()
         if rec:
             events.extend({**ev, "party": None}
                           for ev in rename_events(rec.get("name"), rec.get("former_names")))
+            # The company's own end (app.dissolution): the last event of its
+            # timeline, dated as the source states it
+            if rec.get("dissolved_on"):
+                events.append({"kind": "dissolved", "since": str(rec["dissolved_on"]), "until": None,
+                               "active": False, "party": None})
 
     # A holding crossing the 5 % line — reached, or dropped below — the only
     # stake movement the timeline tells; the quarterly drift between stays in

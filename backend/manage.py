@@ -1082,6 +1082,22 @@ def cmd_list_mixed_generations(args):
               f"{'/'.join(r['marks'])} — aliases: {', '.join(r['alias'])}")
 
 
+def cmd_heal_ends_at_dissolution(args):
+    """Close every open holding and seat of a dissolved company on its
+    `dissolved_on` (app.dissolution.heal_ends_at_dissolution): the rule the
+    Wikidata writer applies since 2026-10-25, for a database written before
+    it or loaded in bulk. Founders stay open; an edge the source dates after
+    the dissolution is reported, not closed. Dry run unless --apply."""
+    from app.dissolution import heal_ends_at_dissolution
+    res = heal_ends_at_dissolution(apply=args.apply)
+    verb = "closed" if args.apply else "would close (dry run — add --apply)"
+    print(f"{res['closed']} open holdings and seats of {res['companies']} dissolved companies {verb}; "
+          f"{res['founders_kept']} founder roles kept open; "
+          f"{res['after_dissolution']} edges dated after the dissolution left open")
+    for line in res["lines"]:
+        print("  " + line)
+
+
 def cmd_heal_seats_at_death(args):
     """Close every open seat of a dead person on the death date
     (app.roles.heal_seats_at_death): the rule the writers apply since
@@ -1517,6 +1533,12 @@ def _build_parser():
              "founders stay open. Dry run unless --apply")
     p_hsd.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hsd.set_defaults(func=cmd_heal_seats_at_death)
+
+    p_hed = subparsers.add_parser('heal-ends-at-dissolution',
+        help="Close every open holding and seat of a dissolved company on its dissolved_on "
+             "(until_reason = dissolution); founders stay open. Dry run unless --apply")
+    p_hed.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hed.set_defaults(func=cmd_heal_ends_at_dissolution)
 
     p_hrp = subparsers.add_parser('heal-role-placeholders',
         help="Delete HAS_ROLE edges and role claims whose role is Form 4's \"See Remarks\" placeholder "

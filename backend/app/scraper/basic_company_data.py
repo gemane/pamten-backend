@@ -33,8 +33,13 @@ and Wikidata's to state), ``address`` + its matching key ``address_normalized``
 company is run),
 ``aliases`` (PreviousName_1..10), ``former_names`` (the same names, each with
 its change-of-name date — ``app.former_names``, the timeline's "Renamed from"),
-``is_nominee`` (name-detected) and ``name_credibility`` (the register is the
-authoritative name source).
+``is_nominee`` (name-detected), ``name_credibility`` (the register is the
+authoritative name source), ``company_status`` (CompanyStatus as the register
+words it — "Active", "Liquidation", "Active - Proposal to Strike off", …; the
+panel's Status row) with ``active`` (true: the snapshot lists live companies
+only — a company that was dissolved is simply absent from the next one, and
+"Dissolved" never appears) and ``dissolved_on`` (DissolutionDate, when the
+column is ever filled — ``app.dissolution`` closes what the company held).
 """
 import csv
 import logging
@@ -314,6 +319,8 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                 # not the business's: it goes in `incorporated_on` and leaves
                 # `founded` (the year of origin, Wikidata's) alone.
                 incorporated_on = _uk_date(row.get("IncorporationDate"))
+                status = (row.get("CompanyStatus") or "").strip() or None
+                dissolved_on = _uk_date(row.get("DissolutionDate"))
                 props = {
                     "name": name,
                     "name_normalized": normalize_entity_name(name),
@@ -334,6 +341,12 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "former_names": _former_names(row, name),
                     "is_nominee": is_nominee_name(name),
                     "name_credibility": credibility_score,
+                    # The register's own word on whether the company exists
+                    # (app.dissolution): on the live register unless it says
+                    # dissolved; the status text as worded, for the panel
+                    "active": not dissolved_on and (status or "").casefold() != "dissolved",
+                    **({"company_status": status} if status else {}),
+                    **({"dissolved_on": dissolved_on} if dissolved_on else {}),
                     # What the company does, as filed (app.industry)
                     "uk_sic_codes": _sic_codes(row),
                     "last_scraped_at": _now_iso(),

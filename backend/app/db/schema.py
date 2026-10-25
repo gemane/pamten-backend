@@ -316,7 +316,8 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "cusip", "lei_id", "sec_cik", "companies_house_id", "wikidata_id", "nace_code",
         "website", "logo_url", "search_text", "source_id", "source_url",
         "validation_sources", "gleif_registration_status", "lei_registration_date",
-        "incorporated_on", "created_at", "last_scraped_at", "sec_13f_scraped_at",
+        "incorporated_on", "dissolved_on", "company_status",
+        "created_at", "last_scraped_at", "sec_13f_scraped_at",
         "sec_ex21_ingested", "sec_acquisitions_ingested", "sec_formd_ingested",
         "no_direct_parent_reason", "no_ultimate_parent_reason",
     ),
@@ -449,7 +450,7 @@ _RULED_STRINGS: list[tuple[str, str]] = [
 #: inside an SQL string literal.
 _DATE_PATTERN = "^[0-9]{4}(-[0-9]{2}){0,2}$"
 _DATES: list[tuple[str, str]] = [
-    ("Entity", "incorporated_on"), ("Entity", "lei_registration_date"),
+    ("Entity", "incorporated_on"), ("Entity", "dissolved_on"), ("Entity", "lei_registration_date"),
     ("Person", "birth_date"), ("Person", "death_date"),
     ("OWNS", "since"), ("OWNS", "until"), ("OWNS", "since_not_before"),
     ("OWNS", "ultimate_since"), ("OWNS", "ultimate_until"),
@@ -535,8 +536,9 @@ def constraints() -> list[tuple[str, str, str, str]]:
         ("Claim", "read_from", "REGEXP", grades),
         ("HAS_ROLE", "read_from", "REGEXP", grades),
         ("Claim", "until_read_from", "REGEXP", grades),
-        # the one reason a seat ends that no source stated (app.roles.DEATH)
-        ("HAS_ROLE", "until_reason", "REGEXP", _vocab(("death",))),
+        # the two reasons a seat ends that no source stated: the holder died
+        # (app.roles.DEATH), the company ceased (app.dissolution.DISSOLUTION)
+        ("HAS_ROLE", "until_reason", "REGEXP", _vocab(("death", "dissolution"))),
     ]
     # A flag that means "not asserted" is false, never null: since ArcadeDB
     # 26.10.1 a null compares as false in `<>` and drops out of every filter,

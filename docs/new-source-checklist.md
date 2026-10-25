@@ -203,6 +203,16 @@ parser. Anything that does not map is either a new property (document it) or noi
       and an unset `stale` dropped 1,274 edges out of every filter. Stamp `false`.
 - [ ] **Dates carry their real precision.** UK PSC publishes month and year only; storing
       a fabricated day makes two different people look like the same one.
+- [ ] **An entity's end is a fact the source may state — read it.** Wikidata's P576,
+      GLEIF's `EntityExpirationDate`, Companies House's `CompanyStatus`/`DissolutionDate`
+      all existed for years before anything read them (2026-10-25), so a dissolved
+      company read as live, kept open holdings and seats, and time travel hid it before
+      its incorporation but never after its end. Write the date to `dissolved_on` (the
+      source's precision, fill-only), `active = false` beside it, a register's own
+      status wording to `company_status`; a per-company writer then calls
+      `app.dissolution.end_at_dissolution`, a bulk importer leaves it to
+      `manage.py heal-ends-at-dissolution`. A knowledge base never writes `active = true`:
+      null means no register has said.
 - [ ] **A new edge property goes into `edge_schema.OWNS_PROPS` first.** `owns_props()`
       raises on unknown keywords by design, and the merge paths derive their recreate
       lists from the schema — a property added to a writer but not the schema is silently
@@ -527,7 +537,7 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         transitions (a start, an end, the day a holding stopped being confirmed),
         and every sentence it shows comes from a code on the edge:
         - An end is worded by `until_reason`. The known codes are
-          `gleif_inactive`, `gleif_dropped`, `ceased` and `withdrawn` (a 13D/G
+          `gleif_inactive`, `gleif_dropped`, `ceased`, `withdrawn` and `dissolution` (a 13D/G
           end is worded by its `filing_type`); anything else reads "the source
           records the holding as ended". Reuse a code that fits; a new one gets
           its sentence in the frontend in the same change (`END_REASONS` in

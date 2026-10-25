@@ -121,6 +121,20 @@ class TestEntityProps:
         # to `company` (bulk_import._DEFAULTED_FIELDS); never an empty type
         assert "type" in props and props["type"] is None
 
+    def test_the_day_the_entity_ceased_when_the_record_states_it(self):
+        """`EntityExpirationDate` → `dissolved_on` (app.dissolution); absent
+        otherwise, so a re-import never blanks another source's date."""
+        from app.scraper.gleif_lei_cdf import _dissolved_on
+        rec = _rec("L1", "Gone Ltd")
+        rec["Entity"]["EntityStatus"] = _w("INACTIVE")
+        rec["Entity"]["EntityExpirationDate"] = _w("2021-06-30T00:00:00Z")
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["dissolved_on"] == "2021-06-30" and props["active"] is False
+        _, props = _entity_props(_rec("L2", "Here Ltd"), "gleif", 92)
+        assert "dissolved_on" not in props
+        assert _dissolved_on({"EntityExpirationDate": _w("2021-06-30")}) == "2021-06-30"
+        assert _dissolved_on({"EntityExpirationDate": _w("30/06/2021")}) is None
+
     def test_the_registers_own_word_on_the_record(self):
         """`active` + `gleif_registration_status` on the FULL load, not only the
         delta (the sibling path): 254,659 of 3,453,452 records were INACTIVE and

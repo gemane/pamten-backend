@@ -18,6 +18,7 @@ Fields returned and Owlgraph mapping:
   countryCode      → entity.country (primary ISO-2) + entity.countries (all
                      domiciles; dual-listed companies have >1)
   founded (P571)   → entity.founded_year
+  dissolved (P576) → entity.dissolved_on (at the statement's precision; app.dissolution)
   revenue (P2139)  → entity.revenue_usd
   subsidiary (P355)→ OWNS edge (target entity)
   parent (P749)    → OWNS edge (source entity)
@@ -314,7 +315,7 @@ def _sparql(qid: str) -> list:
     # 1. Core: identity, aliases, instances, all domicile countries, all HQs.
     core = f"""
     SELECT ?itemLabel ?itemDescription ?altLabel ?instance ?countryCode
-           ?founded ?revenue ?itemCoord ?hqLabel ?hqCoord ?hqCountryCode
+           ?founded ?dissolved ?dissolvedP ?revenue ?itemCoord ?hqLabel ?hqCoord ?hqCountryCode
            ?lei ?cik ?website ?logo ?depiction
     WHERE {{
       BIND(wd:{qid} AS ?item)
@@ -370,6 +371,9 @@ def _sparql(qid: str) -> list:
         OPTIONAL {{ ?hq wdt:P17 ?hqCountry . ?hqCountry wdt:P297 ?hqCountryCode }}
       }}
       OPTIONAL {{ ?item wdt:P571 ?founded }}
+      OPTIONAL {{ ?item p:P576/psv:P576 ?dissolvedV .
+                  ?dissolvedV wikibase:timeValue ?dissolved .
+                  OPTIONAL {{ ?dissolvedV wikibase:timePrecision ?dissolvedP }} }}
       OPTIONAL {{ ?item wdt:P2139 ?revenue . FILTER(?revenue > 0) }}
       {_LABEL_SERVICE}
     }}
@@ -1000,6 +1004,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "country":     None,   # primary domicile (first P17) — used for grouping/map
         "countries":   set(),  # all P17 domiciles (dual-listed companies have >1)
         "founded":     None,
+        "dissolved_on": None,  # P576 — the day the entity ceased, at the statement's precision
         "revenue":     None,
         "lei":         None,   # P1278 — bridges to a GLEIF node's lei_id
         "sec_cik":     None,   # P5531 — bridges to a SEC EDGAR node's sec_cik
@@ -1036,6 +1041,8 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     result["founded"] = int(raw_date[:4])
                 except (ValueError, TypeError):
                     pass
+            if result["dissolved_on"] is None:
+                result["dissolved_on"] = _date(row, "dissolved")
 
             if raw_rev := _v(row, "revenue"):
                 try:

@@ -835,6 +835,43 @@ class TestUpsertPersonDetail:
         assert "nat" not in create.kwargs and "nationality" not in create.args[0]
         assert create.kwargs["desc"] is None          # absent, never '' (2026-10-25)
 
+    def test_a_dissolution_date_marks_the_entity_inactive_and_closes_what_it_held(self):
+        """app.dissolution: the Wikidata writer is the one that learns the day."""
+        ended = []
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.end_at_dissolution", side_effect=lambda eid, **k: ended.append(eid)):
+            eid = _upsert_entity("Gone Corp", "company", "US", None, None, None, "Q9",
+                                 source_id="wikidata", dissolved_on="2023-03-15")
+        create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
+        assert create.kwargs["dissolved_on"] == "2023-03-15" and create.kwargs["active"] is False
+        assert "dissolved_on: $dissolved_on" in create.args[0]
+        assert ended == [eid]
+        # the update path: fill-only on the date, inactive once stated, the rule applied
+        ended.clear()
+        ctx, session = _make_session_mock(single_returns=[
+            {"id": "e-1"}, {"name": "Gone Corp", "cred": 0, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.end_at_dissolution", side_effect=lambda eid, **k: ended.append(eid)):
+            _upsert_entity("Gone Corp", "company", "US", None, None, None, "Q9",
+                           source_id="wikidata", dissolved_on="2023-03-15")
+        update = next(c for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0])
+        assert "e.dissolved_on    = COALESCE(e.dissolved_on, $dissolved_on)" in update.args[0]
+        assert "e.active          = CASE WHEN $dissolved_on IS NOT NULL THEN false ELSE e.active END" in update.args[0]
+        assert update.kwargs["dissolved_on"] == "2023-03-15" and ended == ["e-1"]
+
+    def test_a_living_company_asserts_no_active_flag_and_runs_no_rule(self):
+        """A knowledge base does not say a company is active — null means no
+        register has said (schema.FLAGS keeps `active` three-valued)."""
+        ended = []
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.end_at_dissolution", side_effect=lambda eid, **k: ended.append(eid)):
+            _upsert_entity("Live Corp", "company", "US", None, None, None, "Q8", source_id="wikidata")
+        create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
+        assert create.kwargs["dissolved_on"] is None and create.kwargs["active"] is None
+        assert ended == []
+
     def test_an_empty_description_is_absent_on_create_and_backfill(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
@@ -1155,6 +1192,20 @@ class TestSuccession:
             _scrape_node("Q1390577", depth=0, visited=set(), scraped=[], source_id="src-1")
         # predecessor (Twitter) → successor (X Corp.), carrying the succession date
         assert ("id:Q1390577", "id:Q117617480", "2023-04-00") in calls
+
+    def test_scrape_node_passes_the_dissolution_date_to_the_writer(self):
+        data = {
+            "qid": "Q1390577", "name": "Twitter", "description": None,
+            "instances": ["Q4830453"], "country": None, "founded": None, "revenue": None,
+            "dissolved_on": "2023-03-15", "successors": [], "predecessors": [],
+        }
+        seen = {}
+        with patch("app.scraper.runner.fetch_company_data", return_value=data), \
+             patch("app.scraper.runner._resolve_related_company", return_value=None), \
+             patch("app.scraper.runner._upsert_entity",
+                   side_effect=lambda **kw: seen.update(kw) or f"id:{kw['wikidata_id']}"):
+            _scrape_node("Q1390577", depth=0, visited=set(), scraped=[], source_id="src-1")
+        assert seen["dissolved_on"] == "2023-03-15"
 
     def test_scrape_node_predecessor_points_into_current_entity(self):
         data = {
