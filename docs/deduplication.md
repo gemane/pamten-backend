@@ -90,6 +90,8 @@ incompatible), while variants of one person are.
 | `medium` | distinctive (3+ token) name match, **or** a surname+company variant |
 | `low` | common 2-token name match, no corroboration |
 | + `likely_distinct` | conflicting birth dates on an otherwise-matching group ⇒ probably different people (Keith vs Rupert Murdoch) — never auto-merged |
+| + `likely_distinct`, definitive | two different **SEC CIKs**, two different **Wikidata items**, or two different **generational marks** ("…, Sr." against "…, Jr.", II against III — read across a member's name *and* aliases, `app.generations`) ⇒ two people however alike the names — never auto-merged. The marks rule came from Berkshire's 2022 director "Thomas S. Murphy, Jr.", folded into his father (dead since 2022) when the son's "Thomas Murphy" alias matched and the shared company corroborated it (2026-10-25) |
+| capped at `medium` | a mark on one name and none on the other ("Thomas S Murphy Jr" / "Thomas Murphy"): a doubt, not a verdict — a father is rarely written "Sr." — so it waits for a human unless a birth date settles it. The same mark on both sides (SEC's "Gates William H Iii" / the alias "William H. Gates III") merges as before |
 
 Groups already confirmed distinct via keep-separate (below) are dropped from the
 scan (`_all_pairs_dismissed`).
@@ -140,6 +142,9 @@ spellings) against *pre-existing* persons are still left to the periodic full sc
 persons when there are none.
 
 Medium/low and father/son cases are left for a human, deliberately.
+`manage.py list-mixed-generations` names every node whose own aliases carry two
+different marks — a relative folded in by a merge made before the rule — to split
+by hand (recreate the relative, move their seats and claims, keep-separate).
 
 ## Merging — `POST /persons/merge`
 

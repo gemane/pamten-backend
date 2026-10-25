@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest, KeepSeparateRequest
+from app.generations import generation_marks, marks_conflict
 from app.auth.dependencies import require_contributor
 from app.database import db
 from app.db.arcadedb import run_sql
@@ -289,11 +290,23 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             # formatting-variance merges below safe. (A member without a CIK
             # conflicts with nothing.)
             present_ciks = [m.get("sec_cik") for m in members if m.get("sec_cik")]
+            # Two Wikidata items are two people the same way (one item per
+            # human), and two different generational marks — "…, Sr." against
+            # "…, Jr." across a member's name and aliases — are a father and
+            # son by name alone (app.generations; Thomas Murphy, 2026-10-25).
+            present_qids = [m.get("wikidata_id") for m in members if m.get("wikidata_id")]
+            marks = [generation_marks(m.get("full_name"), *(m.get("alias") or [])) for m in members]
+            distinct_by = None
             if len(set(present_ciks)) >= 2:
+                distinct_by = "but DIFFERENT SEC CIKs — distinct filers"
+            elif len(set(present_qids)) >= 2:
+                distinct_by = "but DIFFERENT Wikidata items — distinct people"
+            elif any(marks_conflict(a, b) for a, b in combinations(marks, 2)):
+                distinct_by = "but DIFFERENT generational marks (Sr./Jr., II/III) — distinct people"
+            if distinct_by:
                 groups.append({
                     "confidence": "low", "likely_distinct": True,
-                    "reason": ", ".join([base_reason,
-                                         "but DIFFERENT SEC CIKs — distinct filers"]),
+                    "reason": ", ".join([base_reason, distinct_by]),
                     "suggested_keep_id": members[0]["id"],
                     "members": [{**m, "connected": len(ent[i])}
                                 for i, m in enumerate(members)],
@@ -361,6 +374,12 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                     confidence = "high"
             else:
                 confidence = "medium" if distinctive else "low"
+            # A mark on one name and none on the other is a doubt, not a
+            # verdict — the father is rarely written "Sr." — so the group
+            # waits for a human unless a birth date settles it.
+            if confidence == "high" and not shared_birth and any(marks) and not all(marks):
+                confidence = "medium"
+                reasons.append("one name carries a Jr./Sr./III the other lacks — rule out a relative")
 
             # keep: prefer a Wikidata node, then the most-connected, then shortest name
             idx = sorted(range(len(members)),
