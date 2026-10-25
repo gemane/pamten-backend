@@ -168,7 +168,6 @@ def test_claim_props_knows_every_fact_a_claim_should_record():
         "shortcut", "interest_types",
         "direct_or_indirect", "psc_self_link", "also_ultimate",
         "ultimate_since", "ultimate_until", "until_reason", "value_usd",
-        "file_date",
         # our judgement from GLEIF's archive, not the source's assertion — the
         # claim keeps what the source stated (gleif_rr_history)
         "since_not_before",

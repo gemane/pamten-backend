@@ -106,7 +106,7 @@ def test_a_person_merge_carries_every_owns_property(it_db):
               "voting_shares": 1020598157, "stale": True, "stale_since": "2026-06-30",
               "stale_reason": "13f_not_confirmed", "stale_source_url": None, "shortcut": False,
               "also_ultimate": True, "ultimate_since": "2019-05-05",
-              "ultimate_until": None, "value_usd": 1234.5, "file_date": "2026-01-02",
+              "ultimate_until": None, "value_usd": 1234.5,
               "filing_type": "13G/A",
               "since_basis": "first_listed", "since_source_url": "https://sec.example.test/ex21-2014",
               "structure_basis": "ex21_indent", "since_not_before": "2019-01-01",

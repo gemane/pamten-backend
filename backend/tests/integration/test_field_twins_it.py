@@ -91,3 +91,62 @@ def test_the_writers_leave_an_unknown_list_absent(it_db):
     assert "countries" not in it_db.run_sql("SELECT FROM Entity WHERE id = :id", {"id": eid})[0]
     _upsert_entity("Stateless Ltd", "company", "IE", None, None, "", "Q8", source_id="wikidata")
     assert it_db.run_sql("SELECT countries FROM Entity WHERE id = :id", {"id": eid})[0]["countries"] == ["IE"]
+
+
+def test_the_dead_keys_leave_and_the_undated_role_claims_get_their_first_sighting(it_db):
+    from app.field_twins import heal_claim_dates, heal_dead_keys
+    it_db.run_command("CREATE (:Person {id:'p1', full_name:'A', updated_at:'2026-01-01T00:00:00+00:00'})")
+    it_db.run_command("CREATE (:Person {id:'p2', full_name:'B'})")
+    it_db.run_command("CREATE (:Entity {id:'e1', name:'E1'})")
+    it_db.run_command("CREATE (:Entity {id:'e2', name:'E2'})")
+    it_db.run_command("MATCH (a:Entity {id:'e1'}), (b:Entity {id:'e2'}) "
+                      "CREATE (a)-[:OWNS {until:null, file_date:'2026-01-02', source_date:'2026-01-02'}]->(b)")
+    it_db.run_command("MATCH (a:Person {id:'p1'}), (b:Person {id:'p2'}) "
+                      "CREATE (a)-[:RELATED_TO {relation:'affiliate', credibility_score:98}]->(b)")
+    it_db.run_sql("INSERT INTO Claim SET claim_key='k1', kind='role', from_id='p1', to_id='e1', source_id='wikidata', "
+                  "first_seen_at='2026-10-06T14:01:02+00:00', last_seen_at='2026-10-25T00:00:00+00:00'")
+    it_db.run_sql("INSERT INTO Claim SET claim_key='k2', kind='role', from_id='p2', to_id='e1', source_id='wikidata', "
+                  "source_date='2026-09-01', first_seen_at='2026-10-06T14:01:02+00:00', last_seen_at='2026-10-25T00:00:00+00:00'")
+
+    assert heal_dead_keys(apply=False) == {"applied": False, "OWNS.file_date": 1, "Person.updated_at": 1,
+                                           "RELATED_TO.credibility_score": 1}
+    assert heal_dead_keys(apply=True)["OWNS.file_date"] == 1
+    assert "file_date" not in it_db.run_sql("SELECT FROM OWNS")[0]
+    assert it_db.run_sql("SELECT source_date FROM OWNS")[0]["source_date"] == "2026-01-02"
+    assert "updated_at" not in it_db.run_sql("SELECT FROM Person WHERE id = 'p1'")[0]
+    assert "credibility_score" not in it_db.run_sql("SELECT FROM RELATED_TO")[0]
+
+    assert heal_claim_dates(apply=True) == {"applied": True, "claims": 1}
+    dates = {r["claim_key"]: r["source_date"] for r in it_db.run_sql("SELECT claim_key, source_date FROM Claim")}
+    assert dates == {"k1": "2026-10-06", "k2": "2026-09-01"}
+    assert heal_claim_dates(apply=True)["claims"] == 0
+
+
+def test_a_person_is_stamped_whenever_a_source_writes_them(it_db):
+    """`last_scraped_at` on a person used to be set by the person scrape
+    only — no company-scraped person had one (954 on dev, 2026-10-25)."""
+    from app.scraper.graph_writer import _upsert_person_by_name
+    from app.scraper.runner import _upsert_person
+    def stamp(pid):
+        return it_db.run_sql("SELECT last_scraped_at AS t FROM Person WHERE id = :id", {"id": pid})[0]["t"]
+    OLD = "2020-01-01T00:00:00+00:00"
+    pid = _upsert_person("Some Body", nationality=None, description="", wikidata_id="Q77")
+    assert (stamp(pid) or "") >= "2026-01-01"
+    it_db.run_sql("UPDATE Person SET last_scraped_at = :t WHERE id = :id", {"t": OLD, "id": pid})
+    _upsert_person("Some Body", nationality=None, description="", wikidata_id="Q77")     # the backfill path
+    assert stamp(pid) > OLD
+    nid = _upsert_person_by_name("Jane Form", source_id="sec-edgar")
+    assert (stamp(nid) or "") >= "2026-01-01"
+    it_db.run_sql("UPDATE Person SET last_scraped_at = :t WHERE id = :id", {"t": OLD, "id": nid})
+    assert _upsert_person_by_name("Jane Form", source_id="sec-edgar", sec_cik="0000001") == nid   # the name match
+    assert stamp(nid) > OLD
+    assert it_db.run_sql("SELECT sec_cik FROM Person WHERE id = :id", {"id": nid})[0]["sec_cik"] == "0000001"
+
+
+def test_a_knowledge_base_role_claim_is_dated_by_the_scrape_day(it_db):
+    from app.scraper.runner import _upsert_entity, _upsert_person, _upsert_role
+    pid = _upsert_person("Some Body", nationality=None, description="", wikidata_id="Q77")
+    eid = _upsert_entity("Some Co", "company", None, None, None, "", "Q78", source_id="wikidata")
+    _upsert_role(pid, eid, "CEO", "wikidata", since="2020-01-01")
+    rows = it_db.run_sql("SELECT source_date FROM Claim WHERE kind = 'role' AND from_id = :p", {"p": pid})
+    assert rows and rows[0]["source_date"] and rows[0]["source_date"] >= "2026-01-01"

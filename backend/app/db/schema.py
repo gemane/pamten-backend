@@ -240,7 +240,6 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     ("OWNS", "also_ultimate",      "BOOLEAN"),
     ("OWNS", "interest_types",     "LIST"),
     ("HAS_ROLE",     "credibility_score", "INTEGER"),
-    ("RELATED_TO",   "credibility_score", "INTEGER"),
     ("SUCCEEDED_BY", "credibility_score", "INTEGER"),
     # Claim — the same facts a source asserts, typed alike
     ("Claim", "stake_percent",      "DOUBLE"),
@@ -323,7 +322,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "Person": (
         "id", "full_name", "first_name", "last_name", "birth_date", "death_date", "birth_place",
         "description", "wikipedia_url", "image_url", "source_id", "wikidata_id", "sec_cik",
-        "search_text", "created_at", "last_scraped_at", "updated_at",
+        "search_text", "created_at", "last_scraped_at",
     ),
     "Source": ("id", "name", "url", "type", "kind", "description", "registry_key", "data_mode", "key_id"),
     "Claim": (
@@ -337,7 +336,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "ownership_type", "since", "until", "until_reason", "source_id", "source_url",
         "source_date", "last_scraped_at", "direct_or_indirect", "psc_self_link", "share_class",
         "denominator_date", "event_date", "stale_since", "stale_reason", "stale_source_url",
-        "ultimate_since", "ultimate_until", "file_date", "validation_sources",
+        "ultimate_since", "ultimate_until", "validation_sources",
         "validation_documents", "filing_type", "since_basis", "since_source_url",
         "since_not_before", "structure_basis", "read_from",
     ),
@@ -454,7 +453,7 @@ _DATES: list[tuple[str, str]] = [
     ("OWNS", "since"), ("OWNS", "until"), ("OWNS", "since_not_before"),
     ("OWNS", "ultimate_since"), ("OWNS", "ultimate_until"),
     ("OWNS", "source_date"), ("OWNS", "event_date"), ("OWNS", "denominator_date"),
-    ("OWNS", "stale_since"), ("OWNS", "file_date"),
+    ("OWNS", "stale_since"),
     ("HAS_ROLE", "since"), ("HAS_ROLE", "until"), ("HAS_ROLE", "source_date"),
     ("Claim", "since"), ("Claim", "until"), ("Claim", "source_date"),
     ("Claim", "event_date"), ("Claim", "denominator_date"),

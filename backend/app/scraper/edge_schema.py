@@ -71,7 +71,6 @@ OWNS_PROPS: tuple = (
     "ultimate_since",
     "ultimate_until",
     "value_usd",
-    "file_date",
     # How far the register checked the RECORD behind the edge, as the register
     # states it — GLEIF's `ValidationSources` (FULLY_CORROBORATED /
     # PARTIALLY_CORROBORATED / ENTITY_SUPPLIED_ONLY / PENDING) and

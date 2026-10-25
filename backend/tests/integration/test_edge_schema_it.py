@@ -35,7 +35,7 @@ _SAMPLE = {
     "stale_source_url": "https://www.sec.gov/Archives/edgar/data/1/0002/ex21.htm",
     "shortcut": False, "also_ultimate": True,
     "ultimate_since": "2017-01-01", "ultimate_until": None,
-    "value_usd": 12345678.9, "file_date": "2025-02-07",
+    "value_usd": 12345678.9,
     "filing_type": "13G/A",
     "since_basis": "first_listed", "since_source_url": "https://sec.example.test/ex21-2014",
     "structure_basis": "ex21_indent", "since_not_before": "2019-01-01",
