@@ -761,9 +761,14 @@ Key fields in Form 3/4 XML:
 The title box can say **"See Remarks"** — EDGAR's own pointer to the filing-level
 `<remarks>` element, where the filer wrote the title (Berkshire's 2026 Form 4s:
 `<officerTitle>See Remarks</officerTitle>` … `<remarks>Senior Vice President and Chief
-Financial Officer</remarks>`). The reader then maps the remarks (→ CFO, General Counsel,
-Chairman, …) and, when they name no role it knows, records a plain "Officer" — never the
-placeholder and never the remarks paragraph (`_officer_role`). Until 2026-10-25 the
+Financial Officer</remarks>`). The reader maps the remarks (→ CFO, General Counsel,
+Chairman, …) **only when they read as a title** — short, no sentence — and otherwise
+records a plain "Officer": never the placeholder, never the paragraph, and never a role
+mined out of a sentence, because the sentence can describe a post at another company.
+Televisa's Form 4 says "Mr. Valim is the Chief Executive Officer of izzi, Grupo Televisa,
+S.A.B.'s cable company, and on that basis he may be considered an officer of Grupo
+Televisa" — an officer of Televisa, the CEO of its subsidiary (`_officer_role`,
+`_looks_like_title`). Until 2026-10-25 the
 pointer itself reached the graph as a role on five dev seats, in two spellings;
 `manage.py heal-role-placeholders` removes such seats and names the companies to
 re-scrape.
