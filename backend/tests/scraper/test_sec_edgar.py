@@ -215,6 +215,26 @@ class TestParseForm34Xml:
                              remarks="Senior Vice President, General Counsel and Secretary")
         assert _parse_form34_xml(xml)["role"] == "General Counsel"
 
+    # Televisa's Form 4 (CIK 912892, 2026-06-08): the remarks are a sentence
+    # about a post at a SUBSIDIARY — mining it for "Chief Executive Officer"
+    # would have seated him as Televisa's CEO.
+    def test_a_remarks_sentence_is_never_mined_for_a_role(self):
+        from app.scraper.sec_edgar import _looks_like_title, _officer_role
+        valim = ("Mr. Valim is the Chief Executive Officer of izzi, Grupo Televisa, S.A.B.'s cable "
+                 "company, and on that basis he may be considered an officer of Grupo Televisa, S.A.B.")
+        xml = self._make_xml("Valim Francisco", is_officer="1", title="See Remarks", remarks=valim)
+        result = _parse_form34_xml(xml)
+        assert result["role"] == "Officer"
+        assert result["title"] == "See Remarks"                 # the sentence is not a title either
+        assert _officer_role("See Remarks", "He serves as Chief Financial Officer of the parent.") == "Officer"
+        assert _officer_role("See Remarks", "Chief Financial Officer. Also a director of the trust.") == "Officer"
+        assert _officer_role("See Remarks", "Chief Financial Officer " * 12) == "Officer"     # too long for a title
+        # what a title looks like
+        for ok in ("Senior Vice President and Chief Financial Officer", "Vice Chairman - Non-Insurance Operations",
+                   "Senior Vice President, General Counsel and Secretary"):
+            assert _looks_like_title(ok), ok
+        assert _officer_role("See Remarks", "Senior Vice President and Chief Financial Officer") == "CFO"
+
     def test_see_remarks_never_becomes_a_role_and_a_remarks_paragraph_never_a_title(self):
         from app.scraper.sec_edgar import _officer_role
         # remarks that name no role we know: a plain officer, not the paragraph

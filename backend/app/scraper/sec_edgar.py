@@ -451,14 +451,34 @@ _SEE_REMARKS = re.compile(r"^\s*see\s+remarks?\b", re.IGNORECASE)
 _NAMED_ROLES = frozenset({"CEO", "CFO", "COO", "CTO", "General Counsel", "Chairman", "President"})
 
 
+#: A remarks box that is a sentence, not a title. Televisa's Form 4 for its
+#: cable company's chief says "Mr. Valim is the Chief Executive Officer of
+#: izzi, Grupo Televisa, S.A.B.'s cable company, and on that basis he may be
+#: considered an officer of Grupo Televisa" — a CEO of a SUBSIDIARY, which a
+#: substring match would have seated as Televisa's CEO (2026-10-25).
+_SENTENCE = re.compile(r"\b(is|are|was|were|serves?|served|became|may|considered|also)\b|\. |^(mr|ms|mrs|dr)\b",
+                       re.IGNORECASE)
+_TITLE_MAX = 120
+
+
+def _looks_like_title(text: str) -> bool:
+    """Short and declarative — "Senior Vice President and Chief Financial
+    Officer" — not a sentence about the filer."""
+    text = (text or "").strip()
+    return 0 < len(text) <= _TITLE_MAX and not _SENTENCE.search(text)
+
+
 def _officer_role(title: str, remarks: str = "") -> str:
     """An officer's role from the title box — or, when the box says "See
-    Remarks", from the remarks when they name a role we know ("Senior Vice
-    President and Chief Financial Officer" → CFO), else plain "Officer". The
-    placeholder itself reached the graph as a role on five dev edges, in two
-    spellings, until 2026-10-25."""
+    Remarks", from the remarks when they READ AS A TITLE and name a role we
+    know ("Senior Vice President and Chief Financial Officer" → CFO), else
+    plain "Officer". A remarks sentence is never mined for a role: it can
+    describe a post at another company. The placeholder itself reached the
+    graph as a role on five dev edges, in two spellings, until 2026-10-25."""
     if not _SEE_REMARKS.match(title):
         return _title_to_role(title)
+    if not _looks_like_title(remarks):
+        return "Officer"
     role = _title_to_role(remarks)
     return role if role in _NAMED_ROLES else "Officer"
 
@@ -1737,8 +1757,8 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
 
     name = _normalize_sec_name(name_elem.text.strip())
     role = former_role or (_officer_role(officer_title, remarks) if is_officer else "Director")
-    if is_officer and _SEE_REMARKS.match(officer_title):
-        officer_title = remarks or officer_title          # the title as the filer actually wrote it
+    if is_officer and _SEE_REMARKS.match(officer_title) and _looks_like_title(remarks):
+        officer_title = remarks                           # the title as the filer actually wrote it
     # The reporting owner's own CIK — a hard person key, one per filer across
     # every filing and spelling. Padded to 10 like every CIK we store.
     owner_cik_raw = (owner.findtext(".//rptOwnerCik") or "").strip()

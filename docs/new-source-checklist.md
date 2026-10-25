@@ -240,8 +240,9 @@ parser. Anything that does not map is either a new property (document it) or noi
       into `schema._DATES` (or `_TIMESTAMPS`) so it carries the rule too.
 - [ ] **A placeholder in a field is not a value.** Form 4's title box says "See Remarks"
       when the title is in the remarks box; five dev seats carried the placeholder as
-      their role until 2026-10-25 (`sec_edgar._officer_role` now reads the remarks, and
-      falls back to "Officer" rather than ever storing the pointer). Look for the
+      their role until 2026-10-25 (`sec_edgar._officer_role` now reads the remarks — only
+      when they read as a title, since a sentence there can describe a post at another
+      company — and falls back to "Officer" rather than ever storing the pointer). Look for the
       source's own "see elsewhere" / "not applicable" / "other" tokens before storing
       a free-text field as a fact.
 - [ ] **If the source's records are filings, stamp `filing_type`** ("13G/A", "13F", "RR",
