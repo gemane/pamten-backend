@@ -27,13 +27,13 @@ class TestMarks:
 
 
 class TestListing:
-    ROWS = [{"id": "p1", "full_name": "Thomas Murphy", "alias": ["Thomas Murphy, Sr.", "Thomas S. Murphy, Jr."],
+    ROWS = [{"id": "p1", "full_name": "Thomas Murphy", "aliases": ["Thomas Murphy, Sr.", "Thomas S. Murphy, Jr."],
              "wikidata_id": "Q3525537", "sec_cik": None},
-            {"id": "p2", "full_name": "Bill Gates", "alias": ["William H. Gates III"], "wikidata_id": "Q5284", "sec_cik": None},
-            {"id": "p3", "full_name": "Plain Name", "alias": None, "wikidata_id": None, "sec_cik": "1"}]
+            {"id": "p2", "full_name": "Bill Gates", "aliases": ["William H. Gates III"], "wikidata_id": "Q5284", "sec_cik": None},
+            {"id": "p3", "full_name": "Plain Name", "aliases": None, "wikidata_id": None, "sec_cik": "1"}]
 
     def test_names_only_the_nodes_holding_two_marks(self):
         with patch("app.db.paging.iter_id_pages", lambda label, **kw: iter([self.ROWS])):
             rows = g.mixed_generation_persons()
         assert [(r["id"], r["marks"]) for r in rows] == [("p1", ["jr", "sr"])]
-        assert rows[0]["alias"] == self.ROWS[0]["alias"] and rows[0]["wikidata_id"] == "Q3525537"
+        assert rows[0]["aliases"] == self.ROWS[0]["aliases"] and rows[0]["wikidata_id"] == "Q3525537"

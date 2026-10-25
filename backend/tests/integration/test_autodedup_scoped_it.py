@@ -16,7 +16,7 @@ pytestmark = pytest.mark.integration
 
 def _person(it_db, pid, full_name):
     it_db.run_command(
-        "CREATE (p:Person {id:$id, full_name:$n, alias:[], wikidata_id:null})",
+        "CREATE (p:Person {id:$id, full_name:$n, aliases: [], wikidata_id:null})",
         {"id": pid, "n": full_name})
 
 

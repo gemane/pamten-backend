@@ -1,6 +1,6 @@
 """
 Real-ArcadeDB integration test for person-detail storage + backfill in
-_upsert_person — exercises the list-valued SET (alias / nationalities) and the
+_upsert_person — exercises the list-valued SET (aliases / nationalities) and the
 size(COALESCE(...)) / CASE backfill Cypher, which the mocked unit tests can't
 validate against ArcadeDB's dialect.
 
@@ -20,7 +20,7 @@ def test_upsert_person_stores_and_backfills_detail(it_db):
                          wikidata_id="Q317521")
     with db.get_session() as s:
         p = s.run("MATCH (p:Person {id: $id}) RETURN p", id=pid).single()["p"]
-    assert list(p["alias"]) == []
+    assert list(p["aliases"]) == []
     assert "nationalities" not in p                      # no source named one: absent, not [] (2026-10-25)
 
     # Re-scrape, now enriched: same wikidata_id → backfills the blanks and must
@@ -35,7 +35,7 @@ def test_upsert_person_stores_and_backfills_detail(it_db):
     assert p["birth_date"] == "1971-06-28"
     assert p["description"] == "entrepreneur"
     assert p.get("nationality") is None                  # one field: the scalar twin is gone (2026-10-25)
-    assert list(p["alias"]) == ["Elon", "Technoking"]
+    assert list(p["aliases"]) == ["Elon", "Technoking"]
     assert list(p["nationalities"]) == ["US", "CA"]
 
 
@@ -54,5 +54,5 @@ def test_existing_detail_is_not_overwritten(it_db):
         p = s.run("MATCH (p:Person {id: $id}) RETURN p", id=pid).single()["p"]
     assert p["birth_date"] == "1815-12-10"
     assert p["description"] == "mathematician"
-    assert list(p["alias"]) == ["Ada"]
+    assert list(p["aliases"]) == ["Ada"]
     assert list(p["nationalities"]) == ["GB"]

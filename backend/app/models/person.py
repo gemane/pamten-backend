@@ -5,7 +5,7 @@ from typing import Optional, List
 class PersonCreate(BaseModel):
     first_name: str
     last_name: str
-    alias: Optional[List[str]] = []
+    aliases: Optional[List[str]] = []
     nationalities: Optional[List[str]] = []   # ISO-2 codes; the scalar twin went on 2026-10-25
     birth_date: Optional[str] = None
     death_date: Optional[str] = None

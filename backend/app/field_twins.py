@@ -250,6 +250,21 @@ def heal_address_keys(apply: bool = True) -> dict:
     return out
 
 
+def heal_person_aliases(apply: bool = True) -> dict:
+    """`Person.alias` → `Person.aliases` (2026-10-25: one name for the one
+    list on both node types; the Entity side was always `aliases`). Copies
+    the list where the old key holds one, then removes the old key from
+    every person. Whole-type scans — run with --db-url."""
+    rows = run_sql("SELECT count(*) AS n FROM Person WHERE alias IS NOT NULL", timeout=3600)
+    out = {"applied": bool(apply), "persons": int((rows or [{}])[0].get("n") or 0)}
+    if apply:
+        if out["persons"]:
+            run_sql("UPDATE Person SET aliases = alias WHERE alias IS NOT NULL AND aliases IS NULL", timeout=3600)
+        run_sql("UPDATE Person REMOVE alias", timeout=3600)
+    log.info("person aliases heal: %s", out)
+    return out
+
+
 def heal_all(apply: bool = True) -> dict:
     """Every model-gap heal in one call (`manage.py heal-model-gaps`): the
     2026-10-25 survey's four, then the round-four three — empty lists, the run
@@ -262,4 +277,4 @@ def heal_all(apply: bool = True) -> dict:
             "empty_lists": heal_empty_lists(apply), "run_log": heal_placeholders(apply),
             "seat_filings": heal_seat_claim_filings(apply),
             "dead_keys": heal_dead_keys(apply), "claim_dates": heal_claim_dates(apply),
-            "address_keys": heal_address_keys(apply)}
+            "address_keys": heal_address_keys(apply), "person_aliases": heal_person_aliases(apply)}

@@ -36,7 +36,7 @@ def test_merge_rehomes_edges_and_backfills_then_deletes_dup(it_db):
 
     # Blank bio field backfilled from the dup; wikidata_id retained; the dup's
     # name is captured as an alias so the kept person stays findable by it.
-    keep = it_db.run_command("MATCH (p:Person {id:'keep'}) RETURN p.wikidata_id AS w, p.description AS d, p.alias AS a")[0]
+    keep = it_db.run_command("MATCH (p:Person {id:'keep'}) RETURN p.wikidata_id AS w, p.description AS d, p.aliases AS a")[0]
     assert keep["w"] == "Q4934"
     assert keep["d"] == "SEC filer"     # keep's blank description filled from dup
     assert "Page Lawrence" in (keep["a"] or [])   # dup's name is now an alias
@@ -114,8 +114,8 @@ def test_a_person_merge_carries_every_owns_property(it_db):
               "validation_documents": "ACCOUNTS_FILING"}
     assert set(sample) == set(OWNS_PROPS), "keep the fixture in step with the schema"
 
-    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Warren Buffett', alias:[]})")
-    it_db.run_command("CREATE (:Person {id:'dup', full_name:'Warren E Buffett', alias:[]})")
+    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Warren Buffett', aliases: []})")
+    it_db.run_command("CREATE (:Person {id:'dup', full_name:'Warren E Buffett', aliases: []})")
     it_db.run_command("CREATE (:Entity {id:'brk', name:'Berkshire Hathaway', type:'company'})")
     assigns = ", ".join(f"{k}: ${k}" for k in sample)
     it_db.run_command(
@@ -137,8 +137,8 @@ def test_a_person_merge_takes_the_claims_with_it(it_db):
     from app.claims import KIND_OWNS, claims_for, record_claim
     from app.routers.persons import merge_person_records
 
-    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Larry Page', alias:[]})")
-    it_db.run_command("CREATE (:Person {id:'dup', full_name:'Page Lawrence', alias:[]})")
+    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Larry Page', aliases: []})")
+    it_db.run_command("CREATE (:Person {id:'dup', full_name:'Page Lawrence', aliases: []})")
     it_db.run_command("CREATE (:Entity {id:'goog', name:'Alphabet Inc.', type:'company'})")
     it_db.run_command("MATCH (p:Person {id:'dup'}), (e:Entity {id:'goog'}) "
                       "CREATE (p)-[:OWNS {source_id:'sec'}]->(e)")
@@ -157,8 +157,8 @@ def test_a_person_merge_keeps_voting_group_membership(it_db):
     the hand-written list knew about, and the schema knows all of them."""
     from app.routers.persons import merge_person_records
 
-    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Jorge Paulo Lemann', alias:[]})")
-    it_db.run_command("CREATE (:Person {id:'dup', full_name:'Lemann Jorge Paulo', alias:[]})")
+    it_db.run_command("CREATE (:Person {id:'keep', full_name:'Jorge Paulo Lemann', aliases: []})")
+    it_db.run_command("CREATE (:Person {id:'dup', full_name:'Lemann Jorge Paulo', aliases: []})")
     it_db.run_command("CREATE (:Entity {id:'grp', name:'Voting group', type:'voting_group'})")
     it_db.run_command(
         "MATCH (p:Person {id:'dup'}), (g:Entity {id:'grp'}) CREATE (p)-[:RELATED_TO "

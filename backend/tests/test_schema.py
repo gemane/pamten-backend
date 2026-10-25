@@ -77,8 +77,8 @@ def test_is_idempotent_all_ddl_uses_if_not_exists():
         assert "IF NOT EXISTS" in s, s
         if s.startswith("CREATE PROPERTY"):
             # The type follows IF NOT EXISTS: STRING for an indexed lookup
-            # column unless _PROPERTY_TYPES says otherwise (Person.alias is a
-            # LIST — declared STRING, ArcadeDB rejects `$name IN p.alias`),
+            # column unless _PROPERTY_TYPES says otherwise (Person.aliases is a
+            # LIST — declared STRING, ArcadeDB rejects `$name IN p.aliases`),
             # and the declared type for every number, flag and list a writer
             # sets (_TYPED_PROPERTIES).
             assert re.search(r"IF NOT EXISTS (STRING|LIST|INTEGER|LONG|DOUBLE|BOOLEAN)$", s), s
@@ -88,7 +88,7 @@ def test_declared_property_types_are_rendered():
     with _run() as m:
         schema.ensure_indexes()
     issued = [c.args[0] for c in m.call_args_list]
-    assert "CREATE PROPERTY Person.alias IF NOT EXISTS LIST" in issued
+    assert "CREATE PROPERTY Person.aliases IF NOT EXISTS LIST" in issued
     assert "CREATE PROPERTY Person.full_name IF NOT EXISTS STRING" in issued
 
 
@@ -272,7 +272,7 @@ class TestTypedProperties:
                      "CREATE PROPERTY Source.enabled IF NOT EXISTS BOOLEAN"):
             assert stmt in issued, stmt
         # an indexed LIST is declared once, by the index loop, never twice
-        assert issued.count("CREATE PROPERTY Person.alias IF NOT EXISTS LIST") == 1
+        assert issued.count("CREATE PROPERTY Person.aliases IF NOT EXISTS LIST") == 1
 
     def test_a_declared_property_issues_no_ddl(self):
         types, indexes, declared, rules = self._complete()
@@ -339,11 +339,11 @@ class TestTypedProperties:
 
     def test_an_indexed_property_declared_with_another_type_is_only_reported(self, caplog):
         types, indexes, declared, rules = self._complete()
-        declared["Person.alias"] = "STRING"             # indexed: a redeclare means a reindex
+        declared["Person.aliases"] = "STRING"             # indexed: a redeclare means a reindex
         with caplog.at_level("WARNING", logger="app.db.schema"):
             stmts = schema._statements((types, indexes, declared, rules))
         assert stmts == []
-        assert any("Person.alias is declared STRING" in r.message for r in caplog.records)
+        assert any("Person.aliases is declared STRING" in r.message for r in caplog.records)
 
     def test_ensure_indexes_runs_the_redeclaration(self):
         types, indexes, declared, rules = self._complete()
@@ -376,7 +376,7 @@ class TestTypedProperties:
 
     def test_typed_properties_lists_every_declared_non_string(self):
         rows = schema.typed_properties()
-        assert ("Person", "alias", "LIST") in rows and ("OWNS", "shares", "DOUBLE") in rows
+        assert ("Person", "aliases", "LIST") in rows and ("OWNS", "shares", "DOUBLE") in rows
         assert len({(t, p) for t, p, _ in rows}) == len(rows)
 
 

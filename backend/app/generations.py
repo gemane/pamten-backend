@@ -39,11 +39,11 @@ def mixed_generation_persons() -> list[dict]:
     like. The scan now refuses that merge; this lists the ones made before."""
     from app.db import paging
     out = []
-    for page in paging.iter_id_pages("Person", columns="id, full_name, alias, wikidata_id, sec_cik"):
+    for page in paging.iter_id_pages("Person", columns="id, full_name, aliases, wikidata_id, sec_cik"):
         for p in page:
-            marks = generation_marks(p.get("full_name"), *(p.get("alias") or []))
+            marks = generation_marks(p.get("full_name"), *(p.get("aliases") or []))
             if len(marks) >= 2:
                 out.append({"id": p.get("id"), "full_name": p.get("full_name"), "marks": sorted(marks),
                             "wikidata_id": p.get("wikidata_id"), "sec_cik": p.get("sec_cik"),
-                            "alias": list(p.get("alias") or [])})
+                            "aliases": list(p.get("aliases") or [])})
     return out

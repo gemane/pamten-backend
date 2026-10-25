@@ -62,7 +62,7 @@ def test_duplicate_scan_confidence(it_db):
     # (J) SEC last-first name matches a Wikidata *alias*, not the full name → linked.
     # "Gates William H Iii" shares no name-token set with "Bill Gates", but does
     # with its alias "William H. Gates III"; a shared company makes it HIGH.
-    it_db.run_command("CREATE (:Person {id:'j1', full_name:'Bill Gates', wikidata_id:'Q5', alias:$a})",
+    it_db.run_command("CREATE (:Person {id:'j1', full_name:'Bill Gates', wikidata_id:'Q5', aliases:$a})",
                       {"a": ["William Henry Gates", "William H. Gates III"]})
     it_db.run_command("CREATE (:Person {id:'j2', full_name:'Gates William H Iii', first_name:'Gates', last_name:'William H Iii'})")
     it_db.run_command("CREATE (:Entity {id:'msft', name:'Microsoft', type:'company'})")
