@@ -1069,6 +1069,19 @@ def cmd_heal_role_placeholders(args):
     print(f"Claim:    {res['claims']} placeholder role claims {verb}")
     if res["companies"]:
         print("Re-scrape to write the seats back with their role: " + "; ".join(res["companies"]))
+def cmd_list_mixed_generations(args):
+    """Name every Person whose own names carry two different generational
+    marks — "…, Sr." beside "…, Jr." — the shape a relative folded into a node
+    leaves behind (app.generations). The duplicate scan refuses that merge since
+    2026-10-25; these are the ones made before, to split by hand."""
+    from app.generations import mixed_generation_persons
+    rows = mixed_generation_persons()
+    print(f"{len(rows)} person(s) carry mixed generational marks")
+    for r in rows:
+        print(f"  {r['full_name']} ({r['id']}; wikidata {r['wikidata_id'] or '-'}, cik {r['sec_cik'] or '-'}): "
+              f"{'/'.join(r['marks'])} — aliases: {', '.join(r['alias'])}")
+
+
 def cmd_heal_seats_at_death(args):
     """Close every open seat of a dead person on the death date
     (app.roles.heal_seats_at_death): the rule the writers apply since
@@ -1483,6 +1496,11 @@ def _build_parser():
     p_hmg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hmg.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hmg.set_defaults(func=cmd_heal_model_gaps)
+
+    p_lmg = subparsers.add_parser('list-mixed-generations',
+        help="Persons whose names carry both Sr. and Jr. (or II and III) — a relative folded in by a merge; "
+             "report only, split by hand")
+    p_lmg.set_defaults(func=cmd_list_mixed_generations)
 
     p_hsd = subparsers.add_parser('heal-seats-at-death',
         help="Close every open seat of a dead person on the death date (until_reason = death); "

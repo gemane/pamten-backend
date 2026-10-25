@@ -420,7 +420,8 @@ Different sources spell the same person differently (SEC's "Page Lawrence" vs
 Wikidata's "Larry Page", nicknames, aliases), so scraping creates duplicate
 `Person` nodes. `GET /persons/duplicates` scans for them (name/alias tokens,
 birth date+place, surname+company); high-confidence groups are auto-merged after
-each `run-all` scrape (`SCRAPER_AUTODEDUP_ENABLED`), the rest are resolved from
+each `run-all` scrape (`SCRAPER_AUTODEDUP_ENABLED`) — never two SEC CIKs, two
+Wikidata items or a "Sr." against a "Jr.", which are two people — the rest are resolved from
 the web app's **Scraper tab → Review duplicate persons** panel (merge, keep
 separate, or view the merge log).
 
@@ -622,6 +623,7 @@ python3 manage.py init-schema
 | Command | Description |
 |---|---|
 | `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
+| `list-mixed-generations` | Persons whose own names carry both "Sr." and "Jr." (or II and III) — a relative folded in by a merge before the duplicate scan learned to tell them apart (2026-10-25). Report only; split by hand (see docs/deduplication.md) |
 | `heal-seats-at-death` | Close every open seat of a dead person on the death date (`until_reason = death`, cited by the person's Wikidata item) — the rule the writers apply since 2026-10-25, for a database written before it. Founders stay open; a seat the source dates after the death is reported, not closed. Dry run unless `--apply` |
 | `heal-role-placeholders` | Delete the HAS_ROLE edges and role claims whose role is Form 4's "See Remarks" placeholder — the title box's pointer to the remarks box, which the reader took for a position until 2026-10-25 (five dev seats, two spellings). The seats are real, so the command names the companies to re-scrape; the reader now reads the remarks ("Senior Vice President and Chief Financial Officer" → CFO) and writes them back with their role. Dry run unless `--apply` |
 | `schema-audit` | Name every property the stored rows carry that the schema does not declare — a typo'd writer, a field nobody put into the ledger, a leftover of a rename. Samples `--sample` rows per type (default 5000); exit 1 on drift. ArcadeDB accepts an undeclared property, so this is how the catalog stays the model (2026-10-25) |

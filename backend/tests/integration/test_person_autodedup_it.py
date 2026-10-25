@@ -137,3 +137,79 @@ def test_a_middle_initial_does_not_split_the_surname_bucket(it_db):
     assert _surname_key("E. Schmidt", "Eric E. Schmidt") == _surname_key("Schmidt", "Eric Schmidt")
     assert _surname_key("Edward Page", "Lawrence Edward Page") == "page"
     assert _surname_key(None, "Lawrence Page") == "page"      # unparsed fallback
+
+
+# ── Father and son by name alone (2026-10-25) ────────────────────────────────
+# The post-scrape auto-merge folded Berkshire's 2022 director "Thomas S.
+# Murphy, Jr." into his father "Thomas Murphy" (dead since 2022): the son's
+# "Thomas Murphy" alias matched, Berkshire corroborated, and nothing said the
+# two Wikidata items — or the "Sr." and "Jr." — were two people.
+
+def _berkshire(it_db):
+    it_db.run_command("CREATE (:Entity {id:'brk', name:'Berkshire Hathaway', type:'company'})")
+
+
+def _seat(it_db, pid):
+    it_db.run_command("MATCH (p:Person {id:$p}),(e:Entity{id:'brk'}) CREATE (p)-[:HAS_ROLE {role:'Board Member'}]->(e)",
+                      {"p": pid})
+
+
+def test_two_wikidata_items_are_two_people(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _berkshire(it_db)
+    it_db.run_command("CREATE (:Person {id:'sr', full_name:'Thomas Murphy', wikidata_id:'Q3525537', "
+                      "alias:['Thomas S. Murphy']})")
+    it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas S. Murphy, Jr.', wikidata_id:'Q124988340', "
+                      "alias:['Thomas Murphy', 'Tom Murphy']})")
+    _seat(it_db, "sr")
+    _seat(it_db, "jr")
+
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 0
+    assert it_db.run_command("MATCH (p:Person {id:'jr'}) RETURN p.id AS id")[0]["id"] == "jr"
+    (group,) = [g for g in res["needs_review"] if {m["id"] for m in g["members"]} == {"sr", "jr"}]
+    assert group["likely_distinct"] is True and "DIFFERENT Wikidata items" in group["reason"]
+
+
+def test_sr_against_jr_is_definitive_without_any_id(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _berkshire(it_db)
+    it_db.run_command("CREATE (:Person {id:'sr', full_name:'Thomas Murphy', alias:['Thomas Murphy, Sr.']})")
+    it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas Murphy', alias:['Thomas Murphy, Jr.']})")
+    _seat(it_db, "sr")
+    _seat(it_db, "jr")
+
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 0
+    (group,) = [g for g in res["needs_review"] if {m["id"] for m in g["members"]} == {"sr", "jr"}]
+    assert group["likely_distinct"] is True and "generational marks" in group["reason"]
+
+
+def test_a_mark_on_one_side_only_waits_for_a_human(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _berkshire(it_db)
+    it_db.run_command("CREATE (:Person {id:'plain', full_name:'Thomas Murphy', wikidata_id:'Q3525537'})")
+    it_db.run_command("CREATE (:Person {id:'jr', full_name:'Thomas S Murphy Jr', alias:['Thomas Murphy']})")
+    _seat(it_db, "plain")
+    _seat(it_db, "jr")
+
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 0
+    (group,) = [g for g in res["needs_review"] if {m["id"] for m in g["members"]} == {"plain", "jr"}]
+    assert group["confidence"] == "medium" and group["likely_distinct"] is False
+    assert "rule out a relative" in group["reason"]
+
+
+def test_the_same_mark_on_both_sides_still_merges(it_db):
+    """SEC's "Gates William H Iii" and the Wikidata node whose alias is
+    "William H. Gates III": one mark, one person — the merge that must keep
+    working."""
+    from app.routers.persons import deduplicate_high_confidence
+    it_db.run_command("CREATE (:Entity {id:'msft', name:'Microsoft', type:'company'})")
+    it_db.run_command("CREATE (:Person {id:'bg', full_name:'Bill Gates', wikidata_id:'Q5284', alias:['William H. Gates III']})")
+    it_db.run_command("CREATE (:Person {id:'sec', full_name:'Gates William H Iii'})")
+    for pid in ("bg", "sec"):
+        it_db.run_command("MATCH (p:Person {id:$p}),(e:Entity{id:'msft'}) CREATE (p)-[:HAS_ROLE {role:'Director'}]->(e)",
+                          {"p": pid})
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1 and res["merged"][0]["keep_id"] == "bg"
