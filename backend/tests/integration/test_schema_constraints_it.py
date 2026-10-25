@@ -29,6 +29,10 @@ def test_the_bootstrap_declares_the_rules_once(it_db):
     assert rules[("OWNS", "stake_percent")]["min"] == "0" and rules[("OWNS", "stake_percent")]["max"] == "100"
     assert rules[("OWNS", "read_from")]["regexp"] == "^(field|table|form|layout|prose|narrative)$"
     assert rules[("OWNS", "stale")]["default"] == "false"
+    assert rules[("OWNS", "shortcut")]["default"] == "false"
+    assert rules[("Entity", "is_nominee")]["default"] == "false"
+    assert rules[("Person", "on_demand_scraped")]["default"] == "false"
+    assert rules[("Entity", "active")].get("default") is None    # three-valued on purpose
     assert rules[("Claim", "claim_key")]["mandatory"] is True
     assert rules[("Claim", "source_id")]["mandatory"] is True and rules[("Claim", "source_id")]["notNull"] is True
     assert rules[("OWNS", "since")]["regexp"] == "^[0-9]{4}(-[0-9]{2}){0,2}$"
@@ -56,8 +60,13 @@ def test_the_server_refuses_what_breaks_a_rule_and_leaves_nulls_alone(it_db):
     assert "does not match" in _refused(
         it_db, "MATCH (a:Entity {id:'a'}), (b:Entity {id:'b'}) CREATE (a)-[:OWNS {ownership_type:'owner', until:null}]->(b)")
     # the flag's default: a new edge is not stale unless said so
-    row = it_db.run_sql("SELECT stale, stake_percent FROM OWNS")[0]
+    row = it_db.run_sql("SELECT stale, shortcut, also_ultimate, stake_percent FROM OWNS")[0]
     assert row["stale"] is False and row["stake_percent"] == 20.0
+    assert row["shortcut"] is False and row["also_ultimate"] is False
+    # a node too: a voting group is created without the nominee flag
+    it_db.run_command("CREATE (:Entity {id:'vg', name:'Voting group', type:'voting_group'})")
+    row = it_db.run_sql("SELECT is_nominee, on_demand_scraped, active FROM Entity WHERE id = 'vg'")[0]
+    assert row["is_nominee"] is False and row["on_demand_scraped"] is False and row["active"] is None
     assert "mandatory" in _refused(it_db, "CREATE (:Claim {kind:'owns', from_id:'a', to_id:'b', source_id:'s'})")
     assert "does not match" in _refused(
         it_db, "CREATE (:Claim {claim_key:'k', kind:'ownership', from_id:'a', to_id:'b', source_id:'s'})")

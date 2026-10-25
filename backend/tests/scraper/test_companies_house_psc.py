@@ -337,6 +337,7 @@ class TestPscFields:
         assert m.owner_props["first_name"] == "Jean"
         assert m.owner_props["last_name"] == "Randle"
         assert m.owner_props["search_text"] == "Jean Carol Randle"
+        assert "description" not in m.owner_props        # absent, never '' (2026-10-25)
 
     def test_birth_date(self):
         assert _birth_date({"date_of_birth": {"year": 1951, "month": 8}}) == "1951-08"

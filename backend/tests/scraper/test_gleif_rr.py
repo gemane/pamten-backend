@@ -586,17 +586,29 @@ class TestHealStakes:
             ("OTHER", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED"),
         ])
         assert res["pairs"] == 2 and res["with_stake"] == 1 and res["filled"] == 1
-        assert len(calls) == 1
+        assert len(calls) == 2
         cypher, params = calls[0]
         assert params == {"p": "lei:PARENT", "c": "lei:CHILD", "src": "gleif-src", "stake": 100.0}
         assert "r.source_id = $src" in cypher and "r.until IS NULL" in cypher
         assert "r.stake_percent IS NULL" in cypher          # fill-only: never overwrites
 
+    def test_the_pairs_claim_gains_the_same_share_fill_only(self, tmp_path):
+        """The claim is what GLEIF stated; a database healed before 2026-10-25
+        had the figure on the edge and none on the claim."""
+        from app.claims import KIND_OWNS, claim_key
+        res, calls = self._run(tmp_path, [
+            ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED", "100"),
+        ])
+        assert res["claims_filled"] == 1 and res["claims_already"] == 0
+        cypher, params = calls[1]
+        assert params == {"key": claim_key(KIND_OWNS, "lei:PARENT", "lei:CHILD", "gleif-src"), "stake": 100.0}
+        assert "Claim {claim_key: $key}" in cypher and "cl.stake_percent IS NULL" in cypher
+
     def test_dry_run_counts_and_writes_nothing(self, tmp_path):
         res, calls = self._run(tmp_path, [
             ("CHILD", "PARENT", "IS_DIRECTLY_CONSOLIDATED_BY", "PUBLISHED", "100"),
         ], dry_run=True)
-        assert res["with_stake"] == 1 and res["filled"] == 0 and calls == []
+        assert res["with_stake"] == 1 and res["filled"] == 0 and res["claims_filled"] == 0 and calls == []
 
     def test_an_edge_that_already_holds_one_is_counted(self, tmp_path):
         res, _ = self._run(tmp_path, [

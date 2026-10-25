@@ -440,7 +440,7 @@ def _upsert_person(
                     p.last_scraped_at = $now
                 """,
                 id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place, now=_now_iso(),
-                image=image_url, wikipedia=wikipedia_url, desc=description or "",
+                image=image_url, wikipedia=wikipedia_url, desc=description or None,
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities or None, source_id=source_id,
             )
@@ -467,7 +467,7 @@ def _upsert_person(
             last=last_name,
             full=full_name,
             search_text=_person_search_text(full_name, aliases),
-            desc=description or "",
+            desc=description or None,      # absent, never '' (2026-10-25)
             wid=wikidata_id,
             bdate=birth_date,
             ddate=death_date,

@@ -494,7 +494,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
         owner_props = {
             "first_name": first, "last_name": last, "full_name": name,
             "search_text": name,
-            "birth_date": _birth_date(data), "description": "",
+            "birth_date": _birth_date(data),      # no description: absent, never ''
             # the list only when the record states one: an empty list is a blank
             "aliases": [], **({"nationalities": [nationality]} if nationality else {}),
             # The corporate branch passes it to `_entity`; this one built its

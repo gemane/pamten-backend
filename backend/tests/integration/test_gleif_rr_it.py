@@ -272,13 +272,21 @@ def test_the_stake_heal_fills_an_edge_drawn_before_and_never_overwrites(it_db, t
     ])
     dry = heal_stakes(today, "gleif-src", dry_run=True)
     assert dry["with_stake"] == 2 and dry["filled"] == 0
+    it_db.run_command(
+        "MATCH (c:Claim {to_id:$c}) SET c.stake_percent = 55.0", {"c": f"lei:{PART_CHILD}"})
     res = heal_stakes(today, "gleif-src")
     assert res["filled"] == 1 and res["already"] == 1
+    assert res["claims_filled"] == 1 and res["claims_already"] == 1
     rows = {r["c"]: r["stake"] for r in it_db.run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity) RETURN b.lei_id AS c, r.stake_percent AS stake",
         {"p": f"lei:{PARENT}"})}
     assert rows[STAKED_CHILD] == 100.0
     assert rows[PART_CHILD] == 55.0                # fill-only: the held figure stays
+    # the claim says what the edge says — and keeps a figure it already held
+    claims = {r["c"]: r["stake"] for r in it_db.run_command(
+        "MATCH (c:Claim) WHERE c.from_id = $p RETURN c.to_id AS c, c.stake_percent AS stake",
+        {"p": f"lei:{PARENT}"})}
+    assert claims[f"lei:{STAKED_CHILD}"] == 100.0 and claims[f"lei:{PART_CHILD}"] == 55.0
 
 
 # ── How far the LOU checked the record ───────────────────────────────────────

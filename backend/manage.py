@@ -1139,8 +1139,8 @@ def cmd_heal_model_gaps(args):
     """The 2026-10-25 survey's four gaps (app.field_twins): fold the scalar
     `nationality` into `nationalities` and drop it, put `country` into every
     `countries` list that lacks it, stamp `source_id` on the PSC persons written
-    without one, and set `stale = false` where the flag was unset — and the
-    round-four three: drop empty `nationalities`/`countries` lists, drop the run
+    without one, and set every flag of `schema.FLAGS` to false where it was
+    unset — and the round-four three: drop empty `nationalities`/`countries` lists, drop the run
     log's `''` placeholders, give the SEC seat claims a `filing_type` where the
     claim itself says which record (an 8-K departure, a Form D). Dry run
     unless --apply; the edge pass scans OWNS — run with --db-url."""
@@ -1155,8 +1155,9 @@ def cmd_heal_model_gaps(args):
     print(f"Entities: {c['fixed']} countries lists given their country, of {c['scanned']}{verb}")
     s = res["person_sources"]
     print(f"Persons: {s['stamped']} PSC persons stamped source_id {s['source_id']!r}{verb}")
-    e = res["stale_flags"]
-    print(f"OWNS: {e['fixed']} edges given stale = false{verb}")
+    e = {k: v for k, v in res["flags"].items() if k not in ("applied", "fixed")}
+    print(f"Flags set false where unset: {res['flags']['fixed']} — "
+          + ", ".join(f"{k} {v}" for k, v in e.items()) + verb)
     lists = {k: v for k, v in res["empty_lists"].items() if k != "applied"}
     print("Empty lists removed: " + ", ".join(f"{k} {v}" for k, v in lists.items()) + verb)
     r = {k: v for k, v in res["run_log"].items() if k != "applied"}
@@ -1171,6 +1172,8 @@ def cmd_heal_model_gaps(args):
     print(f"Address keys: {a['keyed']} address_normalized set, {a['addresses_moved']} readable addresses moved, "
           f"{a['removed']} registered_address removed, of {a['scanned']} entities{verb}")
     print(f"Person.alias renamed to aliases on {res['person_aliases']['persons']} persons{verb}")
+    es = {k: v for k, v in res["empty_strings"].items() if k != "applied"}
+    print("Empty strings removed: " + ", ".join(f"{k} {v}" for k, v in es.items()) + verb)
 
 
 def cmd_init_schema(args):

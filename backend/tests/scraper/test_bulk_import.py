@@ -184,6 +184,24 @@ class TestBatchWriterClaims:
         assert "UPDATE Claim" in joined
         assert "UPSERT WHERE claim_key" in joined
 
+    def test_the_claim_carries_the_stake_the_extra_bag_put_on_the_edge(self):
+        """GLEIF RR passes `stake_percent=None` and the record's share in
+        `extra`: edge and claim are built from one merged bag, so the claim
+        states the same figure (a database healed before 2026-10-25 did not)."""
+        from app.scraper.bulk_import import _BatchWriter, _owns
+        bound: list[dict] = []
+        with patch("app.scraper.bulk_import.run_sqlscript",
+                   side_effect=lambda script, params=None: bound.append(params or {})), \
+             patch("app.stake_history.rows_for_batch", return_value=[]):
+            b = _BatchWriter(batch_size=100)
+            _owns(b, "e1", "e2", None, "controlling", None, None, "gleif", 92,
+                  extra={"stake_percent": 100.0, "filing_type": "RR"})
+            b.flush()
+        params = {k: v for d in bound for k, v in d.items()}
+        assert params["e_stake_percent__0"] == 100.0               # the edge
+        assert params["c_stake_percent__0"] == 100.0               # its claim
+        assert params["c_filing_type__0"] == "RR"
+
     def test_a_role_edge_also_writes_a_claim(self):
         joined = self._scripts(lambda b: b.role(
             "p1", "e1", {"role": "CEO", "source_id": "sec"}))

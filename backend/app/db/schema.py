@@ -486,6 +486,13 @@ _RULE_KEYS = {"MANDATORY": "mandatory", "NOTNULL": "notNull", "REGEXP": "regexp"
 
 _ISO2 = "^[A-Z]{2}$"
 
+#: The flags that are `true` or `false` and never null — "not asserted" is
+#: false. Declared with a DEFAULT (`constraints()`) and healed on an older
+#: database (`field_twins.heal_flags`).
+FLAGS: tuple[tuple[str, str], ...] = (
+    ("OWNS", "stale"), ("OWNS", "shortcut"), ("OWNS", "also_ultimate"),
+    ("Entity", "is_nominee"), ("Entity", "on_demand_scraped"), ("Person", "on_demand_scraped"))
+
 
 def _vocab(values) -> str:
     return "^(" + "|".join(str(getattr(v, "value", v)) for v in values) + ")$"
@@ -497,8 +504,8 @@ def constraints() -> list[tuple[str, str, str, str]]:
     keys a row cannot exist without (a claim's source among them), the
     vocabularies (built from the enums the code already validates against, so
     a new value needs no second list), the ISO-2 shape of a country, the shape
-    of every date and timestamp, the 0–100 range of a percentage, and
-    `stale`'s default. ArcadeDB refuses a write that breaks one with a clear
+    of every date and timestamp, the 0–100 range of a percentage, and the
+    flags' default. ArcadeDB refuses a write that breaks one with a clear
     message, and refuses to declare a rule while any stored row breaks it —
     so a heal runs before its rule, never after (2026-10-25). A rule leaves a
     null alone (`notnull` is the one that does not)."""
@@ -530,8 +537,14 @@ def constraints() -> list[tuple[str, str, str, str]]:
         ("Claim", "until_read_from", "REGEXP", grades),
         # the one reason a seat ends that no source stated (app.roles.DEATH)
         ("HAS_ROLE", "until_reason", "REGEXP", _vocab(("death",))),
-        ("OWNS", "stale", "DEFAULT", "false"),
     ]
+    # A flag that means "not asserted" is false, never null: since ArcadeDB
+    # 26.10.1 a null compares as false in `<>` and drops out of every filter,
+    # so the readers wrapped each in COALESCE. `stale` since 2026-10-25, the
+    # other five the same day (`field_twins.FLAGS` heals the rows written
+    # before). `Entity.active` stays three-valued on purpose: null means no
+    # register has said whether the company still exists.
+    rules += [(vtype, prop, "DEFAULT", "false") for vtype, prop in FLAGS]
     for vtype, prop in (("OWNS", "stake_percent"), ("OWNS", "voting_power_pct"),
                         ("Claim", "stake_percent"), ("Claim", "voting_power_pct"),
                         ("StakeHistory", "stake_percent"), ("StakeHistory", "previous_percent")):
