@@ -144,6 +144,37 @@ def heal_stale_flags(apply: bool = True) -> dict:
     return out
 
 
+#: The lists that are absent when the source stated nothing — never `[]`,
+#: as a scalar is never `''`. `alias`/`aliases` stay lists: search and the
+#: person merge read them unconditionally.
+EMPTY_LISTS: tuple[tuple[str, str], ...] = (("Person", "nationalities"), ("Entity", "countries"))
+
+
+def heal_empty_lists(apply: bool = True) -> dict:
+    """Remove every `nationalities` / `countries` that is an empty list (196
+    persons and 4 entities on dev, 2026-10-25): the writers now leave the
+    property absent when no source named a country. `.size()` reads 0 on an
+    absent property too, so the filter says IS NOT NULL first. A whole-type
+    scan per list — run with --db-url."""
+    out: dict = {"applied": bool(apply)}
+    for label, col in EMPTY_LISTS:
+        where = f"{col} IS NOT NULL AND {col}.size() = 0"
+        rows = run_sql(f"SELECT count(*) AS n FROM {label} WHERE {where}", timeout=3600)
+        n = int((rows or [{}])[0].get("n") or 0)
+        out[f"{label}.{col}"] = n
+        if apply and n:
+            run_sql(f"UPDATE {label} REMOVE {col} WHERE {where}", timeout=3600)
+    log.info("empty lists heal: %s", out)
+    return out
+
+
 def heal_all(apply: bool = True) -> dict:
+    """Every model-gap heal in one call (`manage.py heal-model-gaps`): the
+    2026-10-25 survey's four, then the round-four three — empty lists, the run
+    log's `''` placeholders, the SEC seat claims' filing type."""
+    from app.roles import heal_seat_claim_filings
+    from app.scraper.run_log import heal_placeholders
     return {"nationalities": heal_nationalities(apply), "countries": heal_countries(apply),
-            "person_sources": heal_person_sources(apply), "stale_flags": heal_stale_flags(apply)}
+            "person_sources": heal_person_sources(apply), "stale_flags": heal_stale_flags(apply),
+            "empty_lists": heal_empty_lists(apply), "run_log": heal_placeholders(apply),
+            "seat_filings": heal_seat_claim_filings(apply)}

@@ -136,6 +136,7 @@ def scraper_run(body: ScrapeRequest, _: dict = Depends(require_contributor)):
         with record_run("wikidata", body.query) as run:
             result = run_scrape(body.query, body.depth)
             run["total"] = result.get("total", 0)
+            run["entity_id"] = result.get("entity_id")
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -175,6 +176,7 @@ def sec_edgar_run(
         with record_run("sec_edgar", company) as run:
             result = run_scrape_sec_edgar(company)
             run["total"] = result.get("total", 0)
+            run["entity_id"] = result.get("entity_id")
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -305,9 +307,9 @@ def scraper_run_all(
     try:
         with record_run("all", company) as run:
             result = run_scrape_all(company, depth)
-            run["total"] = sum(
-                (v or {}).get("total", 0)
-                for v in (result.get("results") or {}).values() if isinstance(v, dict))
+            per_source = [v for v in (result.get("results") or {}).values() if isinstance(v, dict)]
+            run["total"] = sum((v or {}).get("total", 0) for v in per_source)
+            run["entity_id"] = next((v["entity_id"] for v in per_source if v.get("entity_id")), None)
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -373,6 +375,7 @@ def scraper_source_run(
         with record_run(name, company) as run:
             result = spec.run(company, depth, (country or "").upper() or None)
             run["total"] = result.get("total", 0) if isinstance(result, dict) else 0
+            run["entity_id"] = result.get("entity_id") if isinstance(result, dict) else None
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -412,6 +415,7 @@ def open_corporates_run(
         with record_run("open_corporates", company) as run:
             result = run_scrape_open_corporates(company)
             run["total"] = result.get("total", 0)
+            run["entity_id"] = result.get("entity_id")
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))

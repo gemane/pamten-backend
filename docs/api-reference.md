@@ -132,7 +132,7 @@ Off unless `ANALYTICS_ENABLED` is set.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/scraper/status` | — | Master + per-source flag states (incl. `autodedup_enabled`) |
-| GET | `/scraper/runs` | — | Recent scrape run log — source, target, timings, counts, status (see [Scrape run log](../README.md#scrape-run-log)). Public, but the `error` field is **omitted** unless the caller is a contributor or admin, since exception text can carry internal URLs or credentials |
+| GET | `/scraper/runs` | — | Recent scrape run log — source, target, timings, counts, status, `reason` and the resolved `entity_id` (null when a run has none; see [Scrape run log](../README.md#scrape-run-log)). Public, but the `error` field is **omitted** unless the caller is a contributor or admin, since exception text can carry internal URLs or credentials |
 | PATCH | `/scraper/sources/{name}/mode` | admin | Set a source's data mode: `full` draws edges, `claims_only` records claims and enriches entities but never draws structure. Does not touch existing edges |
 | POST | `/scraper/sources/{name}/sweep-edges` | admin | Delete every edge a source drew (nodes and claims stay) — the retro half of claims-only. Destructive: `?confirm=` must equal the source name |
 | GET | `/scraper/health` | public | Per-source health: last run/success, failure streaks, runs in 24h, bulk-dataset freshness (GLEIF publish date, PSC snapshot age) and the import lock. `last_error` and the lock `holder` are stripped outside contributor/admin — key absent, not null, same as `/scraper/runs` |

@@ -131,13 +131,15 @@ class TestWritersUseTheFold:
         assert mp.owner_props["source_id"] == "uk-psc"
         assert mp.edge_props["stale"] is False
 
-    def test_a_psc_person_without_a_nationality_has_an_empty_list(self):
+    def test_a_psc_person_without_a_nationality_has_no_list(self):
+        """Absent, not `[]`: the bulk writer sets only the keys in the bag, so
+        a record that states no nationality writes no list (2026-10-25)."""
         from app.scraper.companies_house_psc import psc_record
         rec = {"company_number": "01234567", "data": {
             "kind": "individual-person-with-significant-control", "name": "Mr Robert Power",
             "links": {"self": "/company/01234567/persons-with-significant-control/individual/x"},
             "natures_of_control": ["ownership-of-shares-75-to-100-percent"]}}
-        assert psc_record(rec, "uk-psc", 97).owner_props["nationalities"] == []
+        assert "nationalities" not in psc_record(rec, "uk-psc", 97).owner_props
 
     def test_no_writer_names_the_scalar_any_more(self):
         import pathlib
@@ -149,3 +151,41 @@ class TestWritersUseTheFold:
         offenders = [str(p.relative_to(app)) for p in app.rglob("*.py")
                      if p.name != "field_twins.py" and writes.search(p.read_text())]
         assert offenders == [], offenders
+
+
+class TestHealEmptyLists:
+    def _fake(self, counts, calls):
+        def run_sql(sql, params=None, timeout=None):
+            calls.append(sql)
+            if sql.startswith("UPDATE"):
+                return [{"count": 1}]
+            return [{"n": counts["Person"] if "FROM Person" in sql else counts["Entity"]}]
+        return run_sql
+
+    def test_an_empty_list_is_removed_only_where_it_exists(self):
+        calls = []
+        with patch.object(m, "run_sql", self._fake({"Person": 196, "Entity": 0}, calls)):
+            res = m.heal_empty_lists(apply=True)
+        assert res == {"applied": True, "Person.nationalities": 196, "Entity.countries": 0}
+        updates = [c for c in calls if c.startswith("UPDATE")]
+        assert updates == ["UPDATE Person REMOVE nationalities WHERE nationalities IS NOT NULL AND nationalities.size() = 0"]
+        # `.size()` reads 0 on an absent property too: the filter must say IS NOT NULL
+        assert all("IS NOT NULL AND" in c for c in calls)
+
+    def test_a_dry_run_counts_and_writes_nothing(self):
+        calls = []
+        with patch.object(m, "run_sql", self._fake({"Person": 2, "Entity": 4}, calls)):
+            res = m.heal_empty_lists(apply=False)
+        assert res["Person.nationalities"] == 2 and res["Entity.countries"] == 4
+        assert not any(c.startswith("UPDATE") for c in calls)
+
+    def test_heal_all_runs_every_model_gap_heal(self):
+        names = ["nationalities", "countries", "person_sources", "stale_flags", "empty_lists"]
+        with patch.object(m, "heal_nationalities", lambda a: "n"), patch.object(m, "heal_countries", lambda a: "c"), \
+             patch.object(m, "heal_person_sources", lambda a: "p"), patch.object(m, "heal_stale_flags", lambda a: "s"), \
+             patch.object(m, "heal_empty_lists", lambda a: "e"), \
+             patch("app.scraper.run_log.heal_placeholders", lambda a: "r"), \
+             patch("app.roles.heal_seat_claim_filings", lambda a: "f"):
+            res = m.heal_all(apply=False)
+        assert list(res) == names + ["run_log", "seat_filings"]
+        assert res["run_log"] == "r" and res["seat_filings"] == "f"

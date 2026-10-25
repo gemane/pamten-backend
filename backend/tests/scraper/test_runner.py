@@ -315,8 +315,9 @@ class TestRunScrapeSecEdgar:
         assert closed == [(("p-musk", closed[0][0][1], "2026-09-01"),
                            {"role": "CEO", "source_id": closed[0][1]["source_id"],
                             "source_url": "https://www.sec.gov/8k", "source_date": "2026-09-02",
-                            # the departure was read out of Item 5.02's sentences
-                            "read_from": "narrative"})]
+                            # the record that stated it, and that the departure
+                            # was read out of Item 5.02's sentences
+                            "filing_type": "8-K", "read_from": "narrative"})]
         assert any(r["role"] == "departed CEO" for r in result["scraped"])
 
     def test_person_investor_classified_as_person(self):
@@ -876,14 +877,16 @@ class TestUpsertPersonDetail:
         assert backfill.kwargs["aliases"] == ["Elon"]
         assert backfill.kwargs["nats"] == ["US"]
 
-    def test_defaults_to_empty_lists_when_detail_absent(self):
+    def test_an_unknown_nationality_is_no_list(self):
+        """Absent, not `[]` (2026-10-25): a null parameter is a property Cypher
+        does not write. Aliases stay a list — search and the merge read them."""
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_person("Jane Doe", nationality=None, description=None,
                            wikidata_id="Q2")
         create = self._create_call(session)
         assert create.kwargs["aliases"] == []
-        assert create.kwargs["nats"] == []
+        assert create.kwargs["nats"] is None
         assert create.kwargs["bdate"] is None
 
 

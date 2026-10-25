@@ -494,7 +494,8 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             "first_name": first, "last_name": last, "full_name": name,
             "search_text": name,
             "birth_date": _birth_date(data), "description": "",
-            "alias": [], "nationalities": [nationality] if nationality else [],
+            # the list only when the record states one: an empty list is a blank
+            "alias": [], **({"nationalities": [nationality]} if nationality else {}),
             # The corporate branch passes it to `_entity`; this one built its
             # props without it, and 7 dev persons had no source (2026-10-25).
             "source_id": source_id,

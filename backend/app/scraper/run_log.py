@@ -38,9 +38,18 @@ def record_run(source: str, target: str, reason: str | None = None):
     a nightly cron that has no work to do doesn't read as a nightly failure.
 
     `reason` is why the run happened (the on-demand decision: absent, stale,
-    forced…) and the block may set `entity_id` to the company it resolved —
+    forced…) and the block sets `entity_id` to the company it resolved —
     together they let the weekly digest tell a first scrape from a refresh and
-    name the company, which a target string cannot.
+    name the company, which a target string cannot. Every per-company runner
+    sets it (tests/scraper/test_run_log.py checks each block); a bulk run —
+    a GLEIF delta, a PSC snapshot — has no one company and leaves it unset.
+
+    What is not known is absent, never an empty string: a run that resolved
+    no company has no `entity_id`, one that did not fail has no `error`, and
+    `finished_at` exists once the run has finished. Until 2026-10-25 the row
+    was created with `''` in all three (271 of 298 dev runs carried an empty
+    `entity_id`), against the rule every other writer follows — a blank is
+    not a value, and a reader that filters on `IS NULL` never saw them.
     """
     run_id = str(uuid.uuid4())
     out: dict = {"total": 0}
@@ -61,9 +70,9 @@ def _safe_create(run_id: str, source: str, target: str, reason: str | None = Non
         with db.get_session() as s:
             s.run(
                 "CREATE (r:ScrapeRun {id:$id, source:$src, target:$tgt, status:'running', "
-                "started_at:$at, finished_at:'', total:0, error:'', reason:$why, entity_id:''})",
+                "started_at:$at, total:0, reason:$why})",
                 id=run_id, src=source, tgt=(target or "")[:200], at=_now_iso(),
-                why=(reason or "")[:40])
+                why=(reason or "")[:40] or None)
     except Exception as exc:  # noqa: BLE001 - logging must never break a scrape
         log.warning("scrape-run start log failed: %s", exc)
 
@@ -73,13 +82,33 @@ def _safe_finish(run_id: str, status: str, total: int, error: str,
     try:
         with db.get_session() as s:
             s.run(
+                # A null here is an absent property (Cypher drops it), so a
+                # run without an error or a company stores neither.
                 "MATCH (r:ScrapeRun {id:$id}) SET r.status=$st, r.finished_at=$at, "
                 "r.total=$tot, r.error=$err, r.entity_id=$eid",
-                id=run_id, st=status, at=_now_iso(), tot=total, err=error,
-                eid=str(entity_id or ""))
+                id=run_id, st=status, at=_now_iso(), tot=total, err=error or None,
+                eid=str(entity_id) if entity_id else None)
         _prune()
     except Exception as exc:  # noqa: BLE001
         log.warning("scrape-run finish log failed: %s", exc)
+
+
+PLACEHOLDER_COLUMNS = ("entity_id", "finished_at", "error", "reason")
+
+
+def heal_placeholders(apply: bool = True) -> dict:
+    """Drop the `''` placeholders the run log wrote before 2026-10-25 — an
+    `entity_id`, `finished_at`, `error` or `reason` that is an empty string
+    becomes an absent property. Returns the count per column."""
+    from app.db.arcadedb import run_sql
+    out: dict = {"applied": bool(apply)}
+    for col in PLACEHOLDER_COLUMNS:
+        rows = run_sql(f"SELECT count(*) AS n FROM ScrapeRun WHERE {col} = ''")
+        out[col] = int((rows or [{}])[0].get("n") or 0)
+        if apply and out[col]:
+            run_sql(f"UPDATE ScrapeRun REMOVE {col} WHERE {col} = ''")
+    log.info("run-log placeholder heal: %s", out)
+    return out
 
 
 def _prune() -> None:

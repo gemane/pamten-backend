@@ -688,15 +688,27 @@ def set_since_lower_bound(owner_id: str, owned_id: str, since: str, source_url: 
     return changed
 
 
+def form_label(document_type: str | None) -> str:
+    """The `filing_type` of a seat read from an insider filing: "Form 3" for
+    an initial statement (`3`, `3/A`), "Form 4" otherwise — the label the
+    ownership claims of the same scan carry, so the Sources panel reads
+    "SEC EDGAR · Form 4" beside a seat as beside a holding."""
+    return "Form 3" if str(document_type or "").strip().upper().startswith("3") else "Form 4"
+
+
 def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                      source_id: str, source_url: str | None = None,
                      source_date: str | None = None, credibility_score: int = 98,
                      since: str | None = None, until: str | None = None,
-                     read_from: str | None = None):
+                     read_from: str | None = None, filing_type: str | None = None):
     """Create a HAS_ROLE edge attributed to SEC EDGAR if not already present.
 
     ``read_from``: how the seat was read (`edge_schema.READ_GRADES`) — a Form
     3/4 or Form D field. On the claim, a created seat, a relabelled one.
+    ``filing_type``: which KIND of record stated the seat ("Form 4", "Form 3",
+    "Form D") — on the claim, where the Sources panel shows it beside the
+    source; the ownership claims carried it from the start, the seat claims
+    did not until 2026-10-25 (208 dev claims without it).
 
     Provenance: source_url = the specific Form 3/4 filing document,
     source_date = its filing date. On a re-scrape of an existing edge we refresh
@@ -708,7 +720,7 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, source_url=source_url, source_date=source_date,
                  since=since, until=until, credibility_score=credibility_score,
-                 read_from=read_from)
+                 read_from=read_from, filing_type=filing_type)
     # HAS_ROLE is not gated by claims-only — the mode suppresses ownership
     # structure, not people (see graph_writer._upsert_role).
     now = datetime.now(timezone.utc).isoformat()
@@ -770,13 +782,14 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
 def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None = None,
                     source_id: str | None = None, source_url: str | None = None,
                     source_date: str | None = None, credibility_score: int = 98,
-                    read_from: str | None = None) -> int:
+                    read_from: str | None = None, filing_type: str | None = None) -> int:
     """End the person's open seat(s) at the company on `until`.
 
     ``read_from``: how the departure was read — a "Former …" Form 4 is a
     field, an 8-K Item 5.02 is narrative (a name, a verb and a date out of
     an announcement's sentence). Recorded on the closing claim only; the seat
-    keeps the grade of whoever drew it.
+    keeps the grade of whoever drew it. ``filing_type``: the record that
+    stated the departure ("Form 4", "8-K"), on that claim likewise.
 
     The one statutory statement of a departure: a "Former …" Form 4 or an 8-K
     Item 5.02 naming the person. With `role`, only that seat is closed (Tim
@@ -815,7 +828,7 @@ def _close_role_sec(person_id: str, entity_id: str, until: str, role: str | None
         record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                      role=seats[0], until=until, source_url=source_url,
                      source_date=source_date, credibility_score=credibility_score,
-                     read_from=read_from)
+                     read_from=read_from, filing_type=filing_type)
     return len(seats)
 
 

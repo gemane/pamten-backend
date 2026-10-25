@@ -77,6 +77,10 @@ def test_the_backfill_dates_from_claims_then_scrapes_and_guesses_nothing(it_db):
                       "last_scraped_at:'2026-05-05T00:00:00+00:00'})")
     it_db.run_command("CREATE (:Entity {id:'silent', name:'N', name_normalized:'n'})")
     it_db.run_command("CREATE (:Person {id:'p-claimed', full_name:'P'})")
+    # a 13D group member: never scraped itself, no claim names it, one RELATED_TO edge
+    it_db.run_command("CREATE (:Entity {id:'grouped', name:'G', name_normalized:'g'})")
+    it_db.run_command("MATCH (a:Entity {id:'grouped'}), (b:Entity {id:'claimed'}) "
+                      "CREATE (a)-[:RELATED_TO {relation:'voting_group', last_scraped_at:'2026-10-06T22:56:41+00:00'}]->(b)")
     for key, frm, to, seen in (("k1", "owner", "claimed", "2025-06-01T00:00:00+00:00"),
                                ("k2", "claimed", "sub", "2025-02-01T00:00:00+00:00"),
                                ("k3", "p-claimed", "claimed", "2025-09-01T00:00:00+00:00")):
@@ -85,14 +89,16 @@ def test_the_backfill_dates_from_claims_then_scrapes_and_guesses_nothing(it_db):
                       {"k": key, "f": frm, "t": to, "seen": seen})
 
     dry = backfill(apply=False)
-    assert dry["Entity"]["missing"] == 3 and dry["Entity"]["written"] == 0
+    assert dry["Entity"]["missing"] == 4 and dry["Entity"]["written"] == 0
     assert _created_at(it_db, "Entity", "claimed") is None
 
     res = backfill(apply=True)
-    assert (res["Entity"]["from_claims"], res["Entity"]["from_scrape"], res["Entity"]["unknown"]) == (1, 1, 1)
+    assert (res["Entity"]["from_claims"], res["Entity"]["from_scrape"], res["Entity"]["from_edges"],
+            res["Entity"]["unknown"]) == (1, 1, 1, 1)
     assert res["Person"]["from_claims"] == 1
     assert _created_at(it_db, "Entity", "claimed") == "2025-02-01T00:00:00+00:00"   # the oldest of its three claims
     assert _created_at(it_db, "Entity", "scraped") == "2026-05-05T00:00:00+00:00"
     assert _created_at(it_db, "Entity", "silent") is None                            # nothing recorded, nothing guessed
+    assert _created_at(it_db, "Entity", "grouped") == "2026-10-06T22:56:41+00:00"    # its one edge
     assert _created_at(it_db, "Person", "p-claimed") == "2025-09-01T00:00:00+00:00"
     assert backfill(apply=True)["Entity"]["missing"] == 1                            # only the unknown one remains
