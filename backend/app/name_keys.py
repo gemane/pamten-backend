@@ -19,10 +19,18 @@ log = logging.getLogger(__name__)
 
 _CHUNK = 500
 
+#: Node types whose key is the writer's own convention, not the name's: a
+#: 13D voting group is named "Voting group · 5 parties" and keyed
+#: "voting group <issuer>" (`sec_writer._upsert_voting_group`), so two groups
+#: at different issuers never share a key. The first dev run of this heal
+#: rewrote three of those keys from the display name (2026-10-25); restored.
+_OWN_KEY_TYPES = frozenset({"voting_group"})
+
 
 def heal_name_keys(apply: bool = False) -> dict:
     """Recompute `name_normalized` from `name` on every Entity whose stored
-    key differs from what the normaliser says today. Dry run unless `apply`.
+    key differs from what the normaliser says today — except the types that
+    key themselves (`_OWN_KEY_TYPES`). Dry run unless `apply`.
     Returns the scan and change counts, the changed (name, old, new) rows
     (first 50), and the keys that two or more entities now share for the
     first time — the duplicates the old key hid, to merge by hand."""
@@ -30,12 +38,12 @@ def heal_name_keys(apply: bool = False) -> dict:
     out = {"scanned": 0, "changed": 0, "sample": [], "newly_shared": {}, "applied": bool(apply)}
     keys_before: dict[tuple, int] = {}
     keys_after: dict[tuple, list] = {}
-    for page in paging.iter_id_pages("Entity", columns="id, @rid AS rid, name, name_normalized, country"):
+    for page in paging.iter_id_pages("Entity", columns="id, @rid AS rid, name, name_normalized, country, type"):
         out["scanned"] += len(page)
         rows = []
         for k, r in enumerate(page):
             name = r.get("name")
-            if not name:
+            if not name or r.get("type") in _OWN_KEY_TYPES:
                 continue
             old, new = r.get("name_normalized"), normalize_entity_name(name)
             keys_before[(old, r.get("country"))] = keys_before.get((old, r.get("country")), 0) + 1

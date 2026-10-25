@@ -494,7 +494,9 @@ sab` — two companies, whose Form 4 officers landed on one and whose LEI sat on
 Joined first, `CERVECERIA CHILE S A` also loses its `sa` exactly as `Cerveceria Chile S.A.`
 does, and `J P Morgan` keys like `J.P. Morgan`. A lone letter (`Toys R Us`) is not an
 abbreviation and stays. The key is stored on the node, so a database written before the
-rule carries the old keys: `manage.py heal-name-keys` recomputes them and names the keys
+rule carries the old keys: `manage.py heal-name-keys` recomputes them (a 13D voting group is
+left alone — its key is the writer's own, "voting group <issuer>", not its display name's;
+the first dev run rewrote three of those and had to be restored) and names the keys
 two entities now share for the first time (dev: 31 keys changed, one new pair, Televisa),
 which are merged by hand in the app — a same-name pair is a candidate, never an automatic
 merge (see the father/son and Domino's notes).
