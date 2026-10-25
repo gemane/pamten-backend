@@ -43,6 +43,37 @@ def test_a_community_reassertion_leaves_the_statutory_label_alone(it_db, pair):
     assert [(r["role"], r["cred"]) for r in rows] == [("Director", 98)]
 
 
+def test_a_filing_dated_a_day_from_the_community_seat_is_that_seat(it_db, pair):
+    # Ronald Sugar at Apple: Wikidata says 2010-11-17, his Form 4 2010-11-16.
+    _upsert_role("pm", "sx", "Board Member", pair["wd"], since="2010-11-17", credibility_score=80)
+    _upsert_role_sec("pm", "sx", "Director", pair["sec"], since="2010-11-16", credibility_score=98)
+    rows = it_db.run_command(
+        "MATCH (:Person {id:'pm'})-[r:HAS_ROLE]->(:Entity {id:'sx'}) "
+        "RETURN r.role AS role, r.since AS since")
+    assert [(r["role"], r["since"]) for r in rows] == [("Director", "2010-11-16")], \
+        "one seat, the statutory word, the earlier day"
+
+
+def test_the_filing_first_then_the_community_date_a_day_later(it_db, pair):
+    _upsert_role_sec("pm", "sx", "Director", pair["sec"], since="2010-11-16", credibility_score=98)
+    _upsert_role("pm", "sx", "Board Member", pair["wd"], since="2010-11-17", credibility_score=80)
+    rows = it_db.run_command(
+        "MATCH (:Person {id:'pm'})-[r:HAS_ROLE]->(:Entity {id:'sx'}) "
+        "RETURN r.role AS role, r.since AS since")
+    assert [(r["role"], r["since"]) for r in rows] == [("Director", "2010-11-16")]
+
+
+def test_a_filing_after_an_ended_spell_opens_a_new_one(it_db, pair):
+    _upsert_role("pm", "sx", "CEO", pair["wd"], since="2008-10-01", until="2018-09-07",
+                 credibility_score=80)
+    _upsert_role_sec("pm", "sx", "CEO", pair["sec"], since="2021-03-01", credibility_score=98)
+    rows = it_db.run_command(
+        "MATCH (:Person {id:'pm'})-[r:HAS_ROLE]->(:Entity {id:'sx'}) "
+        "RETURN r.since AS since, r.until AS until ORDER BY r.since")
+    assert [(r["since"], r["until"]) for r in rows] == [
+        ("2008-10-01", "2018-09-07"), ("2021-03-01", None)]
+
+
 def test_different_positions_stay_separate_edges(it_db, pair):
     _upsert_role("pm", "sx", "CEO", pair["wd"], credibility_score=80)
     _upsert_role_sec("pm", "sx", "Director", pair["sec"], credibility_score=98)

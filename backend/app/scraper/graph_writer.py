@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from app import former_names as former
 from app.claims import KIND_OWNS, KIND_ROLE, KIND_SUCCESSION, record_claim
-from app.roles import canonical_role, end_seats_at_death, finer_start, same_start
+from app.roles import canonical_role, combined_start, end_seats_at_death, periods_overlap
 from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.owns_merge import SINCE_FIELDS, combine_since
@@ -512,6 +512,21 @@ def _relabel_if_more_credible(session, person_id: str, entity_id: str,
         sid=source_id, cred=new_cred, rfrom=read_from)
 
 
+def _same_seat(session, person_id: str, entity_id: str, role: str,
+               since: str | None, until: str | None) -> dict | None:
+    """The stored seat an assertion of `role` for `since`–`until` is about:
+    the same position (`canonical_role`) over a touching period
+    (`roles.periods_overlap`) — an open seat first, then the spell it
+    touches. None when the assertion is a new spell (or the first). An
+    assertion without a start cannot found a spell: it is about the seat
+    held, and its end (if any) is the caller's to apply only to a seat that
+    began by then."""
+    matches = _matching_role(session, person_id, entity_id, role, open_only=False)
+    matches.sort(key=lambda m: (m["until"] is not None, m["since"] or ""))
+    return next((m for m in matches
+                 if since is None or periods_overlap(m["since"], m["until"], since, until)), None)
+
+
 def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                  since: str | None = None, until: str | None = None,
                  source_url: str | None = None, credibility_score: int = 80,
@@ -521,18 +536,16 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     ``read_from``: how reliably the seat was read (`edge_schema.READ_GRADES`);
     on the claim, on a seat this write creates, and on a relabelled one.
 
-    Matched on role, and on `since` **only when the incoming assertion has one**.
-    A dated tenure is its own edge — someone can be CEO twice — but an *undated*
-    assertion of a role that is already recorded says nothing new, and adding it
-    is how a person came to be listed twice on the same board: the company scrape
-    knew Larry Page joined Alphabet's board in 1998, and the person scrape, which
-    gets no dates from the reverse lookup, added a second edge beside it.
-
-    The date matches at the coarser precision (`roles.same_start`): Wikidata
-    states Ryan Roslansky's LinkedIn CEO seat as both 2020-06-01 and "June
-    2020", and SEC states a director's day where Wikidata gives the year —
-    one seat each, which kept the more precise date. Two different days are
-    still two seats.
+    Matched on the position (`canonical_role`) over a touching period
+    (`roles.periods_overlap`, `_same_seat`): nobody holds one post at one
+    company twice at once, so an assertion dated 2022-07-14 is the seat held
+    open since 2022-07-11 — Wikidata's appointment day beside the SEC's Form 3
+    date used to be two "Director" rows — and the seat keeps the earlier day
+    (`roles.combined_start`; one date at two precisions keeps the finer:
+    Ryan Roslansky's LinkedIn CEO statement as 2020-06-01 and "June 2020").
+    An undated assertion of a held role says nothing new, and a dated one
+    teaches an undated seat its date. Two spells that do not touch stay two
+    seats: Larry Page, CEO of Google 1998–2001 and again from 2011.
     """
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
@@ -544,30 +557,31 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     # corroboration — Bill Gates and "Gates William H Iii" could never merge.
     now = _now_iso()
     with db.get_session() as session:
-        matches = _matching_role(session, person_id, entity_id, role,
-                                 open_only=False)
-        exists = next((m for m in matches
-                       if since is None or same_start(m["since"], since)), None)
+        exists = _same_seat(session, person_id, entity_id, role, since, until)
         if exists:
-            # Match the stored seat by ITS date; "June 2020" learning its day
-            # takes the day.
-            stored = exists["since"] if since else None
+            # The seat this assertion is about, matched by ITS stored dates;
+            # the start becomes the finer of one date at two precisions, else
+            # the earliest — "June 2020" learning its day takes the day, an
+            # undated seat learns its date, and the Form 3 three days after
+            # Wikidata's appointment day leaves the earlier day in place.
+            start = combined_start(exists["since"], since)
             session.run(
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                 WHERE r.role = $role
-                  AND ($since IS NULL OR r.since = $since)
+                  AND (($stored IS NULL AND r.since IS NULL) OR r.since = $stored)
+                  AND (($stored_until IS NULL AND r.until IS NULL) OR r.until = $stored_until)
                 SET r.last_scraped_at = $now,
-                    r.since = COALESCE($finer, r.since),
+                    r.since = $start,
+                    r.source_date = CASE WHEN $stored IS NULL AND $start IS NOT NULL
+                                         THEN $start ELSE r.source_date END,
                     r.source_url = COALESCE(r.source_url, $surl)
                 """,
-                pid=person_id, eid=entity_id, role=exists["role"], since=stored,
-                finer=finer_start(stored, since) if stored else None,
-                now=now, surl=source_url,
+                pid=person_id, eid=entity_id, role=exists["role"],
+                stored=exists["since"], stored_until=exists["until"],
+                start=start, now=now, surl=source_url,
             )
-            if stored:
-                stored = finer_start(stored, since)
-            if until:
+            if until and not exists["until"]:
                 # The source now states the END of a seat we hold open — a
                 # Wikidata end time added later. It used to be dropped here, so
                 # a CEO who left in 2015 was still CEO in 2020 and today. Only a
@@ -576,40 +590,16 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
                     """
                     MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
                     WHERE r.role = $role AND r.until IS NULL
-                      AND ($since IS NULL OR r.since = $since)
+                      AND (($since IS NULL AND r.since IS NULL) OR r.since = $since)
                       AND (r.since IS NULL OR r.since <= $until)
                     SET r.until = $until, r.until_source_url = $surl
                     """,
-                    pid=person_id, eid=entity_id, role=exists["role"], since=stored,
+                    pid=person_id, eid=entity_id, role=exists["role"], since=start,
                     until=until, surl=source_url)
             _relabel_if_more_credible(session, person_id, entity_id,
                                       exists["role"], role, exists["cred"],
                                       credibility_score, source_id, read_from)
             return
-
-        if since:
-            # We now know when a role we already had started. That is the same
-            # role learning its date, not a second appointment — so fill the
-            # blank rather than creating an edge beside it. (The reverse order is
-            # handled above: an undated assertion matches a dated edge.)
-            undated = next((m for m in matches if m["since"] is None), None)
-            if undated:
-                session.run(
-                    """
-                    MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-                    WHERE r.role = $role AND r.since IS NULL
-                    SET r.since = $since, r.source_date = $since,
-                        r.until = COALESCE(r.until, $until),
-                        r.last_scraped_at = $now,
-                        r.source_url = COALESCE($surl, r.source_url)
-                    """,
-                    pid=person_id, eid=entity_id, role=undated["role"], since=since,
-                    until=until, now=now, surl=source_url,
-                )
-                _relabel_if_more_credible(session, person_id, entity_id,
-                                          undated["role"], role, undated["cred"],
-                                          credibility_score, source_id, read_from)
-                return
 
         session.run(
             """

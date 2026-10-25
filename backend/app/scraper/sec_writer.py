@@ -13,12 +13,12 @@ import unicodedata
 import uuid
 from datetime import datetime, timezone
 
-from app.roles import canonical_role, end_seats_at_death
+from app.roles import canonical_role, combined_start, end_seats_at_death
 from app.claims import KIND_OWNS, KIND_ROLE, claims_for, close_role_claim, record_claim
 from app.database import db
 from app.db.anchors import label_or_entity
 from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, STALE_CLEAR, STALE_CLEAR_CYPHER, edge_create_clause, owns_props
-from app.scraper.graph_writer import _matching_role, _now_iso, _relabel_if_more_credible
+from app.scraper.graph_writer import _now_iso, _relabel_if_more_credible, _same_seat
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 from app.scraper.owns_merge import ANSWER_FIELDS, SINCE_FIELDS, combine_since, outranks
 
@@ -725,28 +725,28 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     # structure, not people (see graph_writer._upsert_role).
     now = datetime.now(timezone.utc).isoformat()
     with db.get_session() as session:
-        matches = _matching_role(session, person_id, entity_id, role, open_only=False)
-        open_seats = [m for m in matches if not m.get("until")]
-        existing = open_seats[0] if open_seats else None
-        if not existing:
-            # No open seat — but a CLOSED one that ends after this filing is
-            # the same spell, not a new one. Tim Cook's older Form 4 says CEO;
-            # re-asserted after the 8-K closed the seat on 2026-09-01, it
-            # opened a second CEO spell that the next 8-K read closed again,
-            # once per scrape. A filing dated after the close is a return.
-            asserted = since or source_date or ""
-            for m in matches:
-                if m.get("until") and (m["until"] or "") >= asserted:
-                    session.run(
-                        """
-                        MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
-                        WHERE r.role = $role AND r.until = $until
-                        SET r.last_scraped_at = $now, r.since = COALESCE(r.since, $since)
-                        """,
-                        pid=person_id, eid=entity_id, role=m["role"], until=m["until"],
-                        now=now, since=since)
-                    return
+        # The seat this filing is about: the same position over a touching
+        # period (graph_writer._same_seat). A filing dated after a CLOSED
+        # spell is a return, not that spell: Tim Cook's older Form 4 says CEO;
+        # re-asserted after the 8-K closed the seat on 2026-09-01, it opened a
+        # second CEO spell that the next 8-K read closed again, once per
+        # scrape. An undated filing is dated by its filing date for this.
+        existing = _same_seat(session, person_id, entity_id, role,
+                              since or source_date, until)
+        if existing and existing.get("until"):
+            session.run(
+                """
+                MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
+                WHERE r.role = $role AND r.until = $until
+                SET r.last_scraped_at = $now, r.since = COALESCE(r.since, $since)
+                """,
+                pid=person_id, eid=entity_id, role=existing["role"], until=existing["until"],
+                now=now, since=since)
+            return
         if existing:
+            # One seat; the earlier of the two starts (the finer of one date at
+            # two precisions) — a Form 3 three days after Wikidata's
+            # appointment day used to open a second "Director" seat.
             session.run(
                 """
                 MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid})
@@ -754,10 +754,11 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
                 SET r.last_scraped_at = $now,
                     r.source_url  = COALESCE($surl,  r.source_url),
                     r.source_date = COALESCE($sdate, r.source_date),
-                    r.since       = COALESCE(r.since, $since)
+                    r.since       = $start
                 """,
                 pid=person_id, eid=entity_id, role=existing["role"], now=now,
-                surl=source_url, sdate=source_date, since=since,
+                surl=source_url, sdate=source_date,
+                start=combined_start(existing.get("since"), since),
             )
             _relabel_if_more_credible(session, person_id, entity_id,
                                       existing["role"], role, existing["cred"],

@@ -413,13 +413,16 @@ def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = N
 
 
 def _carry_edge(rel: str, props: tuple, src: str, tgt: str, params: dict,
-                e: dict, seat: str = "") -> int:
+                e: dict) -> int:
     """Put the edge ``e`` (read off a node that is about to be deleted) onto the
     node that survives — without losing a period or a start date.
 
     ``src``/``tgt`` are the survivor-side endpoints as Cypher node patterns
-    bound to ``a`` and ``t`` (``(a:Entity {id: $k})``); ``seat`` an extra
-    condition that makes two edges the same relationship (a role's name).
+    bound to ``a`` and ``t`` (``(a:Entity {id: $k})``). A HAS_ROLE edge is a
+    seat and goes through `_carry_seat`: the same position (canonical role)
+    over a touching period is the same seat, whatever word each side used
+    for it — matched by label, the auto-dedup's person merge put Wikidata's
+    "Board Member" beside the SEC's "Director" on every board it merged.
 
     - An ENDED edge is history: it is carried over as its own edge, unless the
       survivor already holds the very same period (same since, same until).
@@ -433,30 +436,27 @@ def _carry_edge(rel: str, props: tuple, src: str, tgt: str, params: dict,
     Returns 1 when a new edge was created.
     """
     from app.scraper.edge_schema import edge_create_clause, edge_params, edge_return_clause
-    from app.scraper.owns_merge import SINCE_FIELDS, combine_since, fold
-    seat_and = f" AND {seat}" if seat else ""
-    if e.get("until") is not None:
+    from app.scraper.owns_merge import fold
+    if rel == "HAS_ROLE":
+        if _carry_seat(src, tgt, params, e):
+            return 0
+    elif e.get("until") is not None:
         same = run_query(
-            f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until = $c_until{seat_and} "
+            f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until = $c_until "
             "AND ((r.since IS NULL AND $c_since IS NULL) OR r.since = $c_since) RETURN r LIMIT 1",
             {**params, "c_until": e["until"], "c_since": e.get("since")})
         if same:
             return 0
     else:
         current = run_query(
-            f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until IS NULL{seat_and} "
+            f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until IS NULL "
             f"RETURN {edge_return_clause('r', props)} LIMIT 1", params)
         if current:
             kept = current[0]
-            if rel == "OWNS":
-                sets = fold([kept, e], kept)
-            else:
-                since = combine_since(kept, e)
-                sets = ({f: since[f] for f in SINCE_FIELDS if f in props}
-                        if any(since[f] != kept.get(f) for f in SINCE_FIELDS) else {})
+            sets = fold([kept, e], kept)
             if sets:
                 run_command(
-                    f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until IS NULL{seat_and} SET "
+                    f"MATCH {src}-[r:{rel}]->{tgt} WHERE r.until IS NULL SET "
                     + ", ".join(f"r.{f} = $c_set_{f}" for f in sets),
                     {**params, **{f"c_set_{f}": v for f, v in sets.items()}})
             return 0
@@ -464,6 +464,53 @@ def _carry_edge(rel: str, props: tuple, src: str, tgt: str, params: dict,
         f"MATCH {src}, {tgt} CREATE (a)-[:{rel} {{{edge_create_clause(props)}}}]->(t)",
         {**params, **edge_params(e, props)})
     return 1
+
+
+#: What a seat takes from a more credible asserter when two seats fold: the
+#: label and who says so (graph_writer._relabel_if_more_credible's set).
+_SEAT_LABEL_FIELDS = ("role", "source_id", "credibility_score", "source_url",
+                      "source_date", "read_from")
+
+
+def _carry_seat(src: str, tgt: str, params: dict, e: dict) -> bool:
+    """Fold the seat ``e`` into the survivor's seat for the same position, if
+    the survivor holds one: the same `canonical_role` over a touching period
+    (`roles.periods_overlap` — nobody holds one post twice at once). The
+    folded seat keeps the earlier start (`roles.combined_start`), takes an
+    end the carried spell states for its open period, and the more credible
+    asserter's label and citation. False when there is no such seat and
+    the caller creates the edge."""
+    from app.roles import canonical_role, combined_start, periods_overlap
+    rows = run_query(
+        f"MATCH {src}-[r:HAS_ROLE]->{tgt} RETURN r.role AS role, r.since AS since, "
+        "r.until AS until, COALESCE(r.credibility_score, 0) AS cred", params)
+    want = canonical_role(e.get("role") or "")
+    rows = [r for r in rows if canonical_role(r.get("role") or "") == want
+            and periods_overlap(r.get("since"), r.get("until"), e.get("since"), e.get("until"))]
+    if not rows:
+        return False
+    rows.sort(key=lambda r: (r.get("until") is not None, r.get("since") or ""))
+    kept = rows[0]
+    sets = {"since": combined_start(kept.get("since"), e.get("since"))}
+    if kept.get("until") is None and e.get("until"):
+        start = sets["since"]
+        if start is None or str(start) <= str(e["until"]):
+            sets["until"] = e["until"]
+            sets["until_source_url"] = e.get("until_source_url") or e.get("source_url")
+            sets["until_reason"] = e.get("until_reason")
+    if (e.get("credibility_score") or 0) > kept["cred"] and e.get("role") != kept.get("role"):
+        sets.update({f: e.get(f) for f in _SEAT_LABEL_FIELDS})
+    if sets["since"] == kept.get("since"):
+        del sets["since"]
+    if sets:
+        run_command(
+            f"MATCH {src}-[r:HAS_ROLE]->{tgt} WHERE r.role = $c_role "
+            "AND ((r.since IS NULL AND $c_since IS NULL) OR r.since = $c_since) "
+            "AND ((r.until IS NULL AND $c_until IS NULL) OR r.until = $c_until) SET "
+            + ", ".join(f"r.{f} = $c_set_{f}" for f in sets),
+            {**params, "c_role": kept.get("role"), "c_since": kept.get("since"),
+             "c_until": kept.get("until"), **{f"c_set_{f}": v for f, v in sets.items()}})
+    return True
 
 
 def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
@@ -495,8 +542,7 @@ def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
         {"pid": dead_id},
     ):
         migrated += _carry_edge("HAS_ROLE", ROLE_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
-                                {"k": keep_id, "tid": e["tid"], "seat_role": e.get("role")}, e,
-                                seat="r.role = $seat_role")
+                                {"k": keep_id, "tid": e["tid"]}, e)
 
     # People are group members too — Lemann, Sicupira and Telles all are — and
     # a person-merge used to sever them from their bloc exactly as the entity
@@ -766,8 +812,7 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
         {"id": dead_id},
     ):
         migrated += _carry_edge("HAS_ROLE", ROLE_PROPS, "(a:Person {id: $pid})", "(t:Entity {id: $k})",
-                                {"pid": e["pid"], "k": keep_id, "seat_role": e.get("role")}, e,
-                                seat="r.role = $seat_role")
+                                {"pid": e["pid"], "k": keep_id}, e)
 
     # 4. RELATED_TO, both directions — filing-group membership and 13F fund
     # affiliation. Direction preserved: a member points AT its group.

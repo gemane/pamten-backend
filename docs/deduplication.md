@@ -237,21 +237,35 @@ role claims are keyed per canonical position, so the sources panel counts
 "SEC EDGAR + Wikidata" as corroboration of the one seat, while a "CEO" claim
 never corroborates a "Director" row.
 
-**One date at two precisions is one seat.** A dated assertion matches a held
-seat when the two starts agree at the coarser precision
-(`app.roles.same_start`): Wikidata holds Ryan Roslansky's LinkedIn CEO
-statement twice — `2020-06-01` and "June 2020" (`2020-06-00`) — and SEC states
-a director's day where Wikidata gives only the year. The seat keeps the finer
-date (`finer_start`). Two different days stay two seats: someone can hold the
-same post twice (Larry Page, CEO of Google in 1998 and 2011).
+**One position, one seat at a time.** Nobody holds one post at one company
+twice at once, so an assertion of a position is about the seat whose period
+it touches (`app.roles.periods_overlap`, `graph_writer._same_seat`): an open
+seat, or the closed spell it falls into. The sources rarely agree on the day
+— Wikidata gives the appointment, the SEC the Form 3 filed days later, or
+only the year — and until 2026-10-25 two different days were two seats, so a
+Form 3 three days after Wikidata's day opened a second "Director" row
+(Chávez at Alphabet; Sugar and Lozano at Apple a day apart). The seat keeps
+the earlier start (`app.roles.combined_start`; one date at two precisions
+keeps the finer — Wikidata holds Ryan Roslansky's LinkedIn CEO statement as
+`2020-06-01` and "June 2020"), and an end stated for a touching period ends
+it. An assertion without a start says nothing about the period: it attaches
+to the seat held, and its end applies only to a seat that began by then. Two
+spells that do not touch stay two seats: Larry Page, CEO of Google 1998–2001
+and again from 2011 — a second spell needs the first one ended.
+
+The merges carry seats by the same rule (`maintenance._carry_seat`): a seat
+of the removed node folds into the survivor's seat for the same position
+over a touching period, keeps the earlier start, takes an end the carried
+spell states, and the more credible asserter's label and citation. Matched
+by label, the post-scrape auto-dedup's person merge put "Board Member"
+beside "Director" on every board it merged (12 pairs on dev, 2026-10-25).
 
 Pre-existing duplicates are healed by
 `python manage.py dedupe-role-synonyms [--dry-run]`: per (person, company,
 canonical role) it keeps the most credible open edge, backfills
 since/source_url/source_date from the losers, and deletes the rest. The start
-kept is the finer one when the two are the same date at two precisions, else
-the earliest. Each loser is deleted by its own date, one edge at a time, so a
-same-label pair ("CEO" + "CEO") keeps one seat.
+kept is `combined_start` of the two. Each loser is deleted by its own date,
+one edge at a time, so a same-label pair ("CEO" + "CEO") keeps one seat.
 
 ## Same identifier, two nodes — `deduplicate_entities`
 

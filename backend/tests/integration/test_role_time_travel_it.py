@@ -61,6 +61,11 @@ class TestOpenCorporates:
         _upsert_role_oc("p", "c", "Director", None, "2019-09-30", "oc")
         assert _seats(seat)[0]["until"] is None
 
+    def test_an_earlier_start_for_the_held_seat_moves_it_back(self, seat):
+        _upsert_role_oc("p", "c", "Director", "2020-01-05", None, "oc")
+        _upsert_role_oc("p", "c", "Director", "2020-01-01", None, "oc")
+        assert [(s["since"], s["until"]) for s in _seats(seat)] == [("2020-01-01", None)]
+
     def test_an_undated_seat_is_dated_by_the_scrape(self, seat):
         _upsert_role_oc("p", "c", "Secretary", None, None, "oc")
         assert (_seats(seat)[0]["sdate"] or "") >= "2026-01-01"

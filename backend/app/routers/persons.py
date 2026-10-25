@@ -648,8 +648,7 @@ def merge_person_records(keep: str, dup: str) -> None:
                         {"k": keep, "tid": e["target"]}, e)
         for e in _edges("HAS_ROLE", ROLE_PROPS, out=True):
             _carry_edge("HAS_ROLE", ROLE_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
-                        {"k": keep, "tid": e["target"], "seat_role": e.get("role")}, e,
-                        seat="r.role = $seat_role")
+                        {"k": keep, "tid": e["target"]}, e)
 
         # RELATED_TO (both directions) → fold onto keep's edge. This is how a
         # merged person keeps their voting-group membership.
