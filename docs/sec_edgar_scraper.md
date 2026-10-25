@@ -183,6 +183,19 @@ guess. The edge and the claim keep only the latest amendment; a change in a
 holding at or above 5 % keeps the overwritten statement as stake history
 (data-model, *Stake history*), which time travel and the timeline's 5 %
 crossings read — a sub-5 % holding still shows today's stake in a past year.
+**How long a statement speaks.** A 13D/G is never withdrawn — a holder who
+sells down files an amendment (an exit at 0 % closes the holding, a lower
+percentage updates it), and one who simply stops filing leaves the last
+statement standing. The register tier is exempt from the community stale pass,
+so a 13G/A from 2014 stood at full strength beside this year's. Since
+2026-10-25 `manage.py mark-stale` also dims a holding whose last 13D/G is
+older than its form's restatement window (`stale_reason = not_restated`,
+`stale_since` = that filing date; `maintenance.RESTATEMENT_WINDOW_DAYS`): a
+13G is restated within 45 days of every year end while anything changed
+(quarterly under the 2024 rules), so 15 months; a 13D is amended only on a
+material change, so five years. Dimmed, never closed — silence is not a sale —
+and the next amendment the scraper reads clears the mark with the refresh.
+
 A holder who files both — Musk's 13G/A says 19.9 % of the class, his Form 4
 holdings compute to 28.4 % — has ONE claim from this source: the 13D/G
 statement, which the Form 4 never overwrites (*Of record versus beneficial*,

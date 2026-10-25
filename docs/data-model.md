@@ -361,8 +361,14 @@ Two rules keep the tiers meaning something on OWNS edges:
   Exhibit 21 / 8.1 dated `stale_since`, linked in `stale_source_url`, no longer
   names the subsidiary), `unconfirmed` (no source has confirmed the community-tier
   edge since `stale_since`, its last confirmation), `lei_lapsed` (the GLEIF record
-  lapsed; `stale_since` is its last update) — and `stale_since`, the day that
-  evidence is dated. The history endpoint hands them to the panel's timeline,
+  lapsed; `stale_since` is its last update), `not_restated` (the holder's last
+  Schedule 13D/G, filed `stale_since`, is older than the form's restatement
+  window — a 13G is restated every February while it lasts, so 15 months; a 13D
+  only on a material change, so five years; `maintenance.RESTATEMENT_WINDOW_DAYS`,
+  the second pass of `mark-stale`. Register-tier holdings were exempt from every
+  stale pass, so a 13G/A from 2014 stood at full strength beside this year's and
+  VeriSign's holders summed to 106 %, Sirius XM's to 202 %, on dev 2026-10-25) —
+  and `stale_since`, the day that evidence is dated. The history endpoint hands them to the panel's timeline,
   which shows a dated "no longer confirmed" entry under that year with the reason,
   so a reader can see why a holding went grey. Every writer that clears the mark
   clears the three fields with it (`edge_schema.STALE_CLEAR`), so a healed edge

@@ -183,12 +183,14 @@ STALE_REASONS: dict[str, str] = {
     "ex21_not_listed":   "the newer Exhibit 21 / 8.1 dated `stale_since` (`stale_source_url`) no longer names the subsidiary",
     "unconfirmed":       "no source has confirmed this community-tier edge since `stale_since`",
     "lei_lapsed":        "the GLEIF relationship record lapsed; last updated `stale_since`",
+    "not_restated":      "the holder's last Schedule 13D/G, filed `stale_since`, is older than the form's restatement window (maintenance.RESTATEMENT_WINDOW_DAYS)",
 }
 
 #: The property values that clear the mark — every writer that sets
 #: ``stale = false`` sets these with it, so a healed edge carries no old reason.
 STALE_CLEAR: dict = {"stale": False, "stale_since": None, "stale_reason": None, "stale_source_url": None}
 STALE_CLEAR_CYPHER = "r.stale = false, r.stale_since = null, r.stale_reason = null, r.stale_source_url = null"
+STALE_CLEAR_SQL = "stale = false, stale_since = null, stale_reason = null, stale_source_url = null"
 
 
 def edge_create_clause(props: tuple) -> str:
