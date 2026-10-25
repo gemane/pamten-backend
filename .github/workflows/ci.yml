@@ -101,7 +101,9 @@ jobs:
           echo "ArcadeDB did not become ready in time"; exit 1
 
       - name: Run integration tests
-        run: cd backend && python -m pytest tests/integration -v
+        # Every test creates and drops its own database, so the workers never
+        # share state; -n auto is one worker per core of the runner.
+        run: cd backend && python -m pytest tests/integration -v -n auto
 
   lint:
     name: Lint

@@ -59,6 +59,8 @@ email-validator==2.3.0
     # via
     #   -c requirements.txt
     #   -r requirements.in
+execnet==2.1.2
+    # via pytest-xdist
 fastapi==0.141.1
     # via
     #   -c requirements.txt
@@ -133,7 +135,10 @@ pytest==9.1.1
     # via
     #   -r requirements-dev.in
     #   pytest-asyncio
+    #   pytest-xdist
 pytest-asyncio==1.4.0
+    # via -r requirements-dev.in
+pytest-xdist==3.8.0
     # via -r requirements-dev.in
 python-dateutil==2.9.0.post0
     # via
