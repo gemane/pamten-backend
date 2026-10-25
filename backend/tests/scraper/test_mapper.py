@@ -69,6 +69,25 @@ class TestNormalizeEntityName:
     def test_removes_commas_and_periods(self):
         assert normalize_entity_name("Apple, Inc.") == "apple"
 
+    # GLEIF writes "S A B", EDGAR "S.A.B.": dev held Grupo Televisa twice (2026-10-25)
+    def test_spaced_abbreviations_key_like_dotted_ones(self):
+        assert normalize_entity_name("GRUPO TELEVISA S A B") == normalize_entity_name("Grupo Televisa, S.A.B.") == "grupo televisa sab"
+        assert normalize_entity_name("J P Morgan") == normalize_entity_name("J.P. Morgan") == "jp morgan"
+        assert normalize_entity_name("GRUPO BIMBO S A B DE C V") == "grupo bimbo sab de cv"
+        # the joined letters then meet the suffix strip like their dotted twin
+        assert normalize_entity_name("CERVECERIA CHILE S A") == normalize_entity_name("Cerveceria Chile S.A.") == "cerveceria chile"
+
+    def test_a_comma_parts_a_name_from_its_legal_form(self):
+        # the roman numeral is the name's, the S. the legal form's — found on dev
+        assert normalize_entity_name("BlackRock Mexico Infraestructura I, S. de R.L. de C.V.") == \
+            "blackrock mexico infraestructura i s de rl de cv"
+        assert normalize_entity_name("Fondo II, S.A.") == "fondo ii"
+
+    def test_a_lone_letter_is_not_an_abbreviation(self):
+        assert normalize_entity_name("Toys R Us") == "toys r us"
+        assert normalize_entity_name("H & M Hennes") == "h & m hennes"
+        assert normalize_entity_name("A Company") == "a"             # the suffix strip, as before
+
     def test_same_company_different_legal_forms(self):
         # The cross-source deduplication promise: all three normalize to the same string
         assert normalize_entity_name("BlackRock, Inc.") \

@@ -1068,6 +1068,24 @@ def cmd_schema_audit(args):
     sys.exit(1)
 
 
+def cmd_heal_name_keys(args):
+    """Recompute Entity.name_normalized where the normaliser's answer changed
+    (app.name_keys.heal_name_keys) and name the keys two entities now share
+    for the first time — the duplicates the old key hid. Whole-type scan: run
+    with --db-url. Dry run unless --apply."""
+    _apply_direct_db_url(args)
+    from app.name_keys import heal_name_keys
+    res = heal_name_keys(apply=args.apply)
+    verb = "rewritten" if args.apply else "would change (dry run — add --apply)"
+    print(f"Entities: {res['changed']} name keys {verb}, of {res['scanned']}")
+    for name, old, new in res["sample"]:
+        print(f"  {name!r}: {old!r} -> {new!r}")
+    if res["newly_shared"]:
+        print("\nKeys now shared for the first time — merge these by hand in the app:")
+        for key, names in res["newly_shared"].items():
+            print(f"  {key}: " + "; ".join(names))
+
+
 def cmd_heal_model_gaps(args):
     """The 2026-10-25 survey's four gaps (app.field_twins): fold the scalar
     `nationality` into `nationalities` and drop it, put `country` into every
@@ -1402,6 +1420,14 @@ def _build_parser():
     p_hpt.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hpt.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hpt.set_defaults(func=cmd_heal_property_types)
+
+    p_hnk = subparsers.add_parser('heal-name-keys',
+        help="Recompute Entity.name_normalized where the normaliser changed (2026-10-25: spaced "
+             "abbreviations) and name the keys two entities now share. Whole-type scan: run with "
+             "--db-url. Dry run unless --apply")
+    p_hnk.add_argument('--apply', action='store_true', help='Write the keys (default: count only)')
+    p_hnk.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB')
+    p_hnk.set_defaults(func=cmd_heal_name_keys)
 
     p_hmg = subparsers.add_parser('heal-model-gaps',
         help="Fold Person.nationality into nationalities and drop it, put country into countries, "
