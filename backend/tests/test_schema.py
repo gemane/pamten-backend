@@ -193,6 +193,7 @@ class TestStartupIssuesNoDdlWhenTheSchemaIsComplete:
 
     _TYPED = ({f"{t}.{p}" for t, p, _ in schema._TYPED_PROPERTIES}
               | {f"{t}.{p}" for t, p in schema._RULED_STRINGS}
+              | {f"{t}.{p}" for t, p in schema.string_properties()}
               | {f"{t}.{p}" for t, p, _ in schema._INDEXES} | {f"{t}.{p}" for t, p, _ in schema._EDGE_INDEXES})
 
     def test_a_complete_schema_issues_nothing(self):
@@ -270,7 +271,8 @@ class TestTypedProperties:
             | {f"{t}[{p}]" for t, p in schema._FULLTEXT_INDEXES}
         stmts = schema._statements((types, indexes))
         creates = [s for s in stmts if s.startswith("CREATE PROPERTY")]
-        assert len(creates) == len(schema._TYPED_PROPERTIES) + len(schema._RULED_STRINGS)
+        assert len(creates) == (len(schema._TYPED_PROPERTIES) + len(schema._RULED_STRINGS)
+                                + len(schema.string_properties()))
         # the rules cannot be compared without the catalog: every one is issued
         assert len([s for s in stmts if s.startswith("ALTER PROPERTY")]) == len(schema.constraints())
 
@@ -293,6 +295,7 @@ class TestTypedProperties:
         declared = {f"{t}.{p}": k for t, p, k in schema._TYPED_PROPERTIES}
         declared.update({f"{t}.{p}": k for (t, p), k in schema._PROPERTY_TYPES.items()})
         declared.update({f"{t}.{p}": "STRING" for t, p in schema._RULED_STRINGS})
+        declared.update({f"{t}.{p}": "STRING" for t, p in schema.string_properties()})
         # the indexed strings the rules sit on are declared by the index loop
         declared.update({f"{t}.{p}": "STRING" for t, p, _ in schema._INDEXES if f"{t}.{p}" not in declared})
         return types, indexes, declared, _held_rules()
@@ -343,8 +346,10 @@ class TestTypedProperties:
             < issued.index("CREATE PROPERTY OWNS.shares_outstanding IF NOT EXISTS DOUBLE")
 
     def test_dates_are_not_typed(self):
-        for _, prop, ptype in schema._TYPED_PROPERTIES:
+        for vtype, prop, ptype in schema._TYPED_PROPERTIES:
             assert ptype != "DATE" and ptype != "DATETIME"
+            if vtype == "RefreshToken":
+                continue                    # epoch seconds, a DOUBLE on purpose (app.auth.refresh)
             assert not prop.endswith(("_date", "_at", "since", "until")), prop
 
     def test_share_counts_are_doubles_not_longs(self):
@@ -476,3 +481,82 @@ class TestConstraints:
             *_, rules = schema._existing_schema()
         assert rules == {"T.id": {"mandatory": True, "notNull": True},
                          "T.stake": {"min": "0", "max": "100"}, "T.free": {}}
+
+
+class TestTheLedger:
+    """Every property a writer sets is declared — the strings too (2026-10-25).
+    ArcadeDB accepts an undeclared property, so the ledger is what catches a
+    typo: the writers' own property lists are held against it here, and the
+    audit holds the stored rows against it on a live database."""
+
+    def test_the_writers_edge_and_claim_properties_are_all_declared(self):
+        from app import claims, industry, stake_history
+        from app.scraper import edge_schema
+        ledger = schema.all_properties()
+        for prop in edge_schema.OWNS_PROPS:
+            assert ("OWNS", prop) in ledger, prop
+        for prop in edge_schema.ROLE_PROPS:
+            assert ("HAS_ROLE", prop) in ledger, prop
+        for prop in edge_schema.RELATED_TO_PROPS:
+            assert ("RELATED_TO", prop) in ledger, prop
+        bag = claims.claim_props(kind="owns", from_id="a", to_id="b", source_id="s")
+        for prop in list(bag) + ["first_seen_at"]:
+            assert ("Claim", prop) in ledger, prop
+        for prop in stake_history._ROW_FIELDS:
+            assert ("StakeHistory", prop) in ledger, prop
+        row = industry.statement_props("e", "uk-sic", "62012", None, source_id="s")
+        for prop in list(row) + ["first_seen_at"]:
+            assert ("IndustryCode", prop) in ledger, prop
+
+    def test_the_string_ledger_holds_only_what_nothing_else_declares(self):
+        elsewhere = ({(t, p) for t, p, _ in schema._TYPED_PROPERTIES} | set(schema._PROPERTY_TYPES)
+                     | {(t, p) for t, p, _ in schema._INDEXES} | {(t, p) for t, p, _ in schema._EDGE_INDEXES}
+                     | {(t, p) for t, p in schema._FULLTEXT_INDEXES} | set(schema._RULED_STRINGS))
+        strings = schema.string_properties()
+        assert len(strings) == len(set(strings))                     # listed once
+        for key in strings:
+            assert key not in elsewhere, key
+        for vtype, props in schema._STRING_PROPERTIES.items():
+            assert len(props) == len(set(props)), vtype              # no twin inside a type
+        # every type named in the ledger is one the bootstrap creates
+        created = {t for t, _, _ in schema._INDEXES} | set(schema._EDGE_TYPES)
+        for vtype in schema._STRING_PROPERTIES:
+            assert vtype in created, vtype
+        for vtype, _, _ in schema._TYPED_PROPERTIES:
+            assert vtype in created, vtype
+
+    def test_a_complete_catalog_declares_no_string_and_a_missing_one_is_declared(self):
+        types, indexes, declared, rules = TestTypedProperties._complete()
+        assert schema._statements((types, indexes, declared, rules)) == []
+        del declared["Entity.legal_form"]
+        assert schema._statements((types, indexes, declared, rules)) == [
+            "CREATE PROPERTY Entity.legal_form IF NOT EXISTS STRING"]
+
+    def test_the_audit_names_what_the_rows_carry_beyond_the_catalog(self):
+        types, indexes, declared, rules = TestTypedProperties._complete()
+        rows = {"Entity": [{"@rid": "#1:0", "id": "a", "name": "A", "countrry": "US"},
+                           {"@rid": "#1:1", "id": "b", "legal_form": "PLC"}],
+                "OWNS": [{"@rid": "#2:0", "stake_percent": 10.0, "stakke": 10}],
+                "Person": []}
+        asked = []
+
+        def run(sql, *a, **kw):
+            if sql == "SELECT name, properties FROM schema:types":
+                return [{"name": t, "properties": [{"name": d.split(".", 1)[1]} for d in declared
+                                                   if d.split(".", 1)[0] == t]} for t in types]
+            if sql == "SELECT name FROM schema:indexes":
+                return [{"name": i} for i in indexes]
+            asked.append(sql)
+            for t, r in rows.items():
+                if sql.startswith(f"SELECT FROM {t} LIMIT"):
+                    return r
+            return []
+        with _run(run):
+            assert schema.undeclared_properties(sample=7) == {"Entity": ["countrry"], "OWNS": ["stakke"]}
+        assert "SELECT FROM Entity LIMIT 7" in asked and "SELECT FROM Person LIMIT 7" in asked
+
+    def test_the_audit_is_empty_without_a_catalog(self):
+        def run(sql, *a, **kw):
+            raise RuntimeError("no such type schema:types")
+        with _run(run):
+            assert schema.undeclared_properties() == {}
