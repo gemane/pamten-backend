@@ -51,6 +51,12 @@ def wikidata(it_db, monkeypatch):
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
     monkeypatch.setattr(settings, "SCRAPER_WIKIDATA_ENABLED", True)
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)
+    # These tests are about what a FULL-mode scrape draws (roles AND ownership
+    # edges). The default is claims_only (BE #391), under which the ownership
+    # becomes a claim and no edge — test_data_mode_it.py covers that side. Set
+    # explicitly: the tests used to pass or fail with whatever mode the shared
+    # cache had read from the previous test's database.
+    monkeypatch.setattr(settings, "SCRAPER_WIKIDATA_DATA_MODE", "full")
     monkeypatch.setattr(runner, "get_source_enabled", lambda _n: True)
     monkeypatch.setattr(runner, "search_entity", lambda q, limit=3: [{"id": "Q4934", "label": q}])
     # `run_scrape_person` asks Wikidata to classify the hits before choosing one.

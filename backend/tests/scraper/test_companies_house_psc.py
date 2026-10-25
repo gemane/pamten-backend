@@ -340,7 +340,7 @@ class TestPscFields:
     def test_birth_date(self):
         assert _birth_date({"date_of_birth": {"year": 1951, "month": 8}}) == "1951-08"
         assert _birth_date({"date_of_birth": {"year": 1951}}) == "1951"
-        assert _birth_date({}) == ""
+        assert _birth_date({}) is None            # never "": the date rule refuses an empty string
 
     def test_entity_psc_id_uses_uk_company_number(self):
         node_id, chid = _entity_psc_id({"identification": {

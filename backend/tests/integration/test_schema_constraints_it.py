@@ -81,7 +81,8 @@ def test_a_date_keeps_its_shape_at_any_precision_and_a_timestamp_its_offset(it_d
     assert "does not match" in _refused(
         it_db, "MATCH (a:Entity {id:'a'}) SET a.incorporated_on = '2019-03-04', a.created_at = '2019-03-04'")
     # a timestamp: what the writers send, with either spelling of UTC; never naive
-    for ok in ("2026-10-25T10:00:00.123456+00:00", "2026-10-25T10:00:00Z", "2026-10-25T12:00:00+02:00"):
+    for ok in ("2026-10-25T10:00:00.123456+00:00", "2026-10-25T10:00:00Z", "2026-10-25T12:00:00+02:00",
+               "2020-01-01T00:00Z"):                     # what the server makes of a parsed `…T00:00:00Z`
         it_db.run_command("MATCH (a:Entity {id:'a'}) SET a.last_scraped_at = $t", {"t": ok})
         assert it_db.run_sql("SELECT last_scraped_at AS t FROM Entity WHERE id = 'a'")[0]["t"] == ok
     for bad in ("2026-10-25", "2026-10-25T10:00:00", "yesterday"):

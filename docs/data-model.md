@@ -52,7 +52,8 @@ HAS_ROLE) are restricted to their vocabularies — built from the enums the code
 against (`EntityType`, `OwnershipType`, `READ_GRADES`), so a new value is added once;
 `country` and `hq_country` match `^[A-Z]{2}$`; **every date** matches
 `^[0-9]{4}(-[0-9]{2}){0,2}$` and **every timestamp**
-`YYYY-MM-DDTHH:MM:SS[.ffffff]` with an offset (`+00:00`, or `Z`) — the shape, never
+`YYYY-MM-DDTHH:MM[:SS[.ffffff]]` with an offset (`+00:00`, or `Z`; seconds optional because
+ArcadeDB parses a Cypher `…T00:00:00Z` into a datetime and stores it back as `…T00:00Z`) — the shape, never
 the calendar: a Wikidata year stays `2019-00-00`, a PSC birth month `1965-04`, but
 "4 March 2019", "03/04/2019", a timestamp in a date field and a naive timestamp are
 refused, because the readers compare dates as text and any other notation sorts into

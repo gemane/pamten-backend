@@ -299,9 +299,12 @@ _DATES: list[tuple[str, str]] = [
 ]
 #: The timestamps: ISO 8601 with a time AND an offset — what
 #: `datetime.now(timezone.utc).isoformat()` writes (`+00:00`; a few hundred
-#: older rows carry `Z`, which is the same instant). A naive timestamp is
-#: refused: without its offset it is not a point in time.
-_TIMESTAMP_PATTERN = ("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?"
+#: older rows carry `Z`, which is the same instant). Seconds are optional
+#: because ArcadeDB parses a Cypher value shaped `…T00:00:00Z` into a datetime
+#: and stores it back as `…T00:00Z` — the server's own spelling must pass its
+#: own rule. A naive timestamp is refused: without its offset it is not a
+#: point in time.
+_TIMESTAMP_PATTERN = ("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?"
                       "(Z|[+-][0-9]{2}:[0-9]{2})$")
 _TIMESTAMPS: list[tuple[str, str]] = [
     ("Entity", "created_at"), ("Entity", "last_scraped_at"), ("Entity", "sec_13f_scraped_at"),

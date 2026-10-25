@@ -419,9 +419,11 @@ class TestConstraints:
         ts = re.compile(schema._TIMESTAMP_PATTERN)
         assert ts.match(datetime.now(timezone.utc).isoformat())        # what every writer sends
         for ok in ("2026-10-25T10:00:00+00:00", "2026-10-25T10:00:00.123456+00:00",
-                   "2026-10-25T10:00:00.123456Z", "2026-10-25T10:00:00Z", "2026-10-25T12:00:00+02:00"):
+                   "2026-10-25T10:00:00.123456Z", "2026-10-25T10:00:00Z", "2026-10-25T12:00:00+02:00",
+                   "2020-01-01T00:00Z"):                 # ArcadeDB's own spelling of a parsed instant
             assert ts.match(ok), ok
-        for bad in ("2026-10-25", "2026-10-25T10:00:00", "2026-10-25 10:00:00+00:00", "yesterday", ""):
+        for bad in ("2026-10-25", "2026-10-25T10:00:00", "2026-10-25T10:00", "2026-10-25 10:00:00+00:00",
+                    "yesterday", ""):
             assert not ts.match(bad), bad
 
     def test_a_pattern_travels_inside_an_sql_string_literal(self):

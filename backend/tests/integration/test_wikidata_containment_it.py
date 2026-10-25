@@ -57,7 +57,7 @@ class TestTheFreshnessGate:
         _seed_edge(graph, "sec-owner", SEC_CRED)
         _upsert_owns("sec-owner", "own-co", "wd-src", credibility_score=WD_CRED)
 
-        assert _edge(graph, "sec-owner")["seen"] == "2020-01-01T00:00Z"
+        assert _edge(graph, "sec-owner")["seen"] == OLD      # stored as seeded: the property is a declared STRING
 
     def test_but_its_corroboration_is_still_recorded(self, graph):
         # Containment must not cost the corroboration signal — a community source
@@ -79,7 +79,7 @@ class TestTheFreshnessGate:
         _upsert_owns("wd-owner", "own-co", "wd-src", credibility_score=WD_CRED)
 
         e = _edge(graph, "wd-owner")
-        assert e["seen"] != "2020-01-01T00:00Z"
+        assert e["seen"] != OLD
         assert e["stale"] is False
 
     def test_a_register_source_can_refresh_a_community_edge(self, graph):
@@ -91,7 +91,7 @@ class TestTheFreshnessGate:
         _upsert_owns("wd-owner", "own-co", "sec-src", credibility_score=SEC_CRED)
 
         e = _edge(graph, "wd-owner")
-        assert e["seen"] != "2020-01-01T00:00Z" and e["stale"] is False
+        assert e["seen"] != OLD and e["stale"] is False
 
 
 class TestTheStalenessPass:
