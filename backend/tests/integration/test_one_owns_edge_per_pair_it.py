@@ -325,7 +325,7 @@ class TestInferredMarkers:
         row = it_db.run_command(
             "MATCH (:Entity {id:'nc'})-[r:OWNS]->(:Entity {id:'dj'}) RETURN r.direct_or_indirect AS m, "
             "r.structure_basis AS b, r.also_ultimate AS au, r.source_id AS src")[0]
-        assert (row["m"], row.get("b"), row.get("au"), row["src"]) == ("indirect", None, None, "sec")
+        assert (row["m"], row.get("b"), row.get("au"), row["src"]) == ("indirect", None, False, "sec")
 
     def test_sec_never_overwrites_a_stated_marker_with_an_inferred_one(self, it_db):
         from app.scraper.sec_writer import _upsert_owns_sec

@@ -91,28 +91,62 @@ class TestHealPersonSources:
         assert issued == [("UPDATE [#3:0] SET source_id = :sid", {"sid": "uk-psc"})]
 
 
-class TestHealStaleFlags:
+class TestHealFlags:
+    """Every flag of `schema.FLAGS` is `false` where it was unset — `stale`
+    first, then the five that joined it on 2026-10-25."""
+
     def test_pages_until_no_unset_flag_is_left(self):
-        pages = [[{"rid": "#4:0"}, {"rid": "#4:1"}], []]
+        pages = {("OWNS", "stale"): [[{"rid": "#4:0"}, {"rid": "#4:1"}], []],
+                 ("Entity", "is_nominee"): [[{"rid": "#2:7"}], []]}
         issued = []
 
         def run_sql(sql, params=None, **k):
             issued.append(sql)
             if sql.startswith("SELECT @rid"):
-                return pages.pop(0)
+                for (label, col), pg in pages.items():
+                    if f"FROM {label} WHERE {col} IS NULL" in sql:
+                        return pg.pop(0)
+                return []
             return []
         with patch.object(m, "run_sql", run_sql):
-            res = m.heal_stale_flags(apply=True)
-        assert res == {"fixed": 2, "applied": True}
+            res = m.heal_flags(apply=True)
+        assert res["fixed"] == 3 and res["applied"] is True
+        assert res["OWNS.stale"] == 2 and res["Entity.is_nominee"] == 1 and res["OWNS.shortcut"] == 0
         assert "UPDATE [#4:0, #4:1] SET stale = false" in issued
+        assert "UPDATE [#2:7] SET is_nominee = false" in issued
         assert issued[0] == "SELECT @rid AS rid FROM OWNS WHERE stale IS NULL LIMIT 2000"
+        assert "SELECT @rid AS rid FROM Person WHERE on_demand_scraped IS NULL LIMIT 2000" in issued
+
+    def test_every_declared_flag_is_healed(self):
+        from app.db.schema import FLAGS
+        assert set(FLAGS) == {("OWNS", "stale"), ("OWNS", "shortcut"), ("OWNS", "also_ultimate"),
+                              ("Entity", "is_nominee"), ("Entity", "on_demand_scraped"),
+                              ("Person", "on_demand_scraped")}
+        assert ("Entity", "active") not in FLAGS          # null = no register has said
 
     def test_a_dry_run_only_counts(self):
         issued = []
         with patch.object(m, "run_sql", lambda s, p=None, **k: issued.append(s) or [{"n": 1274}]):
-            res = m.heal_stale_flags(apply=False)
-        assert res == {"fixed": 1274, "applied": False}
-        assert issued == ["SELECT count(*) AS n FROM OWNS WHERE stale IS NULL"]
+            res = m.heal_flags(apply=False)
+        assert res["fixed"] == 1274 * 6 and res["applied"] is False and res["OWNS.also_ultimate"] == 1274
+        assert issued[0] == "SELECT count(*) AS n FROM OWNS WHERE stale IS NULL"
+        assert not any(s.startswith("UPDATE") for s in issued)
+
+
+class TestHealEmptyStrings:
+    def test_an_empty_description_is_removed_a_real_one_kept(self):
+        calls = []
+        with patch.object(m, "run_sql", lambda s, p=None, **k: calls.append(s) or [{"n": 1378}]):
+            res = m.heal_empty_strings(apply=True)
+        assert res["Person.description"] == 1378
+        assert "UPDATE Person REMOVE description WHERE description = ''" in calls
+
+    def test_a_dry_run_only_counts(self):
+        calls = []
+        with patch.object(m, "run_sql", lambda s, p=None, **k: calls.append(s) or [{"n": 2}]):
+            res = m.heal_empty_strings(apply=False)
+        assert res["Person.description"] == 2
+        assert not any(c.startswith("UPDATE") for c in calls)
 
 
 class TestWritersUseTheFold:
@@ -216,17 +250,18 @@ class TestHealEmptyLists:
         assert not any(c.startswith("UPDATE") for c in calls)
 
     def test_heal_all_runs_every_model_gap_heal(self):
-        names = ["nationalities", "countries", "person_sources", "stale_flags", "empty_lists"]
+        names = ["nationalities", "countries", "person_sources", "flags", "empty_lists"]
         with patch.object(m, "heal_nationalities", lambda a: "n"), patch.object(m, "heal_countries", lambda a: "c"), \
-             patch.object(m, "heal_person_sources", lambda a: "p"), patch.object(m, "heal_stale_flags", lambda a: "s"), \
-             patch.object(m, "heal_empty_lists", lambda a: "e"), \
+             patch.object(m, "heal_person_sources", lambda a: "p"), patch.object(m, "heal_flags", lambda a: "s"), \
+             patch.object(m, "heal_empty_lists", lambda a: "e"), patch.object(m, "heal_empty_strings", lambda a: "es"), \
              patch.object(m, "heal_dead_keys", lambda a: "d"), patch.object(m, "heal_claim_dates", lambda a: "cd"), \
              patch.object(m, "heal_address_keys", lambda a: "ak"), patch.object(m, "heal_person_aliases", lambda a: "pa"), \
              patch("app.scraper.run_log.heal_placeholders", lambda a: "r"), \
              patch("app.roles.heal_seat_claim_filings", lambda a: "f"):
             res = m.heal_all(apply=False)
-        assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates", "address_keys", "person_aliases"]
-        assert res["person_aliases"] == "pa"
+        assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates", "address_keys",
+                                     "person_aliases", "empty_strings"]
+        assert res["person_aliases"] == "pa" and res["empty_strings"] == "es" and res["flags"] == "s"
         assert res["run_log"] == "r" and res["seat_filings"] == "f"
         assert res["dead_keys"] == "d" and res["claim_dates"] == "cd"
 

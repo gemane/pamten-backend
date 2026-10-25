@@ -26,18 +26,33 @@ def test_the_heals_bring_an_older_database_to_one_field(it_db):
     # the write (an UPDATE to null leaves null — the default applies to new rows)
     it_db.run_command("MATCH (a:Entity {id:'e1'})-[r:OWNS]->(b:Entity {id:'e2'}) SET r.stale = null")
     assert it_db.run_sql("SELECT count(*) AS n FROM OWNS WHERE stale IS NULL")[0]["n"] == 1
+    # the other flags the same way (2026-10-25): a voting group written before
+    # the default had no nominee flag, every person no on-demand flag
+    it_db.run_command("MATCH (e:Entity {id:'e3'}) SET e.is_nominee = null")
+    it_db.run_command("MATCH (p:Person {id:'p3'}) SET p.on_demand_scraped = null")
+    # an empty description beside a real one
+    it_db.run_command("CREATE (:Person {id:'p5', full_name:'E', description:'', source_id:'sec-edgar'})")
+    it_db.run_command("CREATE (:Person {id:'p6', full_name:'F', description:'A banker', source_id:'wikidata'})")
 
     dry = heal_all(apply=False)
     # the dry run counts every empty list as it stands — the two the fold will
     # fill and the two nothing names; the apply below runs the fold first
     assert dry["empty_lists"] == {"applied": False, "Person.nationalities": 2, "Entity.countries": 2}
     assert dry["nationalities"]["dropped"] == 2 and dry["nationalities"]["folded"] == 1
-    assert dry["countries"]["fixed"] == 1 and dry["person_sources"]["stamped"] == 1 and dry["stale_flags"]["fixed"] == 1
+    assert dry["countries"]["fixed"] == 1 and dry["person_sources"]["stamped"] == 1
+    assert dry["flags"]["fixed"] == 3 and dry["flags"]["OWNS.stale"] == 1
+    assert dry["flags"]["Entity.is_nominee"] == 1 and dry["flags"]["Person.on_demand_scraped"] == 1
+    assert dry["empty_strings"] == {"applied": False, "Person.description": 1}
     assert it_db.run_sql("SELECT nationality FROM Person WHERE id = 'chpsc:01:a'")[0]["nationality"] == "GB"   # untouched
 
     res = heal_all(apply=True)
     assert res["nationalities"]["dropped"] == 2 and res["countries"]["fixed"] == 1
-    assert res["person_sources"]["stamped"] == 1 and res["stale_flags"]["fixed"] == 1
+    assert res["person_sources"]["stamped"] == 1 and res["flags"]["fixed"] == 3
+    assert it_db.run_sql("SELECT is_nominee FROM Entity WHERE id = 'e3'")[0]["is_nominee"] is False
+    assert it_db.run_sql("SELECT on_demand_scraped FROM Person WHERE id = 'p3'")[0]["on_demand_scraped"] is False
+    assert res["empty_strings"]["Person.description"] == 1
+    assert "description" not in it_db.run_sql("SELECT FROM Person WHERE id = 'p5'")[0]
+    assert it_db.run_sql("SELECT description FROM Person WHERE id = 'p6'")[0]["description"] == "A banker"
     rows = {r["id"]: r for r in it_db.run_sql("SELECT id, nationalities, source_id FROM Person")}
     assert rows["chpsc:01:a"]["nationalities"] == ["GB"] and rows["chpsc:01:a"]["source_id"] == "uk-psc"
     assert rows["p2"]["nationalities"] == ["US", "CA"] and rows["p3"]["nationalities"] == ["DE"]
@@ -52,8 +67,8 @@ def test_the_heals_bring_an_older_database_to_one_field(it_db):
     # idempotent
     again = heal_all(apply=True)
     assert again["nationalities"]["dropped"] == 0 and again["countries"]["fixed"] == 0
-    assert again["person_sources"]["stamped"] == 0 and again["stale_flags"]["fixed"] == 0
-    assert again["empty_lists"]["Person.nationalities"] == 0
+    assert again["person_sources"]["stamped"] == 0 and again["flags"]["fixed"] == 0
+    assert again["empty_lists"]["Person.nationalities"] == 0 and again["empty_strings"]["Person.description"] == 0
 
 
 def test_the_writers_fold_the_scalar_into_the_list(it_db):
@@ -78,14 +93,16 @@ def test_the_writers_leave_an_unknown_list_absent(it_db):
     from app.scraper.runner import _upsert_entity, _upsert_person
 
     pid = _upsert_person("Nobody Known", nationality=None, description="", wikidata_id="Q9")
-    assert "nationalities" not in it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": pid})[0]
+    row = it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": pid})[0]
+    assert "nationalities" not in row and row.get("description") is None       # '' is absent too
     _upsert_person("Nobody Known", nationality="FR", description="", wikidata_id="Q9")      # learned later: filled
     assert it_db.run_sql("SELECT nationalities FROM Person WHERE id = :id", {"id": pid})[0]["nationalities"] == ["FR"]
     _upsert_person("Nobody Known", nationality=None, description="", wikidata_id="Q9")      # a blank never blanks
     assert it_db.run_sql("SELECT nationalities FROM Person WHERE id = :id", {"id": pid})[0]["nationalities"] == ["FR"]
 
     nid = _upsert_person_by_name("Jane Form", source_id="sec-edgar")
-    assert "nationalities" not in it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": nid})[0]
+    row = it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": nid})[0]
+    assert "nationalities" not in row and row.get("description") is None
 
     eid = _upsert_entity("Stateless Ltd", "company", None, None, None, "", "Q8", countries=[], source_id="wikidata")
     assert "countries" not in it_db.run_sql("SELECT FROM Entity WHERE id = :id", {"id": eid})[0]
@@ -161,11 +178,14 @@ def test_the_person_merge_and_the_person_api_leave_an_unknown_list_absent(it_db)
     it_db.run_command("CREATE (:Person {id:'keep', full_name:'Larry Page', description:''})")
     it_db.run_command("CREATE (:Person {id:'dup', full_name:'Page Lawrence', description:''})")
     merge_person_records("keep", "dup")
-    assert "nationalities" not in it_db.run_sql("SELECT FROM Person WHERE id = 'keep'")[0]
+    kept = it_db.run_sql("SELECT FROM Person WHERE id = 'keep'")[0]
+    assert "nationalities" not in kept
+    assert kept.get("description") is None          # '' from either side is absent, never copied
 
-    made = create_person(PersonCreate(first_name="Ada", last_name="Lovelace"), _={"role": "contributor"})
+    made = create_person(PersonCreate(first_name="Ada", last_name="Lovelace", description=""), _={"role": "contributor"})
     pid = made["id"] if isinstance(made, dict) else made.id
-    assert "nationalities" not in it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": pid})[0]
+    row = it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": pid})[0]
+    assert "nationalities" not in row and row.get("description") is None
     update_person(pid, PersonCreate(first_name="Ada", last_name="Lovelace", nationalities=["GB"]), _={"role": "contributor"})
     assert it_db.run_sql("SELECT nationalities FROM Person WHERE id = :id", {"id": pid})[0]["nationalities"] == ["GB"]
 

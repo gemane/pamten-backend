@@ -397,6 +397,11 @@ class TestConstraints:
         assert rules[("Entity", "country", "REGEXP")] == "^[A-Z]{2}$"
         assert rules[("OWNS", "stake_percent", "MIN")] == "0" and rules[("OWNS", "stake_percent", "MAX")] == "100"
         assert rules[("OWNS", "stale", "DEFAULT")] == "false"
+        # every flag that means "not asserted" (2026-10-25); `active` stays three-valued
+        for key in (("OWNS", "shortcut"), ("OWNS", "also_ultimate"), ("Entity", "is_nominee"),
+                    ("Entity", "on_demand_scraped"), ("Person", "on_demand_scraped")):
+            assert rules[(*key, "DEFAULT")] == "false"
+        assert ("Entity", "active", "DEFAULT") not in rules
         for key in (("Entity", "id"), ("Person", "id"), ("Claim", "claim_key"), ("Claim", "to_id")):
             assert rules[(*key, "MANDATORY")] == "true" and rules[(*key, "NOTNULL")] == "true"
         # a claim is what one source says: it cannot exist without naming it

@@ -75,7 +75,9 @@ def test_both_cases_in_one_graph(it_db):
     assert _flag("parent", "leaf") is True
     assert _flag("parent", "orphan") is False
     assert res["marked_redundant"] == 1
-    assert res["marked_load_bearing"] == 1
+    # `shortcut` defaults to false since 2026-10-25, so a fresh load-bearing
+    # edge already says what the pass concludes: unchanged, not newly marked
+    assert res["marked_load_bearing"] == 0 and res["unchanged"] == 1
 
 
 def test_a_chain_through_another_shortcut_does_not_count(it_db):

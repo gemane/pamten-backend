@@ -833,6 +833,17 @@ class TestUpsertPersonDetail:
         assert create.kwargs["nats"] == ["US", "CA"]
         # one field: the scalar twin is neither written nor derived (2026-10-25)
         assert "nat" not in create.kwargs and "nationality" not in create.args[0]
+        assert create.kwargs["desc"] is None          # absent, never '' (2026-10-25)
+
+    def test_an_empty_description_is_absent_on_create_and_backfill(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_person("Nobody Known", nationality=None, description="", wikidata_id="Q9")
+        assert self._create_call(session).kwargs["desc"] is None
+        ctx, session = _make_session_mock(single_returns=[{"id": "p-1"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            _upsert_person("Nobody Known", nationality=None, description="", wikidata_id="Q9")
+        assert self._backfill_call(session).kwargs["desc"] is None
 
     def test_the_countries_list_always_carries_the_country(self):
         from app.scraper.runner import _upsert_entity

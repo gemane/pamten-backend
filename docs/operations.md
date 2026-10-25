@@ -32,7 +32,9 @@ it unnecessary. Entities loaded before that date lack `active` /
 
 The same goes for the share a record states (`RelationshipQuantifiers`, read since
 2026-10-13 as `stake_percent`): fill it once onto an older database, fill-only — an
-edge that already holds a figure, from GLEIF or another source, keeps it:
+edge that already holds a figure, from GLEIF or another source, keeps it. The pair's
+GLEIF claim is filled the same way (since 2026-10-25; the first version left 154 dev
+claims stating no share beside an edge stating 100 %):
 
 ```bash
 python3 manage.py gleif-rr-stakes --file ~/data/rr-cdf/gleif-rr.json.zip --dry-run

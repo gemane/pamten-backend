@@ -674,7 +674,7 @@ def merge_person_records(keep: str, dup: str) -> None:
                 keep.created_at    = $created_at
         """, keep=keep,
              created_at=_earliest_birth(keep, dup),
-             description=dup_node.get("description") or "",
+             description=dup_node.get("description") or None,   # absent, never ''
              alias=alias_union,
              nationalities=dup_node.get("nationalities") or None,   # absent, never []
              **{p: dup_node.get(p) for p in BIO_COALESCE})
@@ -733,7 +733,8 @@ def create_person(person: PersonCreate, _: dict = Depends(require_contributor)):
             id=person_id,
             created_at=datetime.now(timezone.utc).isoformat(),
             full_name=full_name,
-            **{**person.model_dump(), "nationalities": person.nationalities or None},
+            **{**person.model_dump(), "nationalities": person.nationalities or None,
+               "description": person.description or None},      # absent, never ''
         )
         record = result.single()
         if not record:
@@ -799,7 +800,8 @@ def update_person(person_id: str, person: PersonCreate, _: dict = Depends(requir
         result = session.run(query,
             id=person_id,
             full_name=full_name,
-            **{**person.model_dump(), "nationalities": person.nationalities or None},
+            **{**person.model_dump(), "nationalities": person.nationalities or None,
+               "description": person.description or None},      # absent, never ''
         )
         record = result.single()
         if not record:

@@ -678,30 +678,42 @@ def heal_stakes(filepath: str, source_id: str, dry_run: bool = False, run=None) 
 
     Fill-only: a pair's open edge **whose answer GLEIF holds** gains the
     stated share where it has none; a stake another source put there, or an
-    earlier GLEIF figure, stays. Idempotent; ``dry_run`` counts and writes
-    nothing; the daily delta keeps it current afterwards. ``run`` is the
-    caller's run_command (the one its tests mock).
+    earlier GLEIF figure, stays. The pair's GLEIF **claim** gains it the same
+    way (2026-10-25: the first version filled the edge only, so 154 dev edges
+    stated 100 % beside a claim row saying none — a fresh import writes both
+    from one property bag, see `_BatchWriter._claim`). Idempotent; ``dry_run``
+    counts and writes nothing; the daily delta keeps it current afterwards.
+    ``run`` is the caller's run_command (the one its tests mock).
     """
     if run is None:
         from app.db.arcadedb import run_command as run
+    from app.claims import KIND_OWNS, key_for
     from app.merged_ids import canonical_id
     pairs, records = _folded_pairs(filepath)
     stated = sorted((pc, _collapse(slot)[3]["stake_percent"]) for pc, slot in pairs.items()
                     if _collapse(slot)[3].get("stake_percent") is not None)
     counts = {"records": records, "pairs": len(pairs), "with_stake": len(stated), "filled": 0,
-              "already": 0, "dry_run": dry_run}
+              "already": 0, "claims_filled": 0, "claims_already": 0, "dry_run": dry_run}
     if dry_run:
         return counts
     for (parent, child), stake in stated:
+        p, c = canonical_id(f"lei:{parent}"), canonical_id(f"lei:{child}")
         rows = run(
             "MATCH (a:Entity {id: $p})-[r:OWNS]->(b:Entity {id: $c}) "
             "WHERE r.source_id = $src AND r.filing_type = 'RR' AND r.until IS NULL "
             "AND r.stake_percent IS NULL "
             "SET r.stake_percent = $stake RETURN count(r) AS n",
-            {"p": canonical_id(f"lei:{parent}"), "c": canonical_id(f"lei:{child}"),
-             "src": source_id, "stake": stake})
+            {"p": p, "c": c, "src": source_id, "stake": stake})
         n = int((rows or [{}])[0].get("n") or 0)
         counts["filled" if n else "already"] += 1
+        key = key_for({"kind": KIND_OWNS, "from_id": p, "to_id": c, "source_id": source_id,
+                       "filing_type": "RR"})
+        rows = run(
+            "MATCH (cl:Claim {claim_key: $key}) WHERE cl.stake_percent IS NULL "
+            "SET cl.stake_percent = $stake RETURN count(cl) AS n",
+            {"key": key, "stake": stake})
+        n = int((rows or [{}])[0].get("n") or 0)
+        counts["claims_filled" if n else "claims_already"] += 1
     log.info("RR stake heal: %s", counts)
     return counts
 

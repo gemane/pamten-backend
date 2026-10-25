@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 
 from app.db.arcadedb import run_sql, run_sqlscript
+from app.db.schema import FLAGS
 
 log = logging.getLogger(__name__)
 
@@ -124,23 +125,33 @@ def heal_person_sources(apply: bool = True) -> dict:
     return out
 
 
-def heal_stale_flags(apply: bool = True) -> dict:
-    """`stale = false` on every OWNS edge where the flag is unset. A whole-type
-    scan paged by LIMIT; the WHERE excludes what a pass has done, so it ends."""
-    out = {"fixed": 0, "applied": bool(apply)}
-    if not apply:
-        rows = run_sql("SELECT count(*) AS n FROM OWNS WHERE stale IS NULL", timeout=3600)
-        out["fixed"] = int((rows or [{}])[0].get("n") or 0)
-        return out
-    while True:
-        rows = run_sql(f"SELECT @rid AS rid FROM OWNS WHERE stale IS NULL LIMIT {_EDGE_PAGE}", timeout=3600)
-        rids = [str(r["rid"]) for r in rows or [] if r.get("rid")]
-        if not rids:
-            break
-        for i in range(0, len(rids), _CHUNK):
-            run_sql(f"UPDATE [{', '.join(rids[i:i + _CHUNK])}] SET stale = false")
-        out["fixed"] += len(rids)
-    log.info("stale flags heal: %s", out)
+def heal_flags(apply: bool = True) -> dict:
+    """`false` on every flag of `schema.FLAGS` that is unset: `OWNS.stale`
+    (1,274 dev edges, 2026-10-25), then `shortcut` (8,177), `also_ultimate`
+    (8,194), `Entity.is_nominee` (the 38 voting groups), `on_demand_scraped`
+    (6,704 entities, every person). Whole-type scans paged by LIMIT; the
+    WHERE excludes what a pass has done, so each ends. `fixed` is the total,
+    `Type.flag` the share of each."""
+    out: dict = {"fixed": 0, "applied": bool(apply)}
+    for label, col in FLAGS:
+        key = f"{label}.{col}"
+        if not apply:
+            rows = run_sql(f"SELECT count(*) AS n FROM {label} WHERE {col} IS NULL", timeout=3600)
+            out[key] = int((rows or [{}])[0].get("n") or 0)
+            out["fixed"] += out[key]
+            continue
+        out[key] = 0
+        while True:
+            rows = run_sql(f"SELECT @rid AS rid FROM {label} WHERE {col} IS NULL LIMIT {_EDGE_PAGE}",
+                           timeout=3600)
+            rids = [str(r["rid"]) for r in rows or [] if r.get("rid")]
+            if not rids:
+                break
+            for i in range(0, len(rids), _CHUNK):
+                run_sql(f"UPDATE [{', '.join(rids[i:i + _CHUNK])}] SET {col} = false")
+            out[key] += len(rids)
+        out["fixed"] += out[key]
+    log.info("flags heal: %s", out)
     return out
 
 
@@ -165,6 +176,28 @@ def heal_empty_lists(apply: bool = True) -> dict:
         if apply and n:
             run_sql(f"UPDATE {label} REMOVE {col} WHERE {where}", timeout=3600)
     log.info("empty lists heal: %s", out)
+    return out
+
+
+#: The strings that are absent when the source stated nothing — never `''`.
+#: `Person.description`: the SEC and PSC person writers wrote an empty string
+#: and the Wikidata path `description or ""` (1,378 dev persons, 2026-10-25).
+EMPTY_STRINGS: tuple[tuple[str, str], ...] = (("Person", "description"),)
+
+
+def heal_empty_strings(apply: bool = True) -> dict:
+    """Remove every property of `EMPTY_STRINGS` that is an empty string: the
+    writers now leave it absent when no source described the person. A
+    whole-type scan per field — run with --db-url."""
+    out: dict = {"applied": bool(apply)}
+    for label, col in EMPTY_STRINGS:
+        where = f"{col} = ''"
+        rows = run_sql(f"SELECT count(*) AS n FROM {label} WHERE {where}", timeout=3600)
+        n = int((rows or [{}])[0].get("n") or 0)
+        out[f"{label}.{col}"] = n
+        if apply and n:
+            run_sql(f"UPDATE {label} REMOVE {col} WHERE {where}", timeout=3600)
+    log.info("empty strings heal: %s", out)
     return out
 
 
@@ -269,12 +302,14 @@ def heal_all(apply: bool = True) -> dict:
     """Every model-gap heal in one call (`manage.py heal-model-gaps`): the
     2026-10-25 survey's four, then the round-four three — empty lists, the run
     log's `''` placeholders, the SEC seat claims' filing type — then the
-    round-five two: dead keys, undated role claims."""
+    round-five two: dead keys, undated role claims — and round six: every
+    flag false where unset, empty descriptions gone."""
     from app.roles import heal_seat_claim_filings
     from app.scraper.run_log import heal_placeholders
     return {"nationalities": heal_nationalities(apply), "countries": heal_countries(apply),
-            "person_sources": heal_person_sources(apply), "stale_flags": heal_stale_flags(apply),
+            "person_sources": heal_person_sources(apply), "flags": heal_flags(apply),
             "empty_lists": heal_empty_lists(apply), "run_log": heal_placeholders(apply),
             "seat_filings": heal_seat_claim_filings(apply),
             "dead_keys": heal_dead_keys(apply), "claim_dates": heal_claim_dates(apply),
-            "address_keys": heal_address_keys(apply), "person_aliases": heal_person_aliases(apply)}
+            "address_keys": heal_address_keys(apply), "person_aliases": heal_person_aliases(apply),
+            "empty_strings": heal_empty_strings(apply)}

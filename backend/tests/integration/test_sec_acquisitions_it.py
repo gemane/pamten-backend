@@ -91,7 +91,7 @@ def test_writes_the_closing_as_a_stated_start_with_the_price_and_reads_it_back(i
     assert wiz["url"] == Q1_URL
     assert wiz["grade"] == "field"
     assert wiz["doi"] is None, "the filer is the group; it does not say which company bought"
-    assert wiz["shortcut"] is None, "no chain in the graph → the edge is drawn"
+    assert wiz["shortcut"] is False, "no chain in the graph → the edge is drawn"
     claims = _claims(it_db, "Wiz Inc")
     assert len(claims) == 1
     assert claims[0] == {"ft": "10-Q XBRL", "since": "2026-03-11", "basis": None,
@@ -165,8 +165,8 @@ def test_a_pair_the_register_draws_through_a_chain_is_a_shortcut(it_db):
         "the deal's date and price are still recorded on the edge"
     chain = it_db.run_command(
         "MATCH (:Entity {id:'lei:GOOGLE'})-[r:OWNS]->(:Entity {id:'lei:WIZ'}) RETURN r.shortcut AS s")
-    assert dict(chain[0])["s"] is None, "the chain itself is untouched"
-    assert _edge(it_db, "Intersect")["shortcut"] is None, "no chain to Intersect → drawn"
+    assert dict(chain[0])["s"] is False, "the chain itself is untouched"
+    assert _edge(it_db, "Intersect")["shortcut"] is False, "no chain to Intersect → drawn"
 
 
 def test_rerun_is_gated_idempotent_and_force_rereads(it_db):
