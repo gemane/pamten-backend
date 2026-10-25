@@ -1383,6 +1383,40 @@ def _apply_entity_merge(dead: dict, keep: dict) -> int:
     return migrated
 
 
+def merge_entities_by_id(keep_id: str, dead_id: str, apply: bool = False) -> dict:
+    """Fold the entity `dead_id` into `keep_id` by hand — the one merge path the
+    automatic dedup never takes: two nodes that share no hard id and whose
+    names the normaliser only now keys alike (2026-10-25: GLEIF's "GRUPO
+    TELEVISA S A B" and EDGAR's "GRUPO TELEVISA, S.A.B."). The survivor's own
+    values win and its gaps fill from the loser (`_merge_entity_props`); edges
+    and claims move, a forwarding address and a merge-log row are written, the
+    loser is deleted. Refused when the pair carries a keep-separate mark
+    (NOT_DUPLICATE), which a human set on purpose. Dry run unless `apply`."""
+    if keep_id == dead_id:
+        raise ValueError("keep and dead are the same entity")
+    rows = {r["id"]: dict(r) for r in run_sql(
+        "SELECT FROM Entity WHERE id = :a OR id = :b", {"a": keep_id, "b": dead_id})}
+    keep, dead = rows.get(keep_id), rows.get(dead_id)
+    if keep is None or dead is None:
+        missing = [i for i, r in ((keep_id, keep), (dead_id, dead)) if r is None]
+        raise ValueError(f"no such entity: {', '.join(missing)}")
+    marked = run_sql("SELECT count(*) AS n FROM NOT_DUPLICATE WHERE (@out.id = :a AND @in.id = :b) "
+                     "OR (@out.id = :b AND @in.id = :a)", {"a": keep_id, "b": dead_id})
+    if marked and marked[0]["n"]:
+        raise ValueError("the pair is marked keep-separate (NOT_DUPLICATE); not merged")
+    out = {"keep": {"id": keep_id, "name": keep.get("name")},
+           "dead": {"id": dead_id, "name": dead.get("name")},
+           "carried": sorted(_merge_entity_props(keep, dead)),
+           "edges": int(run_sql("SELECT count(*) AS n FROM (SELECT expand(bothE()) FROM Entity WHERE id = :id)",
+                                {"id": dead_id})[0]["n"]),
+           "claims": int(run_sql("SELECT count(*) AS n FROM Claim WHERE from_id = :id OR to_id = :id",
+                                 {"id": dead_id})[0]["n"]),
+           "applied": bool(apply)}
+    if apply:
+        out["migrated"] = _apply_entity_merge(dead, keep)
+    return out
+
+
 def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     """Scoped, high-confidence-only entity auto-merge — the entity twin of the
     post-scrape person dedup. For the entities a scrape just touched, merge any

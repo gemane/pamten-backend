@@ -498,8 +498,11 @@ rule carries the old keys: `manage.py heal-name-keys` recomputes them (a 13D vot
 left alone — its key is the writer's own, "voting group <issuer>", not its display name's;
 the first dev run rewrote three of those and had to be restored) and names the keys
 two entities now share for the first time (dev: 31 keys changed, one new pair, Televisa),
-which are merged by hand in the app — a same-name pair is a candidate, never an automatic
-merge (see the father/son and Domino's notes).
+which are merged by hand — `manage.py merge-entities --keep ID --dead ID --apply`, since the
+app has no entity-merge button; a same-name pair is a candidate, never an automatic merge (see
+the father/son and Domino's notes). Keep the node that holds more (the SEC Televisa with its
+CIK and 21 seats; the GLEIF Cervecería with its LEI): the survivor's values win and its gaps
+fill from the loser, so the LEI or CIK the loser carried arrives either way.
 
 ## Design note: country-aware legal-form stripping (not built)
 
