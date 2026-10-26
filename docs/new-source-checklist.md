@@ -528,7 +528,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
         documents of one source written into the one claim per (pair, source) in a
         single run — the 13G/A, then the Form 4 — recorded a 28 → 20 → 28 flap as
         history on every run, a ping-pong that had been silent before history
-        existed. Wrap the runner's write phase in `one_statement_per_run()`
+        existed (since 2026-10-26 an SEC claim is keyed by filing family, so those
+        two are two claims and two series; the rule stands for two documents of
+        one family). Wrap the runner's write phase in `one_statement_per_run()`
         (`app.stake_history`): the stored claim is read once, the rows are computed
         at the end against the run's LAST write. Any runner that can write a claim
         twice per run needs it. And a statement dated BEFORE the one it replaces

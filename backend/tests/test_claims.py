@@ -138,11 +138,30 @@ class TestAcquisitionClaimKey:
             claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec",
                         filing_type="10-Q XBRL")["claim_key"], "one acquisition claim per pair, whichever form"
 
-    def test_other_filing_types_keep_the_plain_key(self):
-        plain = claim_key(KIND_OWNS, "A", "B", "sec")
-        for ft in ("EX-21", "EX-8.1", "13G/A", "13F", "RR", None):
-            assert claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec",
+    def test_every_sec_filing_family_is_its_own_claim_for_the_pair(self):
+        """2026-10-26: a Form 4, a 13G and a 13F about one pair are three
+        statements of the register, keyed apart; an amendment of the same
+        family updates its own claim."""
+        from app.claims import filing_family
+        keys = {ft: claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec",
+                                filing_type=ft)["claim_key"]
+                for ft in ("Form 4", "Form 3", "13G", "13G/A", "13D/A", "SC 13D", "13F", "EX-21", "EX-8.1", "10-Q XBRL")}
+        assert keys["Form 4"] == keys["Form 3"]                       # the insider statements
+        assert keys["13G"] == keys["13G/A"] == keys["13D/A"] == keys["SC 13D"]
+        assert len({keys["Form 4"], keys["13G"], keys["13F"], keys["EX-21"], keys["EX-8.1"], keys["10-Q XBRL"]}) == 6
+        assert filing_family("13G/A") == "13dg" and filing_family("Form 4") == "insider"
+        assert filing_family("EX-21") == "ex21" and filing_family("13F") == "13f"
+
+    def test_another_sources_filing_type_leaves_the_plain_key(self):
+        from app.claims import filing_family, owns_claim_key
+        plain = claim_key(KIND_OWNS, "A", "B", "gleif")
+        for ft in ("RR", "snapshot", "", None):
+            assert claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="gleif",
                                filing_type=ft)["claim_key"] == plain
+            assert filing_family(ft) is None
+        assert owns_claim_key("A", "B", "gleif", "RR") == plain
+        assert owns_claim_key("A", "B", "sec", "EX-21") == \
+            claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type="EX-21")["claim_key"]
 
     def test_key_for_reproduces_the_stored_key(self):
         from app.claims import key_for
@@ -150,6 +169,11 @@ class TestAcquisitionClaimKey:
         assert key_for(deal) == deal["claim_key"], "a heal must never fold it into the plain claim"
         plain = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type="EX-21")
         assert key_for(plain) == plain["claim_key"]
+        g = claim_props(kind=KIND_OWNS, from_id="A", to_id="B", source_id="sec", filing_type="13G/A")
+        assert key_for(g) == g["claim_key"] != plain["claim_key"]
+        # a claim written before 2026-10-26 under the plain key is re-keyed by the heal
+        old = {**g, "claim_key": claim_key(KIND_OWNS, "A", "B", "sec")}
+        assert key_for(old) == g["claim_key"]
 
 
 class TestHowFarTheRegisterCheckedIt:

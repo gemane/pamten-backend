@@ -170,9 +170,20 @@ single, fast, current-best answer — and the claims sit beside it as the eviden
 (:Claim {kind:'owns', from_id, to_id, stake_percent: 75, source_id:'ch-psc'})
 ```
 
-- **Keyed** on `claim_key` = digest of (kind, from_id, to_id, source_id — and, for a role, the canonical role), UNIQUE.
+- **Keyed** on `claim_key` = digest of (kind, from_id, to_id, source_id — and, for a role, the canonical role; for an ownership claim, the **SEC filing family**), UNIQUE.
   A source re-asserting the same relationship updates its own row, so re-imports
-  are idempotent here even though the edges still need a dedup pass. The parts
+  are idempotent here even though the edges still need a dedup pass. SEC EDGAR
+  speaks about one pair through several filing families, each its own statement:
+  `insider` (Form 3/4/5, the holding of record), `13dg` (Schedule 13D/G, the
+  beneficial stake the edge rule prefers), `13f`, `ex21`, `ex81`, `acquisition`
+  (the acquirer's XBRL) — `claims.filing_family`, read off the filing type's text,
+  so no other source's key changed. Since 2026-10-26 (the acquisition since
+  2026-10-12); before, one claim per (pair, source) held whichever filing was read
+  last, and the Sources panel showed one "SEC EDGAR" line where the register had
+  made two or three statements. An amendment of the same family still updates its
+  own claim. The stake history (`app.stake_history`) is kept per claim, so each
+  family is its own series and a Form 4 number no longer "replaces" a 13G one.
+  `manage.py heal-claim-keys` re-keys a database written before. The parts
   are length-prefixed before hashing, so an id containing the separator cannot
   make two different claims collide.
 - **Written by the edge writers themselves** — `_BatchWriter.owns/role/succeeded_by`
