@@ -1,5 +1,6 @@
 from typing import Annotated
 
+import unicodedata
 import logging
 import re
 
@@ -144,7 +145,36 @@ def resolve_best_entity(q: str, country: str | None = None) -> dict | None:
     if not rows:
         return None
     ranked = sorted(enumerate(rows), key=lambda ir: _rank(ir[1], q_lower, tokens, ir[0], nn))
-    return ranked[0][1]
+    best = ranked[0][1]
+    # A best guess is not an answer. The candidates come from a full-text
+    # query that can match on one shared word, and the on-demand scrape acts on
+    # whatever comes back: "Voting group · 8 parties" resolved to Alibaba
+    # (every candidate only shared "group"), whose graph the client then drew
+    # around the group (2026-10-26). Taken only when it IS the query — the
+    # same normalised name, or every word of the query in one of its names.
+    return best if _credible_match(best, tokens, nn) else None
+
+
+def _credible_match(node: dict, tokens: list[str], nn: str | None) -> bool:
+    """Whether a candidate is the company the query names, not a neighbour
+    in the index: its normalised name (or an alias's) equals the query's, or
+    every word of the query occurs in its name, an alias or a register name.
+    Words without a letter or digit ("·", "&", "-") are not words."""
+    alias_raw = list(node.get("aliases") or []) + list(node.get("other_names") or [])
+    if nn and (node.get("name_normalized") == nn or any(normalize_entity_name(a) == nn for a in alias_raw if a)):
+        return True
+    # accents folded on both sides: "Nestlé" is NESTLE S.A. (the name
+    # normaliser keeps accents, so the key test above does not catch it)
+    words = [_fold(t) for t in tokens if any(ch.isalnum() for ch in t)]
+    if not words:
+        return False
+    names = [_fold(node.get("name") or "")] + [_fold(a) for a in alias_raw if a]
+    return any(all(w in n for w in words) for n in names)
+
+
+def _fold(text: str) -> str:
+    """Lowercased, accents removed (é → e), for comparing words across sources."""
+    return "".join(ch for ch in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(ch))
 
 
 def resolve_best_person(q: str) -> dict | None:

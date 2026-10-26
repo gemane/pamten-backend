@@ -46,7 +46,7 @@ from app.scraper.sec_writer import (
     _retire_superseded_bloc_edge, _roster_overlap, _rosters_match,               # noqa: F401
     _same_member, _split_member_key,                                             # noqa: F401
     _upsert_group_membership, _upsert_owns_sec,                                  # noqa: F401
-    _upsert_role_sec, _upsert_voting_group, _close_role_sec, form_label,                          # noqa: F401
+    _upsert_role_sec, _upsert_voting_group, _prune_group_membership, _close_role_sec, form_label,                          # noqa: F401
     stated_by_13dg,                                                              # noqa: F401
     write_acquisition_sec,                                                       # noqa: F401
 )
@@ -1896,6 +1896,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             # of its own, or the company would list both it and the group.
             _upsert_group_membership(investor_node_id, group_id,
                                      "Person" if is_individual else "Entity", source_id)
+            joined = {investor_node_id}
             for m in members:
                 m_individual = (m.get("type_code") in _INDIVIDUAL_CODES
                                 if m.get("type_code") else is_person_name(m["name"]))
@@ -1909,6 +1910,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                     scraped.append({"type": "entity", "name": m["name"], "role": "group member"})
                 _upsert_group_membership(mid, group_id,
                                          "Person" if m_individual else "Entity", source_id)
+                joined.add(mid)
+            # the roster is this filing's now: who it no longer names has left
+            _prune_group_membership(group_id, joined)
 
             _upsert_owns_sec(
                 owner_id=group_id, owned_id=target_id, source_id=source_id,
