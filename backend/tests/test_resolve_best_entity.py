@@ -45,3 +45,12 @@ def test_the_normalised_name_or_an_alias_is_a_match():
 def test_punctuation_is_not_a_word_and_nothing_is_nothing():
     assert _resolve("Johnson & Johnson", [{"id": "j", "name": "JOHNSON & JOHNSON", "name_normalized": "johnson johnson"}])["id"] == "j"
     assert _resolve("·", GROUPS) is None
+
+
+def test_the_search_text_counts_as_it_is_what_the_index_matched():
+    sx = {"id": "sx", "name": "Space Exploration Technologies Corp.", "name_normalized": "space exploration technologies",
+          "search_text": "Space Exploration Technologies Corp. SpaceX"}
+    assert _resolve("SpaceX", [sx])["id"] == "sx"
+    # and a description sharing one word is still no match
+    ali = {**GROUPS[1], "search_text": "Alibaba Group Holding Limited Chinese multinational technology group"}
+    assert _resolve("Voting group · 8 parties", [ali]) is None

@@ -158,7 +158,8 @@ def resolve_best_entity(q: str, country: str | None = None) -> dict | None:
 def _credible_match(node: dict, tokens: list[str], nn: str | None) -> bool:
     """Whether a candidate is the company the query names, not a neighbour
     in the index: its normalised name (or an alias's) equals the query's, or
-    every word of the query occurs in its name, an alias or a register name.
+    every word of the query occurs in its name, an alias, a register name or
+    its search text.
     Words without a letter or digit ("·", "&", "-") are not words."""
     alias_raw = list(node.get("aliases") or []) + list(node.get("other_names") or [])
     if nn and (node.get("name_normalized") == nn or any(normalize_entity_name(a) == nn for a in alias_raw if a)):
@@ -168,7 +169,11 @@ def _credible_match(node: dict, tokens: list[str], nn: str | None) -> bool:
     words = [_fold(t) for t in tokens if any(ch.isalnum() for ch in t)]
     if not words:
         return False
-    names = [_fold(node.get("name") or "")] + [_fold(a) for a in alias_raw if a]
+    # the search text too: it is what the full-text index matched on (name,
+    # description, aliases, registration number) — "SpaceX" lives only there
+    # on Space Exploration Technologies Corp.
+    names = ([_fold(node.get("name") or "")] + [_fold(a) for a in alias_raw if a]
+             + [_fold(node.get("search_text") or "")])
     return any(all(w in n for w in words) for n in names)
 
 
