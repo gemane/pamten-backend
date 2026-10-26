@@ -1133,6 +1133,18 @@ def cmd_schema_audit(args):
     sys.exit(1)
 
 
+def cmd_heal_group_memberships(args):
+    """Remove the membership lines of parties a voting group's roster no longer
+    names (sec_writer.heal_group_memberships) — the writer prunes them since
+    2026-10-26. Dry run unless --apply."""
+    from app.scraper.sec_writer import heal_group_memberships
+    res = heal_group_memberships(apply=args.apply)
+    verb = "removed" if args.apply else "would be removed (dry run — add --apply)"
+    print(f"{res['removed']} membership lines of former parties in {res['groups']} groups {verb}")
+    for line in res["lines"]:
+        print("  " + line)
+
+
 def cmd_heal_keyed_ids(args):
     """Give every uuid-keyed Entity and Person that carries a hard id the
     keyed id a new node gets today (app.node_ids: `lei:`, `wd:Q…`, `sec:{cik}`),
@@ -1541,6 +1553,12 @@ def _build_parser():
     p_hpt.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hpt.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hpt.set_defaults(func=cmd_heal_property_types)
+
+    p_hgm = subparsers.add_parser('heal-group-memberships',
+        help="Remove the membership lines of parties a voting group's roster no longer names. "
+             "Dry run unless --apply")
+    p_hgm.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hgm.set_defaults(func=cmd_heal_group_memberships)
 
     p_hki = subparsers.add_parser('heal-keyed-ids',
         help="Give every uuid-keyed Entity/Person with a hard id its keyed id (lei:, wd:Q…, sec:cik), "

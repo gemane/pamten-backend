@@ -698,3 +698,38 @@ class TestAGroupIsItsOwnVertexType:
         rows = graph.run_command("MATCH (g:VotingGroup {id:$g})-[r:OWNS]->(b:Entity {id:'abi2'}) "
                                  "RETURN r.voting_power_pct AS v", {"g": gid})
         assert [r["v"] for r in rows] == [52.3]
+
+
+class TestARosterThatShrinks:
+    """2026-10-26: Symbotic's group was named for 8 parties and listed 12 —
+    the newer filing replaced the roster and the name, but the four parties
+    who left kept their membership lines."""
+
+    def test_a_newer_filing_without_a_party_removes_its_line(self, graph):
+        filing = TestTheWholeScrapeWritesTheGroup.FILING
+        TestTheWholeScrapeWritesTheGroup()._scrape(graph, filing)
+        later = {**filing, "file_date": "2026-08-01",
+                 "group_members": [m for m in filing["group_members"] if m["name"] != "Jorge Paulo Lemann"]}
+        TestTheWholeScrapeWritesTheGroup()._scrape(graph, later)
+        [g] = graph.run_command("MATCH (g:VotingGroup) RETURN g.id AS id, g.name AS name")
+        members = sorted(r["n"] for r in graph.run_command(
+            "MATCH (m)-[:MEMBER_OF]->(g:VotingGroup {id:$g}) RETURN coalesce(m.name, m.full_name) AS n", {"g": g["id"]}))
+        assert g["name"] == "Voting group · 3 parties"
+        assert len(members) == 3 and "Jorge Paulo Lemann" not in members
+
+    def test_the_heal_removes_only_the_lines_the_roster_no_longer_names(self, graph):
+        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership, _upsert_person_by_name
+        from app.scraper.sec_writer import heal_group_memberships
+        gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER[:2]), "sec")    # BRC + Stichting
+        _upsert_group_membership("stichting", gid, "Entity", "sec")                  # on the roster (by name)
+        graph.run_command("CREATE (:Entity {id:'brc', name:'BRC S.a R.L.', sec_cik:'0001301486'})")
+        _upsert_group_membership("brc", gid, "Entity", "sec")                         # on the roster (by CIK)
+        pid = _upsert_person_by_name("Jorge Paulo Lemann", source_id="sec")
+        _upsert_group_membership(pid, gid, "Person", "sec")                          # left: not on the roster
+        dry = heal_group_memberships(apply=False)
+        assert (dry["groups"], dry["removed"]) == (1, 1) and "Jorge Paulo Lemann" in dry["lines"][0]
+        assert heal_group_memberships(apply=True)["removed"] == 1
+        left = sorted(r["id"] for r in graph.run_command(
+            "MATCH (m)-[:MEMBER_OF]->(g:VotingGroup {id:$g}) RETURN m.id AS id", {"g": gid}))
+        assert left == ["brc", "stichting"]
+        assert heal_group_memberships(apply=True)["removed"] == 0

@@ -485,6 +485,10 @@ BRC merely filed.
 * **The group's OWNS edge carries a null stake.** Its members hold the shares
   individually; adding a bloc percentage to theirs is what put companies over
   100% of themselves. The edge is written with `owner_label="VotingGroup"`.
+* **A newer filing's roster replaces the old one, members included**: the
+  name follows the count and the membership lines of parties it no longer names
+  are removed (`_prune_group_membership`, since 2026-10-26 — Symbotic's group
+  was named for 8 and listed 12; `manage.py heal-group-memberships`).
 * **The filer's own bloc edge is retired** when the group is written — it is the
   same filing, not a second fact — but only the stakeless one, so a member that
   also reports a real holding keeps it.
