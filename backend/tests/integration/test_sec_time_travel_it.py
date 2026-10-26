@@ -106,7 +106,7 @@ def test_a_detach_takes_the_start_from_the_claims_that_remain(pair):
     pair.run_command("MATCH (a {id:'h'}),(b {id:'c'}) CREATE (a)-[:OWNS {source_id:'sec', "
                      "since:'2013-12-31', since_basis:'first_listed', stake_percent:100}]->(b)")
     record_claim(kind=KIND_OWNS, from_id="h", to_id="c", source_id="sec", since="2013-12-31",
-                 since_basis="first_listed", stake_percent=100)
+                 since_basis="first_listed", stake_percent=100, filing_type="EX-21")   # the list's claim
     record_claim(kind=KIND_OWNS, from_id="h", to_id="c", source_id="gleif", since="2016-08-01",
                  ownership_type="controlling", credibility_score=92)
     assert detach_owns_sec("h", "c", "sec") == "reassigned"

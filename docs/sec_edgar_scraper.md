@@ -865,8 +865,12 @@ the ownership claims always did: "Form 3" for an initial statement, "Form 4" for
 any later one (`sec_writer.form_label` reads the document type), "Form D" for a
 private company's officers and directors, "8-K" for an Item 5.02 departure — so
 the Sources panel reads "SEC EDGAR · Form 4" beside a seat as beside a holding.
-A departure is recorded on the **same claim** as the appointment (one claim per
-source and position): the claim keeps the appointment's `filing_type`,
+An ownership claim is keyed by the filing's **family** (`claims.filing_family`:
+Form 3/4/5, Schedule 13D/G, 13F, Exhibit 21, EX-8.1, the acquirer's XBRL), so a
+Form 4 and a 13G about one pair are two claims and two panel lines — the register
+made two statements — while an amendment updates its family's claim
+(2026-10-26; see *Claims* in docs/data-model.md). A departure is recorded on the
+**same claim** as the appointment (one claim per source and position): the claim keeps the appointment's `filing_type`,
 `source_url` and `read_from` and gains the departure's `until_source_url` and
 `until_read_from` (`claims.close_role_claim`); the seat edge likewise keeps its
 own citation and cites the closing filing in `until_source_url`. A later Form 4

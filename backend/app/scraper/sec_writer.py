@@ -522,21 +522,23 @@ def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,
     )
 
 
-def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
+def detach_owns_sec(owner_id: str, owned_id: str, source_id: str,
+                    filing_type: str = "EX-21") -> str:
     """Withdraw SEC's assertion that ``owner`` holds ``owned`` directly — an
     Exhibit 21 re-read that now places the subsidiary under an intermediate
     parent, where an earlier flat read had hung it off the filer.
 
-    SEC's claim for the pair goes. The edge goes only if it is SEC's alone;
+    SEC's claim of that filing family for the pair goes (the list's; a 13G or
+    Form 4 about the same pair is another statement and stays). The edge goes only if it is SEC's alone;
     an edge another source also claims (GLEIF's ultimate-parent link, say)
     stays and is re-answered from that source's claim, so it never keeps
     citing SEC for a fact SEC withdrew. Returns "deleted", "reassigned" or
     "none" (nothing SEC's to withdraw).
     """
-    from app.claims import KIND_OWNS, claim_key, claims_for, edge_values_from
+    from app.claims import KIND_OWNS, claims_for, edge_values_from, owns_claim_key
     from app.db.arcadedb import run_sql
     from app.scraper.owns_merge import ANSWER_FIELDS
-    withdrawn = claim_key(KIND_OWNS, owner_id, owned_id, source_id)
+    withdrawn = owns_claim_key(owner_id, owned_id, source_id, filing_type)
     run_sql("DELETE FROM Claim WHERE claim_key = :k", {"k": withdrawn})
     with db.get_session() as session:
         edge = session.run(
@@ -545,9 +547,10 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str) -> str:
             o=owner_id, n=owned_id, sid=source_id).single()
         if not edge:
             return "none"
-        # By key, not by source: SEC can hold a second claim for the pair (an
-        # acquisition read from the filer's XBRL, keyed apart), and that one
-        # still supports the edge when the list's claim is withdrawn.
+        # By key, not by source: SEC can hold another claim for the pair (an
+        # acquisition read from the filer's XBRL, a 13G — keyed by filing
+        # family), and that one still supports the edge when the list's claim
+        # is withdrawn.
         others = [c for c in claims_for(owner_id, owned_id, KIND_OWNS) if c.get("claim_key") != withdrawn]
         if not others:
             session.run(

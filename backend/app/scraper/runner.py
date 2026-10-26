@@ -1081,7 +1081,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
             written += 1
             if holder != company_id:
                 nested += 1
-                if detach_owns_sec(company_id, sub_id, source_id) != "none":
+                if detach_owns_sec(company_id, sub_id, source_id, filing_type) != "none":
                     detached += 1
 
         # What this list no longer names: dimmed, never closed.

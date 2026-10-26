@@ -30,6 +30,7 @@ holding it rather than the newest).
 from __future__ import annotations
 
 import hashlib
+import re
 
 from app.roles import canonical_role
 import logging
@@ -41,24 +42,61 @@ KIND_ROLE = "role"
 KIND_SUCCESSION = "succession"
 
 #: `filing_type` values of an owns claim read from an acquirer's XBRL
-#: business-combination facts (app/scraper/sec_acquisitions.py). Such a claim
-#: is keyed APART from the same source's other owns claim for the pair: SEC's
-#: Exhibit 21 says "held at year-end", its 10-Q says "bought on this day for
-#: this much" — two assertions, two claims. Keyed together, the second write
-#: overwrote the first and the next Exhibit 21 read overwrote it back.
+#: business-combination facts (app/scraper/sec_acquisitions.py).
 ACQUISITION_FILING_TYPES = frozenset({"10-K XBRL", "10-Q XBRL"})
 _ACQUISITION_KEY = "acquisition"
+
+#: SEC EDGAR speaks about one pair through several filing families, and each
+#: is its own statement: a Form 4 is the insider's holding of record, a
+#: Schedule 13D/G the beneficial stake at or above 5 % (which the edge rule
+#: prefers), a 13F the manager's quarterly table, an Exhibit 21 the issuer's
+#: subsidiary list, the acquirer's XBRL the deal. One claim per (pair, source)
+#: held whichever filing was read last, so the Sources panel showed one "SEC
+#: EDGAR" line where the register had made two or three statements (2026-10-26;
+#: the acquisition was keyed apart since 2026-10-12 for the same reason). A
+#: family is read off the filing type's text alone — no source lookup in a key
+#: — and anything that is not an SEC form (GLEIF's "RR", a PSC snapshot) has
+#: none, so those keys never changed. A re-read of the same family still
+#: updates its own claim: amendments do not pile up.
+_SEC_FAMILIES: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"^(SC\s*)?13[DG]\b", re.I), "13dg"),         # 13D, 13D/A, 13G, 13G/A, SC 13D
+    (re.compile(r"^13F\b", re.I), "13f"),
+    (re.compile(r"^Form\s*[345]\b", re.I), "insider"),        # Form 3 / 4 / 5
+    (re.compile(r"^EX-21\b", re.I), "ex21"),
+    (re.compile(r"^EX-8\.1\b", re.I), "ex81"),
+)
+
+
+def filing_family(filing_type: str | None) -> str | None:
+    """The SEC filing family a `filing_type` belongs to, or None for a type
+    that is not an SEC form (every other source's)."""
+    ft = (filing_type or "").strip()
+    if not ft:
+        return None
+    if ft in ACQUISITION_FILING_TYPES:
+        return _ACQUISITION_KEY
+    for pattern, family in _SEC_FAMILIES:
+        if pattern.match(ft):
+            return family
+    return None
 
 
 def _key_discriminator(kind: str | None, role: str | None, filing_type: str | None) -> str | None:
     """The part of a claim's identity beyond (kind, pair, source): a role claim's
-    canonical role, an acquisition claim's marker, else nothing. `claim_props`
+    canonical role, an owns claim's SEC filing family, else nothing. `claim_props`
     and `key_for` MUST agree on this, or a heal re-keys what a writer wrote."""
     if kind == KIND_ROLE and role:
         return canonical_role(role)
-    if kind == KIND_OWNS and filing_type in ACQUISITION_FILING_TYPES:
-        return _ACQUISITION_KEY
+    if kind == KIND_OWNS:
+        return filing_family(filing_type)
     return None
+
+
+def owns_claim_key(from_id: str, to_id: str, source_id: str, filing_type: str | None = None) -> str:
+    """The key of a source's owns claim for a pair — the one a writer gave it
+    for that filing type (`claim_props`), for a caller that must find it."""
+    return claim_key(KIND_OWNS, from_id, to_id, source_id,
+                     role_key=_key_discriminator(KIND_OWNS, None, filing_type))
 
 
 def now_iso() -> str:

@@ -227,8 +227,8 @@ class TestRowsForBatch:
 
 class TestRecordClaimHook:
     def test_the_stored_stake_is_read_before_the_upsert_and_the_rows_written_after(self):
-        from app.claims import KIND_OWNS, claim_key, record_claim
-        key = claim_key(KIND_OWNS, "br", "ms", "sec")
+        from app.claims import KIND_OWNS, owns_claim_key, record_claim
+        key = owns_claim_key("br", "ms", "sec", "13G/A")           # the 13D/G family's claim (2026-10-26)
         fake, calls = sql_recorder(stored=claim(4.8, claim_key=key, source_date="2024-02-13"))
         with patch("app.db.arcadedb.run_sql", fake):
             record_claim(kind=KIND_OWNS, from_id="br", to_id="ms", source_id="sec",
@@ -396,8 +396,10 @@ class TestTimeTravelStake:
 
 class TestOneStatementPerRun:
     """A runner that writes the same claim twice in one run (the SEC company
-    scrape: a holder's 13D/G figure, then their Form 4 figure) states the LAST
-    value against the pre-run claim — never a flap through the first."""
+    scrape: a holder's Form 4, then its amendment) states the LAST value
+    against the pre-run claim — never a flap through the first. Since
+    2026-10-26 a 13D/G and a Form 4 are two claims (keyed by filing family),
+    so the one-family flap is what remains to guard."""
 
     @staticmethod
     def _write(stake, **kw):
@@ -411,8 +413,8 @@ class TestOneStatementPerRun:
                 for s, p in calls if s.startswith("CREATE VERTEX StakeHistory")]
 
     def _stored(self, stake=28.4419):
-        from app.claims import KIND_OWNS, claim_key
-        key = claim_key(KIND_OWNS, "em", "tsla", "sec")
+        from app.claims import owns_claim_key
+        key = owns_claim_key("em", "tsla", "sec", "Form 4")        # the insider family's claim
         return claim(stake, claim_key=key, from_id="em", to_id="tsla", filing_type="Form 4",
                      source_date="2026-06-17", denominator_date="2026-07-16")
 
@@ -421,7 +423,7 @@ class TestOneStatementPerRun:
         fake, calls = sql_recorder(stored=self._stored())
         with patch("app.db.arcadedb.run_sql", fake):
             with one_statement_per_run():
-                self._write(19.9, filing_type="13G/A", event_date="2026-06-16")
+                self._write(19.9, filing_type="Form 4", event_date="2026-06-16")
                 self._write(28.4188, filing_type="Form 4", source_date="2026-06-17",
                             denominator_date="2026-10-15")
                 assert not any(s.startswith("CREATE") for s, _ in calls)   # nothing until the end
@@ -438,7 +440,7 @@ class TestOneStatementPerRun:
         fake, calls = sql_recorder(stored=self._stored())
         with patch("app.db.arcadedb.run_sql", fake):
             with one_statement_per_run():
-                self._write(19.9, filing_type="13G/A")
+                self._write(19.9, filing_type="Form 4")
                 self._write(28.4419, filing_type="Form 4")
         assert [s.split()[0] for s, _ in calls] == ["SELECT", "UPDATE", "UPDATE"]
 
@@ -454,7 +456,8 @@ class TestOneStatementPerRun:
                 self._write(27.0, filing_type="Form 4")
                 self._write(26.0, filing_type="Form 4")
         pre_reads = [p["keys"] for s, p in calls if "FROM Claim WHERE claim_key IN" in s]
-        assert len(pre_reads) == 2 and all(len(k) == 1 for k in pre_reads)
+        # three keys: em's 13D/G claim, x's, em's Form 4 claim (read once, the second write reuses it)
+        assert len(pre_reads) == 3 and all(len(k) == 1 for k in pre_reads)
         assert self._creates(calls) == [(28.4419, None, "Form 4"), (26.0, 28.4419, "Form 4")]
 
     def test_outside_the_block_history_is_immediate_again(self):
@@ -463,7 +466,7 @@ class TestOneStatementPerRun:
         with patch("app.db.arcadedb.run_sql", fake):
             with one_statement_per_run():
                 pass
-            self._write(19.9, filing_type="13G/A")
+            self._write(19.9, filing_type="Form 4")
         assert [s.split()[0] for s, _ in calls] == ["SELECT", "SELECT", "UPDATE", "CREATE", "CREATE"]
 
     def test_a_failed_pre_read_skips_that_key_only_and_raises_nothing(self):
