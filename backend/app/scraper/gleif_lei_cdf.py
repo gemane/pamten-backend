@@ -25,6 +25,7 @@ import re
 import zipfile
 from typing import IO
 
+from app import addresses
 from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _legal_form_type, _ProgressBar,
     _ProgressStream, _rebuild_indexes,
@@ -32,7 +33,7 @@ from app.scraper.bulk_import import (
 from app.scraper.gleif_reference import (
     legal_form_name, make_register_id, registration_authority_name)
 from app.scraper.gleif_succession import _iter_lei_records, _legal_name, _v
-from app.scraper.mapper import is_nominee_name, normalize_address, normalize_entity_name
+from app.scraper.mapper import is_nominee_name, normalize_entity_name
 
 log = logging.getLogger(__name__)
 
@@ -97,16 +98,6 @@ def _display_address(entity: dict) -> str | None:
     ]
     joined = ", ".join(p.strip() for p in parts if p and p.strip())
     return joined or None
-
-
-def _hq_location(entity: dict) -> tuple[str | None, str | None]:
-    """(city, ISO-2 country) from HeadquartersAddress — the entity's real operating
-    location, distinct from the LegalAddress (often a registered-agent office, e.g. a
-    Delaware C/O). Surfaced at the top of the node like other sources' HQ."""
-    hq = entity.get("HeadquartersAddress") or {}
-    city = _v(hq.get("City"))
-    country = _v(hq.get("Country"))
-    return (city or None), (country[:2].upper() if country else None)
 
 
 def _hq_address(entity: dict) -> str | None:
@@ -333,8 +324,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         "name_credibility": _validated_credibility(rec, credibility_score),
         "country": _country(entity),
         "jurisdiction_code": _jurisdiction_code(entity),
-        "address": _display_address(entity),
-        "address_normalized": normalize_address(_display_address(entity)),
+        # the registered office's readable address and its matching key,
+        # written even when absent (app.addresses)
+        **addresses.parts(addresses.REGISTERED, full=_display_address(entity), empty=("full", "key")),
         "legal_form": _legal_form(entity),
         "legal_form_code": _legal_form_code(entity),
         "registration_authority": reg_authority,
@@ -369,28 +361,13 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     dissolved = _dissolved_on(entity)
     if dissolved:
         props["dissolved_on"] = dissolved      # only when stated: a re-import never blanks it
-    # Real operating location (top of the node). Only set when GLEIF has an HQ address,
-    # so we never clobber an existing (e.g. Wikidata) HQ with a null.
-    hq_city, hq_country = _hq_location(entity)
-    if hq_city:
-        props["hq_city"] = hq_city
-    if hq_country:
-        props["hq_country"] = hq_country
-    hq_addr = _hq_address(entity)
-    if hq_addr:
-        props["hq_address"] = hq_addr
-    # The same addresses in parts, for a structured geocode. Only set when
-    # present, so a re-import never blanks what another source supplied.
-    for prefix, source in (("reg", entity.get("LegalAddress")),
-                           ("hq", entity.get("HeadquartersAddress"))):
-        for key, value in _address_parts(source).items():
-            if key == "country" and prefix == "reg":
-                continue            # already stored as `country`
-            if key == "city" and prefix == "hq":
-                continue            # already stored as `hq_city`
-            if key == "country" and prefix == "hq":
-                continue            # already stored as `hq_country`
-            props[f"{prefix}_{key}"] = value
+    # Both places in parts, for a structured geocode (app.addresses): the real
+    # operating location with its readable address, and the legal address's
+    # parts (its country is the entity's `country`). Only what GLEIF states,
+    # so a re-import never blanks what another source (e.g. Wikidata) supplied.
+    props.update(addresses.parts(addresses.HEADQUARTERS, **_address_parts(entity.get("HeadquartersAddress")),
+                                 full=_hq_address(entity)))
+    props.update(addresses.parts(addresses.REGISTERED, **_address_parts(entity.get("LegalAddress"))))
     # UK company: its GLEIF registration number is the Companies House number, so key it
     # like the PSC import (gb-coh:{number}) → GLEIF and PSC nodes merge on this id.
     if reg_code == _COMPANIES_HOUSE_RA and reg_number:

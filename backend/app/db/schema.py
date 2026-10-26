@@ -23,6 +23,7 @@ Design notes
 """
 import logging
 
+from app import addresses
 from app.db.arcadedb import run_sql, run_sqlscript
 
 log = logging.getLogger(__name__)
@@ -208,10 +209,8 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     ("Entity", "name_credibility", "INTEGER"),
     ("Entity", "scrape_depth",     "INTEGER"),
     ("Entity", "revenue",          "DOUBLE"),
-    ("Entity", "hq_lat",           "DOUBLE"),
-    ("Entity", "hq_lng",           "DOUBLE"),
-    ("Entity", "reg_lat",          "DOUBLE"),
-    ("Entity", "reg_lng",          "DOUBLE"),
+    # the pins of both places (app.addresses)
+    *[("Entity", f, "DOUBLE") for f in addresses.coordinate_fields()],
     # Entity — flags
     ("Entity", "is_nominee",        "BOOLEAN"),
     ("Entity", "active",            "BOOLEAN"),
@@ -313,9 +312,9 @@ def typed_properties() -> list[tuple[str, str, str]]:
 #: takes. A conformance test holds the writers' own property lists against it.
 _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "Entity": (
-        "id", "name", "name_normalized", "type", "country", "hq_country", "description",
-        "address", "address_normalized", "hq_address", "hq_city", "hq_street", "hq_postcode",
-        "hq_geo_precision", "reg_city", "reg_street", "reg_postcode", "reg_geo_precision",
+        "id", "name", "name_normalized", "type", "country", "description",
+        # both places: readable address, matching key, parts, geocode precision
+        *[f for f in addresses.all_fields() if f not in addresses.coordinate_fields()],
         "legal_form", "legal_form_code", "registration_authority", "registration_authority_code",
         "registration_number", "register_id", "country_registered", "jurisdiction_code",
         "cusip", "lei_id", "sec_cik", "companies_house_id", "wikidata_id", "nace_code",

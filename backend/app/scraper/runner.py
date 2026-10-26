@@ -55,10 +55,21 @@ from app.field_twins import merge_countries, merge_nationalities
 from app.roles import combined_start, end_seats_at_death
 from app.dissolution import end_at_dissolution
 from app.node_ids import mint_node_id
+from app import addresses
+
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
                                      weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
 from app.scraper.geocode import geocode_address
+
+#: Wikidata states a headquarters' city, country and coordinate (P159/P625)
+_WD_HQ = ("lat", "lng", "city", "country")
+_WD_HQ_FILL = addresses.fill_clause("e", addresses.HEADQUARTERS, _WD_HQ)
+_WD_HQ_CREATE = addresses.create_map(addresses.HEADQUARTERS, _WD_HQ)
+#: a registered pin geocoded from a stated address: fill-only, its own parameter names
+_REG_PIN_FILL = ",\n                ".join(
+    f"e.{addresses.field(addresses.REGISTERED, p)} = COALESCE(e.{addresses.field(addresses.REGISTERED, p)}, ${v})"
+    for p, v in (("lat", "lat"), ("lng", "lng"), ("precision", "prec")))
 
 
 
@@ -147,12 +158,10 @@ def _geocode_registered_and_attach(entity_id: str, address: dict) -> None:
     lat, lng = coord if coord else (None, None)
     with db.get_session() as session:
         session.run(
-            """
-            MATCH (e:Entity {id: $id})
+            f"""
+            MATCH (e:Entity {{id: $id}})
             SET e.country    = COALESCE(e.country, $country),
-                e.reg_lat    = COALESCE(e.reg_lat, $lat),
-                e.reg_lng    = COALESCE(e.reg_lng, $lng),
-                e.reg_geo_precision = COALESCE(e.reg_geo_precision, $prec)
+                {_REG_PIN_FILL}
             """,
             id=entity_id,
             country=address.get("country") or None,
@@ -288,8 +297,8 @@ def _upsert_entity(
             # the wrong company. NB: comments must stay OUT of the query string;
             # ArcadeDB's Cypher parser rejects `--` and fails the whole statement.
             session.run(
-                """
-                MATCH (e:Entity {id: $id})
+                f"""
+                MATCH (e:Entity {{id: $id}})
                 SET e.wikidata_id     = $wid,
                     e.lei_id          = COALESCE(e.lei_id, $lei),
                     e.sec_cik         = COALESCE(e.sec_cik, $sec_cik),
@@ -305,10 +314,7 @@ def _upsert_entity(
                     e.aliases         = CASE WHEN size($aliases) > 0 THEN $aliases ELSE COALESCE(e.aliases, []) END,
                     e.countries       = CASE WHEN size(COALESCE($countries, [])) > 0 THEN $countries ELSE e.countries END,
                     e.hq_locations    = CASE WHEN size($hq_locations) > 0 THEN $hq_locations ELSE COALESCE(e.hq_locations, []) END,
-                    e.hq_lat          = COALESCE(e.hq_lat, $hq_lat),
-                    e.hq_lng          = COALESCE(e.hq_lng, $hq_lng),
-                    e.hq_city         = COALESCE(e.hq_city, $hq_city),
-                    e.hq_country      = COALESCE(e.hq_country, $hq_country),
+                    {_WD_HQ_FILL},
                     e.website         = COALESCE(e.website, $website),
                     e.logo_url        = COALESCE(e.logo_url, $logo_url),
                     e.dissolved_on    = COALESCE(e.dissolved_on, $dissolved_on),
@@ -344,8 +350,8 @@ def _upsert_entity(
         # else the Wikidata item, else the CIK — a uuid only without any
         entity_id = mint_node_id(lei=lei, wikidata_id=wikidata_id, sec_cik=sec_cik)
         session.run(
-            """
-            CREATE (e:Entity {
+            f"""
+            CREATE (e:Entity {{
                 id: $id, name: $name, name_normalized: $name_norm,
                 search_text: $search_text,
                 name_credibility: $cred,
@@ -356,12 +362,11 @@ def _upsert_entity(
                 source_id: $source_id,
                 is_nominee: $is_nominee,
                 aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
-                hq_lat: $hq_lat, hq_lng: $hq_lng,
-                hq_city: $hq_city, hq_country: $hq_country,
+                {_WD_HQ_CREATE},
                 website: $website,
                 logo_url: $logo_url, created_at: $created_at,
                 dissolved_on: $dissolved_on, active: $active
-            })
+            }})
             """,
             id=entity_id, created_at=_now_iso(),
             name=name,
