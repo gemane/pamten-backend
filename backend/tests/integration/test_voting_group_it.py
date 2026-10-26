@@ -193,6 +193,25 @@ class TestTheProfileShowsTheParties:
         prof = get_person_profile(pid)
         assert [g["group"]["id"] for g in prof["voting_groups"]] == [gid]
 
+    def test_a_members_profile_carries_what_its_group_holds(self, graph):
+        """2026-10-26: Berkshire's profile listed its DaVita group but not the
+        group's edge, so the graph drew the group as a dead end. The group's
+        current holding comes with it — voting power, no stake — and an ended
+        one does not."""
+        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership, _upsert_owns_sec
+        from app.routers.search import get_full_profile
+        gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER), "sec")
+        _upsert_owns_sec(gid, "abi", "sec", "unknown", "2025-02-07", None, owner_label="VotingGroup",
+                         voting_power_pct=52.3)
+        _upsert_group_membership("stichting", gid, "Entity", "sec")
+        graph.run_command("CREATE (:Entity {id:'old', name:'Old Co', type:'company'})")
+        graph.run_command("MATCH (g:VotingGroup {id:$g}), (b:Entity {id:'old'}) "
+                          "CREATE (g)-[:OWNS {source_id:'sec', voting_power_pct:30.0, until:'2020-01-01'}]->(b)", {"g": gid})
+        [g] = get_full_profile("stichting")["voting_groups"]
+        assert g["group"]["id"] == gid
+        assert [(h["entity"]["id"], h["relationship"]["voting_power_pct"], h["relationship"].get("stake_percent"))
+                for h in g["holds"]] == [("abi", 52.3, None)]
+
     def test_a_person_in_no_group_gets_an_empty_list(self, graph):
         from app.scraper.runner import _upsert_person_by_name
         from app.routers.search import get_person_profile

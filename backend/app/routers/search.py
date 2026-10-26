@@ -400,7 +400,25 @@ def _voting_groups_of(session, node_id: str, hidden: set, label: str) -> list[di
                RETURN g""", id=node_id):
         node = dict(g["g"])
         if node.get("id") not in hidden:
-            out.append({"group": node})
+            out.append({"group": node, "holds": _group_holdings(session, node["id"], hidden)})
+    return out
+
+
+def _group_holdings(session, group_id: str, hidden: set) -> list[dict]:
+    """What a filing group holds — the company its bloc controls, with the
+    edge (voting power, no stake). Returned with every group a member's
+    profile lists, so the graph can draw the line from the group on to the
+    company: Berkshire → its 13D group → DaVita read as a dead end until
+    2026-10-26, the group's edge known only to the group's own profile.
+    Current edges only, proven shortcuts excepted, as the sections are."""
+    out = []
+    for rec in session.run(
+            """MATCH (g:VotingGroup {id: $id})-[r:OWNS]->(t:Entity)
+               WHERE r.until IS NULL AND COALESCE(r.shortcut, false) <> true
+               RETURN t, r""", id=group_id):
+        held = dict(rec["t"])
+        if held.get("id") not in hidden:
+            out.append({"entity": held, "relationship": dict(rec["r"])})
     return out
 
 
