@@ -31,6 +31,8 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from xml.sax.saxutils import escape, quoteattr
 
+from app import addresses
+
 MIME = "application/vnd.oasis.opendocument.spreadsheet"
 
 
@@ -466,7 +468,8 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
         ["Legal form", entity.get("legal_form")], ["Founded", entity.get("founded")],
         ["Incorporated", entity.get("incorporated_on")],
         ["Revenue", entity.get("revenue")], ["Employees", entity.get("employees")],
-        ["Headquarters", ", ".join(p for p in (entity.get("hq_city"), entity.get("hq_country")) if p) or None],
+        ["Headquarters", ", ".join(p for p in (addresses.read(entity, addresses.HEADQUARTERS)[k]
+                                               for k in ("city", "country")) if p) or None],
         ["Address", entity.get("address")],
         ["Website", Link(entity["website"]) if entity.get("website") else None],
         ["LEI", entity.get("lei_id")], ["Register id", entity.get("register_id")],

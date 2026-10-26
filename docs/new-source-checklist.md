@@ -188,7 +188,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       one display string and wrote the city alone until 2026-10-18 — 203k of 219k
       corporate PSCs and every register row carried a postcode the graph never stored.
       Write only the parts the record has (a bulk SET of null blanks what another source
-      put on a merged node).
+      put on a merged node). Build them with `app.addresses.parts(kind, street=…, city=…,
+      postcode=…, country=…, full=…)` and never spell a field: the registry knows the
+      names, derives the matching key, drops what a kind does not store, and writes a
+      part as None only where you name it in `empty`. A test counts the spellings per
+      file (`tests/test_addresses.py`), so a new one fails.
 - [ ] **Keep values as the source gave them.** Do not strip a legitimate `C/O …` line or
       "normalise" a name to make a downstream tool happy — fix the tool-facing side. A
       stored value that no source ever said is a lie the graph cannot walk back.

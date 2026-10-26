@@ -23,6 +23,7 @@ from app.entity_resolution import resolve_entity_id
 from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.node_ids import mint_node_id
+from app import addresses
 from app.scraper.mapper import is_nominee_name, normalize_cik, normalize_entity_name, parse_full_name
 import logging
 
@@ -658,16 +659,21 @@ def _merge_aliases(existing: list[str] | None, new: list[str] | None,
     return out
 
 
+#: what EDGAR states of a filer's business address (app.addresses)
+_SEC_HQ = ("full", "city", "country", "street", "postcode")
+_SEC_HQ_FILL = addresses.fill_clause("e", addresses.HEADQUARTERS, _SEC_HQ)
+_SEC_HQ_CREATE = addresses.create_map(addresses.HEADQUARTERS, _SEC_HQ)
+
+
 def _hq_params(headquarters: dict | None) -> dict:
-    """Query parameters for a headquarters, or three Nones. Every write is a
-    COALESCE, so a missing address leaves whatever is already there."""
+    """Query parameters for a headquarters, every one present (None when not
+    stated). Every write is a COALESCE, so a missing address leaves whatever
+    is already there; the parts, so the geocoder never has to re-parse the
+    string."""
     hq = headquarters or {}
-    return {"hq_address":  hq.get("address") or None,
-            "hq_city":     hq.get("city") or None,
-            "hq_country":  hq.get("country") or None,
-            # The parts, so the geocoder never has to re-parse the string.
-            "hq_street":   hq.get("street") or None,
-            "hq_postcode": hq.get("postcode") or None}
+    return addresses.parts(addresses.HEADQUARTERS, street=hq.get("street"), city=hq.get("city"),
+                           postcode=hq.get("postcode"), country=hq.get("country"),
+                           full=hq.get("address"), empty=_SEC_HQ)
 
 
 def _resolve_by_name(session, name: str, name_norm: str, country: str | None) -> str | None:
@@ -774,18 +780,14 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                                           former.names(former_names), cur_name)
                 dated    = former.merge(rec["former_names"] if rec else None, former_names)
                 session.run(
-                    """
-                    MATCH (e:Entity {id: $id})
+                    f"""
+                    MATCH (e:Entity {{id: $id}})
                     SET e.sec_cik     = COALESCE($cik, e.sec_cik),
                         e.lei_id      = COALESCE($lei, e.lei_id),
                         e.source_id   = COALESCE(e.source_id, $source_id),
                         e.country     = COALESCE(e.country, $country),
                         e.jurisdiction_code = COALESCE(e.jurisdiction_code, $jurisdiction_code),
-                        e.hq_address  = COALESCE(e.hq_address, $hq_address),
-                        e.hq_city     = COALESCE(e.hq_city, $hq_city),
-                        e.hq_country  = COALESCE(e.hq_country, $hq_country),
-                        e.hq_street   = COALESCE(e.hq_street, $hq_street),
-                        e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode),
+                        {_SEC_HQ_FILL},
                         e.website     = COALESCE(e.website, $website),
                         e.aliases     = $aliases,
                         e.former_names = $former_names,
@@ -799,18 +801,14 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 )
             else:
                 session.run(
-                    """
-                    MATCH (e:Entity {id: $id})
+                    f"""
+                    MATCH (e:Entity {{id: $id}})
                     SET e.sec_cik   = COALESCE($cik, e.sec_cik),
                         e.lei_id    = COALESCE($lei, e.lei_id),
                         e.source_id = COALESCE(e.source_id, $source_id),
                         e.country   = COALESCE(e.country, $country),
                         e.jurisdiction_code = COALESCE(e.jurisdiction_code, $jurisdiction_code),
-                        e.hq_address = COALESCE(e.hq_address, $hq_address),
-                        e.hq_city    = COALESCE(e.hq_city, $hq_city),
-                        e.hq_country = COALESCE(e.hq_country, $hq_country),
-                        e.hq_street   = COALESCE(e.hq_street, $hq_street),
-                        e.hq_postcode = COALESCE(e.hq_postcode, $hq_postcode),
+                        {_SEC_HQ_FILL},
                         e.website     = COALESCE(e.website, $website)
                     """,
                     id=entity_id, cik=cik, lei=lei, source_id=source_id, country=country,
@@ -824,8 +822,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         entity_id = mint_node_id(lei=lei, sec_cik=cik)
         aliases = _merge_aliases([], former.names(former_names), name)
         session.run(
-            """
-            CREATE (e:Entity {
+            f"""
+            CREATE (e:Entity {{
                 id: $id, name: $name, name_normalized: $name_norm,
                 name_credibility: $cred, search_text: $search_text, aliases: $aliases,
                 former_names: $former_names,
@@ -834,10 +832,9 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 country: $country, jurisdiction_code: $jurisdiction_code,
                 founded: null, revenue: null,
                 description: null, wikidata_id: null,
-                hq_address: $hq_address, hq_city: $hq_city, hq_country: $hq_country,
-                hq_street: $hq_street, hq_postcode: $hq_postcode,
+                {_SEC_HQ_CREATE},
                 website: $website, created_at: $created_at
-            })
+            }})
             """,
             id=entity_id, name=name, name_norm=name_norm, website=website,
             created_at=_now_iso(),

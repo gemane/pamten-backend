@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
+from app import addresses
 from app.models.entity import EntityCreate, EntityResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
@@ -74,7 +75,7 @@ def list_countries():
 #: nothing and reports success.
 _BASIS_PROPERTY = {
     "jurisdiction": "e.country",
-    "hq": "e.hq_country",
+    "hq": f"e.{addresses.field(addresses.HEADQUARTERS, 'country')}",
     "subdivision": "e.jurisdiction_code",
 }
 

@@ -29,6 +29,7 @@ stored the assembled string still gets asked plainly, unmodified.
 import logging
 
 from app.db.arcadedb import run_query, run_command
+from app import addresses
 from app.scraper.geocode import geocode_address, geocode_full
 
 log = logging.getLogger(__name__)
@@ -38,27 +39,20 @@ REGISTERED = "registered"
 
 #: What each pass reads and writes. Keeping them as data rather than two
 #: near-identical functions means a fix to one cannot silently miss the other.
-_PASSES = {
-    HQ: {
-        "lat": "hq_lat", "lng": "hq_lng", "precision": "hq_geo_precision",
-        # The parts first; the assembled string only for rows that have no parts.
-        "street": "hq_street", "postcode": "hq_postcode",
-        "full": "hq_address", "city": "hq_city", "country": "hq_country",
-    },
-    REGISTERED: {
-        "lat": "reg_lat", "lng": "reg_lng", "precision": "reg_geo_precision",
-        "street": "reg_street", "postcode": "reg_postcode",
-        # `address` is the human-readable legal address; `address_normalized` is
-        # the lowercased matching key kept for dedup, which geocodes worse.
-        #
-        # NO country fallback: the address resolves or there is no pin. Geocoding
-        # a bare country returns its centroid, and the first run of this pass put
-        # 51 American companies in a field in Kansas and 39 British ones in the
-        # Irish Sea, all captioned as registered offices. An absent pin says "we
-        # do not know"; a centroid says something false.
-        "full": "address", "city": "reg_city", "country": None,
-    },
-}
+def _pass(kind: str) -> dict:
+    """What one pass reads and writes, from the address registry: the parts
+    first, the readable address only for rows that have no parts (never the
+    matching key, which geocodes worse), and a country only where the kind
+    may fall back to one — the registered pass may not: a centroid put 51
+    American companies in a field in Kansas, captioned as registered offices
+    (`addresses.Kind.geocode_country`)."""
+    f = addresses.fields(kind)
+    return {"lat": f["lat"], "lng": f["lng"], "precision": f["precision"],
+            "street": f["street"], "postcode": f["postcode"], "full": f["full"], "city": f["city"],
+            "country": f.get("country") if addresses.KINDS[kind].geocode_country else None}
+
+
+_PASSES = {HQ: _pass(addresses.HEADQUARTERS), REGISTERED: _pass(addresses.REGISTERED)}
 
 
 def _run_pass(name: str, limit: int | None, ids: list[str] | None = None) -> dict:

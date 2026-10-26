@@ -6,6 +6,15 @@ and roles are edges. Location is **not** a node — an entity carries its own HQ
 its registered address (`address`, `reg_lat`, `reg_lng`), so the map reads one
 record instead of traversing. Both are geocoded, because where a company is run
 and where it is registered are different places and the map can show either.
+**One registry owns the shape** (`app/addresses.py`, since 2026-10-26): each kind
+of place — `registered`, `headquarters` — stores the same parts under its prefix
+(readable address, matching key where the kind keeps one, street, city, postcode,
+country where the kind has its own, pin and precision), and every importer, the
+SEC writer, the geocoder's passes, the copied-HQ heal and the schema ledger read
+the field names from it (`addresses.parts`, `fields`, `read`, `fill_clause`). A
+third kind of place is one registry entry. Two names do not follow the prefix and
+are stated there: the registered office's `address` and `address_normalized`; the
+registered office has no country field because the entity's `country` is it.
 
 ## Every property is declared
 

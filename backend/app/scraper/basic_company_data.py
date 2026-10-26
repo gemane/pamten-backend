@@ -46,6 +46,7 @@ import logging
 import zipfile
 from typing import IO, Iterator
 
+from app import addresses
 from app.scraper.bulk_import import (
     _drop_secondary_indexes, _flush_script, _now_iso, _ProgressBar,
     _rebuild_indexes,
@@ -53,7 +54,7 @@ from app.scraper.bulk_import import (
 from app import former_names
 from app.industry import parse_uk_sic, sync_uk_sic
 from app.scraper.companies_house_psc import mark_first_year_lower_bounds
-from app.scraper.mapper import is_nominee_name, normalize_address, normalize_entity_name
+from app.scraper.mapper import is_nominee_name, normalize_entity_name
 
 log = logging.getLogger(__name__)
 
@@ -116,9 +117,9 @@ def _reg_address_parts(row: dict) -> dict:
     street = ", ".join(p for p in ((row.get(k) or "").strip() for k in _STREET_KEYS) if p) or None
     city = (row.get("RegAddress.PostTown") or "").strip() or None
     postcode = (row.get("RegAddress.PostCode") or "").strip() or None
-    parts = {"address": _reg_address(row), "reg_street": street, "reg_city": city,
-             "reg_postcode": postcode}
-    return {k: v for k, v in parts.items() if v}
+    # the matching key always (None without an address), the rest only when stated
+    return addresses.parts(addresses.REGISTERED, street=street, city=city, postcode=postcode,
+                           full=_reg_address(row), empty=("key",))
 
 
 def _sic_codes(row: dict) -> list[str]:
@@ -328,9 +329,8 @@ def import_basic_company_data(filepath: str, credibility_score: int,
                     "type": _company_type(row.get("CompanyCategory")),
                     "country": "GB",
                     "incorporated_on": incorporated_on,
-                    # the register's address string is set by _reg_address_parts;
-                    # this is its matching key for the same-name dedup
-                    "address_normalized": normalize_address(_reg_address(row)),
+                    # the register's address string and its matching key (the
+                    # same-name dedup's corroborator) come with _reg_address_parts
                     # Nothing under hq_*: the register states the registered
                     # office, not where the company is run (_reg_address_parts).
                     "companies_house_id": number,

@@ -12,6 +12,7 @@ from app import former_names as former
 from app.database import db
 from app.db.arcadedb import run_query, run_command, run_sql, run_sqlscript
 from app.db.anchors import label_or_entity
+from app import addresses
 from app.db.paging import iter_id_pages
 from app.scraper.mapper import derive_ownership_type as _derive_ownership_type
 from app.merged_ids import record_merge_sql
@@ -366,7 +367,7 @@ def _group_confidence(members: list[dict]) -> str:
     if any(_shared(f) for f in ("lei_id", "wikidata_id", "sec_cik",
                                 "companies_house_id", "register_id")):
         return "definitive"
-    if _shared("address_normalized"):
+    if _shared(_REG_KEY):
         return "high"
     countries = {m.get("country") for m in members if m.get("country")}
     # the year the member began: the business's (`founded`) or, for a register
@@ -390,7 +391,7 @@ def find_duplicate_entity_names(limit: int = 100, min_confidence: str | None = N
     for name_norm, cnt in groups:
         members = run_sql(
             "SELECT id, name, country, founded, incorporated_on, lei_id, companies_house_id, "
-            "sec_cik, wikidata_id, register_id, address_normalized FROM Entity "
+            f"sec_cik, wikidata_id, register_id, {_REG_KEY} FROM Entity "
             "WHERE name_normalized = :nn LIMIT 25", {"nn": name_norm})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
         confidence = _group_confidence(members)
@@ -936,8 +937,8 @@ def clear_snapshot_since(apply: bool = False) -> dict:
 
 #: What the UK importers wrote under the headquarters prefix until 2026-10-18,
 #: all of it made from the registered office — cleared by the heal below.
-_COPIED_HQ_FIELDS = ("hq_address", "hq_city", "hq_country", "hq_street", "hq_postcode",
-                     "hq_lat", "hq_lng", "hq_geo_precision")
+_COPIED_HQ_FIELDS = tuple(addresses.field(addresses.HEADQUARTERS, p)
+                          for p in ("full", "city", "country", "street", "postcode", "lat", "lng", "precision"))
 #: (headquarters field, registered field) — a PART made from the registered
 #: office belongs under the registered prefix, where it is kept when nothing
 #: stands there yet. The pin is not moved: it is cleared, because the geocoder
@@ -945,7 +946,12 @@ _COPIED_HQ_FIELDS = ("hq_address", "hq_city", "hq_country", "hq_street", "hq_pos
 #: the copy and was GLEIF's headquarters point (Carlsberg Marston's: HQ in
 #: Northampton, registered office in Wolverhampton — the moved pin put its
 #: registered office in Northampton). The registered pass re-geocodes it.
-_HQ_TO_REG = (("hq_street", "reg_street"), ("hq_city", "reg_city"), ("hq_postcode", "reg_postcode"))
+#: the two places' stored fields (app.addresses)
+_HQ = addresses.fields(addresses.HEADQUARTERS)
+_REG = addresses.fields(addresses.REGISTERED)
+_REG_KEY = _REG["key"]
+_HQ_TO_REG = tuple((addresses.field(addresses.HEADQUARTERS, p), addresses.field(addresses.REGISTERED, p))
+                   for p in ("street", "city", "postcode"))
 _UK_HEAL_COLUMNS = ("id, @rid AS rid, address, "
                     + ", ".join(_COPIED_HQ_FIELDS) + ", "
                     + ", ".join(reg for _, reg in _HQ_TO_REG))
@@ -987,12 +993,12 @@ def clear_copied_uk_headquarters(apply: bool = False) -> dict:
             params: dict = {}
             for k, r in enumerate(page):
                 sets: dict = {}
-                if r.get("hq_address") and r.get("hq_address") == r.get("address"):
+                if r.get(_HQ["full"]) and r.get(_HQ["full"]) == r.get(_REG["full"]):
                     counts["copied"] += 1
                     for hq, reg in _HQ_TO_REG:
                         if r.get(hq) is not None and r.get(reg) is None:
                             sets[reg] = r[hq]
-                    if r.get("hq_lat") is not None:
+                    if r.get(_HQ["lat"]) is not None:
                         counts["pins_cleared"] += 1
                     for f in _COPIED_HQ_FIELDS:
                         sets[f] = None
@@ -1582,7 +1588,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     for nn in names:
         members = run_sql(
             "SELECT id, name, country, founded, incorporated_on, lei_id, companies_house_id, sec_cik, "
-            "wikidata_id, register_id, address_normalized, COALESCE(name_credibility, 0) AS cred "
+            f"wikidata_id, register_id, {_REG_KEY}, COALESCE(name_credibility, 0) AS cred "
             "FROM Entity "
             "WHERE name_normalized = :nn LIMIT 50", {"nn": nn})
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
@@ -2070,7 +2076,7 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
         # this repair, which only exists to fill blanks.
         run_command(
             "MATCH (e:Entity {id:$id}) SET e.country = COALESCE(e.country, $c), "
-            "e.hq_country = COALESCE(e.hq_country, $h)",
+            f"e.{_HQ['country']} = COALESCE(e.{_HQ['country']}, $h)",
             {"id": f["id"], "c": f["country"], "h": f["hq_country"]})
 
     return {"candidates": len(rows), "filled": len(filled),
@@ -2154,7 +2160,7 @@ def backfill_sec_headquarters(limit: int | None = None, fetch=None) -> dict:
 
     rows = run_query(
         "MATCH (e:Entity) WHERE e.sec_cik IS NOT NULL "
-        "AND (e.hq_address IS NULL OR e.hq_country IS NULL) "
+        f"AND (e.{_HQ['full']} IS NULL OR e.{_HQ['country']} IS NULL) "
         "RETURN e.id AS id, e.name AS name, e.sec_cik AS cik")
     if limit:
         rows = rows[:limit]
@@ -2171,10 +2177,9 @@ def backfill_sec_headquarters(limit: int | None = None, fetch=None) -> dict:
             continue
         run_command(
             "MATCH (e:Entity {id:$id}) "
-            "SET e.hq_address = COALESCE(e.hq_address, $a), "
-            "    e.hq_city    = COALESCE(e.hq_city, $c), "
-            "    e.hq_country = COALESCE(e.hq_country, $k)",
-            {"id": r["id"], "a": hq["address"], "c": hq["city"], "k": hq["country"]})
+            f"SET {addresses.fill_clause('e', addresses.HEADQUARTERS, ('full', 'city', 'country'))}",
+            addresses.parts(addresses.HEADQUARTERS, full=hq["address"], city=hq["city"], country=hq["country"],
+                            empty=("full", "city", "country")) | {"id": r["id"]})
         filled.append({"id": r["id"], "name": r["name"], **hq})
 
     return {"candidates": len(rows), "filled": len(filled),

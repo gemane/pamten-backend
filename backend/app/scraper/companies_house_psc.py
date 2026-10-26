@@ -28,6 +28,7 @@ import zipfile
 from dataclasses import dataclass
 from typing import IO
 
+from app import addresses
 from app.scraper.gleif_reference import (canonical_register_number,
                                           general_register_for_country, make_register_id,
                                           register_for_name, register_for_number_format,
@@ -36,8 +37,11 @@ from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _entity, _max_pct, _now_iso,
     _ProgressBar, _rebuild_indexes,
 )
-from app.scraper.mapper import derive_ownership_type, normalize_address, parse_full_name
+from app.scraper.mapper import derive_ownership_type, parse_full_name
 from app.scraper.edge_schema import READ_FIELD
+
+#: the registered office's stored fields (app.addresses)
+_REG = addresses.fields(addresses.REGISTERED)
 
 log = logging.getLogger(__name__)
 
@@ -338,11 +342,10 @@ def _psc_address(addr: dict | None) -> dict:
         return (str(addr.get(key) or "")).strip() or None
 
     lines = [p for p in (_v("premises"), _v("address_line_1"), _v("address_line_2")) if p]
-    parts = lines + [p for p in (_v("locality"), _v("region"), _v("postal_code"), _v("country")) if p]
-    address = ", ".join(parts) or None
-    return {"address": address, "address_normalized": normalize_address(address),
-            "reg_street": ", ".join(lines) or None, "reg_city": _v("locality"),
-            "reg_postcode": _v("postal_code")}
+    joined = lines + [p for p in (_v("locality"), _v("region"), _v("postal_code"), _v("country")) if p]
+    return addresses.parts(addresses.REGISTERED, street=", ".join(lines) or None, city=_v("locality"),
+                           postcode=_v("postal_code"), full=", ".join(joined) or None,
+                           empty=("full", "key", "street", "city", "postcode"))
 
 
 @dataclass(frozen=True)
@@ -540,12 +543,10 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             "name": name, "entity_type": "company",
             "country": iso2,
             "country_registered": None if iso2 else country_text,
-            "companies_house_id": chid, "address_normalized": address["address_normalized"],
-            # the panel's display address; no hq_* — the register does not say
-            # where the owner is run (see _psc_address)
-            "address": address["address"],
-            "reg_street": address["reg_street"], "reg_city": address["reg_city"],
-            "reg_postcode": address["reg_postcode"],
+            "companies_house_id": chid,
+            # the registered office with its key and parts; no headquarters —
+            # the register does not say where the owner is run (see _psc_address)
+            **address,
             "registration_number": reg_number,
             "registration_authority": (ident.get("place_registered") or "").strip() or None,
             "register_id": register_id,
@@ -592,7 +593,7 @@ def write_entity_owner(batch, mapped: PscMapped, source_id: str, credibility_sco
             country=props["country"], founded=None, lei_id=None,
             companies_house_id=props["companies_house_id"],
             source_id=source_id, credibility_score=credibility_score,
-            address_normalized=props["address_normalized"],
+            address_normalized=props[_REG["key"]],
             extra={"registration_number": props["registration_number"],
                    "registration_authority": props["registration_authority"],
                    "register_id": props["register_id"],
@@ -600,8 +601,8 @@ def write_entity_owner(batch, mapped: PscMapped, source_id: str, credibility_sco
                    # the display address and its parts only when the record
                    # has them: a bulk SET of null would blank what GLEIF wrote
                    # on a merged node
-                   **{k: props[k] for k in ("address", "reg_street", "reg_city", "reg_postcode")
-                      if props.get(k)}})
+                   **{_REG[p]: props[_REG[p]] for p in ("full", "street", "city", "postcode")
+                      if props.get(_REG[p])}})
 
 
 def _process(rec: dict, batch: "_BatchWriter", source_id: str, credibility_score: int,

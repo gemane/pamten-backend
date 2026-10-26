@@ -32,6 +32,7 @@ from typing import IO
 
 from datetime import datetime, timezone
 
+from app import addresses
 from app.claims import claim_props, KIND_OWNS, KIND_ROLE, KIND_SUCCESSION
 from app.scraper.edge_schema import READ_FIELD
 
@@ -514,15 +515,11 @@ def _entity(batch, node_id, name, entity_type, country, founded,
         "founded": founded,
         "lei_id": lei_id,
         "companies_house_id": companies_house_id,
-        "address_normalized": address_normalized,
+        addresses.field(addresses.REGISTERED, "key"): address_normalized,
         "is_nominee": is_nominee_name(name),   # holder-of-record, not a beneficial owner
     }
-    if hq_city:
-        props["hq_city"] = hq_city
-    if hq_country:
-        props["hq_country"] = hq_country
-    if hq_address:
-        props["hq_address"] = hq_address
+    # the headquarters only as far as it is known (app.addresses)
+    props.update(addresses.parts(addresses.HEADQUARTERS, city=hq_city, country=hq_country, full=hq_address))
     # Same escape hatch _owns has always had: fields only one caller states
     # (the PSC corporate path's registration_number / register_id) ride along
     # without widening every signature. The mapper computed these for months

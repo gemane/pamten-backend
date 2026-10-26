@@ -122,7 +122,7 @@ class TestTheBackfill:
         sql, params = commands[0]
         # COALESCE everywhere: a repair, not a re-import.
         assert sql.count("COALESCE") == 3
-        assert params["c"] == "MILWAUKEE" and params["k"] == "US"
+        assert params["hq_city"] == "MILWAUKEE" and params["hq_country"] == "US"   # named after the fields (app.addresses)
 
     def test_never_touches_the_registration_country(self, monkeypatch):
         from app.scraper import maintenance
@@ -164,3 +164,18 @@ class TestTheBackfill:
                         stateOrCountryDescription="United Kingdom")
 
         assert maintenance.backfill_sec_headquarters(fetch=fetch)["filled"] == 1
+
+
+def test_the_writer_stores_every_part_edgar_states():
+    """The SEC name-keyed writer's parameters and its fill/create clauses
+    cover the whole business address — street and postcode included, so the
+    geocoder never re-parses the string (app.addresses, 2026-10-26)."""
+    from app.scraper import graph_writer as gw
+    params = gw._hq_params({"address": "1 Apple Park Way, Cupertino", "city": "Cupertino",
+                            "country": "US", "street": "1 Apple Park Way", "postcode": "95014"})
+    assert params == {"hq_address": "1 Apple Park Way, Cupertino", "hq_city": "Cupertino",
+                      "hq_country": "US", "hq_street": "1 Apple Park Way", "hq_postcode": "95014"}
+    for f in params:
+        assert f"e.{f} = COALESCE(e.{f}, ${f})" in gw._SEC_HQ_FILL
+        assert f"{f}: ${f}" in gw._SEC_HQ_CREATE
+    assert set(gw._hq_params(None).values()) == {None}          # every parameter present, none stated

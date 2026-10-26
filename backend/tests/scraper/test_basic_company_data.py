@@ -162,12 +162,15 @@ class TestOnlyCompanies:
         assert bare["active"] is True and "company_status" not in bare and "dissolved_on" not in bare
 
     def test_a_row_without_address_columns_writes_no_parts(self):
-        """Only the parts the row has: a SET of null would blank GLEIF's."""
+        """Only the parts the row has: a SET of null would blank GLEIF's. The
+        matching key always comes along (None without an address) — the
+        importer wrote it beside these parts before they moved into one
+        helper (app.addresses, 2026-10-26)."""
         from app.scraper.basic_company_data import _reg_address_parts
-        assert _reg_address_parts({"RegAddress.PostTown": "", "RegAddress.PostCode": " "}) == {}
+        assert _reg_address_parts({"RegAddress.PostTown": "", "RegAddress.PostCode": " "}) == {"address_normalized": None}
         assert _reg_address_parts({"RegAddress.CareOf": "C/O AGENTS LTD", "RegAddress.POBox": "PO BOX 1",
                                    "RegAddress.PostCode": "N1 1AA"}) == {
-            "address": "C/O AGENTS LTD, PO BOX 1, N1 1AA",
+            "address": "C/O AGENTS LTD, PO BOX 1, N1 1AA", "address_normalized": "c o agents ltd po box 1 n1 1aa",
             "reg_street": "C/O AGENTS LTD, PO BOX 1", "reg_postcode": "N1 1AA"}
 
     def test_the_import_then_marks_first_year_lower_bounds_for_the_companies_it_touched(self, tmp_path):
