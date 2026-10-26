@@ -14,7 +14,6 @@ All entry points:
 
 import os
 import re
-import uuid
 import logging
 import zipfile
 from contextlib import ExitStack
@@ -55,6 +54,7 @@ from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.field_twins import merge_countries, merge_nationalities
 from app.roles import combined_start, end_seats_at_death
 from app.dissolution import end_at_dissolution
+from app.node_ids import mint_node_id
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
                                      weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
@@ -339,7 +339,9 @@ def _upsert_entity(
                 end_at_dissolution(entity_id)      # nothing of a dissolved company stays open
             return _record_touched_entity(entity_id)
 
-        entity_id = str(uuid.uuid4())
+        # keyed by the best hard id it arrives with (app.node_ids): the LEI,
+        # else the Wikidata item, else the CIK — a uuid only without any
+        entity_id = mint_node_id(lei=lei, wikidata_id=wikidata_id, sec_cik=sec_cik)
         session.run(
             """
             CREATE (e:Entity {
@@ -460,7 +462,7 @@ def _upsert_person(
                 end_seats_at_death(rec["id"])      # a seat ends no later than its holder's death
             return _record_touched(rec["id"])
 
-        person_id = str(uuid.uuid4())
+        person_id = mint_node_id(wikidata_id=wikidata_id)      # `wd:Q…`, a uuid without one
         session.run(
             """
             CREATE (p:Person {

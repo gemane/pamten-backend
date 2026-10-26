@@ -301,7 +301,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the ASGI server percent-decodes the path *before* routing, so an id containing `/`
       makes its page unreachable. Never embed an API self-link verbatim; mint
       `prefix:{part}:{part}` from its stable components (the `chpsc:` ids did it wrong,
-      shipped, and needed a routing workaround plus a data migration).
+      shipped, and needed a routing workaround plus a data migration). **And key the id
+      on the source's hard id when the writer has one** (`app.node_ids.mint_node_id`:
+      `lei:`, `wd:Q…`, `sec:{cik}`, your register's own prefix): a uuid is re-minted by
+      every rebuild, and every shared link, pin and flag that named the node broke with
+      it — 2,225 dev nodes carried a QID or a CIK under a uuid until 2026-10-26. A
+      name-only node keeps a uuid; a malformed value is never keyed on.
 - [ ] **Match on a hard identifier when the source has one.** Shared LEI/CIK/CH number is
       proof; a shared name is a hint.
 - [ ] **When the source NAMES the register, use the name before any guess.**

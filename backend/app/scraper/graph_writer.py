@@ -13,7 +13,6 @@ re-exports these names for compatibility.
 """
 import contextvars
 import functools
-import uuid
 from datetime import datetime, timezone
 
 from app import former_names as former
@@ -23,6 +22,7 @@ from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
+from app.node_ids import mint_node_id
 from app.scraper.mapper import is_nominee_name, normalize_entity_name, parse_full_name
 import logging
 
@@ -818,7 +818,9 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 )
             return _record_touched_entity(entity_id)
 
-        entity_id = str(uuid.uuid4())
+        # keyed by the LEI or the CIK it arrives with (app.node_ids); a
+        # name-only row (an Exhibit 21 subsidiary) gets a uuid
+        entity_id = mint_node_id(lei=lei, sec_cik=cik)
         aliases = _merge_aliases([], former.names(former_names), name)
         session.run(
             """
@@ -902,7 +904,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
                 _stamp_person_cik(session, rec["id"], sec_cik)
                 return _record_touched(rec["id"])
 
-        person_id = str(uuid.uuid4())
+        person_id = mint_node_id(sec_cik=sec_cik)                # `sec:{cik}`, a uuid without one
         session.run(
             """
             CREATE (p:Person {
