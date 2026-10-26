@@ -18,12 +18,20 @@ def test_the_writers_key_a_new_node_and_find_it_again(it_db):
     assert apple == "wd:Q312"                                        # the item outranks the CIK
     assert _upsert_entity("Apple Inc.", "company", "US", None, None, None, "Q312", source_id="wikidata") == "wd:Q312"
     assert _upsert_entity_by_name("APPLE INC", cik="0000320193", source_id="sec-edgar") == "wd:Q312"   # the CIK finds it
-    brc = _upsert_entity_by_name("BRC S.a R.L.", cik="0001301486", source_id="sec-edgar")
+    brc = _upsert_entity_by_name("BRC S.a R.L.", cik="1301486", source_id="sec-edgar")       # a bare CIK
     assert brc == "sec:0001301486"
+    assert it_db.run_sql("SELECT sec_cik FROM Entity WHERE id = 'sec:0001301486'")[0]["sec_cik"] == "0001301486", \
+        "stored padded at creation, not only re-stamped later"
     assert _upsert_entity_by_name("BRC S.A R.L.", cik="0001301486", source_id="sec-edgar") == brc
+    # the lookup pads too: a bare CIK from any caller finds the padded node
+    from app.database import db
+    from app.entity_resolution import resolve_entity_id
+    with db.get_session() as session:
+        assert resolve_entity_id(session, sec_cik="1301486") == brc
     sub = _upsert_entity_by_name("Sub Inc", source_id="sec-edgar")
     assert is_uuid(sub)                                               # name-only: nothing to key on
     assert _upsert_person("Tim Cook", None, None, "Q265852", source_id="wikidata") == "wd:Q265852"
+    assert _upsert_person_by_name("COOK TIMOTHY D", source_id="sec-edgar", sec_cik="1214156") == "sec:0001214156"
     assert _upsert_person_by_name("COOK TIMOTHY D", source_id="sec-edgar", sec_cik="0001214156") == "sec:0001214156"
     assert is_uuid(_upsert_person_by_name("Nobody Known", source_id="sec-edgar"))
     assert it_db.run_sql("SELECT count(*) AS n FROM Entity")[0]["n"] == 3

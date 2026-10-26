@@ -1223,6 +1223,9 @@ def cmd_heal_model_gaps(args):
     print(f"Person.alias renamed to aliases on {res['person_aliases']['persons']} persons{verb}")
     es = {k: v for k, v in res["empty_strings"].items() if k != "applied"}
     print("Empty strings removed: " + ", ".join(f"{k} {v}" for k, v in es.items()) + verb)
+    ck = res["cik_padding"]
+    print(f"CIKs padded to 10 digits: Entity {ck['Entity']['padded']}, Person {ck['Person']['padded']}"
+          f" ({ck['Entity']['not_a_cik'] + ck['Person']['not_a_cik']} values that are no CIK left as they are){verb}")
 
 
 def cmd_init_schema(args):

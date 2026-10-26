@@ -298,6 +298,26 @@ def heal_person_aliases(apply: bool = True) -> dict:
     return out
 
 
+def heal_cik_padding(apply: bool = True) -> dict:
+    """Every `sec_cik` in its 10-digit form (`mapper.normalize_cik`): 84 dev
+    entities held a bare CIK from an SEC path that did not pad (2026-10-26),
+    so the CIK lookup missed their padded twins. A value that is not a CIK
+    at all is left as it is and counted. Whole-type scans — run with --db-url."""
+    from app.scraper.mapper import normalize_cik
+    out: dict = {"applied": bool(apply)}
+    for label in ("Entity", "Person"):
+        rows = run_sql(f"SELECT @rid AS rid, sec_cik FROM {label} WHERE sec_cik IS NOT NULL", timeout=3600)
+        padded = [(str(r["rid"]), normalize_cik(r["sec_cik"])) for r in rows or []
+                  if normalize_cik(r["sec_cik"]) and normalize_cik(r["sec_cik"]) != str(r["sec_cik"])]
+        out[label] = {"padded": len(padded),
+                      "not_a_cik": sum(1 for r in rows or [] if not normalize_cik(r["sec_cik"]))}
+        if apply:
+            for rid, cik in padded:
+                run_sql(f"UPDATE {rid} SET sec_cik = :c", {"c": cik})
+    log.info("cik padding heal: %s", out)
+    return out
+
+
 def heal_all(apply: bool = True) -> dict:
     """Every model-gap heal in one call (`manage.py heal-model-gaps`): the
     2026-10-25 survey's four, then the round-four three — empty lists, the run
@@ -312,4 +332,4 @@ def heal_all(apply: bool = True) -> dict:
             "seat_filings": heal_seat_claim_filings(apply),
             "dead_keys": heal_dead_keys(apply), "claim_dates": heal_claim_dates(apply),
             "address_keys": heal_address_keys(apply), "person_aliases": heal_person_aliases(apply),
-            "empty_strings": heal_empty_strings(apply)}
+            "empty_strings": heal_empty_strings(apply), "cik_padding": heal_cik_padding(apply)}

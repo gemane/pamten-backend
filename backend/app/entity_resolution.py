@@ -25,6 +25,9 @@ def resolve_entity_id(session, *, label: str = "Entity", **ids) -> str | None:
     or falsy identifier values are skipped. Returns None if nothing matches."""
     for field in _RESOLVE_FIELDS:
         value = ids.get(field)
+        if field == "sec_cik" and value:
+            from app.scraper.mapper import normalize_cik
+            value = normalize_cik(value)          # a bare CIK finds its padded node (2026-10-26)
         if not value:
             continue
         rec = session.run(

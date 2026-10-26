@@ -10,6 +10,7 @@ class TestMinting:
         assert keyed_id("529900T8BM49AURSDO55", "Q312", "0000320193") == "lei:529900T8BM49AURSDO55"
         assert keyed_id(None, "Q312", "0000320193") == "wd:Q312"
         assert keyed_id(None, None, "0000320193") == "sec:0000320193"
+        assert keyed_id(None, None, "320193") == "sec:0000320193"          # one filer, one id: the padded form
 
     def test_a_name_only_node_gets_a_uuid(self):
         assert keyed_id(None, None, None) is None

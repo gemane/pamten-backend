@@ -22,10 +22,11 @@ import logging
 import re
 import uuid
 
+from app.scraper.mapper import normalize_cik
+
 log = logging.getLogger(__name__)
 
 _QID = re.compile(r"^Q[0-9]+$")
-_CIK = re.compile(r"^[0-9]{1,10}$")
 _LEI = re.compile(r"^[A-Z0-9]{20}$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -38,8 +39,9 @@ def keyed_id(lei: str | None = None, wikidata_id: str | None = None,
         return f"lei:{lei.strip()}"
     if wikidata_id and _QID.match(wikidata_id.strip()):
         return f"wd:{wikidata_id.strip()}"
-    if sec_cik and _CIK.match(sec_cik.strip()):
-        return f"sec:{sec_cik.strip()}"
+    cik = normalize_cik(sec_cik)
+    if cik:
+        return f"sec:{cik}"                      # always the 10-digit form: one filer, one id
     return None
 
 

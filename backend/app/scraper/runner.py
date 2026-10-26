@@ -27,7 +27,7 @@ from app.stake_history import one_statement_per_run
 from app.scraper.wikidata import (search_entity, search_entity_in_country,
                                   fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix, normalize_cik
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
@@ -236,6 +236,7 @@ def _upsert_entity(
     keeps that higher-credibility source when Wikidata later enriches it.
     """
     name_norm = normalize_entity_name(name)
+    sec_cik = normalize_cik(sec_cik)           # the 10-digit form, as every CIK is stored and looked up
     # FULL_TEXT search field (name + description + aliases), so scraped entities
     # are findable via /search — same content as manage.py backfill-search. The
     # BODS importer sets this inline too; the Wikidata scraper must as well or the
