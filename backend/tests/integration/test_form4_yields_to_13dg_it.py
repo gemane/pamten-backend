@@ -87,18 +87,21 @@ def test_a_rescrape_changes_nothing(graph):
     assert run_sql("SELECT FROM StakeHistory") == []
 
 
-def test_a_form_4_claim_from_before_the_rule_is_replaced_by_the_13ga(graph):
+def test_a_form_4_claim_from_before_the_rule_yields_the_edge_to_the_13ga(graph):
     """Dev today: the pair holds the Form 4 figure from an earlier run. The next
-    run states the 13G/A; its date precedes the Form 4's restatement, so the
-    history keeps one row — the 13G/A, previous 28.4188 — and time travel
-    never shows the count of record after June."""
+    run states the 13G/A, which takes the edge. Since 2026-10-26 the two are
+    two claims (keyed by filing family) and two series: the Form 4 claim
+    stays as the register's statement of record, the 13G/A is the first
+    statement of its own family — so no "replaced" history row is written,
+    and the beneficial figure never reads as a change of the count of record."""
     _scrape([], [MUSK_FORM4])
     assert [(r["pct"], r["ft"]) for r in _owner_rows(graph)] == [(28.4188, "Form 4")]
     _scrape([MUSK_13GA], [MUSK_FORM4])
     assert [(r["pct"], r["sh"], r["ft"]) for r in _owner_rows(graph)] == [(19.9, 699580882, "13G/A")]
-    rows = run_sql("SELECT stake_percent, previous_percent, as_of, filing_type FROM StakeHistory")
-    assert [(r["stake_percent"], r["previous_percent"], r["as_of"], r["filing_type"]) for r in rows] == [
-        (19.9, 28.4188, "2026-06-16", "13G/A")]
+    claims = {r["filing_type"]: r["stake_percent"] for r in run_sql(
+        "SELECT filing_type, stake_percent FROM Claim WHERE kind = 'owns'")}
+    assert claims == {"Form 4": 28.4188, "13G/A": 19.9}
+    assert run_sql("SELECT FROM StakeHistory") == []
 
 
 def test_a_13ga_that_reported_an_exit_lets_the_form_4_write(graph):
