@@ -133,6 +133,29 @@ class TestHealFlags:
         assert not any(s.startswith("UPDATE") for s in issued)
 
 
+class TestHealCikPadding:
+    ROWS = {"Entity": [{"rid": "#1:0", "sec_cik": "914208"}, {"rid": "#1:1", "sec_cik": "0000320193"},
+                       {"rid": "#1:2", "sec_cik": "CIK?"}],
+            "Person": [{"rid": "#2:0", "sec_cik": "0001350874"}]}
+
+    def test_a_bare_cik_is_padded_and_a_non_cik_left(self):
+        calls = []
+        def run_sql(sql, params=None, **k):
+            calls.append((sql, params))
+            return self.ROWS["Entity" if "FROM Entity" in sql else "Person"] if sql.startswith("SELECT") else []
+        with patch.object(m, "run_sql", run_sql):
+            res = m.heal_cik_padding(apply=True)
+        assert res["Entity"] == {"padded": 1, "not_a_cik": 1} and res["Person"] == {"padded": 0, "not_a_cik": 0}
+        assert ("UPDATE #1:0 SET sec_cik = :c", {"c": "0000914208"}) in calls
+        assert not any(s.startswith("UPDATE #1:1") or s.startswith("UPDATE #1:2") for s, _ in calls)
+
+    def test_a_dry_run_only_counts(self):
+        calls = []
+        with patch.object(m, "run_sql", lambda s, p=None, **k: calls.append(s) or (self.ROWS["Entity"] if "FROM Entity" in s else self.ROWS["Person"])):
+            res = m.heal_cik_padding(apply=False)
+        assert res["Entity"]["padded"] == 1 and not any(s.startswith("UPDATE") for s in calls)
+
+
 class TestHealEmptyStrings:
     def test_an_empty_description_is_removed_a_real_one_kept(self):
         calls = []
@@ -254,14 +277,16 @@ class TestHealEmptyLists:
         with patch.object(m, "heal_nationalities", lambda a: "n"), patch.object(m, "heal_countries", lambda a: "c"), \
              patch.object(m, "heal_person_sources", lambda a: "p"), patch.object(m, "heal_flags", lambda a: "s"), \
              patch.object(m, "heal_empty_lists", lambda a: "e"), patch.object(m, "heal_empty_strings", lambda a: "es"), \
+             patch.object(m, "heal_cik_padding", lambda a: "ck"), \
              patch.object(m, "heal_dead_keys", lambda a: "d"), patch.object(m, "heal_claim_dates", lambda a: "cd"), \
              patch.object(m, "heal_address_keys", lambda a: "ak"), patch.object(m, "heal_person_aliases", lambda a: "pa"), \
              patch("app.scraper.run_log.heal_placeholders", lambda a: "r"), \
              patch("app.roles.heal_seat_claim_filings", lambda a: "f"):
             res = m.heal_all(apply=False)
         assert list(res) == names + ["run_log", "seat_filings", "dead_keys", "claim_dates", "address_keys",
-                                     "person_aliases", "empty_strings"]
+                                     "person_aliases", "empty_strings", "cik_padding"]
         assert res["person_aliases"] == "pa" and res["empty_strings"] == "es" and res["flags"] == "s"
+        assert res["cik_padding"] == "ck"
         assert res["run_log"] == "r" and res["seat_filings"] == "f"
         assert res["dead_keys"] == "d" and res["claim_dates"] == "cd"
 

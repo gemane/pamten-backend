@@ -860,6 +860,23 @@ class TestUpsertPersonDetail:
         assert "e.active          = CASE WHEN $dissolved_on IS NOT NULL THEN false ELSE e.active END" in update.args[0]
         assert update.kwargs["dissolved_on"] == "2023-03-15" and ended == ["e-1"]
 
+    def test_a_new_entity_is_keyed_by_its_hard_id(self):
+        """app.node_ids (2026-10-26): `wd:Q…` for a Wikidata node, `lei:` when
+        Wikidata states the LEI (the GLEIF import's own key), a uuid only
+        for a node with neither."""
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            eid = _upsert_entity("Apple Inc.", "company", "US", None, None, None, "Q312", source_id="wikidata")
+        assert eid == "wd:Q312"
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            assert _upsert_entity("Apple Inc.", "company", "US", None, None, None, "Q312",
+                                  source_id="wikidata", lei="HWUPKR0MPOU8FGXBT394") == "lei:HWUPKR0MPOU8FGXBT394"
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx):
+            pid = _upsert_person("Tim Cook", None, None, "Q265852", source_id="wikidata")
+        assert pid == "wd:Q265852"
+
     def test_a_living_company_asserts_no_active_flag_and_runs_no_rule(self):
         """A knowledge base does not say a company is active — null means no
         register has said (schema.FLAGS keeps `active` three-valued)."""

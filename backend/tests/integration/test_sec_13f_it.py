@@ -97,10 +97,10 @@ def test_without_a_denominator_counts_stay_and_percent_is_absent(it_db):
 def test_a_filer_known_from_13g_gets_one_node_not_two(it_db):
     _company(it_db)
     it_db.run_command("CREATE (:Entity {id:'giga', name:'Gigafund', "
-                      "name_normalized:'gigafund', sec_cik:'1713833', type:'fund'})")
+                      "name_normalized:'gigafund', sec_cik:'0001713833', type:'fund'})")   # the 10-digit form every CIK is stored in
     _run(it_db)
     n = it_db.run_command(
-        "MATCH (e:Entity) WHERE e.sec_cik = '1713833' RETURN count(e) AS n")[0]["n"]
+        "MATCH (e:Entity) WHERE e.sec_cik = '0001713833' RETURN count(e) AS n")[0]["n"]
     assert n == 1, "the 13F filer must land on the node its CIK already has"
 
 
@@ -201,7 +201,7 @@ def test_the_claims_carry_the_counts(it_db):
     from app.claims import claims_for
     _company(it_db)
     _run(it_db)
-    giga = it_db.run_command("MATCH (e:Entity) WHERE e.sec_cik = '1713833' "
+    giga = it_db.run_command("MATCH (e:Entity) WHERE e.sec_cik = '0001713833' "
                              "RETURN e.id AS id")[0]["id"]
     rows = claims_for(from_id=giga, to_id="sx")
     assert len(rows) == 1 and rows[0]["shares"] == 171826745
@@ -226,7 +226,7 @@ def test_the_filing_type_reaches_edge_claim_and_sources_panel(it_db):
         "MATCH ()-[r:OWNS]->(:Entity {id:'sx'}) RETURN r.filing_type AS ft LIMIT 1")[0]
     assert edge["ft"] == "13F"
 
-    giga = it_db.run_command("MATCH (e:Entity) WHERE e.sec_cik = '1713833' "
+    giga = it_db.run_command("MATCH (e:Entity) WHERE e.sec_cik = '0001713833' "
                              "RETURN e.id AS id")[0]["id"]
     assert claims_for(from_id=giga, to_id="sx")[0]["filing_type"] == "13F"
 

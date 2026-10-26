@@ -14,7 +14,6 @@ All entry points:
 
 import os
 import re
-import uuid
 import logging
 import zipfile
 from contextlib import ExitStack
@@ -28,7 +27,7 @@ from app.stake_history import one_statement_per_run
 from app.scraper.wikidata import (search_entity, search_entity_in_country,
                                   fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix, normalize_cik
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
@@ -55,6 +54,7 @@ from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.field_twins import merge_countries, merge_nationalities
 from app.roles import combined_start, end_seats_at_death
 from app.dissolution import end_at_dissolution
+from app.node_ids import mint_node_id
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
                                      weakest_reading)
 from app.scraper.country_match import matches_requested, country_mismatch
@@ -236,6 +236,7 @@ def _upsert_entity(
     keeps that higher-credibility source when Wikidata later enriches it.
     """
     name_norm = normalize_entity_name(name)
+    sec_cik = normalize_cik(sec_cik)           # the 10-digit form, as every CIK is stored and looked up
     # FULL_TEXT search field (name + description + aliases), so scraped entities
     # are findable via /search — same content as manage.py backfill-search. The
     # BODS importer sets this inline too; the Wikidata scraper must as well or the
@@ -339,7 +340,9 @@ def _upsert_entity(
                 end_at_dissolution(entity_id)      # nothing of a dissolved company stays open
             return _record_touched_entity(entity_id)
 
-        entity_id = str(uuid.uuid4())
+        # keyed by the best hard id it arrives with (app.node_ids): the LEI,
+        # else the Wikidata item, else the CIK — a uuid only without any
+        entity_id = mint_node_id(lei=lei, wikidata_id=wikidata_id, sec_cik=sec_cik)
         session.run(
             """
             CREATE (e:Entity {
@@ -460,7 +463,7 @@ def _upsert_person(
                 end_seats_at_death(rec["id"])      # a seat ends no later than its holder's death
             return _record_touched(rec["id"])
 
-        person_id = str(uuid.uuid4())
+        person_id = mint_node_id(wikidata_id=wikidata_id)      # `wd:Q…`, a uuid without one
         session.run(
             """
             CREATE (p:Person {

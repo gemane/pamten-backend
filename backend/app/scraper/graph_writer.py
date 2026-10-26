@@ -13,7 +13,6 @@ re-exports these names for compatibility.
 """
 import contextvars
 import functools
-import uuid
 from datetime import datetime, timezone
 
 from app import former_names as former
@@ -23,7 +22,8 @@ from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
-from app.scraper.mapper import is_nominee_name, normalize_entity_name, parse_full_name
+from app.node_ids import mint_node_id
+from app.scraper.mapper import is_nominee_name, normalize_cik, normalize_entity_name, parse_full_name
 import logging
 
 from app.config import settings
@@ -728,6 +728,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     its US filing office, so the two answer different questions and the map draws
     one or the other. Only ever fills a blank."""
     name_norm = normalize_entity_name(name)
+    cik = normalize_cik(cik)                   # the 10-digit form, as every CIK is stored and looked up
     with db.get_session() as session:
         entity_id = (resolve_entity_id(session, sec_cik=cik) if cik else None) \
             or _resolve_by_name(session, name, name_norm, country)
@@ -818,7 +819,9 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 )
             return _record_touched_entity(entity_id)
 
-        entity_id = str(uuid.uuid4())
+        # keyed by the LEI or the CIK it arrives with (app.node_ids); a
+        # name-only row (an Exhibit 21 subsidiary) gets a uuid
+        entity_id = mint_node_id(lei=lei, sec_cik=cik)
         aliases = _merge_aliases([], former.names(former_names), name)
         session.run(
             """
@@ -865,6 +868,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
     executive filings use FIRST LAST order; the reversed two-word form is tried
     before creating a new node.
     """
+    sec_cik = normalize_cik(sec_cik)           # the 10-digit form, as every CIK is stored and looked up
     parts = full_name.strip().split()
     reversed_name = f"{parts[1]} {parts[0]}" if len(parts) == 2 else None
 
@@ -902,7 +906,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
                 _stamp_person_cik(session, rec["id"], sec_cik)
                 return _record_touched(rec["id"])
 
-        person_id = str(uuid.uuid4())
+        person_id = mint_node_id(sec_cik=sec_cik)                # `sec:{cik}`, a uuid without one
         session.run(
             """
             CREATE (p:Person {
@@ -933,4 +937,4 @@ def _stamp_person_cik(session, person_id: str, sec_cik: str | None) -> None:
     CIK already recorded is never overwritten."""
     session.run("MATCH (p:Person {id: $id}) SET p.sec_cik = COALESCE(p.sec_cik, $cik), "
                 "p.last_scraped_at = $now",
-                id=person_id, cik=sec_cik, now=_now_iso())
+                id=person_id, cik=normalize_cik(sec_cik), now=_now_iso())

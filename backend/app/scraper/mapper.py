@@ -155,6 +155,22 @@ _NOMINEE_NAME = re.compile(
 )
 
 
+def normalize_cik(raw: str | None) -> str | None:
+    """A CIK zero-padded to 10 digits, matching how SEC EDGAR reports it —
+    or None for a value that is not a CIK.
+
+    Wikidata's P5531 is sometimes padded ("0000789019") and sometimes not
+    ("789019"), and 84 dev entities held a bare CIK from an SEC path that did
+    not pad (2026-10-26) — so a CIK lookup missed its padded twin and four
+    filers sat on the graph twice. Every writer and lookup normalises here;
+    the keyed id (`sec:{cik}`) is minted from the padded form.
+    """
+    if not raw:
+        return None
+    digits = str(raw).strip().lstrip("#").strip()
+    return digits.zfill(10) if digits.isdigit() and len(digits) <= 10 else None
+
+
 def is_nominee_name(name: str | None) -> bool:
     """True if `name` looks like a nominee / custodian (holder of record), not a
     beneficial owner."""

@@ -1133,6 +1133,23 @@ def cmd_schema_audit(args):
     sys.exit(1)
 
 
+def cmd_heal_keyed_ids(args):
+    """Give every uuid-keyed Entity and Person that carries a hard id the
+    keyed id a new node gets today (app.node_ids: `lei:`, `wd:Q…`, `sec:{cik}`),
+    through the rename machinery — claims re-keyed, references re-pointed, a
+    forwarding row per old id so old links keep opening. Dry run unless
+    --apply."""
+    from app.node_ids import heal_keyed_ids
+    res = heal_keyed_ids(apply=args.apply)
+    verb = "moved" if args.apply else "would move (dry run — add --apply)"
+    for label in ("Entity", "Person"):
+        c = res[label]
+        print(f"{label}: {c['moved']} {verb} to a keyed id, {c['unkeyed']} name-only nodes keep a uuid, "
+              f"{c['taken']} keyed ids already taken, of {c['scanned']} uuid-keyed")
+        for name, old, new in c["sample"][:5]:
+            print(f"  {name!r}: {old} -> {new}")
+
+
 def cmd_heal_voting_groups(args):
     """Move every Entity of type `voting_group` to the VotingGroup vertex
     type (app.voting_groups.heal_voting_group_type, 2026-10-26): same id,
@@ -1206,6 +1223,9 @@ def cmd_heal_model_gaps(args):
     print(f"Person.alias renamed to aliases on {res['person_aliases']['persons']} persons{verb}")
     es = {k: v for k, v in res["empty_strings"].items() if k != "applied"}
     print("Empty strings removed: " + ", ".join(f"{k} {v}" for k, v in es.items()) + verb)
+    ck = res["cik_padding"]
+    print(f"CIKs padded to 10 digits: Entity {ck['Entity']['padded']}, Person {ck['Person']['padded']}"
+          f" ({ck['Entity']['not_a_cik'] + ck['Person']['not_a_cik']} values that are no CIK left as they are){verb}")
 
 
 def cmd_init_schema(args):
@@ -1521,6 +1541,12 @@ def _build_parser():
     p_hpt.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hpt.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
     p_hpt.set_defaults(func=cmd_heal_property_types)
+
+    p_hki = subparsers.add_parser('heal-keyed-ids',
+        help="Give every uuid-keyed Entity/Person with a hard id its keyed id (lei:, wd:Q…, sec:cik), "
+             "with a forwarding row per old id. Dry run unless --apply")
+    p_hki.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
+    p_hki.set_defaults(func=cmd_heal_keyed_ids)
 
     p_hvg = subparsers.add_parser('heal-voting-groups',
         help="Move every Entity of type voting_group to the VotingGroup vertex type (2026-10-26); "

@@ -978,17 +978,7 @@ def normalize_url(raw: str | None) -> str | None:
     return None
 
 
-def normalize_cik(raw: str | None) -> str | None:
-    """A CIK zero-padded to 10 digits, matching how SEC EDGAR reports it.
-
-    Wikidata's P5531 is sometimes padded ("0000789019") and sometimes not
-    ("789019"). Storing the unpadded form would silently break the match against
-    an EDGAR-sourced node, which always stores the padded one.
-    """
-    if not raw:
-        return None
-    digits = raw.strip().lstrip("#").strip()
-    return digits.zfill(10) if digits.isdigit() and len(digits) <= 10 else None
+from app.scraper.mapper import normalize_cik  # noqa: E402,F401 — moved to the mapper (2026-10-26); kept for callers
 
 
 def _aggregate(qid: str, rows: list) -> dict | None:
