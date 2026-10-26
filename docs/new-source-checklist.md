@@ -198,9 +198,19 @@ parser. Anything that does not map is either a new property (document it) or noi
       reader needed a fallback (2026-10-25; `founded` / `founded_date` was the same disease
       the day before).
       Write the list (`app.field_twins.merge_*` folds a single value in); where a scalar
-      must stay as a filter key (`country`), the list always contains it. A flag is
-      `true` or `false`, never unset: since ArcadeDB 26.10.1 a `<>` on a null is false,
-      and an unset `stale` dropped 1,274 edges out of every filter. Stamp `false`.
+      must stay as a filter key (`country`), the list always contains it.
+- [ ] **What no source stated is absent — never `''`, never `[]`; a flag that means "not
+      asserted" is `false` by declaration.** The SEC and PSC person writers wrote
+      `description: ''` for 1,378 people and nobody noticed for a year, because a reader
+      with `or ""` hides it; 196 empty `nationalities` lists hid the same way. Leave the
+      key out (the writers since 2026-10-25; `field_twins.heal_empty_strings` /
+      `heal_empty_lists` catch a database written before). A flag is the one shape that
+      must NOT be absent: since ArcadeDB 26.10.1 a `<>` on a null is false and an unset
+      `stale` dropped 1,274 edges out of every filter — so every flag meaning "not
+      asserted" is listed in `schema.FLAGS` and declared `DEFAULT false`, and
+      `heal-model-gaps` sets the rows written before. The exception is deliberate and
+      documented: `Entity.active` stays three-valued, because null means no register has
+      said whether the company exists, which is a different fact from "not ceased".
 - [ ] **Dates carry their real precision.** UK PSC publishes month and year only; storing
       a fabricated day makes two different people look like the same one.
 - [ ] **An entity's end is a fact the source may state — read it.** Wikidata's P576,
@@ -342,6 +352,19 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Use the existing writers** — `_upsert_entity_by_name`, `_upsert_person_by_name`,
       `resolve_entity_id`. They already implement match-by-id-then-name-then-normalised,
       and the credibility rule that stops a weak source renaming a company.
+- [ ] **A thing that is not a legal person is not an Entity — give it its own vertex
+      type.** A 13D filing group spent a year as an Entity of type `voting_group`, and
+      every query that assumes an entity is a company had to fence it off: eight did
+      (`not_a_voting_group`), the rest forgot — the 38 groups were the only entities
+      without a nominee flag, were counted in the entity totals, and were offered to
+      every heal that walks the entities. Since 2026-10-26 it is a `VotingGroup` with a
+      `MEMBER_OF` edge, and nothing that walks the entities meets one. For a new kind
+      of node (an agreement, a trust arrangement, a fund share class): a vertex type in
+      `schema._INDEXES`, its name in `anchors.NODE_LABELS` (every site that reads a
+      label off an edge coerces through `label_or_entity`), `owner_label=` on the OWNS
+      writer when it can own, and the entity routes open it by a labelled fallback read
+      — never an unlabelled scan. Keep `type` on the node as the API's node kind: the
+      client draws by it, and it is what let the frontend stay unchanged.
 - [ ] **Run the whole scrape inside one `@_with_autodedup` scope.** The person auto-merge
       only groups duplicates touched *together* in one scope, so per-source scopes leave
       cross-source pairs unmerged — Wikidata "Larry Page" beside SEC "Page Lawrence" is the
@@ -585,6 +608,22 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       country is rejected when a country was asked for. See the plugin guide for why
       EDGAR's own filter is the wrong field.
 
+- [ ] **A source that speaks in several document families about one pair gets one claim
+      per family.** A claim is keyed on (kind, pair, source) — and, for an ownership
+      claim, the SEC filing family (`claims.filing_family`: insider, 13dg, 13f, ex21,
+      ex81, acquisition). Before 2026-10-26 a Form 4, a 13G and a 13F about one pair
+      shared one claim, which held whichever was read last, so the Sources panel showed
+      one line where the register had made three statements. A new family is one
+      pattern in `_SEC_FAMILIES`; a re-read of a family updates its own claim, so
+      amendments never pile up; `manage.py heal-claim-keys` re-keys what was written
+      before. A source with one document kind needs nothing — the family is read off
+      the filing type's text, and anything that is not an SEC form has none.
+- [ ] **A heal that fills an edge fills its claim.** `gleif-rr-stakes` put the record's
+      share on 154 edges and left their claims saying "none", so the panel showed GLEIF
+      contradicting the edge it supported. A fresh write builds edge and claim from one
+      property bag (`_BatchWriter._claim` reads the merged bag — pin that with a test);
+      a heal has no bag and must write both, and its integration test asserts both.
+
 ## 5. Being a good client
 
 - [ ] **Rate limit and identify yourself** — `REQUEST_DELAY` after every request, a real
@@ -785,6 +824,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       than one row per pair from one run, or a `previous_percent` that equals an older
       row's figure, is the writer stating a holding twice. Fix the writer; the rows are
       then deleted and the source re-run (the delete is a dev write — the user's word).
+- [ ] **When a vocabulary shrinks, the heal runs before the rule.** ArcadeDB refuses to
+      declare a REGEXP while a stored row breaks it, and the bootstrap declares rules at
+      every start: when `voting_group` left `Entity.type`, a deploy before the heal would
+      have left the rule in `init-schema`'s `failed` list until the 38 rows moved. Order
+      on dev: the heal (`heal-voting-groups --apply`), then `init-schema`, then
+      `schema-audit` — and the PR body says so, since the merge deploys itself.
 - [ ] **`register()` validates against the catalogue** — the `KNOWN_SOURCES` entry must
       exist, the kind must match, and the settings flag must be real (Pydantic rejects
       unknown fields, so a test cannot monkeypatch a flag that was never declared). Patch
