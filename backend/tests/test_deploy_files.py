@@ -141,3 +141,15 @@ def test_the_gleif_history_keeps_its_file_where_the_host_sees_it():
     line = next(ln for ln in OPS.splitlines() if ln.strip().startswith("gleif-history)"))
     assert "gleif-rr-history --intervals /data/" in line
     assert "gleif-history" not in SETUP          # manual, run once — never cron
+
+
+def test_the_daily_delta_closes_dissolutions_and_rederives_shortcuts():
+    # a delta stores a dissolution without closing anything and can retire the
+    # direct edge a shortcut stood in for; the cron runs `ops.sh gleif-update`
+    body = OPS[OPS.index("cmd_gleif_update() {"):]
+    body = body[:body.index("\n}")]
+    delta = body.index("run_manage gleif-update")
+    close = body.index("run_manage heal-ends-at-dissolution --apply")
+    assert delta < close < body.index("run_manage mark-shortcuts")
+    assert 'gleif-update)          cmd_gleif_update "$@"' in OPS
+

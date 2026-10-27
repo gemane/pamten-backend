@@ -188,6 +188,19 @@ cmd_import() {
   echo "✅ import ($mode) done in $(( ($(date +%s) - t0) / 60 )) min"
 }
 
+# The daily delta, then what the finished graph needs after it (as the import's
+# finishing steps): a delta can record a dissolution, which the LEI-CDF mapping
+# stores without closing anything, and can retire a direct edge, which turns a
+# redundant ultimate-parent shortcut into the only link to a company — its stale
+# flag would hide that company. Both passes are idempotent and run even when the
+# delta skipped (gleif-update exits 0 then).
+cmd_gleif_update() {
+  watch_job gleif-update
+  run_manage gleif-update "$@"
+  run_manage heal-ends-at-dissolution --apply
+  run_manage mark-shortcuts
+}
+
 cmd_backup() {
   watch_job backup
   step "backup"
@@ -267,7 +280,7 @@ main() {
     refresh-golden-copies) cmd_refresh_golden_copies "$@" ;;
     refresh-psc)           cmd_refresh_psc ;;
     refresh-company-data)  cmd_refresh_company_data ;;
-    gleif-update)          watch_job gleif-update; run_manage gleif-update "$@" ;;
+    gleif-update)          cmd_gleif_update "$@" ;;
     # the intervals file stays in DATA_DIR: a re-apply after a restore downloads nothing
     gleif-history)         run_manage gleif-rr-history --intervals /data/gleif-rr-history.jsonl.gz "$@" ;;
     backup)                cmd_backup ;;
