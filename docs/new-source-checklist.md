@@ -313,6 +313,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       name-only node keeps a uuid; a malformed value is never keyed on.
 - [ ] **Match on a hard identifier when the source has one.** Shared LEI/CIK/CH number is
       proof; a shared name is a hint.
+- [ ] **Read by the id the database already holds before searching by name.** A per-company
+      reader resolves the query to its node first and, when the node carries the source's id,
+      fetches by that id; the name search is the fallback. The SEC scrape searched by name
+      only and missed SpaceX (a trade name) and Nestlé (no 10-K/20-F) although both nodes held
+      the right CIK (2026-10-27); Exhibit 21, acquisitions and 13F already read by the number.
 - [ ] **When the source NAMES the register, use the name before any guess.**
       `register_for_name` matches the filer's words against every name GLEIF lists for the
       country's registers (local names, organisation names, sites) — it keys funds and

@@ -2511,13 +2511,43 @@ def fetch_company_lei(cik: str) -> str | None:
     return (sub.get("lei") or "").strip() or None
 
 
-def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMIT) -> dict | None:
+def company_by_cik(cik: str | None) -> dict | None:
+    """The filer EDGAR holds under a CIK, as `search_company` returns it —
+    {cik: zero-padded-10-digit, name: registered name} — or None when EDGAR
+    has no such filer (404) or the value is no CIK. The submissions document
+    is the identity: no name has to match."""
+    from app.scraper.mapper import normalize_cik
+    padded = normalize_cik(cik)
+    if not padded:
+        return None
+    try:
+        name = (_submissions(padded) or {}).get("name")
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            log.warning("SEC EDGAR: no filer under the stored CIK %s", padded)
+            return None
+        raise
+    return {"cik": padded, "name": name} if name else None
+
+
+def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMIT,
+                   cik: str | None = None) -> dict | None:
     """
     Full SEC EDGAR scrape for one company.
     Returns structured dict with ownership_filings and executives, or None
     if the company is not found on EDGAR.
+
+    With `cik` — the number the database already holds for the company — the
+    filer is read by that number and the name search is skipped: an id is the
+    answer a name only approximates. "SpaceX" (a trade name) and Nestlé (no
+    10-K or 20-F, so the name search's indexes never list it) were found by
+    neither of the name lookups, while both nodes carried the right CIK from
+    Wikidata (2026-10-27). A CIK EDGAR does not know falls back to the name.
     """
-    company = search_company(company_name)
+    company = company_by_cik(cik) if cik else None
+    if cik and not company:
+        log.warning("SEC EDGAR: stored CIK %s unknown to EDGAR — searching %r by name", cik, company_name)
+    company = company or search_company(company_name)
     if not company:
         return None
 
