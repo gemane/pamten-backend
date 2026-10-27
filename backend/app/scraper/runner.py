@@ -1740,6 +1740,21 @@ def _note_form4_yields(scraped: list[dict], holder: str, company: str) -> None:
              holder, company)
 
 
+def _stored_sec_cik(company_name: str, country: str | None = None) -> str | None:
+    """The CIK the database already holds for the company a query names, or
+    None. The same resolver the Exhibit 21, acquisitions and 13F passes use
+    before they read EDGAR by number — a credible match only, so a loose name
+    cannot hand the scrape a neighbour's CIK. Best-effort: an unreachable
+    database means the name search, as before."""
+    try:
+        from app.routers.search import resolve_best_entity
+        entity = resolve_best_entity(company_name, country)
+    except Exception as exc:  # noqa: BLE001 — the lookup only saves a search
+        log.warning("SEC EDGAR runner: stored-CIK lookup failed for %r: %s", company_name, exc)
+        return None
+    return (entity or {}).get("sec_cik") or None
+
+
 def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.
@@ -1776,7 +1791,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     from app.scraper.sec_edgar import fetch_filer_country, scrape_company
 
     log.info("SEC EDGAR runner: starting scrape for %r", company_name)
-    data = scrape_company(company_name)
+    stored_cik = _stored_sec_cik(company_name, country)
+    data = scrape_company(company_name, cik=stored_cik)
 
     if not data:
         return {

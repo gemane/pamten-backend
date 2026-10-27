@@ -50,6 +50,21 @@ with no place on the timeline.
 Every EDGAR entity has a Central Index Key (CIK) — a zero-padded 10-digit integer.
 It is required to locate filings.
 
+**Step 0 — the CIK the database already holds (2026-10-27):**
+Before any search, the runner resolves the query to its node with the same
+credible-match resolver the Exhibit 21, acquisitions and 13F passes use
+(`runner._stored_sec_cik` → `resolve_best_entity`). When that node carries a
+`sec_cik` (from an earlier scrape, a Wikidata identifier or a GLEIF/SEC merge),
+the filer is read by that number (`sec_edgar.company_by_cik`, the submissions
+document) and no name has to match. The name search below runs only for a
+company the database holds no CIK for, or one whose stored CIK EDGAR does not
+know (404). Why: the name search finds only what its indexes list. "SpaceX" is a
+trade name (EDGAR: SPACE EXPLORATION TECHNOLOGIES CORP, neither equal nor a
+prefix), and Nestlé files no 10-K or 20-F, so neither was found while both nodes
+held the right CIK. By number, SpaceX reads its 13D/G holders and ten officers.
+Nestlé is found but yields no edges: its one large-holder filing (2024) is
+pre-XML HTML and its Forms 3/4 name it as the owner, not the issuer.
+
 **Step 1 — tickers file (preferred):**
 `company_tickers.json` maps ~10,000 listed companies to their CIK, ticker, and
 registered name. It is a flat JSON object keyed by an arbitrary integer index:
@@ -65,6 +80,9 @@ registered name. It is a flat JSON object keyed by an arbitrary integer index:
 Matching is done by normalising both the query and the `title` field: lowercase,
 strip punctuation and legal suffixes (Inc, Corp, LLC, etc.), then compare.
 Exact matches win; prefix matches are the fallback.
+
+**Step 1b — browse-edgar's registered-name index:** companies filing 10-K or 20-F
+whose registered name starts with the query.
 
 **Step 2 — EFTS full-text search (fallback):**
 For companies not in the tickers file (private companies, foreign names), the
