@@ -898,7 +898,10 @@ stops at a section while 3711 reaches class 29.10). The SEC's list uses rounded
 group codes (3250 for the 325x industries) and a few codes of its own that no
 industry classification has — 6770 blank checks, 8880 ADRs, 8888 foreign
 governments — which show the SEC's title and no tree. `manage.py
-backfill-industry` fetches the code for filers scraped before this existed.
+backfill-industry` (or `POST /scraper/backfill-industry`, called by the scrape
+scripts after their passes) fetches the code for every filer that has a CIK and
+no statement — a filer scraped before this existed, or one whose CIK arrived
+other than through its own scrape.
 
 ## Request Budget per Company
 

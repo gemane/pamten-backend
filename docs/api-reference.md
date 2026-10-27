@@ -146,6 +146,7 @@ Off unless `ANALYTICS_ENABLED` is set.
 | POST | `/scraper/open-corporates/run` | admin | Run an OpenCorporates scrape by company name |
 | POST | `/scraper/run-all` | admin | Run all enabled scrapers for a company (then auto-dedup). `?depth=` passes through to the Wikidata scrape (see `/scraper/run`) |
 | POST | `/scraper/geocode` | contributor | Backfill HQ coordinates via Nominatim (needs `GEOCODING_ENABLED`) |
+| POST | `/scraper/backfill-industry` | contributor | Fill-only industry codes: EDGAR's SIC for SEC filers without one, stored UK SIC codes into statements (`?limit=` caps the EDGAR lookups; needs `SCRAPER_ENABLED` + `SCRAPER_SEC_EDGAR_ENABLED`). Returns counts and a 20-company sample; the scrape scripts call it after their passes |
 | GET | `/scraper/bods/status` | — | Enabled state of the bulk GLEIF / UK datasets (imported from the CLI, not HTTP) |
 | GET | `/scraper/sources` | — | Per-source toggle states + `kind` (`instant` = query-driven, on-demand; `bulk` = scheduled dataset import). On-demand `/scraper/ensure` runs only enabled `instant` sources |
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |

@@ -195,6 +195,46 @@ def test_sec_ex21_run_master_off_is_403(client, make_token, monkeypatch):
     assert client.post("/scraper/sec-ex21/run", params={"company": "Apple"}, headers=tok).status_code == 403
 
 
+def test_backfill_industry_requires_contributor(client, make_token):
+    assert client.post("/scraper/backfill-industry").status_code in (401, 403)
+    tok = {"Authorization": f"Bearer {make_token(role='viewer')}"}
+    assert client.post("/scraper/backfill-industry", headers=tok).status_code == 403
+
+
+def test_backfill_industry_delegates_and_returns_counts(client, make_token, monkeypatch):
+    from app.config import settings
+    import app.industry as industry
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", True)
+    seen = {}
+
+    def fake(limit=None, fetch=None):
+        seen["limit"] = limit
+        return {"sec_candidates": 30, "sec_filled": 25,
+                "sec_changes": [{"id": f"e{i}", "name": f"Co {i}", "code": "2834", "nace": "21"} for i in range(25)],
+                "uk_companies": 2, "uk_statements": 3}
+    monkeypatch.setattr(industry, "backfill", fake)
+    tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
+    r = client.post("/scraper/backfill-industry", params={"limit": 40}, headers=tok)
+    assert r.status_code == 200
+    body = r.json()
+    assert seen["limit"] == 40
+    assert (body["status"], body["sec_filled"], body["uk_statements"]) == ("ok", 25, 3)
+    assert "sec_changes" not in body and len(body["sec_sample"]) == 20   # counts for the script, a sample for a human
+
+
+def test_backfill_industry_is_gated_like_the_sec_scrape(client, make_token, monkeypatch):
+    from app.config import settings
+    import app.industry as industry
+    monkeypatch.setattr(industry, "backfill", lambda **k: pytest.fail("reached EDGAR while disabled"))
+    tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", False)
+    assert client.post("/scraper/backfill-industry", headers=tok).status_code == 403
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    monkeypatch.setattr(settings, "SCRAPER_SEC_EDGAR_ENABLED", False)
+    assert client.post("/scraper/backfill-industry", headers=tok).status_code == 403
+
+
 # ── Stats endpoint ──────────────────────────────────────────────────────────────
 
 def test_stats_is_public_and_maps_types(client, monkeypatch):

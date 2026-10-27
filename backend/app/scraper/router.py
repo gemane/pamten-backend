@@ -565,6 +565,36 @@ def geocode_backfill_run(
     return {"status": "ok", **backfill(limit=limit)}
 
 
+# ── Industry endpoint ─────────────────────────────────────────────────────────
+
+@router.post("/backfill-industry")
+def industry_backfill_run(
+    limit: int | None = Query(None, ge=1, description="Max SEC filers to look up this run"),
+    _: dict = Depends(require_contributor),
+):
+    """
+    Give every company the sector its sources already know (app.industry): an
+    SEC filer without a US SIC statement gets EDGAR's code, a UK company whose
+    register SIC codes were stored but never turned into statements gets those.
+    Fill-only. The scrape scripts call it after their passes, because a scrape
+    records the SIC code only for the company it resolved by name: a CIK that
+    arrives any other way (a Wikidata identifier, a holder in someone else's
+    filing, an Exhibit 21 row) gets no code until this runs. It reads EDGAR, so
+    it is gated like the SEC scrape.
+    """
+    if not settings.SCRAPER_ENABLED:
+        raise HTTPException(status_code=403,
+                            detail="Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise HTTPException(status_code=403,
+                            detail="SEC EDGAR scraper is disabled. Set SCRAPER_SEC_EDGAR_ENABLED=true in the environment to enable.")
+    from app.industry import backfill
+    res = backfill(limit=limit)
+    # the per-company list is for the CLI's sample; the script needs the counts
+    return {"status": "ok", **{k: v for k, v in res.items() if k != "sec_changes"},
+            "sec_sample": res["sec_changes"][:20]}
+
+
 # ── Proxy statement endpoints ───────────────────────────────────────────────────
 
 @router.post("/proxy-statement/run")
