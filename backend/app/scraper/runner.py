@@ -1740,19 +1740,47 @@ def _note_form4_yields(scraped: list[dict], holder: str, company: str) -> None:
              holder, company)
 
 
-def _stored_sec_cik(company_name: str, country: str | None = None) -> str | None:
-    """The CIK the database already holds for the company a query names, or
+def _stored_entity(company_name: str, country: str | None = None) -> dict | None:
+    """The node the database already holds for the company a query names, or
     None. The same resolver the Exhibit 21, acquisitions and 13F passes use
     before they read EDGAR by number — a credible match only, so a loose name
     cannot hand the scrape a neighbour's CIK. Best-effort: an unreachable
     database means the name search, as before."""
     try:
         from app.routers.search import resolve_best_entity
-        entity = resolve_best_entity(company_name, country)
+        return resolve_best_entity(company_name, country)
     except Exception as exc:  # noqa: BLE001 — the lookup only saves a search
         log.warning("SEC EDGAR runner: stored-CIK lookup failed for %r: %s", company_name, exc)
         return None
-    return (entity or {}).get("sec_cik") or None
+
+
+def _stored_sec_cik(company_name: str, country: str | None = None) -> str | None:
+    """The CIK the database already holds for the company a query names, or None."""
+    return (_stored_entity(company_name, country) or {}).get("sec_cik") or None
+
+
+def _confirm_stored_lei(stored: dict | None, data: dict) -> None:
+    """The stored node's LEI for the filer the name search found, when the
+    filer's own filings state it (`sec_lei`) — so the write lands on that
+    node instead of minting a twin keyed by the CIK (Unilever, 2026-10-27).
+
+    Asked only in the one shape a name proposes and no id settles: the node
+    the query resolved to has an LEI and no CIK, EDGAR states no LEI for the
+    filer, and the two names key alike. On a confirmation `data` gains the
+    LEI and the filing that states it; otherwise nothing changes."""
+    if not stored or data.get("lei") or not data.get("cik"):
+        return
+    lei = stored.get("lei_id")
+    if not lei or stored.get("sec_cik"):
+        return
+    stored_key = stored.get("name_normalized") or normalize_entity_name(stored.get("name") or "")
+    if not stored_key or normalize_entity_name(data.get("name") or "") != stored_key:
+        return
+    from app.scraper.sec_lei import confirm_filer_lei
+    hit = confirm_filer_lei(data["cik"], lei, [data.get("name"), stored.get("name")])
+    if hit:
+        data["lei"] = lei
+        data["lei_source_url"] = hit["source_url"]
 
 
 def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
@@ -1791,8 +1819,8 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     from app.scraper.sec_edgar import fetch_filer_country, scrape_company
 
     log.info("SEC EDGAR runner: starting scrape for %r", company_name)
-    stored_cik = _stored_sec_cik(company_name, country)
-    data = scrape_company(company_name, cik=stored_cik)
+    stored = _stored_entity(company_name, country)
+    data = scrape_company(company_name, cik=(stored or {}).get("sec_cik") or None)
 
     if not data:
         return {
@@ -1810,6 +1838,7 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
         log.info("SEC EDGAR: %r is registered in %s, not %s — skipping",
                  data["name"], filer_country, country)
         return country_mismatch(company_name, filer_country, country)
+    _confirm_stored_lei(stored, data)
 
     # One statement per claim per run: a holder's 13D/G figure and then their
     # Form 4 figure go into the one claim, and only the last is the answer —
@@ -1855,6 +1884,12 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         website=fetch_filer_website(data["cik"]) if data.get("cik") else None,
     )
     scraped.append({"type": "entity", "name": data["name"], "role": "target"})
+    if data.get("lei_source_url"):
+        # the filing that tied the CIK to the node's LEI (`_confirm_stored_lei`)
+        with db.get_session() as session:
+            session.run("MATCH (e:Entity {id: $id}) "
+                        "SET e.lei_source_url = COALESCE(e.lei_source_url, $u)",
+                        id=target_id, u=data["lei_source_url"])
     _record_sec_industry(target_id, data.get("cik"), source_id)
 
     # Ownership filings → investor nodes + OWNS edges

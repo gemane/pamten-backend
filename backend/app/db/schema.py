@@ -318,6 +318,9 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "legal_form", "legal_form_code", "registration_authority", "registration_authority_code",
         "registration_number", "register_id", "country_registered", "jurisdiction_code",
         "cusip", "lei_id", "sec_cik", "companies_house_id", "wikidata_id", "nace_code",
+        # the filer's own filing that states the node's LEI, where that joined
+        # the LEI to an EDGAR CIK (app.scraper.sec_lei)
+        "lei_source_url",
         "website", "logo_url", "search_text", "source_id", "source_url",
         "validation_sources", "gleif_registration_status", "lei_registration_date",
         "incorporated_on", "dissolved_on", "company_status",

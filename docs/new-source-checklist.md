@@ -318,6 +318,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       fetches by that id; the name search is the fallback. The SEC scrape searched by name
       only and missed SpaceX (a trade name) and Nestlé (no 10-K/20-F) although both nodes held
       the right CIK (2026-10-27); Exhibit 21, acquisitions and 13F already read by the number.
+- [ ] **When only a name proposes a pair, let the source's own documents settle it — and
+      read them.** An LEI-only node and a CIK-only filer of one name share no hard id; the
+      filer's own filings stating the LEI do (`sec_lei`, 2026-10-27). A search hit says only
+      that the code occurs in some document of that filer. A guarantor's prospectus carries
+      the issuer's LEI, and one document can be filed under two CIKs. So validate the
+      identifier's checksum, take a lone LEI only from a document the filer filed alone,
+      and otherwise require the name to label the code. A miss is "unknown", never "different".
 - [ ] **When the source NAMES the register, use the name before any guess.**
       `register_for_name` matches the filer's words against every name GLEIF lists for the
       country's registers (local names, organisation names, sites) — it keys funds and

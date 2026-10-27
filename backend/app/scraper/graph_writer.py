@@ -111,7 +111,8 @@ def _run_scoped_autodedup(touched_persons: list, touched_entities: list) -> dict
     try:
         from app.scraper.maintenance import deduplicate_entities_for
         ed = deduplicate_entities_for(touched_entities, apply=True)
-        out["entity_deduplication"] = {"merged_count": ed["entities_merged"], "review_count": ed["needs_review"]}
+        out["entity_deduplication"] = {"merged_count": ed["entities_merged"], "review_count": ed["needs_review"],
+                                       "lei_bridged": len(ed.get("lei_bridged") or [])}
     except Exception as exc:  # noqa: BLE001 - never fail a scrape on dedup
         log.error("Auto-dedup (entities) after scrape failed: %s", exc)
         out["entity_deduplication"] = {"status": "error", "detail": str(exc)}
@@ -704,7 +705,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             headquarters: dict | None = None,
                             website: str | None = None,
                             credibility_score: int = 98) -> str:
-    """Find or create an Entity node matched by CIK, exact name, or normalized name.
+    """Find or create an Entity node matched by CIK, LEI, exact name, or normalized name.
 
     A name says which company only together with where it is registered
     (`_resolve_by_name`): a row that states a ``country`` takes the node of
@@ -736,7 +737,11 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     name_norm = normalize_entity_name(name)
     cik = normalize_cik(cik)                   # the 10-digit form, as every CIK is stored and looked up
     with db.get_session() as session:
+        # the hard ids first, then the name: an LEI the filer states (or its
+        # filings confirm, `sec_lei`) finds the GLEIF node whatever its name
+        # or country says — without it the write minted a twin of that node
         entity_id = (resolve_entity_id(session, sec_cik=cik) if cik else None) \
+            or (resolve_entity_id(session, lei_id=lei) if lei else None) \
             or _resolve_by_name(session, name, name_norm, country)
         if not entity_id and cik:
             # The prefix must end on a WORD boundary, and the candidate must not

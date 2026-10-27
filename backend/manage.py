@@ -272,6 +272,8 @@ def cmd_dedupe_entities(args):
     _apply_direct_db_url(args)
     from app.scraper.maintenance import deduplicate_entities
     res = deduplicate_entities(limit=getattr(args, "limit", None))
+    for b in res.get("lei_bridged") or []:
+        print(f"  {b['name']}: CIK node {b['cik_id']} takes LEI {b['lei_id']} ({b['source_url']})")
     print(f"Merged {res['entities_merged']} entities across "
           f"{res['groups_processed']} shared-id groups; {res.get('remaining', 0)} groups remaining")
 
@@ -1655,7 +1657,9 @@ def _build_parser():
     p_me.set_defaults(func=cmd_merge_entities)
 
     p_de = subparsers.add_parser('dedupe-entities',
-        help='Merge entities sharing a hard external id (LEI / CH number / SEC CIK / Wikidata)')
+        help='Merge entities sharing a hard external id (LEI / CH number / SEC CIK / Wikidata); '
+             'first joins an LEI-only node to a CIK-only filer of its name when the filer\'s own '
+             'filings state the LEI (needs SEC scraping enabled)')
     p_de.add_argument('--limit', type=int, help='Max shared-id groups to process (default: all)')
     p_de.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_de.set_defaults(func=cmd_dedupe_entities)
