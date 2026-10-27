@@ -198,8 +198,8 @@ _PROPERTY_TYPES: dict[tuple[str, str], str] = {
 #: coerce every write (an int into a DOUBLE property is stored 20.0; a
 #: numeric string into an INTEGER is parsed; a value that cannot convert is
 #: refused, which is what we want of "abc" for a year). Declaring a type
-#: never touches the rows already stored — `manage.py heal-property-types`
-#: rewrites those. Dates stay STRING on purpose: the writers keep a source's
+#: never touches the rows already stored: a type added to a loaded database
+#: holds for new writes only (a fresh import is typed throughout). Dates stay STRING on purpose: the writers keep a source's
 #: precision ("2019-00-00" is a Wikidata year), which no DATE type can hold.
 _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     # Entity — numbers
@@ -290,15 +290,6 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     ("Peer",         "enabled",           "BOOLEAN"),
     ("Peer",         "credibility_score", "INTEGER"),
 ]
-
-
-def typed_properties() -> list[tuple[str, str, str]]:
-    """Every declared non-string property as (type, property, ArcadeDB type) —
-    the indexed ones from `_PROPERTY_TYPES` and the rest from
-    `_TYPED_PROPERTIES`; what the heal converts stored rows to."""
-    out = [(t, p, k) for (t, p), k in _PROPERTY_TYPES.items()]
-    out += [row for row in _TYPED_PROPERTIES if (row[0], row[1]) not in _PROPERTY_TYPES]
-    return out
 
 
 #: Every STRING property a writer sets, by type — the ledger (2026-10-25).
@@ -507,8 +498,7 @@ _RULE_KEYS = {"MANDATORY": "mandatory", "NOTNULL": "notNull", "REGEXP": "regexp"
 _ISO2 = "^[A-Z]{2}$"
 
 #: The flags that are `true` or `false` and never null — "not asserted" is
-#: false. Declared with a DEFAULT (`constraints()`) and healed on an older
-#: database (`field_twins.heal_flags`).
+#: false. Declared with a DEFAULT (`constraints()`).
 FLAGS: tuple[tuple[str, str], ...] = (
     ("OWNS", "stale"), ("OWNS", "shortcut"), ("OWNS", "also_ultimate"),
     ("Entity", "is_nominee"), ("Entity", "on_demand_scraped"), ("Person", "on_demand_scraped"))
@@ -651,8 +641,8 @@ def _statements(existing: tuple | None = None) -> list[str]:
             # The server declares another type (shares_outstanding was LONG for a
             # day before it became DOUBLE). ArcadeDB has no `ALTER PROPERTY …
             # TYPE`; dropping the declaration touches no row, and the fresh one
-            # coerces every write from then on — heal-property-types rewrites
-            # the rows that still carry the old type.
+            # coerces every write from then on; rows already stored keep the
+            # old type.
             log.info("redeclaring %s.%s: %s on the server, %s in the code", vtype, prop, live, ptype)
             stmts.append(f"DROP PROPERTY {vtype}.{prop} IF EXISTS")
         stmts.append(f"CREATE PROPERTY {vtype}.{prop} IF NOT EXISTS {ptype}")

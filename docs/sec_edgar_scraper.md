@@ -564,10 +564,6 @@ the claims that remain instead of keeping SEC's withdrawn one as stated.
 names is flagged `stale` (dimmed), never closed — an exhibit may omit
 insignificant subsidiaries, and silence is not an end date.
 
-`python manage.py heal-sec-dates [--dry-run]` repairs edges written before
-these rules (amendment dates → `amendment`, Form 3/4 starts removed, ends before
-starts reopened), edges and claims alike, walking the SEC claims.
-
 ### Parsing stake percentages
 
 The primary filing document (linked from the index page's document table) contains
@@ -627,8 +623,7 @@ stated start: the earliest quarter a manager reported the holding in is a
 **lower bound** (`since_basis = first_reported`, combined so a later quarter never
 moves it), and `source_date` is the latest quarter. An edge a newer quarter no
 longer confirms is `stale` — dimmed in the panel, and in time travel for the
-years after its last confirmation. `heal-sec-dates` gave holdings written before
-this their quarter as the lower bound.
+years after its last confirmation.
 
 Every institutional manager over $100M files a quarterly report of what it
 holds. Since 2013 the information table is structured XML — issuer name, CUSIP,
@@ -839,9 +834,7 @@ Televisa's Form 4 says "Mr. Valim is the Chief Executive Officer of izzi, Grupo 
 S.A.B.'s cable company, and on that basis he may be considered an officer of Grupo
 Televisa" — an officer of Televisa, the CEO of its subsidiary (`_officer_role`,
 `_looks_like_title`). Until 2026-10-25 the
-pointer itself reached the graph as a role on five dev seats, in two spellings;
-`manage.py heal-role-placeholders` removes such seats and names the companies to
-re-scrape.
+pointer itself reached the graph as a role on five dev seats, in two spellings.
 
 Names are stored as `LAST FIRST [MIDDLE]` in all caps. The scraper converts
 them to `First [Middle] Last` in title case. The relationship flags are written
@@ -936,7 +929,7 @@ alone (`claims._END_KEPT`) — it used to write "open" over the 8-K's departure.
 A seat of someone since dead is closed on the death date instead, by the
 graph's own rule (`until_reason = death`, see docs/data-model.md). Claims written
 before 2026-10-25 carry no filing type; the next scrape of the company rewrites
-them, and `manage.py heal-model-gaps` labels the 8-K and Form D ones meanwhile.
+them.
 
 ---
 
@@ -1024,10 +1017,7 @@ filing date as `since` made News Corp's FY2026 exhibit date all 200 of its
 subsidiaries 2026 in the timeline. The writer's `filing_dates_the_stake=False`
 keeps the date as the as-of `source_date` only; the same applies to 13F (a
 quarter-end snapshot). A 13D/13G, due within days of crossing 5%, still dates its
-stake. Edges written before this are repaired by
-`manage.py clear-snapshot-since [--apply]`, which clears a `since` only where it
-equals the `source_date` (the signature of the invented date) and is not marked with
-`since_basis` (a deliberate lower bound from older filings is never cleared).
+stake.
 
 **Finding the list** (all 135 CIKs of the dev graph swept on 2026-10-07: 14
 filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,879 subsidiaries;

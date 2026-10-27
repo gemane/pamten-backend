@@ -67,39 +67,3 @@ def test_a_person_merge_keeps_the_earlier_birth(it_db):
                           "created_at:$born})", {"id": pid, "born": born})
     merge_person_records(keep="keep-1", dup="dup-1")
     assert _created_at(it_db, "Person", "keep-1") == "2025-01-01T00:00:00+00:00"
-
-
-def test_the_backfill_dates_from_claims_then_scrapes_and_guesses_nothing(it_db):
-    from app.created_at import backfill
-
-    it_db.run_command("CREATE (:Entity {id:'claimed', name:'C', name_normalized:'c'})")
-    it_db.run_command("CREATE (:Entity {id:'scraped', name:'S', name_normalized:'s', "
-                      "last_scraped_at:'2026-05-05T00:00:00+00:00'})")
-    it_db.run_command("CREATE (:Entity {id:'silent', name:'N', name_normalized:'n'})")
-    it_db.run_command("CREATE (:Person {id:'p-claimed', full_name:'P'})")
-    # a 13D group member: never scraped itself, no claim names it, one MEMBER_OF edge
-    it_db.run_command("CREATE (:Entity {id:'grouped', name:'G', name_normalized:'g'})")
-    it_db.run_command("CREATE (:VotingGroup {id:'grp', name:'Voting group · 2 parties', type:'voting_group'})")
-    it_db.run_command("MATCH (a:Entity {id:'grouped'}), (g:VotingGroup {id:'grp'}) "
-                      "CREATE (a)-[:MEMBER_OF {last_scraped_at:'2026-10-06T22:56:41+00:00'}]->(g)")
-    for key, frm, to, seen in (("k1", "owner", "claimed", "2025-06-01T00:00:00+00:00"),
-                               ("k2", "claimed", "sub", "2025-02-01T00:00:00+00:00"),
-                               ("k3", "p-claimed", "claimed", "2025-09-01T00:00:00+00:00")):
-        it_db.run_sql("UPDATE Claim SET claim_key = :k, kind = 'owns', from_id = :f, to_id = :t, "
-                      "source_id = 's', first_seen_at = :seen UPSERT WHERE claim_key = :k",
-                      {"k": key, "f": frm, "t": to, "seen": seen})
-
-    dry = backfill(apply=False)
-    assert dry["Entity"]["missing"] == 4 and dry["Entity"]["written"] == 0
-    assert _created_at(it_db, "Entity", "claimed") is None
-
-    res = backfill(apply=True)
-    assert (res["Entity"]["from_claims"], res["Entity"]["from_scrape"], res["Entity"]["from_edges"],
-            res["Entity"]["unknown"]) == (1, 1, 1, 1)
-    assert res["Person"]["from_claims"] == 1
-    assert _created_at(it_db, "Entity", "claimed") == "2025-02-01T00:00:00+00:00"   # the oldest of its three claims
-    assert _created_at(it_db, "Entity", "scraped") == "2026-05-05T00:00:00+00:00"
-    assert _created_at(it_db, "Entity", "silent") is None                            # nothing recorded, nothing guessed
-    assert _created_at(it_db, "Entity", "grouped") == "2026-10-06T22:56:41+00:00"    # its one edge
-    assert _created_at(it_db, "Person", "p-claimed") == "2025-09-01T00:00:00+00:00"
-    assert backfill(apply=True)["Entity"]["missing"] == 1                            # only the unknown one remains

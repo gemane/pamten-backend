@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app import roles
 from app.scraper import sec_writer
 
 RUNNER = pathlib.Path(__file__).resolve().parents[1] / "app" / "scraper" / "runner.py"
@@ -70,37 +69,3 @@ class TestEveryRunnerCallSitePassesIt:
         assert any('filing_type="Form D"' in a for a in calls)
         assert any('filing_type="8-K"' in a for a in calls)
         assert sum('form_label(exec_rec.get("document_type"))' in a for a in calls) == 2
-
-
-class TestTheHeal:
-    def _fake(self, counts):
-        calls = []
-
-        def run_sql(sql, params=None):
-            calls.append(sql)
-            if sql.startswith("UPDATE"):
-                return [{"count": 1}]
-            if "read_from = 'narrative'" in sql:
-                return [{"n": counts["8k"]}]
-            if "primary_doc.xml" in sql:
-                return [{"n": counts["d"]}]
-            return [{"n": counts["all"]}]
-        return calls, run_sql
-
-    def test_the_dry_run_counts_and_writes_nothing(self, monkeypatch):
-        import app.db.arcadedb as arcadedb
-        calls, fake = self._fake({"8k": 1, "d": 3, "all": 208})
-        monkeypatch.setattr(arcadedb, "run_sql", fake)
-        res = roles.heal_seat_claim_filings(apply=False)
-        assert res == {"applied": False, "form_8k": 1, "form_d": 3, "unfilled": 204}
-        assert not any(c.startswith("UPDATE") for c in calls)
-
-    def test_apply_labels_each_kind_and_reports_what_is_left(self, monkeypatch):
-        import app.db.arcadedb as arcadedb
-        calls, fake = self._fake({"8k": 1, "d": 0, "all": 204})
-        monkeypatch.setattr(arcadedb, "run_sql", fake)
-        res = roles.heal_seat_claim_filings(apply=True)
-        updates = [c for c in calls if c.startswith("UPDATE")]
-        assert len(updates) == 1 and "SET filing_type = '8-K'" in updates[0]
-        assert "source_id = 'sec-edgar'" in updates[0] and "filing_type IS NULL" in updates[0]
-        assert res["unfilled"] == 204                                 # what the next scrape fills

@@ -215,12 +215,10 @@ parser. Anything that does not map is either a new property (document it) or noi
       asserted" is `false` by declaration.** The SEC and PSC person writers wrote
       `description: ''` for 1,378 people and nobody noticed for a year, because a reader
       with `or ""` hides it; 196 empty `nationalities` lists hid the same way. Leave the
-      key out (the writers since 2026-10-25; `field_twins.heal_empty_strings` /
-      `heal_empty_lists` catch a database written before). A flag is the one shape that
+      key out (the writers since 2026-10-25). A flag is the one shape that
       must NOT be absent: since ArcadeDB 26.10.1 a `<>` on a null is false and an unset
       `stale` dropped 1,274 edges out of every filter — so every flag meaning "not
-      asserted" is listed in `schema.FLAGS` and declared `DEFAULT false`, and
-      `heal-model-gaps` sets the rows written before. The exception is deliberate and
+      asserted" is listed in `schema.FLAGS` and declared `DEFAULT false`. The exception is deliberate and
       documented: `Entity.active` stays three-valued, because null means no register has
       said whether the company exists, which is a different fact from "not ceased".
 - [ ] **Dates carry their real precision.** UK PSC publishes month and year only; storing
@@ -250,9 +248,8 @@ parser. Anything that does not map is either a new property (document it) or noi
       562,701.427 shares and a LONG declaration is refused over it. Changing a type
       later is not a one-line edit: the bootstrap drops and redeclares an unindexed
       property whose server type differs (ArcadeDB has no `ALTER PROPERTY … TYPE`),
-      `heal-property-types` then converts the stored rows — and it skips a group whose
-      live declaration still differs, because a stale declaration coerces every
-      converted row straight back (47 rows on dev looped that way for a day).
+      but the stored rows keep their old type, and a converted row is coerced straight
+      back while a stale declaration stands (47 rows on dev looped that way for a day).
 - [ ] **Every property the writer sets is in the schema's ledger.** ArcadeDB accepts an
       undeclared property, so nothing stops a typo — the ledger does (`app/db/schema.py`:
       a string into `_STRING_PROPERTIES`, a number, flag or list into `_TYPED_PROPERTIES`
@@ -644,14 +641,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       shared one claim, which held whichever was read last, so the Sources panel showed
       one line where the register had made three statements. A new family is one
       pattern in `_SEC_FAMILIES`; a re-read of a family updates its own claim, so
-      amendments never pile up; `manage.py heal-claim-keys` re-keys what was written
-      before. A source with one document kind needs nothing — the family is read off
+      amendments never pile up. A source with one document kind needs nothing — the family is read off
       the filing type's text, and anything that is not an SEC form has none.
-- [ ] **A heal that fills an edge fills its claim.** `gleif-rr-stakes` put the record's
+- [ ] **A pass that fills an edge fills its claim.** A GLEIF stake heal (2026-10) put the record's
       share on 154 edges and left their claims saying "none", so the panel showed GLEIF
       contradicting the edge it supported. A fresh write builds edge and claim from one
       property bag (`_BatchWriter._claim` reads the merged bag — pin that with a test);
-      a heal has no bag and must write both, and its integration test asserts both.
+      a pass after the import has no bag and must write both, and its integration test
+      asserts both.
 
 ## 5. Being a good client
 
@@ -853,12 +850,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       than one row per pair from one run, or a `previous_percent` that equals an older
       row's figure, is the writer stating a holding twice. Fix the writer; the rows are
       then deleted and the source re-run (the delete is a dev write — the user's word).
-- [ ] **When a vocabulary shrinks, the heal runs before the rule.** ArcadeDB refuses to
+- [ ] **When a vocabulary shrinks, the old rows block the rule.** ArcadeDB refuses to
       declare a REGEXP while a stored row breaks it, and the bootstrap declares rules at
-      every start: when `voting_group` left `Entity.type`, a deploy before the heal would
-      have left the rule in `init-schema`'s `failed` list until the 38 rows moved. Order
-      on dev: the heal (`heal-voting-groups --apply`), then `init-schema`, then
-      `schema-audit` — and the PR body says so, since the merge deploys itself.
+      every start: when `voting_group` left `Entity.type`, the rule sat in `init-schema`'s
+      `failed` list until the 38 rows moved. Name the blocked rule in the PR body, since
+      the merge deploys itself.
+- [ ] **No committed heal before production** (2026-10-27). Production starts from a
+      fresh import with the current code, so a repair of what older code wrote is needed
+      on dev only, once: a throwaway script, run on the user's word — or dev stays as it
+      is (its data may be dropped). After the production start a heal ships with its
+      change, runs once, and the next PR removes it. 33 one-off `manage.py` heals were
+      removed on 2026-10-27.
 - [ ] **`register()` validates against the catalogue** — the `KNOWN_SOURCES` entry must
       exist, the kind must match, and the settings flag must be real (Pydantic rejects
       unknown fields, so a test cannot monkeypatch a flag that was never declared). Patch

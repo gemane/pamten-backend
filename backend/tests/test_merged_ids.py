@@ -165,43 +165,6 @@ class TestRepointReferences:
         assert merged_ids.repoint_references("", "keep") == 0
 
 
-class TestHealMergedReferences:
-    """The one-off for the merges that ran before the re-point existed."""
-
-    ROWS = [{"old_id": "a", "new_id": "k"}, {"old_id": "b", "new_id": "k"},
-            {"old_id": "k", "new_id": "k"}]
-
-    def _fake(self, stale_for):
-        issued = []
-
-        def run_sql(sql, params=None):
-            issued.append((sql, params))
-            if sql.startswith("SELECT old_id"):
-                return self.ROWS
-            if sql.startswith("SELECT count"):
-                return [{"n": stale_for.get((sql.split(" FROM ")[1].split(" ")[0], params["old"]), 0)}]
-            return [{"count": 1}]
-        return run_sql, issued
-
-    def test_a_dry_run_counts_the_stale_rows_and_writes_nothing(self, monkeypatch):
-        run_sql, issued = self._fake({("Flag", "a"): 3, ("Pin", "b"): 1})
-        monkeypatch.setattr("app.db.arcadedb.run_sql", run_sql)
-        res = merged_ids.heal_merged_references(apply=False)
-        assert res == {"redirects": 2, "stale": 3 * 3 + 1 * 2, "moved": 0, "applied": False}
-        assert not any(s.startswith("UPDATE") for s, _ in issued)
-
-    def test_apply_updates_only_where_something_is_stale(self, monkeypatch):
-        run_sql, issued = self._fake({("Flag", "a"): 3})
-        monkeypatch.setattr("app.db.arcadedb.run_sql", run_sql)
-        res = merged_ids.heal_merged_references(apply=True)
-        updates = [(s, p) for s, p in issued if s.startswith("UPDATE")]
-        assert [s for s, _ in updates] == ["UPDATE Flag SET from_id = :new WHERE from_id = :old",
-                                           "UPDATE Flag SET to_id = :new WHERE to_id = :old",
-                                           "UPDATE Flag SET node_id = :new WHERE node_id = :old"]
-        assert all(p == {"new": "k", "old": "a"} for _, p in updates)
-        assert res["moved"] == 3 and res["applied"] is True
-
-
 class TestForwardingMap:
     """The importers' cached forwarding map — many-into-one and chains, the
     cases raised when we built the fix: does it hold for several merged ids?"""

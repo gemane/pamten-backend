@@ -186,38 +186,11 @@ def record_merge_sql(old_id: str, new_id: str, kind: str = "Entity") -> None:
 def _repoint_best_effort(old_id: str, new_id: str) -> None:
     """The references follow the forwarding row, with the same rule as the row
     itself: the nodes are already merged, so a failure here must not fail the
-    merge — it degrades to a stale reference, which `heal_merged_references`
-    picks up later."""
+    merge — it degrades to a stale reference (the log names it)."""
     try:
         repoint_references(old_id, new_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("could not re-point references %s -> %s: %s", old_id, new_id, exc)
-
-
-def heal_merged_references(apply: bool = True) -> dict:
-    """Re-point every stored reference still carrying an id a merge folded
-    away — moderation records and scrape runs left behind by the merges that
-    ran before 2026-10-24, when only `rename_node_id` moved them. Walks the
-    MergedId table (small: one row per merge) and, per redirect, every column
-    of `REFERENCE_COLUMNS` — each an indexed lookup. Dry run counts only."""
-    from app.db.arcadedb import run_sql
-    counts = {"redirects": 0, "stale": 0, "moved": 0, "applied": bool(apply)}
-    for r in run_sql("SELECT old_id, new_id FROM MergedId"):
-        old, new = r.get("old_id"), r.get("new_id")
-        if not old or not new or old == new:
-            continue
-        counts["redirects"] += 1
-        for table, cols in REFERENCE_COLUMNS:
-            for col in cols:
-                n = run_sql(f"SELECT count(*) AS n FROM {table} WHERE {col} = :old", {"old": old})
-                stale = int((n[0].get("n") if n else 0) or 0)
-                if not stale:
-                    continue
-                counts["stale"] += stale
-                if apply:
-                    counts["moved"] += _updated(run_sql(
-                        f"UPDATE {table} SET {col} = :new WHERE {col} = :old", {"new": new, "old": old}))
-    return counts
 
 
 def resolve_current_id(session, old_id: str) -> str | None:
@@ -243,27 +216,3 @@ def resolve_current_id(session, old_id: str) -> str | None:
             return None
         seen.add(current)
     return current if current != old_id else None
-
-
-def rename_node_id(session, label: str, old_id: str, new_id: str) -> bool:
-    """Give a node a new id, everywhere the old one lives.
-
-    The node itself, every property store that carries node ids (the claims,
-    then `REFERENCE_COLUMNS`), and a MergedId forwarding row so every old link
-    keeps resolving — the same machinery a merge uses. Graph edges never store
-    the id, so they need nothing. Refuses (returns False) when the new id is
-    already taken: that is a merge, not a rename.
-    """
-    clash = session.run(f"MATCH (n:{label} {{id: $id}}) RETURN n.id AS id LIMIT 1",
-                        id=new_id).single()
-    if clash:
-        return False
-    session.run(f"MATCH (n:{label} {{id: $old}}) SET n.id = $new", old=old_id, new=new_id)
-    # Claims are keyed by a hash of their endpoints, so they are re-keyed, not
-    # just re-pointed: the plain UPDATE left the old key on the renamed claim,
-    # and the next scrape wrote a second claim for the same assertion.
-    from app.claims import migrate_claims
-    migrate_claims(old_id, new_id)
-    # record_merge re-points REFERENCE_COLUMNS (flags, suppressions, pins, runs)
-    record_merge(session, old_id, new_id, kind=label)
-    return True

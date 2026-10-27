@@ -408,3 +408,17 @@ def test_every_help_text_renders():
     subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     for name, sub in subparsers.choices.items():
         assert sub.format_help(), name
+
+
+def test_no_one_off_heal_ships_before_production():
+    """Production starts from a fresh import, so a repair of what older code
+    wrote is a throwaway script on dev, never a command (2026-10-27, 33 removed).
+    The heal left is a step of a bulk load: the importers set `dissolved_on`
+    without closing anything. A new `heal-*` / `backfill-*` / `migrate-*` /
+    `normalize-*` command must be added here on purpose."""
+    import manage
+    parser = manage._build_parser()
+    commands = set(next(a for a in parser._actions if a.choices).choices)
+    one_off = {c for c in commands if c.startswith(("heal-", "backfill-", "migrate-", "normalize-"))}
+    assert one_off == {"heal-ends-at-dissolution", "backfill-search", "backfill-industry",
+                       "backfill-former-registers"}

@@ -49,34 +49,6 @@ def test_a_seat_opened_for_someone_already_dead_ends_at_once(it_db):
     assert (seat["until"], seat["until_reason"]) == ("2011-04-12", "death")
 
 
-def test_the_heal_closes_what_was_written_before_the_rule(it_db):
-    from app.roles import heal_seats_at_death
-
-    it_db.run_command("CREATE (:Person {id:'park', full_name:'Byung-Gook Park', death_date:'2022-05-17', wikidata_id:'Q5'})")
-    it_db.run_command("CREATE (:Person {id:'jobs', full_name:'Steve Jobs', death_date:'2011-10-05'})")
-    it_db.run_command("CREATE (:Person {id:'alive', full_name:'Alive One'})")
-    it_db.run_command("CREATE (:Entity {id:'sx', name:'Samsung', name_normalized:'samsung'})")
-    for pid, role, since in (("park", "Board Member", None), ("park", "Advisor", "2023-01-01"),
-                             ("jobs", "Founder", "1976-04-01"), ("alive", "CEO", None)):
-        it_db.run_command("MATCH (p:Person {id:$p}), (e:Entity {id:'sx'}) "
-                          "CREATE (p)-[:HAS_ROLE {role:$r, since:$s, source_id:'wikidata'}]->(e)",
-                          {"p": pid, "r": role, "s": since})
-
-    dry = heal_seats_at_death(apply=False)
-    assert (dry["closed"], dry["founders_kept"], dry["after_death"]) == (1, 1, 1)
-    assert dry["people"] == ["Byung-Gook Park († 2022-05-17): Board Member @ Samsung, Advisor @ Samsung"]
-    assert it_db.run_sql("SELECT count(*) AS n FROM HAS_ROLE WHERE until IS NOT NULL")[0]["n"] == 0
-
-    res = heal_seats_at_death(apply=True)
-    assert (res["closed"], res["founders_kept"], res["after_death"]) == (1, 1, 1)
-    park = _seats(it_db, "park")
-    assert park["Board Member"]["until"] == "2022-05-17" and park["Board Member"]["until_reason"] == "death"
-    assert park["Advisor"]["until"] is None                      # dated after the death: the source's error, reported
-    assert _seats(it_db, "jobs")["Founder"]["until"] is None
-    assert _seats(it_db, "alive")["CEO"]["until"] is None
-    assert heal_seats_at_death(apply=True)["closed"] == 0        # idempotent
-
-
 def test_a_re_read_keeps_the_end_and_a_new_spell_replaces_it(it_db):
     from app.claims import record_claim
     from app.scraper.sec_writer import _close_role_sec, _upsert_role_sec

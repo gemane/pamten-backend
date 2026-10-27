@@ -5,13 +5,8 @@ Owlgraph management commands – run directly on the server.
 Usage:
   python3 manage.py init-schema
   python3 manage.py geocode [--limit N]
-  python3 manage.py normalize-countries
-  python3 manage.py normalize-nationalities
   python3 manage.py gleif-lei-cdf [options]   # GLEIF entities (golden copy)
   python3 manage.py gleif-rr [options]        # GLEIF relationships (golden copy)
-  python3 manage.py gleif-rr-status --file F  # once: mark edges on LAPSED GLEIF records stale
-  python3 manage.py gleif-rr-stakes --file F  # once: fill the share GLEIF records state
-  python3 manage.py gleif-rr-validation --file F  # once: fill how far GLEIF checked each record
   python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
   python3 manage.py ch-psc-update [options]   # UK PSC incremental refresh (snapshot diff)
   python3 manage.py quality-report            # data quality as numbers
@@ -68,51 +63,6 @@ def cmd_gleif_rr(args):
                                     emit_leis_path=getattr(args, "emit_leis", None)))
     if result is not None:
         print(result)
-
-def cmd_gleif_rr_status(args):
-    """Mark the GLEIF edges whose relationship record has LAPSED as `stale`
-    (`gleif_rr.heal_registration_status`) — once, on a database loaded before
-    the RR import read the record's registration status (2026-10-13). The full
-    import and the daily delta stamp it themselves since. `--dry-run` only counts."""
-    from app.config import settings
-    settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
-    from app.scraper.runner import run_gleif_rr_status
-    result = _run_guarded_import("gleif-rr-status",
-        lambda: run_gleif_rr_status(local_file=args.file, dry_run=args.dry_run))
-    if result is not None:
-        print(result)
-
-
-def cmd_gleif_rr_stakes(args):
-    """Fill `stake_percent` on GLEIF edges from the share the relationship record
-    states (`gleif_rr.heal_stakes`) — once, on a database loaded before the RR
-    import read the record's quantifiers (2026-10-13). Fill-only; `--dry-run`
-    only counts."""
-    from app.config import settings
-    settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
-    from app.scraper.runner import run_gleif_rr_stakes
-    result = _run_guarded_import("gleif-rr-stakes",
-        lambda: run_gleif_rr_stakes(local_file=args.file, dry_run=args.dry_run))
-    if result is not None:
-        print(result)
-
-
-def cmd_gleif_rr_validation(args):
-    """Fill how far the LOU checked each relationship record (GLEIF's
-    ValidationSources / ValidationDocuments) onto the GLEIF edges
-    (`gleif_rr.heal_validation`) — once, on a database loaded before the RR
-    import read it (2026-10-13). Fill-only; `--dry-run` only counts."""
-    from app.config import settings
-    settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
-    from app.scraper.runner import run_gleif_rr_validation
-    result = _run_guarded_import("gleif-rr-validation",
-        lambda: run_gleif_rr_validation(local_file=args.file, dry_run=args.dry_run))
-    if result is not None:
-        print(result)
-
 
 def cmd_gleif_rr_history(args):
     """GLEIF relationship history from the golden-copy archive (once, after
@@ -374,60 +324,6 @@ def cmd_mark_stale(args):
     print(f"Schedule 13D/G not restated: marked {res['marked']}, cleared {res['cleared']} "
           f"(of {res['judged']} open 13D/G holdings; windows {res['windows']} days from the filing date)")
 
-def cmd_clear_snapshot_since(args):
-    """Remove the start date list-style SEC filings (Exhibit 21/8.1, 13F) used to
-    invent from their filing date. Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.scraper.maintenance import clear_snapshot_since
-    res = clear_snapshot_since(apply=args.apply)
-    verb = "Cleared" if res["applied"] else "Would clear (dry run — add --apply)"
-    print(f"{verb}: since on {res['edges']} OWNS edges and {res['claims']} claims")
-
-def cmd_psc_first_year_bounds(args):
-    """Mark PSC edges notified in the register's first year (6 April 2016 to
-    20 April 2017) on companies incorporated before the register as lower bounds
-    (`since_basis = register_first_year`) — once, on a database loaded before
-    `ch-company-data` did this itself (2026-10-18). Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.scraper.companies_house_psc import mark_first_year_lower_bounds
-    res = mark_first_year_lower_bounds(apply=args.apply)
-    verb = "Marked" if res["applied"] else "Would mark (dry run — add --apply)"
-    print(f"{verb}: {res['edges']} OWNS edges and {res['claims']} claims as lower bounds "
-          f"({res['companies_before_register']} companies incorporated before the register)")
-
-def cmd_heal_entity_types(args):
-    """Give every typeless entity `type = 'company'` (the GLEIF bulk writer left
-    an ordinary company's type empty until 2026-10-24). Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.scraper.maintenance import heal_entity_types
-    res = heal_entity_types(apply=args.apply)
-    verb = "Typed" if res["applied"] else "Would type (dry run — add --apply)"
-    print(f"{verb}: {res['matched']} of {res['scanned']} entities had no type")
-
-
-def cmd_drop_verified_flag(args):
-    """Remove the never-true `verified` property from every Entity and Person
-    (dropped from the writers on 2026-10-24). Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.scraper.maintenance import drop_verified_flag
-    res = drop_verified_flag(apply=args.apply)
-    for label, c in res.items():
-        verb = "Removed from" if c["applied"] else "Would remove from (dry run — add --apply)"
-        print(f"{verb} {c['matched']} of {c['scanned']} {label} nodes")
-
-
-def cmd_clear_copied_uk_hq(args):
-    """Clear the headquarters fields the UK importers copied from the registered
-    office until 2026-10-18 (moving the parts and the pin under `reg_*`) and fill
-    the display `address` where empty. Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.scraper.maintenance import clear_copied_uk_headquarters
-    res = clear_copied_uk_headquarters(apply=args.apply)
-    verb = "Cleared" if res["applied"] else "Would clear (dry run — add --apply)"
-    print(f"{verb}: copied headquarters on {res['copied']} of {res['nodes']} UK nodes "
-          f"({res['pins_cleared']} headquarters pins cleared — run `geocode --target registered` next, "
-          f"{res['addresses_filled']} display addresses filled)")
-
 def cmd_quality_report(args):
     """Data quality as numbers — run before and after any change to the source mix."""
     _apply_direct_db_url(args)
@@ -502,20 +398,6 @@ def cmd_prune_analytics(args):
         print(f"  {vtype:14} {n}")
 
 
-def cmd_verify_users(args):
-    """One-off: mark all existing accounts email-verified. Login now requires a
-    verified email, so accounts created before that feature would otherwise be
-    locked out. New sign-ups still verify via the emailed link."""
-    from app.db.arcadedb import run_sql
-    target = getattr(args, "email", None)
-    if target:
-        rows = run_sql("UPDATE User SET email_verified = true WHERE email = :e",
-                       {"e": target.strip().lower()})
-    else:
-        rows = run_sql("UPDATE User SET email_verified = true WHERE email_verified IS NULL OR email_verified = false")
-    n = int(rows[0].get("count", 0)) if rows and isinstance(rows[0], dict) else 0
-    print(f"Marked {n} user(s) email-verified.")
-
 def cmd_set_password(args):
     """Set a user's password directly against the database.
 
@@ -578,43 +460,6 @@ def cmd_backfill_former_registers(args):
     if counts["backfilled"]:
         print("Now run the entity dedup so the recovered pairs can merge:")
         print("  POST /scraper/deduplicate-entities  (or the scraper panel)")
-
-
-def cmd_migrate_psc_ids(args):
-    """Rewrite slash-bearing chpsc ids to the slug-safe form, everywhere they live.
-
-    One-shot cleanup for nodes minted before psc_slug_id existed. The node id
-    changes, every property store that carries node ids follows (Claim, Flag,
-    Suppression, Pin), and a MergedId forwarding row keeps every old link
-    resolving — the same machinery a merge uses. Graph edges never store the
-    id, so they need nothing. Idempotent: the old form starts "chpsc:/", the
-    new one never does.
-    """
-    from app.config import settings
-    if args.confirm_database != settings.ARCADEDB_DATABASE:
-        print(f"refusing: --confirm-database must be {settings.ARCADEDB_DATABASE!r} "
-              f"(the configured database), got {args.confirm_database!r}.")
-        raise SystemExit(2)
-    from app.database import db
-    from app.merged_ids import rename_node_id
-    from app.scraper.companies_house_psc import psc_slug_id
-
-    migrated = skipped = 0
-    with db.get_session() as session:
-        for label in ("Entity", "Person"):
-            rows = list(session.run(
-                f"MATCH (n:{label}) WHERE n.id STARTS WITH 'chpsc:/' RETURN n.id AS id"))
-            for r in rows:
-                old_id = r["id"]
-                new_id = psc_slug_id(old_id[len("chpsc:"):])
-                if not rename_node_id(session, label, old_id, new_id):
-                    print(f"  ! {old_id} -> {new_id} already exists, skipping")
-                    skipped += 1
-                    continue
-                migrated += 1
-                print(f"  {label}: {old_id}")
-                print(f"       -> {new_id}")
-    print(f"migrated {migrated}, skipped {skipped}.")
 
 
 def cmd_ensure_user(args):
@@ -713,154 +558,6 @@ def cmd_sec_cache(args):
     ses = info["session"]
     print(f"this process: local {ses['hits']} hit / {ses['misses']} miss / {ses['writes']} written; "
           f"shared {ses['s3_hits']} hit / {ses['s3_writes']} written")
-
-
-def cmd_heal_claim_keys(args):
-    """Re-key claims whose key does not match their content, folding the
-    doubles that came of it (see `app.claims.heal_claim_keys`). One-off repair
-    after two fixed bugs (merge re-keyed role claims without the role; an id
-    rename did not re-key at all). `--dry-run` only counts."""
-    from app.claims import heal_claim_keys
-    res = heal_claim_keys(dry_run=args.dry_run)
-    verb = "would re-key" if args.dry_run else "re-keyed"
-    print(f"{res['claims']} claims read; {res['stale']} with a stale key"
-          + ("" if args.dry_run else f": {res['moved']} moved in place, {res['folded']} folded into "
-             "the correctly keyed claim for the same assertion")
-          + f" ({verb}).")
-
-
-def cmd_heal_sec_dates(args):
-    """Repair the SEC dates written before Time travel 2/6 (see
-    `app.scraper.time_travel_heal.heal_sec_dates`). `--dry-run` only counts."""
-    from app.scraper.time_travel_heal import heal_sec_dates
-    res = heal_sec_dates(dry_run=args.dry_run)
-    verb = "would repair" if args.dry_run else "repaired"
-    print(f"{res['pairs']} SEC holdings read; {verb}: {res['amendment']} amendment dates made a "
-          f"lower bound, {res['form4']} Form 3/4 starts removed, "
-          f"{res['ended_before_start']} periods ended before they began reopened, "
-          f"{res['first_reported']} 13F holdings given their quarter as a lower-bound start.")
-
-
-def cmd_heal_merged_references(args):
-    """Re-point flags, suppressions, pins and scrape runs still carrying an id a
-    merge folded away (`app.merged_ids.heal_merged_references`); the merges
-    before 2026-10-24 left them behind. `--dry-run` only counts."""
-    from app.merged_ids import heal_merged_references
-    res = heal_merged_references(apply=not args.dry_run)
-    verb = "would move" if args.dry_run else "moved"
-    print(f"{res['redirects']} merge redirects read; {res['stale']} stale references found, "
-          f"{verb} {res['moved'] if not args.dry_run else res['stale']}.")
-
-
-def cmd_heal_read_from(args):
-    """Stamp `read_from` (how surely a value was read) on edges and claims
-    written before the grade existed (`app.scraper.read_from_heal`). Fill-only,
-    plus the one re-grade (a 13D/G cover page's retired `prose` → `form`);
-    Exhibit 21 rows wait for the next `sec-ex21` run. `--dry-run` only counts."""
-    from app.scraper.read_from_heal import heal_read_from
-    res = heal_read_from(dry_run=args.dry_run)
-    verb = "would stamp" if res.pop("dry_run") else "stamped"
-    if not res:
-        print(f"{verb} nothing: every edge and claim with a known reader already carries its grade")
-        return
-    for key, n in sorted(res.items()):
-        source, table, grade = key.split(":")
-        print(f"{verb} {n:>7}  {source:<14} {table:<9} {grade}")
-
-
-def cmd_heal_role_dates(args):
-    """Give undated seats their evidence date (see
-    `app.scraper.time_travel_heal.heal_role_dates`). `--dry-run` only counts."""
-    from app.scraper.time_travel_heal import heal_role_dates
-    res = heal_role_dates(dry_run=args.dry_run)
-    verb = "would date" if args.dry_run else "dated"
-    print(f"{res['seats']} person–company pairs read; {verb} {res['dated']} undated seats "
-          "by the day their source last listed them.")
-
-
-def cmd_heal_incorporated_on(args):
-    """Rename `founded_date` to `incorporated_on` on every entity and clear a
-    `founded` that only repeated the incorporation year on a node no other
-    source dated (app.incorporation). For a database written before
-    2026-10-24. Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.incorporation import heal
-    res = heal(apply=args.apply)
-    verb = "Healed" if res["applied"] else "Would heal (dry run — add --apply)"
-    print(f"{verb}: {res['renamed']} founded_date → incorporated_on, {res['dropped_old_field']} old fields dropped, "
-          f"{res['cleared_founded']} register-only `founded` years cleared, of {res['scanned']} entities")
-
-
-def cmd_dedupe_role_synonyms(args):
-    """Merge HAS_ROLE edges that name the SAME position in different words.
-
-    Before the writers matched roles canonically, "Director" (SEC) and "Board
-    Member" (Wikidata) each drew an edge — one seat, two rows; until
-    2026-10-25 the person merge matched a seat by its label and the Wikidata
-    writer took a different day for a different seat, so the twins came back
-    with every scrape. For every (person, company, canonical role) with
-    multiple open edges this keeps the most credible one (backfilling
-    since/source_url/source_date from the losers) and deletes the rest. Claims are untouched: every source's
-    assertion stays on record and now corroborates the surviving edge.
-
-    Also folds one seat held twice at two date precisions (Wikidata's
-    "2020-06-01" and "June 2020" for the same CEO statement; SEC's day beside
-    Wikidata's year) — the start kept is the finer of the two."""
-    from app.database import db as _db
-    from app.roles import canonical_role, combined_start
-
-    with _db.get_session() as session:
-        rows = list(session.run(
-            "MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity) "
-            "WHERE r.until IS NULL "
-            "RETURN p.id AS pid, e.id AS eid, p.full_name AS person, "
-            "e.name AS company, r.role AS role, r.since AS since, "
-            "r.source_url AS surl, r.source_date AS sdate, "
-            "COALESCE(r.credibility_score, 0) AS cred"))
-    groups: dict = {}
-    for r in rows:
-        groups.setdefault((r.get("pid"), r.get("eid"),
-                           canonical_role(r.get("role") or "")), []).append(r)
-    merged = 0
-    for (pid, eid, _), edges in groups.items():
-        if len(edges) < 2:
-            continue
-        edges.sort(key=lambda x: -x["cred"])
-        winner, losers = edges[0], edges[1:]
-        print(f"  {winner.get('person')} @ {winner.get('company')}: "
-              f"keep {winner.get('role')!r} ({winner['cred']}), drop "
-              f"{[x.get('role') for x in losers]}")
-        merged += 1
-        if args.dry_run:
-            continue
-        kept = winner.get("since")
-        with _db.get_session() as session:
-            for lost in losers:
-                # The loser by its OWN date, one edge: a same-label pair
-                # ("CEO" 2020-06-01 + "CEO" 2020-06-00, Wikidata's statement
-                # held twice) matched both by label alone and lost the seat.
-                session.run(
-                    "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
-                    "WHERE r.role = $role AND r.until IS NULL "
-                    "  AND (($since IS NULL AND r.since IS NULL) OR r.since = $since) "
-                    "WITH r LIMIT 1 DELETE r",
-                    pid=pid, eid=eid, role=lost.get("role"), since=lost.get("since"))
-                # Onto the winner's OPEN seat only (a closed spell of the same
-                # role must not take a later start than its end). One date at
-                # two precisions keeps the finer; else the EARLIEST start.
-                start = combined_start(kept, lost.get("since"))
-                session.run(
-                    "MATCH (p:Person {id: $pid})-[r:HAS_ROLE]->(e:Entity {id: $eid}) "
-                    "WHERE r.role = $role AND r.until IS NULL "
-                    "  AND (($kept IS NULL AND r.since IS NULL) OR r.since = $kept) "
-                    "SET r.since = $since, "
-                    "    r.source_url = COALESCE(r.source_url, $surl), "
-                    "    r.source_date = COALESCE(r.source_date, $sdate)",
-                    pid=pid, eid=eid, role=winner.get("role"), kept=kept,
-                    since=start, surl=lost.get("surl"), sdate=lost.get("sdate"))
-                kept = start
-    verb = "would merge" if args.dry_run else "merged"
-    print(f"{verb} {merged} duplicated position(s)")
 
 
 def cmd_sec_formd(args):
@@ -1041,36 +738,6 @@ def cmd_seed(args):
     import seed
     seed.main(region=args.region)
 
-def cmd_heal_property_types(args):
-    """Rewrite every stored number whose type is not its declared one
-    (app.db.schema._TYPED_PROPERTIES; app.property_types) — the rows written
-    before the types were declared on 2026-10-24. Whole-type scans: run with
-    --db-url straight at ArcadeDB. Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.property_types import heal
-    res = heal(apply=args.apply)
-    verb = "Rewrote" if res["applied"] else "Would rewrite (dry run — add --apply)"
-    if not res["converted"] and not res["misdeclared"]:
-        print("Every stored value already has its declared type.")
-    for key, n in res["converted"].items():
-        print(f"{verb} {n} {key} values")
-    for key, d in res["misdeclared"].items():
-        print(f"Skipped {key}: the server declares it {d['server'] or 'not at all'}, the code {d['code']} "
-              f"— run init-schema (or let the API start) first, then this heal again")
-
-
-def cmd_heal_role_placeholders(args):
-    """Delete the HAS_ROLE edges and role claims whose role is Form 4's "See
-    Remarks" placeholder (app.roles.heal_placeholder_roles); re-scrape the
-    companies it names and the reader writes the seats back with their real
-    role. Dry run unless --apply."""
-    from app.roles import heal_placeholder_roles
-    res = heal_placeholder_roles(apply=args.apply)
-    verb = "deleted" if args.apply else "would delete (dry run — add --apply)"
-    print(f"HAS_ROLE: {res['edges']} placeholder edges {verb}")
-    print(f"Claim:    {res['claims']} placeholder role claims {verb}")
-    if res["companies"]:
-        print("Re-scrape to write the seats back with their role: " + "; ".join(res["companies"]))
 def cmd_list_mixed_generations(args):
     """Name every Person whose own names carry two different generational
     marks — "…, Sr." beside "…, Jr." — the shape a relative folded into a node
@@ -1100,22 +767,6 @@ def cmd_heal_ends_at_dissolution(args):
         print("  " + line)
 
 
-def cmd_heal_seats_at_death(args):
-    """Close every open seat of a dead person on the death date
-    (app.roles.heal_seats_at_death): the rule the writers apply since
-    2026-10-25, for a database written before it. Founders stay open; a seat
-    that began after the death is the source's error and is reported, not
-    closed. Dry run unless --apply."""
-    from app.roles import heal_seats_at_death
-    res = heal_seats_at_death(apply=args.apply)
-    verb = "closed" if args.apply else "would close (dry run — add --apply)"
-    print(f"HAS_ROLE: {res['closed']} open seats of dead holders {verb}; "
-          f"{res['founders_kept']} founder roles kept open; "
-          f"{res['after_death']} seats that begin after the death left open")
-    for line in res["people"]:
-        print("  " + line)
-
-
 def cmd_schema_audit(args):
     """Name every property the stored rows carry that the schema does not
     declare (app.db.schema.undeclared_properties) — a typo'd writer, a field
@@ -1133,113 +784,6 @@ def cmd_schema_audit(args):
     print(f"\n{sum(len(v) for v in drift.values())} undeclared propert(y|ies) on {len(drift)} type(s) — "
           "declare them in app/db/schema.py, or remove the leftovers")
     sys.exit(1)
-
-
-def cmd_heal_group_memberships(args):
-    """Remove the membership lines of parties a voting group's roster no longer
-    names (sec_writer.heal_group_memberships) — the writer prunes them since
-    2026-10-26. Dry run unless --apply."""
-    from app.scraper.sec_writer import heal_group_memberships
-    res = heal_group_memberships(apply=args.apply)
-    verb = "removed" if args.apply else "would be removed (dry run — add --apply)"
-    print(f"{res['removed']} membership lines of former parties in {res['groups']} groups {verb}")
-    for line in res["lines"]:
-        print("  " + line)
-
-
-def cmd_heal_keyed_ids(args):
-    """Give every uuid-keyed Entity and Person that carries a hard id the
-    keyed id a new node gets today (app.node_ids: `lei:`, `wd:Q…`, `sec:{cik}`),
-    through the rename machinery — claims re-keyed, references re-pointed, a
-    forwarding row per old id so old links keep opening. Dry run unless
-    --apply."""
-    from app.node_ids import heal_keyed_ids
-    res = heal_keyed_ids(apply=args.apply)
-    verb = "moved" if args.apply else "would move (dry run — add --apply)"
-    for label in ("Entity", "Person"):
-        c = res[label]
-        print(f"{label}: {c['moved']} {verb} to a keyed id, {c['unkeyed']} name-only nodes keep a uuid, "
-              f"{c['taken']} keyed ids already taken, of {c['scanned']} uuid-keyed")
-        for name, old, new in c["sample"][:5]:
-            print(f"  {name!r}: {old} -> {new}")
-
-
-def cmd_heal_voting_groups(args):
-    """Move every Entity of type `voting_group` to the VotingGroup vertex
-    type (app.voting_groups.heal_voting_group_type, 2026-10-26): same id,
-    RELATED_TO {group_member} → MEMBER_OF, the OWNS edge recreated from the
-    new vertex, the old node deleted. Run BEFORE `init-schema` re-declares the
-    Entity.type vocabulary, which no longer has `voting_group` in it. Dry run
-    unless --apply."""
-    from app.voting_groups import heal_voting_group_type
-    res = heal_voting_group_type(apply=args.apply)
-    verb = "moved" if args.apply else "would move (dry run — add --apply)"
-    print(f"{res['groups']} voting groups {verb} to their own vertex type, "
-          f"with {res['members']} memberships and {res['holdings']} holdings")
-    for line in res["names"]:
-        print("  " + line)
-
-
-def cmd_heal_name_keys(args):
-    """Recompute Entity.name_normalized where the normaliser's answer changed
-    (app.name_keys.heal_name_keys) and name the keys two entities now share
-    for the first time — the duplicates the old key hid. Whole-type scan: run
-    with --db-url. Dry run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.name_keys import heal_name_keys
-    res = heal_name_keys(apply=args.apply)
-    verb = "rewritten" if args.apply else "would change (dry run — add --apply)"
-    print(f"Entities: {res['changed']} name keys {verb}, of {res['scanned']}")
-    for name, old, new in res["sample"]:
-        print(f"  {name!r}: {old!r} -> {new!r}")
-    if res["newly_shared"]:
-        print("\nKeys now shared for the first time — merge these by hand in the app:")
-        for key, names in res["newly_shared"].items():
-            print(f"  {key}: " + "; ".join(names))
-
-
-def cmd_heal_model_gaps(args):
-    """The 2026-10-25 survey's four gaps (app.field_twins): fold the scalar
-    `nationality` into `nationalities` and drop it, put `country` into every
-    `countries` list that lacks it, stamp `source_id` on the PSC persons written
-    without one, and set every flag of `schema.FLAGS` to false where it was
-    unset — and the round-four three: drop empty `nationalities`/`countries` lists, drop the run
-    log's `''` placeholders, give the SEC seat claims a `filing_type` where the
-    claim itself says which record (an 8-K departure, a Form D). Dry run
-    unless --apply; the edge pass scans OWNS — run with --db-url."""
-    _apply_direct_db_url(args)
-    from app.field_twins import heal_all
-    res = heal_all(apply=args.apply)
-    verb = "" if args.apply else " (dry run — add --apply)"
-    n = res["nationalities"]
-    print(f"Persons: {n['dropped']} scalar nationality dropped, {n['folded']} folded into the list, "
-          f"of {n['scanned']}{verb}")
-    c = res["countries"]
-    print(f"Entities: {c['fixed']} countries lists given their country, of {c['scanned']}{verb}")
-    s = res["person_sources"]
-    print(f"Persons: {s['stamped']} PSC persons stamped source_id {s['source_id']!r}{verb}")
-    e = {k: v for k, v in res["flags"].items() if k not in ("applied", "fixed")}
-    print(f"Flags set false where unset: {res['flags']['fixed']} — "
-          + ", ".join(f"{k} {v}" for k, v in e.items()) + verb)
-    lists = {k: v for k, v in res["empty_lists"].items() if k != "applied"}
-    print("Empty lists removed: " + ", ".join(f"{k} {v}" for k, v in lists.items()) + verb)
-    r = {k: v for k, v in res["run_log"].items() if k != "applied"}
-    print("ScrapeRun '' placeholders removed: " + ", ".join(f"{k} {v}" for k, v in r.items()) + verb)
-    f = res["seat_filings"]
-    print(f"SEC seat claims given a filing_type: {f['form_8k']} 8-K, {f['form_d']} Form D; "
-          f"{f['unfilled']} left for the next scrape of their company{verb}")
-    d = {k: v for k, v in res["dead_keys"].items() if k != "applied"}
-    print("Dead keys removed: " + ", ".join(f"{k} {v}" for k, v in d.items()) + verb)
-    print(f"Role claims dated by their first sighting: {res['claim_dates']['claims']}{verb}")
-    a = res["address_keys"]
-    print(f"Address keys: {a['keyed']} address_normalized set, {a['addresses_moved']} readable addresses moved, "
-          f"{a['removed']} registered_address removed, of {a['scanned']} entities{verb}")
-    print(f"Person.alias renamed to aliases on {res['person_aliases']['persons']} persons{verb}")
-    es = {k: v for k, v in res["empty_strings"].items() if k != "applied"}
-    print("Empty strings removed: " + ", ".join(f"{k} {v}" for k, v in es.items()) + verb)
-    ck = res["cik_padding"]
-    print(f"CIKs padded to 10 digits: Entity {ck['Entity']['padded']}, Person {ck['Person']['padded']}"
-          f" ({ck['Entity']['not_a_cik'] + ck['Person']['not_a_cik']} values that are no CIK left as they are){verb}")
 
 
 def cmd_init_schema(args):
@@ -1317,23 +861,6 @@ def cmd_rebuild_search(args):
           f"ok={res.get('ok')} failed={res.get('failed')}")
 
 
-def cmd_heal_source_ids(args):
-    """Give every Source node its stable id (gleif, sec-edgar, uk-psc, wikidata,
-    opencorporates, peer:<slug>), re-point every entity, edge, claim and
-    statement that carried the old uuid, fold the ScraperSource toggles into
-    the Source node and re-key the claims (app.source_ids). Whole-type scans:
-    run with --db-url straight at ArcadeDB. Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.source_ids import heal
-    res = heal(apply=args.apply)
-    verb = "Re-keyed" if res["applied"] else "Would re-key (dry run — add --apply)"
-    holders = ", ".join(f"{k} {v}" for k, v in res["holders"].items()) or "nothing"
-    print(f"{verb} {res['sources']} source(s); holders: {holders}; "
-          f"{res['toggles_moved']} toggle rows folded in; conflicts: {len(res['conflicts'])}")
-    if res.get("claims"):
-        print(f"claims: {res['claims']}")
-
-
 def cmd_wipe_source(args):
     """Delete ONE source's data (edges + the nodes only it created). There is no
     whole-database wipe — a fresh dev start is a database DROP. Guards mirror the
@@ -1405,37 +932,6 @@ def cmd_geocode(args):
         print(f"  {name:10} geocoded {p['geocoded']} of {p['total']} candidates")
     print(f"Geocoded {result['geocoded']} of {result['entities_total']} candidates")
 
-def cmd_normalize_countries(args):
-    from app.scraper.maintenance import normalize_entity_countries
-    result = normalize_entity_countries()
-    for c in result["converted"]:
-        print(f"  {c['from']} -> {c['to']}")
-    print(f"Converted {len(result['converted'])} country values "
-          f"({result['skipped']} already canonical or unrecognized)")
-
-def cmd_normalize_nationalities(args):
-    from app.scraper.maintenance import normalize_person_nationalities
-    result = normalize_person_nationalities()
-    for c in result["converted"]:
-        print(f"  {c['from']} -> {c['to']}")
-    print(f"Converted {len(result['converted'])} of {result['distinct_values']} distinct values "
-          f"({result['unchanged']} already ISO-2)")
-    if result["unmapped"]:
-        # Printed, not hidden: these are kept verbatim, and the list is how the
-        # demonym table gets extended instead of the data quietly staying mixed.
-        print(f"Left unchanged, not recognised ({len(result['unmapped'])}): "
-              f"{', '.join(result['unmapped'])}")
-
-
-def cmd_backfill_countries(args):
-    from app.scraper.maintenance import backfill_entity_countries
-    result = backfill_entity_countries(limit=args.limit)
-    for c in result["changes"]:
-        print(f"  {c['name'][:44]:44} -> {c['country']}  ({c['from']})")
-    print(f"Filled {result['filled']} of {result['candidates']} entities with no country "
-          f"({result['still_unknown']} still unknown — the source has none either)")
-
-
 def cmd_backfill_industry(args):
     """Give every company a sector its sources already know (app.industry):
     EDGAR's SIC code for SEC filers, the register's SIC codes for UK companies."""
@@ -1446,59 +942,6 @@ def cmd_backfill_industry(args):
     print(f"SEC: {res['sec_filled']} of {res['sec_candidates']} filers given a code; "
           f"UK: {res['uk_statements']} statements for {res['uk_companies']} companies")
 
-
-def cmd_backfill_sec_headquarters(args):
-    """Fill in SEC filers' headquarters from EDGAR's business address.
-
-    Separate from backfill-countries on purpose: that fills where a company is
-    REGISTERED, this fills where it is RUN, and EDGAR's business address is only
-    good evidence of the second.
-    """
-    from app.scraper.maintenance import backfill_sec_headquarters
-    res = backfill_sec_headquarters(limit=args.limit)
-    for c in res["changes"][:20]:
-        print(f"  {c['name'][:40]:42} {c['country']}  {c['address'][:48]}")
-    print(f"Filled {res['filled']} of {res['candidates']} SEC filers "
-          f"({res['still_unknown']} EDGAR could not place)")
-
-
-def cmd_backfill_created_at(args):
-    """Give every Entity and Person without `created_at` the oldest date anything
-    recorded about it — the oldest claim naming it, else its own last_scraped_at,
-    else the oldest edge touching it, else nothing (app.created_at). For a database written before 2026-10-24,
-    when the creation sites began stamping it. Dry-run unless --apply."""
-    _apply_direct_db_url(args)
-    from app.created_at import backfill
-    res = backfill(apply=args.apply)
-    verb = "Dated" if res["applied"] else "Would date (dry run — add --apply)"
-    for label in ("Entity", "Person"):
-        c = res[label]
-        print(f"{label}: {c['missing']} of {c['scanned']} without created_at — {verb} "
-              f"{c['from_claims']} from their oldest claim, {c['from_scrape']} from last_scraped_at, "
-              f"{c['from_edges']} from their oldest edge; {c['unknown']} stay unknown")
-
-
-def cmd_backfill_person_images(args):
-    """Store the Wikidata portrait (P18) and English Wikipedia article of persons lacking them."""
-    from app.scraper.maintenance import backfill_person_images
-    res = backfill_person_images(limit=args.limit)
-    for c in res["changes"][:20]:
-        print(f"  {(c['name'] or '')[:40]:42} {c['image_url']}")
-    print(f"Stored {res['filled']} portraits and {res['linked']} Wikipedia links for "
-          f"{res['candidates']} persons with a Wikidata id ({res['without_image']} still without a portrait)")
-
-
-def cmd_backfill_entity_sources(args):
-    from app.scraper.maintenance import backfill_entity_sources
-    result = backfill_entity_sources()
-    u = result["updated"]
-    print(f"Stamped source_id on {u['wikidata']} Wikidata + {u['sec_edgar']} SEC EDGAR entities")
-    print(f"{result['still_missing']} entities still have no source_id "
-          f"(no wikidata_id/sec_cik to attribute)")
-    if not result["wikidata_source_found"] or not result["sec_edgar_source_found"]:
-        print("  note: a Source node was missing — "
-              f"Wikidata found={result['wikidata_source_found']}, "
-              f"SEC EDGAR found={result['sec_edgar_source_found']}")
 
 def cmd_gen_federation_key(args):
     from app.federation_keys import generate_keypair, fingerprint
@@ -1548,59 +991,10 @@ def _build_parser():
     )
     p_seed.set_defaults(func=cmd_seed)
 
-    # init-schema command
-    p_hpt = subparsers.add_parser('heal-property-types',
-        help="Rewrite every stored number whose type is not its declared one (rows from before the "
-             "types were declared on 2026-10-24). Whole-type scans: run with --db-url. Dry run unless --apply")
-    p_hpt.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hpt.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
-    p_hpt.set_defaults(func=cmd_heal_property_types)
-
-    p_hgm = subparsers.add_parser('heal-group-memberships',
-        help="Remove the membership lines of parties a voting group's roster no longer names. "
-             "Dry run unless --apply")
-    p_hgm.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hgm.set_defaults(func=cmd_heal_group_memberships)
-
-    p_hki = subparsers.add_parser('heal-keyed-ids',
-        help="Give every uuid-keyed Entity/Person with a hard id its keyed id (lei:, wd:Q…, sec:cik), "
-             "with a forwarding row per old id. Dry run unless --apply")
-    p_hki.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hki.set_defaults(func=cmd_heal_keyed_ids)
-
-    p_hvg = subparsers.add_parser('heal-voting-groups',
-        help="Move every Entity of type voting_group to the VotingGroup vertex type (2026-10-26); "
-             "run before init-schema. Dry run unless --apply")
-    p_hvg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hvg.set_defaults(func=cmd_heal_voting_groups)
-
-    p_hnk = subparsers.add_parser('heal-name-keys',
-        help="Recompute Entity.name_normalized where the normaliser changed (2026-10-25: spaced "
-             "abbreviations) and name the keys two entities now share. Whole-type scan: run with "
-             "--db-url. Dry run unless --apply")
-    p_hnk.add_argument('--apply', action='store_true', help='Write the keys (default: count only)')
-    p_hnk.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB')
-    p_hnk.set_defaults(func=cmd_heal_name_keys)
-
-    p_hmg = subparsers.add_parser('heal-model-gaps',
-        help="Fold Person.nationality into nationalities and drop it, put country into countries, "
-             "stamp source_id on PSC persons, set stale = false where unset, drop empty lists and "
-             "the run log's '' placeholders, give SEC seat claims their filing_type (2026-10-25). "
-             "Scans OWNS: run with --db-url. Dry run unless --apply")
-    p_hmg.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hmg.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
-    p_hmg.set_defaults(func=cmd_heal_model_gaps)
-
     p_lmg = subparsers.add_parser('list-mixed-generations',
         help="Persons whose names carry both Sr. and Jr. (or II and III) — a relative folded in by a merge; "
              "report only, split by hand")
     p_lmg.set_defaults(func=cmd_list_mixed_generations)
-
-    p_hsd = subparsers.add_parser('heal-seats-at-death',
-        help="Close every open seat of a dead person on the death date (until_reason = death); "
-             "founders stay open. Dry run unless --apply")
-    p_hsd.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hsd.set_defaults(func=cmd_heal_seats_at_death)
 
     p_hed = subparsers.add_parser('heal-ends-at-dissolution',
         help="Close every open holding and seat of a dissolved company on its dissolved_on "
@@ -1608,11 +1002,6 @@ def _build_parser():
     p_hed.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hed.set_defaults(func=cmd_heal_ends_at_dissolution)
 
-    p_hrp = subparsers.add_parser('heal-role-placeholders',
-        help="Delete HAS_ROLE edges and role claims whose role is Form 4's \"See Remarks\" placeholder "
-             "(2026-10-25); re-scrape the companies it names. Dry run unless --apply")
-    p_hrp.add_argument('--apply', action='store_true', help='Delete (default: count only)')
-    p_hrp.set_defaults(func=cmd_heal_role_placeholders)
     p_sa = subparsers.add_parser('schema-audit',
         help="Name every stored property the schema does not declare (a typo'd writer, an "
              "undeclared field, a leftover). Samples --sample rows per type; exit 1 on drift")
@@ -1693,13 +1082,6 @@ def _build_parser():
 
     # wipe-source command (replaces the removed whole-DB wipe-data; drop the
     # database for a fresh start instead)
-    p_hsi = subparsers.add_parser('heal-source-ids',
-        help="Give every Source node its stable id and re-point everything that carried the old uuid; "
-             "fold the ScraperSource toggles in; re-key the claims. Dry run unless --apply")
-    p_hsi.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hsi.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB (whole-type scans)')
-    p_hsi.set_defaults(func=cmd_heal_source_ids)
-
     p_wipe = subparsers.add_parser('wipe-source',
                                    help="Delete ONE source's data (its edges + the nodes only it created). "
                                         "No whole-DB wipe — drop the database for a fresh start.")
@@ -1727,52 +1109,12 @@ def _build_parser():
                        help="Which address to geocode (default both — a company has two places)")
     p_geo.set_defaults(func=cmd_geocode)
 
-    # normalize-countries command
-    p_norm = subparsers.add_parser('normalize-countries',
-                                   help='Convert full-name Entity.country values to ISO-2 codes')
-    p_norm.set_defaults(func=cmd_normalize_countries)
-
-    # normalize-nationalities command
-    p_nat = subparsers.add_parser('normalize-nationalities',
-                                  help='Convert Person.nationality demonyms ("British") to ISO-2 codes')
-    p_nat.set_defaults(func=cmd_normalize_nationalities)
-
     # backfill-industry: EDGAR's SIC + the UK register's SIC codes -> IndustryCode statements + nace_code
     p_ind = subparsers.add_parser('backfill-industry',
         help="Give every company a sector its sources already know: SEC filers' SIC from EDGAR, "
              "UK companies' SIC codes from the stored register snapshot (NACE Rev. 2 tree)")
     p_ind.add_argument('--limit', type=int, help='Max SEC filers to fetch this run')
     p_ind.set_defaults(func=cmd_backfill_industry)
-
-    # backfill-sec-headquarters: EDGAR's business address -> hq_* (where it is RUN)
-    p_hq = subparsers.add_parser('backfill-sec-headquarters',
-        help="Fill SEC filers' hq_address/hq_city/hq_country from EDGAR's business address")
-    p_hq.add_argument('--limit', type=int, help='Max entities to process this run')
-    p_hq.set_defaults(func=cmd_backfill_sec_headquarters)
-
-    # backfill-created-at (one-off; every creation site stamps it since 2026-10-24)
-    p_bca = subparsers.add_parser('backfill-created-at',
-                                  help="Give every Entity and Person without created_at the oldest date anything recorded about it (oldest claim, else last_scraped_at, else oldest edge, else nothing). Dry run unless --apply")
-    p_bca.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_bca.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_bca.set_defaults(func=cmd_backfill_created_at)
-
-    # backfill-person-images: Wikidata P18 -> Person.image_url (what /media/person/{id} serves)
-    p_pimg = subparsers.add_parser('backfill-person-images',
-        help="Store the Wikidata portrait (P18) and English Wikipedia article of every person with a Wikidata id lacking them")
-    p_pimg.add_argument('--limit', type=int, help='Max persons to process this run')
-    p_pimg.set_defaults(func=cmd_backfill_person_images)
-
-    # backfill-countries command
-    p_bc = subparsers.add_parser('backfill-countries',
-                                 help="Fill missing Entity.country from SEC EDGAR")
-    p_bc.add_argument('--limit', type=int, help='Only consider the first N candidates')
-    p_bc.set_defaults(func=cmd_backfill_countries)
-
-    # backfill-entity-sources command
-    p_bes = subparsers.add_parser('backfill-entity-sources',
-                                  help='Stamp source_id on Wikidata/SEC entities created before it was set')
-    p_bes.set_defaults(func=cmd_backfill_entity_sources)
 
     # gleif-succession command
     p_succ = subparsers.add_parser('gleif-succession',
@@ -1790,26 +1132,6 @@ def _build_parser():
     p_rr.add_argument('--only-file', help='File of seed LEIs (one per line, # comments) — their corporate family')
     p_rr.add_argument('--emit-leis', help='With --only: write the family LEIs here (feed to gleif-lei-cdf --only-file to name them)')
 
-    # gleif-rr-status command (one-off heal: edges on LAPSED records → stale)
-    p_rr_status = subparsers.add_parser('gleif-rr-status',
-        help='Mark GLEIF edges whose relationship record has LAPSED as stale — once, on a database loaded before 2026-10-13')
-    p_rr_status.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
-    p_rr_status.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
-    p_rr_status.set_defaults(func=cmd_gleif_rr_status)
-
-    # gleif-rr-stakes command (one-off heal: the share a record states → stake_percent)
-    p_rr_stakes = subparsers.add_parser('gleif-rr-stakes',
-        help='Fill stake_percent on GLEIF edges from the share the relationship record states — once, on a database loaded before 2026-10-13')
-    p_rr_stakes.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
-    p_rr_stakes.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
-    p_rr_stakes.set_defaults(func=cmd_gleif_rr_stakes)
-
-    # gleif-rr-validation command (one-off heal: how far each record was checked)
-    p_rr_val = subparsers.add_parser('gleif-rr-validation',
-        help="Fill how far GLEIF checked each relationship record onto its edge — once, on a database loaded before 2026-10-13")
-    p_rr_val.add_argument('--file', required=True, help='Path to the current RR-CDF golden-copy .json/.zip')
-    p_rr_val.add_argument('--dry-run', action='store_true', help='Count the edges without writing')
-    p_rr_val.set_defaults(func=cmd_gleif_rr_validation)
     p_rr.set_defaults(func=cmd_gleif_rr)
 
     p_rh = subparsers.add_parser('gleif-rr-history',
@@ -1946,44 +1268,6 @@ def _build_parser():
                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_ms.set_defaults(func=cmd_mark_stale)
 
-    # clear-snapshot-since command (one-off heal after the writer fix)
-    p_css = subparsers.add_parser('clear-snapshot-since',
-                                  help='Remove the start date Exhibit 21/8.1 and 13F edges got from their filing date (they list holdings as of a date, not since when). Dry run unless --apply')
-    p_css.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_css.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_css.set_defaults(func=cmd_clear_snapshot_since)
-
-    # psc-first-year-bounds command (one-off heal; ch-company-data does it itself since 2026-10-18)
-    p_pfy = subparsers.add_parser('psc-first-year-bounds',
-                                  help='Mark PSC edges notified in the register\'s first year on companies incorporated before it as lower bounds (since_basis register_first_year). Dry run unless --apply')
-    p_pfy.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_pfy.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_pfy.set_defaults(func=cmd_psc_first_year_bounds)
-
-    # clear-copied-uk-hq command (one-off heal; the UK importers stopped copying 2026-10-18)
-    # heal-entity-types (one-off; the bulk writer defaults `type` since 2026-10-24)
-    p_het = subparsers.add_parser('heal-entity-types',
-                                  help="Give every typeless entity type = 'company' (the GLEIF bulk writer left ordinary companies untyped until 2026-10-24). Dry run unless --apply")
-    p_het.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_het.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_het.set_defaults(func=cmd_heal_entity_types)
-
-    # drop-verified-flag (one-off; the writers stopped stamping it on 2026-10-24)
-    p_dvf = subparsers.add_parser('drop-verified-flag',
-                                  help='Remove the never-true `verified` property from every Entity and Person. Dry run unless --apply')
-    p_dvf.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_dvf.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_dvf.set_defaults(func=cmd_drop_verified_flag)
-
-    p_cuh = subparsers.add_parser('clear-copied-uk-hq',
-                                  help='Clear the hq_* fields ch-psc/ch-company-data copied from the registered office (the parts move under reg_*, the pin is cleared for `geocode --target registered`; the display address is filled). Dry run unless --apply')
-    p_cuh.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_cuh.add_argument('--db-url',
-                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_cuh.set_defaults(func=cmd_clear_copied_uk_hq)
-
     # quality-report command
     p_qr = subparsers.add_parser('quality-report',
                                  help='Data quality as numbers: stakes, corroboration, official ids, freshness, contradiction gauges')
@@ -2019,11 +1303,6 @@ def _build_parser():
                          help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_prune.set_defaults(func=cmd_prune_analytics)
 
-    # verify-users command (one-off: unblock pre-existing accounts under the new
-    # "login requires a verified email" rule)
-    p_vu = subparsers.add_parser('verify-users',
-                                 help='Mark existing user accounts email-verified (login now requires it)')
-    p_vu.add_argument('--email', help='Only verify this address (default: all unverified users)')
     # sec-holdings: read what an institutional filer OWNS (its own 13D/13G
     # filings), as opposed to a normal scrape which reads filings about a company.
     p_gf = subparsers.add_parser('geocache-forget',
@@ -2035,12 +1314,6 @@ def _build_parser():
         help='On-disk EDGAR filing cache: stats')
     p_sc.add_argument('action', choices=['stats'])
     p_sc.set_defaults(func=cmd_sec_cache)
-
-    p_drs = subparsers.add_parser('dedupe-role-synonyms',
-        help='Merge HAS_ROLE edges naming the same position in different words')
-    p_drs.add_argument('--dry-run', action='store_true',
-                       help='Report what would merge without changing anything')
-    p_drs.set_defaults(func=cmd_dedupe_role_synonyms)
 
     p_formd = subparsers.add_parser('sec-formd',
         help="One issuer's board/officers from its newest SEC Form D (private companies)")
@@ -2074,45 +1347,6 @@ def _build_parser():
                        help='10-K / 10-Q filings to read, newest first (default 8; ~2 requests each)')
     p_acq.set_defaults(func=cmd_sec_acquisitions)
 
-    p_hio = subparsers.add_parser('heal-incorporated-on',
-        help="Rename founded_date to incorporated_on on every entity and clear a founded year that only "
-             "repeated the incorporation date on a node no other source dated (before 2026-10-24). Dry run unless --apply")
-    p_hio.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
-    p_hio.add_argument('--db-url', help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
-    p_hio.set_defaults(func=cmd_heal_incorporated_on)
-
-    p_hsd = subparsers.add_parser('heal-sec-dates',
-        help="Repair SEC start/end dates written before the time-travel fixes "
-             "(amendment dates as starts, Form 4 starts, ends before starts); --dry-run counts")
-    p_hsd.add_argument('--dry-run', action='store_true', help='Count, change nothing')
-    p_hsd.set_defaults(func=cmd_heal_sec_dates)
-
-    p_hrf = subparsers.add_parser('heal-read-from',
-        help="Stamp read_from (how surely a value was read: field/table/form/layout/prose/"
-             "narrative) on edges and claims from before the grade; fill-only plus the "
-             "13D/G prose→form re-grade, Exhibit 21 rows wait for the next sec-ex21 run; "
-             "--dry-run counts")
-    p_hrf.add_argument('--dry-run', action='store_true', help='Count, change nothing')
-    p_hrf.set_defaults(func=cmd_heal_read_from)
-
-    p_hrd = subparsers.add_parser('heal-role-dates',
-        help="Date undated seats by the day their source last listed them "
-             "(time travel shows them dimmed otherwise); --dry-run counts")
-    p_hrd.add_argument('--dry-run', action='store_true', help='Count, change nothing')
-    p_hrd.set_defaults(func=cmd_heal_role_dates)
-
-    p_hmr = subparsers.add_parser('heal-merged-references',
-        help="Re-point flags, suppressions, pins and scrape runs still carrying an id a merge "
-             "folded away (merges before 2026-10-24 left them behind); --dry-run counts")
-    p_hmr.add_argument('--dry-run', action='store_true', help='Count, change nothing')
-    p_hmr.set_defaults(func=cmd_heal_merged_references)
-
-    p_hck = subparsers.add_parser('heal-claim-keys',
-        help="Re-key claims whose key does not match their content and fold the doubles "
-             "(one-off repair; --dry-run only counts)")
-    p_hck.add_argument('--dry-run', action='store_true', help='Count stale keys, change nothing')
-    p_hck.set_defaults(func=cmd_heal_claim_keys)
-
     p_13f = subparsers.add_parser('sec-13f',
         help="Institutional holders of one company from Form 13F (the sub-5%% view)")
     p_13f.add_argument('company', help='Company name as known to the graph')
@@ -2132,7 +1366,6 @@ def _build_parser():
     p_sh.add_argument('--succeeds', help='CIK this filer took over from → SUCCEEDED_BY edge')
     p_sh.set_defaults(func=cmd_sec_holdings)
 
-    p_vu.set_defaults(func=cmd_verify_users)
 
     # set-password: operator reset when neither in-app route is usable (the email
     # reset flow needs SMTP; /auth/change-password needs the current password).
@@ -2152,12 +1385,6 @@ def _build_parser():
     p_bfr.add_argument('--confirm-database', required=True,
                        help='Must equal the configured ARCADEDB_DATABASE')
     p_bfr.set_defaults(func=cmd_backfill_former_registers)
-
-    p_mig = subparsers.add_parser('migrate-psc-ids',
-        help='Rewrite slash-bearing chpsc node ids to the slug-safe form (one-shot)')
-    p_mig.add_argument('--confirm-database', required=True,
-                       help='Must equal the configured ARCADEDB_DATABASE')
-    p_mig.set_defaults(func=cmd_migrate_psc_ids)
 
     p_eu = subparsers.add_parser('ensure-user',
         help='Create or correct a service account (password from an env var, not argv)')

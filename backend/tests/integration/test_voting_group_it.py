@@ -716,20 +716,3 @@ class TestARosterThatShrinks:
             "MATCH (m)-[:MEMBER_OF]->(g:VotingGroup {id:$g}) RETURN coalesce(m.name, m.full_name) AS n", {"g": g["id"]}))
         assert g["name"] == "Voting group · 3 parties"
         assert len(members) == 3 and "Jorge Paulo Lemann" not in members
-
-    def test_the_heal_removes_only_the_lines_the_roster_no_longer_names(self, graph):
-        from app.scraper.runner import _upsert_voting_group, _upsert_group_membership, _upsert_person_by_name
-        from app.scraper.sec_writer import heal_group_memberships
-        gid = _upsert_voting_group("abi", "ABI", _roster(*ABI_ROSTER[:2]), "sec")    # BRC + Stichting
-        _upsert_group_membership("stichting", gid, "Entity", "sec")                  # on the roster (by name)
-        graph.run_command("CREATE (:Entity {id:'brc', name:'BRC S.a R.L.', sec_cik:'0001301486'})")
-        _upsert_group_membership("brc", gid, "Entity", "sec")                         # on the roster (by CIK)
-        pid = _upsert_person_by_name("Jorge Paulo Lemann", source_id="sec")
-        _upsert_group_membership(pid, gid, "Person", "sec")                          # left: not on the roster
-        dry = heal_group_memberships(apply=False)
-        assert (dry["groups"], dry["removed"]) == (1, 1) and "Jorge Paulo Lemann" in dry["lines"][0]
-        assert heal_group_memberships(apply=True)["removed"] == 1
-        left = sorted(r["id"] for r in graph.run_command(
-            "MATCH (m)-[:MEMBER_OF]->(g:VotingGroup {id:$g}) RETURN m.id AS id", {"g": gid}))
-        assert left == ["brc", "stichting"]
-        assert heal_group_memberships(apply=True)["removed"] == 0
