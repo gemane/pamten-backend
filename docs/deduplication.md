@@ -603,6 +603,42 @@ aggregation (sub-second even on a multi-million-entity DB). Fuzzy name near-miss
 (`Alphabet` vs `Google`) are deliberately **not** auto-merged — nothing can safely
 merge those, so they stay for review.
 
+## An LEI the filer's own filings confirm — `_bridge_sec_lei`
+
+One shape of same-name group is settled by a document instead of a person. It is
+an **LEI-only node** (GLEIF, Companies House, Wikidata) beside a **CIK-only EDGAR
+filer**, under one `name_normalized`. Example: Unilever's `gb-coh:00041424` (LEI
+549300MKFYEKVRWML317, country NL) and EDGAR's `sec:0000217410` (UNILEVER PLC, GB),
+the one split the 2026-10-26 rebuild left. EDGAR's submissions document states an
+LEI for few operating companies, and Wikidata gives a CIK for few foreign filers,
+so no hard id joins such a pair, and its tier was `low`. Its own filings settle
+it: the filer states its LEI wherever a European or bond-market rule asks for one.
+
+For each such pair `sec_lei.confirm_filer_lei` runs the full-text search for the LEI
+under the CIK and reads at most two hit documents. The rules are in
+docs/sec_edgar_scraper.md, "Step 0b": checksum-valid LEIs only; a lone LEI only in
+a document the filer filed alone; otherwise the filer's name must label the code.
+On a confirmation **the CIK node takes the LEI** (and `lei_source_url`, the filing),
+so the group shares a hard id, turns `definitive` and merges as usual: the higher
+`name_credibility` survives, and a forwarding row and a merge-log row are written.
+
+- **Where it runs:** in the scoped post-scrape dedup (`deduplicate_entities_for`)
+  for a group that is not already `definitive`/`high`, and as the first step of the
+  full `deduplicate_entities` (`bridge_sec_lei_pairs`). The full step walks every
+  filer with a CIK and no LEI against the LEI-only nodes of its name. These are
+  indexed lookups, and EDGAR is asked only where such a pair exists.
+- **Limits:** at most four pairs per group (`_SEC_LEI_PAIRS_PER_GROUP`). The bridge
+  runs only where SEC scraping may (`SCRAPER_ENABLED` and
+  `SCRAPER_SEC_EDGAR_ENABLED`), so a `dedupe-entities` with scraping off skips it.
+  A keep-separate pair is never asked. `deduplicate_entities_bulk` does not bridge.
+- **Results:** `lei_bridged` lists each join, with the filing, and
+  `manage.py dedupe-entities` prints it.
+- **Unknown, not different:** a pair the filings do not confirm stays in review.
+  Apple states its LEI in no filing.
+
+The SEC scrape asks the same question before it writes, so a fresh database never
+mints the twin (`runner._confirm_stored_lei`).
+
 
 # OWNS edge deduplication
 

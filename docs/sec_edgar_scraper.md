@@ -65,6 +65,45 @@ held the right CIK. By number, SpaceX reads its 13D/G holders and ten officers.
 Nestlé is found but yields no edges: its one large-holder filing (2024) is
 pre-XML HTML and its Forms 3/4 name it as the owner, not the issuer.
 
+**Step 0b — the stored node's LEI, confirmed by the filer's own filings (2026-10-27):**
+When the node the query resolved to holds an **LEI and no CIK**, the name search
+below found a filer, EDGAR states **no LEI** for that filer, and the two names key
+alike (`normalize_entity_name`), the runner asks the filer's own filings whether
+the LEI is its own (`runner._confirm_stored_lei` → `sec_lei.confirm_filer_lei`). On
+a confirmation the scrape writes with that LEI, the upsert resolves the node by it
+(`_upsert_entity_by_name` tries CIK, then LEI, then the name), the node gains the
+CIK, and `lei_source_url` keeps the filing. Without it the write minted a twin keyed
+`sec:{cik}`: after the 2026-10-26 rebuild Unilever was Companies House's
+`gb-coh:00041424` (LEI 549300MKFYEKVRWML317, country NL) beside EDGAR's UNILEVER PLC
+(CIK 0000217410, GB). The country kept the name match apart, and no hard id joined them.
+
+How the check works:
+
+1. One full-text search, `"{LEI}"` filtered to the CIK (`efts …/search-index?q=…&ciks=…`).
+   Unilever: 170 hits, all its own 6-K directors'-dealing notices. Apple: none. Not
+   every filer states its LEI anywhere, so a miss means **unknown**, never "a
+   different company".
+2. Up to two hit documents are read (`MAX_DOCUMENTS`; Archives files, so `sec_cache`
+   keeps them). Every 20-character code that passes the ISO 17442 check digits
+   (mod 97-10) is an LEI; a look-alike string fails the checksum.
+3. **The only LEI of a document the filer filed alone** confirms it: Unilever's
+   notices ("a) Name Unilever PLC b) LEI 5493…"), Berkshire's and Alphabet's note
+   prospectuses ("Issuer Berkshire Hathaway Inc. LEI …").
+4. **Among several LEIs, or in a document several filers share**, the filer's name must
+   **label** the LEI: the name's words, then only legal-form and label words
+   ("LEI", "Legal Entity Identifier", "is", "b)") up to the code, within 300
+   characters. Sysco's 424B5 states "Sysco Corporation’s Legal Entity Identifier is
+   5RGW…" and "Sysco Holdings’ Legal Entity Identifier is 2549…". "sysco" stands
+   before both, but only the first is Sysco Corp's. "Holdings" and "group" count
+   as name words here, although the issuer matcher drops them as noise. Fiserv's
+   "Issuer Legal Entity Identifier … Guarantor Legal Entity Identifier …" names
+   nobody, so it confirms nothing. Kraft Heinz Foods Co's prospectus is filed under
+   its own CIK and the guarantor Kraft Heinz Co's alike. It holds one LEI, the
+   issuer's, and the shared-filing rule keeps the guarantor from claiming it.
+
+The entity dedup asks the same question for a twin that already exists (see
+docs/deduplication.md, "An LEI the filer's own filings confirm").
+
 **Step 1 — tickers file (preferred):**
 `company_tickers.json` maps ~10,000 listed companies to their CIK, ticker, and
 registered name. It is a flat JSON object keyed by an arbitrary integer index:

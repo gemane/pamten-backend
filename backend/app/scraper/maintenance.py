@@ -1556,6 +1556,75 @@ def merge_entities_by_id(keep_id: str, dead_id: str, apply: bool = False) -> dic
     return out
 
 
+#: The LEI-only × CIK-only pairs checked per same-name group: each check is a
+#: search and up to two document reads at EDGAR.
+_SEC_LEI_PAIRS_PER_GROUP = 4
+
+
+def _sec_lei_check_enabled() -> bool:
+    """Reading EDGAR is scraping: the bridge runs only where SEC scraping may."""
+    from app.config import settings
+    return bool(settings.SCRAPER_ENABLED and settings.SCRAPER_SEC_EDGAR_ENABLED)
+
+
+def _bridge_sec_lei(members: list[dict], kept_separate: set, apply: bool = True) -> list[dict]:
+    """Same-name members that share no hard id because one holds only an LEI
+    and the other only a CIK: where the filer's own filings state the LEI
+    (`sec_lei.confirm_filer_lei`), the CIK node takes the LEI — and the
+    filing as ``lei_source_url`` — so the pair shares a hard id and the
+    ordinary merge folds it (Unilever's Companies House node and EDGAR's
+    UNILEVER PLC, 2026-10-27). A pair a human kept apart is never asked.
+    Updates `members` in place; returns the pairs joined."""
+    from app.scraper.sec_lei import confirm_filer_lei
+    lei_only = [m for m in members if m.get("lei_id") and not m.get("sec_cik")]
+    cik_only = [m for m in members if m.get("sec_cik") and not m.get("lei_id")]
+    joined: list[dict] = []
+    asked = 0
+    for filer in cik_only:
+        for node in lei_only:
+            if asked >= _SEC_LEI_PAIRS_PER_GROUP:
+                return joined
+            if frozenset((filer["id"], node["id"])) in kept_separate:
+                continue
+            asked += 1
+            hit = confirm_filer_lei(filer["sec_cik"], node["lei_id"],
+                                    [filer.get("name"), node.get("name")])
+            if not hit:
+                continue
+            if apply:
+                run_command("MATCH (e:Entity {id: $id}) "
+                            "SET e.lei_id = $lei, e.lei_source_url = COALESCE(e.lei_source_url, $url)",
+                            {"id": filer["id"], "lei": node["lei_id"], "url": hit["source_url"]})
+            filer["lei_id"] = node["lei_id"]
+            joined.append({"cik_id": filer["id"], "lei_id": node["lei_id"], "lei_node_id": node["id"],
+                           "name": filer.get("name"), "source_url": hit["source_url"]})
+            break
+    return joined
+
+
+def bridge_sec_lei_pairs(kept_separate: set | None = None) -> list[dict]:
+    """`_bridge_sec_lei` across the database: every EDGAR filer node without
+    an LEI against the LEI-only nodes of its name. Bounded by the filers (a
+    few hundred, each an indexed name lookup); EDGAR is asked only where such
+    a pair exists. Nothing when SEC scraping is off."""
+    if not _sec_lei_check_enabled():
+        return []
+    if kept_separate is None:
+        kept_separate = _not_duplicate_pairs()
+    joined: list[dict] = []
+    filers = run_sql("SELECT id, name, name_normalized, sec_cik FROM Entity "
+                     "WHERE sec_cik IS NOT NULL AND lei_id IS NULL AND name_normalized IS NOT NULL")
+    for f in filers:
+        filer = {k: v for k, v in dict(f).items() if not k.startswith("@")}
+        partners = run_sql("SELECT id, name, lei_id, sec_cik FROM Entity WHERE name_normalized = :nn "
+                           "AND lei_id IS NOT NULL AND sec_cik IS NULL LIMIT 10",
+                           {"nn": filer["name_normalized"]})
+        partners = [{k: v for k, v in dict(p).items() if not k.startswith("@")} for p in partners]
+        if partners:
+            joined += _bridge_sec_lei([filer, *partners], kept_separate)
+    return joined
+
+
 def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     """Scoped, high-confidence-only entity auto-merge — the entity twin of the
     post-scrape person dedup. For the entities a scrape just touched, merge any
@@ -1569,7 +1638,8 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     id), and the loser's edges are migrated onto it before it's deleted.
     """
     if not entity_ids:
-        return {"entities_merged": 0, "groups_checked": 0, "needs_review": 0, "detail": []}
+        return {"entities_merged": 0, "groups_checked": 0, "needs_review": 0,
+                "lei_bridged": [], "detail": []}
 
     # Normalized names of the touched entities (id is UNIQUE-indexed → fast).
     names: set[str] = set()
@@ -1584,6 +1654,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
     kept_separate = _not_duplicate_pairs(list(dict.fromkeys(entity_ids)))
 
     merged: list[dict] = []
+    bridged: list[dict] = []
     review = 0
     for nn in names:
         members = run_sql(
@@ -1594,6 +1665,10 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
         members = [{k: v for k, v in m.items() if not k.startswith("@")} for m in members]
         if len(members) < 2:
             continue
+        if _group_confidence(members) not in ("definitive", "high") and _sec_lei_check_enabled():
+            # an LEI-only node and a CIK-only filer of one name: the filer's
+            # own filings may state the LEI, which makes it definitive
+            bridged += _bridge_sec_lei(members, kept_separate, apply=apply)
         if _group_confidence(members) not in ("definitive", "high"):
             review += 1
             continue
@@ -1612,7 +1687,7 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
                            "deleted": dead["name"], "deleted_id": dead["id"]})
 
     return {"entities_merged": len(merged), "groups_checked": len(names),
-            "needs_review": review, "detail": merged[:100]}
+            "needs_review": review, "lei_bridged": bridged, "detail": merged[:100]}
 
 
 def _former_register_groups() -> list[tuple[str, list[str]]]:
@@ -1654,6 +1729,13 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     highest ``name_credibility`` node (then the lexically-smallest
     id, for a deterministic result).
     """
+    # Read once for the whole run rather than per group: this path is unscoped,
+    # and the count short-circuit makes it free when nobody has kept anything apart.
+    kept_separate = _not_duplicate_pairs()
+    # First the pairs a name proposes and the filer's own filings join (an
+    # LEI-only node, a CIK-only filer): they then share an LEI like any other.
+    bridged = bridge_sec_lei_pairs(kept_separate)
+
     # All duplicate groups across every hard external identifier (cheap aggregation).
     # A shared LEI / Companies House number / SEC CIK / Wikidata id ⇒ same company,
     # so this merges across sources (e.g. a GLEIF node and a PSC node for the same UK
@@ -1670,10 +1752,6 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     dup_keys += [("former_register_id", g) for g in _former_register_groups()]
     total = len(dup_keys)
     batch = dup_keys if limit is None else dup_keys[:limit]
-
-    # Read once for the whole run rather than per group: this path is unscoped,
-    # and the count short-circuit makes it free when nobody has kept anything apart.
-    kept_separate = _not_duplicate_pairs()
 
     merged: list[dict] = []
     for key_prop, key in batch:
@@ -1712,6 +1790,7 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
         "groups_processed": len(batch),
         "duplicate_groups_found": total,
         "remaining": max(0, total - len(batch)),
+        "lei_bridged": bridged,
         "detail": merged[:100],   # cap payload; counts above are complete
     }
 
