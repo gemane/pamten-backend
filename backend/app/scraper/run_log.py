@@ -93,24 +93,6 @@ def _safe_finish(run_id: str, status: str, total: int, error: str,
         log.warning("scrape-run finish log failed: %s", exc)
 
 
-PLACEHOLDER_COLUMNS = ("entity_id", "finished_at", "error", "reason")
-
-
-def heal_placeholders(apply: bool = True) -> dict:
-    """Drop the `''` placeholders the run log wrote before 2026-10-25 — an
-    `entity_id`, `finished_at`, `error` or `reason` that is an empty string
-    becomes an absent property. Returns the count per column."""
-    from app.db.arcadedb import run_sql
-    out: dict = {"applied": bool(apply)}
-    for col in PLACEHOLDER_COLUMNS:
-        rows = run_sql(f"SELECT count(*) AS n FROM ScrapeRun WHERE {col} = ''")
-        out[col] = int((rows or [{}])[0].get("n") or 0)
-        if apply and out[col]:
-            run_sql(f"UPDATE ScrapeRun REMOVE {col} WHERE {col} = ''")
-    log.info("run-log placeholder heal: %s", out)
-    return out
-
-
 def _prune() -> None:
     with db.get_session() as s:
         rows = sorted(

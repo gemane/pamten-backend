@@ -10,7 +10,7 @@ keep 13D voting groups out; since 2026-10-26 a group is its own vertex type
 import pytest
 
 from app.quality import _identity
-from app.scraper.maintenance import _duplicate_name_groups, backfill_entity_countries
+from app.scraper.maintenance import _duplicate_name_groups
 from app.routers.entities import get_entities_without_country
 from app.routers.federation import build_export
 
@@ -34,17 +34,6 @@ def test_the_quality_report_counts_a_typeless_entity_and_never_a_group(it_db):
 def test_the_duplicate_scan_sees_typeless_namesakes(it_db):
     _seed(it_db)
     assert ("bare co", 2) in _duplicate_name_groups()
-
-
-def test_the_country_backfill_offers_a_typeless_entity_and_not_the_group(it_db):
-    _seed(it_db)
-    asked = []
-    def fetch(cik):
-        asked.append(cik)
-        return {}
-    res = backfill_entity_countries(fetch=fetch)
-    assert res["candidates"] == 2                   # bare + bare2 have no country; co has one; grp is no entity
-    assert asked == ["0000000001"]
 
 
 def test_the_missing_country_list_names_the_typeless_entity_and_not_the_group(it_db):

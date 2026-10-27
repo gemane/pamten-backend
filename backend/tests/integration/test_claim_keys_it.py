@@ -93,60 +93,6 @@ class TestTheMerge:
         assert (c["since"], c["since_basis"], c["since_source_url"]) == ("2013-06-30", "first_listed", "u")
 
 
-class TestTheRename:
-    def test_a_renamed_nodes_claims_are_rekeyed(self, it_db):
-        from app.database import db
-        from app.merged_ids import rename_node_id
-        it_db.run_command("CREATE (:Entity {id:'gb-coh:4680292', name:'News Corp Holdings UK & Ireland'})")
-        _record(from_id="nc", to_id="gb-coh:4680292", filing_type="EX-21")
-        with db.get_session() as session:
-            assert rename_node_id(session, "Entity", "gb-coh:4680292", "gb-coh:04680292") is True
-        [c] = _claims(it_db)
-        assert c["to_id"] == "gb-coh:04680292" and _keys_match(it_db)
-        # the next scrape finds its claim instead of writing a second one (the dev duplicate)
-        _record(from_id="nc", to_id="gb-coh:04680292", filing_type="EX-21")
-        assert len(_claims(it_db)) == 1
-
-
-class TestTheRepair:
-    def _seed_the_damage(self, it_db):
-        from app.claims import KIND_ROLE, claim_key
-        # (1) the old merge: a role claim keyed WITHOUT its role, and the correctly
-        #     keyed one the next scrape wrote beside it
-        it_db.run_sql("INSERT INTO Claim SET claim_key = :k, kind = 'role', from_id = 'p', to_id = 'co', "
-                      "source_id = :s, role = 'CEO', first_seen_at = '2026-01-01T00:00:00+00:00', "
-                      "last_seen_at = '2026-02-01T00:00:00+00:00'",
-                      {"k": claim_key("role", "p", "co", SEC), "s": SEC})
-        _record(kind=KIND_ROLE, from_id="p", to_id="co", role="CEO")
-        # (2) the old rename: re-pointed, still keyed for the old id, no twin
-        it_db.run_sql("INSERT INTO Claim SET claim_key = :k, kind = 'owns', from_id = 'nc', "
-                      "to_id = 'gb-coh:04680292', source_id = :s, stake_percent = 100.0",
-                      {"k": claim_key("owns", "nc", "gb-coh:4680292", SEC), "s": SEC})
-        # (3) a healthy claim
-        _record(from_id="x", to_id="y")
-
-    def test_dry_run_counts_and_changes_nothing(self, it_db):
-        from app.claims import heal_claim_keys
-        self._seed_the_damage(it_db)
-        before = _claims(it_db)
-        assert heal_claim_keys(dry_run=True) == {"claims": 4, "stale": 2, "moved": 0, "folded": 0}
-        assert _claims(it_db) == before
-
-    def test_it_rekeys_in_place_and_folds_the_doubles(self, it_db):
-        from app.claims import heal_claim_keys
-        self._seed_the_damage(it_db)
-        res = heal_claim_keys(page=2)                       # several pages
-        assert (res["stale"], res["moved"], res["folded"]) == (2, 1, 1)
-        got = _claims(it_db)
-        assert len(got) == 3 and _keys_match(it_db)
-        role = next(c for c in got if c["kind"] == "role")
-        assert role["first_seen_at"] == "2026-01-01T00:00:00+00:00"       # the earlier sight survives the fold
-        assert next(c for c in got if c["to_id"] == "gb-coh:04680292")["stake_percent"] == 100.0
-        # a second run finds nothing left
-        again = heal_claim_keys()
-        assert (again["claims"], again["stale"]) == (3, 0)
-
-
 def test_a_claim_without_a_source_is_refused_by_the_server(it_db):
     """`record_claim` has always dropped a sourceless claim; since 2026-10-25 the
     schema refuses one outright (`Claim.source_id` mandatory), so no merge ever

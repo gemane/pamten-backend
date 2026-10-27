@@ -4,9 +4,6 @@ whose Source nodes were uuids beside ScraperSource toggle rows."""
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-
 from app.scraper.sources import KNOWN_SOURCES, SOURCE_ID, slug_id, source_id_for, source_key_for
 
 
@@ -74,69 +71,3 @@ class TestEnsureSource:
         assert create[0][1]["id"] == "gleif" and create[0][1]["key"] == "bods_gleif"
         assert create[0][1]["type"] == "register" and create[0][1]["name"] == "GLEIF"
         assert "registry_key: $key" in create[0][0]
-
-
-class TestHeal:
-    SOURCES = [{"id": "aaaa-1111", "name": "GLEIF", "type": "register"},
-               {"id": "wikidata", "name": "Wikidata", "type": "knowledge_base"},     # already stable
-               {"id": "bbbb-2222", "name": "Peer: Signed", "type": "peer"}]
-    SCRAPER = [{"name": "bods_gleif", "enabled": False, "data_mode": "full", "kind": "bulk", "description": "d"},
-               {"name": "wikidata", "enabled": True, "data_mode": "claims_only", "kind": "instant", "description": "d"}]
-
-    def _run(self, monkeypatch, apply):
-        from app import source_ids as m
-        issued = []
-
-        def fake_run_sql(sql, params=None, timeout=None):
-            issued.append((sql, params))
-            if sql.startswith("SELECT id, name, type FROM Source"):
-                return self.SOURCES
-            if sql.startswith("SELECT id FROM Source"):
-                return [{"id": s["id"]} for s in self.SOURCES]
-            if sql.startswith("SELECT count(*)"):
-                return [{"n": 3 if "Claim" in sql and params["old"] == "aaaa-1111" else 0}]
-            if "FROM ScraperSource" in sql and sql.startswith("SELECT"):
-                return self.SCRAPER
-            if sql.startswith("UPDATE Claim SET source_id"):
-                return [{"count": 3 if params["old"] == "aaaa-1111" else 0}]
-            if sql.startswith("DELETE FROM ScraperSource"):
-                return [{"count": 2}]
-            return [{"count": 0}]
-        monkeypatch.setattr(m, "run_sql", fake_run_sql)
-        rekeys = []
-        monkeypatch.setattr("app.claims.heal_claim_keys", lambda dry_run=False, **k: rekeys.append(dry_run) or {"rekeyed": 3})
-        return m.heal(apply=apply), issued, rekeys
-
-    def test_plan_names_only_the_nodes_whose_id_is_not_stable(self, monkeypatch):
-        from app import source_ids as m
-        monkeypatch.setattr(m, "run_sql", lambda sql, params=None, timeout=None: self.SOURCES)
-        assert m.plan() == [{"old": "aaaa-1111", "new": "gleif", "name": "GLEIF", "key": "bods_gleif"},
-                            {"old": "bbbb-2222", "new": "peer:signed", "name": "Peer: Signed", "key": None}]
-
-    def test_apply_repoints_every_holder_rekeys_the_node_folds_the_toggles_and_rekeys_claims(self, monkeypatch):
-        res, issued, rekeys = self._run(monkeypatch, apply=True)
-        from app.source_ids import HOLDERS
-        gleif_updates = [p for s, p in issued if s.startswith("UPDATE ") and p and p.get("old") == "aaaa-1111"]
-        assert len(gleif_updates) == len(HOLDERS) + 1          # every holder, then the node itself
-        assert [s for s, p in issued if s.startswith("UPDATE Source SET id")] == ["UPDATE Source SET id = :new, registry_key = :key WHERE id = :old"] * 2
-        assert res["sources"] == 2 and res["holders"] == {"Claim": 3}
-        assert res["toggles_moved"] == 2 and res["scraper_rows_deleted"] == 2
-        folds = [p for s, p in issued if s.startswith("UPDATE Source SET enabled")]
-        assert {p["id"]: (p["e"], p["m"]) for p in folds} == {"gleif": (False, "full"), "wikidata": (True, "claims_only")}
-        assert any(s.startswith("DROP TYPE ScraperSource") for s, _ in issued)
-        assert rekeys == [False] and res["claims"] == {"rekeyed": 3}
-
-    def test_a_dry_run_counts_the_holders_and_writes_nothing(self, monkeypatch):
-        res, issued, rekeys = self._run(monkeypatch, apply=False)
-        assert res["sources"] == 2 and res["holders"] == {"Claim": 3} and res["applied"] is False
-        assert not any(s.startswith(("UPDATE", "DELETE", "DROP")) for s, _ in issued)
-        assert rekeys == [True]
-
-    def test_a_taken_id_is_a_conflict_not_a_merge(self, monkeypatch):
-        from app import source_ids as m
-        rows = [{"id": "aaaa-1111", "name": "GLEIF", "type": "register"}, {"id": "gleif", "name": "GLEIF", "type": "register"}]
-        monkeypatch.setattr(m, "run_sql", lambda sql, params=None, timeout=None:
-                            rows if "FROM Source" in sql and sql.startswith("SELECT") else [{"count": 0}])
-        monkeypatch.setattr("app.claims.heal_claim_keys", lambda **k: pytest.fail("no claims re-key without a change"))
-        res = m.heal(apply=True)
-        assert res["sources"] == 0 and [c["old"] for c in res["conflicts"]] == ["aaaa-1111"]

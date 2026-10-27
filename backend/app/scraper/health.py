@@ -26,9 +26,6 @@ _RUNLOG_LABELS = {
     "sec-formd": "SEC Form D boards",
     "sec-acquisitions": "SEC acquisitions (XBRL)",
     "gleif-update": "GLEIF daily delta",
-    "gleif-rr-status": "GLEIF record status heal",
-    "gleif-rr-stakes": "GLEIF stated-share heal",
-    "gleif-rr-validation": "GLEIF record-checking heal",
     "ch-psc-update": "UK PSC refresh",
     "deduplicate-entities": "Entity dedup",
 }

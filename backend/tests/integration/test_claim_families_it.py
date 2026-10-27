@@ -55,16 +55,3 @@ def test_the_exhibit_21_withdrawal_takes_only_the_lists_claim(graph):
     assert set(c) == {"13D"}
     edge = graph.run_command("MATCH (:Entity {id:'tsla'})-[r:OWNS]->(:Entity {id:'sub'}) RETURN r.stake_percent AS s, r.filing_type AS ft")
     assert [(e["s"], e["ft"]) for e in edge] == [(60.0, "13D")]        # re-answered from the 13D
-
-
-def test_the_key_heal_rekeys_a_database_written_before(graph):
-    from app.claims import KIND_OWNS, claim_key, heal_claim_keys, owns_claim_key
-    plain = claim_key(KIND_OWNS, "musk", "tsla", "sec-edgar")
-    graph.run_sql("UPDATE Claim SET claim_key = :k, kind = 'owns', from_id = 'musk', to_id = 'tsla', "
-                  "source_id = 'sec-edgar', filing_type = '13G/A', stake_percent = 28.4 UPSERT WHERE claim_key = :k", {"k": plain})
-    dry = heal_claim_keys(dry_run=True)
-    assert dry["stale"] == 1
-    res = heal_claim_keys()
-    assert res["moved"] == 1
-    assert graph.run_sql("SELECT claim_key FROM Claim")[0]["claim_key"] == owns_claim_key("musk", "tsla", "sec-edgar", "13G/A")
-    assert heal_claim_keys(dry_run=True)["stale"] == 0

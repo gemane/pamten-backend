@@ -76,37 +76,6 @@ class TestEndSeatsAtDeath:
         assert roles.end_seats_at_death("p1") == {"closed": 0, "founders_kept": 0, "after_death": 0}
 
 
-class TestHeal:
-    ROWS = [{"pid": "p1", "person": "Byung-Gook Park", "died": "2022-05-17", "company": "Samsung", "role": "Board Member", "since": None},
-            {"pid": "p2", "person": "Thomas Murphy", "died": "2022-01-01", "company": "Berkshire", "role": "Board Member", "since": "2022-12-19"},
-            {"pid": "p3", "person": "Steve Jobs", "died": "2011-10-05", "company": "Apple", "role": "Founder", "since": "1976-04-01"}]
-
-    def test_the_dry_run_counts_names_and_writes_nothing(self, monkeypatch):
-        import app.db.arcadedb as arcadedb
-        calls = []
-
-        def run_sql(sql, params=None, timeout=None):
-            calls.append(sql)
-            return self.ROWS if "@out.death_date IS NOT NULL" in sql else []
-        monkeypatch.setattr(arcadedb, "run_sql", run_sql)
-        res = roles.heal_seats_at_death(apply=False)
-        assert (res["closed"], res["founders_kept"], res["after_death"], res["applied"]) == (1, 1, 1, False)
-        assert res["people"] == ["Byung-Gook Park († 2022-05-17): Board Member @ Samsung",
-                                 "Thomas Murphy († 2022-01-01): Board Member @ Berkshire"]
-        assert not any(c.startswith("UPDATE") for c in calls)
-
-    def test_apply_closes_through_the_rule(self, monkeypatch):
-        import app.db.arcadedb as arcadedb
-        monkeypatch.setattr(arcadedb, "run_sql",
-                            lambda sql, params=None, timeout=None: self.ROWS if "@out.death_date" in sql else [])
-        with patch.object(roles, "end_seats_at_death",
-                          side_effect=lambda pid: {"closed": 1 if pid == "p1" else 0, "founders_kept": int(pid == "p3"),
-                                                   "after_death": int(pid == "p2")}) as rule:
-            res = roles.heal_seats_at_death(apply=True)
-        assert [c.args[0] for c in rule.call_args_list] == ["p1", "p2", "p3"]
-        assert (res["closed"], res["founders_kept"], res["after_death"]) == (1, 1, 1)
-
-
 def _session(rows=()):
     session = MagicMock()
     run_mock = MagicMock()

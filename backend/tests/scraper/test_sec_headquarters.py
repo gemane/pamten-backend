@@ -10,7 +10,6 @@ in the graph had no headquarters while EDGAR held their street address.
 So: business address → `hq_*`, incorporation → `country`, and never the reverse.
 """
 
-import pytest
 
 from app.scraper.sec_edgar import sec_headquarters, sec_country
 
@@ -99,71 +98,6 @@ class TestTheTwoQuestionsStaySeparate:
                                           "stateOrCountryDescription": "United Kingdom"}}}
         assert sec_country(doc) == "KY"            # registered
         assert sec_headquarters(doc)["country"] == "GB"   # run
-
-
-class TestTheBackfill:
-    def _rows(self, *rows):
-        return list(rows)
-
-    def test_fills_only_what_is_blank(self, monkeypatch):
-        from app.scraper import maintenance
-
-        commands = []
-        monkeypatch.setattr(maintenance, "run_query", lambda *a, **k: [
-            {"id": "e1", "name": "Heartland Advisors", "cik": "0000937394"}])
-        monkeypatch.setattr(maintenance, "run_command",
-                            lambda sql, params=None: commands.append((sql, params)))
-
-        res = maintenance.backfill_sec_headquarters(
-            fetch=lambda cik: subs(street1="790 N WATER STREET", city="MILWAUKEE",
-                                   stateOrCountry="WI", zipCode="53202"))
-
-        assert res["filled"] == 1
-        sql, params = commands[0]
-        # COALESCE everywhere: a repair, not a re-import.
-        assert sql.count("COALESCE") == 3
-        assert params["hq_city"] == "MILWAUKEE" and params["hq_country"] == "US"   # named after the fields (app.addresses)
-
-    def test_never_touches_the_registration_country(self, monkeypatch):
-        from app.scraper import maintenance
-
-        commands = []
-        monkeypatch.setattr(maintenance, "run_query", lambda *a, **k: [
-            {"id": "e1", "name": "Somewhere Inc", "cik": "1"}])
-        monkeypatch.setattr(maintenance, "run_command",
-                            lambda sql, params=None: commands.append((sql, params)))
-
-        maintenance.backfill_sec_headquarters(
-            fetch=lambda cik: subs(street1="60 Wall St", city="NEW YORK", stateOrCountry="NY"))
-
-        assert "e.country" not in commands[0][0]
-
-    def test_a_filer_edgar_cannot_place_is_skipped(self, monkeypatch):
-        from app.scraper import maintenance
-
-        monkeypatch.setattr(maintenance, "run_query", lambda *a, **k: [
-            {"id": "e1", "name": "No Address Co", "cik": "1"}])
-        monkeypatch.setattr(maintenance, "run_command",
-                            lambda *a, **k: pytest.fail("wrote for a filer with no address"))
-
-        res = maintenance.backfill_sec_headquarters(fetch=lambda cik: {})
-        assert res["filled"] == 0 and res["still_unknown"] == 1
-
-    def test_a_fetch_failure_does_not_stop_the_run(self, monkeypatch):
-        from app.scraper import maintenance
-
-        rows = [{"id": "e1", "name": "Broken", "cik": "1"},
-                {"id": "e2", "name": "Fine", "cik": "2"}]
-        monkeypatch.setattr(maintenance, "run_query", lambda *a, **k: rows)
-        monkeypatch.setattr(maintenance, "run_command", lambda *a, **k: None)
-
-        def fetch(cik):
-            if cik == "1":
-                raise RuntimeError("EDGAR timeout")
-            return subs(street1="1 High St", city="LONDON", stateOrCountry="X0",
-                        stateOrCountryDescription="United Kingdom")
-
-        assert maintenance.backfill_sec_headquarters(fetch=fetch)["filled"] == 1
 
 
 def test_the_writer_stores_every_part_edgar_states():

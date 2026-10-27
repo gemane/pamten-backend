@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 
-from app.db.arcadedb import run_sql, run_sqlscript
 
 log = logging.getLogger(__name__)
 
@@ -36,69 +35,3 @@ def earliest(*stamps: str | None) -> str | None:
     live in a Cypher CASE. SQL returns the stored string as written."""
     known = [str(s) for s in stamps if s]
     return min(known) if known else None
-
-
-def _oldest_claim_dates(ids: list[str]) -> dict[str, str]:
-    """{node id: oldest claim first_seen_at} over both ends of the claims that
-    name these ids — two indexed grouped reads per page, never a scan."""
-    oldest: dict[str, str] = {}
-    for col in ("to_id", "from_id"):
-        rows = run_sql(f"SELECT {col} AS i, min(first_seen_at) AS t FROM Claim "
-                       f"WHERE {col} IN :ids AND first_seen_at IS NOT NULL GROUP BY {col}",
-                       {"ids": ids})
-        for r in rows:
-            i, t = r.get("i"), r.get("t")
-            if i and t and (i not in oldest or str(t) < oldest[i]):
-                oldest[i] = str(t)
-    return oldest
-
-
-def _oldest_edge_date(rid: str) -> str | None:
-    """The oldest `last_scraped_at` of any edge touching the node, in or out,
-    of any type — one read per node, and only for a node nothing else dated."""
-    rows = run_sql(f"SELECT min(last_scraped_at) AS t FROM (SELECT expand(bothE()) FROM {rid})")
-    t = (rows or [{}])[0].get("t")
-    return str(t) if t else None
-
-
-def backfill(apply: bool = True, labels: tuple[str, ...] = ("Entity", "Person", "VotingGroup")) -> dict:
-    """Give every node without `created_at` the oldest date anything recorded
-    about it. Walks the id index (app.db.paging). Returns per-label counts:
-    scanned, missing, from_claims, from_scrape, from_edges, unknown, written."""
-    from app.db import paging
-    out: dict = {"applied": bool(apply)}
-    for label in labels:
-        c = {"scanned": 0, "missing": 0, "from_claims": 0, "from_scrape": 0, "from_edges": 0,
-             "unknown": 0, "written": 0}
-        for page in paging.iter_id_pages(label, columns="id, @rid AS rid, created_at, last_scraped_at"):
-            c["scanned"] += len(page)
-            missing = [r for r in page if not r.get("created_at") and r.get("rid")]
-            if not missing:
-                continue
-            c["missing"] += len(missing)
-            claims = _oldest_claim_dates([r["id"] for r in missing])
-            values: list[tuple[str, str]] = []
-            for r in missing:
-                when = claims.get(r["id"])
-                if when:
-                    c["from_claims"] += 1
-                elif r.get("last_scraped_at"):
-                    when = str(r["last_scraped_at"])
-                    c["from_scrape"] += 1
-                else:
-                    when = _oldest_edge_date(str(r["rid"]))
-                    if not when:
-                        c["unknown"] += 1
-                        continue
-                    c["from_edges"] += 1
-                values.append((str(r["rid"]), when))
-            if not apply:
-                continue
-            for i in range(0, len(values), _WRITE_CHUNK):
-                chunk = values[i:i + _WRITE_CHUNK]
-                stmts = "\n".join(f"UPDATE {rid} SET created_at = :v{k};" for k, (rid, _) in enumerate(chunk))
-                run_sqlscript(stmts, {f"v{k}": when for k, (_, when) in enumerate(chunk)})
-                c["written"] += len(chunk)
-        out[label] = c
-    log.info("created_at backfill: %s", out)
-    return out

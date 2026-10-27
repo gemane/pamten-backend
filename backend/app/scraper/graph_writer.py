@@ -220,8 +220,8 @@ def _ensure_source(name: str, url: str, credibility: int, type_: str = "register
     UK PSC) — pass its constants. The id is STABLE (`sources.source_id_for`:
     the catalogue's id for a catalogue label, a slug of the name otherwise),
     the same on every instance; a node keyed the old way — a random uuid,
-    before 2026-10-24 — is found by its name and keeps its id until
-    `manage.py heal-source-ids` re-keys it, so nothing is ever created twice."""
+    before 2026-10-24 — is found by its name and keeps its id, so nothing is
+    ever created twice."""
     from app.scraper.sources import KNOWN_SOURCES, source_id_for, source_key_for
     key = source_key_for(name)
     meta = KNOWN_SOURCES.get(key) if key else None
@@ -551,9 +551,8 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     """
     now = _now_iso()
     # The claim is dated by the day the source said it — the scrape day for
-    # a knowledge base, as the owns claims are; the 290 Wikidata role claims
-    # on dev had no date at all (2026-10-25; `heal-model-gaps` dates them by
-    # their first sighting).
+    # a knowledge base, as the owns claims are (the 290 Wikidata role claims
+    # on dev had no date at all until 2026-10-25).
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=since, until=until, source_url=source_url,
                  source_date=now[:10],

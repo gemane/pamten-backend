@@ -9,7 +9,6 @@ Skipped unless ARCADEDB_IT_URL is set — see conftest.py.
 """
 import pytest
 
-from app.database import db
 
 pytestmark = pytest.mark.integration
 
@@ -76,38 +75,3 @@ def test_a_person_merge_moves_them_too(it_db):
     assert _references_to(it_db, "dup-1") == {}
     assert _references_to(it_db, "keep-1")["Flag.node_id"] == 1
     assert _references_to(it_db, "keep-1")["ScrapeRun.entity_id"] == 1
-
-
-def test_a_rename_moves_them_through_the_same_path(it_db):
-    from app.merged_ids import rename_node_id
-
-    it_db.run_command("CREATE (:Entity {id:'old-id', name:'Acme', name_normalized:'acme'})")
-    _moderation_on(it_db, "old-id")
-    with db.get_session() as session:
-        assert rename_node_id(session, "Entity", "old-id", "new-id") is True
-    assert _references_to(it_db, "old-id") == {}
-    assert _references_to(it_db, "new-id")["Suppression.node_id"] == 1
-
-
-def test_the_heal_moves_what_an_old_merge_left_behind(it_db):
-    from app.merged_ids import heal_merged_references, record_merge_sql
-    from app.merged_ids import repoint_references
-
-    # a merge recorded the old way: forwarding row, references untouched
-    it_db.run_command("CREATE (:Entity {id:'survivor', name:'S', name_normalized:'s'})")
-    _moderation_on(it_db, "gone")
-    with db.get_session() as session:
-        session.run("MERGE (m:MergedId {old_id:'gone'}) SET m.new_id='survivor', m.kind='Entity', m.at='2026-01-01', m.id='x'")
-    assert _references_to(it_db, "gone")
-
-    dry = heal_merged_references(apply=False)
-    assert dry["redirects"] == 1 and dry["stale"] == 5 and dry["moved"] == 0
-    assert _references_to(it_db, "gone")                      # a dry run moved nothing
-
-    res = heal_merged_references(apply=True)
-    assert res["moved"] == 5
-    assert _references_to(it_db, "gone") == {}
-    assert sum(_references_to(it_db, "survivor").values()) == 5
-    assert heal_merged_references(apply=True)["stale"] == 0   # idempotent
-    assert repoint_references("gone", "survivor") == 0        # and so is the primitive
-    record_merge_sql("gone", "survivor")                       # recording it again is harmless

@@ -68,10 +68,6 @@ _REG_PIN_FILL = ",\n                ".join(
     for p, v in (("lat", "lat"), ("lng", "lng"), ("precision", "prec")))
 
 
-
-
-
-
 def _duplicate_name_summary() -> dict:
     """Same-company-different-identifier duplicates surfaced right after an
     import (e.g. one company under two GLEIF LEIs). Best-effort — a failure here
@@ -202,8 +198,6 @@ BODS_UK_PSC_CREDIBILITY  = _PSC["credibility"]     # statutory UK legal register
 # the number-keyed companies the PSC import creates. Enrichment only, no edges, and
 # no toggle of its own, so it is not in the catalogue.
 CH_REGISTER_CREDIBILITY  = 97   # statutory UK register, authoritative for the name
-
-
 
 
 def _upsert_entity(
@@ -376,8 +370,6 @@ def _upsert_entity(
         return _record_touched_entity(entity_id)
 
 
-
-
 def _upsert_person(
     full_name: str,
     nationality: str | None,
@@ -481,8 +473,6 @@ def _upsert_person(
         if death_date:
             end_seats_at_death(person_id)
         return _record_touched(person_id)
-
-
 
 
 # ── Recursive scrape ──────────────────────────────────────────────────────────
@@ -797,9 +787,6 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
 
 
 # ── SEC EDGAR helpers ─────────────────────────────────────────────────────────
-
-
-
 
 
 # ── SEC EDGAR public entry point ──────────────────────────────────────────────
@@ -2915,98 +2902,6 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None,
     reg_day = mark_registration_day()
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts, "edge_dedup": dedup,
             "registration_day": reg_day}
-
-
-def run_gleif_rr_status(local_file: str, dry_run: bool = False) -> dict:
-    """
-    One-off heal: mark the RR edges whose relationship record is LAPSED as
-    `stale`, from the current RR-CDF golden copy (`gleif_rr.heal_registration_status`).
-    For a database loaded before the import read the record's registration status;
-    logged as a `gleif-rr-status` ScrapeRun. Checks the GLEIF flags like the import.
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise PermissionError(
-            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
-        )
-    from app.scraper.gleif_rr import heal_registration_status
-    from app.scraper.run_log import record_run
-
-    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
-    log.info("GLEIF RR status heal: reading %s (dry_run=%s)", local_file, dry_run)
-    with record_run("gleif-rr-status", os.path.basename(local_file),
-                    reason="dry_run" if dry_run else None) as run:
-        counts = heal_registration_status(local_file, source_id, dry_run=dry_run)
-        run["total"] = counts["marked"]
-        run["note"] = (f"{counts['unmaintained']:,} pairs on lapsed records, "
-                       f"{counts['marked']:,} edges marked, {counts['not_here']:,} not in this database"
-                       + (" (dry run)" if dry_run else ""))
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
-
-
-def run_gleif_rr_stakes(local_file: str, dry_run: bool = False) -> dict:
-    """
-    One-off heal: fill `stake_percent` on the RR edges from the share the
-    relationship record states (`gleif_rr.heal_stakes`), fill-only. For a database
-    loaded before the import read the record's quantifiers; logged as a
-    `gleif-rr-stakes` ScrapeRun. Checks the GLEIF flags like the import.
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise PermissionError(
-            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
-        )
-    from app.scraper.gleif_rr import heal_stakes
-    from app.scraper.run_log import record_run
-
-    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
-    log.info("GLEIF RR stake heal: reading %s (dry_run=%s)", local_file, dry_run)
-    with record_run("gleif-rr-stakes", os.path.basename(local_file),
-                    reason="dry_run" if dry_run else None) as run:
-        counts = heal_stakes(local_file, source_id, dry_run=dry_run)
-        run["total"] = counts["filled"]
-        run["note"] = (f"{counts['with_stake']:,} pairs with a stated share, "
-                       f"{counts['filled']:,} edges filled, {counts['already']:,} already held one "
-                       f"or not here" + (" (dry run)" if dry_run else ""))
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
-
-
-def run_gleif_rr_validation(local_file: str, dry_run: bool = False) -> dict:
-    """
-    One-off heal: fill how far the LOU checked each relationship record
-    (`gleif_rr.heal_validation`) onto the RR edges, fill-only. For a database
-    loaded before the import read it; logged as a `gleif-rr-validation` ScrapeRun.
-    """
-    if not settings.SCRAPER_ENABLED:
-        raise PermissionError(
-            "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
-        )
-    from app.scraper.gleif_rr import heal_validation
-    from app.scraper.run_log import record_run
-
-    source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
-    log.info("GLEIF RR validation heal: reading %s (dry_run=%s)", local_file, dry_run)
-    with record_run("gleif-rr-validation", os.path.basename(local_file),
-                    reason="dry_run" if dry_run else None) as run:
-        counts = heal_validation(local_file, source_id, dry_run=dry_run)
-        run["total"] = counts["filled"]
-        run["note"] = (f"{counts['with_validation']:,} pairs with a stated level, "
-                       f"{counts['filled']:,} edges filled, {counts['already']:,} already held one "
-                       f"or not here" + (" (dry run)" if dry_run else ""))
-    return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 
 
 def run_gleif_update(interval: str = "auto", lei_file: str | None = None,

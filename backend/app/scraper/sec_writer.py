@@ -222,36 +222,6 @@ def _prune_group_membership(group_id: str, keep_ids: set[str]) -> int:
     return removed
 
 
-def heal_group_memberships(apply: bool = False) -> dict:
-    """The rule for a database written before it: every membership line whose
-    party matches no entry of its group's roster (by CIK when both carry one,
-    else by the folded name; the node's aliases count) is removed. Dry run
-    unless `apply`; names what would go. Dev on 2026-10-26: the 4 former
-    parties of Symbotic's group, nothing else."""
-    from app.db.arcadedb import run_command, run_query, run_sql
-    out: dict = {"applied": bool(apply), "groups": 0, "removed": 0, "lines": []}
-    for g in run_sql("SELECT id, name, member_keys FROM VotingGroup"):
-        roster = g.get("member_keys") or []
-        stale = []
-        for m in run_query(
-                "MATCH (m)-[:MEMBER_OF]->(g:VotingGroup {id: $g}) "
-                "RETURN m.id AS id, labels(m)[0] AS label, coalesce(m.name, m.full_name) AS name, "
-                "m.sec_cik AS cik, m.aliases AS aliases", {"g": g["id"]}):
-            keys = [_member_key(n, m.get("cik")) for n in [m.get("name")] + list(m.get("aliases") or []) if n]
-            if roster and not any(_same_member(k, r) for k in keys for r in roster):
-                stale.append(m)
-        if not stale:
-            continue
-        out["groups"] += 1
-        out["removed"] += len(stale)
-        out["lines"].append(f"{g.get('name')} ({g['id']}): " + ", ".join(str(m.get("name")) for m in stale))
-        if apply:
-            for m in stale:
-                run_command(f"MATCH (m:{label_or_entity(m.get('label'))} {{id: $mid}})-[r:MEMBER_OF]->"
-                          f"(g:VotingGroup {{id: $g}}) DELETE r", {"mid": m["id"], "g": g["id"]})
-    return out
-
-
 def _retire_superseded_bloc_edge(filer_id: str, subject_id: str, source_id: str,
                                  filer_label: str) -> None:
     """Delete the filer's own bloc edge, now that the group carries it.

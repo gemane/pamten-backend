@@ -638,20 +638,6 @@ def quality(_: dict = Depends(require_admin)):
     return quality_report()
 
 
-@router.post("/migrate-ownership-types")
-def migrate_ownership_types(_: dict = Depends(require_admin)):
-    """One-time migration deriving canonical ownership_type values. Admin only."""
-    return maintenance.migrate_ownership_types()
-
-
-@router.post("/backfill-entity-sources")
-def backfill_entity_sources(_: dict = Depends(require_admin)):
-    """One-time backfill stamping source_id on Wikidata/SEC entities that predate
-    the fix — restores the source panel for pure owners (e.g. a government or a
-    large fund with no inbound owners). Idempotent. Admin only."""
-    return maintenance.backfill_entity_sources()
-
-
 @router.post("/flag-nominees")
 def flag_nominees(_: dict = Depends(require_admin)):
     """Flag nominee/custodian entities (holders of record — '… Nominees Limited',

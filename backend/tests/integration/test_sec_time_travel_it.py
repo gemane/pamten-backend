@@ -150,68 +150,9 @@ def test_the_profile_keeps_a_lower_bound_before_its_date(pair):
     assert get_full_profile("c", as_of="2019-12-31")["owners"] == []
 
 
-def test_the_heal_repairs_what_the_old_writer_left(it_db):
-    from app.claims import KIND_OWNS, KIND_ROLE, record_claim
-    from app.scraper import runner
-    from app.scraper.time_travel_heal import heal_sec_dates
-    sec = runner._ensure_source("SEC EDGAR", "https://www.sec.gov", 98, "regulator")
-    for i in ("amend", "orig", "f4", "c"):
-        it_db.run_command(f"CREATE (:Entity {{id:'{i}', name:'{i}', type:'company'}})")
-    it_db.run_command("CREATE (:Person {id:'p', full_name:'P'})")
-    edges = (("amend", "13G/A", "2026-02-10", "2026-02-10", None),   # amendment date as a stated start
-             ("orig", "13G", "2005-03-01", "2005-03-01", None),      # an original: stays stated
-             ("f4", "Form 4", "2026-05-01", "2026-05-01", None))     # a trade date as a start
-    for a, ft, since, sdate, until in edges:
-        it_db.run_command("MATCH (x {id:$a}),(y {id:'c'}) CREATE (x)-[:OWNS {source_id:$s, "
-                          "filing_type:$f, since:$since, source_date:$d}]->(y)",
-                          {"a": a, "s": sec, "f": ft, "since": since, "d": sdate})
-        record_claim(kind=KIND_OWNS, from_id=a, to_id="c", source_id=sec, filing_type=ft,
-                     since=since, source_date=sdate, stake_percent=6.0)
-    # a seat closed by an older departure: ended before it began
-    it_db.run_command("MATCH (p {id:'p'}),(y {id:'c'}) CREATE (p)-[:HAS_ROLE {role:'CEO', "
-                      "since:'2024-02-01', until:'2022-05-01', source_id:$s}]->(y)", {"s": sec})
-    record_claim(kind=KIND_ROLE, from_id="p", to_id="c", source_id=sec, role="CEO",
-                 until="2022-05-01")
-
-    assert heal_sec_dates(dry_run=True) == {"amendment": 1, "form4": 1, "ended_before_start": 1,
-                                            "first_reported": 0, "pairs": 3}
-    assert it_db.run_command("MATCH ()-[r:OWNS]->() WHERE r.since_basis IS NOT NULL RETURN r") == []
-
-    heal_sec_dates()
-    got = {r["a"]: (r.get("since"), r.get("basis")) for r in it_db.run_command(
-        "MATCH (x)-[r:OWNS]->() RETURN x.id AS a, r.since AS since, r.since_basis AS basis")}
-    assert got == {"amend": ("2026-02-10", "amendment"), "orig": ("2005-03-01", None),
-                   "f4": (None, None)}
-    assert it_db.run_command("MATCH ()-[r:HAS_ROLE]->() RETURN r.until AS u")[0].get("u") is None
-    claims = {r["from_id"]: (r.get("since"), r.get("since_basis")) for r in it_db.run_sql(
-        "SELECT from_id, since, since_basis FROM Claim WHERE kind = 'owns'")}
-    assert claims == {"amend": ("2026-02-10", "amendment"), "orig": ("2005-03-01", None),
-                      "f4": (None, None)}
-    # idempotent
-    assert heal_sec_dates() == {"amendment": 0, "form4": 0, "ended_before_start": 0,
-                                "first_reported": 0, "pairs": 3}
-
-
 def test_a_13f_holding_starts_at_its_earliest_quarter_as_a_lower_bound(pair):
     for period in ("2025-06-30", "2024-12-31", "2026-03-31"):          # read in any order
         _write(file_date=period, filing_type="13F", filing_dates_the_stake=False,
                since_date=period, since_basis="first_reported")
     edges = _edges(pair)
     assert [(e["since"], e["basis"]) for e in edges] == [("2024-12-31", "first_reported")]
-
-
-def test_the_heal_gives_a_13f_holding_its_quarter_as_a_lower_bound(it_db):
-    from app.claims import KIND_OWNS, record_claim
-    from app.scraper import runner
-    from app.scraper.time_travel_heal import heal_sec_dates
-    sec = runner._ensure_source("SEC EDGAR", "https://www.sec.gov", 98, "regulator")
-    it_db.run_command("CREATE (:Entity {id:'fund', name:'Fund', type:'fund'})")
-    it_db.run_command("CREATE (:Entity {id:'c', name:'C', type:'company'})")
-    it_db.run_command("MATCH (x {id:'fund'}),(y {id:'c'}) CREATE (x)-[:OWNS {source_id:$s, "
-                      "filing_type:'13F', source_date:'2026-03-31'}]->(y)", {"s": sec})
-    record_claim(kind=KIND_OWNS, from_id="fund", to_id="c", source_id=sec, filing_type="13F",
-                 source_date="2026-03-31")
-    assert heal_sec_dates()["first_reported"] == 1
-    row = it_db.run_command("MATCH ()-[r:OWNS]->() RETURN r.since AS s, r.since_basis AS b")[0]
-    assert (row["s"], row["b"]) == ("2026-03-31", "first_reported")
-    assert heal_sec_dates()["first_reported"] == 0

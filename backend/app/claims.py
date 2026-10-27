@@ -477,36 +477,3 @@ def migrate_claims(dead_id: str, keep_id: str) -> int:
     from app.industry import migrate as migrate_industry
     migrate_industry(dead_id, keep_id)
     return moved
-
-
-def heal_claim_keys(dry_run: bool = False, page: int = 2000) -> dict:
-    """Re-key every claim whose key does not match its own content.
-
-    Two paths left such claims behind (both fixed): a merge re-keyed ROLE
-    claims without the role, and an id rename re-pointed claims without
-    re-keying them at all. Either way the next scrape wrote a correctly keyed
-    claim beside the stale one — the same assertion, stored twice.
-
-    Walks the type through its UNIQUE `claim_key` index, two-sided range per
-    page (`app.db.paging`: the only walk that survives a full-size database).
-    Keys are sha1 hex, so the space ends below "g". A re-keyed claim may be
-    met again further on; it is then "unchanged".
-    """
-    from app.db.arcadedb import run_sql
-
-    out = {"claims": 0, "stale": 0, "moved": 0, "folded": 0}
-    after = ""
-    while True:
-        rows = run_sql(f"SELECT FROM Claim WHERE claim_key > '{after}' AND claim_key < 'g' "
-                       f"ORDER BY claim_key LIMIT {int(page)}")
-        if not rows:
-            return out
-        for r in rows:
-            after = max(after, r["claim_key"])
-            out["claims"] += 1
-            if key_for(r) == r["claim_key"]:
-                continue
-            out["stale"] += 1
-            if dry_run:
-                continue
-            out[rekey_claim(r)] += 1

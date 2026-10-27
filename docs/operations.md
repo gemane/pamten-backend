@@ -10,46 +10,6 @@ one filled-in env file (`deploy/.env.example`); day two is `owlgraph <command>`
 (`deploy/ops.sh`). Everything — the steps, the prerequisites, what was tested — is
 in [`deploy/README.md`](../deploy/README.md).
 
-## GLEIF record status (once, databases loaded before 2026-10-13)
-
-The RR import reads each relationship record's own registration status since
-2026-10-13: a **LAPSED** record (not renewed, no longer maintained by its LOU —
-102k of 490k records) draws its edge `stale`, dimmed and dated by the record's last
-update. A database loaded by the older importer carries no such mark, and the daily
-delta only reaches records that change, so stamp it once from the current golden copy:
-
-```bash
-cd ~/github/pamten-backend/backend && source venv/bin/activate
-python3 manage.py gleif-rr-status --file ~/data/rr-cdf/gleif-rr.json.zip --dry-run   # counts only
-python3 manage.py gleif-rr-status --file ~/data/rr-cdf/gleif-rr.json.zip
-```
-
-One Cypher write per lapsed pair, under the import lock, logged as a
-`gleif-rr-status` run (`GET /scraper/runs`). Marks only — a renewal arrives through
-the delta and clears the mark there. Idempotent; a full re-import (`gleif-rr`) makes
-it unnecessary. Entities loaded before that date lack `active` /
-`gleif_registration_status` until the next full LEI-CDF load; nothing reads them yet.
-
-The same goes for the share a record states (`RelationshipQuantifiers`, read since
-2026-10-13 as `stake_percent`): fill it once onto an older database, fill-only — an
-edge that already holds a figure, from GLEIF or another source, keeps it. The pair's
-GLEIF claim is filled the same way (since 2026-10-25; the first version left 154 dev
-claims stating no share beside an edge stating 100 %):
-
-```bash
-python3 manage.py gleif-rr-stakes --file ~/data/rr-cdf/gleif-rr.json.zip --dry-run
-python3 manage.py gleif-rr-stakes --file ~/data/rr-cdf/gleif-rr.json.zip
-```
-
-And for how far the LOU checked each record (`ValidationSources` /
-`ValidationDocuments`, read since 2026-10-13 as `validation_sources` /
-`validation_documents`), likewise fill-only:
-
-```bash
-python3 manage.py gleif-rr-validation --file ~/data/rr-cdf/gleif-rr.json.zip --dry-run
-python3 manage.py gleif-rr-validation --file ~/data/rr-cdf/gleif-rr.json.zip
-```
-
 ## GLEIF history (once)
 
 After the first full import, run `owlgraph gleif-history` (dev box: `manage.py

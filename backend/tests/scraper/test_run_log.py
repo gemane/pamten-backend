@@ -61,24 +61,6 @@ class TestNoPlaceholders:
         assert finish.call_args.args[1:] == ("ok", 2, "", "lei:1")
 
 
-class TestHeal:
-    def test_counts_each_column_and_removes_only_on_apply(self):
-        calls = []
-
-        def fake(sql, params=None):
-            calls.append(sql)
-            return [{"n": 7 if "entity_id" in sql else 0}]
-        with patch("app.db.arcadedb.run_sql", fake):
-            dry = m.heal_placeholders(apply=False)
-            assert dry == {"applied": False, "entity_id": 7, "finished_at": 0, "error": 0, "reason": 0}
-            assert not any(c.startswith("UPDATE") for c in calls)
-            calls.clear()
-            res = m.heal_placeholders(apply=True)
-        assert res["entity_id"] == 7
-        updates = [c for c in calls if c.startswith("UPDATE")]
-        assert updates == ["UPDATE ScrapeRun REMOVE entity_id WHERE entity_id = ''"]   # only the column that had any
-
-
 #: Runs that are not about one company: a bulk file, a delta, a snapshot.
 BULK_SOURCES = {"ch-psc-update", "gleif-rr-status", "gleif-rr-stakes", "gleif-rr-validation",
                 "gleif-update"}

@@ -161,9 +161,7 @@ def _nationality(raw: str | None) -> str:
     `British` side by side, meaning the same thing and grouping as two.
 
     An unrecognised value is kept **verbatim**: it is free text and the tail is
-    long, and what the register said is worth more than a tidy blank. See
-    ``maintenance.normalize_person_nationalities`` for the pass that reports the
-    residue so the table can be extended.
+    long, and what the register said is worth more than a tidy blank.
     """
     from app.scraper.maintenance import nationality_to_iso2
     return nationality_to_iso2(raw) or (raw or "").strip()
@@ -395,9 +393,8 @@ def mark_first_year_lower_bounds(company_ids: list[str] | None = None, apply: bo
     The PSC import cannot do this itself: the company's incorporation date
     comes from BasicCompanyData (`ch-company-data`), which runs after it. So
     this runs at the end of that import — scoped to the companies it touched
-    (``company_ids``) or, on a full run, over every ``gb-coh:`` company — and
-    as ``manage.py psc-first-year-bounds`` for a database loaded before it
-    existed (2026-10-18). Idempotent: only edges without a basis are touched,
+    (``company_ids``) or, on a full run, over every ``gb-coh:`` company.
+    Idempotent: only edges without a basis are touched,
     and the refresh keeps the mark on an edge whose record restates the same
     day. ``apply=False`` counts and writes nothing.
 

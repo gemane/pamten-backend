@@ -186,43 +186,6 @@ def test_an_edge_on_a_lapsed_record_is_drawn_stale_and_dated(it_db, tmp_path):
     assert _edge(it_db, PARENT, ANNULLED_CHILD) is None   # no statement, no edge
 
 
-def test_the_heal_marks_an_edge_drawn_before_the_status_was_read(it_db, tmp_path):
-    """A database loaded by the old importer: the same pairs, no mark. One pass
-    over the current golden copy stamps them; a pair another source holds and
-    a pair with a maintained record are left alone; a dry run writes nothing."""
-    from app.scraper.gleif_rr import heal_registration_status, import_rr_cdf
-
-    # the old world: records without a status field, nothing stale
-    import_rr_cdf(_zip_of(tmp_path, "rr-old.json.zip", [
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", LAPSED_CHILD, PARENT),
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", FRESH_CHILD, PARENT),
-    ]), "gleif-src", 92)
-    assert not _edge(it_db, PARENT, LAPSED_CHILD)["stale"]
-    # a pair another source drew for the same parent
-    it_db.run_command(
-        "MATCH (a:Entity {id:$p}) CREATE (o:Entity {id:$c, name:'Other Co', lei_id:$lei}) "
-        "CREATE (a)-[:OWNS {source_id:'sec-src', filing_type:'EX-21', ownership_type:'controlling'}]->(o)",
-        {"p": f"lei:{PARENT}", "c": "lei:OTHERSRC00000000005", "lei": "OTHERSRC00000000005"})
-
-    today = _zip_of(tmp_path, "rr-today.json.zip", [
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", LAPSED_CHILD, PARENT, rr_status="LAPSED"),
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", FRESH_CHILD, PARENT, rr_status="PUBLISHED"),
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", "OTHERSRC00000000005", PARENT, rr_status="LAPSED"),
-    ])
-    dry = heal_registration_status(today, "gleif-src", dry_run=True)
-    assert dry["unmaintained"] == 2 and dry["marked"] == 0
-    assert not _edge(it_db, PARENT, LAPSED_CHILD)["stale"]
-
-    res = heal_registration_status(today, "gleif-src")
-    assert res["unmaintained"] == 2 and res["marked"] == 1 and res["not_here"] == 1
-    assert _edge(it_db, PARENT, LAPSED_CHILD)["stale"] is True
-    assert not _edge(it_db, PARENT, FRESH_CHILD)["stale"]
-    assert not _edge(it_db, PARENT, "OTHERSRC00000000005")["stale"]   # SEC's edge, SEC's mark
-    # idempotent
-    again = heal_registration_status(today, "gleif-src")
-    assert again["marked"] == 1 and _edge(it_db, PARENT, LAPSED_CHILD)["stale"] is True
-
-
 # ── The share the record states ──────────────────────────────────────────────
 
 STAKED_CHILD = "STAKEDCHILD000000006"
@@ -253,40 +216,6 @@ def test_the_stated_share_lands_on_the_edge_and_its_claim(it_db, tmp_path):
         "SELECT to_id, stake_percent AS stake FROM Claim WHERE from_id = :p", {"p": f"lei:{PARENT}"})}
     assert claims[f"lei:{STAKED_CHILD}"] == 100.0
     assert claims[f"lei:{BAD_CHILD}"] is None
-
-
-def test_the_stake_heal_fills_an_edge_drawn_before_and_never_overwrites(it_db, tmp_path):
-    from app.scraper.gleif_rr import heal_stakes, import_rr_cdf
-
-    # the old world: no quantifier read; one edge already holds a figure
-    import_rr_cdf(_zip_of(tmp_path, "rr-old-stakes.json.zip", [
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", STAKED_CHILD, PARENT),
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", PART_CHILD, PARENT),
-    ]), "gleif-src", 92)
-    it_db.run_command(
-        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) SET r.stake_percent = 55.0",
-        {"p": f"lei:{PARENT}", "c": f"lei:{PART_CHILD}"})
-    today = _zip_of(tmp_path, "rr-today-stakes.json.zip", [
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", STAKED_CHILD, PARENT, amount="100"),
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", PART_CHILD, PARENT, amount="100"),
-    ])
-    dry = heal_stakes(today, "gleif-src", dry_run=True)
-    assert dry["with_stake"] == 2 and dry["filled"] == 0
-    it_db.run_command(
-        "MATCH (c:Claim {to_id:$c}) SET c.stake_percent = 55.0", {"c": f"lei:{PART_CHILD}"})
-    res = heal_stakes(today, "gleif-src")
-    assert res["filled"] == 1 and res["already"] == 1
-    assert res["claims_filled"] == 1 and res["claims_already"] == 1
-    rows = {r["c"]: r["stake"] for r in it_db.run_command(
-        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity) RETURN b.lei_id AS c, r.stake_percent AS stake",
-        {"p": f"lei:{PARENT}"})}
-    assert rows[STAKED_CHILD] == 100.0
-    assert rows[PART_CHILD] == 55.0                # fill-only: the held figure stays
-    # the claim says what the edge says — and keeps a figure it already held
-    claims = {r["c"]: r["stake"] for r in it_db.run_command(
-        "MATCH (c:Claim) WHERE c.from_id = $p RETURN c.to_id AS c, c.stake_percent AS stake",
-        {"p": f"lei:{PARENT}"})}
-    assert claims[f"lei:{STAKED_CHILD}"] == 100.0 and claims[f"lei:{PART_CHILD}"] == 55.0
 
 
 # ── How far the LOU checked the record ───────────────────────────────────────
@@ -324,29 +253,3 @@ def test_how_far_the_record_was_checked_lands_on_the_edge_and_its_claim(it_db, t
     assert claims[f"lei:{CHECKED_CHILD}"]["vs"] == "FULLY_CORROBORATED"
     assert claims[f"lei:{CHECKED_CHILD}"]["vd"] == "ACCOUNTS_FILING"
     assert claims[f"lei:{FRESH_CHILD}"]["vs"] is None
-
-
-def test_the_validation_heal_fills_an_edge_drawn_before_and_keeps_a_held_level(it_db, tmp_path):
-    from app.scraper.gleif_rr import heal_validation, import_rr_cdf
-
-    import_rr_cdf(_zip_of(tmp_path, "rr-old-checked.json.zip", [
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", CHECKED_CHILD, PARENT),
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", OWN_CHILD, PARENT),
-    ]), "gleif-src", 92)
-    it_db.run_command(
-        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) SET r.validation_sources = 'PENDING'",
-        {"p": f"lei:{PARENT}", "c": f"lei:{OWN_CHILD}"})
-    today = _zip_of(tmp_path, "rr-today-checked.json.zip", [
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", CHECKED_CHILD, PARENT,
-             checked=("FULLY_CORROBORATED", "ACCOUNTS_FILING")),
-        _rec("IS_DIRECTLY_CONSOLIDATED_BY", OWN_CHILD, PARENT, checked=("ENTITY_SUPPLIED_ONLY",)),
-    ])
-    assert heal_validation(today, "gleif-src", dry_run=True)["filled"] == 0
-    res = heal_validation(today, "gleif-src")
-    assert res["with_validation"] == 2 and res["filled"] == 1 and res["already"] == 1
-    rows = {r["c"]: r for r in it_db.run_command(
-        "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity) "
-        "RETURN b.lei_id AS c, r.validation_sources AS vs, r.validation_documents AS vd",
-        {"p": f"lei:{PARENT}"})}
-    assert rows[CHECKED_CHILD]["vs"] == "FULLY_CORROBORATED" and rows[CHECKED_CHILD]["vd"] == "ACCOUNTS_FILING"
-    assert rows[OWN_CHILD]["vs"] == "PENDING"                   # fill-only

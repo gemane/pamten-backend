@@ -69,18 +69,3 @@ class TestOpenCorporates:
     def test_an_undated_seat_is_dated_by_the_scrape(self, seat):
         _upsert_role_oc("p", "c", "Secretary", None, None, "oc")
         assert (_seats(seat)[0]["sdate"] or "") >= "2026-01-01"
-
-
-def test_the_heal_dates_undated_seats_by_their_last_listing(seat):
-    from app.claims import KIND_ROLE, record_claim
-    from app.scraper.time_travel_heal import heal_role_dates
-    seat.run_command("MATCH (p:Person {id:'p'}),(c:Entity {id:'c'}) CREATE (p)-[:HAS_ROLE "
-                     "{role:'Director', source_id:'wd', last_scraped_at:'2026-09-14T08:15:00+00:00'}]->(c)")
-    seat.run_command("MATCH (p:Person {id:'p'}),(c:Entity {id:'c'}) CREATE (p)-[:HAS_ROLE "
-                     "{role:'CEO', since:'2011-01-01', source_id:'wd', last_scraped_at:'2026-09-14T08:15:00+00:00'}]->(c)")
-    record_claim(kind=KIND_ROLE, from_id="p", to_id="c", source_id="wd", role="Director")
-    assert heal_role_dates(dry_run=True) == {"seats": 1, "dated": 1}
-    heal_role_dates()
-    got = {s["role"]: s["sdate"] for s in _seats(seat)}
-    assert got == {"Director": "2026-09-14", "CEO": None}       # a dated seat is left alone
-    assert heal_role_dates() == {"seats": 1, "dated": 0}

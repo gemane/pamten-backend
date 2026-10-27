@@ -172,8 +172,7 @@ by hand (recreate the relative, move their seats and claims, keep-separate).
 5. **Log + delete** — write a `MergeLog` row and a `MergedId` forwarding row,
    re-point every stored reference to the dup's id (flags, suppressions, pins,
    scrape runs — `merged_ids.REFERENCE_COLUMNS`, done by the forwarding-row
-   write so no merge path can skip it; the merges before 2026-10-24 did, and
-   `manage.py heal-merged-references` moves what they left), then
+   write so no merge path can skip it), then
    `DETACH DELETE` the dup.
 
 **Which node is kept** (`suggested_keep_id`): prefer a Wikidata node, then the
@@ -260,13 +259,6 @@ over a touching period, keeps the earlier start, takes an end the carried
 spell states, and the more credible asserter's label and citation. Matched
 by label, the post-scrape auto-dedup's person merge put "Board Member"
 beside "Director" on every board it merged (12 pairs on dev, 2026-10-25).
-
-Pre-existing duplicates are healed by
-`python manage.py dedupe-role-synonyms [--dry-run]`: per (person, company,
-canonical role) it keeps the most credible open edge, backfills
-since/source_url/source_date from the losers, and deletes the rest. The start
-kept is `combined_start` of the two. Each loser is deleted by its own date,
-one edge at a time, so a same-label pair ("CEO" + "CEO") keeps one seat.
 
 ## Same identifier, two nodes — `deduplicate_entities`
 
@@ -497,16 +489,12 @@ covered the day it is added.
 everything it had, or — when the survivor already holds a claim for the same
 assertion — folded into it (the one seen last is kept, with the earlier
 `first_seen_at`). Without it every merge orphaned the dead node's claims and the
-merged company showed as uncorroborated. An **id rename**
-(`merged_ids.rename_node_id`) goes through the same step.
+merged company showed as uncorroborated.
 
 One key rule, one place (`claims.key_for`): a role claim's key includes its
 canonical role. The merge once re-keyed without it — a person's roles at a
-company collapsed into one claim and the next scrape doubled them — and the
-rename did not re-key at all. `python manage.py heal-claim-keys [--dry-run]`
-repairs what those left behind: every claim whose key does not match its own
-content is re-keyed, and folded where the correctly keyed claim already exists
-(dev: 343 stale keys of 8,678 claims, 119 assertions stored twice).
+company collapsed into one claim and the next scrape doubled them (dev: 343 stale
+keys of 8,678 claims, 119 assertions stored twice).
 
 ## Spaced abbreviations are abbreviations
 
@@ -516,13 +504,8 @@ S.A.B.`, and until 2026-10-25 those keyed as `grupo televisa s a b` and `grupo t
 sab` — two companies, whose Form 4 officers landed on one and whose LEI sat on the other.
 Joined first, `CERVECERIA CHILE S A` also loses its `sa` exactly as `Cerveceria Chile S.A.`
 does, and `J P Morgan` keys like `J.P. Morgan`. A lone letter (`Toys R Us`) is not an
-abbreviation and stays. The key is stored on the node, so a database written before the
-rule carries the old keys: `manage.py heal-name-keys` recomputes them (a 13D voting group
-was once left alone here — its key is the writer's own, "voting group <issuer>", not its
-display name's, and the first dev run rewrote three of those; since 2026-10-26 a group is its
-own vertex type and the Entity scan never meets one) and names the keys
-two entities now share for the first time (dev: 31 keys changed, one new pair, Televisa),
-which are merged by hand — `manage.py merge-entities --keep ID --dead ID --apply`, since the
+abbreviation and stays. A changed rule can make two entities share a key for the first time
+(dev, 2026-10-25: 31 keys changed, one new pair, Televisa); such a pair is merged by hand — `manage.py merge-entities --keep ID --dead ID --apply`, since the
 app has no entity-merge button; a same-name pair is a candidate, never an automatic merge (see
 the father/son and Domino's notes). Keep the node that holds more (the SEC Televisa with its
 CIK and 21 seats; the GLEIF Cervecería with its LEI): the survivor's values win and its gaps
@@ -582,7 +565,7 @@ discriminator: same name **+ same registered address** ⇒ merge; same name
 **+ different address** ⇒ leave alone. Until 2026-10-25 the field was
 `registered_address`, which GLEIF filled with the key and the Companies House
 importers with the readable string, so a UK company never corroborated its
-GLEIF twin; `heal-model-gaps` re-keys an older database.
+GLEIF twin.
 
 The **full-DB** scan **detects, it does not auto-merge** (a name clash isn't a
 duplicate). Surfaced in the BODS import result as `duplicate_names`, via

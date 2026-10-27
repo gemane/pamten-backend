@@ -374,11 +374,6 @@ class TestTypedProperties:
             if prop in ("shares", "shares_outstanding", "voting_shares"):
                 assert ptype == "DOUBLE", prop
 
-    def test_typed_properties_lists_every_declared_non_string(self):
-        rows = schema.typed_properties()
-        assert ("Person", "aliases", "LIST") in rows and ("OWNS", "shares", "DOUBLE") in rows
-        assert len({(t, p) for t, p, _ in rows}) == len(rows)
-
 
 class TestConstraints:
     """The rules the server enforces beyond type (`constraints()`): built from

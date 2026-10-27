@@ -8,8 +8,7 @@ provenance fields (name, url, credibility, type) AND its run-time switches
 (`enabled`, `data_mode`). Until 2026-10-24 those were two node types: a
 `Source` with a random uuid per environment (so a claim's `source_id` meant
 nothing outside the database that minted it) and a `ScraperSource` keyed by
-the catalogue slug for the toggle; `manage.py heal-source-ids` folds a
-database written that way.
+the catalogue slug for the toggle.
 
 The catalogue KEY (`sec_edgar`, `bods_gleif`, …) stays the toggle name in the
 API and the config flags; the node's `id` is the entry's `id`.
