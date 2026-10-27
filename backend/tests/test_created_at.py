@@ -61,7 +61,7 @@ class TestScrapePathStampsIt:
 
     def test_wikidata_entity_and_person(self):
         from app.scraper import runner
-        q, kw = self._create_query("runner", lambda: runner._upsert_entity("Acme", "company", "US", 2000, None, None, "Q1"))
+        q, kw = self._create_query("runner", lambda: runner._upsert_entity("Acme", 2000, None, None, "Q1"))
         assert "created_at: $created_at" in q and kw["created_at"].endswith("+00:00")
         q, kw = self._create_query("runner", lambda: runner._upsert_person("Ada L", None, None, "Q2"))
         assert "created_at: $created_at" in q and kw["created_at"]

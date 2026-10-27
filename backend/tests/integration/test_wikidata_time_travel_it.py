@@ -58,7 +58,7 @@ def test_a_scrape_never_postpones_a_founding_date(it_db):
     from app.scraper.runner import _upsert_entity
     it_db.run_command("CREATE (:Entity {id:'wd:Q1', name:'Co', wikidata_id:'Q1', founded:1975})")
     for year, expect in ((1993, 1975), (None, 1975), (1960, 1960)):
-        _upsert_entity(name="Co", entity_type="company", country=None, founded=year, revenue=None,
+        _upsert_entity(name="Co", founded=year, revenue=None,
                        description=None, wikidata_id="Q1", source_id="wd")
         got = it_db.run_command("MATCH (e:Entity {wikidata_id:'Q1'}) RETURN e.founded AS y")
         assert [r["y"] for r in got] == [expect]

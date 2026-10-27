@@ -13,10 +13,10 @@ def test_the_writers_key_a_new_node_and_find_it_again(it_db):
     from app.node_ids import is_uuid
     from app.scraper.runner import _upsert_entity, _upsert_person
     from app.scraper.graph_writer import _upsert_entity_by_name, _upsert_person_by_name
-    apple = _upsert_entity("Apple Inc.", "company", "US", None, None, None, "Q312", source_id="wikidata",
+    apple = _upsert_entity("Apple Inc.", None, None, None, "Q312", source_id="wikidata",
                            sec_cik="0000320193")
     assert apple == "wd:Q312"                                        # the item outranks the CIK
-    assert _upsert_entity("Apple Inc.", "company", "US", None, None, None, "Q312", source_id="wikidata") == "wd:Q312"
+    assert _upsert_entity("Apple Inc.", None, None, None, "Q312", source_id="wikidata") == "wd:Q312"
     assert _upsert_entity_by_name("APPLE INC", cik="0000320193", source_id="sec-edgar") == "wd:Q312"   # the CIK finds it
     brc = _upsert_entity_by_name("BRC S.a R.L.", cik="1301486", source_id="sec-edgar")       # a bare CIK
     assert brc == "sec:0001301486"

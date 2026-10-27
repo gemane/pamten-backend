@@ -665,7 +665,10 @@ enriches entities, but never creates OWNS / SUCCEEDED_BY structure.
 **HAS_ROLE is deliberately exempt** — the mode distrusts a source's ownership
 claims, not its people, and suppressing roles orphaned every Wikidata person
 (absent from company panels) while starving the person dedup of its
-shared-company corroboration. The mode change affects new writes only —
+shared-company corroboration. Independent of the mode, Wikidata never writes
+an address or an entity type (country, `countries`, `hq_*`, `hq_locations`,
+`type` — 2026-10-27): the enrichment is the description, founding year,
+employees, revenue, website and logo, which no register states. The mode change affects new writes only —
 `POST …/sweep-edges` removes the structure the source already drew (nodes,
 claims and HAS_ROLE edges stay). Reverting is mode back to `full` plus a
 re-scrape / re-import. Built for the Wikidata quality decision, generic on

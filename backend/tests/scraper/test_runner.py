@@ -655,7 +655,7 @@ class TestUpsertEntity:
     def test_creates_new_entity_when_not_found(self):
         ctx, session = _make_session_mock()   # all lookups miss
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
+            _upsert_entity("Acme", 2000, None, None, "Q1")
         # 3 sequential indexed resolution lookups (wikidata_id/name/name_normalized)
         # all miss, then CREATE
         assert session.run.call_count == 4
@@ -663,7 +663,7 @@ class TestUpsertEntity:
     def test_updates_existing_entity_when_found(self):
         ctx, session = _make_session_mock(single_returns=[{"id": "existing-uuid"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            eid = _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
+            eid = _upsert_entity("Acme", 2000, None, None, "Q1")
         assert eid == "existing-uuid"
         # run called three times: MATCH, the winner-name read, then SET
         assert session.run.call_count == 3
@@ -671,7 +671,7 @@ class TestUpsertEntity:
     def test_returns_string_id(self):
         ctx, _ = _make_session_mock()   # all lookups miss → creates a new node
         with patch("app.scraper.runner.db.get_session", ctx):
-            eid = _upsert_entity("Acme", "company", None, None, None, None, "Q1")
+            eid = _upsert_entity("Acme", None, None, None, "Q1")
         assert isinstance(eid, str) and len(eid) > 0
 
     def test_sets_search_text_on_create(self):
@@ -679,7 +679,7 @@ class TestUpsertEntity:
         # scraped entity enters the FULL_TEXT /search index.
         ctx, session = _make_session_mock()   # miss → CREATE
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Acme Corp", "company", None, None, None, "A widget maker",
+            _upsert_entity("Acme Corp", None, None, "A widget maker",
                            "Q1", aliases=["Acme", "ACME Inc"])
         create = session.run.call_args_list[-1]
         assert "search_text: $search_text" in create.args[0]
@@ -688,7 +688,7 @@ class TestUpsertEntity:
     def test_sets_search_text_on_update(self):
         ctx, session = _make_session_mock(single_returns=[{"id": "e1"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Acme", "company", None, None, None, None, "Q1")
+            _upsert_entity("Acme", None, None, None, "Q1")
         upd = session.run.call_args_list[-1]
         assert "e.search_text     = $search_text" in upd.args[0]
         assert upd.kwargs["search_text"] == "Acme"
@@ -841,7 +841,7 @@ class TestUpsertPersonDetail:
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.runner.end_at_dissolution", side_effect=lambda eid, **k: ended.append(eid)):
-            eid = _upsert_entity("Gone Corp", "company", "US", None, None, None, "Q9",
+            eid = _upsert_entity("Gone Corp", None, None, None, "Q9",
                                  source_id="wikidata", dissolved_on="2023-03-15")
         create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
         assert create.kwargs["dissolved_on"] == "2023-03-15" and create.kwargs["active"] is False
@@ -853,7 +853,7 @@ class TestUpsertPersonDetail:
             {"id": "e-1"}, {"name": "Gone Corp", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.runner.end_at_dissolution", side_effect=lambda eid, **k: ended.append(eid)):
-            _upsert_entity("Gone Corp", "company", "US", None, None, None, "Q9",
+            _upsert_entity("Gone Corp", None, None, None, "Q9",
                            source_id="wikidata", dissolved_on="2023-03-15")
         update = next(c for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0])
         assert "e.dissolved_on    = COALESCE(e.dissolved_on, $dissolved_on)" in update.args[0]
@@ -866,11 +866,11 @@ class TestUpsertPersonDetail:
         for a node with neither."""
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
-            eid = _upsert_entity("Apple Inc.", "company", "US", None, None, None, "Q312", source_id="wikidata")
+            eid = _upsert_entity("Apple Inc.", None, None, None, "Q312", source_id="wikidata")
         assert eid == "wd:Q312"
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
-            assert _upsert_entity("Apple Inc.", "company", "US", None, None, None, "Q312",
+            assert _upsert_entity("Apple Inc.", None, None, None, "Q312",
                                   source_id="wikidata", lei="HWUPKR0MPOU8FGXBT394") == "lei:HWUPKR0MPOU8FGXBT394"
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
@@ -884,7 +884,7 @@ class TestUpsertPersonDetail:
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.runner.end_at_dissolution", side_effect=lambda eid, **k: ended.append(eid)):
-            _upsert_entity("Live Corp", "company", "US", None, None, None, "Q8", source_id="wikidata")
+            _upsert_entity("Live Corp", None, None, None, "Q8", source_id="wikidata")
         create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
         assert create.kwargs["dissolved_on"] is None and create.kwargs["active"] is None
         assert ended == []
@@ -899,14 +899,23 @@ class TestUpsertPersonDetail:
             _upsert_person("Nobody Known", nationality=None, description="", wikidata_id="Q9")
         assert self._backfill_call(session).kwargs["desc"] is None
 
-    def test_the_countries_list_always_carries_the_country(self):
+    @pytest.mark.parametrize("existing", [None, "eid-1"], ids=["create", "update"])
+    def test_wikidata_writes_no_address_and_no_type(self, existing):
+        """Neither path names a country, a list of countries, a headquarters
+        part or a type of Wikidata's (2026-10-27); a created node is a
+        "company" until a register says otherwise."""
         from app.scraper.runner import _upsert_entity
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.runner.resolve_entity_id", return_value=None):
-            _upsert_entity("Heineken N.V.", "company", "NL", None, None, "", "Q2", countries=[])
-        create = next(c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0])
-        assert create.kwargs["countries"] == ["NL"]
+             patch("app.scraper.runner.resolve_entity_id", return_value=existing):
+            _upsert_entity("Unilever", None, None, "", "Q157062")
+        write = next(c for c in session.run.call_args_list
+                     if "CREATE (e:Entity" in c.args[0] or "e.wikidata_id     = $wid" in c.args[0])
+        for word in ("country", "hq_", "$type", "e.type"):
+            assert word not in write.args[0], word
+        assert not {k for k in write.kwargs if k in ("type", "country", "countries") or k.startswith("hq_")}
+        if existing is None:
+            assert "type: 'company'" in write.args[0]
 
     def test_a_single_nationality_folds_into_the_list(self):
         ctx, session = _make_session_mock()
@@ -1133,8 +1142,7 @@ class TestEntitySourceStamping:
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.runner.resolve_entity_id", return_value=None):
-            _upsert_entity(name="Gov", entity_type="government", country=None,
-                           founded=None, revenue=None, description=None,
+            _upsert_entity(name="Gov", founded=None, revenue=None, description=None,
                            wikidata_id="Q1", source_id="WD-SRC")
         create = self._create_call(session)
         assert create is not None
@@ -1145,8 +1153,7 @@ class TestEntitySourceStamping:
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.runner.resolve_entity_id", return_value="eid-1"):
-            _upsert_entity(name="Gov", entity_type="government", country=None,
-                           founded=None, revenue=None, description=None,
+            _upsert_entity(name="Gov", founded=None, revenue=None, description=None,
                            wikidata_id="Q1", source_id="WD-SRC")
         updates = self._update_calls(session)
         assert updates and updates[0].kwargs["source_id"] == "WD-SRC"
@@ -1299,14 +1306,14 @@ class TestIdentifierBridge:
         ctx, session = _make_session_mock(
             single_returns=[None, None, {"id": "lei:INR2EJN1ERAN0W5ZP974"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            eid = _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+            eid = _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                                  lei="INR2EJN1ERAN0W5ZP974")
         assert eid == "lei:INR2EJN1ERAN0W5ZP974"
 
     def test_lei_lookup_is_attempted_when_a_lei_is_known(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+            _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                            lei="INR2EJN1ERAN0W5ZP974")
         assert any("lei_id" in call.args[0] for call in session.run.call_args_list), \
             "no lookup keyed on lei_id — the bridge would never find the GLEIF node"
@@ -1315,7 +1322,7 @@ class TestIdentifierBridge:
         # resolve_entity_id skips falsy ids, so the common case keeps its 3 lookups.
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")
+            _upsert_entity("Acme", 2000, None, None, "Q1")
         assert session.run.call_count == 4          # 3 lookups + CREATE
 
     def test_update_never_overwrites_an_existing_identifier(self):
@@ -1323,7 +1330,7 @@ class TestIdentifierBridge:
         # clobbering lei_id would re-point a merge key at the wrong company.
         ctx, session = _make_session_mock(single_returns=[{"id": "existing"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+            _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                            lei="INR2EJN1ERAN0W5ZP974", sec_cik="0000789019")
         update = [c for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0]]
         assert len(update) == 1
@@ -1336,7 +1343,7 @@ class TestIdentifierBridge:
     def test_created_node_carries_the_identifiers(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Microsoft", "company", "US", 1975, None, None, "Q2283",
+            _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                            lei="INR2EJN1ERAN0W5ZP974", sec_cik="0000789019")
         create = [c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0]]
         assert len(create) == 1

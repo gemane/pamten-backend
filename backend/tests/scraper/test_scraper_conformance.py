@@ -212,10 +212,6 @@ class TestNoDeadFlag:
         assert offenders == []
 
 
-ENTITY_WRITERS = [
-    ("wikidata entity", "runner", lambda: runner._upsert_entity("Acme", "company", "US", 2000, None, None, "Q1")),
-]
-
 # Persons from a source that carries a date of birth must persist it.
 PERSON_WRITERS_WITH_DOB = [
     ("wikidata person", "runner", lambda: runner._upsert_person("Elon Musk", None, None, "Q1", birth_date="1971-06-28")),
@@ -223,11 +219,14 @@ PERSON_WRITERS_WITH_DOB = [
 
 
 class TestMinimumFields:
-    @pytest.mark.parametrize("label,module,invoke", ENTITY_WRITERS)
-    def test_entity_captures_name_and_country(self, label, module, invoke):
-        q = _create_query(module, invoke)
-        assert "name:" in q, f"{label}: entity must capture a name"
-        assert "country:" in q, f"{label}: entity must capture a country"
+    def test_the_knowledge_base_captures_a_name_and_no_address(self):
+        # A register's writer captures a country (the BODS test below); the
+        # Wikidata writer the opposite: a knowledge base writes no address and
+        # no type (2026-10-27).
+        q = _create_query("runner", lambda: runner._upsert_entity("Acme", 2000, None, None, "Q1"))
+        assert "name:" in q
+        assert "country" not in q and "hq_" not in q
+        assert "type: 'company'" in q, "a node must still have a type: the default, not Wikidata's"
 
     @pytest.mark.parametrize("label,module,invoke", PERSON_WRITERS_WITH_DOB)
     def test_person_captures_name_and_birth_date(self, label, module, invoke):

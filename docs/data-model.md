@@ -704,15 +704,25 @@ there is nothing analogous to Delaware to capture.
 
 ### Filling a missing country
 
-`manage.py backfill-countries` fills `country` where it is blank, from Wikidata
-(batched P17, falling back to the headquarters' country) and SEC EDGAR. It only
-ever fills a blank — an existing country is never overwritten.
+`manage.py backfill-countries` fills `country` where it is blank, from SEC
+EDGAR (the filer's state or country of incorporation). It only ever fills a
+blank — an existing country is never overwritten.
 
 Worth knowing why it was needed: subsidiaries and owners are written as *stubs*
 when some other company is scraped, with no country of their own, so a company
 that only ever appeared as an owner had none at all. BlackRock and The Vanguard
-Group were both missing from the map for that reason. The Wikidata scraper now
-fetches those countries during the scrape, so new stubs arrive with one.
+Group were both missing from the map for that reason.
+
+Wikidata is never asked for a country (2026-10-27). It writes no address of
+any kind — no `country`, `countries`, `hq_*` or `hq_locations` — and no `type`,
+on create or on update: the registers state them, and a Wikidata item often
+describes a group rather than the legal entity. Unilever's Q157062 states both
+the United Kingdom and the Netherlands in arbitrary order, and the Wikidata
+update put NL over the GB that GLEIF and Companies House state for UNILEVER
+PLC. A stub Wikidata creates carries an LEI or a CIK, so its register fills
+the country; a search target only Wikidata knows stays without one, and has
+the default type `company`. Values Wikidata wrote before that date are still
+on the nodes.
 
 For SEC filers the order is deliberate: **state of incorporation first, business
 address only as a fallback.** EDGAR's business address is where the *filing* comes
@@ -721,15 +731,13 @@ German banks to the United States. A filer with only a US address and no stated
 incorporation is left blank, because a wrong country is worse than none.
 
 The live scrapers now set a country themselves, so the pass is a repair for older
-records rather than a routine step: the Wikidata scraper fetches related companies'
-countries during a scrape, and the SEC scraper reads the filer's from EDGAR.
+records rather than a routine step: the SEC scraper reads the filer's from EDGAR.
 
-Jurisdiction and headquarters are kept in **separate fields throughout**. Wikidata's
-P17 is a legal domicile and goes to `country`; the country of its P159 headquarters
-goes to `hq_country`. Coalescing them is tempting when one is missing, and it is
-what the Registered/Headquarters switch on the map exists to avoid — an early
-version of the backfill did coalesce, and wrote Morgan, Grenfell & Co.'s London
-headquarters into its jurisdiction field, which the source never claimed.
+Jurisdiction and headquarters are kept in **separate fields throughout**.
+Coalescing them is tempting when one is missing, and it is what the
+Registered/Headquarters switch on the map exists to avoid — an early version of
+the backfill did coalesce, and wrote Morgan, Grenfell & Co.'s London headquarters
+(from Wikidata) into its jurisdiction field, which the source never claimed.
 
 ### One edge per pair
 

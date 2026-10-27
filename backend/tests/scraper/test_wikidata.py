@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from app.scraper.wikidata import (
-    _v, _qid, _parse_point, _aggregate, _fetch_person_details,
+    _v, _qid, _aggregate, _fetch_person_details, _sparql,
     search_entity, fetch_company_data, commons_thumb_url,
 )
 
@@ -26,7 +26,6 @@ APPLE_ROW = _row(
     itemDescription="American technology company",
     altLabel="Apple",
     instance="http://www.wikidata.org/entity/Q4830453",
-    countryCode="US",
     founded="1976-04-01T00:00:00Z",
     revenue="394328000000",
     subsidiary="http://www.wikidata.org/entity/Q312",
@@ -70,23 +69,6 @@ class TestQid:
         assert _qid("Q999") == "Q999"
 
 
-# ── _parse_point ───────────────────────────────────────────────────────────────
-
-class TestParsePoint:
-    def test_parses_point_swapping_lon_lat(self):
-        # WKT is Point(longitude latitude); we return (lat, lng)
-        assert _parse_point("Point(-122.03 37.33)") == (37.33, -122.03)
-
-    def test_parses_positive_and_integer_coords(self):
-        assert _parse_point("Point(13 52)") == (52.0, 13.0)
-
-    def test_returns_none_for_none(self):
-        assert _parse_point(None) is None
-
-    def test_returns_none_for_garbage(self):
-        assert _parse_point("somewhere") is None
-
-
 # ── _aggregate ────────────────────────────────────────────────────────────────
 
 class TestAggregate:
@@ -97,7 +79,6 @@ class TestAggregate:
         result = _aggregate("Q1", [APPLE_ROW])
         assert result["name"] == "Apple Inc."
         assert result["description"] == "American technology company"
-        assert result["country"] == "US"
         assert result["qid"] == "Q1"
 
     def test_parses_founded_year(self):
@@ -144,46 +125,6 @@ class TestAggregate:
         sub = result["subsidiaries"][0]
         assert sub["qid"] == "Q312"
         assert sub["name"] == "Apple Records"
-
-    def test_dual_listed_company_multiple_countries_and_hqs(self):
-        # Unilever-style: two domiciles (UK + NL) and two HQs.
-        rows = [
-            _row(itemLabel="Unilever", countryCode="GB",
-                 hqLabel="London", hqCountryCode="GB", hqCoord="Point(-0.12 51.5)"),
-            _row(itemLabel="Unilever", countryCode="NL",
-                 hqLabel="Rotterdam", hqCountryCode="NL", hqCoord="Point(4.48 51.92)"),
-        ]
-        r = _aggregate("Q1", rows)
-        assert r["country"] == "GB"                       # primary
-        assert r["countries"] == ["GB", "NL"]             # both domiciles, primary first
-        # Primary HQ's city and country agree (no "Rotterdam, GB" mismatch)
-        assert (r["hq_city"], r["hq_country"]) == ("London", "GB")
-        assert set(r["hq_locations"]) == {"London|GB", "Rotterdam|NL"}
-
-    def test_primary_hq_prefers_one_with_a_resolved_country(self):
-        # Unilever's real case: an HQ that's an office building (coords but no
-        # country) must NOT become the primary and inherit a mismatched country.
-        rows = [
-            _row(itemLabel="Unilever", countryCode="GB",
-                 hqLabel="Rotterdam", hqCoord="Point(4.48 51.92)"),   # coords, no country
-            _row(itemLabel="Unilever", countryCode="NL",
-                 hqLabel="London", hqCountryCode="GB", hqCoord="Point(-0.12 51.5)"),
-        ]
-        r = _aggregate("Q1", rows)
-        assert (r["hq_city"], r["hq_country"]) == ("London", "GB")  # never "Rotterdam, GB"
-
-    def test_single_country_company_has_singleton_countries_list(self):
-        r = _aggregate("Q1", [APPLE_ROW])
-        assert r["country"] == "US"
-        assert r["countries"] == ["US"]
-
-    def test_hq_country_never_falls_back_to_a_mismatched_domicile(self):
-        # HQ in NL but company domiciled in GB → hq_country must be NL, not GB.
-        rows = [_row(itemLabel="X", countryCode="GB",
-                     hqLabel="Rotterdam", hqCountryCode="NL", hqCoord="Point(4.48 51.92)")]
-        r = _aggregate("Q1", rows)
-        assert r["hq_city"] == "Rotterdam"
-        assert r["hq_country"] == "NL"
 
     def test_extracts_ceo(self):
         result = _aggregate("Q1", [APPLE_ROW])
@@ -297,46 +238,29 @@ class TestAggregate:
         assert result["revenue"] is None
 
     def test_basic_fields_set_only_on_first_row(self):
-        row1 = _row(itemLabel="First Name", countryCode="US")
-        row2 = _row(itemLabel="Second Name", countryCode="DE")
+        row1 = _row(itemLabel="First Name", itemDescription="first")
+        row2 = _row(itemLabel="Second Name", itemDescription="second")
         result = _aggregate("Q1", [row1, row2])
         assert result["name"] == "First Name"
-        assert result["country"] == "US"
+        assert result["description"] == "first"
 
-    def test_extracts_hq_coordinates_city_and_country(self):
-        row = _row(
-            itemLabel="Apple Inc.",
-            hqCoord="Point(-122.0312 37.3318)",
-            hqLabel="Cupertino",
-            hqCountryCode="US",
-        )
-        result = _aggregate("Q1", [row])
-        assert result["hq_lat"] == pytest.approx(37.3318)
-        assert result["hq_lng"] == pytest.approx(-122.0312)
-        assert result["hq_city"] == "Cupertino"
-        assert result["hq_country"] == "US"
-
-    def test_falls_back_to_item_coordinate_when_no_hq(self):
-        row = _row(itemLabel="X", itemCoord="Point(13.4 52.5)", countryCode="DE")
-        result = _aggregate("Q1", [row])
-        assert result["hq_lat"] == pytest.approx(52.5)
-        assert result["hq_lng"] == pytest.approx(13.4)
-        assert result["hq_country"] == "DE"  # falls back to item country
-
-    def test_hq_prefers_hq_coord_over_item_coord(self):
-        row = _row(
-            itemLabel="X",
-            itemCoord="Point(0 0)",
-            hqCoord="Point(2 48)",
-            hqLabel="Paris",
-        )
-        result = _aggregate("Q1", [row])
-        assert (result["hq_lat"], result["hq_lng"]) == (48.0, 2.0)
-
-    def test_no_coordinates_leaves_hq_none(self):
-        result = _aggregate("Q1", [_row(itemLabel="X")])
-        assert result["hq_lat"] is None
-        assert result["hq_city"] is None
+    def test_no_address_is_read(self):
+        """Wikidata writes no address (2026-10-27): the queries ask for no
+        country, headquarters or coordinate, and the result carries none."""
+        asked = []
+        def fake_get(url, params, timeout):
+            asked.append(params["query"])
+            r = MagicMock()
+            r.json.return_value = {"results": {"bindings": []}}
+            return r
+        with patch("app.scraper.wikidata._wd_get", side_effect=fake_get):
+            _sparql("Q157062")
+        assert asked
+        for q in asked:
+            for prop in ("wdt:P17 ", "wdt:P159 ", "wdt:P625 "):
+                assert prop not in q, prop
+        result = _aggregate("Q1", [APPLE_ROW])
+        assert not {k for k in result if "countr" in k or k.startswith("hq") or k == "headquarters"}
 
     def test_subsidiary_instances_accumulated_across_rows(self):
         row1 = _row(

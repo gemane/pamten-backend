@@ -58,18 +58,18 @@ def test_nothing_of_a_dissolved_company_stays_open(it_db):
 def test_the_wikidata_writer_stores_the_day_and_applies_the_rule(it_db):
     from app.scraper.runner import _upsert_entity
     it_db.run_command("CREATE (:Entity {id:'owner', name:'Owner', name_normalized:'owner'})")
-    gid = _upsert_entity("Compaq", "company", "US", None, None, None, "Q1", source_id="wikidata")
+    gid = _upsert_entity("Compaq", None, None, None, "Q1", source_id="wikidata")
     row = it_db.run_sql("SELECT active, dissolved_on FROM Entity WHERE id = :id", {"id": gid})[0]
     assert row.get("active") is None and row.get("dissolved_on") is None     # a knowledge base asserts neither
     it_db.run_command("MATCH (a:Entity {id:'owner'}), (b:Entity {id:$g}) "
                       "CREATE (a)-[:OWNS {since:'1999-01-01', until:null, source_id:'wikidata'}]->(b)", {"g": gid})
-    _upsert_entity("Compaq", "company", "US", None, None, None, "Q1", source_id="wikidata", dissolved_on="2002-00-00")
+    _upsert_entity("Compaq", None, None, None, "Q1", source_id="wikidata", dissolved_on="2002-00-00")
     row = it_db.run_sql("SELECT active, dissolved_on FROM Entity WHERE id = :id", {"id": gid})[0]
     assert row["active"] is False and row["dissolved_on"] == "2002-00-00"      # the statement's precision
     held = it_db.run_sql("SELECT until, until_reason FROM OWNS WHERE @in.id = :g", {"g": gid})[0]
     assert (held["until"], held["until_reason"]) == ("2002-00-00", "dissolution")
     # fill-only: a later, different date does not move it
-    _upsert_entity("Compaq", "company", "US", None, None, None, "Q1", source_id="wikidata", dissolved_on="2003-01-01")
+    _upsert_entity("Compaq", None, None, None, "Q1", source_id="wikidata", dissolved_on="2003-01-01")
     assert it_db.run_sql("SELECT dissolved_on FROM Entity WHERE id = :id", {"id": gid})[0]["dissolved_on"] == "2002-00-00"
 
 

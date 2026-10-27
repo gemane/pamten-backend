@@ -14,9 +14,7 @@ Fields returned and Owlgraph mapping:
   itemLabel        → entity.name
   itemDescription  → entity.description
   altLabel         → entity.aliases (skos:altLabel, English only)
-  instance (P31)   → used to classify entity type (company / person / etc.)
-  countryCode      → entity.country (primary ISO-2) + entity.countries (all
-                     domiciles; dual-listed companies have >1)
+  instance (P31)   → tells a person (Q5) from a company; never written as entity.type
   founded (P571)   → entity.founded_year
   dissolved (P576) → entity.dissolved_on (at the statement's precision; app.dissolution)
   revenue (P2139)  → entity.revenue_usd
@@ -27,9 +25,11 @@ Fields returned and Owlgraph mapping:
   chairperson (P488)   → person node + HAS_ROLE edge (role="Chairman")
   board member (P3320) → person node + HAS_ROLE edge (role="Board Member")
   owned by (P127)  → OWNS edge (owner → this company; owner may be person or entity)
-  headquarters (P159) + coordinate (P625) → primary entity.hq_lat/hq_lng/hq_city/
-                     hq_country (city and country always agree) + entity.hq_locations
-                     ("City|CC" for every HQ; dual-listed companies have >1)
+
+Not read: country (P17), headquarters (P159), coordinates (P625). Wikidata
+writes no address and no entity type (2026-10-27) — the registers state them,
+and an item often describes a group rather than the legal entity (Unilever's
+Q157062 states both the United Kingdom and the Netherlands).
 
 Rate limits:
   Wikimedia policy: no hard public limit, but requests must include a User-Agent
@@ -45,7 +45,7 @@ Data licence:
 
 How to verify:
   1. Open https://www.wikidata.org/wiki/<QID> in a browser.
-  2. Compare P31 (instance of), P17 (country), P355 (subsidiaries), P169 (CEO)
+  2. Compare P31 (instance of), P355 (subsidiaries), P169 (CEO)
      with the values returned by fetch_company_data().
   3. Run the SPARQL query directly at https://query.wikidata.org/ to inspect raw rows.
 """
@@ -307,15 +307,15 @@ def _sparql(qid: str) -> list:
     result rows.
 
     A single query joining every multi-valued property (aliases × instances ×
-    countries × HQs × subsidiaries × people × owners) is a cartesian product
+    subsidiaries × people × owners) is a cartesian product
     that explodes for large companies — Unilever produced a 140 MB response.
     Splitting by concern keeps each query bounded; _aggregate reads fields
     per-row, so the combined rows aggregate correctly.
     """
-    # 1. Core: identity, aliases, instances, all domicile countries, all HQs.
+    # 1. Core: identity, aliases, instances, hard ids.
     core = f"""
-    SELECT ?itemLabel ?itemDescription ?altLabel ?instance ?countryCode
-           ?founded ?dissolved ?dissolvedP ?revenue ?itemCoord ?hqLabel ?hqCoord ?hqCountryCode
+    SELECT ?itemLabel ?itemDescription ?altLabel ?instance
+           ?founded ?dissolved ?dissolvedP ?revenue
            ?lei ?cik ?website ?logo ?depiction
     WHERE {{
       BIND(wd:{qid} AS ?item)
@@ -362,13 +362,6 @@ def _sparql(qid: str) -> list:
             FILTER(?dpRank != wikibase:DeprecatedRank)
             BIND(IF(?dpRank = wikibase:PreferredRank, 0, 1) AS ?dpOrd)
           }} ORDER BY ASC(?dpOrd) ASC(STR(?depiction)) LIMIT 1 }}
-      }}
-      OPTIONAL {{ ?item wdt:P17 ?country . ?country wdt:P297 ?countryCode }}
-      OPTIONAL {{ ?item wdt:P625 ?itemCoord }}
-      OPTIONAL {{
-        ?item wdt:P159 ?hq .
-        OPTIONAL {{ ?hq wdt:P625 ?hqCoord }}
-        OPTIONAL {{ ?hq wdt:P17 ?hqCountry . ?hqCountry wdt:P297 ?hqCountryCode }}
       }}
       OPTIONAL {{ ?item wdt:P571 ?founded }}
       OPTIONAL {{ ?item p:P576/psv:P576 ?dissolvedV .
@@ -639,7 +632,7 @@ def fetch_person_details_for(qid: str) -> dict | None:
 def fetch_person_companies(qid: str, limit: int = 60) -> list[dict]:
     """The companies a person leads, founded or owns, in one query.
 
-    Returns `[{qid, name, country, roles, instances, is_company}]`. Aggregated
+    Returns `[{qid, name, roles, instances, is_company}]`. Aggregated
     with GROUP_CONCAT so a company with three roles and four P31s is one row
     rather than twelve, and without `P31/P279*` subclass traversal, which is what
     makes WDQS time out (see `search_entity_in_country` for the same lesson).
@@ -649,17 +642,16 @@ def fetch_person_companies(qid: str, limit: int = 60) -> list[dict]:
         f"  OPTIONAL {{ ?company wdt:{p} ?sig{i} }}" for i, p in enumerate(COMPANY_SIGNAL_PROPS))
     counts = " ".join(f"(COUNT(DISTINCT ?sig{i}) AS ?n{i})" for i in range(len(COMPANY_SIGNAL_PROPS)))
     query = f"""
-    SELECT ?company ?companyLabel ?countryCode
+    SELECT ?company ?companyLabel
            (GROUP_CONCAT(DISTINCT ?role; separator="|") AS ?roles)
            (GROUP_CONCAT(DISTINCT ?inst; separator="|") AS ?instances)
            {counts} WHERE {{
       VALUES (?prop ?role) {{ {values} }}
       ?company ?prop wd:{qid} .
       OPTIONAL {{ ?company wdt:P31 ?i . BIND(STRAFTER(STR(?i), "entity/") AS ?inst) }}
-      OPTIONAL {{ ?company wdt:P17 ?c . ?c wdt:P297 ?countryCode }}
 {optionals}
       {_LABEL_SERVICE}
-    }} GROUP BY ?company ?companyLabel ?countryCode LIMIT {int(limit)}
+    }} GROUP BY ?company ?companyLabel LIMIT {int(limit)}
     """
     r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=60)
     out = []
@@ -673,7 +665,6 @@ def fetch_person_companies(qid: str, limit: int = 60) -> list[dict]:
         out.append({
             "qid": target,
             "name": name,
-            "country": _v(row, "countryCode") or None,
             "roles": [r_ for r_ in (_v(row, "roles") or "").split("|") if r_],
             "instances": instances,
             "is_company": looks_like_a_company(instances, signals),
@@ -745,55 +736,10 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     return details
 
 
-def countries_for(qids: set[str]) -> dict[str, dict]:
-    """Jurisdiction and headquarters country for related-company QIDs, in ONE query.
-
-    Subsidiaries and owners are written as stubs when some *other* company is
-    scraped, with no country of their own — so a company that only ever appears as
-    an owner never gets one. That is why BlackRock and The Vanguard Group, two of
-    the most significant owners in the graph, were absent from the map entirely.
-
-    Returns ``{qid: {"country": ISO2 | None, "hq_country": ISO2 | None}}``.
-
-    The two are kept apart rather than coalesced. P17 is where the company belongs
-    legally and belongs in `country`; P159's country is where it is *run* and
-    belongs in `hq_country`. Collapsing them into one value is precisely the blur
-    the map's Registered/Headquarters switch exists to avoid — an earlier version
-    of this function did coalesce, and wrote one company's headquarters country
-    into its jurisdiction field.
-
-    Batched and pre-aggregated for the same reason as _fetch_person_details: one
-    row per company, no combinatorial blow-up.
-    """
-    if not qids:
-        return {}
-    values = " ".join(f"wd:{q}" for q in sorted(qids))
-    query = f"""
-    SELECT ?item (SAMPLE(?directCode) AS ?country) (SAMPLE(?hqCode) AS ?hq) WHERE {{
-      VALUES ?item {{ {values} }}
-      OPTIONAL {{ ?item wdt:P17 ?c . ?c wdt:P297 ?directCode }}
-      OPTIONAL {{ ?item wdt:P159 ?h . ?h wdt:P17 ?hc . ?hc wdt:P297 ?hqCode }}
-    }} GROUP BY ?item
-    """
-    r = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=30)
-    out: dict[str, dict] = {}
-    for row in r.json()["results"]["bindings"]:
-        qid = _qid(_v(row, "item"))
-        if not qid:
-            continue
-        def code(key: str) -> str | None:
-            v = (_v(row, key) or "").strip().upper()
-            return v if len(v) == 2 else None
-        country, hq = code("country"), code("hq")
-        if country or hq:
-            out[qid] = {"country": country, "hq_country": hq}
-    return out
-
-
 def fetch_company_data(qid: str) -> dict | None:
     """
-    Fetch a company's data from Wikidata: identity, all domicile countries and
-    HQs, subsidiaries, parent, owners, and key people. Returns a structured
+    Fetch a company's data from Wikidata: identity, hard ids, subsidiaries,
+    parent, owners, and key people. Returns a structured
     dict or None if no results.
     """
     data = _aggregate(qid, _sparql(qid))
@@ -806,18 +752,6 @@ def fetch_company_data(qid: str) -> dict | None:
     person_qids |= {p["qid"] for p in data["officers"] if p.get("qid")}
     person_qids |= {o["qid"] for o in data["owners"]
                     if o.get("qid") and "Q5" in o.get("instances", [])}
-    # Countries for the companies we are about to create as stubs, so an owner or
-    # subsidiary is not written with country=None and then never revisited.
-    company_qids = {c["qid"] for c in data.get("subsidiaries", []) if c.get("qid")}
-    company_qids |= {o["qid"] for o in data.get("owners", [])
-                     if o.get("qid") and "Q5" not in o.get("instances", [])}
-    countries = countries_for(company_qids)
-    for group in ("subsidiaries", "owners"):
-        for item in data.get(group, []) or []:
-            if found := countries.get(item.get("qid")):
-                item["country"] = found["country"]
-                item["hq_country"] = found["hq_country"]
-
     details = _fetch_person_details(person_qids)
     if details:
         for group in (data["ceos"], data["officers"], data["owners"]):
@@ -901,25 +835,6 @@ def _qid(uri: str | None) -> str | None:
     return uri.rstrip("/").split("/")[-1]
 
 
-def _parse_point(wkt: str | None) -> tuple[float, float] | None:
-    """
-    Parse a Wikidata P625 WKT literal into (latitude, longitude).
-
-    WKT stores coordinates as 'Point(<longitude> <latitude>)', so the order is
-    swapped on the way out.
-    """
-    if not wkt:
-        return None
-    m = re.match(r"\s*Point\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)", wkt, re.IGNORECASE)
-    if not m:
-        return None
-    try:
-        lng, lat = float(m.group(1)), float(m.group(2))
-    except ValueError:
-        return None
-    return (lat, lng)
-
-
 def normalize_lei(raw: str | None) -> str | None:
     """An ISO 17442 LEI (20 alphanumerics, upper case), or None if it isn't one.
 
@@ -991,8 +906,6 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "description": None,
         "aliases":     set(),
         "instances":   set(),
-        "country":     None,   # primary domicile (first P17) — used for grouping/map
-        "countries":   set(),  # all P17 domiciles (dual-listed companies have >1)
         "founded":     None,
         "dissolved_on": None,  # P576 — the day the entity ceased, at the statement's precision
         "revenue":     None,
@@ -1010,21 +923,13 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "ceos":        {},
         "officers":    {},   # founder / chairperson / board member → HAS_ROLE
         "owners":      {},   # owned by (P127) → OWNS edge (owner → company)
-        "headquarters": {},  # city -> {city, country, coord} (all P159 HQs)
-        "hq_lat":      None,  # primary HQ (map pin) — filled after the loop
-        "hq_lng":      None,
-        "hq_city":     None,
-        "hq_country":  None,
     }
-
-    item_coord = None  # company's own P625, used as a fallback HQ coordinate
 
     for row in rows:
         # Basic fields (set once)
         if result["name"] is None:
             result["name"]        = _label(row, "itemLabel")
             result["description"] = _v(row, "itemDescription")
-            result["country"]     = _v(row, "countryCode")
 
             if raw_date := _v(row, "founded"):
                 try:
@@ -1072,23 +977,6 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     result["employees_as_of"] = int(raw_asof[:4])
                 except (ValueError, TypeError):
                     pass
-
-        # All domicile countries (P17 may repeat across rows for a dual-listed
-        # company); the company's own P625 is a fallback HQ coordinate.
-        if cc := _v(row, "countryCode"):
-            result["countries"].add(cc)
-        if item_coord is None:
-            item_coord = _parse_point(_v(row, "itemCoord"))
-
-        # Headquarters (P159) — collect each with its OWN city/country/coord so
-        # they can never disagree (dual-listed firms have several).
-        if hq_city := _label(row, "hqLabel"):
-            hq = result["headquarters"].setdefault(
-                hq_city, {"city": hq_city, "country": None, "coord": None})
-            if hq["country"] is None:
-                hq["country"] = _v(row, "hqCountryCode")
-            if hq["coord"] is None:
-                hq["coord"] = _parse_point(_v(row, "hqCoord"))
 
         # Aliases (skos:altLabel, English)
         if alias := _v(row, "altLabel"):
@@ -1190,38 +1078,6 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if owner_qid:
                 _add_period(result["owners"][owner_qid], _date(row, "ownerStart"),
                             _date(row, "ownerEnd"))
-
-    # ── Headquarters: choose a consistent primary + list them all ────────────
-    multi_country = len(result["countries"]) > 1
-    hqs = list(result["headquarters"].values())
-    # Primary HQ (map pin + main display): prefer one with BOTH coordinates and
-    # a resolved country, so city/country agree and the pin is placeable.
-    primary = (next((h for h in hqs if h["coord"] and h["country"]), None)
-               or next((h for h in hqs if h["country"]), None)
-               or next((h for h in hqs if h["coord"]), None)
-               or (hqs[0] if hqs else None))
-    if primary:
-        result["hq_city"]    = primary["city"]
-        # Use the HQ's own country. Only fall back to the entity's country for a
-        # single-domicile company — for a dual-listed firm, guessing would
-        # reintroduce the mismatch (e.g. Rotterdam labelled GB).
-        result["hq_country"] = primary["country"] or (None if multi_country else result["country"])
-        coord = primary["coord"] or item_coord
-        if coord:
-            result["hq_lat"], result["hq_lng"] = coord
-    elif item_coord:
-        # No named P159 HQ, but the company has its own coordinate.
-        result["hq_lat"], result["hq_lng"] = item_coord
-        result["hq_country"] = result["country"]
-
-    # All HQs as "City|CC" strings (CC may be empty) for display.
-    result["hq_locations"] = [
-        f"{h['city']}|{h['country'] or ''}" for h in hqs if h.get("city")
-    ]
-
-    # Domicile countries: primary first, then the rest, de-duplicated.
-    others = sorted(c for c in result["countries"] if c and c != result["country"])
-    result["countries"] = ([result["country"]] if result["country"] else []) + others
 
     # Convert sets/dicts to lists
     result["aliases"]      = sorted(result["aliases"])
