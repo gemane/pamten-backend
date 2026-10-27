@@ -51,7 +51,7 @@ cryptography==50.0.1
     # via
     #   -c requirements.txt
     #   -r requirements.in
-dnspython==2.8.0
+dnspython==2.9.0
     # via
     #   -c requirements.txt
     #   email-validator
