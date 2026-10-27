@@ -2106,40 +2106,27 @@ def normalize_person_nationalities() -> dict:
 # ── Country backfill ──────────────────────────────────────────────────────────
 
 def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
-    """Fill in `country` for entities that have none, from Wikidata and SEC EDGAR.
+    """Fill in `country` for entities that have none, from SEC EDGAR.
 
     Companies created as owner or subsidiary stubs never got a country of their
     own, so a company that only ever appears as an *owner* had none at all —
     BlackRock and The Vanguard Group among them, absent from the map entirely.
 
     Only ever fills a blank. An existing country is never overwritten: this is a
-    repair for missing data, not a re-import.
+    repair for missing data, not a re-import. Wikidata is not asked: it writes
+    no address (2026-10-27, see runner._upsert_entity).
     """
     from app.scraper.sec_edgar import sec_country
-    from app.scraper.wikidata import countries_for
 
     rows = run_query(
         "MATCH (e:Entity) WHERE (e.country IS NULL OR e.country = '') "
-        "RETURN e.id AS id, e.name AS name, e.wikidata_id AS wd, e.sec_cik AS cik")
+        "RETURN e.id AS id, e.name AS name, e.sec_cik AS cik")
     if limit:
         rows = rows[:limit]
 
     filled: list[dict] = []
-    # Wikidata in one batched query rather than one request per entity. Jurisdiction
-    # (P17) and headquarters (P159) are written to their own fields — coalescing
-    # them would defeat the map's Registered/Headquarters switch.
-    wd = {r["wd"]: r for r in rows if r.get("wd")}
-    if wd:
-        for qid, found in countries_for(set(wd)).items():
-            if not found["country"] and not found["hq_country"]:
-                continue
-            filled.append({"id": wd[qid]["id"], "name": wd[qid]["name"],
-                           "country": found["country"], "hq_country": found["hq_country"],
-                           "from": "wikidata"})
-
-    done = {f["id"] for f in filled}
     for r in rows:
-        if r["id"] in done or not r.get("cik"):
+        if not r.get("cik"):
             continue
         try:
             subs = (fetch or _sec_submissions)(r["cik"])
@@ -2147,16 +2134,13 @@ def backfill_entity_countries(limit: int | None = None, fetch=None) -> dict:
             log.warning("country backfill: SEC fetch failed for %s: %s", r["name"], exc)
             continue
         if code := sec_country(subs or {}):
-            filled.append({"id": r["id"], "name": r["name"], "country": code,
-                           "hq_country": None, "from": "sec"})
+            filled.append({"id": r["id"], "name": r["name"], "country": code, "from": "sec"})
 
     for f in filled:
         # COALESCE, not assignment: a value already known must not be replaced by
         # this repair, which only exists to fill blanks.
-        run_command(
-            "MATCH (e:Entity {id:$id}) SET e.country = COALESCE(e.country, $c), "
-            f"e.{_HQ['country']} = COALESCE(e.{_HQ['country']}, $h)",
-            {"id": f["id"], "c": f["country"], "h": f["hq_country"]})
+        run_command("MATCH (e:Entity {id:$id}) SET e.country = COALESCE(e.country, $c)",
+                    {"id": f["id"], "c": f["country"]})
 
     return {"candidates": len(rows), "filled": len(filled),
             "still_unknown": len(rows) - len(filled), "changes": filled}

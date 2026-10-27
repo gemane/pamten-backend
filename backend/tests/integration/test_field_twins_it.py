@@ -72,7 +72,7 @@ def test_the_heals_bring_an_older_database_to_one_field(it_db):
 
 
 def test_the_writers_fold_the_scalar_into_the_list(it_db):
-    from app.scraper.runner import _upsert_person, _upsert_entity
+    from app.scraper.runner import _upsert_person
 
     pid = _upsert_person("Larry Page", nationality="US", description="", wikidata_id="Q1")
     row = it_db.run_sql("SELECT nationalities, nationality FROM Person WHERE id = :id", {"id": pid})[0]
@@ -81,14 +81,11 @@ def test_the_writers_fold_the_scalar_into_the_list(it_db):
     _upsert_person("Larry Page", nationality=None, description="", wikidata_id="Q1", nationalities=["CA"])
     assert it_db.run_sql("SELECT nationalities FROM Person WHERE id = :id", {"id": pid})[0]["nationalities"] == ["US"]
 
-    eid = _upsert_entity("Heineken N.V.", "company", "NL", None, None, "", "Q2",
-                         countries=[], source_id="wikidata")
-    assert it_db.run_sql("SELECT countries FROM Entity WHERE id = :id", {"id": eid})[0]["countries"] == ["NL"]
-
 
 def test_the_writers_leave_an_unknown_list_absent(it_db):
     """What no source stated is absent, not `[]` — on the Wikidata person and
-    entity writers, the name-keyed person writer and the PSC person."""
+    entity writers, the name-keyed person writer and the PSC person. (The
+    Wikidata entity writer states no country at all.)"""
     from app.scraper.graph_writer import _upsert_person_by_name
     from app.scraper.runner import _upsert_entity, _upsert_person
 
@@ -104,10 +101,8 @@ def test_the_writers_leave_an_unknown_list_absent(it_db):
     row = it_db.run_sql("SELECT FROM Person WHERE id = :id", {"id": nid})[0]
     assert "nationalities" not in row and row.get("description") is None
 
-    eid = _upsert_entity("Stateless Ltd", "company", None, None, None, "", "Q8", countries=[], source_id="wikidata")
+    eid = _upsert_entity("Stateless Ltd", None, None, "", "Q8", source_id="wikidata")
     assert "countries" not in it_db.run_sql("SELECT FROM Entity WHERE id = :id", {"id": eid})[0]
-    _upsert_entity("Stateless Ltd", "company", "IE", None, None, "", "Q8", source_id="wikidata")
-    assert it_db.run_sql("SELECT countries FROM Entity WHERE id = :id", {"id": eid})[0]["countries"] == ["IE"]
 
 
 def test_the_dead_keys_leave_and_the_undated_role_claims_get_their_first_sighting(it_db):
@@ -163,7 +158,7 @@ def test_a_person_is_stamped_whenever_a_source_writes_them(it_db):
 def test_a_knowledge_base_role_claim_is_dated_by_the_scrape_day(it_db):
     from app.scraper.runner import _upsert_entity, _upsert_person, _upsert_role
     pid = _upsert_person("Some Body", nationality=None, description="", wikidata_id="Q77")
-    eid = _upsert_entity("Some Co", "company", None, None, None, "", "Q78", source_id="wikidata")
+    eid = _upsert_entity("Some Co", None, None, "", "Q78", source_id="wikidata")
     _upsert_role(pid, eid, "CEO", "wikidata", since="2020-01-01")
     rows = it_db.run_sql("SELECT source_date FROM Claim WHERE kind = 'role' AND from_id = :p", {"p": pid})
     assert rows and rows[0]["source_date"] and rows[0]["source_date"] >= "2026-01-01"

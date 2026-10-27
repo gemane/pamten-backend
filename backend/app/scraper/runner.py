@@ -51,7 +51,7 @@ from app.scraper.sec_writer import (
     write_acquisition_sec,                                                       # noqa: F401
 )
 from app.scraper.scraper_registry import ScraperSpec, register, registered
-from app.field_twins import merge_countries, merge_nationalities
+from app.field_twins import merge_nationalities
 from app.roles import combined_start, end_seats_at_death
 from app.dissolution import end_at_dissolution
 from app.node_ids import mint_node_id
@@ -62,10 +62,6 @@ from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, RE
 from app.scraper.country_match import matches_requested, country_mismatch
 from app.scraper.geocode import geocode_address
 
-#: Wikidata states a headquarters' city, country and coordinate (P159/P625)
-_WD_HQ = ("lat", "lng", "city", "country")
-_WD_HQ_FILL = addresses.fill_clause("e", addresses.HEADQUARTERS, _WD_HQ)
-_WD_HQ_CREATE = addresses.create_map(addresses.HEADQUARTERS, _WD_HQ)
 #: a registered pin geocoded from a stated address: fill-only, its own parameter names
 _REG_PIN_FILL = ",\n                ".join(
     f"e.{addresses.field(addresses.REGISTERED, p)} = COALESCE(e.{addresses.field(addresses.REGISTERED, p)}, ${v})"
@@ -212,21 +208,13 @@ CH_REGISTER_CREDIBILITY  = 97   # statutory UK register, authoritative for the n
 
 def _upsert_entity(
     name: str,
-    entity_type: str,
-    country: str | None,
     founded: int | None,
     revenue: float | None,
     description: str | None,
     wikidata_id: str,
     employees: int | None = None,
     employees_as_of: int | None = None,
-    hq_lat: float | None = None,
-    hq_lng: float | None = None,
-    hq_city: str | None = None,
-    hq_country: str | None = None,
     aliases: list[str] | None = None,
-    countries: list[str] | None = None,      # all domiciles (dual-listed → >1)
-    hq_locations: list[str] | None = None,   # all HQs as "City|CC" strings
     source_id: str | None = None,
     credibility_score: int = 80,
     lei: str | None = None,                  # P1278 — bridge to a GLEIF node
@@ -243,6 +231,16 @@ def _upsert_entity(
     own provenance shows in the node panel. It only *fills* a missing value
     (COALESCE) on update, so an entity first seen from a register (GLEIF/SEC)
     keeps that higher-credibility source when Wikidata later enriches it.
+
+    Wikidata writes no address — no country, no list of countries, no
+    headquarters city, coordinate or list — and no entity type, neither on
+    create nor on update (2026-10-27). The registers state all of them, and
+    Wikidata's are crowd-edited and often describe a group rather than the
+    legal entity: Unilever's item Q157062 states both the United Kingdom and
+    the Netherlands, its row order is arbitrary, and the update put NL over
+    the GB that GLEIF and Companies House state for UNILEVER PLC. A node
+    Wikidata creates carries the default type "company" and no country until
+    a register fills them.
     """
     name_norm = normalize_entity_name(name)
     sec_cik = normalize_cik(sec_cik)           # the 10-digit form, as every CIK is stored and looked up
@@ -252,10 +250,6 @@ def _upsert_entity(
     # companies it adds never enter the search index.
     search_text = " ".join(p for p in (
         name, description or "", " ".join(aliases or [])) if p).strip()
-    # The list of countries always carries the country: 17 dev entities had
-    # `countries: []` beside a filled `country` (2026-10-25), and every reader
-    # that prefers the list then showed nothing.
-    countries = merge_countries(countries, country)
     with db.get_session() as session:
         # Sequential indexed lookups — an OR across these fields full-scans the
         # Entity type on ArcadeDB (see app.entity_resolution).
@@ -297,13 +291,11 @@ def _upsert_entity(
             # the wrong company. NB: comments must stay OUT of the query string;
             # ArcadeDB's Cypher parser rejects `--` and fails the whole statement.
             session.run(
-                f"""
-                MATCH (e:Entity {{id: $id}})
+                """
+                MATCH (e:Entity {id: $id})
                 SET e.wikidata_id     = $wid,
                     e.lei_id          = COALESCE(e.lei_id, $lei),
                     e.sec_cik         = COALESCE(e.sec_cik, $sec_cik),
-                    e.type            = COALESCE($type, e.type),
-                    e.country         = COALESCE($country, e.country),
                     e.founded         = CASE WHEN $founded IS NOT NULL AND (e.founded IS NULL OR $founded < e.founded) THEN $founded ELSE e.founded END,
                     e.revenue         = COALESCE($revenue, e.revenue),
                     e.employees       = COALESCE($employees, e.employees),
@@ -312,9 +304,6 @@ def _upsert_entity(
                     e.search_text     = $search_text,
                     e.name_normalized = $name_norm,
                     e.aliases         = CASE WHEN size($aliases) > 0 THEN $aliases ELSE COALESCE(e.aliases, []) END,
-                    e.countries       = CASE WHEN size(COALESCE($countries, [])) > 0 THEN $countries ELSE e.countries END,
-                    e.hq_locations    = CASE WHEN size($hq_locations) > 0 THEN $hq_locations ELSE COALESCE(e.hq_locations, []) END,
-                    {_WD_HQ_FILL},
                     e.website         = COALESCE(e.website, $website),
                     e.logo_url        = COALESCE(e.logo_url, $logo_url),
                     e.dissolved_on    = COALESCE(e.dissolved_on, $dissolved_on),
@@ -328,8 +317,6 @@ def _upsert_entity(
                 wid=wikidata_id,
                 lei=lei, sec_cik=sec_cik,
                 source_id=source_id,
-                type=entity_type,
-                country=country,
                 founded=founded,
                 revenue=revenue,
                 desc=description,
@@ -338,8 +325,6 @@ def _upsert_entity(
                 cred=credibility_score,
                 employees=employees, employees_as_of=employees_as_of,
                 aliases=aliases or [],
-                countries=countries or None, hq_locations=hq_locations or [],
-                hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
                 website=website, logo_url=logo_url, dissolved_on=dissolved_on,
             )
             if dissolved_on:
@@ -350,31 +335,28 @@ def _upsert_entity(
         # else the Wikidata item, else the CIK — a uuid only without any
         entity_id = mint_node_id(lei=lei, wikidata_id=wikidata_id, sec_cik=sec_cik)
         session.run(
-            f"""
-            CREATE (e:Entity {{
+            """
+            CREATE (e:Entity {
                 id: $id, name: $name, name_normalized: $name_norm,
                 search_text: $search_text,
                 name_credibility: $cred,
-                type: $type, country: $country, founded: $founded,
+                type: 'company', founded: $founded,
                 revenue: $revenue, employees: $employees, employees_as_of: $employees_as_of,
                 description: $desc,
                 wikidata_id: $wid, lei_id: $lei, sec_cik: $sec_cik,
                 source_id: $source_id,
                 is_nominee: $is_nominee,
-                aliases: $aliases, countries: $countries, hq_locations: $hq_locations,
-                {_WD_HQ_CREATE},
+                aliases: $aliases,
                 website: $website,
                 logo_url: $logo_url, created_at: $created_at,
                 dissolved_on: $dissolved_on, active: $active
-            }})
+            })
             """,
             id=entity_id, created_at=_now_iso(),
             name=name,
             name_norm=name_norm,
             search_text=search_text,
             cred=credibility_score,
-            type=entity_type,
-            country=country,
             founded=founded,
             revenue=revenue,
             employees=employees, employees_as_of=employees_as_of,
@@ -384,8 +366,6 @@ def _upsert_entity(
             source_id=source_id,
             is_nominee=is_nominee_name(name),
             aliases=aliases or [],
-            countries=countries or None, hq_locations=hq_locations or [],
-            hq_lat=hq_lat, hq_lng=hq_lng, hq_city=hq_city, hq_country=hq_country,
             website=website, logo_url=logo_url,
             # a dissolved company is not active; a living one is not asserted
             # active by a knowledge base (null = no register has said)
@@ -564,8 +544,6 @@ def _scrape_node(
     entity_type = infer_entity_type(data["instances"])
     entity_id = _upsert_entity(
         name=data["name"],
-        entity_type=entity_type,
-        country=data.get("country"),
         founded=data.get("founded"),
         revenue=data.get("revenue"),
         description=data.get("description"),
@@ -575,13 +553,7 @@ def _scrape_node(
         logo_url=data.get("logo_url"),
         dissolved_on=data.get("dissolved_on"),
         employees_as_of=data.get("employees_as_of"),
-        hq_lat=data.get("hq_lat"),
-        hq_lng=data.get("hq_lng"),
-        hq_city=data.get("hq_city"),
-        hq_country=data.get("hq_country"),
         aliases=data.get("aliases", []),
-        countries=data.get("countries", []),
-        hq_locations=data.get("hq_locations", []),
         lei=data.get("lei"),
         sec_cik=data.get("sec_cik"),
         source_id=source_id,
@@ -606,17 +578,11 @@ def _scrape_node(
         if gate is False:
             counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
             continue
+        # No country: a node created here carries an LEI or a CIK
+        # (_resolve_related_company), and that register states it.
         sub_id = gate or _upsert_entity(
             name=sub_name,
-            entity_type=sub_type,
             lei=sub.get("lei"), sec_cik=sub.get("sec_cik"),
-            # Fetched in one batched query alongside the scrape. Passing None here
-            # is what left owner-only companies — BlackRock among them — with no
-            # country at all, and so absent from the map. Jurisdiction and
-            # headquarters stay separate: the map's Registered/Headquarters switch
-            # is meaningless if they are conflated on the way in.
-            country=sub.get("country"),
-            hq_country=sub.get("hq_country"),
             founded=None,
             revenue=None,
             description=None,
@@ -712,9 +678,7 @@ def _scrape_node(
                 continue
             owner_id = gate or _upsert_entity(
                 name=owner["label"],
-                entity_type=infer_entity_type(instances),
                 lei=owner.get("lei"), sec_cik=owner.get("sec_cik"),
-                country=owner.get("country"), hq_country=owner.get("hq_country"),
                 founded=None, revenue=None, description=None,
                 wikidata_id=owner["qid"],
                 source_id=source_id,
@@ -736,8 +700,7 @@ def _scrape_node(
             counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
             continue
         succ_id = gate or _upsert_entity(
-            name=succ["name"], entity_type="company",
-            country=None, founded=None, revenue=None, description=None,
+            name=succ["name"], founded=None, revenue=None, description=None,
             wikidata_id=succ["qid"], lei=succ.get("lei"),
             sec_cik=succ.get("sec_cik"), source_id=source_id,
         )
@@ -751,8 +714,7 @@ def _scrape_node(
             counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
             continue
         pred_id = gate or _upsert_entity(
-            name=pred["name"], entity_type="company",
-            country=None, founded=None, revenue=None, description=None,
+            name=pred["name"], founded=None, revenue=None, description=None,
             wikidata_id=pred["qid"], lei=pred.get("lei"),
             sec_cik=pred.get("sec_cik"), source_id=source_id,
         )
@@ -2343,8 +2305,7 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
             log.info("Wikidata person scrape: skipping %r — not a company", link["name"])
             continue
         entity_id = _upsert_entity(
-            name=link["name"], entity_type=infer_entity_type(link["instances"]),
-            country=link.get("country"), founded=None, revenue=None, description=None,
+            name=link["name"], founded=None, revenue=None, description=None,
             wikidata_id=link["qid"], source_id=source_id,
         )
         for role in link["roles"]:

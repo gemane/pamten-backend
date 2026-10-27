@@ -175,6 +175,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       registered pin yet), which captioned an accountant's or agent's door "Headquarters"
       and overwrote the headquarters GLEIF had put on a merged node. A source that states
       only one of the two places leaves the other empty; "we do not know" is a fact too.
+- [ ] **A knowledge base writes no address and no type.** Wikidata writes no `country`,
+      `countries`, `hq_*`, `hq_locations` or `type`, neither on create nor on update
+      (2026-10-27): the registers state them, and an item often describes a group, not
+      the legal entity. Unilever's Q157062 states the United Kingdom and the Netherlands
+      in arbitrary order; the Wikidata update wrote NL over the GB that GLEIF and
+      Companies House state for UNILEVER PLC. A crowd-edited source enriches with what
+      no register states (description, employees, revenue, logo, website) and never
+      outranks a register on a fact the register owns.
 - [ ] **Keep the finest grain the source states — do not collapse it to the country.**
       Exhibit 21 states "Florida, USA"; storing only `country: US` threw Florida away, and
       a subsidiary's panel showed "United States" with no real location (the reported bug).

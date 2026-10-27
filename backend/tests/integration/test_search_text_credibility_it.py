@@ -19,7 +19,7 @@ def _gleif_company(it_db):
 
 def _wikidata_enrich(source_id):
     return runner._upsert_entity(
-        "SpaceX", "company", None, None, None,
+        "SpaceX", None, None,
         "American spaceflight and AI company", "Q193701",
         lei="LEI549300TEST0000001",
         aliases=["Space Exploration Technologies"], source_id=source_id,
@@ -49,7 +49,7 @@ def test_a_winning_name_still_takes_over_the_index(it_db):
         "wikidata_id: 'Q_LOW', type: 'company'})")
     src = runner._ensure_source(runner.WIKIDATA_SOURCE_NAME,
                                 runner.WIKIDATA_SOURCE_URL, 60, "knowledge_base")
-    runner._upsert_entity("Newname GmbH", "company", None, None, None, None,
+    runner._upsert_entity("Newname GmbH", None, None, None,
                           "Q_LOW", source_id=src, credibility_score=60)
     row = it_db.run_sql("SELECT name, name_normalized, search_text FROM Entity "
                         "WHERE id = 'lo'")[0]

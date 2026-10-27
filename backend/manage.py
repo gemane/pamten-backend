@@ -1765,7 +1765,7 @@ def _build_parser():
 
     # backfill-countries command
     p_bc = subparsers.add_parser('backfill-countries',
-                                 help="Fill missing Entity.country from Wikidata and SEC EDGAR")
+                                 help="Fill missing Entity.country from SEC EDGAR")
     p_bc.add_argument('--limit', type=int, help='Only consider the first N candidates')
     p_bc.set_defaults(func=cmd_backfill_countries)
 

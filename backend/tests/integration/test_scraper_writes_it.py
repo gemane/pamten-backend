@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 def test_wikidata_upsert_creates_and_updates_for_real(it_db):
     from app.scraper.runner import _upsert_entity
 
-    eid = _upsert_entity("Alphabet Inc.", "company", "US", 2015, None,
+    eid = _upsert_entity("Alphabet Inc.", 2015, None,
                          "Holding company", "Q20800404",
                          lei="5493006MHB84DD0ZWV18", sec_cik="0001652044")
     rows = it_db.run_sql(f"SELECT FROM Entity WHERE id = '{eid}'")
@@ -32,7 +32,7 @@ def test_wikidata_upsert_creates_and_updates_for_real(it_db):
     assert node["sec_cik"] == "0001652044"
 
     # Second call takes the UPDATE branch — the one the bad comment sat in.
-    again = _upsert_entity("Alphabet Inc.", "company", "US", 2015, 1.0,
+    again = _upsert_entity("Alphabet Inc.", 2015, 1.0,
                            "Holding company", "Q20800404")
     assert again == eid
     rows = it_db.run_sql(f"SELECT FROM Entity WHERE id = '{eid}'")
@@ -46,10 +46,37 @@ def test_wikidata_upsert_does_not_overwrite_an_existing_identifier(it_db):
     it_db.run_command(
         "CREATE (e:Entity {id:'lei:REG', name:'Registered Co', name_normalized:'registered co', "
         "type:'company', lei_id:'REGISTEREDLEI0000001', name_credibility:92})")
-    _upsert_entity("Registered Co", "company", "US", None, None, None, "Q1",
+    _upsert_entity("Registered Co", None, None, None, "Q1",
                    lei="WIKIDATASAYSOTHER001")
     rows = it_db.run_sql("SELECT lei_id FROM Entity WHERE id = 'lei:REG'")
     assert rows[0]["lei_id"] == "REGISTEREDLEI0000001", "a crowd-edited LEI overwrote the register's"
+
+
+def test_wikidata_writes_no_address_and_no_type(it_db):
+    """Unilever (2026-10-27): the Wikidata update put NL — the first of the two
+    countries its group item Q157062 states — over the GB of the register node
+    for UNILEVER PLC. Wikidata writes no address and no type, on update or
+    create."""
+    from app.scraper.runner import _upsert_entity
+
+    it_db.run_command(
+        "CREATE (e:Entity {id:'gb-coh:00041424', name:'UNILEVER PLC', name_normalized:'unilever', "
+        "type:'holding', country:'GB', countries:['GB'], hq_city:'Port Sunlight', hq_country:'GB', "
+        "hq_lat:53.35, hq_lng:-2.99, lei_id:'549300MKFYEKVRWML317', name_credibility:97})")
+    eid = _upsert_entity("Unilever", 1929, None, "British consumer goods company", "Q157062",
+                         lei="549300MKFYEKVRWML317", source_id="wikidata")
+    assert eid == "gb-coh:00041424"
+    row = it_db.run_sql("SELECT FROM Entity WHERE id = 'gb-coh:00041424'")[0]
+    assert (row["type"], row["country"], row["countries"]) == ("holding", "GB", ["GB"])
+    assert (row["hq_city"], row["hq_country"], row["hq_lat"], row["hq_lng"]) == ("Port Sunlight", "GB", 53.35, -2.99)
+    assert "hq_locations" not in row
+    assert row["wikidata_id"] == "Q157062" and row["founded"] == 1929      # the rest still enriches
+
+    new_id = _upsert_entity("Only In Wikidata", None, None, None, "Q999001", source_id="wikidata")
+    node = it_db.run_sql("SELECT FROM Entity WHERE id = :id", {"id": new_id})[0]
+    assert node["type"] == "company"
+    for absent in ("country", "countries", "hq_city", "hq_country", "hq_lat", "hq_lng", "hq_locations"):
+        assert node.get(absent) is None, absent
 
 
 # ── SEC must not adopt a company whose name is merely a prefix ────────────────
@@ -93,13 +120,13 @@ def test_the_website_persists_and_the_first_writer_wins(it_db):
     register value must not be clobbered by a later crowd-edited one."""
     from app.scraper.runner import _upsert_entity
 
-    eid = _upsert_entity("Site Co", "company", "US", None, None, None, "Q77",
+    eid = _upsert_entity("Site Co", None, None, None, "Q77",
                          website="https://site.test")
     row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.website AS w",
                             {"id": eid})[0]
     assert row["w"] == "https://site.test"
 
-    _upsert_entity("Site Co", "company", "US", None, None, None, "Q77",
+    _upsert_entity("Site Co", None, None, None, "Q77",
                    website="https://other.test")
     row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.website AS w",
                             {"id": eid})[0]
@@ -138,13 +165,13 @@ def test_the_logo_url_persists_fills_if_missing_and_reaches_the_profile(it_db):
 
     logo = ("https://upload.wikimedia.org/wikipedia/commons/thumb/"
             "b/bd/Tesla_Motors.svg/250px-Tesla_Motors.svg.png")
-    eid = _upsert_entity("Logo Co", "company", "US", None, None, None, "Q88",
+    eid = _upsert_entity("Logo Co", None, None, None, "Q88",
                          logo_url=logo)
     row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.logo_url AS l",
                             {"id": eid})[0]
     assert row["l"] == logo
 
-    _upsert_entity("Logo Co", "company", "US", None, None, None, "Q88",
+    _upsert_entity("Logo Co", None, None, None, "Q88",
                    logo_url="https://upload.wikimedia.org/usurper.png")
     row = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.logo_url AS l",
                             {"id": eid})[0]

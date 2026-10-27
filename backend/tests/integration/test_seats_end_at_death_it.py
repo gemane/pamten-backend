@@ -19,7 +19,7 @@ def test_a_death_date_closes_the_open_seats_but_not_the_founders(it_db):
     from app.scraper.graph_writer import _upsert_role
 
     pid = _upsert_person("Paul Allen", None, "", "Q27", source_id="wikidata")
-    ms = _upsert_entity("Microsoft", "company", "US", None, None, "", "Q2283", source_id="wikidata")
+    ms = _upsert_entity("Microsoft", None, None, "", "Q2283", source_id="wikidata")
     _upsert_role(pid, ms, "Founder", "wikidata", source_url="w")
     _upsert_role(pid, ms, "Board Member", "wikidata", since="1990-01-01", source_url="w")
     _upsert_role(pid, ms, "Chairman", "wikidata", since="2019-06-01", source_url="w")     # dated after the death
