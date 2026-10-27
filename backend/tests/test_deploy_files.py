@@ -125,6 +125,15 @@ def test_the_import_merges_across_sources_before_finishing():
     assert dedupe < finish.index("rebuild-search")
 
 
+def test_the_import_closes_what_ended_with_a_dissolved_company():
+    # the bulk importers store dissolved_on without closing anything (dev:
+    # Altaba, dissolved 2019, still had 104 open edges): after the merge (one
+    # company, one date), before the shortcuts (a closed edge is no path)
+    finish = OPS[OPS.index('step "finishing"'):OPS.index("cmd_backup()")]
+    close = finish.index("run_manage heal-ends-at-dissolution --apply")
+    assert finish.index("run_manage dedupe-entities") < close < finish.index("run_manage mark-shortcuts")
+
+
 def test_the_gleif_history_keeps_its_file_where_the_host_sees_it():
     # in the container ~ is gone with the container: the intervals file must
     # land in DATA_DIR, or a re-apply downloads the whole archive again
