@@ -177,6 +177,10 @@ cmd_import() {
   # first: imports never merge across sources (GLEIF vs Companies House vs a
   # PSC foreign owner); the index, geocoding and shortcuts need the merged graph
   run_manage dedupe-entities --limit 100000
+  # the bulk importers store dissolved_on without closing anything: close a
+  # dissolved company's holdings and seats on that day, before the shortcuts
+  # (a closed edge is no path)
+  run_manage heal-ends-at-dissolution --apply
   [ "$mode" = test ] && run_manage rebuild-search
   run_manage geocode
   run_manage mark-shortcuts

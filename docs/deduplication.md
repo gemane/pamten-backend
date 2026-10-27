@@ -274,7 +274,8 @@ collapse to one node carrying the LEI, the name, and the ownership edges. Expose
 `strategy=merge` migrates edges first) and `python manage.py dedupe-entities`.
 **No importer does this merge itself**, so it is the first finishing step of every
 import chain (`~/scripts/steps/finish-import.sh`, `deploy/ops.sh import`), before the
-search index, geocoding and `mark-shortcuts`. Until 2026-10-05 neither chain ran it, and
+closing of what ended with a dissolved company (`heal-ends-at-dissolution`), the search
+index, geocoding and `mark-shortcuts`. Until 2026-10-05 neither chain ran it, and
 the test import left 13 doubled companies: 8 GLEIF companies next to their Companies
 House record (Unilever PLC, Google UK), and 5 GLEIF companies next to themselves as a
 PSC foreign owner (Alphabet, Tesla, Nestlé S.A.), which broke the chain at the border.
