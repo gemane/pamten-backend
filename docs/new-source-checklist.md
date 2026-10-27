@@ -231,7 +231,9 @@ parser. Anything that does not map is either a new property (document it) or noi
       source's precision, fill-only), `active = false` beside it, a register's own
       status wording to `company_status`; a per-company writer then calls
       `app.dissolution.end_at_dissolution`, a bulk importer leaves it to
-      `manage.py heal-ends-at-dissolution`. A knowledge base never writes `active = true`:
+      `manage.py heal-ends-at-dissolution --apply`, which every bulk chain runs after
+      the dedup (the post-load item in section 7). Until 2026-10-27 no chain did, and
+      dev's Altaba, dissolved in 2019, still held 104 open edges. A knowledge base never writes `active = true`:
       null means no register has said.
 - [ ] **A new edge property goes into `edge_schema.OWNS_PROPS` first.** `owns_props()`
       raises on unknown keywords by design, and the merge paths derive their recreate
@@ -861,6 +863,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       is (its data may be dropped). After the production start a heal ships with its
       change, runs once, and the next PR removes it. 33 one-off `manage.py` heals were
       removed on 2026-10-27.
+- [ ] **A step after a load goes into all four chains.** What the finished graph needs
+      (merge across sources, close what a dissolution ended, mark shortcuts, search
+      index, geocode) runs in two full imports — dev `~/scripts/steps/finish-import.sh`,
+      production `deploy/ops.sh import` — and the parts a daily delta can change run
+      again in two nightly updates — dev `~/scripts/cron-gleif-update.sh`, production
+      `ops.sh gleif-update`. Adding a step to one means checking the other three:
+      production's GLEIF update never re-marked shortcuts, which the dev cron always
+      did (found 2026-10-27). `backend/tests/test_deploy_files.py` pins the production
+      order; the scripts repo has no tests, so read its two scripts.
 - [ ] **`register()` validates against the catalogue** — the `KNOWN_SOURCES` entry must
       exist, the kind must match, and the settings flag must be real (Pydantic rejects
       unknown fields, so a test cannot monkeypatch a flag that was never declared). Patch
