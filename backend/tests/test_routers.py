@@ -776,3 +776,62 @@ def test_sec_acquisitions_run_master_off_is_403(client, make_token, monkeypatch)
     tok = {"Authorization": f"Bearer {make_token(role='contributor')}"}
     assert client.post("/scraper/sec-acquisitions/run", params={"company": "Alphabet"},
                        headers=tok).status_code == 403
+
+
+# ── Run-all: an errored source fails the run row ────────────────────────────────
+
+def _run_all_with(monkeypatch, results):
+    """POST /scraper/run-all with run_scrape_all faked; returns (response, run row)."""
+    from contextlib import contextmanager
+    from app.config import settings
+    import app.scraper.router as router
+    monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+    monkeypatch.setattr(router, "run_scrape_all",
+                        lambda company, depth: {"status": "ok", "query": company,
+                                                "results": results})
+    rows: list[dict] = []
+
+    @contextmanager
+    def fake_record_run(source, target, reason=None):
+        out = {"total": 0, "source": source}
+        yield out
+        rows.append(out)
+
+    monkeypatch.setattr(router, "record_run", fake_record_run)
+    return rows
+
+
+def test_run_all_with_an_errored_source_logs_failed_and_names_it(client, make_token, monkeypatch):
+    rows = _run_all_with(monkeypatch, {
+        "wikidata": {"status": "ok", "total": 7, "entity_id": "lei:X"},
+        "sec_edgar": {"status": "error", "detail": "unsupported operand type"},
+        "open_corporates": {"status": "disabled"},
+    })
+    r = client.post("/scraper/run-all", params={"company": "Toast"}, headers=auth(make_token))
+    assert r.status_code == 200               # the caller still gets every source's result
+    (row,) = rows
+    assert row["status"] == "failed"
+    assert row["note"] == "sec_edgar: unsupported operand type"
+    assert row["total"] == 7                  # what the other sources wrote is kept
+    assert row["entity_id"] == "lei:X"
+
+
+def test_run_all_names_every_errored_source(client, make_token, monkeypatch):
+    rows = _run_all_with(monkeypatch, {
+        "wikidata": {"status": "error", "detail": "timeout"},
+        "sec_edgar": {"status": "error"},
+    })
+    client.post("/scraper/run-all", params={"company": "Toast"}, headers=auth(make_token))
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["note"] == "wikidata: timeout; sec_edgar: error"
+
+
+def test_run_all_without_errors_stays_ok(client, make_token, monkeypatch):
+    rows = _run_all_with(monkeypatch, {
+        "wikidata": {"status": "ok", "total": 3},
+        "sec_edgar": {"status": "no_results"},
+        "open_corporates": {"status": "disabled"},
+    })
+    client.post("/scraper/run-all", params={"company": "Toast"}, headers=auth(make_token))
+    assert "status" not in rows[0] and "note" not in rows[0]
+    assert rows[0]["total"] == 3

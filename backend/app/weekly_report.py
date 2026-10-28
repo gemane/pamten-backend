@@ -118,7 +118,10 @@ def _scrapes(runs: list[dict]) -> dict:
         if src in IMPORT_SOURCES:
             continue
         by_source[src][r.get("status") or "?"] += 1
-        written += int(r.get("total") or 0) if r.get("status") == "ok" else 0
+        # Every status: a run-all with one errored source is `failed`, but the
+        # other sources' records were written (an exception or a running row
+        # carries 0).
+        written += int(r.get("total") or 0)
         if r.get("status") == "failed":
             failures.append({"source": src, "target": r.get("target"),
                              "error": _short_error(r.get("error") or "")})

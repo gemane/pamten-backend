@@ -310,12 +310,31 @@ def scraper_run_all(
             per_source = [v for v in (result.get("results") or {}).values() if isinstance(v, dict)]
             run["total"] = sum((v or {}).get("total", 0) for v in per_source)
             run["entity_id"] = next((v["entity_id"] for v in per_source if v.get("entity_id")), None)
+            _mark_errored_sources(run, result)
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception:
         logger.exception("Run-all scrape failed (company=%r)", company)
         raise HTTPException(status_code=500, detail="Run-all failed. Check server logs for details.")
+
+
+def _mark_errored_sources(run: dict, result: dict) -> None:
+    """Finish the run-all row as `failed` when any source errored.
+
+    `run_scrape_all` catches each source's exception into `{"status": "error"}`
+    so one source can't sink the rest, and returns `ok` regardless — the run
+    row read `ok` with the other sources' total. On 2026-10-28 Toast's SEC
+    scrape raised inside run-all and neither /scraper/runs, the health page
+    nor the weekly digest showed it. The total stays (the other sources did
+    write); the note — stored as the row's error — names each errored source.
+    """
+    errored = [f"{name}: {v.get('detail') or 'error'}"
+               for name, v in (result.get("results") or {}).items()
+               if isinstance(v, dict) and v.get("status") == "error"]
+    if errored:
+        run["status"] = "failed"
+        run["note"] = "; ".join(errored)
 
 
 # ── Generic per-source endpoints (registry-driven) ────────────────────────────

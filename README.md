@@ -445,6 +445,10 @@ can name it; a bulk run (a GLEIF delta, a PSC snapshot) has none. What a run
 does not know is **absent**, never an empty string: no `error` on a clean run,
 no `entity_id` on a run that resolved no company, `finished_at` only once it
 has finished (until 2026-10-25 the row was created with `''` in all three).
+A `run-all` row is `failed` when **any** source errored, with the error naming
+each one (`sec_edgar: …`) and the total of the sources that did write; until
+2026-10-28 it read `ok` whatever a source raised, so a Toast SEC failure
+showed nowhere.
 
 The endpoint is **public**: what the platform ingests, against which company and
 when, is the kind of thing an ownership-transparency project should be open
