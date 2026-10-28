@@ -419,6 +419,17 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             if existing:
                 active_only = f"AND {cond}"
                 break
+        if not existing and until is None:
+            # The spell the dissolution rule closed (app.dissolution) is still
+            # the one a filing from before the end describes: re-read, it is
+            # updated, not drawn again beside the closed one — once per scrape,
+            # as the rebuild's Altaba re-reads would have. The update states
+            # the filing's open end; the scrape scope closes it again
+            # (graph_writer._end_dissolved_after_scrape).
+            existing = _dissolution_closed(session, owner_label, owner_id, owned_id,
+                                           since or file_date, source_id=source_id)
+            if existing:
+                active_only = "AND r.until_reason = 'dissolution'"
         if existing:
             # The start: combined with what the edge has, earliest wins (an
             # amendment's lower bound never replaces an original's stated day).
@@ -495,6 +506,9 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             """,
             oid=owner_id, nid=owned_id, until=until,
         ).single()
+        if not shared and until is None:
+            # another source's spell the dissolution rule closed — see above
+            shared = _dissolution_closed(session, owner_label, owner_id, owned_id, since or file_date)
         if shared:
             _share_owns_edge(session, owner_label, owner_id, owned_id, shared["r"], bag, now)
             return
@@ -505,6 +519,24 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             """,
             oid=owner_id, nid=owned_id, **bag,
         )
+
+
+def _dissolution_closed(session, owner_label: str, owner_id: str, owned_id: str,
+                        dated: str | None, source_id: str | None = None):
+    """The pair's edge the dissolution rule closed, when a filing dated `dated`
+    falls inside it (no date: it does) — or None. The dates are compared in
+    Python: Cypher coerces ISO strings."""
+    by_source = "AND r.source_id = $sid" if source_id else ""
+    for row in session.run(
+            f"""
+            MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+            WHERE r.until_reason = 'dissolution' {by_source} RETURN r
+            """,
+            oid=owner_id, nid=owned_id, sid=source_id):
+        end = row["r"].get("until")
+        if not dated or not end or str(dated)[:10] <= str(end)[:10]:
+            return row
+    return None
 
 
 def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,

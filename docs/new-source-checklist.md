@@ -233,8 +233,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       `app.dissolution.end_at_dissolution`, a bulk importer leaves it to
       `manage.py heal-ends-at-dissolution --apply`, which every bulk chain runs after
       the dedup (the post-load item in section 7). Until 2026-10-27 no chain did, and
-      dev's Altaba, dissolved in 2019, still held 104 open edges. A knowledge base never writes `active = true`:
-      null means no register has said.
+      dev's Altaba, dissolved in 2019, still held 104 open edges. **An edge written LATER
+      onto a company already known dissolved** is closed by the scrape scope
+      (`graph_writer._end_dissolved_after_scrape`, after the dedup) — the 2026-10-27
+      rebuild replayed the SEC scrapes after the chain's step and Altaba had 105 open
+      edges again. A writer that matches only open edges must also match the spell the
+      rule closed, when the filing is dated inside it, or every re-read draws a second
+      edge (`sec_writer._dissolution_closed`; seats do this through `_same_seat`).
+      A knowledge base never writes `active = true`: null means no register has said.
 - [ ] **A new edge property goes into `edge_schema.OWNS_PROPS` first.** `owns_props()`
       raises on unknown keywords by design, and the merge paths derive their recreate
       lists from the schema — a property added to a writer but not the schema is silently
