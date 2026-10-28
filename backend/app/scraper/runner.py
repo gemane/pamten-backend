@@ -791,7 +791,6 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
 
 # ── SEC EDGAR public entry point ──────────────────────────────────────────────
 
-@_with_autodedup
 def _upsert_affiliate(filer_id: str, affiliate_id: str, source_id: str,
                       source_url: str | None = None, source_date: str | None = None):
     """Record that two entities belong to the same fund group.
@@ -837,7 +836,6 @@ def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> 
     return written
 
 
-@_with_autodedup
 def _same_filer(a: str | None, b: str | None) -> bool:
     """The filer under another spelling ("Chubb Limited" vs "CHUBB LIMITED",
     "Inter & Co, Inc." vs "Inter&Co, Inc"): legal forms and punctuation dropped."""
@@ -846,6 +844,7 @@ def _same_filer(a: str | None, b: str | None) -> bool:
     return bool(a and b) and key(a) == key(b)
 
 
+@_with_autodedup
 def run_sec_ex21(company: str, force: bool = False) -> dict:
     """Ingest one issuer's statutory subsidiary list from its latest annual
     filing's Exhibit 21 (10-K) or Exhibit 8.1 (20-F).
@@ -1071,6 +1070,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                     "confirmed_on": data["confirmed_on"]} if data.get("confirmed_by") else {})}
 
 
+@_with_autodedup
 def run_sec_acquisitions(company: str, force: bool = False,
                          max_filings: int | None = None) -> dict:
     """Ingest the acquisitions one filer's own 10-K / 10-Q XBRL facts state:
@@ -1191,6 +1191,7 @@ def run_sec_acquisitions(company: str, force: bool = False,
                 "shortcuts": shortcuts, "scraped": scraped}
 
 
+@_with_autodedup
 def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
     """Date an issuer's subsidiary edges by their OLDEST listing: "owned since
     at least".
@@ -1568,6 +1569,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 "filings_total": data["filings_total"]}
 
 
+@_with_autodedup
 def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None) -> dict:
     """Ingest what one SEC filer owns — the 13D/13G stakes it discloses in others.
 
@@ -1732,6 +1734,7 @@ def _confirm_stored_lei(stored: dict | None, data: dict) -> None:
         data["lei_source_url"] = hit["source_url"]
 
 
+@_with_autodedup
 def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
     """
     Scrape SEC EDGAR for ownership and executive data about one company.

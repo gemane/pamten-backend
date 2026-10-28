@@ -402,6 +402,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       only groups duplicates touched *together* in one scope, so per-source scopes leave
       cross-source pairs unmerged — Wikidata "Larry Page" beside SEC "Page Lawrence" is the
       bug that taught us this.
+      **The decorator goes on the entry point, and a helper added later goes ABOVE it.**
+      `@_with_autodedup` sat on `_upsert_affiliate` and `_same_filer` for months, two
+      helpers inserted between it and `run_scrape_sec_edgar` / `run_sec_ex21`, so the
+      standalone SEC scrape and EX-21 run had no scope at all;
+      `tests/scraper/test_scrape_scope.py` now names every `run_*` that must open one.
 - [ ] **A code field never carries words.** `country` (and every other ISO-coded
       field) holds the code or nothing; a filer's text that resolves to no code is kept
       as written in a field of its own (`country_registered` for PSCs). "Not

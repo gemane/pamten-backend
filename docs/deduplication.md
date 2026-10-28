@@ -105,12 +105,15 @@ under `needs_review`. It runs:
 - on demand via `POST /persons/deduplicate` (`apply=false` = dry run) — a **full**
   scan of every person, and
 - automatically after **every** scrape — `run-all` *and* the single-source runs
-  (`/scraper/run`, `/scraper/sec-edgar/run`, `/scraper/open-corporates/run`), gated by
+  (`/scraper/run`, `/scraper/sec-edgar/run`, `/scraper/open-corporates/run`, the SEC
+  enrichments: EX-21 and its history, acquisitions, Form D, 13F, a filer's holdings), gated by
   `SCRAPER_AUTODEDUP_ENABLED` (default on) — best-effort, so a dedup failure never
   fails the scrape. Wired via a re-entrant `_with_autodedup` decorator on the scrape
   entry points: a scrape nested inside another (run-all calls the single-source
   runners) shares the outer touched-set and skips its own dedup, so the merge runs
-  exactly once, at the outermost scrape.
+  exactly once, at the outermost scrape. `tests/scraper/test_scrape_scope.py` checks that every `run_*` entry point
+  carries the decorator and no helper does (it had drifted onto two helpers, #210 and
+  #349, leaving the standalone SEC scrape and EX-21 run unscoped until 2026-10-28).
 
 **Scoped after scraping.** The full person scan is O(all persons) — fine at a few
 thousand, but it crawls once the graph holds millions (e.g. after a UK PSC import).

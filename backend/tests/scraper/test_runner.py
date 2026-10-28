@@ -122,7 +122,9 @@ class TestPermissionGuards:
              patch("app.scraper.runner.one_statement_per_run", fake_run), \
              patch("app.scraper.runner._write_sec_edgar",
                    side_effect=lambda *a: (events.append("write"), {"status": "ok"})[1]) as write:
-            assert run_scrape_sec_edgar("Tesla, Inc.") == {"status": "ok"}
+            res = run_scrape_sec_edgar("Tesla, Inc.")
+        assert res["status"] == "ok"
+        assert "entity_deduplication" in res        # a standalone scrape opens its own scope
         assert events == ["enter", "write", "exit"]
         write.assert_called_once_with("Tesla, Inc.", data, "US")
 
