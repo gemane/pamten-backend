@@ -216,3 +216,28 @@ def resolve_current_id(session, old_id: str) -> str | None:
             return None
         seen.add(current)
     return current if current != old_id else None
+
+
+def rename_node_id(session, label: str, old_id: str, new_id: str) -> bool:
+    """Give a node a new id, everywhere the old one lives.
+
+    The node itself, every property store that carries node ids (the claims,
+    then `REFERENCE_COLUMNS`), and a MergedId forwarding row so every old link
+    keeps resolving — the same machinery a merge uses. Graph edges never store
+    the id, so they need nothing. Refuses (returns False) when the new id is
+    already taken: that is a merge, not a rename. Used by the writers when a
+    uuid-keyed node learns a hard id (`node_ids.key_on_learning`).
+    """
+    clash = session.run(f"MATCH (n:{label} {{id: $id}}) RETURN n.id AS id LIMIT 1",
+                        id=new_id).single()
+    if clash:
+        return False
+    session.run(f"MATCH (n:{label} {{id: $old}}) SET n.id = $new", old=old_id, new=new_id)
+    # Claims are keyed by a hash of their endpoints, so they are re-keyed, not
+    # just re-pointed: a plain UPDATE left the old key on the renamed claim,
+    # and the next scrape wrote a second claim for the same assertion.
+    from app.claims import migrate_claims
+    migrate_claims(old_id, new_id)
+    # record_merge re-points REFERENCE_COLUMNS (flags, suppressions, pins, runs)
+    record_merge(session, old_id, new_id, kind=label)
+    return True

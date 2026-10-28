@@ -57,9 +57,10 @@ def test_a_person_is_stamped_whenever_a_source_writes_them(it_db):
     nid = _upsert_person_by_name("Jane Form", source_id="sec-edgar")
     assert (stamp(nid) or "") >= "2026-01-01"
     it_db.run_sql("UPDATE Person SET last_scraped_at = :t WHERE id = :id", {"t": OLD, "id": nid})
-    assert _upsert_person_by_name("Jane Form", source_id="sec-edgar", sec_cik="0000001") == nid   # the name match (a bare CIK, padded on write)
-    assert stamp(nid) > OLD
-    assert it_db.run_sql("SELECT sec_cik FROM Person WHERE id = :id", {"id": nid})[0]["sec_cik"] == "0000000001"
+    # the name match (a bare CIK, padded on write), re-keyed by the CIK it learned
+    assert _upsert_person_by_name("Jane Form", source_id="sec-edgar", sec_cik="0000001") == "sec:0000000001"
+    assert stamp("sec:0000000001") > OLD
+    assert it_db.run_sql("SELECT sec_cik FROM Person WHERE id = 'sec:0000000001'")[0]["sec_cik"] == "0000000001"
 
 
 def test_a_knowledge_base_role_claim_is_dated_by_the_scrape_day(it_db):
