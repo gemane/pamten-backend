@@ -3484,6 +3484,11 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             "since_basis":   _stake_start(filing["form"], parsed.get("event_date"), filing["date"])[1],
             "form_type":     filing["form"],
             "filing_type":   _short_form(filing["form"]),
+            # Only the schedule's XML is read here (`_parse_holding_filing`), so
+            # every row is `field`. The scrape's holdings loop writes whatever the
+            # row says — without this, 681 13D/G edges had no grade after the
+            # 2026-10-27 rebuild, while `run_sec_holdings` stamped the same rows.
+            "read_from":     READ_FIELD,
             "until":         closed_since.get(sid),
             "source_url":    _filing_index_url(cik, filing["accession"]),
         })

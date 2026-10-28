@@ -179,7 +179,9 @@ which is why it grades above a layout reading and well above prose. The two
 paths used to be indistinguishable afterwards — both cite the index page — and
 the text path is where every misread 13D/G came from (Bozano, Altria). Among
 SEC's own claims the field beats the form; it never outranks a more credible
-source.
+source. The filer side (`fetch_filer_holdings`, what a filer owns) reads the XML
+only, so each of its rows carries `read_from: field` itself — both writers of
+those rows, the company scrape and `run_sec_holdings`, record it.
 
 **There are two schemas, one per schedule**, and they spell the same facts differently:
 

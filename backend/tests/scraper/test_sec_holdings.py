@@ -132,6 +132,18 @@ class TestFetchFilerHoldings:
         assert {r["subject_name"] for r in rows} == {"West Pharmaceutical", "Hologic Inc"}
         assert all(r["until"] is None for r in rows)
 
+    def test_every_holding_says_it_was_read_from_the_xml(self):
+        """The scrape's holdings loop writes `holding["read_from"]` as it comes;
+        a row without it left the edge ungraded (681 after the 2026-10-27 rebuild)."""
+        subs = _subs([("SCHEDULE 13G", "a-1", "2026-04-30"),
+                      ("SCHEDULE 13D", "a-2", "2026-04-29")])
+        docs = {"a-1": XML.format(cik="0000105770", name="West Pharmaceutical", pct="7.48"),
+                "a-2": XML_13D.format(cik="0000859737", name="Hologic Inc", pct="7.49")}
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for(docs)):
+            rows = fetch_filer_holdings("0002100119")
+        assert len(rows) == 2 and {r["read_from"] for r in rows} == {"field"}
+
     def test_a_holding_carries_its_date_of_event(self):
         import pathlib
         real = (pathlib.Path(__file__).parent / "fixtures" / "13g_vanguard.xml").read_text()
