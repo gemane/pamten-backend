@@ -318,6 +318,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       every rebuild, and every shared link, pin and flag that named the node broke with
       it — 2,225 dev nodes carried a QID or a CIK under a uuid until 2026-10-26. A
       name-only node keeps a uuid; a malformed value is never keyed on.
+- [ ] **A name is replaced by credibility, never by arrival order.** Write `name_credibility`
+      with the name, and let an existing node take the incoming name only when the source
+      is at least as credible AND the name is the source's own for that id (EDGAR's name for
+      the CIK, the register's for its number) — not the spelling another filing uses for
+      someone else. The SEC writer kept whatever name it found, so 23 filers showed the
+      Wikidata label of whichever source ran first (2026-10-27 rebuild). Keep the replaced
+      name as an alias.
 - [ ] **Match on a hard identifier when the source has one.** Shared LEI/CIK/CH number is
       proof; a shared name is a hint.
 - [ ] **Read by the id the database already holds before searching by name.** A per-company

@@ -1598,7 +1598,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     # Free: the submissions document was already fetched for the name and is cached.
     filer_id = _upsert_entity_by_name(name=filer_name, entity_type="company",
-                                      cik=cik, source_id=source_id,
+                                      cik=cik, source_id=source_id, register_name=True,
                                       country=fetch_filer_country(cik),
                                       headquarters=fetch_filer_headquarters(cik),
                                       website=fetch_filer_website(cik))
@@ -1824,6 +1824,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         entity_type="company",
         cik=data.get("cik"),
         source_id=source_id,
+        register_name=True,                 # EDGAR's own name for this CIK
         former_names=data.get("former_names"),
         lei=data.get("lei"),
         country=filer_country,

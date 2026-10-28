@@ -703,7 +703,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             jurisdiction_code: str | None = None,
                             headquarters: dict | None = None,
                             website: str | None = None,
-                            credibility_score: int = 98) -> str:
+                            credibility_score: int = 98,
+                            register_name: bool = False) -> str:
     """Find or create an Entity node matched by CIK, LEI, exact name, or normalized name.
 
     A name says which company only together with where it is registered
@@ -732,7 +733,17 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     **run** — EDGAR's business address. Kept strictly apart from ``country``,
     which is where it is *registered*: a foreign filer's EDGAR address is often
     its US filing office, so the two answer different questions and the map draws
-    one or the other. Only ever fills a blank."""
+    one or the other. Only ever fills a blank.
+
+    ``register_name``: ``name`` is the register's own name for this id —
+    EDGAR's name for the CIK (the scraped filer, `fetch_filer_name`), not a
+    name another filing spells (a 13D party, an Exhibit 21 row). It then
+    replaces the node's name when ``credibility_score`` is at least the
+    name's credibility, the rule the Wikidata writer already applies, so the
+    name no longer depends on which source created the node: 23 SEC filers
+    showed the Wikidata label after the 2026-10-27 rebuild — Molson Coors
+    its pre-2020 name — and 1,043 EDGAR's. The name it replaces stays an
+    alias, so search still finds it."""
     name_norm = normalize_entity_name(name)
     cik = normalize_cik(cik)                   # the 10-digit form, as every CIK is stored and looked up
     with db.get_session() as session:
@@ -767,9 +778,11 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             entity_id = rec["id"] if rec else None
 
         if entity_id:
-            # Only stamp the CIK onto the existing entity; preserve whatever
-            # name and credibility the entity already has (Wikidata names are
-            # human-readable; EDGAR registered names are all-caps legal strings).
+            # Stamp the ids onto the existing entity. Its name changes only for
+            # the register's own name of at least its credibility (see
+            # `register_name`); any other spelling leaves it as it is.
+            if register_name and name:
+                _take_register_name(session, entity_id, name, credibility_score)
             if former_names:
                 # Fold former names into aliases + search_text, and their dated
                 # entries into former_names (unions, no clobber).
@@ -850,6 +863,20 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             is_nominee=is_nominee_name(name),
         )
         return _record_touched_entity(entity_id)
+
+
+def _take_register_name(session, entity_id: str, name: str, credibility: int) -> None:
+    """Give the node the register's name when it is at least as credible as
+    the name it has; the replaced name stays an alias."""
+    rec = session.run("MATCH (e:Entity {id: $id}) RETURN e.name AS name, e.name_credibility AS cred, "
+                      "e.aliases AS aliases, e.description AS descr", id=entity_id).single()
+    if not rec or rec["name"] == name or (rec["cred"] or 0) > credibility:
+        return
+    aliases = _merge_aliases(rec["aliases"], [rec["name"]] if rec["name"] else [], name)
+    session.run("MATCH (e:Entity {id: $id}) SET e.name = $name, e.name_normalized = $norm, "
+                "e.name_credibility = $cred, e.aliases = $aliases, e.search_text = $st",
+                id=entity_id, name=name, norm=normalize_entity_name(name), cred=credibility,
+                aliases=aliases, st=_search_text(name, rec["descr"], aliases))
 
 
 def _upsert_person_by_name(full_name: str, source_id: str | None = None,
