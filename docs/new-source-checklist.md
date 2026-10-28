@@ -704,7 +704,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       filler column (truthy! read as the jurisdiction of all 62 rows), jurisdictions fused
       with legal forms ("Kentucky limited liability company"), ALL-CAPS section-header rows,
       and long-form country names ("The People's Republic of China", curly apostrophe
-      included). Capture the cleanest AND the most hostile payload as unit fixtures. (And
+      included). Capture the cleanest AND the most hostile payload as unit fixtures.
+      **A cell's paragraphs are not one string**: join `<p>`/`<br>` with a space, never
+      nothing, and check whether paired cells list several records by position
+      (HubSpot: ten companies in one row; 14 of 15 lost, names glued). Before changing a
+      reader, diff its output over every cached payload, and read what changed. (And
       check helper table shapes before using them: `_US_STATES` maps code→name; the name
       lookup is `_US_STATE_NAMES`.)
 - [ ] **Measure the whole population, not the companies you happen to have.** One

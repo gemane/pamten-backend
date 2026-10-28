@@ -1040,6 +1040,23 @@ from readers removed again the same day, so 11 remain):
 - **One subsidiary per paragraph, no table** (Alibaba's Exhibit 8.1, "… Co., Ltd.
   (PRC)"): read as "Name (Jurisdiction)", the last bracket being the place, under
   the content gate a headerless table meets.
+- **Several subsidiaries in one table row, one paragraph each** (2026-10-28). HubSpot
+  puts ten companies in one row: ten `<p>`s in the name cell, ten in the
+  jurisdiction cell, paired by position. The cell's paragraphs were joined with no
+  separator, so the row read as one company "HubSpot Australia Pty LtdHubSpot
+  BelgiumHubSpot Canada Inc." in "AustraliaBelgiumCanada" and 14 of 15 were lost
+  (NexPoint's glued names reached dev as nodes; Cellectis' row held the header and
+  both subsidiaries and read nothing). The row is split when every non-empty cell
+  has the same number of paragraphs and a later cell's paragraphs, the first
+  excepted (it may be the header), all map to a country. That place test keeps
+  a two-line header one row (Herc: "JURISDICTION OF / INCORPORATION", JPMorgan:
+  "Organized Under / The Laws Of"), and a name wrapped beside one place stays one
+  company (Chubb). Any other cell joins its paragraphs with a space, so
+  "USA(Pennsylvania)" now reads "USA (Pennsylvania)". Measured on the 829 cached
+  exhibits: six gained rows (HubSpot 1→15, NexPoint 123→137, Lazard, Phibro, and
+  the 20-F lists of Cellectis 0→2 and ESG 3→4); 20 Chubb/DaVita lists changed
+  only in spacing. A place that starts like a header word ("State of Delaware,
+  United States") is no longer dropped as noise.
 - **A list grouped under country rows** with no jurisdiction column (AB InBev:
   "Name and registered office | % economic interest", a row holding only
   "Argentina", then "Cerveceria … - Charcas 5160 - Buenos Aires | 61.63%"): the
