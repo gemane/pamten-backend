@@ -546,6 +546,19 @@ registry-corroborated and reliable; Level 2 (who owns whom) is **accounting
 consolidation, not shareholding** — no percentages — and can be declined, which is
 what the reporting exceptions record.
 
+### A node that learns its hard id later
+
+A node created by name (an Exhibit 21 row or a 13D party without a CIK, a founder
+name) carries a uuid. When a writer later stamps a hard id onto it (the SEC upsert
+meets its CIK, the person writer matches it by name with a CIK, Wikidata identifies
+it), the writer renames it to the keyed id at once (`node_ids.key_on_learning`, via
+`merged_ids.rename_node_id`). The rename moves the node, re-hashes its claims under
+the new endpoint, re-points the stored references and leaves a MergedId forwarding
+row, so old links keep opening. A keyed id already taken is a twin for the dedup and
+is never forced. Until 2026-10-28 a one-off heal did this after the fact; the
+2026-10-27 rebuild, run without it, left WARBURG PINCUS LLC and Steven Sarracino
+under uuids.
+
 ### How far GLEIF checked a record
 
 Every LEI record carries `ValidationSources`, GLEIF's own statement of whether an

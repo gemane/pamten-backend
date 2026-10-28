@@ -22,7 +22,7 @@ from app.database import db
 from app.entity_resolution import resolve_entity_id
 from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
-from app.node_ids import mint_node_id
+from app.node_ids import key_on_learning, mint_node_id
 from app import addresses
 from app.scraper.mapper import is_nominee_name, normalize_cik, normalize_entity_name, parse_full_name
 import logging
@@ -849,6 +849,9 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                     jurisdiction_code=jurisdiction_code, website=website,
                     **_hq_params(headquarters),
                 )
+            if cik or lei:
+                # an Exhibit 21 row or a 13D party created by name, now met with its CIK
+                entity_id = key_on_learning(session, "Entity", entity_id)
             return _record_touched_entity(entity_id)
 
         # keyed by the LEI or the CIK it arrives with (app.node_ids); a
@@ -923,8 +926,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
             name=full_name,
         ).single()
         if rec and not _cik_conflict(rec.get("cik"), sec_cik):
-            _stamp_person_cik(session, rec["id"], sec_cik)
-            return _record_touched(rec["id"])
+            return _record_touched(_stamp_person_cik(session, rec["id"], sec_cik))
 
         # 2. Reversed two-word form — catches "Brin Sergey" when "Sergey Brin"
         #    already exists (or vice-versa), same CIK-conflict guard.
@@ -934,8 +936,7 @@ def _upsert_person_by_name(full_name: str, source_id: str | None = None,
                 name=reversed_name,
             ).single()
             if rec and not _cik_conflict(rec.get("cik"), sec_cik):
-                _stamp_person_cik(session, rec["id"], sec_cik)
-                return _record_touched(rec["id"])
+                return _record_touched(_stamp_person_cik(session, rec["id"], sec_cik))
 
         person_id = mint_node_id(sec_cik=sec_cik)                # `sec:{cik}`, a uuid without one
         session.run(
@@ -962,10 +963,12 @@ def _cik_conflict(existing: str | None, incoming: str | None) -> bool:
     return bool(existing and incoming and existing != incoming)
 
 
-def _stamp_person_cik(session, person_id: str, sec_cik: str | None) -> None:
+def _stamp_person_cik(session, person_id: str, sec_cik: str | None) -> str:
     """A person matched by name: stamp when they were last written from a
     source, and fill their SEC CIK when they had none yet — COALESCE, so a
-    CIK already recorded is never overwritten."""
+    CIK already recorded is never overwritten. Returns the person's id, the
+    keyed one when a uuid-keyed person just learned their CIK."""
     session.run("MATCH (p:Person {id: $id}) SET p.sec_cik = COALESCE(p.sec_cik, $cik), "
                 "p.last_scraped_at = $now",
                 id=person_id, cik=normalize_cik(sec_cik), now=_now_iso())
+    return key_on_learning(session, "Person", person_id) if sec_cik else person_id

@@ -54,7 +54,7 @@ from app.scraper.scraper_registry import ScraperSpec, register, registered
 from app.field_twins import merge_nationalities
 from app.roles import combined_start, end_seats_at_death
 from app.dissolution import end_at_dissolution
-from app.node_ids import mint_node_id
+from app.node_ids import key_on_learning, mint_node_id
 from app import addresses
 
 from app.scraper.edge_schema import (READ_FIELD, READ_LAYOUT, READ_NARRATIVE, READ_TABLE,
@@ -321,6 +321,8 @@ def _upsert_entity(
                 aliases=aliases or [],
                 website=website, logo_url=logo_url, dissolved_on=dissolved_on,
             )
+            # a node created by name and now identified by Wikidata gets its keyed id
+            entity_id = key_on_learning(session, "Entity", entity_id)
             if dissolved_on:
                 end_at_dissolution(entity_id)      # nothing of a dissolved company stays open
             return _record_touched_entity(entity_id)
