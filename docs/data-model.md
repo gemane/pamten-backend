@@ -584,6 +584,18 @@ rather than the registered one), so an uncorroborated GLEIF record stays above t
 community sources at 80 while losing to a corroborated one. On a day's delta of
 18,166 records: 98.7% fully corroborated, 0.8% entity-supplied, 0.4% partial.
 
+### Which name a company shows
+
+`Entity.name` is **the most credible source's name, whichever source created the
+node**, with `name_credibility` beside it: SEC 98, Companies House 97, GLEIF 92
+(less a penalty for a record GLEIF did not check, below), Wikidata 80. The Wikidata
+writer replaces a name only of lower or equal credibility; the SEC scrape gives the
+filer EDGAR's own name for its CIK on the same rule and keeps the replaced name in
+`aliases`, so search still finds it. A name another filing spells (a 13D party, an
+Exhibit 21 row) never renames a node. Until 2026-10-28 the SEC writer never renamed,
+so 23 filers showed the Wikidata label of whichever source ran first: Molson Coors
+showed its pre-2020 "Molson Coors Brewing Company".
+
 ### How far GLEIF checked a relationship
 
 A relationship record carries the same statement about itself — `ValidationSources`
