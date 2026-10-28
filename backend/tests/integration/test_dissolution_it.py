@@ -112,3 +112,83 @@ def test_the_server_accepts_the_seat_end_reason(it_db):
     assert "does not match" in str(exc.value)
     with pytest.raises(Exception):
         it_db.run_command("CREATE (:Entity {id:'bad', name:'Bad', dissolved_on:'15/03/2023'})")   # the date shape
+
+
+def test_a_scrape_writing_onto_a_company_known_dissolved_leaves_nothing_open(it_db):
+    """The rebuild of 2026-10-27 replayed the SEC scrapes after the chain's
+    dissolution step: Altaba's Exhibit 21 came back open. The outermost scrape
+    scope now applies the rule to every company it touched."""
+    from app.scraper.graph_writer import _upsert_entity_by_name, _with_autodedup
+    from app.scraper.sec_writer import _upsert_owns_sec
+    it_db.run_command("CREATE (:Entity {id:'sec:0001011006', name:'Altaba', name_normalized:'altaba', "
+                      "sec_cik:'0001011006', dissolved_on:'2019-10-04'})")
+
+    @_with_autodedup
+    def ex21_like():
+        owner = _upsert_entity_by_name("Altaba", cik="0001011006", source_id="sec-edgar")
+        sub = _upsert_entity_by_name("Altaba Holdings Hong Kong Limited", source_id="sec-edgar")
+        _upsert_owns_sec(owner_id=owner, owned_id=sub, source_id="sec-edgar", stake_percent=100,
+                         ownership_type="controlling", file_date="2019-03-01",
+                         filing_type="EX-21", read_from="table",
+                         source_url="https://www.sec.gov/Archives/edgar/data/1011006/x.htm")
+        return {"status": "ok"}
+
+    res = ex21_like()
+    assert res["dissolution"] == {"closed": 1}
+    e = it_db.run_sql("SELECT until, until_reason FROM OWNS WHERE @out.id = 'sec:0001011006'")
+    assert [dict(r) for r in e] == [{"until": "2019-10-04", "until_reason": "dissolution"}]
+    # the filing's claim is left as stated: it named no end
+    assert [c["until"] for c in it_db.run_sql(
+        "SELECT until FROM Claim WHERE kind = 'owns' AND from_id = 'sec:0001011006'")] == [None]
+    # A re-scrape: the SEC writer's update states the filing's own `until`
+    # (none), the scope closes the edge again — the end state is the same.
+    assert ex21_like()["dissolution"] == {"closed": 1}
+    e = it_db.run_sql("SELECT until, until_reason FROM OWNS WHERE @out.id = 'sec:0001011006'")
+    assert [dict(r) for r in e] == [{"until": "2019-10-04", "until_reason": "dissolution"}]
+
+
+def _owns(it_db, a, b):
+    rows = [dict(r) for r in it_db.run_sql(
+        "SELECT source_id, until, until_reason FROM OWNS WHERE @out.id = :a AND @in.id = :b", {"a": a, "b": b})]
+    return sorted(rows, key=lambda r: (r["until"] is None, r["until"] or ""))
+
+
+def _seed_gone(it_db):
+    it_db.run_command("CREATE (:Entity {id:'gone', name:'Gone Corp', name_normalized:'gone corp', "
+                      "dissolved_on:'2019-10-04'})")
+    it_db.run_command("CREATE (:Entity {id:'sub', name:'Sub', name_normalized:'sub'})")
+
+
+def _sec_read(file_date):
+    from app.scraper.graph_writer import _record_touched_entity, _with_autodedup
+    from app.scraper.sec_writer import _upsert_owns_sec
+
+    @_with_autodedup
+    def scrape():
+        _record_touched_entity("gone")
+        _upsert_owns_sec(owner_id="gone", owned_id="sub", source_id="sec-edgar", stake_percent=100,
+                         ownership_type="controlling", file_date=file_date, filing_type="EX-21")
+        return {"status": "ok"}
+    return scrape()
+
+
+def test_a_filing_dated_after_the_end_is_its_own_spell(it_db):
+    """The rule leaves an edge the source dates after the dissolution open
+    (its error, reported); the writer does not fold it into the closed spell."""
+    _seed_gone(it_db)
+    _sec_read("2019-03-01")
+    _sec_read("2020-02-01")
+    assert _owns(it_db, "gone", "sub") == [
+        {"source_id": "sec-edgar", "until": "2019-10-04", "until_reason": "dissolution"},
+        {"source_id": "sec-edgar", "until": None, "until_reason": None}]
+
+
+def test_another_sources_closed_spell_is_shared_not_drawn_again(it_db):
+    _seed_gone(it_db)
+    it_db.run_command("MATCH (a:Entity {id:'gone'}), (b:Entity {id:'sub'}) CREATE (a)-[:OWNS "
+                      "{source_id:'gleif', credibility_score:92, until:'2019-10-04', "
+                      "until_reason:'dissolution'}]->(b)")
+    _sec_read("2019-03-01")
+    _sec_read("2019-03-01")
+    rows = _owns(it_db, "gone", "sub")
+    assert len(rows) == 1 and rows[0]["until"] == "2019-10-04" and rows[0]["until_reason"] == "dissolution"

@@ -119,6 +119,35 @@ def _run_scoped_autodedup(touched_persons: list, touched_entities: list) -> dict
     return out
 
 
+def _end_dissolved_after_scrape(touched_entities: list) -> dict:
+    """Nothing of a dissolved company stays open — after the scrape, too.
+
+    `end_at_dissolution` runs where a writer STORES `dissolved_on` (the Wikidata
+    entity writer) and the bulk chains run the heal; but an edge written later
+    onto a company already known to be dissolved stayed open. The rebuild of
+    2026-10-27 replayed the SEC scrapes after the chain's dissolution step and
+    left Altaba (dissolved 2019-10-04) with 105 open holdings and seats: its
+    Exhibit 21, the 13D/G and Form 4 filings about it, its officers. So the
+    outermost scope applies the rule to every touched company that has an end.
+    After the dedup, which can fold a dissolution date onto a survivor.
+    Best-effort, like the dedup beside it."""
+    ids = [i for i in dict.fromkeys(touched_entities or []) if i]
+    if not ids:
+        return {}
+    closed = 0
+    try:
+        from app.db.arcadedb import run_sql
+        from app.dissolution import end_at_dissolution
+        for i in range(0, len(ids), 500):
+            for row in run_sql("SELECT id FROM Entity WHERE id IN :ids AND dissolved_on IS NOT NULL",
+                               {"ids": ids[i:i + 500]}) or []:
+                closed += end_at_dissolution(row["id"])["closed"]
+    except Exception as exc:  # noqa: BLE001 - never fail a scrape on the dissolution rule
+        log.error("Dissolution rule after scrape failed: %s", exc)
+        return {"dissolution": {"status": "error", "detail": str(exc)}}
+    return {"dissolution": {"closed": closed}} if closed else {}
+
+
 def _scrape_target_after(target: dict | None) -> dict | None:
     """The target's id after the scoped dedup, which may have merged it away.
 
@@ -192,6 +221,7 @@ def _with_autodedup(fn):
             _stamp_scrape_freshness(target)
         if isinstance(result, dict):
             result.update(_run_scoped_autodedup(touched_p, touched_e))
+            result.update(_end_dissolved_after_scrape(touched_e))
             # After the dedup, not before: a merge can fold the target into a
             # survivor, and geocoding the id that no longer exists would write
             # coordinates nobody reads.

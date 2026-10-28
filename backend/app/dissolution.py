@@ -18,7 +18,10 @@ and its seats close with `until_reason = dissolution`, except a founder's
 seat (a founder is not a seat that ends) and except an edge the source dates
 after the dissolution (its error, left open and reported). The source's
 claim is NOT touched — it stated no end, and the claim is what the source
-said. `until_source_url` cites the record that stated the dissolution when
+said. Who applies it: the Wikidata writer when the date arrives, every
+scrape scope to the companies it touched (`graph_writer`, for an edge
+written onto a company already known dissolved), the heal for the bulk
+chains. `until_source_url` cites the record that stated the dissolution when
 the caller knows it (the Wikidata item, the register page); the heal, which
 cannot know which source did, cites none.
 """
