@@ -585,6 +585,43 @@ class TestTheDenominatorIsDatedAndPerClass:
         assert d.by_class == {} and d.total == 15_000_000_000.0 and d.as_of == "2026-03-31"
         assert cover_counts({}, html) is None
 
+    # Trimmed from Toast's 10-Q for 2026-06-30 (tost-20260630.htm): the cover
+    # states millions, `scale="6"`.
+    TOAST = (
+        '<xbrli:context id="c-2"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0001650164</xbrli:identifier>'
+        '<xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassAMember</xbrldi:explicitMember>'
+        '</xbrli:segment></xbrli:entity><xbrli:period><xbrli:instant>2026-07-30</xbrli:instant></xbrli:period></xbrli:context>'
+        '<xbrli:context id="c-3"><xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0001650164</xbrli:identifier>'
+        '<xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassBMember</xbrldi:explicitMember>'
+        '</xbrli:segment></xbrli:entity><xbrli:period><xbrli:instant>2026-07-30</xbrli:instant></xbrli:period></xbrli:context>'
+        '<td><ix:nonFraction unitRef="shares" contextRef="c-2" decimals="-6" name="dei:EntityCommonStockSharesOutstanding" scale="6" id="f-24">514</ix:nonFraction></td>'
+        '<td><ix:nonFraction unitRef="shares" contextRef="c-3" decimals="-6" name="dei:EntityCommonStockSharesOutstanding" scale="6" id="f-25">64</ix:nonFraction></td>')
+
+    def test_a_scaled_cover_figure_is_multiplied_out(self):
+        """Read as written, a Toast director's 3,566 shares were 693.77 % of
+        Class A, the database refused the edge and the whole scrape failed."""
+        from app.scraper.sec_edgar import cover_counts, cover_facts, stake_for
+        assert cover_facts(self.TOAST) == {"c-2": 514_000_000.0, "c-3": 64_000_000.0}
+        d = cover_counts(cover_facts(self.TOAST), self.TOAST)
+        assert d.by_class == {"A": 514_000_000.0, "B": 64_000_000.0} and d.as_of == "2026-07-30"
+        pick = stake_for({"Class A Common Stock": 3566.0}, d)
+        assert pick["stake_percent"] == 0.0007 and pick["shares_outstanding"] == 514_000_000.0
+
+    def test_more_shares_than_the_class_has_is_no_percentage(self):
+        from app.scraper.sec_edgar import _pct_of, stake_for
+        assert _pct_of(3566.0, 514.0) is None
+        assert _pct_of(514.0, 514.0) == 100.0
+        pick = stake_for({"Class A Common Stock": 3566.0}, {"total": 578.0, "as_of": "2026-07-30",
+                                                             "by_class": {"A": 514.0, "B": 64.0}})
+        assert pick["stake_percent"] is None and pick["shares_owned"] == 3566.0
+
+    def test_an_unscaled_or_decimal_figure_reads_as_written(self):
+        from app.scraper.sec_edgar import cover_facts
+        tag = '<ix:nonFraction contextRef="c1" name="dei:EntityCommonStockSharesOutstanding"{}>{}</ix:nonFraction>'
+        assert cover_facts(tag.format("", "1,408,035,161")) == {"c1": 1_408_035_161.0}
+        assert cover_facts(tag.format(' scale="9"', "13.18")) == {"c1": 13_180_000_000.0}
+        assert cover_facts(tag.format(' scale="0"', "941,481")) == {"c1": 941_481.0}
+
 
 # ── Person-centric insider holding (Option A) ────────────────────────────────
 

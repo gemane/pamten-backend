@@ -136,6 +136,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       entirely. A fetcher that takes "the latest value" was handing out a fifteen-year-old
       count. Date every value you divide by, refuse one older than the thing it measures
       allows (15 months for a quarterly filer), and read the primary document instead.
+- [ ] **An inline-XBRL figure is scaled.** `ix:nonFraction` shows the number as printed
+      and states its power of ten in `scale` (`scale="6"`: millions). Toast's cover
+      "514" read as 514 shares made a director 693.77 % of Class A, and the database's
+      stake rule then failed the whole company scrape, twice. Multiply by 10^`scale`,
+      accept a decimal display ("13.18" billion), and refuse any computed share of a class
+      above 100 % as a wrong denominator, not a holding.
 - [ ] **A dimensional XBRL fact is three things: a member, a concept and a context.** The
       acquirer's business combinations (`sec-acquisitions`) are tagged as an axis member
       (`goog:WizIncMember`) on a consideration fact whose CONTEXT period is the closing day —

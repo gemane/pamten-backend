@@ -654,6 +654,13 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   endpoint (padded CIK), and — because a MULTI-class issuer's per-class cover
   facts are dimensioned and never reach the aggregated endpoints — a fallback
   that reads the newest 10-Q/10-K inline-XBRL cover and sums the classes.
+  **An inline fact's displayed figure is multiplied by 10^`scale`**
+  (`cover_facts`): Toast's cover shows "514" and "64" with `scale="6"`, i.e.
+  514 million Class A and 64 million Class B. Read as written, a director's
+  3,566 shares were 693.77 % of Class A. A share count above 100 % of its
+  class is never stated: `_pct_of` returns no percentage and logs the
+  denominator, because the database refuses such a stake and the refusal
+  failed the whole company scrape.
   SpaceX's 13.18bn total (7.70bn Class A + 5.49bn Class B, stated to the share
   on its 10-Q cover) only exists via that fallback; it is where the press got
   the number too. Restricted to 10-Q/10-K deliberately: a 20-F filer's cover
