@@ -129,3 +129,16 @@ class TestRendering:
         h = format_report_html({**REPORT, "recipient": "ops@example.com"})
         assert "sent to ops@example.com" in h
         assert "sent to" not in format_report_html(REPORT), "no recipient when only printed"
+
+
+def test_records_written_counts_a_failed_run_alls_total():
+    # A run-all with one errored source finishes `failed`, but the other
+    # sources' records were written and belong in the week's count.
+    from app.weekly_report import _scrapes
+    out = _scrapes([
+        {"source": "all", "status": "failed", "total": 7, "target": "Toast",
+         "error": "sec_edgar: boom"},
+        {"source": "wikidata", "status": "ok", "total": 3, "target": "Acme"},
+    ])
+    assert out["records_written"] == 10
+    assert out["failures"][0]["source"] == "all"

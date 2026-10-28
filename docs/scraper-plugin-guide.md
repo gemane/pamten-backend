@@ -347,7 +347,9 @@ exists because the dispatchers catch every exception per source — a two-argume
 having run nothing.
 
 `run_scrape_all` applies the enabled/disabled/error wrapping uniformly to every
-registered scraper, so a registered spec is all the wiring `run-all` needs.
+registered scraper, so a registered spec is all the wiring `run-all` needs. A
+source that raises comes back as `{"status": "error", "detail": …}`; the run-all
+endpoint then finishes its `ScrapeRun` row as `failed`, naming the source.
 
 ---
 

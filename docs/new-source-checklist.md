@@ -653,6 +653,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the Render logs, is how a failed scrape is noticed. It yields a **dict** — set
       `run["status"]`/`run["note"]`/`run["total"]` on it; `run.result = …` is an attribute
       on a dict and dies at runtime while every mocked test stays green.
+      A dispatcher that **catches** a source's exception (run-all does, so one source
+      can't sink the rest) must still say so on its row: set `status = "failed"` and
+      name the source in `note`, or the run log reads `ok` over an error — Toast's SEC
+      scrape failed inside run-all on 2026-10-28 and showed nowhere.
 - [ ] **Gate re-runs by the source's own clock, not a TTL.** 13Fs are due 45 days after
       quarter end, so its gate is "has a new deadline passed since the last run" — it
       opens by itself the day after a deadline and never blocks a genuinely new period the
