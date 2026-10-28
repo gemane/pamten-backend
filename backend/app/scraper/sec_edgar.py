@@ -884,6 +884,14 @@ def _pct_of(part: float | None, whole: int | float | None) -> float | None:
     pct = round(part / whole * 100, 4)
     if pct == 0 and part:
         return None                 # real, but below the precision floor
+    if pct > 100:
+        # More shares than the class has: the denominator is wrong (a scaled
+        # cover read as written — Toast's 514 for 514 million gave 693.77 %),
+        # never the holding. No percentage beats a confidently wrong one, and
+        # the database refuses a stake above 100, failing the whole scrape.
+        log.warning("SEC EDGAR: %s shares of %s outstanding is %s%% — no percentage stated",
+                    part, whole, pct)
+        return None
     return pct
 
 
@@ -2425,24 +2433,37 @@ def _shares_outstanding_from_cover(cik: str) -> "SharesOutstanding | None":
         html = _get_text(f"{ARCHIVES_URL}/{_cik_int(cik)}/{acc}/{doc}")
     except httpx.HTTPError:
         return None
-    # One ix:nonFraction fact per share class. Keyed by contextRef, which is
-    # what distinguishes the classes — and, being a dict, also what keeps a
-    # fact echoed elsewhere in the document from double-counting.
+    return cover_counts(cover_facts(html), html)
+
+
+def cover_facts(html: str) -> dict[str, float]:
+    """The cover's share counts, contextRef → count. Pure, for the tests.
+
+    One ix:nonFraction fact per share class. Keyed by contextRef, which is
+    what distinguishes the classes — and, being a dict, also what keeps a
+    fact echoed elsewhere in the document from double-counting.
+
+    **The displayed figure times 10^`scale`.** Toast's 10-Q cover shows "514"
+    and "64" with `scale="6"` — 514 million Class A, 64 million Class B. Read
+    as written, a director's 3,566 shares became 693.77 % of Class A; the
+    database refused the edge and the whole Toast scrape failed (both
+    rebuilds, 2026-10-26 and -27)."""
     seen: dict[str, float] = {}
-    facts_html = html
     for tag in re.findall(r"<ix:nonFraction[^>]*>", html):
         if 'name="dei:EntityCommonStockSharesOutstanding"' not in tag:
             continue
         ctx = re.search(r'contextRef="([^"]+)"', tag)
         if not ctx:
             continue
-        m = re.search(re.escape(tag) + r"([\d,]+)<", html)
-        if m:
-            try:
-                seen[ctx.group(1)] = float(m.group(1).replace(",", ""))
-            except ValueError:
-                continue
-    return cover_counts(seen, facts_html)
+        m = re.search(re.escape(tag) + r"([\d,]+(?:\.\d+)?)<", html)
+        if not m:
+            continue
+        scale = re.search(r'\bscale="(-?\d+)"', tag)
+        try:
+            seen[ctx.group(1)] = float(m.group(1).replace(",", "")) * 10 ** int(scale.group(1) if scale else 0)
+        except ValueError:
+            continue
+    return seen
 
 
 def cover_counts(facts: dict[str, float], html: str) -> "SharesOutstanding | None":
