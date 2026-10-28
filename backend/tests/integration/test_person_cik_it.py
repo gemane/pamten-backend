@@ -19,9 +19,11 @@ def test_same_cik_different_spellings_resolve_to_one_node(it_db):
 def test_cik_is_stamped_on_a_name_matched_node(it_db):
     first = _upsert_person_by_name("Warren Buffett")                    # no CIK yet
     again = _upsert_person_by_name("Warren Buffett", sec_cik="0000315090")
-    assert first == again, "matched by name"
-    cik = it_db.run_sql("SELECT sec_cik FROM Person WHERE id = :id", {"id": first})[0]["sec_cik"]
-    assert cik == "0000315090", "the CIK was filled in on the existing node"
+    # matched by name, and re-keyed by the CIK it learned (node_ids.key_on_learning)
+    assert again == "sec:0000315090" and first != again
+    rows = it_db.run_sql("SELECT id, sec_cik FROM Person WHERE full_name = 'Warren Buffett'")
+    assert [(r["id"], r["sec_cik"]) for r in rows] == [("sec:0000315090", "0000315090")], \
+        "the CIK was filled in on the existing node, no second person"
 
 
 def test_a_different_cik_is_a_different_person(it_db):
