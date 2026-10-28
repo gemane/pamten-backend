@@ -147,6 +147,37 @@ _PT_PER_UNIT = {"pt": 1.0, "px": 0.75, "in": 72.0, "em": 12.0, "%": 5.0}
 _NBSP_PT = 3.0
 
 
+#: a paragraph break inside a cell (<p>, <div>, <br>) — a private-use character,
+#: so the whitespace collapsing below cannot swallow it
+_PARA = "\ue000"
+
+
+def _split_paragraph_row(cells: list[list[str]]) -> list[list[str]] | None:
+    """Rows when a table row lists several companies, one paragraph each.
+
+    HubSpot (2026) puts ten subsidiaries in ONE row: the name cell holds ten
+    paragraphs, the jurisdiction cell ten more, paired by position. Joined, the
+    row was one subsidiary "HubSpot Australia Pty LtdHubSpot BelgiumHubSpot
+    Canada Inc." in "AustraliaBelgiumCanada", and 14 of its 15 were lost
+    (NexPoint, Cellectis and Environmental Solutions draw the same layout).
+
+    Split only when every non-empty cell has the same number of paragraphs and
+    a later cell's paragraphs — the first excepted, which may be the header
+    (Cellectis: "Name of Subsidiary", then two companies) — all read as
+    jurisdictions. A header broken over two lines is the same shape, so the
+    place test is what keeps Herc's "SUBSIDIARIES OF HERC HOLDINGS INC. / As of
+    December 31, 2025" beside "JURISDICTION OF / INCORPORATION" one row. A name
+    wrapped over two lines beside one jurisdiction (Chubb) is not split either.
+    """
+    filled = [c for c in cells if c]
+    n = len(filled[0]) if filled else 0
+    if n < 2 or len(filled) < 2 or any(len(c) != n for c in filled):
+        return None
+    if not any(all(jurisdiction_country(p) for p in c[1:]) for c in filled[1:]):
+        return None
+    return [[c[i] if c else "" for c in cells] for i in range(n)]
+
+
 def _css_indent(attrs) -> float:
     style = dict(attrs).get("style") or ""
     return sum(float(v) * _PT_PER_UNIT.get((u or "pt").lower(), 1.0)
@@ -179,6 +210,7 @@ class _TableTextParser(HTMLParser):
         self._free: list[str] = []                  # text outside any table
         self._spans: list[tuple[int, int]] = []     # grid columns of the row's cells
         self._colspan = 1
+        self._paras: list[list[str]] = []           # each cell's paragraphs
 
     @property
     def rows(self) -> list[list[str]]:   # flattened view (tests, debugging)
@@ -192,6 +224,7 @@ class _TableTextParser(HTMLParser):
             self._row = []
             self._row_indent = None
             self._spans = []
+            self._paras = []
         elif tag in ("td", "th") and self._row is not None:
             self._cell = []
             self._cell_indent = _css_indent(attrs)
@@ -200,6 +233,8 @@ class _TableTextParser(HTMLParser):
         elif self._cell is not None and not "".join(self._cell).strip():
             # a block or span wrapping the text can carry the indent instead
             self._cell_indent += _css_indent(attrs)
+        elif self._cell is not None and tag in ("p", "div", "br"):
+            self._cell.append(_PARA)
         elif self._table is None and tag in ("p", "div", "br", "hr"):
             self._flush_free()
 
@@ -210,18 +245,24 @@ class _TableTextParser(HTMLParser):
             # whole filler column of U+200B, which is truthy and was taken as
             # the jurisdiction of all 62 subsidiaries.
             raw = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", raw)
-            text = re.sub(r"\s+", " ", raw).strip()
+            # Paragraphs joined by a space: "LLC" + "Landmark" was glued into
+            # one word, and one name ("…, LLCLandmark at West Place, LLC").
+            paras = [p for p in (re.sub(r"\s+", " ", x).strip() for x in raw.split(_PARA)) if p]
+            raw = raw.replace(_PARA, "")
+            text = " ".join(paras)
             if text and self._row_indent is None:
                 lead = len(raw) - len(raw.lstrip())
                 self._row_indent = self._cell_indent + lead * _NBSP_PT
             self._row.append(text)
+            self._paras.append(paras)
             start = self._spans[-1][1] if self._spans else 0
             self._spans.append((start, start + self._colspan))
             self._cell = None
         elif tag == "tr" and self._row is not None:
             if any(self._row):
-                row = _Row(self._row, self._row_indent or 0.0, self._spans)
-                (self._table if self._table is not None else self._orphan()).append(row)
+                target = self._table if self._table is not None else self._orphan()
+                for cells in _split_paragraph_row(self._paras) or [self._row]:
+                    target.append(_Row(cells, self._row_indent or 0.0, self._spans))
             self._row = None
         elif tag == "table" and self._table is not None:
             if self._table:
@@ -904,7 +945,10 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
             data_seen = True
             if _MARKER_CELL.match(name):
                 continue                  # a row number is never a name (Chanson's "13")
-            if _NOISE.match(name) or _NOISE.match(jurisdiction):
+            # "State of Delaware" starts like the header word "State" but is a
+            # place: HubSpot's APIHub, Inc. was dropped as a header row
+            if _NOISE.match(name) or (_NOISE.match(jurisdiction)
+                                      and jurisdiction_country(jurisdiction) is None):
                 continue
             # a jurisdiction is short; a long second column means prose
             if len(jurisdiction) > 60 or len(name) < 2:
