@@ -292,6 +292,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       claims and never lifts a source over a more credible one — and it is never an
       argument for admitting a weaker source: a low grade names the parser to
       improve next (`manage.py quality-report` counts edges per source and grade).
+      **The reader's row carries the grade, not the writer's call.** A writer that
+      passes `row.get("read_from")` writes null when one reader forgets it: the
+      filer-side 13D/G rows (`fetch_filer_holdings`) had none, so the company
+      scrape wrote 681 ungraded edges while `run_sec_holdings` hard-coded `field`
+      for the same rows. A test per reader asserts the key on its rows.
 - [ ] **Display-only extras follow the established conventions.** A website goes through
       `normalize_url` (http(s) only, reject rather than repair — the value becomes an
       `<a href>`); an image becomes a direct `upload.wikimedia.org` thumb via
