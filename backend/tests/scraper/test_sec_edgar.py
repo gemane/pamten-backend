@@ -400,6 +400,37 @@ class TestSearchCompany:
         assert result is None
 
 
+    def test_a_fund_vehicle_is_not_its_sponsor(self):
+        """2026-10-29: the full-text hit for "Baillie Gifford & Co" (the 13F
+        manager, CIK 0001088875) was the proxy of BAILLIE GIFFORD FUNDS, and the
+        manager's node took the funds' CIK. Not found beats a wrong CIK."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"hits": {"hits": [{"_source": {
+            "display_names": ["BAILLIE GIFFORD FUNDS  (CIK 0001120543)"],
+            "ciks": ["1120543"], "adsh": "0001120543-25-000001"}}]}}
+        mock_response.raise_for_status = MagicMock()
+        mock_response.content = b'<feed xmlns="http://www.w3.org/2005/Atom"/>'
+        with patch("app.scraper.sec_edgar._tickers_cache", {}), \
+             patch("app.scraper.sec_edgar.time.sleep"), \
+             patch("app.scraper.sec_edgar._get_client",
+                   return_value=MagicMock(get=MagicMock(return_value=mock_response))):
+            assert search_company("Baillie Gifford & Co") is None
+
+
+class TestFundVehicles:
+    def test_a_fund_word_the_query_lacks_scores_zero(self):
+        from app.scraper.sec_edgar import _name_similarity
+        assert _name_similarity("Baillie Gifford & Co", "BAILLIE GIFFORD FUNDS") == 0.0
+        assert _name_similarity("Blackstone", "Blackstone Private Credit Fund") == 0.0
+        assert _name_similarity("iShares", "iShares Trust") == 0.0
+
+    def test_a_fund_word_the_query_has_is_kept(self):
+        from app.scraper.sec_edgar import _name_similarity
+        assert _name_similarity("Northern Trust", "NORTHERN TRUST CORP") == 1.0
+        assert _name_similarity("Vanguard Funds", "VANGUARD FUNDS") == 1.0
+        assert _name_similarity("Trustmark", "TRUSTMARK CORP") == 1.0     # a word, not a prefix
+
+
 # ── Form 4 share-holding extraction ──────────────────────────────────────────
 
 _FORM4_XML = """<?xml version="1.0"?>

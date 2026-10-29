@@ -385,6 +385,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the issuer's LEI, and one document can be filed under two CIKs. So validate the
       identifier's checksum, take a lone LEI only from a document the filer filed alone,
       and otherwise require the name to label the code. A miss is "unknown", never "different".
+- [ ] **A similarity score cannot tell a sponsor from its vehicle.** "Baillie Gifford & Co"
+      and "BAILLIE GIFFORD FUNDS" score 0.84, and the manager took the funds' CIK. When the
+      extra words in a candidate's name make it another kind of entity (a fund, a trust, a
+      finance subsidiary), reject it on the words, not on a higher threshold — a threshold
+      high enough to drop "Funds" also drops "Goldman Sachs" → "GOLDMAN SACHS GROUP".
 - [ ] **When the source NAMES the register, use the name before any guess.**
       `register_for_name` matches the filer's words against every name GLEIF lists for the
       country's registers (local names, organisation names, sites) — it keys funds and

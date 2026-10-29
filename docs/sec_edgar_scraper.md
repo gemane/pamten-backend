@@ -135,6 +135,17 @@ GET https://efts.sec.gov/LATEST/search-index?q="Company+Name"&forms=10-K
 500 and long timeouts during development. It is only used for CIK lookup (10-K
 and DEF 14A filings), where it is more stable.
 
+**A fund vehicle is not its sponsor.** Every vector scores a candidate with
+`_name_similarity` (≥ 0.55), which is 0 when the candidate's name adds a fund
+word the query lacks (fund(s), trust, ETF(s), portfolio(s)). An asset manager
+files 13F and 13G, never a 10-K or a proxy, so the first full-text hit for its
+name is often its own fund trust's: "Baillie Gifford & Co" (CIK 0001088875)
+matched the DEF 14A of BAILLIE GIFFORD FUNDS (CIK 0001120543) at 0.84, and the
+manager's node carried the funds' CIK until the 2026-10-29 rebuild. Now the
+search answers "not found", and the manager's CIK comes from its own 13F
+filings. A query that names the vehicle ("Vanguard Funds") still finds it;
+"iShares" no longer finds iShares Trust.
+
 ---
 
 ## Large Shareholders — SC 13D / SC 13G
