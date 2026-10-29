@@ -77,6 +77,30 @@ CIK, and `lei_source_url` keeps the filing. Without it the write minted a twin k
 `gb-coh:00041424` (LEI 549300MKFYEKVRWML317, country NL) beside EDGAR's UNILEVER PLC
 (CIK 0000217410, GB). The country kept the name match apart, and no hard id joined them.
 
+**A name alone carries no CIK onto a node (2026-10-29).** When the upsert finds
+the node by its name (exact, by name key, or by a name prefix) rather than by an
+id, the write's CIK goes onto it only if (`graph_writer._not_this_filer`):
+
+- the node carries no other CIK or LEI — before, the `SET` replaced it;
+- EDGAR's **current** name for the CIK is one of the node's names (its name or
+  GLEIF's other names), compared on `_name_key`: legal forms, "the", accents,
+  punctuation and EDGAR's "/DE/" tags dropped, every other word kept — "The
+  Coca-Cola Company" and "COCA COLA CO" agree, "BlackRock" and "BlackRock
+  Finance" do not. A filer write with `register_name` holds EDGAR's name
+  already; any other write fetches it once per CIK, since the next write finds
+  the node by that CIK. When EDGAR cannot say, the name match stands.
+
+Otherwise the write takes a node of its own, keyed `sec:{cik}`. A filing spells
+the name its filer had **then**: BlackRock's pre-2024 13G filings say "BlackRock
+Inc." under CIK 0001364742 — the old parent, now "BlackRock Finance, Inc." — and
+that spelling found GLEIF's node of the 2024 parent "BlackRock, Inc.", which took
+the old CIK and then EDGAR's name for it, while the new parent's own filings drew
+`sec:0002012383` beside it (2026-10-29 rebuild: 179 and 325 edges; about 112
+subsidiaries drawn twice, GLEIF's RR edges on one node and the 10-K's Exhibit 21
+on the other). The prefix match failed the same way: "Tencent Music Entertainment
+Group" begins with the word "Tencent", and Wikidata's node "Tencent" took Tencent
+Music's CIK.
+
 How the check works:
 
 1. One full-text search, `"{LEI}"` filtered to the CIK (`efts …/search-index?q=…&ciks=…`).

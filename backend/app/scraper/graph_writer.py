@@ -12,6 +12,8 @@ writers live in `sec_writer.py`; orchestration stays in `runner.py`, which
 re-exports these names for compatibility.
 """
 import contextvars
+import re
+import unicodedata
 import functools
 from datetime import datetime, timezone
 
@@ -747,6 +749,62 @@ def _resolve_by_name(session, name: str, name_norm: str, country: str | None) ->
     return None
 
 
+_STATE_TAG = re.compile(r"\s*/[a-z]{0,6}/?\s*$")       # EDGAR's "/DE/", "/NEW/", a bare "/"
+_NAME_FORMS = frozenset({"the", "inc", "incorporated", "corp", "corporation", "co", "company",
+                         "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se"})
+
+
+def _name_key(name: str) -> tuple[str, ...]:
+    """Two spellings of one name agree on this key: GLEIF's "The Coca-Cola
+    Company" and EDGAR's "COCA COLA CO", "Amazon.com, Inc." and "AMAZON COM
+    INC", "Bank of America Corporation" and "BANK OF AMERICA CORP /DE/". Words
+    stay words, so "BlackRock" and "BlackRock Finance" do not."""
+    plain = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode().lower()
+    plain = _STATE_TAG.sub("", plain)
+    return tuple(w for w in re.split(r"[^a-z0-9&]+", plain) if w and w not in _NAME_FORMS)
+
+
+def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
+                    edgar_name: str | None) -> str | None:
+    """Why the node a NAME found is not the company the write's CIK or LEI
+    belongs to, or None. Two reasons:
+
+    - it carries another CIK or LEI — a register id is the company, a name is
+      not, and the SET below would have overwritten it;
+    - EDGAR's current name for the CIK is not one of the node's names. A
+      filing spells the name its filer had THEN: BlackRock's pre-2024 13G
+      filings say "BlackRock Inc." under CIK 0001364742, the old parent EDGAR
+      now names "BlackRock Finance, Inc.", and that spelling found the GLEIF
+      node of the 2024 parent "BlackRock, Inc." — the node took the old CIK and
+      then EDGAR's name for it, and the new parent's own filings drew a second
+      node (2026-10-29 rebuild). The prefix match below fails the same way:
+      "Tencent Music Entertainment Group" starts with the word "Tencent", and
+      Wikidata's node "Tencent" took Tencent Music's CIK.
+
+    ``edgar_name`` is EDGAR's name when the caller holds it (``register_name``);
+    otherwise it is fetched — once per CIK, since the next write finds the node
+    by the CIK. When EDGAR cannot say, the name match stands."""
+    rec = session.run("MATCH (e:Entity {id: $id}) RETURN e.name AS name, e.other_names AS other, "
+                      "e.sec_cik AS cik, e.lei_id AS lei", id=entity_id).single()
+    if not rec:
+        return None
+    if cik and rec.get("cik") and rec["cik"] != cik:
+        return f"it carries CIK {rec['cik']}"
+    if lei and rec.get("lei") and rec["lei"] != lei:
+        return f"it carries LEI {rec['lei']}"
+    if not cik:
+        return None
+    if not edgar_name:
+        from app.scraper.sec_edgar import fetch_filer_name
+        edgar_name = fetch_filer_name(cik)
+    if not edgar_name:
+        return None
+    names = {_name_key(n) for n in [rec.get("name"), *(rec.get("other") or [])] if n}
+    if _name_key(edgar_name) in names:
+        return None
+    return f"EDGAR names CIK {cik} {edgar_name!r}"
+
+
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None,
                             source_id: str | None = None,
@@ -804,8 +862,14 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         # filings confirm, `sec_lei`) finds the GLEIF node whatever its name
         # or country says — without it the write minted a twin of that node
         entity_id = (resolve_entity_id(session, sec_cik=cik) if cik else None) \
-            or (resolve_entity_id(session, lei_id=lei) if lei else None) \
-            or _resolve_by_name(session, name, name_norm, country)
+            or (resolve_entity_id(session, lei_id=lei) if lei else None)
+        edgar_name = name if register_name else None
+        if not entity_id:
+            entity_id = _resolve_by_name(session, name, name_norm, country)
+            if entity_id and (cik or lei) and (why := _not_this_filer(session, entity_id, cik, lei, edgar_name)):
+                log.info("%r (CIK %s, LEI %s) matched %s by name only, and %s — not that node",
+                         name, cik, lei, entity_id, why)
+                entity_id = None
         if not entity_id and cik:
             # The prefix must end on a WORD boundary, and the candidate must not
             # already belong to a different filer.
@@ -829,6 +893,10 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 name_norm=name_norm, cik=cik,
             ).single()
             entity_id = rec["id"] if rec else None
+            if entity_id and (why := _not_this_filer(session, entity_id, cik, lei, edgar_name)):
+                log.info("%r (CIK %s) matched %s by a name prefix, and %s — not that node",
+                         name, cik, entity_id, why)
+                entity_id = None
 
         if entity_id:
             # Stamp the ids onto the existing entity. Its name changes only for
