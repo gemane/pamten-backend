@@ -383,6 +383,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       fetches by that id; the name search is the fallback. The SEC scrape searched by name
       only and missed SpaceX (a trade name) and Nestlé (no 10-K/20-F) although both nodes held
       the right CIK (2026-10-27); Exhibit 21, acquisitions and 13F already read by the number.
+- [ ] **A name in a filing is the name its filer had then.** A writer that joins an id to
+      a node by name must check the id's register name **now**: BlackRock's pre-2024 13G
+      filings name "BlackRock Inc." under the old parent's CIK, and the GLEIF node of the
+      2024 parent took that CIK (2026-10-29). Compare on words, not on a similarity score
+      (`graph_writer._name_key`), never overwrite an id the node already carries, and
+      apply the same check to every fallback match (a name prefix took Tencent Music's CIK
+      onto "Tencent").
 - [ ] **When only a name proposes a pair, let the source's own documents settle it — and
       read them.** An LEI-only node and a CIK-only filer of one name share no hard id; the
       filer's own filings stating the LEI do (`sec_lei`, 2026-10-27). A search hit says only
