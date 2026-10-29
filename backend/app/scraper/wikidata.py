@@ -918,6 +918,20 @@ def normalize_url(raw: str | None) -> str | None:
 from app.scraper.mapper import normalize_cik  # noqa: E402,F401 — moved to the mapper (2026-10-26); kept for callers
 
 
+def _add_ids(entry: dict, lei_raw: str | None, cik_raw: str | None) -> None:
+    """Collect every LEI and CIK an item states, not just the first. An item
+    is an organisation and can state several legal entities' ids — Google two
+    CIKs, Barclays and Unilever two LEIs — and the writer tests a node's own id
+    against all of them (`register_pointer.contradiction`); `lei` / `sec_cik`
+    keep the first, the pointer the runner follows."""
+    for key, single, value in (("leis", "lei", normalize_lei(lei_raw)),
+                               ("sec_ciks", "sec_cik", normalize_cik(cik_raw))):
+        if value and value not in entry.setdefault(key, []):
+            entry[key].append(value)
+            if entry.get(single) is None:
+                entry[single] = value
+
+
 def _aggregate(qid: str, rows: list) -> dict | None:
     if not rows:
         return None
@@ -931,8 +945,10 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         "founded":     None,
         "dissolved_on": None,  # P576 — the day the entity ceased, at the statement's precision
         "revenue":     None,
-        "lei":         None,   # P1278 — bridges to a GLEIF node's lei_id
-        "sec_cik":     None,   # P5531 — bridges to a SEC EDGAR node's sec_cik
+        "lei":         None,   # P1278 — a pointer to the GLEIF record (register_pointer)
+        "sec_cik":     None,   # P5531 — a pointer to the EDGAR filer
+        "leis":        [],     # every P1278 the item states
+        "sec_ciks":    [],     # every P5531
         "website":     None,   # P856 — the company's official site
         "logo_url":    None,   # P154 (P18 fallback) → direct upload.wikimedia.org thumb
         "_depiction":  None,   # P18, promoted only when no P154 exists
@@ -970,10 +986,7 @@ def _aggregate(qid: str, rows: list) -> dict | None:
         # Identifiers can arrive on any row (they are OPTIONAL joins in the core
         # query, so an early row may have them null while a later one carries the
         # value) — read them outside the set-once block above, first non-null wins.
-        if result["lei"] is None:
-            result["lei"] = normalize_lei(_v(row, "lei"))
-        if result["sec_cik"] is None:
-            result["sec_cik"] = normalize_cik(_v(row, "cik"))
+        _add_ids(result, _v(row, "lei"), _v(row, "cik"))
         # Shortest valid URL wins, not first-seen: the subselect in the core
         # query already returns one row, but rows from a cache or an older
         # query shape may still carry the full storefront list — and among
@@ -1016,9 +1029,11 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     "qid":       sub_qid,
                     "name":      _label(row, "subsidiaryLabel"),
                     "instances": set(),
-                    "lei":       normalize_lei(_v(row, "subsidiaryLei")),
-                    "sec_cik":   normalize_cik(_v(row, "subsidiaryCik")),
+                    "lei":       None,
+                    "sec_cik":   None,
                 }
+            if sub_qid:
+                _add_ids(result["subsidiaries"][sub_qid], _v(row, "subsidiaryLei"), _v(row, "subsidiaryCik"))
             if sub_inst := _v(row, "subsidiaryInstance"):
                 result["subsidiaries"][sub_qid]["instances"].add(_qid(sub_inst))
             if sub_qid:
@@ -1036,17 +1051,17 @@ def _aggregate(qid: str, rows: list) -> dict | None:
             if succ_qid and succ_qid not in result["successors"]:
                 result["successors"][succ_qid] = {
                     "qid": succ_qid, "name": _label(row, "successorLabel"),
-                    "date": _date(row, "successorDate"),
-                    "lei": normalize_lei(_v(row, "successorLei")),
-                    "sec_cik": normalize_cik(_v(row, "successorCik"))}
+                    "date": _date(row, "successorDate"), "lei": None, "sec_cik": None}
+            if succ_qid:
+                _add_ids(result["successors"][succ_qid], _v(row, "successorLei"), _v(row, "successorCik"))
         if pred_uri := _v(row, "predecessor"):
             pred_qid = _qid(pred_uri)
             if pred_qid and pred_qid not in result["predecessors"]:
                 result["predecessors"][pred_qid] = {
                     "qid": pred_qid, "name": _label(row, "predecessorLabel"),
-                    "date": _date(row, "predecessorDate"),
-                    "lei": normalize_lei(_v(row, "predecessorLei")),
-                    "sec_cik": normalize_cik(_v(row, "predecessorCik"))}
+                    "date": _date(row, "predecessorDate"), "lei": None, "sec_cik": None}
+            if pred_qid:
+                _add_ids(result["predecessors"][pred_qid], _v(row, "predecessorLei"), _v(row, "predecessorCik"))
 
         # CEO (keyed by qid+since to capture multiple tenures)
         if ceo_uri := _v(row, "ceo"):
@@ -1092,9 +1107,11 @@ def _aggregate(qid: str, rows: list) -> dict | None:
                     "qid":       owner_qid,
                     "label":     _label(row, "ownerLabel"),
                     "instances": set(),
-                    "lei":       normalize_lei(_v(row, "ownerLei")),
-                    "sec_cik":   normalize_cik(_v(row, "ownerCik")),
+                    "lei":       None,
+                    "sec_cik":   None,
                 }
+            if owner_qid:
+                _add_ids(result["owners"][owner_qid], _v(row, "ownerLei"), _v(row, "ownerCik"))
             if owner_inst := _v(row, "ownerInstance"):
                 result["owners"][owner_qid]["instances"].add(_qid(owner_inst))
             if owner_qid:

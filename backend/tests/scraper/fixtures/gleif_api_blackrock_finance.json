@@ -1,0 +1,91 @@
+{
+ "data": {
+  "type": "lei-records",
+  "id": "549300LRIF3NWCU26A80",
+  "attributes": {
+   "lei": "549300LRIF3NWCU26A80",
+   "entity": {
+    "legalName": {
+     "name": "BlackRock Finance, Inc.",
+     "language": "en"
+    },
+    "otherNames": [
+     {
+      "name": "BLACKROCK, INC.",
+      "language": "en",
+      "type": "PREVIOUS_LEGAL_NAME"
+     }
+    ],
+    "transliteratedOtherNames": [],
+    "legalAddress": {
+     "language": "en",
+     "addressLines": [
+      "c/o CORPORATION SERVICE COMPANY, 251 LITTLE FALLS DRIVE"
+     ],
+     "addressNumber": null,
+     "addressNumberWithinBuilding": null,
+     "mailRouting": null,
+     "city": "WILMINGTON",
+     "region": "US-DE",
+     "country": "US",
+     "postalCode": "19808"
+    },
+    "headquartersAddress": {
+     "language": "en",
+     "addressLines": [
+      "50 HUDSON YARDS"
+     ],
+     "addressNumber": null,
+     "addressNumberWithinBuilding": null,
+     "mailRouting": null,
+     "city": "New York",
+     "region": "US-NY",
+     "country": "US",
+     "postalCode": "10001"
+    },
+    "registeredAt": {
+     "id": "RA000602",
+     "other": null
+    },
+    "registeredAs": "4109022",
+    "jurisdiction": "US-DE",
+    "category": "GENERAL",
+    "legalForm": {
+     "id": "XTIQ",
+     "other": null
+    },
+    "associatedEntity": {
+     "lei": null,
+     "name": null
+    },
+    "status": "ACTIVE",
+    "expiration": {
+     "date": null,
+     "reason": null
+    },
+    "successorEntity": {
+     "lei": null,
+     "name": null
+    },
+    "successorEntities": [],
+    "creationDate": "2006-02-12T23:00:00Z",
+    "subCategory": null,
+    "otherAddresses": []
+   },
+   "registration": {
+    "initialRegistrationDate": "2014-02-20T01:35:00Z",
+    "lastUpdateDate": "2026-10-28T12:32:27Z",
+    "status": "ISSUED",
+    "nextRenewalDate": "2027-11-23T10:56:40Z",
+    "managingLou": "5299000J2N45DDNE4Y28",
+    "corroborationLevel": "FULLY_CORROBORATED",
+    "validatedAt": {
+     "id": "RA000602",
+     "other": null
+    },
+    "validatedAs": "4109022",
+    "otherValidationAuthorities": []
+   }
+  }
+ }
+}

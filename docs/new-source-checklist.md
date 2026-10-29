@@ -189,6 +189,15 @@ parser. Anything that does not map is either a new property (document it) or noi
       Companies House state for UNILEVER PLC. A crowd-edited source enriches with what
       no register states (description, employees, revenue, logo, website) and never
       outranks a register on a fact the register owns.
+- [ ] **A knowledge base writes no hard id either — its ids are a pointer.** Wikidata's
+      LEI and CIK find the register node and, where the graph lacks the company, the
+      register writes it (`app.scraper.register_pointer`: GLEIF's API, EDGAR's
+      submissions). An item is an organisation, not a legal entity: BlackRock's still
+      states the pre-2024 parent's CIK, the writer stamped it on the listed BlackRock
+      (2026-10-28 rebuild), and the SEC name for that CIK renamed it "BlackRock Finance,
+      Inc." while its own filings drew a second node. A node whose register id the
+      source's ids contradict gets nothing from that source; test against **every** id
+      the source states (Google's item has two CIKs, Barclays' and Unilever's two LEIs).
 - [ ] **Keep the finest grain the source states — do not collapse it to the country.**
       Exhibit 21 states "Florida, USA"; storing only `country: US` threw Florida away, and
       a subsidiary's panel showed "United States" with no real location (the reported bug).
