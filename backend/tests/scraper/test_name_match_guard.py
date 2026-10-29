@@ -52,6 +52,12 @@ class TestNotThisFiler:
                 == f"it carries LEI {'B' * 20}"
         fetch.assert_not_called()
 
+    def test_the_same_id_in_another_spelling_is_the_same(self):
+        # a bare CIK stored before 2026-10-26, a lower-case LEI
+        assert _not_this_filer(_session(name="Meta Platforms, Inc.", cik="1326801"), "n",
+                               "0001326801", None, "META PLATFORMS INC") is None
+        assert _not_this_filer(_session(lei="a" * 20), "n", None, "A" * 20, None) is None
+
     def test_an_lei_alone_asks_edgar_nothing(self):
         with patch("app.scraper.sec_edgar.fetch_filer_name") as fetch:
             assert _not_this_filer(_session(name="X"), "n", None, "A" * 20, None) is None

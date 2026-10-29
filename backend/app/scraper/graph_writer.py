@@ -788,9 +788,9 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
                       "e.sec_cik AS cik, e.lei_id AS lei", id=entity_id).single()
     if not rec:
         return None
-    if cik and rec.get("cik") and rec["cik"] != cik:
+    if cik and rec.get("cik") and normalize_cik(rec["cik"]) != cik:
         return f"it carries CIK {rec['cik']}"
-    if lei and rec.get("lei") and rec["lei"] != lei:
+    if lei and rec.get("lei") and rec["lei"].strip().upper() != lei.strip().upper():
         return f"it carries LEI {rec['lei']}"
     if not cik:
         return None
