@@ -44,19 +44,26 @@ def _sec_scrape():
 
 
 def _wikidata():
+    # the item's CIK is a pointer: EDGAR writes the filer (register_pointer)
+    from app.scraper import sec_edgar
     from app.scraper.runner import _upsert_entity
-    return _upsert_entity("Molson Coors Brewing Company", None, None, "", "Q3319685",
-                          source_id="wikidata", sec_cik=CIK, aliases=["Molson Coors"])
+    with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
+         patch.object(sec_edgar, "_submissions", return_value={"name": "MOLSON COORS BEVERAGE CO"}):
+        return _upsert_entity("Molson Coors Brewing Company", None, None, "", "Q3319685",
+                              source_id="wikidata", sec_cik=CIK, aliases=["Molson Coors"])
 
 
 def test_wikidata_first_then_the_filer_takes_edgars_name(it_db):
     _wikidata()
-    assert _node()["name"] == "Molson Coors Brewing Company"
+    # EDGAR wrote the node the item points at, under its own name
+    assert (_node()["name"], _node()["name_credibility"]) == ("MOLSON COORS BEVERAGE CO", 98)
     _sec_scrape()
     n = _node()
     assert (n["name"], n["name_credibility"]) == ("MOLSON COORS BEVERAGE CO", 98)
     assert n["name_normalized"] != "molson coors brewing"
-    assert "Molson Coors Brewing Company" in n["aliases"]           # still found by the old label
+    # Wikidata's label never named the node; it stays searchable
+    [row] = run_sql("SELECT search_text FROM Entity WHERE sec_cik = :c", {"c": CIK})
+    assert "Molson Coors Brewing Company" in row["search_text"]
 
 
 def test_edgar_first_then_wikidata_leaves_edgars_name(it_db):
@@ -68,7 +75,8 @@ def test_edgar_first_then_wikidata_leaves_edgars_name(it_db):
 def test_a_name_another_filing_spells_never_renames(it_db):
     """A 13D party, an Exhibit 21 row: the filer's spelling of someone else."""
     from app.scraper.graph_writer import _upsert_entity_by_name
-    _wikidata()
+    run_sql("INSERT INTO Entity SET id = 'wd:Q3319685', name = 'Molson Coors Brewing Company', "
+            "name_normalized = 'molson coors brewing', name_credibility = 80, sec_cik = :c", {"c": CIK})
     _upsert_entity_by_name("Molson Coors Beverage Co", cik=CIK, source_id="sec-edgar")
     assert _node()["name"] == "Molson Coors Brewing Company"
 

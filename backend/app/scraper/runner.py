@@ -211,15 +211,32 @@ def _upsert_entity(
     aliases: list[str] | None = None,
     source_id: str | None = None,
     credibility_score: int = 80,
-    lei: str | None = None,                  # P1278 — bridge to a GLEIF node
-    sec_cik: str | None = None,              # P5531 — bridge to a SEC EDGAR node
+    lei: str | list[str] | None = None,      # P1278 — a pointer, never written (register_pointer)
+    sec_cik: str | list[str] | None = None,  # P5531 — a pointer, never written
     website: str | None = None,              # P856 — official site (display only)
     logo_url: str | None = None,             # P154/P18 → direct Commons thumb (display only)
     dissolved_on: str | None = None,         # P576 — the day the entity ceased (app.dissolution)
-) -> str:
+    register_required: bool = False,
+) -> str | None:
     """
-    Find entity by wikidata_id or name, update it if found, create if not.
-    Returns the entity's internal id.
+    Find entity by wikidata_id, the item's stated ids or name, update it if
+    found, create if not. Returns the entity's internal id — or None when it
+    writes nothing: the node found holds a register id the item contradicts,
+    or (``register_required``, a related company) the item points at no
+    register that knows it.
+
+    **Wikidata writes no hard id** (2026-10-29). ``lei`` / ``sec_cik`` (one
+    value or every value the item states) find the node, and a register writes
+    a node the graph lacks (`register_pointer.write_from_pointer`) — never this
+    writer, which keyed it `lei:` from Wikidata's word and COALESCE-filled a
+    node found by name with the item's ids. An item is an organisation, not a
+    legal entity: BlackRock's Q219635 still states the pre-2024 parent's CIK,
+    and the listed BlackRock carried it, was renamed after it and lost its own
+    filings to a second node. A node whose register LEI or CIK is not among
+    the item's is another legal entity than the item describes, and nothing
+    is written onto it (`register_pointer.contradiction`; it is logged). An
+    item without ids, or one no register knows, creates a `wd:` node — the
+    searched company only; a related one is skipped.
 
     ``source_id`` (the Wikidata Source node) is stamped onto the entity so its
     own provenance shows in the node panel. It only *fills* a missing value
@@ -236,8 +253,10 @@ def _upsert_entity(
     Wikidata creates carries the default type "company" and no country until
     a register fills them.
     """
+    from app.scraper import register_pointer
     name_norm = normalize_entity_name(name)
-    sec_cik = normalize_cik(sec_cik)           # the 10-digit form, as every CIK is stored and looked up
+    leis = [x for x in ([lei] if isinstance(lei, str) else lei or []) if x]
+    ciks = [c for c in (normalize_cik(x) for x in ([sec_cik] if isinstance(sec_cik, str) else sec_cik or [])) if c]
     # FULL_TEXT search field (name + description + aliases), so scraped entities
     # are findable via /search — same content as manage.py backfill-search. The
     # BODS importer sets this inline too; the Wikidata scraper must as well or the
@@ -246,18 +265,28 @@ def _upsert_entity(
         name, description or "", " ".join(aliases or [])) if p).strip()
     with db.get_session() as session:
         # Sequential indexed lookups — an OR across these fields full-scans the
-        # Entity type on ArcadeDB (see app.entity_resolution).
-        # lei_id / sec_cik are checked ahead of the name (see _RESOLVE_FIELDS), so
-        # a company Wikidata knows the LEI for attaches to its existing GLEIF node
-        # instead of becoming a second copy of it. That is the duplicate this
-        # bridge is meant to stop being created in the first place; already-split
-        # pairs still need the dedup pass to merge them.
-        entity_id = resolve_entity_id(
-            session, wikidata_id=wikidata_id, sec_cik=sec_cik, lei_id=lei,
-            name=name, name_normalized=name_norm,
-        )
-
+        # Entity type on ArcadeDB (see app.entity_resolution). The item's
+        # stated ids come ahead of the name, so a company Wikidata knows the
+        # LEI for attaches to its existing GLEIF node instead of becoming a
+        # second copy of it.
+        entity_id = (resolve_entity_id(session, wikidata_id=wikidata_id)
+                     or next((i for i in (resolve_entity_id(session, sec_cik=c) for c in ciks) if i), None)
+                     or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None)
+                     or resolve_entity_id(session, name=name, name_normalized=name_norm))
+    if not entity_id and (leis or ciks):
+        entity_id = register_pointer.write_from_pointer(leis, ciks)
+    if not entity_id and register_required:
+        log.info("Wikidata: %s (%s) points at no register that knows it — not written", name, wikidata_id)
+        return None
+    with db.get_session() as session:
         if entity_id:
+            held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik",
+                               id=entity_id).single()
+            why = register_pointer.contradiction({"lei_id": held.get("lei_id"), "sec_cik": held.get("sec_cik")} if held else {}, leis, ciks)
+            if why:
+                log.warning("Wikidata: %s (%s) is not the legal entity of %s — %s; nothing written",
+                            name, wikidata_id, entity_id, why)
+                return None
             # search_text / name_normalized must derive from the name that WINS
             # the credibility contest below, not from the incoming one: Wikidata
             # enriching a GLEIF company must not evict the legal name from the
@@ -279,17 +308,14 @@ def _upsert_entity(
                 name_norm = normalize_entity_name(kept_name)
             # founded only moves EARLIER: time travel hides a company before
             # it, and a later year from Wikidata replaced an earlier one.
-            # lei_id / sec_cik use COALESCE(existing, new): a register (GLEIF/SEC)
-            # is authoritative for its own identifier and Wikidata is crowd-edited,
-            # so only fill a gap — a clobbered lei_id would re-point a merge key at
-            # the wrong company. NB: comments must stay OUT of the query string;
-            # ArcadeDB's Cypher parser rejects `--` and fails the whole statement.
+            # No lei_id / sec_cik: a hard id comes from its register only
+            # (see the docstring). NB: comments must stay OUT of the query
+            # string; ArcadeDB's Cypher parser rejects `--` and fails the
+            # whole statement.
             session.run(
                 """
                 MATCH (e:Entity {id: $id})
                 SET e.wikidata_id     = $wid,
-                    e.lei_id          = COALESCE(e.lei_id, $lei),
-                    e.sec_cik         = COALESCE(e.sec_cik, $sec_cik),
                     e.founded         = CASE WHEN $founded IS NOT NULL AND (e.founded IS NULL OR $founded < e.founded) THEN $founded ELSE e.founded END,
                     e.revenue         = COALESCE($revenue, e.revenue),
                     e.employees       = COALESCE($employees, e.employees),
@@ -309,7 +335,6 @@ def _upsert_entity(
                 id=entity_id,
                 name=name,
                 wid=wikidata_id,
-                lei=lei, sec_cik=sec_cik,
                 source_id=source_id,
                 founded=founded,
                 revenue=revenue,
@@ -327,9 +352,9 @@ def _upsert_entity(
                 end_at_dissolution(entity_id)      # nothing of a dissolved company stays open
             return _record_touched_entity(entity_id)
 
-        # keyed by the best hard id it arrives with (app.node_ids): the LEI,
-        # else the Wikidata item, else the CIK — a uuid only without any
-        entity_id = mint_node_id(lei=lei, wikidata_id=wikidata_id, sec_cik=sec_cik)
+        # keyed by the Wikidata item (app.node_ids): the only id this writer
+        # has of its own — no register knew the item's ids, or it states none
+        entity_id = mint_node_id(wikidata_id=wikidata_id)
         session.run(
             """
             CREATE (e:Entity {
@@ -339,7 +364,7 @@ def _upsert_entity(
                 type: 'company', founded: $founded,
                 revenue: $revenue, employees: $employees, employees_as_of: $employees_as_of,
                 description: $desc,
-                wikidata_id: $wid, lei_id: $lei, sec_cik: $sec_cik,
+                wikidata_id: $wid,
                 source_id: $source_id,
                 is_nominee: $is_nominee,
                 aliases: $aliases,
@@ -358,7 +383,6 @@ def _upsert_entity(
             employees=employees, employees_as_of=employees_as_of,
             desc=description,
             wid=wikidata_id,
-            lei=lei, sec_cik=sec_cik,
             source_id=source_id,
             is_nominee=is_nominee_name(name),
             aliases=aliases or [],
@@ -482,22 +506,35 @@ def _upsert_person(
 def _resolve_related_company(rel: dict) -> str | None | bool:
     """Decide whether a Wikidata-related COMPANY may be written.
 
-    Returns an existing node id (write the edge to it), None (proceed to
-    create — it carries a hard id, so a future source can merge it), or
-    False (SKIP — no existing node, no LEI/CIK, so creating it would mint an
-    unidentifiable orphan that only clutters search and dedup, the litter the
-    depth-2 pass produced for Samsung's subsidiaries).
+    Returns an existing node id (write the edge to it), None (proceed: the
+    item points at a register, which writes the node — `_upsert_entity` with
+    ``register_required``), or False (SKIP — no existing node, no LEI/CIK, so
+    creating it would mint an unidentifiable orphan that only clutters search
+    and dedup, the litter the depth-2 pass produced for Samsung's
+    subsidiaries; or the node found holds a register id the item contradicts,
+    `register_pointer.contradiction`).
 
     People are never routed here — Wikidata's coverage of people is a strength
     and person dedup handles them; only company nodes are gated."""
     from app.database import db
-    lei, cik, wd = rel.get("lei"), rel.get("sec_cik"), rel.get("qid")
+    from app.scraper.register_pointer import contradiction
+    leis = rel.get("leis") or [x for x in [rel.get("lei")] if x]
+    ciks = rel.get("sec_ciks") or [x for x in [rel.get("sec_cik")] if x]
     with db.get_session() as session:
-        existing = resolve_entity_id(session, lei_id=lei, sec_cik=cik,
-                                     wikidata_id=wd)
+        existing = (resolve_entity_id(session, wikidata_id=rel.get("qid"))
+                    or next((i for i in (resolve_entity_id(session, sec_cik=c) for c in ciks) if i), None)
+                    or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None))
+        if existing:
+            held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik",
+                               id=existing).single()
+            why = contradiction({"lei_id": held.get("lei_id"), "sec_cik": held.get("sec_cik")} if held else {}, leis, ciks)
+            if why:
+                log.warning("Wikidata: related %s (%s) is not the legal entity of %s — %s; skipped",
+                            rel.get("name") or rel.get("label"), rel.get("qid"), existing, why)
+                return False
     if existing:
         return existing
-    return None if (lei or cik) else False
+    return None if (leis or ciks) else False
 
 
 def _scrape_node(
@@ -509,9 +546,10 @@ def _scrape_node(
     parent_entity_id: str | None = None,
     counts: dict | None = None,
 ):
-    # `counts` accumulates hygiene stats across the recursion (currently just
-    # skipped_unidentified — related companies with no id and no existing node,
-    # not written). Created once by the top call, threaded down.
+    # `counts` accumulates hygiene stats across the recursion: skipped_unidentified
+    # (related companies with no existing node and no id a register knows, not
+    # written) and conflicts (an item whose ids a node's register ids contradict,
+    # register_pointer.contradiction). Created once by the top call, threaded down.
     if counts is None:
         counts = {}
     if qid in visited:
@@ -546,10 +584,15 @@ def _scrape_node(
         dissolved_on=data.get("dissolved_on"),
         employees_as_of=data.get("employees_as_of"),
         aliases=data.get("aliases", []),
-        lei=data.get("lei"),
-        sec_cik=data.get("sec_cik"),
+        lei=data.get("leis") or data.get("lei"),
+        sec_cik=data.get("sec_ciks") or data.get("sec_cik"),
         source_id=source_id,
     )
+    if entity_id is None:
+        # the node found is another legal entity than the item's ids describe:
+        # nothing of the item is written (register_pointer.contradiction)
+        counts["conflicts"] = counts.get("conflicts", 0) + 1
+        return
     scraped.append({
         "qid":  qid,
         "id":   entity_id,
@@ -574,13 +617,17 @@ def _scrape_node(
         # (_resolve_related_company), and that register states it.
         sub_id = gate or _upsert_entity(
             name=sub_name,
-            lei=sub.get("lei"), sec_cik=sub.get("sec_cik"),
+            lei=sub.get("leis") or sub.get("lei"), sec_cik=sub.get("sec_ciks") or sub.get("sec_cik"),
             founded=None,
             revenue=None,
             description=None,
             wikidata_id=sub["qid"],
             source_id=source_id,
+            register_required=True,
         )
+        if sub_id is None:
+            counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+            continue
         _upsert_owns(entity_id, sub_id, source_id,
                      source_url=_wikidata_url(sub["qid"]),
                      since=sub.get("since"), until=sub.get("until"),
@@ -670,11 +717,15 @@ def _scrape_node(
                 continue
             owner_id = gate or _upsert_entity(
                 name=owner["label"],
-                lei=owner.get("lei"), sec_cik=owner.get("sec_cik"),
+                lei=owner.get("leis") or owner.get("lei"), sec_cik=owner.get("sec_ciks") or owner.get("sec_cik"),
                 founded=None, revenue=None, description=None,
                 wikidata_id=owner["qid"],
                 source_id=source_id,
+                register_required=True,
             )
+            if owner_id is None:
+                counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+                continue
             owner_label = "Entity"
         _upsert_owns(owner_id, entity_id, source_id, source_url=_wikidata_url(qid),
                      owner_label=owner_label,
@@ -693,9 +744,12 @@ def _scrape_node(
             continue
         succ_id = gate or _upsert_entity(
             name=succ["name"], founded=None, revenue=None, description=None,
-            wikidata_id=succ["qid"], lei=succ.get("lei"),
-            sec_cik=succ.get("sec_cik"), source_id=source_id,
+            wikidata_id=succ["qid"], lei=succ.get("leis") or succ.get("lei"),
+            sec_cik=succ.get("sec_ciks") or succ.get("sec_cik"), source_id=source_id, register_required=True,
         )
+        if succ_id is None:
+            counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+            continue
         _upsert_succession(entity_id, succ_id, source_id, since=succ.get("date"),
                            source_url=_wikidata_url(qid))
     for pred in data.get("predecessors", []):
@@ -707,9 +761,12 @@ def _scrape_node(
             continue
         pred_id = gate or _upsert_entity(
             name=pred["name"], founded=None, revenue=None, description=None,
-            wikidata_id=pred["qid"], lei=pred.get("lei"),
-            sec_cik=pred.get("sec_cik"), source_id=source_id,
+            wikidata_id=pred["qid"], lei=pred.get("leis") or pred.get("lei"),
+            sec_cik=pred.get("sec_ciks") or pred.get("sec_cik"), source_id=source_id, register_required=True,
         )
+        if pred_id is None:
+            counts["skipped_unidentified"] = counts.get("skipped_unidentified", 0) + 1
+            continue
         _upsert_succession(pred_id, entity_id, source_id, since=pred.get("date"),
                            source_url=_wikidata_url(qid))
 
@@ -778,13 +835,16 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
         set_scrape_target(target_id, depth)
 
     return {
-        "status":      "ok",
+        # `conflict`: the searched item's ids contradict the node it found, and
+        # nothing of it was written (the target is the first node visited)
+        "status":      "conflict" if target_id is None and counts.get("conflicts") else "ok",
         "query":       query,
         "wikidata_id": qid,
         "entity_id":   target_id,
         "total":       len(scraped),
         "scraped":     scraped,
         "skipped_unidentified": counts.get("skipped_unidentified", 0),
+        "conflicts":   counts.get("conflicts", 0),
     }
 
 

@@ -19,37 +19,47 @@ pytestmark = pytest.mark.integration
 # ── The Cypher actually parses ────────────────────────────────────────────────
 
 def test_wikidata_upsert_creates_and_updates_for_real(it_db):
+    from unittest.mock import patch
+
     from app.scraper.runner import _upsert_entity
 
-    eid = _upsert_entity("Alphabet Inc.", 2015, None,
-                         "Holding company", "Q20800404",
-                         lei="5493006MHB84DD0ZWV18", sec_cik="0001652044")
+    # no register knows the item's ids: a `wd:` node, which carries none of
+    # them (2026-10-29 — a hard id comes from its register only)
+    with patch("app.scraper.register_pointer.write_from_pointer", return_value=None):
+        eid = _upsert_entity("Alphabet Inc.", 2015, None,
+                             "Holding company", "Q20800404",
+                             lei="5493006MHB84DD0ZWV18", sec_cik="0001652044")
+    assert eid == "wd:Q20800404"
     rows = it_db.run_sql(f"SELECT FROM Entity WHERE id = '{eid}'")
     assert rows, "create path did not write a node"
     node = {k: v for k, v in rows[0].items() if not k.startswith("@")}
     assert node["wikidata_id"] == "Q20800404"
-    assert node["lei_id"] == "5493006MHB84DD0ZWV18"
-    assert node["sec_cik"] == "0001652044"
+    assert node.get("lei_id") is None and node.get("sec_cik") is None
 
     # Second call takes the UPDATE branch — the one the bad comment sat in.
     again = _upsert_entity("Alphabet Inc.", 2015, 1.0,
-                           "Holding company", "Q20800404")
+                           "Holding company", "Q20800404",
+                           lei="5493006MHB84DD0ZWV18", sec_cik="0001652044")
     assert again == eid
     rows = it_db.run_sql(f"SELECT FROM Entity WHERE id = '{eid}'")
     node = {k: v for k, v in rows[0].items() if not k.startswith("@")}
-    assert node["lei_id"] == "5493006MHB84DD0ZWV18", "update dropped the identifier"
+    assert node["revenue"] == 1.0
+    assert node.get("lei_id") is None and node.get("sec_cik") is None, "the update wrote Wikidata's ids"
 
 
-def test_wikidata_upsert_does_not_overwrite_an_existing_identifier(it_db):
+def test_a_node_whose_register_id_the_item_contradicts_gets_nothing(it_db):
+    """BlackRock (2026-10-28): Q219635 found the listed company by name, and
+    its LEI is not the one the item states — another legal entity."""
     from app.scraper.runner import _upsert_entity
 
     it_db.run_command(
         "CREATE (e:Entity {id:'lei:REG', name:'Registered Co', name_normalized:'registered co', "
         "type:'company', lei_id:'REGISTEREDLEI0000001', name_credibility:92})")
-    _upsert_entity("Registered Co", None, None, None, "Q1",
-                   lei="WIKIDATASAYSOTHER001")
-    rows = it_db.run_sql("SELECT lei_id FROM Entity WHERE id = 'lei:REG'")
-    assert rows[0]["lei_id"] == "REGISTEREDLEI0000001", "a crowd-edited LEI overwrote the register's"
+    assert _upsert_entity("Registered Co", None, None, "a description", "Q1",
+                          lei="WIKIDATASAYSOTHER001", sec_cik="0000000001") is None
+    row = it_db.run_sql("SELECT FROM Entity WHERE id = 'lei:REG'")[0]
+    assert row["lei_id"] == "REGISTEREDLEI0000001" and row.get("sec_cik") is None
+    assert row.get("wikidata_id") is None and row.get("description") is None
 
 
 def test_wikidata_writes_no_address_and_no_type(it_db):

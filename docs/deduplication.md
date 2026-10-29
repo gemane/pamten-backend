@@ -593,11 +593,11 @@ merge those, so they stay for review.
 ## An LEI the filer's own filings confirm — `_bridge_sec_lei`
 
 One shape of same-name group is settled by a document instead of a person. It is
-an **LEI-only node** (GLEIF, Companies House, Wikidata) beside a **CIK-only EDGAR
+an **LEI-only node** (GLEIF, Companies House) beside a **CIK-only EDGAR
 filer**, under one `name_normalized`. Example: Unilever's `gb-coh:00041424` (LEI
 549300MKFYEKVRWML317, country NL) and EDGAR's `sec:0000217410` (UNILEVER PLC, GB),
 the one split the 2026-10-26 rebuild left. EDGAR's submissions document states an
-LEI for few operating companies, and Wikidata gives a CIK for few foreign filers,
+LEI for few operating companies, and Wikidata writes no hard id at all (2026-10-29),
 so no hard id joins such a pair, and its tier was `low`. Its own filings settle
 it: the filer states its LEI wherever a European or bond-market rule asks for one.
 

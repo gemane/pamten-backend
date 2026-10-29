@@ -930,3 +930,30 @@ class TestActionApiErrorBody:
         body = {"search": [{"id": "Q1"}], "warnings": {"main": {"*": "Unrecognized parameter"}}}
         with patch("httpx.get", side_effect=self._answer(body)), patch("time.sleep"):
             assert search_entity("x") == [{"id": "Q1"}]
+
+
+class TestEveryStatedId:
+    """An item states several legal entities' ids — Google two CIKs, Barclays
+    and Unilever two LEIs — and the writer tests a node against all of them."""
+
+    def test_the_item_and_its_related_companies_keep_every_id(self):
+        from app.scraper.wikidata import _aggregate
+
+        def uri(q):
+            return {"type": "uri", "value": f"http://www.wikidata.org/entity/{q}"}
+
+        def lit(v):
+            return {"type": "literal", "value": v}
+        rows = [
+            {"itemLabel": lit("Barclays"), "lei": lit("G5GSEF7VJP5I7OUK5573"), "cik": lit("312069"),
+             "subsidiary": uri("Q1"), "subsidiaryLabel": lit("Sub"), "subsidiaryLei": lit("AAAAAAAAAAAAAAAAAAAA")},
+            {"itemLabel": lit("Barclays"), "lei": lit("213800LBQA1Y9L22JB70"),
+             "subsidiary": uri("Q1"), "subsidiaryLabel": lit("Sub"), "subsidiaryLei": lit("BBBBBBBBBBBBBBBBBBBB")},
+            {"itemLabel": lit("Barclays"), "lei": lit("G5GSEF7VJP5I7OUK5573"), "lei_bad": lit("x")},
+        ]
+        out = _aggregate("Q245343", rows)
+        assert out["leis"] == ["G5GSEF7VJP5I7OUK5573", "213800LBQA1Y9L22JB70"]
+        assert out["lei"] == "G5GSEF7VJP5I7OUK5573"
+        assert out["sec_ciks"] == ["0000312069"] and out["sec_cik"] == "0000312069"
+        sub = out["subsidiaries"][0]
+        assert sub["leis"] == ["AAAAAAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBBBBBB"] and sub["lei"] == "AAAAAAAAAAAAAAAAAAAA"

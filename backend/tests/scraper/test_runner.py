@@ -584,10 +584,13 @@ class TestRunScrapeWikidata:
              patch("app.scraper.runner.search_entity", return_value=self.SEARCH_RESULT), \
              patch("app.scraper.runner.fetch_company_data", return_value=data_with_sub), \
              patch("app.scraper.runner.db.get_session", self._ctx()), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value="lei:SUB0000000000000APPL") as reg, \
              patch("app.scraper.runner._upsert_owns",
                    side_effect=lambda *a, **kw: owns_calls.append(a)):
             run_scrape("Apple", depth=1)
         assert len(owns_calls) >= 1
+        # the register writes the subsidiary Wikidata points at
+        reg.assert_any_call(["SUB0000000000000APPL"], [])
 
     def test_an_unidentified_subsidiary_is_skipped_not_minted(self):
         # No LEI/CIK and no existing node (mock .single() → None): creating it
@@ -663,12 +666,12 @@ class TestUpsertEntity:
         assert session.run.call_count == 4
 
     def test_updates_existing_entity_when_found(self):
-        ctx, session = _make_session_mock(single_returns=[{"id": "existing-uuid"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
+        ctx, session = _make_session_mock(single_returns=[{"id": "existing-uuid"}, {"lei_id": None, "sec_cik": None}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Acme", 2000, None, None, "Q1")
         assert eid == "existing-uuid"
-        # run called three times: MATCH, the winner-name read, then SET
-        assert session.run.call_count == 3
+        # run called four times: MATCH, the register ids read, the winner-name read, then SET
+        assert session.run.call_count == 4
 
     def test_returns_string_id(self):
         ctx, _ = _make_session_mock()   # all lookups miss → creates a new node
@@ -688,7 +691,7 @@ class TestUpsertEntity:
         assert create.kwargs["search_text"] == "Acme Corp A widget maker Acme ACME Inc"
 
     def test_sets_search_text_on_update(self):
-        ctx, session = _make_session_mock(single_returns=[{"id": "e1"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
+        ctx, session = _make_session_mock(single_returns=[{"id": "e1"}, {"lei_id": None, "sec_cik": None}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_entity("Acme", None, None, None, "Q1")
         upd = session.run.call_args_list[-1]
@@ -852,7 +855,7 @@ class TestUpsertPersonDetail:
         # the update path: fill-only on the date, inactive once stated, the rule applied
         ended.clear()
         ctx, session = _make_session_mock(single_returns=[
-            {"id": "e-1"}, {"name": "Gone Corp", "cred": 0, "aliases": None, "descr": None}])
+            {"id": "e-1"}, {"lei_id": None, "sec_cik": None}, {"name": "Gone Corp", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.runner.end_at_dissolution", side_effect=lambda eid, **k: ended.append(eid)):
             _upsert_entity("Gone Corp", None, None, None, "Q9",
@@ -863,17 +866,24 @@ class TestUpsertPersonDetail:
         assert update.kwargs["dissolved_on"] == "2023-03-15" and ended == ["e-1"]
 
     def test_a_new_entity_is_keyed_by_its_hard_id(self):
-        """app.node_ids (2026-10-26): `wd:Q…` for a Wikidata node, `lei:` when
-        Wikidata states the LEI (the GLEIF import's own key), a uuid only
-        for a node with neither."""
+        """app.node_ids (2026-10-26): `wd:Q…` for a node Wikidata creates — the
+        only id it has of its own since 2026-10-29: a stated LEI is followed
+        to GLEIF, which writes the `lei:` node (register_pointer), and an LEI
+        no register knows keys nothing."""
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Apple Inc.", None, None, None, "Q312", source_id="wikidata")
         assert eid == "wd:Q312"
         ctx, session = _make_session_mock()
-        with patch("app.scraper.runner.db.get_session", ctx):
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value="lei:HWUPKR0MPOU8FGXBT394"):
             assert _upsert_entity("Apple Inc.", None, None, None, "Q312",
                                   source_id="wikidata", lei="HWUPKR0MPOU8FGXBT394") == "lei:HWUPKR0MPOU8FGXBT394"
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value=None):
+            assert _upsert_entity("Apple Inc.", None, None, None, "Q312",
+                                  source_id="wikidata", lei="HWUPKR0MPOU8FGXBT394") == "wd:Q312"
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx):
             pid = _upsert_person("Tim Cook", None, None, "Q265852", source_id="wikidata")
@@ -1302,11 +1312,16 @@ class TestFormerNamesAliases:
 # and the executives on the other.
 
 class TestIdentifierBridge:
+    """Wikidata's LEI / CIK find a node and point at its register; they are
+    never written (2026-10-29, register_pointer): BlackRock's item states the
+    pre-2024 parent's ids, and the listed BlackRock carried its old CIK."""
+
     def test_resolves_on_the_lei_so_a_gleif_node_is_reused(self):
-        # First two lookups (wikidata_id, sec_cik) miss, the lei_id lookup hits the
-        # existing GLEIF node — so no second copy of the company is created.
-        ctx, session = _make_session_mock(
-            single_returns=[None, None, {"id": "lei:INR2EJN1ERAN0W5ZP974"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
+        # The wikidata_id lookup misses, the lei_id lookup hits the existing
+        # GLEIF node — so no second copy of the company is created.
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "lei:INR2EJN1ERAN0W5ZP974"}, {"lei_id": "INR2EJN1ERAN0W5ZP974", "sec_cik": None},
+            {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                                  lei="INR2EJN1ERAN0W5ZP974")
@@ -1314,7 +1329,8 @@ class TestIdentifierBridge:
 
     def test_lei_lookup_is_attempted_when_a_lei_is_known(self):
         ctx, session = _make_session_mock()
-        with patch("app.scraper.runner.db.get_session", ctx):
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value=None):
             _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                            lei="INR2EJN1ERAN0W5ZP974")
         assert any("lei_id" in call.args[0] for call in session.run.call_args_list), \
@@ -1327,30 +1343,92 @@ class TestIdentifierBridge:
             _upsert_entity("Acme", 2000, None, None, "Q1")
         assert session.run.call_count == 4          # 3 lookups + CREATE
 
-    def test_update_never_overwrites_an_existing_identifier(self):
-        # A register is authoritative for its own id and Wikidata is crowd-edited;
-        # clobbering lei_id would re-point a merge key at the wrong company.
-        ctx, session = _make_session_mock(single_returns=[{"id": "existing"}, {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
+    def test_the_update_writes_no_identifier(self):
+        ctx, session = _make_session_mock(single_returns=[
+            {"id": "existing"}, {"lei_id": None, "sec_cik": None},
+            {"name": "Old Name", "cred": 0, "aliases": None, "descr": None}])
         with patch("app.scraper.runner.db.get_session", ctx):
             _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                            lei="INR2EJN1ERAN0W5ZP974", sec_cik="0000789019")
         update = [c for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0]]
         assert len(update) == 1
-        cypher, params = update[0].args[0], update[0].kwargs
-        assert "e.lei_id          = COALESCE(e.lei_id, $lei)" in cypher
-        assert "e.sec_cik         = COALESCE(e.sec_cik, $sec_cik)" in cypher
-        assert params["lei"] == "INR2EJN1ERAN0W5ZP974"
-        assert params["sec_cik"] == "0000789019"
+        assert "lei_id" not in update[0].args[0] and "sec_cik" not in update[0].args[0]
+        assert "lei" not in update[0].kwargs and "sec_cik" not in update[0].kwargs
 
-    def test_created_node_carries_the_identifiers(self):
+    def test_a_node_no_register_knows_carries_no_identifier(self):
         ctx, session = _make_session_mock()
-        with patch("app.scraper.runner.db.get_session", ctx):
-            _upsert_entity("Microsoft", 1975, None, None, "Q2283",
-                           lei="INR2EJN1ERAN0W5ZP974", sec_cik="0000789019")
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value=None) as reg:
+            eid = _upsert_entity("Microsoft", 1975, None, None, "Q2283",
+                                 lei="INR2EJN1ERAN0W5ZP974", sec_cik="789019")
+        reg.assert_called_once_with(["INR2EJN1ERAN0W5ZP974"], ["0000789019"])
         create = [c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0]]
-        assert len(create) == 1
-        assert "lei_id: $lei" in create[0].args[0]
-        assert create[0].kwargs["lei"] == "INR2EJN1ERAN0W5ZP974"
+        assert len(create) == 1 and eid == "wd:Q2283"
+        assert "lei_id" not in create[0].args[0] and "sec_cik" not in create[0].args[0]
+
+    def test_a_node_the_register_wrote_is_enriched_not_created(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value="lei:549300LRIF3NWCU26A80"):
+            eid = _upsert_entity("BlackRock Finance", None, None, None, "Q1",
+                                 lei=["549300LRIF3NWCU26A80"])
+        assert eid == "lei:549300LRIF3NWCU26A80"
+        runs = [c.args[0] for c in session.run.call_args_list]
+        assert not any("CREATE (e:Entity" in q for q in runs)
+        assert any("SET e.wikidata_id" in q for q in runs)
+
+    def test_a_contradicted_node_gets_nothing_of_the_item(self):
+        """The 2026-10-28 rebuild: Q219635 found the listed BlackRock by name,
+        whose GLEIF LEI is not the one the item states."""
+        ctx, session = _make_session_mock(single_returns=[
+            None, None, None, {"id": "lei:529900VBK42Y5HHRMD23"},
+            {"lei_id": "529900VBK42Y5HHRMD23", "sec_cik": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer") as reg:
+            eid = _upsert_entity("BlackRock", None, None, None, "Q219635",
+                                 lei=["549300LRIF3NWCU26A80"], sec_cik=["0001364742"])
+        assert eid is None
+        reg.assert_not_called()
+        assert not any("SET e." in c.args[0] or "CREATE (e:Entity" in c.args[0]
+                       for c in session.run.call_args_list)
+
+    def test_a_node_whose_id_is_one_of_several_stated_is_not_contradicted(self):
+        # Barclays' item states two LEIs; the node holds the second
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "lei:213800LBQA1Y9L22JB70"}, {"lei_id": "213800LBQA1Y9L22JB70", "sec_cik": None},
+            {"name": "Barclays PLC", "cred": 92, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            eid = _upsert_entity("Barclays", None, None, None, "Q245343",
+                                 lei=["G5GSEF7VJP5I7OUK5573", "213800LBQA1Y9L22JB70"])
+        assert eid == "lei:213800LBQA1Y9L22JB70"
+
+    def test_a_related_company_no_register_knows_is_not_written(self):
+        ctx, session = _make_session_mock()
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value=None):
+            assert _upsert_entity("Ghost Sub", None, None, None, "Q7", lei=["ZZZZZZZZZZZZZZZZZZZZ"],
+                                  register_required=True) is None
+        assert not any("CREATE (e:Entity" in c.args[0] for c in session.run.call_args_list)
+
+
+class TestRelatedCompanyGate:
+    def test_a_related_node_the_item_contradicts_is_skipped(self):
+        from app.scraper.runner import _resolve_related_company
+        ctx, _ = _make_session_mock(single_returns=[
+            {"id": "lei:AAAAAAAAAAAAAAAAAAAA"}, {"lei_id": "AAAAAAAAAAAAAAAAAAAA", "sec_cik": None}])
+        with patch("app.database.db.get_session", ctx):
+            assert _resolve_related_company({"qid": "Q1", "name": "Sub", "leis": ["BBBBBBBBBBBBBBBBBBBB"]}) is False
+
+    def test_an_agreeing_node_is_used_and_an_unknown_one_goes_to_its_register(self):
+        from app.scraper.runner import _resolve_related_company
+        ctx, _ = _make_session_mock(single_returns=[
+            {"id": "lei:AAAAAAAAAAAAAAAAAAAA"}, {"lei_id": "AAAAAAAAAAAAAAAAAAAA", "sec_cik": None}])
+        with patch("app.database.db.get_session", ctx):
+            assert _resolve_related_company({"qid": "Q1", "leis": ["AAAAAAAAAAAAAAAAAAAA"]}) == "lei:AAAAAAAAAAAAAAAAAAAA"
+        ctx, _ = _make_session_mock()
+        with patch("app.database.db.get_session", ctx):
+            assert _resolve_related_company({"qid": "Q1", "lei": "AAAAAAAAAAAAAAAAAAAA"}) is None
+            assert _resolve_related_company({"qid": "Q1"}) is False
 
 
 class TestSecIndustry:
