@@ -2625,16 +2625,11 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
     """
     Import a Companies House PSC snapshot (current UK beneficial ownership, daily)
     — the replacement for the frozen OpenOwnership UK PSC BODS export. Reuses the
-    UK PSC source + flag. Checks SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED.
+    UK PSC source. Checks SCRAPER_ENABLED.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise PermissionError(
-            "UK PSC scraper is disabled. "
-            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.companies_house_psc import import_ch_psc
@@ -2694,10 +2689,6 @@ def run_ch_psc_update(local_file: str, digest: str | None = None,
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable.")
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise PermissionError(
-            "UK PSC scraper is disabled. "
-            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable.")
 
     from app.db.schema import ensure_indexes
     from app.scraper import ch_psc_incremental as inc
@@ -2790,16 +2781,11 @@ def run_import_basic_company_data(local_file: str, limit: int | None = None,
     House BasicCompanyData snapshot — the companion to the PSC import, which leaves
     controlled companies un-named. Enrichment only (no
     nodes/edges created), so no _post_bods_import housekeeping is needed. Gated on
-    SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED (same UK-data switch as PSC).
+    SCRAPER_ENABLED.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise PermissionError(
-            "UK PSC scraper is disabled. "
-            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.basic_company_data import import_basic_company_data

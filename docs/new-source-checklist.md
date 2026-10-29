@@ -919,8 +919,8 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       on itself, so the flag defaulted off everywhere else and nobody noticed — until
       the register lookup (an LEI Wikidata points at, BE #480) asked for it inside a
       scrape: the 2026-10-29 rebuild wrote no node from an LEI, and the unit tests had
-      mocked the gate. GLEIF now has no environment switch; the lookup follows the
-      catalogue toggle. When a scrape reaches into a bulk source, test the gate
+      mocked the gate. GLEIF and Companies House now have no environment switch; the
+      lookup follows the catalogue toggle. When a scrape reaches into a bulk source, test the gate
       unmocked against the default settings.
 - [ ] **API keys come from `settings`**, never a literal, and `.env.example` documents
       every new variable.

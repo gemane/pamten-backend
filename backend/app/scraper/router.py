@@ -61,7 +61,6 @@ def scraper_status():
         "wikidata_enabled":           settings.SCRAPER_WIKIDATA_ENABLED,
         "sec_edgar_enabled":          settings.SCRAPER_SEC_EDGAR_ENABLED,
         "open_corporates_enabled":    settings.SCRAPER_OPENCORPORATES_ENABLED,
-        "bods_uk_psc_enabled":        settings.SCRAPER_BODS_UK_PSC_ENABLED,
         "geocoding_enabled":          settings.GEOCODING_ENABLED,
         "autodedup_enabled":          settings.SCRAPER_AUTODEDUP_ENABLED,
     }
@@ -680,12 +679,11 @@ def ownership_quality(limit: int = 100, _: dict = Depends(require_admin)):
 def bods_status():
     """Check enabled status for both BODS sources (GLEIF and UK PSC)."""
     return {
-        # GLEIF has no environment switch: its imports run from the CLI only,
-        # and the per-company register lookup follows the catalogue switch.
+        # The bulk sources have no environment switch: their imports run from
+        # the CLI only, and GLEIF's per-company lookup follows the catalogue.
         "gleif_enabled":      settings.SCRAPER_ENABLED,
-        "uk_psc_enabled":     settings.SCRAPER_ENABLED and settings.SCRAPER_BODS_UK_PSC_ENABLED,
+        "uk_psc_enabled":     settings.SCRAPER_ENABLED,
         "master_switch":      settings.SCRAPER_ENABLED,
-        "bods_uk_psc_switch": settings.SCRAPER_BODS_UK_PSC_ENABLED,
     }
 
 

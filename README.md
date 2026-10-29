@@ -291,8 +291,8 @@ Requires a paid API key (`OPENCORPORATES_API_KEY`). Disabled by default.
 Beneficial-ownership data is loaded in bulk from current, authoritative sources —
 **GLEIF** (Global LEI, corporate ownership worldwide, CC0) and the UK **Companies
 House** register (people with significant control + the company register, Open
-Government Licence). The UK imports are controlled by `SCRAPER_BODS_UK_PSC_ENABLED`;
-GLEIF has no environment switch — its importers run from the CLI only, and the
+Government Licence). Neither has an environment switch: their importers run from
+the CLI only (behind the master `SCRAPER_ENABLED`, which the CLI sets), and the
 per-company GLEIF lookup (an LEI Wikidata points at) follows the GLEIF switch in the
 source catalogue.
 
@@ -588,7 +588,6 @@ log), not as in-place edits that the next scrape would clobber.
 | `SEC_CACHE_DIR` | *(empty)* | Local layer of the EDGAR filing cache (immutable Archives files only; never searches). Needs a persistent disk — leave unset on Render |
 | `OBJECT_STORE_BUCKET` / `_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` | *(empty)* | The shared S3-compatible object store (`app/objectstore.py`) — one bucket for every environment, a prefix per purpose; `edgar/` is the filing cache's shared layer, `geocode/` the address cache's (so a rebuild does not re-ask Nominatim for every address). Any S3 API (Hetzner, Scaleway, AWS); keys are secrets, env only |
 | `SCRAPER_OPENCORPORATES_ENABLED` | `false` | OpenCorporates source switch |
-| `SCRAPER_BODS_UK_PSC_ENABLED` | `false` | UK Companies House bulk-import switch (`ch-psc` / `ch-company-data`) |
 | `SCRAPER_AUTODEDUP_ENABLED` | `true` | Auto-merge high-confidence duplicate persons after each `run-all` scrape |
 | `FEDERATION_ENABLED` | `false` | Enable trusted-peer federation (publish/pull) |
 | `FEDERATION_SIGNING_KEY` | — | Ed25519 private seed (base64) for signing exports; generate with `manage.py gen-federation-key`. Secret — env only |

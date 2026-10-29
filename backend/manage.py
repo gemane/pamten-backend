@@ -127,7 +127,6 @@ def _only_ids(args):
 def cmd_ch_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_import_ch_psc
     result = _run_guarded_import("ch-psc",
@@ -142,7 +141,6 @@ def cmd_ch_psc(args):
 def cmd_ch_psc_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_ch_psc_update
     result = _run_guarded_import("ch-psc-update",
@@ -158,7 +156,6 @@ def cmd_ch_psc_update(args):
 def cmd_ch_company_data(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_import_basic_company_data
     result = _run_guarded_import("ch-company-data",
