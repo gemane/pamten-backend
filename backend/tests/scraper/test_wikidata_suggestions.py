@@ -225,9 +225,82 @@ class TestReadingWikidata:
             assert ws.fetch_country_codes({"Q30", "Q145"}) == {"Q30": "US", "Q145": "GB"}
 
 
+class TestItemsStatingAnId:
+    def _sparql(self, bindings):
+        return _api({"results": {"bindings": bindings}})
+
+    def test_ciks_asked_padded_and_bare_and_read_back_padded(self):
+        seen = []
+
+        def fake(url, params, timeout):
+            seen.append(params["query"])
+            return self._sparql([
+                {"item": {"value": "http://www.wikidata.org/entity/Q219635"}, "v": {"value": "1364742"}},
+                {"item": {"value": "http://www.wikidata.org/entity/Q219635"}, "v": {"value": "0001364742"}},
+                {"item": {"value": "http://www.wikidata.org/entity/Q2"}, "v": {"value": "0001364742"}}])
+        with patch("app.scraper.wikidata._wd_get", side_effect=fake):
+            found = ws.items_stating("P5531", ["0001364742"])
+        assert found == {"0001364742": ["Q219635", "Q2"]}
+        q = seen[0]
+        assert '"0001364742"' in q and '"1364742"' in q
+        assert "p:P5531" in q and "wikibase:DeprecatedRank" in q
+
+    def test_leis_in_batches(self):
+        leis = [f"{i:020d}" for i in range(ws._SPARQL_BATCH + 1)]
+        sizes = []
+
+        def fake(url, params, timeout):
+            sizes.append(params["query"].count('"'))
+            return self._sparql([])
+        with patch("app.scraper.wikidata._wd_get", side_effect=fake):
+            assert ws.items_stating("P1278", leis) == {}
+        assert sizes == [2 * ws._SPARQL_BATCH, 2]
+
+
+BLACKROCK_FINANCE = {"names": ["BlackRock Finance, Inc."], "country": "US", "status": "ISSUED"}
+BLACKROCK_INC = {"names": ["BlackRock, Inc."], "country": "US", "status": "ISSUED"}
+OLD_LEI, NEW_LEI = "549300LRIF3NWCU26A80", "529900VBK42Y5HHRMD23"
+
+
+class TestRefused:
+    """BlackRock after the 2026-10-29 rebuild: the scraper refused Q219635 for
+    lei:529900VBK… and wrote no item id, so the linked report never saw it."""
+
+    def test_the_contradiction_is_tagged_and_named(self):
+        node = _node(id="lei:" + NEW_LEI, name="BlackRock Finance, Inc.", wikidata_id="Q219635",
+                     lei_id=NEW_LEI, sec_cik="0001364742")
+        item = _item(label="BlackRock", leis=[OLD_LEI], ciks=["0001364742"])
+        rows = ws.refused_rows(node, item, f"LEI {NEW_LEI} is not the stated {OLD_LEI}",
+                               _registers({("P1278", NEW_LEI): BLACKROCK_INC,
+                                           ("P1278", OLD_LEI): BLACKROCK_FINANCE}), US)
+        assert [(r["kind"], r["property"], r["link"]) for r in rows] == [("differs", "P1278", "refused")]
+        assert rows[0]["note"] == (f"refused: LEI {NEW_LEI} is not the stated {OLD_LEI}; "
+                                   f"{OLD_LEI} is BlackRock Finance, Inc.")
+
+    def test_a_confident_addition_is_never_confident_on_a_refused_item(self):
+        node = _node(lei_id=VANGUARD_LEI, sec_cik="0000102909")
+        item = _item(ciks=["0000000001"])          # a name and country match, but another CIK
+        regs = _registers({("P1278", VANGUARD_LEI): VANGUARD, ("P5531", "0000000001"): VANGUARD})
+        assert any(r["confidence"] == "high" for r in ws.suggestions_for(node, item, regs, US))
+        rows = ws.refused_rows(node, item, "CIK 0000102909 is not the stated 0000000001", regs, US)
+        assert rows and all(r["confidence"] != "high" and r["link"] == "refused" for r in rows)
+        assert ws.quickstatements(rows, date(2026, 10, 29)) == []
+
+    def test_a_refused_row_when_nothing_else_is_said(self):
+        node = _node(lei_id=NEW_LEI)               # GLEIF does not know the node's LEI here
+        rows = ws.refused_rows(node, _item(leis=[OLD_LEI]), f"LEI {NEW_LEI} is not the stated {OLD_LEI}",
+                               _registers({("P1278", OLD_LEI): BLACKROCK_FINANCE}), US)
+        assert [(r["kind"], r["suggested"], r["current"]) for r in rows] == [("refused", NEW_LEI, OLD_LEI)]
+        assert rows[0]["note"].startswith("refused: LEI")
+
+
 class TestTheReport:
-    def _build(self, nodes, items, iso, gleif, edgar):
+    def _build(self, nodes, items, iso, gleif, edgar, unlinked=(), stating=None):
+        stating = stating or {}
         with patch.object(ws, "graph_nodes", return_value=nodes), \
+             patch.object(ws, "unlinked_nodes", return_value=list(unlinked)), \
+             patch.object(ws, "items_stating", side_effect=lambda prop, values: {
+                 v: q for v, q in stating.get(prop, {}).items() if v in values}), \
              patch.object(ws, "fetch_items", return_value=items), \
              patch.object(ws, "fetch_country_codes", return_value=iso), \
              patch.object(ws, "gleif_facts", side_effect=gleif) as g, \
@@ -241,7 +314,22 @@ class TestTheReport:
         items = {"Q1": _item(), "Q2": _item(countries=())}
         report, g = self._build(nodes, items, US, lambda lei: VANGUARD, lambda cik: None)
         assert g.call_count == 1
-        assert report["counts"] == {"nodes": 3, "items": 2, "missing_high": 1, "missing": 1}
+        assert report["counts"] == {"nodes": 3, "items": 2, "refused_pairs": 0,
+                                    "missing_high": 1, "missing": 1}
+        assert {r["link"] for r in report["rows"]} == {"graph"}
+
+    def test_a_refused_pair_is_reported_and_an_agreeing_one_is_not(self):
+        unlinked = [{"id": "lei:" + NEW_LEI, "name": "BlackRock Finance, Inc.",
+                     "lei_id": NEW_LEI, "sec_cik": "0001364742"},
+                    {"id": "agree", "name": "THE VANGUARD GROUP, INC.", "lei_id": VANGUARD_LEI, "sec_cik": None}]
+        items = {"Q219635": _item(label="BlackRock", leis=[OLD_LEI], ciks=["0001364742"]),
+                 "Q849363": _item(leis=[VANGUARD_LEI])}
+        stating = {"P5531": {"0001364742": ["Q219635"]}, "P1278": {VANGUARD_LEI: ["Q849363"]}}
+        regs = {NEW_LEI: BLACKROCK_INC, OLD_LEI: BLACKROCK_FINANCE, VANGUARD_LEI: VANGUARD}
+        report, _ = self._build([], items, US, regs.get, lambda cik: None, unlinked, stating)
+        assert report["counts"]["refused_pairs"] == 1
+        assert [(r["qid"], r["node_id"], r["kind"], r["link"]) for r in report["rows"]] == [
+            ("Q219635", "lei:" + NEW_LEI, "differs", "refused")]
 
     def test_the_files(self, tmp_path):
         rows = ws.suggestions_for(_node(lei_id=VANGUARD_LEI), _item(),

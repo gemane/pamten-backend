@@ -777,8 +777,11 @@ def cmd_wikidata_suggestions(args):
     report = build_report(limit=args.limit)
     paths = write_report(report, os.path.expanduser(args.out))
     c = report["counts"]
-    print(f"{c.get('nodes', 0)} nodes with a Wikidata item; findings: "
-          + ", ".join(f"{k} {v}" for k, v in sorted(c.items()) if k not in ("nodes", "items")))
+    print(f"{c.get('nodes', 0)} nodes with a Wikidata item, "
+          f"{c.get('refused_pairs', 0)} item{'' if c.get('refused_pairs') == 1 else 's'} "
+          "refused for a node without one; findings: "
+          + ", ".join(f"{k} {v}" for k, v in sorted(c.items())
+                      if k not in ("nodes", "items", "refused_pairs")))
     print(f"CSV: {paths['csv']}")
     print(f"QuickStatements: {paths['quickstatements']} ({paths['statements']} statements)")
 
