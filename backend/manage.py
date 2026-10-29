@@ -45,7 +45,6 @@ def _run_guarded_import(holder, fn, *, skip_ok=False):
 def cmd_gleif_succession(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_succession
     result = _run_guarded_import("gleif-succession",
         lambda: run_import_gleif_succession(local_file=args.file, limit=args.limit))
@@ -55,7 +54,6 @@ def cmd_gleif_succession(args):
 def cmd_gleif_rr(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_rr
     result = _run_guarded_import("gleif-rr",
         lambda: run_import_gleif_rr(local_file=args.file, limit=args.limit,
@@ -129,7 +127,6 @@ def _only_ids(args):
 def cmd_ch_psc(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_import_ch_psc
     result = _run_guarded_import("ch-psc",
@@ -144,7 +141,6 @@ def cmd_ch_psc(args):
 def cmd_ch_psc_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_ch_psc_update
     result = _run_guarded_import("ch-psc-update",
@@ -160,7 +156,6 @@ def cmd_ch_psc_update(args):
 def cmd_ch_company_data(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_UK_PSC_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_import_basic_company_data
     result = _run_guarded_import("ch-company-data",
@@ -174,7 +169,6 @@ def cmd_ch_company_data(args):
 def cmd_gleif_lei_cdf(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
     from app.scraper.runner import run_import_gleif_lei_cdf
     result = _run_guarded_import("gleif-lei-cdf",
         lambda: run_import_gleif_lei_cdf(
@@ -187,7 +181,6 @@ def cmd_gleif_lei_cdf(args):
 def cmd_gleif_repex(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_import_gleif_repex
     result = _run_guarded_import("gleif-repex",
@@ -279,7 +272,6 @@ def cmd_mark_shortcuts(args):
 def cmd_gleif_update(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
-    settings.SCRAPER_BODS_GLEIF_ENABLED = True
     _apply_direct_db_url(args)
     from app.scraper.runner import run_gleif_update
     result = _run_guarded_import("gleif-update",

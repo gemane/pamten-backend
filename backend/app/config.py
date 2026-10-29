@@ -37,8 +37,6 @@ class Settings(BaseSettings):
     OBJECT_STORE_SECRET_KEY:          str  = ""     # secret — env only
     OBJECT_STORE_REGION:              str  = ""     # most providers ignore it; AWS needs it
     SCRAPER_OPENCORPORATES_ENABLED:   bool = False
-    SCRAPER_BODS_GLEIF_ENABLED:       bool = False
-    SCRAPER_BODS_UK_PSC_ENABLED:      bool = False
     # Where the BODS importer spills its on-disk id maps (and downloads) for a
     # multi-GB import. Defaults to the system temp dir — but on boxes where /tmp
     # is a small tmpfs (RAM), a full UK PSC import fills it and SQLite corrupts

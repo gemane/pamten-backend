@@ -143,14 +143,20 @@ class TestScraperGating:
         "wikidata":        "SCRAPER_WIKIDATA_ENABLED",
         "sec_edgar":       "SCRAPER_SEC_EDGAR_ENABLED",
         "open_corporates": "SCRAPER_OPENCORPORATES_ENABLED",
-        "bods_gleif":      "SCRAPER_BODS_GLEIF_ENABLED",
-        "bods_uk_psc":     "SCRAPER_BODS_UK_PSC_ENABLED",
     }
 
     @pytest.mark.parametrize("source,flag", list(SOURCE_FLAGS.items()))
     def test_every_source_has_an_enable_flag(self, source, flag):
         assert source in KNOWN_SOURCES, f"{source} missing from KNOWN_SOURCES"
         assert flag in Settings.model_fields, f"missing config flag {flag} for {source}"
+
+    def test_the_bulk_sources_have_no_environment_switch(self):
+        # GLEIF's and Companies House's imports run from the CLI, which
+        # switched any such flag on itself; the one caller left (GLEIF's
+        # register lookup) follows the catalogue switch. A flag that defaults
+        # off silently kept that lookup from ever running (rebuild of 2026-10-29).
+        assert {"bods_gleif", "bods_uk_psc"} <= set(KNOWN_SOURCES)
+        assert not any("GLEIF" in name or "UK_PSC" in name for name in Settings.model_fields)
 
     ENTRY_POINTS = [
         ("run_scrape",                 lambda: runner.run_scrape("Acme")),

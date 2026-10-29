@@ -297,7 +297,6 @@ class TestTheBaselineRecordsItsSnapshot:
         from app.config import settings
 
         settings.SCRAPER_ENABLED = True
-        settings.SCRAPER_BODS_UK_PSC_ENABLED = True
         snap = _snapshot(tmp_path, [_individual("00000001", "one")], "2026-07-27", "base.zip")
         run_import_ch_psc(snap, digest_out=str(tmp_path / "d.tsv.gz"))
 
@@ -312,7 +311,6 @@ class TestTheBaselineRecordsItsSnapshot:
         from app.config import settings
 
         settings.SCRAPER_ENABLED = True
-        settings.SCRAPER_BODS_UK_PSC_ENABLED = True
         snap = _snapshot(tmp_path, [_individual("00000002", "two")], "2026-07-27", "nodigest.zip")
         run_import_ch_psc(snap)
         assert read_last_snapshot() is None

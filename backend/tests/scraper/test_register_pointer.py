@@ -130,6 +130,15 @@ class TestFollowingThePointer:
              patch.object(rp, "write_from_edgar", return_value="sec:0000000001"):
             assert rp.write_from_pointer(["A" * 20], ["0000000001"]) == "sec:0000000001"
 
+    def test_gleif_follows_the_catalogue_switch_alone(self):
+        # no environment flag besides it: the default settings must not
+        # switch the lookup off (2026-10-29: no LEI ever wrote a node)
+        with patch("app.scraper.sources.get_source_enabled", return_value=True) as sw:
+            assert rp._gleif_enabled() is True
+        sw.assert_called_once_with("bods_gleif")
+        with patch("app.scraper.sources.get_source_enabled", return_value=False):
+            assert rp._gleif_enabled() is False
+
     def test_a_register_that_is_switched_off_is_not_asked(self):
         with patch.object(rp, "_gleif_enabled", return_value=False), \
              patch.object(rp, "_sec_enabled", return_value=False), \

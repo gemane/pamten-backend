@@ -2625,16 +2625,11 @@ def run_import_ch_psc(local_file: str, limit: int | None = None,
     """
     Import a Companies House PSC snapshot (current UK beneficial ownership, daily)
     — the replacement for the frozen OpenOwnership UK PSC BODS export. Reuses the
-    UK PSC source + flag. Checks SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED.
+    UK PSC source. Checks SCRAPER_ENABLED.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise PermissionError(
-            "UK PSC scraper is disabled. "
-            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.companies_house_psc import import_ch_psc
@@ -2694,10 +2689,6 @@ def run_ch_psc_update(local_file: str, digest: str | None = None,
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable.")
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise PermissionError(
-            "UK PSC scraper is disabled. "
-            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable.")
 
     from app.db.schema import ensure_indexes
     from app.scraper import ch_psc_incremental as inc
@@ -2790,16 +2781,11 @@ def run_import_basic_company_data(local_file: str, limit: int | None = None,
     House BasicCompanyData snapshot — the companion to the PSC import, which leaves
     controlled companies un-named. Enrichment only (no
     nodes/edges created), so no _post_bods_import housekeeping is needed. Gated on
-    SCRAPER_ENABLED and SCRAPER_BODS_UK_PSC_ENABLED (same UK-data switch as PSC).
+    SCRAPER_ENABLED.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_UK_PSC_ENABLED:
-        raise PermissionError(
-            "UK PSC scraper is disabled. "
-            "Set SCRAPER_BODS_UK_PSC_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.basic_company_data import import_basic_company_data
@@ -2821,17 +2807,11 @@ def run_import_gleif_succession(local_file: str, limit: int | None = None) -> di
     Import GLEIF LEI-CDF succession (MERGED/DUPLICATE/RETIRED → SuccessorLEI) into
     SUCCEEDED_BY edges. Reuses the GLEIF source + flags. `local_file` is a
     pre-downloaded LEI-CDF golden-copy .json/.zip (multi-GB — a local batch job,
-    not a URL fetch, so no download path here). Checks SCRAPER_ENABLED and
-    SCRAPER_BODS_GLEIF_ENABLED.
+    not a URL fetch, so no download path here). Checks SCRAPER_ENABLED.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.gleif_succession import import_lei_cdf_succession
@@ -2854,16 +2834,11 @@ def run_import_gleif_lei_cdf(local_file: str, limit: int | None = None,
     """
     Import GLEIF entities from the LEI-CDF golden copy (current, authoritative) —
     the replacement for the frozen OpenOwnership GLEIF BODS entity data. Reuses
-    the GLEIF source + flags. Checks SCRAPER_ENABLED and SCRAPER_BODS_GLEIF_ENABLED.
+    the GLEIF source + flags. Checks SCRAPER_ENABLED.
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
@@ -2908,11 +2883,6 @@ def run_import_gleif_repex(local_file: str, limit: int | None = None) -> dict:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
         )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
-        )
 
     from app.scraper.gleif_repex import import_repex
 
@@ -2931,8 +2901,7 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None,
     """
     Import GLEIF RR-CDF (Level 2) direct/ultimate consolidation parents as
     direct/indirect OWNS edges. Reuses the GLEIF source + flags. `local_file` is a
-    pre-downloaded RR-CDF golden-copy .json/.zip. Checks SCRAPER_ENABLED and
-    SCRAPER_BODS_GLEIF_ENABLED.
+    pre-downloaded RR-CDF golden-copy .json/.zip. Checks SCRAPER_ENABLED.
 
     `only_leis` restricts to the corporate family of those seed LEIs (test subset);
     `emit_leis_path` writes the family's LEIs for a follow-up entity-naming pass.
@@ -2940,11 +2909,6 @@ def run_import_gleif_rr(local_file: str, limit: int | None = None,
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.gleif_rr import import_rr_cdf, mark_registration_day
@@ -2993,11 +2957,6 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
             "Scraper is disabled. Set SCRAPER_ENABLED=true in the environment to enable."
-        )
-    if not settings.SCRAPER_BODS_GLEIF_ENABLED:
-        raise PermissionError(
-            "GLEIF scraper is disabled. "
-            "Set SCRAPER_BODS_GLEIF_ENABLED=true in the environment to enable."
         )
 
     from app.scraper.gleif_repex import import_repex
