@@ -269,7 +269,10 @@ parser. Anything that does not map is either a new property (document it) or noi
       a string into `_STRING_PROPERTIES`, a number, flag or list into `_TYPED_PROPERTIES`
       with its type; the conformance test in `tests/test_schema.py` holds every edge and
       claim property against it). After the first import, `manage.py schema-audit` names
-      what the data carries that the ledger does not (2026-10-25).
+      what the data carries that the ledger does not (2026-10-25). **A bare `UPDATE … SET`
+      outside the writers counts too**: the dissolution rule set `OWNS.until_source_url`
+      for three days before the 2026-10-28 rebuild's audit named it, because no writer's
+      property list carried it — the test now runs the end rules and checks what they set.
 - [ ] **The database refuses what breaks a rule — add the value to the enum, not a
       workaround.** `Entity.type`, `OWNS.ownership_type`, `read_from` and a claim's `kind`
       are restricted at the server to the vocabularies built from `EntityType`,

@@ -339,6 +339,9 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "ultimate_since", "ultimate_until", "validation_sources",
         "validation_documents", "filing_type", "since_basis", "since_source_url",
         "since_not_before", "structure_basis", "read_from",
+        # the record that stated the dissolution which ended the holding
+        # (`app.dissolution`); the ledger lacked it until 2026-10-29
+        "until_source_url",
     ),
     "HAS_ROLE": ("role", "since", "until", "source_id", "source_url", "source_date", "last_scraped_at", "read_from",
                  "until_source_url"),

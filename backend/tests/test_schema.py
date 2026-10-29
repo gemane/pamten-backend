@@ -536,6 +536,37 @@ class TestTheLedger:
         for prop in list(row) + ["first_seen_at"]:
             assert ("IndustryCode", prop) in ledger, prop
 
+    def test_the_end_rules_write_only_declared_properties(self):
+        """The dissolution and death rules close edges with a bare UPDATE, so
+        no writer's property list names what they set: `OWNS.until_source_url`
+        went undeclared until the 2026-10-28 rebuild's schema audit found it on
+        18 rows. Run both rules against a mocked database and hold every
+        property their UPDATEs set against the ledger."""
+        from app import dissolution, roles
+        ledger = schema.all_properties()
+        updates = []
+
+        def fake_sql(sql, params=None):
+            if sql.startswith("SELECT dissolved_on"):
+                return [{"dissolved_on": "2019-10-04", "wikidata_id": "Q1"}]
+            if sql.startswith("SELECT death_date"):
+                return [{"death_date": "2020-01-01", "wikidata_id": "Q2"}]
+            if sql.startswith("SELECT @rid"):
+                edge = sql.split(" FROM ")[1].split()[0]
+                return [{"rid": f"#{edge}", "role": "director", "since": None}]
+            if sql.startswith("UPDATE"):
+                updates.append(sql)
+            return []
+
+        with patch("app.db.arcadedb.run_sql", side_effect=fake_sql):
+            assert dissolution.end_at_dissolution("e", source_url="https://example.com/d")["closed"] == 3
+            assert roles.end_seats_at_death("p")["closed"] == 1
+        assert len(updates) == 4
+        for sql in updates:
+            edge = sql.split()[1].lstrip("#")
+            for prop in re.findall(r"(\w+) = :", sql.split(" SET ", 1)[1]):
+                assert (edge, prop) in ledger, (edge, prop)
+
     def test_the_string_ledger_holds_only_what_nothing_else_declares(self):
         elsewhere = ({(t, p) for t, p, _ in schema._TYPED_PROPERTIES} | set(schema._PROPERTY_TYPES)
                      | {(t, p) for t, p, _ in schema._INDEXES} | {(t, p) for t, p, _ in schema._EDGE_INDEXES}
