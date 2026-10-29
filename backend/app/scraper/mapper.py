@@ -219,6 +219,16 @@ _LEGAL_SUFFIX_NORM = re.compile(
 )
 
 
+#: "&" or "and" left at the end once the legal form went: "& Co" and "and
+#: Company" are one legal phrase, and its first half alone is no name.
+_DANGLING_CONJUNCTION = re.compile(r"(?:\s+(?:&|and))+\s*$")
+
+
+def strip_dangling_conjunction(name: str) -> str:
+    """'baillie gifford &' → 'baillie gifford'; 'procter & gamble' unchanged."""
+    return _DANGLING_CONJUNCTION.sub("", name)
+
+
 def coherent_ownership_type(stake_pct: float | None, ownership_type: str | None) -> str:
     """Reconcile a stake with the type stored beside it.
 
@@ -259,6 +269,7 @@ def normalize_entity_name(name: str) -> str:
     e.g. 'BlackRock, Inc.' → 'blackrock'
          'BLACKROCK INC'   → 'blackrock'
          'BlackRock'       → 'blackrock'
+         'JPMorgan Chase & Co.', 'JPMorgan Chase and Company' → 'jpmorgan chase'
     """
     name = name.lower()
     name = name.replace(".", "")
@@ -273,4 +284,6 @@ def normalize_entity_name(name: str) -> str:
     name = _SPACED_LETTERS.sub(lambda m: m.group(0).replace(" ", ""), name)
     name = name.replace(",", "")
     name = _LEGAL_SUFFIX_NORM.sub("", name)
-    return re.sub(r"\s+", " ", name).strip()
+    # "& Co" goes as a whole: stripping "co" alone left "jpmorgan chase &",
+    # which "JPMorgan Chase" never matched (23 dev nodes, 2026-10-29)
+    return strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())

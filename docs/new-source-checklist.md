@@ -783,6 +783,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       re-scrape does not correct the stored value. Run a mapping over every distinct
       value the source produces (`jurisdiction_country` over all places of a sweep)
       and look at what lands where.
+- [ ] **A legal form of several words goes as a whole.** The name key stripped "Co"
+      from "JPMorgan Chase & Co" and kept the "&": "jpmorgan chase &" never matched
+      "JPMorgan Chase", nor "& Co" "and Company" (23 dev nodes, 2026-10-29). Test a
+      suffix rule with the phrases it is part of ("& Co", "and Company", "GmbH & Co. KG")
+      and with a name the word sits inside ("Procter & Gamble"), and keep every key that
+      compares names (`normalize_entity_name`, `graph_writer._name_key`,
+      `sec_edgar._ticker_normalize`) in step.
 - [ ] **Group the unread results by layout before writing a rule — and write
       none for a layout one to five filers use.** The 61 real subsidiary lists that
       read nothing fell into a handful of layouts; a rule per layout read 51 of
@@ -986,6 +993,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Never assert equality on `search_text`.** It has a FULL_TEXT index, so
       `WHERE search_text = 'Apple Operations…'` behaves as a *token* match and counted
       three "Apple" rows where one exact row was meant. Count on `name` or an id.
+- [ ] **The no-network guard turns a fail-open check into a silent pass.** A check that
+      asks a source and lets the write stand when the source cannot answer (the SEC
+      name-match guard, 2026-10-29) is never exercised by a test that forgot to mock the
+      call: the guard raises, the check catches it, and the old behaviour passes. Mock
+      the call explicitly in every test of the check, assert it was (or was not) made,
+      and write one test for the fail-open answer on purpose.
+- [ ] **Compare ids in their normal form on both sides.** The guard compared the
+      write's padded CIK with a node's bare one and read the same filer as another
+      (caught by `test_sec_former_names_it`, not by the new tests). Normalise the stored
+      value too (`normalize_cik`, upper-case LEIs) wherever an id decides.
 - [ ] **Mocked suites must not reach a database.** When code under a mocked test grows a
       query, stub `app.db.arcadedb.run_sql` — a suite that quietly hits a real server is
       no longer testing what it claims, and repeated failed auth locks ArcadeDB out.

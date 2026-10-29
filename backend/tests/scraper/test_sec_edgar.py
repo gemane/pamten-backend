@@ -430,6 +430,11 @@ class TestFundVehicles:
         assert _name_similarity("Vanguard Funds", "VANGUARD FUNDS") == 1.0
         assert _name_similarity("Trustmark", "TRUSTMARK CORP") == 1.0     # a word, not a prefix
 
+    def test_and_co_is_a_legal_form(self):
+        from app.scraper.sec_edgar import _ticker_normalize
+        assert _ticker_normalize("BAILLIE GIFFORD & CO") == _ticker_normalize("Baillie Gifford") == "baillie gifford"
+        assert _ticker_normalize("Procter & Gamble Co") == "procter & gamble"
+
 
 # ── Form 4 share-holding extraction ──────────────────────────────────────────
 
