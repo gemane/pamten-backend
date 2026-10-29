@@ -198,6 +198,15 @@ parser. Anything that does not map is either a new property (document it) or noi
       Inc." while its own filings drew a second node. A node whose register id the
       source's ids contradict gets nothing from that source; test against **every** id
       the source states (Google's item has two CIKs, Barclays' and Unilever's two LEIs).
+- [ ] **Where a knowledge base and a register disagree, report it — to us and to them.**
+      `manage.py wikidata-suggestions` compares each item's LEI/CIK with the node's register
+      ids and writes a CSV plus a QuickStatements batch for a person to submit (never an
+      automatic edit). A suggested addition is confident only when the register agrees with
+      the item on more than the name (country, or another id the item already states): the
+      graph may have met the item by name alone. The first run (2026-10-29) also caught our
+      own errors — Tencent's node carried Tencent Music's CIK, Baillie Gifford & Co the CIK of
+      Baillie Gifford Funds — so read the `review` rows as findings about the graph too. Only
+      CC0-compatible registers feed it (GLEIF, EDGAR); Companies House's OGL is a lawyer question.
 - [ ] **Keep the finest grain the source states — do not collapse it to the country.**
       Exhibit 21 states "Florida, USA"; storing only `country: US` threw Florida away, and
       a subsidiary's panel showed "United States" with no real location (the reported bug).
