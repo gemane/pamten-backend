@@ -546,11 +546,28 @@ def _ticker_normalize(name: str) -> str:
 # *mentions* Nestlé in its text) and overly loose prefix matches.
 _MIN_NAME_SIMILARITY = 0.55
 
+#: Words that make a name a fund vehicle — an investment company registered
+#: under its sponsor's name, not the sponsor.
+_FUND_WORDS = frozenset({"fund", "funds", "trust", "etf", "etfs", "portfolio", "portfolios"})
+
+
+def _fund_words(norm: str) -> set[str]:
+    return set(re.findall(r"[a-z]+", norm)) & _FUND_WORDS
+
+
 def _name_similarity(a: str, b: str) -> float:
-    """Normalized similarity [0, 1] between two company names after stripping suffixes."""
+    """Normalized similarity [0, 1] between two company names after stripping suffixes.
+
+    0 when ``b`` names a fund vehicle ``a`` does not: the full-text search's
+    best hit for "Baillie Gifford & Co" — the 13F manager, CIK 0001088875,
+    which files neither a 10-K nor a proxy — is the DEF 14A of BAILLIE GIFFORD
+    FUNDS (CIK 0001120543), and at 0.84 it passed. Before the 2026-10-29
+    rebuild the manager's node carried the funds' CIK."""
     na = _ticker_normalize(a)
     nb = _ticker_normalize(b)
     if not na or not nb:
+        return 0.0
+    if _fund_words(nb) - _fund_words(na):
         return 0.0
     return SequenceMatcher(None, na, nb).ratio()
 
