@@ -251,6 +251,7 @@ Imports corporate ownership data via SPARQL. For a company it fetches subsidiari
 - Writes to the DB using upsert — safe to re-run, no duplicates
 - Caps at 15 subsidiaries and 3 CEOs per entity
 - 400 ms delay between requests (Wikidata rate limit)
+- An action-API error answer (HTTP 200 with an `error` body — `ratelimited`, `maxlag`, …) raises `WikidataApiError` instead of reading as "no hits", so run-all logs the row `failed` (2026-10-29)
 
 ### SEC EDGAR
 Imports investor data from SC 13D/13G ownership filings, executive data from Form 3/4 XML, the filer's SIC code as its industry (shown as a NACE Rev. 2 sector tree — see *Industry classification* in [`docs/data-model.md`](docs/data-model.md)), statutory subsidiary lists from the 10-K's Exhibit 21 (`manage.py sec-ex21`), acquisitions from the acquirer's own 10-K/10-Q XBRL facts — the closing date as a stated start and the price paid (`manage.py sec-acquisitions`) — and private-company boards from Form D (`manage.py sec-formd`) — all manual-first. Controlled by `SCRAPER_SEC_EDGAR_ENABLED`. With `SEC_CACHE_DIR` set, every filing fetched is kept gzipped on disk and served from there on the next rebuild, `--force` or second pass — the EDGAR golden copy (`manage.py sec-cache stats`). With the object store configured the same filings are also kept in the shared bucket, so Render (no disk) and every other machine read one common copy.

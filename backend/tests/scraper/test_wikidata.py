@@ -852,3 +852,81 @@ class TestStatementPeriods:
             assert f"p:{prop} " in src and f"wdt:{prop} ?" not in src
         assert "wikibase:BestRank" in src and "DeprecatedRank" in src
         assert "pqv:P580/wikibase:timePrecision" in src
+
+
+# ── an error answer is an error, not "no hits" ───────────────────────────────
+
+class TestActionApiErrorBody:
+    """The action API answers a failure with HTTP 200 and an `error` body. Read
+    as an empty result, the 2026-10-28 rebuild's searches for Alibaba Group,
+    Naspers and VeriSign wrote nothing and the run log said ok."""
+
+    ERROR = {"error": {"code": "ratelimited", "info": "You've exceeded your rate limit."},
+             "servedby": "mw-api-ext.eqiad.main"}
+
+    def _answer(self, *bodies):
+        out = []
+        for body in bodies:
+            r = MagicMock(status_code=200)
+            r.json.return_value = body
+            out.append(r)
+        return out
+
+    def test_the_search_raises_with_the_code_and_the_reason(self):
+        from app.scraper.wikidata import WikidataApiError
+        with patch("httpx.get", side_effect=self._answer(self.ERROR)), patch("time.sleep"):
+            with pytest.raises(WikidataApiError, match=r"\(ratelimited\): You've exceeded"):
+                search_entity("Alibaba Group")
+
+    def test_a_bare_error_string_still_raises(self):
+        from app.scraper.wikidata import WikidataApiError
+        with patch("httpx.get", side_effect=self._answer({"error": "boom"})), patch("time.sleep"):
+            with pytest.raises(WikidataApiError, match=r"\(unknown\): boom"):
+                search_entity("x")
+
+    def test_every_action_api_read_raises(self):
+        from app.scraper import wikidata
+        wikidata.country_item.cache_clear()
+        reads = [lambda: wikidata.country_item("DE"),
+                 lambda: wikidata._names_for(["Q1"]),
+                 lambda: wikidata.fetch_person_details_for("Q1")]
+        try:
+            with patch("time.sleep"), \
+                 patch.object(wikidata, "_fetch_person_details", return_value={"Q1": {"is_human": True}}):
+                for read in reads:
+                    with patch("httpx.get", side_effect=self._answer(self.ERROR)):
+                        with pytest.raises(wikidata.WikidataApiError):
+                            read()
+                with patch("httpx.get", side_effect=self._answer({"query": {"search": [{"title": "Q183"}]}},
+                                                                 self.ERROR)):
+                    with pytest.raises(wikidata.WikidataApiError):
+                        wikidata.search_entity_in_country("Alphabet", "DE")
+        finally:
+            wikidata.country_item.cache_clear()
+
+    def test_a_failed_country_lookup_is_not_cached_as_no_country(self):
+        from app.scraper import wikidata
+        wikidata.country_item.cache_clear()
+        try:
+            with patch("time.sleep"), patch("httpx.get", side_effect=self._answer(
+                    self.ERROR, {"query": {"search": [{"title": "Q183"}]}})):
+                with pytest.raises(wikidata.WikidataApiError):
+                    wikidata.country_item("DE")
+                assert wikidata.country_item("DE") == "Q183"
+        finally:
+            wikidata.country_item.cache_clear()
+
+    def test_a_scrape_fails_instead_of_reporting_no_results(self):
+        from app.scraper import runner
+        from app.scraper.wikidata import WikidataApiError
+        with patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+             patch.object(runner.settings, "SCRAPER_WIKIDATA_ENABLED", True), \
+             patch.object(runner, "get_source_enabled", return_value=True), \
+             patch("httpx.get", side_effect=self._answer(self.ERROR)), patch("time.sleep"):
+            with pytest.raises(WikidataApiError):
+                runner.run_scrape("Naspers")
+
+    def test_warnings_are_not_errors(self):
+        body = {"search": [{"id": "Q1"}], "warnings": {"main": {"*": "Unrecognized parameter"}}}
+        with patch("httpx.get", side_effect=self._answer(body)), patch("time.sleep"):
+            assert search_entity("x") == [{"id": "Q1"}]

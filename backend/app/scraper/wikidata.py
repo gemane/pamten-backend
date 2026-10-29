@@ -111,6 +111,28 @@ def _wd_get(url: str, params: dict, timeout: int) -> httpx.Response:
     raise RuntimeError("unreachable")     # pragma: no cover
 
 
+class WikidataApiError(RuntimeError):
+    """The action API (`w/api.php`) answered with an error body."""
+
+
+def _api_json(r: httpx.Response) -> dict:
+    """The body of an action-API answer — or WikidataApiError when it is an
+    error. The action API reports a failure (`ratelimited`, `maxlag`,
+    `internal_api_error_*`, …) as HTTP 200 with `{"error": {"code", "info"}}`
+    and no result key, so `.get("search", [])` read it as "no hits". On the
+    2026-10-28 rebuild the searches for Alibaba Group, Naspers and VeriSign
+    came back empty and answered normally a day later; the run log said ok and
+    the scrape wrote nothing. Raised, it is the source's error: run-all logs
+    the row `failed` (#475)."""
+    body = r.json()
+    err = body.get("error") if isinstance(body, dict) else None
+    if err:
+        if not isinstance(err, dict):
+            err = {"info": err}
+        raise WikidataApiError(f"Wikidata API error ({err.get('code') or 'unknown'}): {err.get('info') or ''}")
+    return body
+
+
 def search_entity(query: str, limit: int = 5) -> list:
     """Full-text search on Wikidata. Returns list of {id, label, description}."""
     r = _wd_get(WIKIDATA_API, {
@@ -121,7 +143,7 @@ def search_entity(query: str, limit: int = 5) -> list:
         "limit":    limit,
         "format":   "json",
     }, timeout=10)
-    return r.json().get("search", [])
+    return _api_json(r).get("search", [])
 
 
 # ── Searching inside one country ──────────────────────────────────────────────
@@ -166,7 +188,7 @@ def country_item(iso2: str) -> str | None:
         "action": "query", "list": "search", "srsearch": f"haswbstatement:P297={code}",
         "srnamespace": 0, "srlimit": 1, "format": "json",
     }, timeout=10)
-    hits = r.json().get("query", {}).get("search", [])
+    hits = _api_json(r).get("query", {}).get("search", [])
     return hits[0]["title"] if hits else None
 
 
@@ -184,7 +206,7 @@ def _names_for(qids: list[str]) -> dict[str, list[str]]:
         "props": "labels|aliases", "languages": "en", "format": "json",
     }, timeout=15)
     out: dict[str, list[str]] = {}
-    for qid, ent in (r.json().get("entities") or {}).items():
+    for qid, ent in (_api_json(r).get("entities") or {}).items():
         label = ((ent.get("labels") or {}).get("en") or {}).get("value") or ""
         aliases = [a.get("value", "") for a in ((ent.get("aliases") or {}).get("en") or [])]
         out[qid] = [n for n in [label, *aliases] if n]
@@ -261,7 +283,7 @@ def search_entity_in_country(query: str, iso2: str, limit: int = 8) -> list:
         "srsearch": f'inlabel:"{query}" haswbstatement:P17={qid}',
         "srnamespace": 0, "srlimit": limit, "format": "json",
     }, timeout=15)
-    ids = [h["title"] for h in r.json().get("query", {}).get("search", [])]
+    ids = [h["title"] for h in _api_json(r).get("query", {}).get("search", [])]
     if not ids:
         return []
     names = _names_for(ids)
@@ -613,7 +635,7 @@ def fetch_person_details_for(qid: str) -> dict | None:
         "action": "wbgetentities", "ids": qid, "props": "labels|descriptions",
         "languages": langs, "languagefallback": 1, "format": "json",
     }, timeout=15)
-    ent = (r.json().get("entities") or {}).get(qid) or {}
+    ent = (_api_json(r).get("entities") or {}).get(qid) or {}
 
     def _first(block: dict) -> str:
         for lang in langs.split("|"):
