@@ -863,6 +863,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 
 - [ ] **Not found returns `None`/an empty result, never an exception.** Auth problems
       raise `PermissionError` with a message that says which flag or key is wrong.
+- [ ] **An error answer is not an empty result.** Read the body's error field before the
+      result key: MediaWiki's action API answers a failure with HTTP 200 and
+      `{"error": {"code", "info"}}`, and `.get("search", [])` read it as "no hits". The
+      2026-10-28 rebuild lost Alibaba Group's, Naspers' and VeriSign's Wikidata items, and
+      the people only Wikidata knew, while the run log said ok
+      (`wikidata._api_json` raises since 2026-10-29). Not found is `[]`; could not ask
+      raises.
 - [ ] **One source failing must not sink the others.** The dispatchers already catch per
       source — which is exactly why a signature or import error can pass as success. If
       your source ran and wrote nothing, make sure the run log says why.
