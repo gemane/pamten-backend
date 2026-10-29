@@ -430,11 +430,13 @@ class TestWikidataSuggestions:
         from app.scraper import wikidata_suggestions as ws
         seen = {}
         monkeypatch.setattr(ws, "build_report", lambda limit=None: seen.setdefault("limit", limit) and None
-                            or {"rows": [], "counts": {"nodes": 3, "items": 3, "missing_high": 2, "differs": 1}})
+                            or {"rows": [], "counts": {"nodes": 3, "items": 3, "refused_pairs": 1,
+                                       "missing_high": 2, "differs": 1}})
         monkeypatch.setattr(ws, "write_report", lambda report, out: {
             "csv": f"{out}/a.csv", "quickstatements": f"{out}/a.qs.txt", "statements": 2})
         manage.cmd_wikidata_suggestions(types.SimpleNamespace(limit=5, out=str(tmp_path)))
         out = capsys.readouterr().out
         assert seen["limit"] == 5
-        assert "3 nodes with a Wikidata item; findings: differs 1, missing_high 2" in out
+        assert ("3 nodes with a Wikidata item, 1 item refused for a node without one; "
+                "findings: differs 1, missing_high 2") in out
         assert f"QuickStatements: {tmp_path}/a.qs.txt (2 statements)" in out

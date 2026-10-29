@@ -33,6 +33,20 @@ Kinds of finding, per item and property:
 - ``several``  the item states more than one value, the node's among them —
                an organisation item holding several legal entities' ids
                (Google, Barclays). ``info`` only.
+- ``refused``  only when nothing else is said about a refused pair (below).
+
+Refused items. The scraper refuses an item whose ids its node's register ids
+contradict (`register_pointer.contradiction`) and writes nothing of it — not
+even the item id, so a node it refused is not among the nodes above. BlackRock
+dropped out of the report that way after the 2026-10-29 rebuild. Such an item
+is found from the other side: the items that state an LEI or CIK of a node
+without an item id (WDQS, `items_stating`). Each pair the scraper would refuse
+is judged like a linked one, every row tagged ``link = refused`` with the
+contradiction in the note, and none of them is ``high``: the item describes
+another legal entity than the node, so adding the node's id to it could be
+wrong, and nothing of such a pair goes into the batch. An item stating none
+of a node's ids is not found this way. Pairs that agree are left out: the
+graph has not linked them yet, and that is not a correction to Wikidata.
 
 Licences: GLEIF's data is CC0 and EDGAR's is a US-government work, so both may
 go into Wikidata (CC0). Companies House (OGL) is not used here.
@@ -50,9 +64,10 @@ PROPS = {"P1278": "lei_id", "P5531": "sec_cik"}
 GLEIF_RECORD_PAGE = "https://search.gleif.org/#/record/{lei}"
 EDGAR_FILER_PAGE = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}"
 _BATCH = 50          # wbgetentities takes at most 50 ids per call
+_SPARQL_BATCH = 150  # ids per WDQS VALUES list — keeps the GET under 8 KB
 
 CSV_FIELDS = ("qid", "label", "property", "kind", "action", "confidence", "current",
-              "suggested", "evidence_url", "register_name", "node_id", "node_name", "note")
+              "suggested", "evidence_url", "register_name", "node_id", "node_name", "link", "note")
 
 
 def _norm(prop: str, value: str | None) -> str | None:
@@ -73,6 +88,41 @@ def graph_nodes() -> list[dict]:
     from app.db.arcadedb import run_sql
     return list(run_sql("SELECT id, name, wikidata_id, lei_id, sec_cik FROM Entity "
                         "WHERE wikidata_id IS NOT NULL"))
+
+
+def unlinked_nodes() -> list[dict]:
+    """Every node without a Wikidata item id that carries a register id."""
+    from app.db.arcadedb import run_sql
+    return list(run_sql("SELECT id, name, lei_id, sec_cik FROM Entity WHERE wikidata_id IS NULL "
+                        "AND (lei_id IS NOT NULL OR sec_cik IS NOT NULL)"))
+
+
+def items_stating(prop: str, values: list[str]) -> dict[str, list[str]]:
+    """Value → the items that state it for `prop`, deprecated statements left
+    out (as `_statements` does), read from WDQS in batches. A CIK is asked in
+    its padded and its bare spelling, since both occur on Wikidata."""
+    from app.scraper.wikidata import SPARQL_URL, _wd_get
+    found: dict[str, list[str]] = {}
+    values = sorted(set(values))
+    for i in range(0, len(values), _SPARQL_BATCH):
+        spellings = set()
+        for v in values[i:i + _SPARQL_BATCH]:
+            spellings.add(v)
+            if prop == "P5531":
+                spellings.add(v.lstrip("0"))
+        literals = " ".join(f'"{v}"' for v in sorted(spellings) if v)
+        query = (f"SELECT ?item ?v WHERE {{ VALUES ?v {{ {literals} }} "
+                 f"?item p:{prop} ?st . ?st ps:{prop} ?v ; wikibase:rank ?rank . "
+                 f"FILTER(?rank != wikibase:DeprecatedRank) }}")
+        body = _wd_get(SPARQL_URL, {"query": query, "format": "json"}, timeout=120).json()
+        for b in (body.get("results") or {}).get("bindings") or []:
+            qid = (b.get("item") or {}).get("value", "").rsplit("/", 1)[-1]
+            value = _norm(prop, (b.get("v") or {}).get("value"))
+            if qid.startswith("Q") and value:
+                found.setdefault(value, [])
+                if qid not in found[value]:
+                    found[value].append(qid)
+    return found
 
 
 def _statements(claims: dict, prop: str) -> list[str]:
@@ -189,7 +239,7 @@ def suggestions_for(node: dict, item: dict, register, iso_of: dict[str, str]) ->
                 "current": "; ".join(current), "suggested": suggested or "",
                 "evidence_url": evidence_url(prop, suggested) if suggested else "",
                 "register_name": (facts or {}).get("names", [""])[0] if facts else "",
-                "node_id": node["id"], "node_name": node.get("name"), "note": note}
+                "node_id": node["id"], "node_name": node.get("name"), "link": "graph", "note": note}
 
     for prop, field in PROPS.items():
         stated = item.get(prop) or []
@@ -228,15 +278,45 @@ def suggestions_for(node: dict, item: dict, register, iso_of: dict[str, str]) ->
     return rows
 
 
+def refused_rows(node: dict, item: dict, why: str, register, iso_of: dict[str, str]) -> list[dict]:
+    """The findings for a node and an item the scraper refuses for it: the
+    linked judgement, every row ``review`` and tagged ``refused`` — or one
+    ``refused`` row when that judgement says nothing."""
+    rows = suggestions_for(node, item, register, iso_of)
+    if not rows:
+        prop = "P1278" if why.startswith("LEI") else "P5531"
+        held = _norm(prop, node.get(PROPS[prop]))
+        rows = [{"qid": node["wikidata_id"], "label": item.get("label"), "property": prop,
+                 "kind": "refused", "action": "review", "confidence": "review",
+                 "current": "; ".join(item.get(prop) or []), "suggested": held or "",
+                 "evidence_url": evidence_url(prop, held) if held else "", "register_name": "",
+                 "node_id": node["id"], "node_name": node.get("name"), "note": ""}]
+    for r in rows:
+        r["link"] = "refused"
+        r["note"] = f"refused: {why}" + (f"; {r['note']}" if r["note"] else "")
+        if r["confidence"] == "high":
+            r["confidence"] = "review"
+    return rows
+
+
 # ── The report ────────────────────────────────────────────────────────────────
 
 def build_report(limit: int | None = None) -> dict:
     """Read the graph, the items and the registers; return the findings and a
     count per kind. Every register record is fetched once."""
+    from app.scraper.register_pointer import contradiction
     nodes = sorted(graph_nodes(), key=lambda n: n["wikidata_id"])
+    unlinked = sorted(unlinked_nodes(), key=lambda n: n["id"])
     if limit:
-        nodes = nodes[:limit]
-    items = fetch_items(sorted({n["wikidata_id"] for n in nodes}))
+        nodes, unlinked = nodes[:limit], unlinked[:limit]
+    by_value = {prop: items_stating(prop, [v for n in unlinked if (v := _norm(prop, n.get(field)))])
+                for prop, field in PROPS.items()}
+    candidates = []                      # (node, qid): an item states one of the node's ids
+    for n in unlinked:
+        qids = {q for prop, field in PROPS.items()
+                for q in by_value[prop].get(_norm(prop, n.get(field)) or "", [])}
+        candidates += [(n, q) for q in sorted(qids)]
+    items = fetch_items(sorted({n["wikidata_id"] for n in nodes} | {q for _, q in candidates}))
     iso_of = fetch_country_codes({q for it in items.values() for q in it["country_qids"]})
     cache: dict[tuple[str, str], dict | None] = {}
 
@@ -252,7 +332,17 @@ def build_report(limit: int | None = None) -> dict:
             log.info("Wikidata item %s of %s is missing or deleted", node["wikidata_id"], node["id"])
             continue
         rows.extend(suggestions_for(node, item, register, iso_of))
-    counts: dict[str, int] = {"nodes": len(nodes), "items": len(items)}
+    refused = 0
+    for node, qid in candidates:
+        item = items.get(qid)
+        if item is None:
+            continue
+        why = contradiction({f: _norm(p, node.get(f)) for p, f in PROPS.items()},
+                            item["P1278"], item["P5531"])
+        if why:
+            refused += 1
+            rows.extend(refused_rows({**node, "wikidata_id": qid}, item, why, register, iso_of))
+    counts: dict[str, int] = {"nodes": len(nodes), "items": len(items), "refused_pairs": refused}
     for r in rows:
         key = r["kind"] + ("_high" if r["confidence"] == "high" else "")
         counts[key] = counts.get(key, 0) + 1

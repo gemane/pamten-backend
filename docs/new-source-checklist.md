@@ -207,6 +207,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       own errors — Tencent's node carried Tencent Music's CIK, Baillie Gifford & Co the CIK of
       Baillie Gifford Funds — so read the `review` rows as findings about the graph too. Only
       CC0-compatible registers feed it (GLEIF, EDGAR); Companies House's OGL is a lawyer question.
+      **A refusal leaves no trace to report from:** the scraper writes nothing of an item it
+      refuses, not even the id, so a report reading only the nodes that carry an item id lost
+      BlackRock after the 2026-10-29 rebuild. Find refused items from the register side — the
+      items that state the ids of the nodes without one (`items_stating`, WDQS) — and judge
+      each pair with the same contradiction rule the writer uses.
 - [ ] **Keep the finest grain the source states — do not collapse it to the country.**
       Exhibit 21 states "Florida, USA"; storing only `country: US` threw Florida away, and
       a subsidiary's panel showed "United States" with no real location (the reported bug).
