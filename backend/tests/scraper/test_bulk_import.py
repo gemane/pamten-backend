@@ -240,14 +240,6 @@ class TestRunnerPermissions:
         with pytest.raises(PermissionError, match="SCRAPER_ENABLED"):
             r.run_import_gleif_lei_cdf("dummy.zip")
 
-    def test_gleif_raises_when_source_flag_disabled(self, monkeypatch):
-        from app.scraper import runner as r
-
-        monkeypatch.setattr(r.settings, "SCRAPER_ENABLED", True)
-        monkeypatch.setattr(r.settings, "SCRAPER_BODS_GLEIF_ENABLED", False)
-
-        with pytest.raises(PermissionError, match="SCRAPER_BODS_GLEIF_ENABLED"):
-            r.run_import_gleif_lei_cdf("dummy.zip")
 
 class TestPostBodsImport:
     """Every BODS import auto-runs nominee flagging + edge dedup, best-effort."""
@@ -472,7 +464,6 @@ def test_the_lei_cdf_import_labels_registration_day_starts(monkeypatch):
     # rebuild), so the company import runs the same pass when it brings them
     from app.scraper import runner as r, gleif_lei_cdf, gleif_incremental, gleif_rr
     monkeypatch.setattr(r.settings, "SCRAPER_ENABLED", True)
-    monkeypatch.setattr(r.settings, "SCRAPER_BODS_GLEIF_ENABLED", True)
     monkeypatch.setattr(r, "_ensure_source", lambda *a, **k: "gleif")
     monkeypatch.setattr(gleif_lei_cdf, "import_lei_cdf_entities", lambda **k: {"entities": 1})
     monkeypatch.setattr(gleif_incremental, "mark_full_load_done", lambda kind: None)

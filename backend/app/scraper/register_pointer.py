@@ -120,9 +120,11 @@ def fetch_gleif_record(lei: str) -> dict | None:
 
 
 def _gleif_enabled() -> bool:
-    from app.config import settings
+    # The catalogue switch alone: GLEIF has no environment switch (its bulk
+    # imports run from the CLI). The 2026-10-29 rebuild wrote no node from an
+    # LEI because this also asked for one that was never set.
     from app.scraper.sources import get_source_enabled
-    return bool(settings.SCRAPER_BODS_GLEIF_ENABLED and get_source_enabled("bods_gleif"))
+    return get_source_enabled("bods_gleif")
 
 
 def _sec_enabled() -> bool:

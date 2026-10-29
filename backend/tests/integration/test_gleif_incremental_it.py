@@ -292,7 +292,6 @@ def test_publish_checkpoint_roundtrip(it_db):
 def _gleif_enabled(monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
-    monkeypatch.setattr(settings, "SCRAPER_BODS_GLEIF_ENABLED", True)
 
 
 def test_update_refused_without_any_load(it_db, _gleif_enabled):
