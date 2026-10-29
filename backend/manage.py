@@ -767,6 +767,22 @@ def cmd_heal_ends_at_dissolution(args):
         print("  " + line)
 
 
+def cmd_wikidata_suggestions(args):
+    """What the registers would correct on Wikidata: a CSV of findings and a
+    QuickStatements batch of the confident additions, for a person to review
+    and submit. Reads the graph, Wikidata, GLEIF and EDGAR; writes nothing to
+    either (app.scraper.wikidata_suggestions)."""
+    import os
+    from app.scraper.wikidata_suggestions import build_report, write_report
+    report = build_report(limit=args.limit)
+    paths = write_report(report, os.path.expanduser(args.out))
+    c = report["counts"]
+    print(f"{c.get('nodes', 0)} nodes with a Wikidata item; findings: "
+          + ", ".join(f"{k} {v}" for k, v in sorted(c.items()) if k not in ("nodes", "items")))
+    print(f"CSV: {paths['csv']}")
+    print(f"QuickStatements: {paths['quickstatements']} ({paths['statements']} statements)")
+
+
 def cmd_schema_audit(args):
     """Name every property the stored rows carry that the schema does not
     declare (app.db.schema.undeclared_properties) — a typo'd writer, a field
@@ -1001,6 +1017,13 @@ def _build_parser():
              "(until_reason = dissolution); founders stay open. Dry run unless --apply")
     p_hed.add_argument('--apply', action='store_true', help='Write the change (default: count only)')
     p_hed.set_defaults(func=cmd_heal_ends_at_dissolution)
+
+    p_wds = subparsers.add_parser('wikidata-suggestions',
+        help="What GLEIF and EDGAR would correct on Wikidata (LEI P1278, CIK P5531): a CSV of "
+             "findings + a QuickStatements batch of the confident additions. Read-only; a person submits")
+    p_wds.add_argument('--out', default='.', help='Directory for the two files (default: the current one)')
+    p_wds.add_argument('--limit', type=int, help='Only the first N nodes (by item id)')
+    p_wds.set_defaults(func=cmd_wikidata_suggestions)
 
     p_sa = subparsers.add_parser('schema-audit',
         help="Name every stored property the schema does not declare (a typo'd writer, an "
