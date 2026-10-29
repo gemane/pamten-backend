@@ -147,6 +147,30 @@ def test_a_scrape_writing_onto_a_company_known_dissolved_leaves_nothing_open(it_
     assert [dict(r) for r in e] == [{"until": "2019-10-04", "until_reason": "dissolution"}]
 
 
+def test_a_runner_that_only_resolves_its_company_leaves_nothing_open(it_db):
+    """`run_sec_ex21` resolves its parent (`resolve_best_entity`) and never
+    upserts it, so the parent was never touched: the 2026-10-28 rebuild left
+    Altaba's 78 Exhibit 21 holdings open. Since 2026-10-29 every edge writer
+    names its parties to the scope (`_record_edge_parties`)."""
+    from app.scraper.graph_writer import _upsert_entity_by_name, _with_autodedup
+    from app.scraper.sec_writer import _upsert_owns_sec
+    it_db.run_command("CREATE (:Entity {id:'sec:0001011006', name:'Altaba', name_normalized:'altaba', "
+                      "sec_cik:'0001011006', dissolved_on:'2019-10-04'})")
+
+    @_with_autodedup
+    def ex21_run():
+        sub = _upsert_entity_by_name("Altaba Holdings Hong Kong Limited", source_id="sec-edgar")
+        _upsert_owns_sec(owner_id="sec:0001011006", owned_id=sub, source_id="sec-edgar", stake_percent=100,
+                         ownership_type="controlling", file_date="2019-03-01",
+                         filing_type="EX-21", read_from="table",
+                         source_url="https://www.sec.gov/Archives/edgar/data/1011006/x.htm")
+        return {"status": "ok"}
+
+    assert ex21_run()["dissolution"] == {"closed": 1}
+    e = it_db.run_sql("SELECT until, until_reason FROM OWNS WHERE @out.id = 'sec:0001011006'")
+    assert [dict(r) for r in e] == [{"until": "2019-10-04", "until_reason": "dissolution"}]
+
+
 def _owns(it_db, a, b):
     rows = [dict(r) for r in it_db.run_sql(
         "SELECT source_id, until, until_reason FROM OWNS WHERE @out.id = :a AND @in.id = :b", {"a": a, "b": b})]

@@ -187,6 +187,29 @@ class TestEdgeProvenance:
             assert field in q, f"{label}: CREATE must stamp {field} — got:\n{q}"
 
 
+def _acquisition():
+    from app.scraper import sec_writer
+    sec_writer.write_acquisition_sec("o", "n", "s", closing="2026-03-11", value_usd=1.0,
+                                     file_date="2026-04-24", source_url="u", filing_type="10-Q XBRL")
+
+
+@pytest.mark.parametrize("label,module,invoke",
+                         EDGE_WRITERS + [("sec_edgar OWNS acquisition", "sec_writer", _acquisition)])
+def test_every_edge_writer_names_its_companies_to_the_dissolution_rule(label, module, invoke):
+    """The scope closes what is open on a dissolved company the scrape wrote an
+    edge onto (graph_writer._record_edge_parties). A writer that forgets to say
+    so leaves its edges open: the Exhibit 21 runner resolves its parent without
+    upserting it, and Altaba kept 78 open holdings after the 2026-10-28 rebuild."""
+    from app.scraper import graph_writer
+    token = graph_writer._edge_entities.set(set())
+    try:
+        _create_query(module, invoke)
+        parties = graph_writer._edge_entities.get()
+    finally:
+        graph_writer._edge_entities.reset(token)
+    assert parties >= ({"o", "n"} if "OWNS" in label else {"e"}), (label, parties)
+
+
 # ── 3. Minimum fields captured from the source ───────────────────────────────
 
 class TestNoDeadFlag:

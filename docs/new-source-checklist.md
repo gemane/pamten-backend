@@ -243,7 +243,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       onto a company already known dissolved** is closed by the scrape scope
       (`graph_writer._end_dissolved_after_scrape`, after the dedup) — the 2026-10-27
       rebuild replayed the SEC scrapes after the chain's step and Altaba had 105 open
-      edges again. A writer that matches only open edges must also match the spell the
+      edges again. **A new OWNS / HAS_ROLE writer calls `_record_edge_parties` first**:
+      the scope learns which companies an edge landed on from that call, not from the
+      upserts — the Exhibit 21 runner only resolves its parent, so until 2026-10-29 the
+      next rebuild still left Altaba's 78 Exhibit 21 holdings open (the conformance test
+      lists every edge writer). A writer that matches only open edges must also match the spell the
       rule closed, when the filing is dated inside it, or every re-read draws a second
       edge (`sec_writer._dissolution_closed`; seats do this through `_same_seat`).
       A knowledge base never writes `active = true`: null means no register has said.
