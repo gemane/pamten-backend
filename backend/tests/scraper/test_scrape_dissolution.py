@@ -3,7 +3,10 @@
 The rule ran where a writer stored `dissolved_on` and in the bulk chains, but
 an edge written later onto a company already known to be dissolved stayed open
 (Altaba: 105 open edges after the 2026-10-27 rebuild). The outermost scrape
-scope now applies it to every touched company with an end.
+scope now applies it to every touched company with an end — and, since
+2026-10-29, to every company an edge was written onto, which a runner that
+only resolves its company (Exhibit 21: Altaba's 78 holdings after the
+2026-10-28 rebuild) never marks touched.
 """
 from unittest.mock import patch
 
@@ -70,3 +73,53 @@ def test_the_outermost_scope_applies_it_after_the_dedup(monkeypatch):
 
     assert scrape()["dissolution"] == {"closed": 1}
     assert order == ["dedup", ("dissolution", ["gone", "live"])]
+
+
+def test_an_edge_party_reaches_the_rule_but_not_the_dedup(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(graph_writer, "_run_scoped_autodedup",
+                        lambda p, e: seen.update(dedup=sorted(e)) or {})
+    monkeypatch.setattr(graph_writer, "_end_dissolved_after_scrape",
+                        lambda e: seen.update(dissolution=sorted(set(e))) or {})
+
+    @graph_writer._with_autodedup
+    def ex21_run():
+        graph_writer._record_edge_parties("parent", "sub", None)   # resolved, never upserted
+        graph_writer._record_touched_entity("sub")
+        return {"status": "ok"}
+
+    ex21_run()
+    assert seen == {"dedup": ["sub"], "dissolution": ["parent", "sub"]}
+    assert graph_writer._edge_entities.get() is None              # the scope is reset
+
+
+def test_outside_a_scope_the_edge_parties_are_dropped():
+    graph_writer._record_edge_parties("parent")
+    assert graph_writer._edge_entities.get() is None
+
+
+def test_an_acquisition_enriching_an_exhibit_21_edge_names_its_companies():
+    """The enrich branch never reaches `_upsert_owns_sec`, so the acquisition
+    writer has to name the pair itself."""
+    from contextlib import contextmanager
+    from unittest.mock import MagicMock
+    from app.scraper import sec_writer
+    session = MagicMock()
+    session.run.return_value.single.return_value = {"r": {"filing_type": "EX-21", "since": None}}
+
+    @contextmanager
+    def _ctx():
+        yield session
+
+    token = graph_writer._edge_entities.set(set())
+    try:
+        with patch.object(sec_writer.db, "get_session", _ctx), patch.object(sec_writer, "record_claim"), \
+             patch.object(sec_writer, "_upsert_owns_sec") as upsert:
+            out = sec_writer.write_acquisition_sec("altaba", "sub", "s", closing="2017-06-16", value_usd=None,
+                                                   file_date="2017-08-09", source_url="u",
+                                                   filing_type="10-Q XBRL")
+        parties = graph_writer._edge_entities.get()
+    finally:
+        graph_writer._edge_entities.reset(token)
+    assert out == "enriched" and not upsert.called
+    assert parties == {"altaba", "sub"}

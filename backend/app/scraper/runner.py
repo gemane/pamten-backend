@@ -30,7 +30,7 @@ from app.scraper.sources import KNOWN_SOURCES
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix, normalize_cik
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
-    _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
+    _record_edge_parties, _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
     # The shared write layer lives in graph_writer now (the module split the
     # multi-scraper refactor deferred); re-exported here so existing imports and
     # test patch targets — `app.scraper.runner._upsert_owns` and friends — keep
@@ -2362,6 +2362,7 @@ def _upsert_role_oc(person_id: str, entity_id: str, role: str,
     source_date = the officer's start date, last_scraped_at = now (refreshed on
     re-scrape).
     """
+    _record_edge_parties(entity_id)
     now = _now_iso()
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, since=start_date, until=end_date, source_url=source_url,

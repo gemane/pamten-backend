@@ -37,6 +37,10 @@ log = logging.getLogger(__name__)
 # is O(all nodes) and crawls once the DB grows to millions of rows.
 _touched_persons: contextvars.ContextVar = contextvars.ContextVar("touched_persons", default=None)
 _touched_entities: contextvars.ContextVar = contextvars.ContextVar("touched_entities", default=None)
+# The companies an edge was written onto — for the dissolution rule only, not
+# the dedup: a runner that RESOLVES its company (Exhibit 21, 13F, Form D,
+# acquisitions) never upserts it, so it is never in `_touched_entities`
+_edge_entities: contextvars.ContextVar = contextvars.ContextVar("edge_entities", default=None)
 
 # The TARGET entity of the scrape (the searched company), so the outermost scope can
 # stamp its on-demand freshness — distinct from the touched-sets (which hold every node
@@ -92,6 +96,19 @@ def _record_touched_entity(entity_id: str) -> str:
     return entity_id
 
 
+def _record_edge_parties(*ids: str | None) -> None:
+    """Note the parties of an OWNS / HAS_ROLE edge a writer is about to write in
+    the active scrape's edge set (if one is active). Every edge writer calls it
+    first: the scope then applies the dissolution rule to each company an edge
+    landed on, found or created. Until 2026-10-29 the rule saw only the
+    upserted companies, and the rebuild of 2026-10-28 left Altaba's 78
+    Exhibit 21 holdings open — the runner looks its parent up, never upserts
+    it. A person id is harmless: the rule reads only Entity rows."""
+    bucket = _edge_entities.get()
+    if bucket is not None:
+        bucket.update(i for i in ids if i)
+
+
 def _run_scoped_autodedup(touched_persons: list, touched_entities: list) -> dict:
     """Scoped, high-confidence auto-merge over the ids a scrape touched — persons
     (SEC 'Page Lawrence' ↔ Wikidata 'Larry Page') and entities (the same company
@@ -128,7 +145,8 @@ def _end_dissolved_after_scrape(touched_entities: list) -> dict:
     2026-10-27 replayed the SEC scrapes after the chain's dissolution step and
     left Altaba (dissolved 2019-10-04) with 105 open holdings and seats: its
     Exhibit 21, the 13D/G and Form 4 filings about it, its officers. So the
-    outermost scope applies the rule to every touched company that has an end.
+    outermost scope applies the rule to every touched company that has an end
+    — upserted, or a party of an edge the scrape wrote (`_record_edge_parties`).
     After the dedup, which can fold a dissolution date onto a survivor.
     Best-effort, like the dedup beside it."""
     ids = [i for i in dict.fromkeys(touched_entities or []) if i]
@@ -206,22 +224,25 @@ def _with_autodedup(fn):
             return fn(*args, **kwargs)
         ptoken = _touched_persons.set(set())
         etoken = _touched_entities.set(set())
+        edtoken = _edge_entities.set(set())
         ttoken = _scrape_target.set(None)
         target = None
         try:
             result = fn(*args, **kwargs)
             touched_p = list(_touched_persons.get() or [])
             touched_e = list(_touched_entities.get() or [])
+            edge_e = list(_edge_entities.get() or [])
             target = _scrape_target.get()
         finally:
             _touched_persons.reset(ptoken)
             _touched_entities.reset(etoken)
+            _edge_entities.reset(edtoken)
             _scrape_target.reset(ttoken)
         if target:
             _stamp_scrape_freshness(target)
         if isinstance(result, dict):
             result.update(_run_scoped_autodedup(touched_p, touched_e))
-            result.update(_end_dissolved_after_scrape(touched_e))
+            result.update(_end_dissolved_after_scrape(touched_e + edge_e))
             # After the dedup, not before: a merge can fold the target into a
             # survivor, and geocoding the id that no longer exists would write
             # coordinates nobody reads.
@@ -330,6 +351,7 @@ def _upsert_owns(owner_id: str, owned_id: str, source_id: str,
     Entity) so the id lookups use the per-type index — a label-less
     `MATCH (a {id}), (b {id})` full-scans every node (~14s on 3M) per edge.
     """
+    _record_edge_parties(owner_id, owned_id)
     if owner_id == owned_id:
         log.warning("refusing a self-owning edge on %s", owner_id)
         return
@@ -579,6 +601,7 @@ def _upsert_role(person_id: str, entity_id: str, role: str, source_id: str,
     teaches an undated seat its date. Two spells that do not touch stay two
     seats: Larry Page, CEO of Google 1998–2001 and again from 2011.
     """
+    _record_edge_parties(entity_id)
     now = _now_iso()
     # The claim is dated by the day the source said it — the scrape day for
     # a knowledge base, as the owns claims are (the 290 Wikidata role claims

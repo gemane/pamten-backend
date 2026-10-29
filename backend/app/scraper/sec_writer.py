@@ -18,7 +18,7 @@ from app.claims import KIND_OWNS, KIND_ROLE, claims_for, close_role_claim, recor
 from app.database import db
 from app.db.anchors import label_or_entity
 from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, STALE_CLEAR, STALE_CLEAR_CYPHER, edge_create_clause, owns_props
-from app.scraper.graph_writer import _now_iso, _relabel_if_more_credible, _same_seat
+from app.scraper.graph_writer import _now_iso, _record_edge_parties, _relabel_if_more_credible, _same_seat
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 from app.scraper.owns_merge import ANSWER_FIELDS, SINCE_FIELDS, combine_since, outranks
 
@@ -343,6 +343,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
     closed rather than duplicated; with no active edge the closed one is written
     directly, so re-reading old filings still builds the timeline.
     """
+    _record_edge_parties(owner_id, owned_id)
     if owner_id == owned_id:
         # A company cannot own itself, and the graph had nine that did — Apple,
         # Microsoft and Alphabet all "holding" 7.48% of themselves, which is
@@ -657,6 +658,7 @@ def write_acquisition_sec(owner_id: str, owned_id: str, source_id: str, *,
     the price (COALESCE); the edge's type and grade become the list's again.
     Same end state whichever order the two run in.
     """
+    _record_edge_parties(owner_id, owned_id)
     from app.claims import ACQUISITION_FILING_TYPES
     with db.get_session() as session:
         held = session.run(
@@ -773,6 +775,7 @@ def _upsert_role_sec(person_id: str, entity_id: str, role: str,
     the day they became an insider in this seat — and backfills an undated
     edge the same way; it never overwrites a date another source stated.
     """
+    _record_edge_parties(entity_id)
     record_claim(kind=KIND_ROLE, from_id=person_id, to_id=entity_id, source_id=source_id,
                  role=role, source_url=source_url, source_date=source_date,
                  since=since, until=until, credibility_score=credibility_score,
