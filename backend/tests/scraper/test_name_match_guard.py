@@ -14,6 +14,8 @@ from app.scraper.graph_writer import _name_key, _not_this_filer
     ("Toyota Motor Corporation", "TOYOTA MOTOR CORP/"),
     ("Société Générale", "SOCIETE GENERALE"),
     ("BlackRock, Inc.", "Blackrock, Inc."),
+    ("Baillie Gifford & Co", "Baillie Gifford and Company"),
+    ("JPMorgan Chase & Co.", "JPMorgan Chase"),
 ])
 def test_spellings_of_one_name_agree(a, b):
     assert _name_key(a) == _name_key(b)
@@ -23,6 +25,7 @@ def test_spellings_of_one_name_agree(a, b):
     ("BlackRock, Inc.", "BlackRock Finance, Inc."),
     ("Tencent", "Tencent Music Entertainment Group"),
     ("Baillie Gifford & Co", "BAILLIE GIFFORD FUNDS"),
+    ("Procter & Gamble", "Procter Gamble"),
 ])
 def test_another_word_is_another_company(a, b):
     assert _name_key(a) != _name_key(b)

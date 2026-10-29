@@ -761,7 +761,10 @@ def _name_key(name: str) -> tuple[str, ...]:
     stay words, so "BlackRock" and "BlackRock Finance" do not."""
     plain = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode().lower()
     plain = _STATE_TAG.sub("", plain)
-    return tuple(w for w in re.split(r"[^a-z0-9&]+", plain) if w and w not in _NAME_FORMS)
+    words = [w for w in re.split(r"[^a-z0-9&]+", plain) if w and w not in _NAME_FORMS]
+    while words and words[-1] in ("&", "and"):     # "& Co" / "and Company" is one legal form
+        words.pop()
+    return tuple(words)
 
 
 def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,

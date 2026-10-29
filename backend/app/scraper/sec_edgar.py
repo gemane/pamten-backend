@@ -58,7 +58,7 @@ import httpx
 from app import former_names
 from app.roles import canonical_role
 from app.scraper.edge_schema import READ_FIELD, READ_FORM
-from app.scraper.mapper import derive_ownership_type
+from app.scraper.mapper import derive_ownership_type, strip_dangling_conjunction
 
 log = logging.getLogger(__name__)
 
@@ -538,7 +538,7 @@ def _ticker_normalize(name: str) -> str:
     name = name.lower()
     name = re.sub(r"[.,]", "", name)
     name = _LEGAL_SUFFIXES.sub("", name)
-    return re.sub(r"\s+", " ", name).strip()
+    return strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())
 
 
 # Minimum SequenceMatcher ratio for a match to be accepted.

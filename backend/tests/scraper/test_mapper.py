@@ -58,7 +58,20 @@ class TestNormalizeEntityName:
         assert normalize_entity_name("FMR LLC") == "fmr"
 
     def test_strips_ltd(self):
-        assert normalize_entity_name("Baillie Gifford & Co Ltd") == "baillie gifford &"
+        assert normalize_entity_name("Baillie Gifford & Co Ltd") == "baillie gifford"
+
+    # "& Co" is one legal form: stripping "co" alone left "jpmorgan chase &",
+    # which "JPMorgan Chase" never matched (23 dev nodes, 2026-10-29)
+    def test_and_co_goes_as_a_whole(self):
+        for name in ("JPMorgan Chase & Co.", "JPMORGAN CHASE & CO", "JPMorgan Chase and Company",
+                     "JPMorgan Chase"):
+            assert normalize_entity_name(name) == "jpmorgan chase"
+
+    def test_an_ampersand_inside_a_name_stays(self):
+        assert normalize_entity_name("Procter & Gamble Co") == "procter & gamble"
+        assert normalize_entity_name("Johnson & Johnson") == "johnson & johnson"
+        assert normalize_entity_name("Marks and Spencer Group plc") == "marks and spencer group"
+        assert normalize_entity_name("AT&T Inc.") == "at&t"
 
     def test_already_normalized(self):
         assert normalize_entity_name("blackrock") == "blackrock"
