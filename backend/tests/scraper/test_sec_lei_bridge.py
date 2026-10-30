@@ -19,6 +19,13 @@ def members():
             {"id": "sec:0000217410", "name": "UNILEVER PLC", "lei_id": None, "sec_cik": "0000217410", "cred": 98}]
 
 
+@pytest.fixture(autouse=True)
+def _no_edgar():
+    # the registers' own word (legal_identity) asks EDGAR: never from a unit test
+    with patch("app.scraper.legal_identity.filer_facts", return_value=None):
+        yield
+
+
 @pytest.fixture
 def flags_on():
     with patch.object(settings, "SCRAPER_ENABLED", True), \
@@ -34,10 +41,41 @@ class TestTheBridge:
              patch.object(maintenance, "run_command", side_effect=lambda q, p=None: writes.append(p)):
             joined = maintenance._bridge_sec_lei(group, set())
         confirm.assert_called_once_with("0000217410", LEI, ["UNILEVER PLC", "Unilever Plc"])
-        assert writes == [{"id": "sec:0000217410", "lei": LEI, "url": URL}]
+        assert writes == [{"id": "sec:0000217410", "lei": LEI, "url": URL, "why": "filing"}]
         assert joined == [{"cik_id": "sec:0000217410", "lei_id": LEI, "lei_node_id": "gb-coh:00041424",
                            "name": "UNILEVER PLC", "source_url": URL}]
         assert maintenance._group_confidence(group) == "definitive"
+
+    def test_unstated_the_registers_decide(self):
+        # NYT states its LEI in no filing: name, place and the 2021 address agree
+        from app.scraper.legal_identity import Filer
+        writes = []
+        nyt = [{"id": "lei:529900J1WEMMIW7BOH57", "name": "New York Times Co.", "lei_id": "529900J1WEMMIW7BOH57",
+                "sec_cik": None, "cred": 92},
+               {"id": "sec:0000071691", "name": "NEW YORK TIMES CO", "lei_id": None, "sec_cik": "0000071691",
+                "cred": 98}]
+        gleif = {"name": "New York Times Co.", "lei_id": "529900J1WEMMIW7BOH57", "country": "US"}
+        with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
+             patch("app.scraper.legal_identity.filer_facts",
+                   return_value=Filer("0000071691", "NEW YORK TIMES CO", home="US-NY")), \
+             patch("app.scraper.legal_identity.same_legal_entity", return_value=("join", "name+country+address@2021-07-16")) as rule, \
+             patch.object(maintenance, "run_sql", return_value=[gleif]), \
+             patch.object(maintenance, "run_command", side_effect=lambda q, p=None: writes.append(p)):
+            joined = maintenance._bridge_sec_lei(nyt, set())
+        assert rule.call_args.args[0] == gleif
+        assert writes == [{"id": "sec:0000071691", "lei": "529900J1WEMMIW7BOH57", "url": None,
+                           "why": "name+country+address@2021-07-16"}]
+        assert joined[0]["evidence"] == "name+country+address@2021-07-16"
+
+    def test_unstated_and_refused_writes_nothing(self):
+        from app.scraper.legal_identity import Filer
+        with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
+             patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0000217410", "UNILEVER PLC")), \
+             patch("app.scraper.legal_identity.same_legal_entity", return_value=("refuse", "registered NL, filer GB")), \
+             patch.object(maintenance, "run_sql", return_value=[{"name": "Unilever Plc"}]), \
+             patch.object(maintenance, "run_command") as write:
+            assert maintenance._bridge_sec_lei(members(), set()) == []
+        write.assert_not_called()
 
     def test_not_confirmed_writes_nothing(self):
         group = members()
@@ -115,6 +153,8 @@ class TestTheWholeDatabase:
                          "sec_cik": "0000217410"},
                         {"id": "sec:0000320193", "name": "Apple Inc.", "name_normalized": "apple",
                          "sec_cik": "0000320193"}]
+            if "CONTAINSTEXT" in q:
+                return []                               # no partner by another name
             assert params == {"nn": "unilever"} or params == {"nn": "apple"}
             return [members()[0]] if params["nn"] == "unilever" else []
         with patch.object(maintenance, "run_sql", side_effect=sql), \
@@ -123,6 +163,25 @@ class TestTheWholeDatabase:
             joined = maintenance.bridge_sec_lei_pairs(set())
         confirm.assert_called_once()                   # Apple has no LEI-only namesake
         assert [j["cik_id"] for j in joined] == ["sec:0000217410"]
+
+    def test_a_partner_by_its_other_name(self, flags_on):
+        # Tencent's GLEIF legal name is Chinese; "Tencent Holdings Limited" is an other name
+        def sql(q, params=None):
+            if "sec_cik IS NOT NULL AND lei_id IS NULL" in q:
+                return [{"id": "sec:0001293451", "name": "Tencent Holdings Ltd",
+                         "name_normalized": "tencent holdings", "sec_cik": "0001293451"}]
+            if "CONTAINSTEXT" in q:
+                assert params == {"q": "tencent holdings"}
+                return [{"id": "lei:254900N4SLUMW4XUYY11", "name": "騰訊控股有限公司", "lei_id": "254900N4SLUMW4XUYY11",
+                         "sec_cik": None, "other_names": ["Tencent Holdings Limited"]},
+                        {"id": "lei:OTHER", "name": "Tencent Music", "lei_id": "OTHER", "sec_cik": None,
+                         "other_names": ["Tencent Music Entertainment Group"]}]
+            return []
+        seen = []
+        with patch.object(maintenance, "run_sql", side_effect=sql), \
+             patch.object(maintenance, "_bridge_sec_lei", side_effect=lambda m, k: seen.append(m) or []):
+            maintenance.bridge_sec_lei_pairs(set())
+        assert [m["id"] for m in seen[0]] == ["sec:0001293451", "lei:254900N4SLUMW4XUYY11"]
 
     def test_scraping_off_reads_nothing(self):
         with patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", False), \

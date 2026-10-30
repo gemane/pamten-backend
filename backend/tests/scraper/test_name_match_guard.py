@@ -102,3 +102,57 @@ class TestFilerAsRegistered:
 def test_an_apostrophe_is_dropped_not_a_word_break(name, key):
     # the split turned the straight one into a stray "s" word (2026-10-30)
     assert _name_key(name) == key
+
+
+class TestAGleifNodeMetByAFilersName:
+    """A node that carries an LEI and no CIK, found by an EDGAR filer's name:
+    the registers decide (`legal_identity`, findings item 4)."""
+
+    def _lei_node(self, **extra):
+        return _session(name="Domino's Pizza LLC", lei="254900BIRZMWFO44TO04", **extra)
+
+    def test_the_rule_refuses_the_llc(self):
+        from app.scraper import graph_writer
+        from app.scraper.legal_identity import Filer
+        with patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0001286681", "DOMINOS PIZZA INC")), \
+             patch("app.scraper.legal_identity.same_legal_entity",
+                   return_value=("refuse", "legal name differs")) as rule:
+            why = _not_this_filer(self._lei_node(), "lei:254900BIRZMWFO44TO04", "0001286681", None, None)
+        assert why == "its GLEIF record is not filer 0001286681: legal name differs"
+        assert rule.call_args.args[1].name == "DOMINOS PIZZA INC"
+        assert ("lei:254900BIRZMWFO44TO04", "0001286681") not in graph_writer._JOINED
+
+    def test_a_join_is_remembered_for_the_write(self):
+        from app.scraper import graph_writer
+        from app.scraper.legal_identity import Filer
+        with patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0001286681", "DOMINOS PIZZA INC")), \
+             patch("app.scraper.legal_identity.same_legal_entity", return_value=("join", "name+place")):
+            assert _not_this_filer(self._lei_node(), "lei:INC", "0001286681", None, None) is None
+        assert graph_writer._JOINED.pop(("lei:INC", "0001286681")) == "name+place"
+
+    def test_edgar_silent_falls_back_to_the_name(self):
+        with patch("app.scraper.legal_identity.filer_facts", return_value=None), \
+             patch("app.scraper.sec_edgar.fetch_filer_name", return_value="DOMINOS PIZZA INC"):
+            assert _not_this_filer(self._lei_node(), "n", "0001286681", None, None) is None
+
+    def test_a_node_without_an_lei_keeps_the_name_test(self):
+        with patch("app.scraper.legal_identity.same_legal_entity") as rule, \
+             patch("app.scraper.sec_edgar.fetch_filer_name", return_value="DOMINOS PIZZA INC"):
+            assert _not_this_filer(_session(name="Domino's Pizza Inc"), "n", "0001286681", None, None) is None
+        rule.assert_not_called()
+
+
+class TestTheFirstCandidateTheRegistersAllow:
+    def test_the_llc_refused_the_inc_taken(self):
+        from app.scraper import graph_writer
+        refusals = {"lei:LLC": "its GLEIF record is not filer 0001286681: legal name differs"}
+        with patch.object(graph_writer, "_not_this_filer", side_effect=lambda s, i, *a: refusals.get(i)):
+            got = graph_writer._first_filer_match(MagicMock(), ["lei:LLC", "lei:INC"], "DOMINOS PIZZA INC",
+                                                  "0001286681", None, None)
+        assert got == ("lei:INC", True)
+
+    def test_every_candidate_of_the_name_is_weighed(self):
+        from app.scraper import graph_writer
+        s = MagicMock()
+        s.run.side_effect = lambda q, **kw: [{"id": "lei:LLC"}, {"id": "lei:INC"}] if "name_normalized" in q else []
+        assert graph_writer._candidates_by_name(s, "DOMINOS PIZZA INC", "dominos pizza", None) == ["lei:LLC", "lei:INC"]

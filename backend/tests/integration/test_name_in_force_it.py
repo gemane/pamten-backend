@@ -20,11 +20,11 @@ pytestmark = pytest.mark.integration
 NEW_LEI, OLD_LEI = "529900VBK42Y5HHRMD23", "549300LRIF3NWCU26A80"
 OLD_CIK, NEW_CIK = "0001364742", "0002012383"
 SUBMISSIONS = {
-    OLD_CIK: {"name": "BlackRock Finance, Inc.", "formerNames": [
+    OLD_CIK: {"name": "BlackRock Finance, Inc.", "stateOfIncorporation": "DE", "formerNames": [
         {"name": "New BlackRock, Inc.", "to": "2006-09-29T00:00:00.000Z"},
         {"name": "BlackRock, Inc.", "to": "2006-10-05T00:00:00.000Z"},
         {"name": "BlackRock Inc.", "to": "2024-09-26T00:00:00.000Z"}]},
-    NEW_CIK: {"name": "BlackRock, Inc.", "formerNames": [
+    NEW_CIK: {"name": "BlackRock, Inc.", "stateOfIncorporation": "DE", "formerNames": [
         {"name": "BlackRock Funding, Inc. /DE", "to": "2024-10-01T00:00:00.000Z"}]},
 }
 
@@ -37,7 +37,8 @@ def _edgar():
 def _seed_new_parent(it_db):
     it_db.run_command("CREATE (:Entity {id: $id, name: 'BlackRock, Inc.', name_normalized: 'blackrock', "
                       "type: 'company', search_text: 'BlackRock, Inc.', name_credibility: 92, "
-                      "lei_id: $lei, country: 'US'})", {"id": f"lei:{NEW_LEI}", "lei": NEW_LEI})
+                      "lei_id: $lei, country: 'US', jurisdiction_code: 'US-DE'})",
+                      {"id": f"lei:{NEW_LEI}", "lei": NEW_LEI})
 
 
 def _old_filer_from_an_old_13g():

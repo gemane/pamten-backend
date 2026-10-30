@@ -1475,8 +1475,12 @@ def _bridge_sec_lei(members: list[dict], kept_separate: set, apply: bool = True)
     (`sec_lei.confirm_filer_lei`), the CIK node takes the LEI — and the
     filing as ``lei_source_url`` — so the pair shares a hard id and the
     ordinary merge folds it (Unilever's Companies House node and EDGAR's
-    UNILEVER PLC, 2026-10-27). A pair a human kept apart is never asked.
+    UNILEVER PLC, 2026-10-27). Where no filing states it — NYT, Tencent and
+    Domino's state theirs nowhere — the registers decide
+    (`legal_identity.same_legal_entity`), and the evidence is kept as
+    ``lei_source``. A pair a human kept apart is never asked.
     Updates `members` in place; returns the pairs joined."""
+    from app.scraper.legal_identity import IDENTITY_FIELDS, JOIN, filer_facts, same_legal_entity
     from app.scraper.sec_lei import confirm_filer_lei
     lei_only = [m for m in members if m.get("lei_id") and not m.get("sec_cik")]
     cik_only = [m for m in members if m.get("sec_cik") and not m.get("lei_id")]
@@ -1491,17 +1495,49 @@ def _bridge_sec_lei(members: list[dict], kept_separate: set, apply: bool = True)
             asked += 1
             hit = confirm_filer_lei(filer["sec_cik"], node["lei_id"],
                                     [filer.get("name"), node.get("name")])
-            if not hit:
+            evidence = None
+            if not hit and (facts := filer_facts(filer["sec_cik"])):
+                gleif = run_sql(f"SELECT {', '.join(IDENTITY_FIELDS)} FROM Entity WHERE id = :id",
+                                {"id": node["id"]})
+                if gleif:
+                    verdict, why = same_legal_entity(dict(gleif[0]), facts)
+                    if verdict == JOIN:
+                        evidence = why
+                    else:
+                        log.info("SEC/LEI bridge: %s is not %s: %s", node["id"], filer["id"], why)
+            if not hit and not evidence:
                 continue
+            url = hit["source_url"] if hit else None
             if apply:
                 run_command("MATCH (e:Entity {id: $id}) "
-                            "SET e.lei_id = $lei, e.lei_source_url = COALESCE(e.lei_source_url, $url)",
-                            {"id": filer["id"], "lei": node["lei_id"], "url": hit["source_url"]})
+                            "SET e.lei_id = $lei, e.lei_source_url = COALESCE(e.lei_source_url, $url), "
+                            "e.lei_source = COALESCE(e.lei_source, $why)",
+                            {"id": filer["id"], "lei": node["lei_id"], "url": url,
+                             "why": "filing" if hit else evidence})
             filer["lei_id"] = node["lei_id"]
             joined.append({"cik_id": filer["id"], "lei_id": node["lei_id"], "lei_node_id": node["id"],
-                           "name": filer.get("name"), "source_url": hit["source_url"]})
+                           "name": filer.get("name"), "source_url": url,
+                           **({"evidence": evidence} if evidence else {})})
             break
     return joined
+
+
+def _partners_by_other_name(filer: dict, seen: set) -> list[dict]:
+    """LEI-only nodes one of whose OTHER names keys as the filer's name:
+    Tencent's GLEIF legal name is "騰訊控股有限公司", its transliteration
+    "Tencent Holdings Limited" an other name. Found through the full-text
+    index (whole words), then held to the name key."""
+    from app.scraper.mapper import normalize_entity_name
+    nn = filer.get("name_normalized")
+    if not nn:
+        return []
+    out = []
+    for r in run_sql("SELECT id, name, lei_id, sec_cik, other_names FROM Entity WHERE search_text CONTAINSTEXT :q "
+                     "AND lei_id IS NOT NULL AND sec_cik IS NULL LIMIT 20", {"q": nn}):
+        r = {k: v for k, v in dict(r).items() if not k.startswith("@")}
+        if r["id"] not in seen and any(normalize_entity_name(n) == nn for n in r.pop("other_names", None) or []):
+            out.append(r)
+    return out
 
 
 def bridge_sec_lei_pairs(kept_separate: set | None = None) -> list[dict]:
@@ -1522,6 +1558,7 @@ def bridge_sec_lei_pairs(kept_separate: set | None = None) -> list[dict]:
                            "AND lei_id IS NOT NULL AND sec_cik IS NULL LIMIT 10",
                            {"nn": filer["name_normalized"]})
         partners = [{k: v for k, v in dict(p).items() if not k.startswith("@")} for p in partners]
+        partners += _partners_by_other_name(filer, {p["id"] for p in partners})
         if partners:
             joined += _bridge_sec_lei([filer, *partners], kept_separate)
     return joined

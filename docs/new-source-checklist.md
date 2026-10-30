@@ -408,6 +408,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the issuer's LEI, and one document can be filed under two CIKs. So validate the
       identifier's checksum, take a lone LEI only from a document the filer filed alone,
       and otherwise require the name to label the code. A miss is "unknown", never "different".
+- [ ] **When no document settles it, ask the registers — at the record's own date.** Two
+      registers describe one legal entity when the legal name (form kept), the place of
+      registration and, for a weak record, the address or a subsidiary agree — compared on
+      the day the record was last true, not today: a lapsed LEI's data is a snapshot
+      (NYT's of 2021). A parent link in force vetoes (Domino's LLC under the Inc.). Run the
+      rule in every writer where the pair can meet, or the write order decides
+      (`legal_identity`, 2026-10-30).
 - [ ] **A similarity score cannot tell a sponsor from its vehicle.** "Baillie Gifford & Co"
       and "BAILLIE GIFFORD FUNDS" score 0.84, and the manager took the funds' CIK. When the
       extra words in a candidate's name make it another kind of entity (a fund, a trust, a

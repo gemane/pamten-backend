@@ -215,6 +215,14 @@ def _registration_status(rec: dict) -> str | None:
     return _v((rec.get("Registration") or {}).get("RegistrationStatus"))
 
 
+def _last_update(rec: dict) -> str | None:
+    """The day GLEIF last updated the record (``LastUpdateDate``). For a record
+    no longer maintained (LAPSED) it is the day its data was last true — the
+    reference day of `legal_identity.same_legal_entity`."""
+    d = _v((rec.get("Registration") or {}).get("LastUpdateDate"))
+    return d[:10] if d and len(d) >= 10 else None
+
+
 def _entity_status(rec: dict) -> str | None:
     """``EntityStatus``: ACTIVE, or INACTIVE once the entity has ceased."""
     return _v((rec.get("Entity") or {}).get("EntityStatus"))
@@ -358,6 +366,9 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     validation = _validation_sources(rec)
     if validation:
         props["validation_sources"] = validation
+    last_update = _last_update(rec)
+    if last_update:
+        props["gleif_last_update"] = last_update
     dissolved = _dissolved_on(entity)
     if dissolved:
         props["dissolved_on"] = dissolved      # only when stated: a re-import never blanks it

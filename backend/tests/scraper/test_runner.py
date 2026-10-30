@@ -1355,6 +1355,21 @@ class TestIdentifierBridge:
         assert "lei_id" not in update[0].args[0] and "sec_cik" not in update[0].args[0]
         assert "lei" not in update[0].kwargs and "sec_cik" not in update[0].kwargs
 
+    def test_a_filer_found_by_its_cik_lets_gleif_decide_on_the_stated_lei(self):
+        # findings item 3: Baillie Gifford's item states LEI 549300UYMK70HLNJU654,
+        # its SEC node had none and the LEI was dropped
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "sec:0001088859"},
+            {"lei_id": None, "sec_cik": "0001088859", "name": "BAILLIE GIFFORD & CO"},
+            {"name": "BAILLIE GIFFORD & CO", "cred": 98, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.attach_stated_lei") as attach:
+            eid = _upsert_entity("Baillie Gifford", None, None, None, "Q1",
+                                 lei="549300UYMK70HLNJU654", sec_cik="0001088859")
+        assert eid == "sec:0001088859"
+        held, node_id, leis = attach.call_args.args
+        assert node_id == "sec:0001088859" and leis == ["549300UYMK70HLNJU654"] and held["sec_cik"] == "0001088859"
+
     def test_a_node_no_register_knows_carries_no_identifier(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \
