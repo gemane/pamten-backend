@@ -3,8 +3,10 @@ findings item 4). The pairs are the 2026-10-29b rebuild's, their facts as
 GLEIF's API and EDGAR's submissions gave them on 2026-10-30."""
 import pytest
 
-from app.scraper.legal_identity import (JOIN, REFUSE, Evidence, Filer, _in_force, header_address,
-                                        names_at, reference_day, same_legal_entity)
+from unittest.mock import patch
+
+from app.scraper.legal_identity import (JOIN, REFUSE, Evidence, Filer, _in_force, filer_held_at,
+                                        header_address, names_at, reference_day, same_legal_entity)
 
 TODAY = "2026-10-30"
 
@@ -61,6 +63,61 @@ class TestTheFourPairs:
         node = {**DOMINOS_LLC_GLEIF, "name": "Domino's Pizza, Inc."}
         assert same_legal_entity(node, DOMINOS, today=TODAY, evidence=fake()) == (
             REFUSE, "registered US-MI, filer US-DE")
+
+
+class TestTheFormFromGleifsCode:
+    """GLEIF's legal name without its form, the form as an ELF code (findings
+    item 19, 2026-10-30): AB InBev's record says "ANHEUSER-BUSCH INBEV", R85P."""
+    ABI_GLEIF = {"name": "ANHEUSER-BUSCH INBEV", "lei_id": "5493008H3828EMEXB082", "legal_form_code": "R85P",
+                 "country": "BE", "jurisdiction_code": None, "gleif_registration_status": "ISSUED",
+                 "validation_sources": "FULLY_CORROBORATED", "gleif_last_update": "2026-06-01"}
+
+    @pytest.mark.parametrize("edgar", ["Anheuser-Busch InBev SA/NV", "ANHEUSER-BUSCH INBEV NV",
+                                       "Anheuser-Busch InBev S.A."])
+    def test_the_codes_abbreviation_is_the_form(self, edgar):
+        assert same_legal_entity(self.ABI_GLEIF, Filer("0001668717", edgar, home="BE"),
+                                 today=TODAY, evidence=fake()) == (JOIN, "name(form R85P)+place")
+
+    @pytest.mark.parametrize("edgar", ["Anheuser-Busch InBev Inc.", "Anheuser-Busch InBev SA/NV Holdings"])
+    def test_another_form_or_word_is_another_name(self, edgar):
+        verdict, why = same_legal_entity(self.ABI_GLEIF, Filer("1", edgar, home="BE"), today=TODAY, evidence=fake())
+        assert verdict == REFUSE and "legal name differs" in why
+
+    def test_no_code_no_form(self):
+        node = {**self.ABI_GLEIF, "legal_form_code": None}
+        assert same_legal_entity(node, Filer("1", "Anheuser-Busch InBev SA/NV", home="BE"),
+                                 today=TODAY, evidence=fake())[0] == REFUSE
+
+    def test_a_gleif_name_with_its_form_is_compared_as_it_is(self):
+        # "Domino's Pizza LLC" names its form; the code adds nothing to it
+        node = {**DOMINOS_LLC_GLEIF, "legal_form_code": "XTIQ"}
+        assert same_legal_entity(node, DOMINOS, today=TODAY, evidence=fake())[0] == REFUSE
+
+
+class TestTheExhibitAtD:
+    """The list a filer held on D: the report covering D, else the newest filed
+    by D. A maintained record's D is today, which no report covers yet; until
+    2026-10-30 no list was read for it (findings item 19)."""
+    FILINGS = [("20-F", "a26", "2026-03-30", "2025-12-31"), ("20-F", "a25", "2025-03-28", "2024-12-31"),
+               ("20-F", "a24", "2024-03-27", "2023-12-31")]                          # newest first
+
+    def _picked(self, day):
+        picked = []
+        with patch("app.database.db.get_session"), \
+             patch("app.scraper.sec_ex21.annual_filings", return_value=self.FILINGS), \
+             patch("app.scraper.sec_ex21.exhibit_candidates", side_effect=lambda cik, form, acc, *a: picked.append(acc) or []), \
+             patch("app.scraper.sec_ex21._parse_first", return_value=([{"name": "Yabora", "jurisdiction": "Brazil"}],)):
+            held = filer_held_at("0001355444", day)
+        return picked, held
+
+    def test_today_reads_the_newest_report(self):
+        assert self._picked("2026-10-30") == (["a26"], [("Yabora", "Brazil")])
+
+    def test_a_past_day_reads_the_report_covering_it(self):
+        assert self._picked("2024-06-30")[0] == ["a25"]           # FY2024, filed 2025
+
+    def test_a_day_before_every_report_reads_the_oldest(self):
+        assert self._picked("2020-01-01")[0] == ["a24"]           # the oldest covers it
 
 
 class TestTheVeto:

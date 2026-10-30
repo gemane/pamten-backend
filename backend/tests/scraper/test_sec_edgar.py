@@ -2818,6 +2818,76 @@ class TestIncorporationPlace:
         from app.scraper.sec_edgar import incorporation_place
         assert incorporation_place(subs) == expected
 
+
+class TestStatedIncorporation:
+    """The newest annual report's cover says where the filer is incorporated;
+    EDGAR's header field only when it does not (findings item 19, 2026-10-30)."""
+
+    @staticmethod
+    def _subs(forms=("10-K",), **header):
+        return {"cik": "1404655", **header,
+                "filings": {"recent": {"form": list(forms),
+                                       "accessionNumber": [f"0001193125-26-04664{i}" for i in range(len(forms))],
+                                       "primaryDocument": [f"doc{i}.htm" for i in range(len(forms))]}}}
+
+    @staticmethod
+    def _tag(value, fmt=None):
+        attr = f' format="{fmt}"' if fmt else ""
+        return (f'<html><ix:nonNumeric contextRef="c-1" name="dei:EntityIncorporationStateCountryCode"{attr}>'
+                f'<span style="font-weight:bold">{value}</span></ix:nonNumeric></html>')
+
+    @pytest.mark.parametrize("value, fmt, expected", [
+        ("Delaware", "ixt-sec:stateprovnameen", "US-DE"),          # HubSpot, whose header says NY
+        ("Cayman Islands", "ixt-sec:edgarprovcountryen", "KY"),    # Alibaba, whose header says Hong Kong
+        ("United Mexican States", "ixt-sec:edgarprovcountryen", "MX"),
+        ("Brazil", "ixt-sec:edgarprovcountryen", "BR"),
+        ("DE", None, "US-DE"),                                     # EDGAR's own code, untransformed
+        ("E9", None, None),
+    ])
+    def test_the_cover_tag(self, value, fmt, expected):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text", return_value=self._tag(value, fmt)):
+            assert sec_edgar.stated_incorporation(self._subs()) == expected
+
+    def test_the_newest_annual_report_is_read(self):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text", return_value=self._tag("Delaware", "ixt-sec:stateprovnameen")) as get:
+            sec_edgar.stated_incorporation(self._subs(forms=("8-K", "10-Q", "20-F", "10-K")))
+        get.assert_called_once_with("https://www.sec.gov/Archives/edgar/data/1404655/000119312526046642/doc2.htm")
+
+    def test_only_the_newest_report_counts(self):
+        # an older report's place may be the one the filer has since left
+        from app.scraper import sec_edgar
+        pages = iter(["<html>untagged</html>", self._tag("New York", "ixt-sec:stateprovnameen")])
+        with patch.object(sec_edgar, "_get_text", side_effect=lambda url: next(pages)):
+            assert sec_edgar.stated_incorporation(self._subs(forms=("10-K", "10-K"))) is None
+
+    @pytest.mark.parametrize("subs", [
+        {"cik": "1404655"},                                        # no filings listed
+        {"filings": {"recent": {"form": ["10-K"], "accessionNumber": ["x"], "primaryDocument": ["d.htm"]}}},
+    ])
+    def test_nothing_to_read(self, subs):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text") as get:
+            assert sec_edgar.stated_incorporation(subs) is None
+        get.assert_not_called()
+
+    def test_the_header_answers_when_the_report_does_not(self):
+        from app.scraper import sec_edgar
+        subs = self._subs(stateOfIncorporation="NY", stateOfIncorporationDescription="NY")
+        with patch.object(sec_edgar, "_get_text", return_value="<html>untagged</html>"):
+            assert sec_edgar.incorporation_place(subs) == "US-NY"
+        with patch.object(sec_edgar, "_get_text", side_effect=RuntimeError("down")):
+            assert sec_edgar.incorporation_place(subs) == "US-NY"
+
+    def test_the_report_beats_the_header(self):
+        from app.scraper import sec_edgar
+        subs = self._subs(stateOfIncorporation="NY", stateOfIncorporationDescription="NY")
+        with patch.object(sec_edgar, "_get_text", return_value=self._tag("Delaware", "ixt-sec:stateprovnameen")):
+            assert sec_edgar.incorporation_place(subs) == "US-DE"
+
+
+class TestFilerIdentity:
     def test_filer_identity_from_one_request(self):
         from app.scraper.sec_edgar import fetch_filer_identity
         with patch("app.scraper.sec_edgar._submissions",

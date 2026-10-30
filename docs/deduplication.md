@@ -736,18 +736,31 @@ evidence or the reason:
 
 1. **The same legal name, legal form kept** (`sec_ex21.legal_name_key`, #489's key): any of
    GLEIF's names (legal, other, transliterated — Tencent's legal name is Chinese) against
-   EDGAR's current name or the former name in force on the reference day `D`.
-2. **The same place of registration**: GLEIF's jurisdiction against EDGAR's state of
-   incorporation (`sec_edgar.incorporation_place`). Another place refuses. GLEIF's bare `US`
-   against EDGAR's New York contradicts nothing but confirms nothing either.
+   EDGAR's current name or the former name in force on the reference day `D`. A GLEIF name
+   that gives no form takes it from the record's legal-form code: GLEIF writes "ANHEUSER-BUSCH
+   INBEV" with ELF code R85P, whose abbreviations are NV, SA and AG, so EDGAR's "Anheuser-Busch
+   InBev SA/NV" is that name — "… Inc." would not be (`legal_identity._same_name_by_form_code`,
+   `gleif_reference.legal_form_abbreviations`, the bundle `gleif_elf_abbr.json` built by
+   `scripts/build_gleif_elf_abbr_bundle.py` from GLEIF's CC0 ELF list; evidence
+   "name(form R85P)+place").
+2. **The same place of registration**: GLEIF's jurisdiction against where the filer is
+   incorporated (`sec_edgar.incorporation_place`): the cover of its newest annual report first
+   (`dei:EntityIncorporationStateCountryCode`, `stated_incorporation`), EDGAR's header field
+   `stateOfIncorporation` only when that report states none. The header field is the filer's
+   own entry in EDGAR's company database, checked against nothing: New York for HubSpot (10-K
+   cover: Delaware), Hong Kong for Alibaba (20-F cover: Cayman Islands), empty for
+   MercadoLibre, Embraer and Televisa. Another place refuses. GLEIF's bare `US` against
+   EDGAR's New York contradicts nothing but confirms nothing either.
 3. **A weak record needs one more match, at its own date.** Weak means a country where EDGAR
    names a state, a LAPSED or RETIRED registration, or ENTITY_SUPPLIED_ONLY data. `D` is the
    record's `gleif_last_update` when GLEIF no longer maintains it, today otherwise. Then
    either GLEIF's street and city equal the business address in the header of the filer's
    filing closest to `D` (postcode aside; today's address, said in the evidence, when no
    filing lies within a year), or a GLEIF child in force on `D` is a company the filer held
-   then (an OWNS edge open on `D`, or that fiscal year's Exhibit 21), by the same name key in
-   a compatible place. NYT's lapsed record (last updated 2021-07-16) says 620 Eighth Avenue;
+   then (an OWNS edge open on `D`, or that fiscal year's Exhibit 21 — else the newest filed by
+   `D`), by the same name key in a compatible place. Until 2026-10-30 only the fiscal year
+   containing `D` counted; a maintained record's `D` is today, which no report covers yet, so
+   no list was ever read for one. NYT's lapsed record (last updated 2021-07-16) says 620 Eighth Avenue;
    so does NYT's July 2021 Form 4 header.
 4. **Veto**: never a record GLEIF lists as a direct or ultimate child of a record that passes
    1 and 2 against the filer, while that link is in force on `D` or today — Domino's Pizza
@@ -766,6 +779,17 @@ It runs wherever such a pair meets, so the order no longer decides:
 - **This bridge**, when no filing confirms the LEI; its candidates include LEI-only nodes one
   of whose other names keys as the filer's (`_partners_by_other_name`, through the full-text
   index).
+Findings item 19 (rebuild 2026-10-30): eight pairs that had joined by name before #490 were
+refused. Six join since (AB InBev by the form code; HubSpot and Alibaba by the report's
+place; MercadoLibre, Embraer and Televisa by the report's place, and their newest lists would
+confirm them too: 10 of 12, 3 of 4 and 5 of 6 GLEIF children). **SoftBank Group and National
+Indemnity stay two nodes each, by decision** (2026-10-30): neither files a 10-K or 20-F, EDGAR
+states no incorporation for them, and only an address could confirm them — suite numbers
+and a Japanese-script GLEIF address do not compare, and the user chose not to loosen it.
+Measured over the 59 dev filers with an Exhibit 21: the report's place equals the header's
+for 50, fills an empty header for 5, corrects it for 1 (Alibaba), and 3 older filers carry
+no tag and keep the header's.
+
 - **The Wikidata writer**: an item found by its CIK that states an LEI the graph lacks asks
   GLEIF, with that node as the only candidate (`register_pointer.attach_stated_lei`; findings
   item 3, Baillie Gifford's 549300UYMK70HLNJU654). On REFUSE GLEIF's node is written on its own.

@@ -3015,13 +3015,60 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
     }
 
 
+#: The cover page's own statement of where the registrant is incorporated,
+#: tagged in every inline-XBRL annual report (since 2019).
+_INCORPORATION_TAG = re.compile(
+    r'<ix:nonNumeric\b[^>]*\bname="dei:EntityIncorporationStateCountryCode"[^>]*>(.*?)</ix:nonNumeric>',
+    re.S | re.I)
+_STATED_FORMS = ("10-K", "20-F", "40-F")
+
+
+def stated_incorporation(submissions: dict) -> str | None:
+    """Where the newest annual report says the filer is incorporated, as a
+    jurisdiction code; None when it does not say (an untagged or older
+    report, no annual report at all).
+
+    EDGAR's `stateOfIncorporation` is header data the filer keeps in EDGAR's
+    company database, checked against nothing: it says New York for HubSpot,
+    whose 10-K cover says Delaware, and Hong Kong (its business address) for
+    Alibaba, whose 20-F says the Cayman Islands; it is empty for MercadoLibre,
+    Embraer and Televisa, whose reports state Delaware, Brazil and Mexico
+    (findings item 19, 2026-10-30). The report is a filing, so it is read once
+    and kept by the filing cache."""
+    from app.scraper.sec_ex21 import jurisdiction_country, jurisdiction_subdivision
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    cik = str(submissions.get("cik") or "").strip()
+    if not cik.isdigit():
+        return None
+    for form, accession, doc in zip(recent.get("form") or [], recent.get("accessionNumber") or [],
+                                    recent.get("primaryDocument") or []):
+        if form not in _STATED_FORMS or not doc:
+            continue
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{doc}"
+        try:
+            m = _INCORPORATION_TAG.search(_get_text(url) or "")
+        except Exception as exc:  # noqa: BLE001 - the header field still answers
+            log.info("SEC EDGAR: annual report %s unreadable: %s", url, exc)
+            return None
+        if not m:
+            return None
+        # a name ("Delaware", "Cayman Islands") or, untransformed, EDGAR's
+        # code: a US state's maps, a foreign one ("E9") does not and falls back
+        value = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip()
+        return jurisdiction_subdivision(value) or jurisdiction_country(value)
+    return None
+
+
 def incorporation_place(submissions: dict) -> str | None:
     """Where the filer is incorporated, as a jurisdiction code: "US-NY" for a
     US state, the ISO-2 country otherwise ("KY" for Cayman), None when EDGAR
     does not say. Incorporation only — never the business address (see
-    `sec_country`)."""
+    `sec_country`). The newest annual report's own statement first
+    (`stated_incorporation`), EDGAR's header field when it has none."""
     from app.scraper.maintenance import nationality_to_iso2
 
+    if stated := stated_incorporation(submissions):
+        return stated
     inc_code = (submissions.get("stateOfIncorporation") or "").strip().upper()
     if inc_code in _US_STATES:
         return "US" if inc_code == "PR" else f"US-{inc_code}"
