@@ -234,10 +234,22 @@ def strip_partnership_form(name: str) -> str:
     return _PARTNERSHIP_FORM.sub("", name)
 
 
-_LEGAL_SUFFIX_NORM = re.compile(
-    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp|gmbh)\b\.?",
-    re.IGNORECASE,
-)
+#: The legal forms a name key drops — at the END of a name only
+#: (`strip_trailing_forms`). Anywhere else the word is part of the name: NV
+#: Energy is Nevada's utility, and "NV ENERGY, INC." was keyed "energy" and
+#: matched EDGAR's ENERGY FUELS INC (findings item 5, 2026-10-30); "Innovex
+#: Co-Invest Fund" became "innovex -invest fund", "Bimbo SA de CV" "bimbo de cv".
+LEGAL_FORM_WORDS = ("inc", "corp", "corporation", "llc", "llp", "ltd", "limited", "co", "company",
+                    "plc", "sa", "ag", "nv", "bv", "lp", "gmbh")
+
+
+def trailing_form(words) -> re.Pattern:
+    """A pattern for one of ``words`` as the last word of a lower-cased name,
+    after a space or the slash of "SA/NV"."""
+    return re.compile(r"(?:^|(?<=[\s/]))(?:" + "|".join(words) + r")\s*$")
+
+
+_TRAILING_LEGAL_FORM = trailing_form(LEGAL_FORM_WORDS)
 
 
 #: "&" or "and" left at the end once the legal form went: "& Co" and "and
@@ -305,6 +317,20 @@ def strip_dangling_conjunction(name: str) -> str:
     return _DANGLING_CONJUNCTION.sub("", name)
 
 
+def strip_trailing_forms(name: str, form: re.Pattern = _TRAILING_LEGAL_FORM) -> str:
+    """A lower-cased name without the legal forms at its end, however many
+    there are ("co ltd", "sa/nv", "gmbh & co") — never down to nothing: "the
+    limited" and "company" are names. A form word anywhere else stays, so the
+    Swedish "AB Volvo" keeps its "ab" as it always did, and Indonesia's "PT"
+    stays in front where every source writes it (2026-10-30)."""
+    name = name.strip()
+    while True:
+        cut = strip_dangling_conjunction(re.sub(r"\s*/\s*$", "", form.sub("", name)).strip())
+        if not cut or cut == name:
+            return name
+        name = cut
+
+
 def coherent_ownership_type(stake_pct: float | None, ownership_type: str | None) -> str:
     """Reconcile a stake with the type stored beside it.
 
@@ -363,14 +389,12 @@ def normalize_entity_name(name: str) -> str:
     # not "is"). Dev held the two Televisas as two companies until 2026-10-25.
     # A lone letter ("Toys R Us") is left alone: one letter is no abbreviation.
     name = _SPACED_LETTERS.sub(lambda m: m.group(0).replace(" ", ""), name)
-    name = name.replace(",", "")
-    # KG first, so the "GmbH & Co." before it goes as a legal form too
-    name = _LEGAL_SUFFIX_NORM.sub("", strip_partnership_form(name))
-    # the slash a legal form leaves when both halves go: "SA/NV" keyed "… /"
-    name = re.sub(r"\s*/\s*$", "", name)
-    # "& Co" goes as a whole: stripping "co" alone left "jpmorgan chase &",
-    # which "JPMorgan Chase" never matched (23 dev nodes, 2026-10-29)
-    key = strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())
+    # a comma parts words: "Co.,Llc" is "co llc", not "collc"
+    name = re.sub(r"\s+", " ", name.replace(",", " ")).strip()
+    # KG first, so the "GmbH & Co." before it goes as a legal form too; then
+    # every form at the end, the slash "SA/NV" leaves and a dangling "&" of
+    # "& Co" with it ("JPMorgan Chase &" matched nothing, 2026-10-29)
+    key = strip_trailing_forms(strip_partnership_form(name))
     # A leading "the": NYT's own "The New York Times Company" keyed apart from
     # EDGAR's "NEW YORK TIMES CO" (2026-10-29b). Kept when nothing else is
     # left — "The Limited" is a name.

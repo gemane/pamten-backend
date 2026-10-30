@@ -1370,6 +1370,22 @@ class TestIdentifierBridge:
         held, node_id, leis = attach.call_args.args
         assert node_id == "sec:0001088859" and leis == ["549300UYMK70HLNJU654"] and held["sec_cik"] == "0001088859"
 
+    def test_a_gleif_node_found_by_its_lei_lets_edgar_decide_on_the_stated_cik(self):
+        # findings item 5: NV Energy's item states CIK 0000741508, its GLEIF node had none
+        ctx, session = _make_session_mock(single_returns=[
+            None, None, {"id": "lei:549300WSWTEW6DURBO45"},
+            {"lei_id": "549300WSWTEW6DURBO45", "sec_cik": None, "name": "NV ENERGY, INC."},
+            {"name": "NV ENERGY, INC.", "cred": 92, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.attach_stated_cik") as attach, \
+             patch("app.scraper.register_pointer.attach_stated_lei") as lei:
+            eid = _upsert_entity("NV Energy", None, None, None, "Q1961658",
+                                 lei="549300WSWTEW6DURBO45", sec_cik="741508")
+        assert eid == "lei:549300WSWTEW6DURBO45"
+        held, node_id, ciks = attach.call_args.args
+        assert node_id == "lei:549300WSWTEW6DURBO45" and ciks == ["0000741508"] and held["lei_id"]
+        lei.assert_not_called()
+
     def test_a_node_no_register_knows_carries_no_identifier(self):
         ctx, session = _make_session_mock()
         with patch("app.scraper.runner.db.get_session", ctx), \

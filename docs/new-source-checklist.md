@@ -810,6 +810,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       re-scrape does not correct the stored value. Run a mapping over every distinct
       value the source produces (`jurisdiction_country` over all places of a sweep)
       and look at what lands where.
+- [ ] **A legal form goes only at the end of a name.** Every name key stripped a form word
+      wherever it stood: "NV ENERGY, INC." (Nevada) keyed "energy" and the SEC search
+      scraped ENERGY FUELS INC for it; "Innovex Co-Invest" lost its "co" (2026-10-30). A
+      new key strips trailing forms only (`mapper.strip_trailing_forms`), and its tests
+      include a name that STARTS with a form word ("NV Energy", "SA Recycling", "AB Volvo",
+      "PT …"). Measure a key change over every stored name before shipping it: how many
+      keys change, which groups split, which join.
 - [ ] **A legal form of several words goes as a whole.** The name key stripped "Co"
       from "JPMorgan Chase & Co" and kept the "&": "jpmorgan chase &" never matched
       "JPMorgan Chase", nor "& Co" "and Company" (23 dev nodes, 2026-10-29). Test a

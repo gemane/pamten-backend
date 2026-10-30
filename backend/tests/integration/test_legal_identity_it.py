@@ -13,10 +13,15 @@ pytestmark = pytest.mark.integration
 
 NYT_LEI, INC_LEI, LLC_LEI, TENCENT_LEI = ("529900J1WEMMIW7BOH57", "25490005ZWM1IF9UXU57",
                                          "254900BIRZMWFO44TO04", "254900N4SLUMW4XUYY11")
+NV_LEI, NV_CIK = "549300WSWTEW6DURBO45", "0000741508"
 FILERS = {"0000071691": Filer("0000071691", "NEW YORK TIMES CO", home="US-NY",
                               street="620 EIGHTH AVENUE", city="NEW YORK"),
           "0001286681": Filer("0001286681", "DOMINOS PIZZA INC", home="US-DE"),
-          "0001293451": Filer("0001293451", "Tencent Holdings Ltd", home="KY")}
+          "0001293451": Filer("0001293451", "Tencent Holdings Ltd", home="KY"),
+          NV_CIK: Filer(NV_CIK, "NV ENERGY, INC.", home="US-NV", street="6226 WEST SAHARA AVENUE", city="LAS VEGAS"),
+          "0001385849": Filer("0001385849", "ENERGY FUELS INC", home="US-DE")}
+ADDRESSES = {"0000071691": ("620 EIGHTH AVENUE", "NEW YORK", None),
+             NV_CIK: ("6226 WEST SAHARA AVENUE", "LAS VEGAS", "today's address: no filing within a year")}
 
 
 def _record(lei, name, jurisdiction, street, city, status="ISSUED", level="FULLY_CORROBORATED",
@@ -38,6 +43,8 @@ RECORDS = {
     LLC_LEI: _record(LLC_LEI, "Domino's Pizza LLC", "US-MI", "30 Frank Lloyd Wright Drive", "Ann Arbor"),
     TENCENT_LEI: _record(TENCENT_LEI, "騰訊控股有限公司", "KY", "Kejizhongyi Avenue", "Shenzhen",
                          other=["Tencent Holdings Limited"]),
+    NV_LEI: _record(NV_LEI, "NV ENERGY, INC.", "US-NV", "6226 West Sahara Avenue", "Las Vegas", status="LAPSED",
+                    updated="2023-09-27T00:00:00Z"),
 }
 LLC_PARENT = [{"lei": INC_LEI, "names": ["Domino's Pizza, Inc."], "place": "US-DE", "status": "ACTIVE",
                "periods": [{"type": "RELATIONSHIP_PERIOD", "startDate": "1999-10-27T00:00:00Z"}]}]
@@ -49,8 +56,7 @@ def _registers():
          patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
          patch("app.scraper.register_pointer.fetch_gleif_record", side_effect=RECORDS.get), \
          patch("app.scraper.legal_identity.filer_facts", side_effect=FILERS.get), \
-         patch("app.scraper.legal_identity.filing_address_at",
-               side_effect=lambda cik, day: ("620 EIGHTH AVENUE", "NEW YORK", None) if cik == "0000071691" else None), \
+         patch("app.scraper.legal_identity.filing_address_at", side_effect=lambda cik, day: ADDRESSES.get(cik)), \
          patch("app.scraper.legal_identity.gleif_parents", side_effect=lambda lei: LLC_PARENT if lei == LLC_LEI else []), \
          patch("app.scraper.legal_identity.gleif_children", return_value=[]), \
          patch("app.scraper.legal_identity.filer_held_at", return_value=[]), \
@@ -132,3 +138,48 @@ def test_the_bridge_finds_tencent_by_its_transliterated_name(it_db):
         joined = maintenance.bridge_sec_lei_pairs(set())
     assert [(j["cik_id"], j["lei_id"], j["evidence"]) for j in joined] == [
         ("sec:0001293451", TENCENT_LEI, "name+place")]
+
+
+#: EDGAR's submissions for NV Energy, as `write_from_edgar` reads them (2026-10-30)
+NV_SUBMISSIONS = {"name": "NV ENERGY, INC.", "stateOfIncorporation": "NV", "formerNames": [],
+                  "addresses": {"business": {"street1": "6226 WEST SAHARA AVENUE", "city": "LAS VEGAS",
+                                             "stateOrCountry": "NV", "zipCode": "89146"}}}
+
+
+def test_a_cik_wikidata_states_lands_on_the_gleif_node(it_db):
+    """Findings item 5: NV Energy's item Q1961658 states LEI and CIK; the
+    filer left EDGAR in 2014, so no name search finds the CIK — the item's
+    pointer is the only way in. The GLEIF node takes it, no second node."""
+    from app.scraper.runner import _upsert_entity
+    assert _gleif(NV_LEI) == f"lei:{NV_LEI}"
+    with patch("app.scraper.sec_edgar._submissions", return_value=NV_SUBMISSIONS):
+        got = _upsert_entity("NV Energy", None, None, None, "Q1961658", source_id="wikidata",
+                             lei=NV_LEI, sec_cik="741508")
+    assert got == f"lei:{NV_LEI}"
+    [row] = _nodes(it_db, "lei_id = :l OR sec_cik = :c", {"l": NV_LEI, "c": NV_CIK})
+    assert row["id"] == f"lei:{NV_LEI}" and row["sec_cik"] == NV_CIK
+    assert row["lei_source"].startswith("name+place+address@2023-09-27")
+
+
+def test_a_stated_cik_the_registers_refuse_writes_nothing(it_db):
+    from app.scraper.runner import _upsert_entity
+    _gleif(LLC_LEI)                                                # Domino's Pizza LLC, US-MI
+    with patch("app.scraper.sec_edgar._submissions") as edgar:
+        _upsert_entity("Domino's Pizza LLC", None, None, None, "Q1", source_id="wikidata",
+                       lei=LLC_LEI, sec_cik="1286681")             # the Inc.'s CIK: name and place differ
+    edgar.assert_not_called()
+    assert _nodes(it_db, "sec_cik = :c", {"c": "0001286681"}) == []
+    [row] = _nodes(it_db, "lei_id = :l", {"l": LLC_LEI})
+    assert row["sec_cik"] is None
+
+
+def test_nv_energy_and_energy_fuels_stay_two_companies(it_db):
+    # the name key dropped "NV" anywhere: "energy", whose prefix "energy fuels" is
+    _gleif(NV_LEI)
+    fuels = _sec("ENERGY FUELS INC", "0001385849")
+    assert fuels == "sec:0001385849"
+    rows = {r["id"]: r for r in _nodes(it_db, "lei_id = :l OR sec_cik IS NOT NULL", {"l": NV_LEI})}
+    assert rows[f"lei:{NV_LEI}"]["sec_cik"] is None
+    [key] = [r["name_normalized"] for r in it_db.run_sql("SELECT name_normalized FROM Entity WHERE id = :i",
+                                                         {"i": f"lei:{NV_LEI}"})]
+    assert key == "nv energy"

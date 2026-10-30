@@ -551,7 +551,7 @@ AG & Co. KGaA" keyed `henkel & kgaa` (findings items 12 and 13, 2026-10-30). Now
   and "l.p" become `lp`, a legal form, so it goes. `normalize_entity_name` and
   `_ticker_normalize` already dropped the dots. A lone letter stays (`Toys R Us`). Known gap:
   `J.P. Morgan` keys `(jp, morgan)`, EDGAR's `JPMORGAN` one word.
-- **GmbH is a legal form** in every list (`mapper._LEGAL_SUFFIX_NORM`, `graph_writer._NAME_FORMS`;
+- **GmbH is a legal form** in every list (`mapper.LEGAL_FORM_WORDS`, `graph_writer._NAME_FORMS`;
   `sec_edgar._LEGAL_FORM_WORDS` had it). **KG and KGaA only as the last word**
   (`mapper.strip_partnership_form`, and `_name_key`'s trailing pop): "KG Mobility Corp" keeps
   its KG. Stripped first, so the "GmbH & Co." before them goes as a legal form too, and the
@@ -564,6 +564,36 @@ and "Merck & Co." are `merck`); the country guard and, for a GLEIF record and an
 `legal_identity` (which keeps the form) keep them apart. Known gap: "Novo Nordisk A/S" keeps
 its slash (`novo nordisk a/s`, #491), so it does not meet a plain "AS". Stored
 `name_normalized` values change on the next rebuild.
+
+## A legal form goes only at the end of a name
+
+Until 2026-10-30 the three name keys dropped a legal-form word wherever it stood:
+"NV ENERGY, INC." keyed `energy` (NV is Nevada), EDGAR's tickers file then gave "NV Energy"
+the prefix match ENERGY FUELS INC at similarity 0.67, and Energy Fuels' filings were scraped
+for it (findings item 5). "Innovex Co-Invest Fund" keyed `innovex -invest fund`, "Bimbo SA de
+CV" `bimbo de cv`, "News Corp UK & Ireland" `news uk & ireland`. Now `normalize_entity_name`,
+`sec_edgar._ticker_normalize` and `graph_writer._name_key` drop forms **only at the end**, as
+many as there are (`mapper.strip_trailing_forms`: "Co., Ltd.", "SA/NV", "GmbH & Co. KG"), a
+leading "the" only at the start, and never strip a name down to nothing ("Company",
+"The Limited"). A comma parts words ("Co.,Llc" is `co llc`, not `collc`), and the tickers key
+drops EDGAR's tag first ("LENNAR CORP /NEW/").
+
+Measured on dev before the change: 305 of 7,145 keys change; three groups of namesakes split
+(the Chubb trio, and Chubb's Russian "LLC Chubb Insurance Company" from the English "Chubb
+Insurance Company Limited" — distinct legal entities each), one pair joins (Frontier Capital
+Management "Co Llc" / "Co.,Llc", one firm). Over the 161 scrape targets the tickers lookup
+changes for NV Energy only (no match instead of Energy Fuels; ADR listings are skipped, see
+`sec_edgar_scraper.md`).
+
+**A leading form stays, in every country** (decision 2026-10-30). 25 dev names start with a
+form word and none is Swedish: Indonesia's `PT` (12, every source writes it in front), "AB
+InBev" (Anheuser-Busch, not *aktiebolag*), NV Energy, and two Russian `LLC`s. Moving a leading
+form to the end found partners only for those two LLCs, and wrongly. A key that depended on
+the country would differ between a node that knows its country and one that does not (1,104
+dev entities have none; EDGAR, Exhibit 21 rows and Wikidata often state none). "AB Volvo"
+keeps its `ab`, as it always did; should a source bring "AB Volvo" beside "Volvo AB", a
+match-time alternative key gated by both sides being Swedish belongs with that source.
+Stored `name_normalized` values change on the next rebuild.
 
 ## Spaced abbreviations are abbreviations
 
@@ -589,6 +619,9 @@ shape: a word that is a legal form *somewhere* can be identity *elsewhere*.
 Stripping `SA` from a US company called "SA Recycling" (initials, not société
 anonyme) erases identity rather than noise, and a collision with a genuinely
 different "Recycling …" company becomes a dedup candidate it should never be.
+Since 2026-10-30 a form goes only at the end of a name, which settles the
+leading cases ("SA Recycling", "NV Energy") without a country; see "A legal form
+goes only at the end of a name".
 
 The data to do better is already imported: entities carry `country`, and
 register-backed entities store `legal_form` from the GLEIF LEI-CDF. The right
@@ -736,6 +769,11 @@ It runs wherever such a pair meets, so the order no longer decides:
 - **The Wikidata writer**: an item found by its CIK that states an LEI the graph lacks asks
   GLEIF, with that node as the only candidate (`register_pointer.attach_stated_lei`; findings
   item 3, Baillie Gifford's 549300UYMK70HLNJU654). On REFUSE GLEIF's node is written on its own.
+  The mirror: an item found by its LEI that states a CIK the GLEIF node lacks asks EDGAR
+  (`register_pointer.attach_stated_cik`); on JOIN `write_from_edgar` writes the filer onto
+  that node (it is weighed before the name's candidates), on REFUSE nothing is written.
+  NV Energy's Q1961658 states CIK 0000741508, a filer EDGAR has not listed since 2014, so no
+  name search finds it (findings item 5, 2026-10-30).
 
 Every JOIN leaves its evidence on the node as `lei_source` ("name+place",
 "name+country+address@2021-07-16", "name+country+subsidiary@…", or "filing" for the bridge's

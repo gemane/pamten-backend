@@ -498,8 +498,9 @@ def test_one_name_key_in_three_countries_is_three_nodes(it_db):
     # Chubb's list: "Chubb Company Services Limited" (England), "Chubb Services
     # Limited" (Cayman) and "Chubb Services Corporation" (Illinois) share the
     # name key once "Company", "Services" and the suffix are dropped — dev drew
-    # one node with three parents at 100 % (2026-10-25). The key stays what it
-    # is; the writer refuses the namesake abroad for every dated row.
+    # one node with three parents at 100 % (2026-10-25). The writer refuses the
+    # namesake abroad for every dated row; since 2026-10-30 "Company" inside a
+    # name stays, so the English one keys apart anyway.
     it_db.run_command(
         "CREATE (:Entity {id: 'chubb', name: 'Chubb Limited', name_normalized: 'chubb', country: 'CH', "
         "search_text: 'Chubb Limited', type: 'company', sec_cik: '0000896159'})")
@@ -516,7 +517,8 @@ def test_one_name_key_in_three_countries_is_three_nodes(it_db):
     assert sorted((r["name"], r["country"]) for r in rows) == [
         ("Chubb Company Services Limited", "GB"), ("Chubb Services Corporation", "US"),
         ("Chubb Services Limited", "KY")]
-    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'chubb services'")[0]["n"] == 3
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'chubb services'")[0]["n"] == 2
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'chubb company services'")[0]["n"] == 1
 
 
 def test_a_row_without_a_jurisdiction_still_folds_onto_the_namesake(it_db):

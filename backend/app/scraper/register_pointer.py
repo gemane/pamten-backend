@@ -228,12 +228,13 @@ def _join_filer(lei: str, props: dict, extra: list[str], by_name: bool = True) -
     return None
 
 
-def write_from_edgar(cik: str) -> str | None:
+def write_from_edgar(cik: str, candidates: list[str] | None = None) -> str | None:
     """The filer EDGAR states for this CIK, written as the SEC writer writes a
     filer it scrapes (EDGAR's name for the CIK, its former names with the day
     each ended, its country and business address); its id, or None when EDGAR
     has no such CIK. The former names are what lets `stale` see that an item
-    pointing here describes the company the CIK used to be."""
+    pointing here describes the company the CIK used to be. ``candidates``
+    are node ids the writer weighs before the name's."""
     import httpx
 
     from app.scraper.graph_writer import _upsert_entity_by_name
@@ -255,7 +256,8 @@ def write_from_edgar(cik: str) -> str | None:
     return _upsert_entity_by_name(name=name, entity_type="company", cik=cik, source_id=source_id,
                                   register_name=True, country=sec_country(sub),
                                   headquarters=sec_headquarters(sub), website=sec_website(sub),
-                                  former_names=former_name_entries(sub) or None)
+                                  former_names=former_name_entries(sub) or None,
+                                  candidates=candidates)
 
 
 def attach_stated_lei(node: dict, node_id: str, leis: list[str]) -> str | None:
@@ -275,6 +277,40 @@ def attach_stated_lei(node: dict, node_id: str, leis: list[str]) -> str | None:
     for lei in leis:
         if landed := write_from_gleif(lei, candidates=[node_id], by_name=False):
             return landed
+    return None
+
+
+def attach_stated_cik(node: dict, node_id: str, ciks: list[str]) -> str | None:
+    """The mirror of `attach_stated_lei`: a knowledge base resolved to ``node``
+    (a GLEIF record: LEI, no CIK) and states a CIK the graph does not hold.
+    The node takes the CIK, with EDGAR's facts written as for any filer, when
+    the registers agree (`legal_identity`); otherwise nothing is written.
+    Until 2026-10-30 the CIK only found nodes: NV Energy's item Q1961658
+    states CIK 0000741508, a filer EDGAR has not listed since 2014, and no
+    name search finds it (findings item 5). Returns the node, or None."""
+    from app.database import db
+    from app.db.arcadedb import run_sql
+    from app.entity_resolution import resolve_entity_id
+    from app.scraper.legal_identity import IDENTITY_FIELDS, JOIN, filer_facts, same_legal_entity
+    if node.get("sec_cik") or not node.get("lei_id") or not ciks or not _sec_enabled():
+        return None
+    with db.get_session() as session:
+        if any(resolve_entity_id(session, sec_cik=c) for c in ciks):
+            return None
+    rows = run_sql(f"SELECT {', '.join(IDENTITY_FIELDS)} FROM Entity WHERE id = :id", {"id": node_id})
+    if not rows:
+        return None
+    record = {k: rows[0].get(k) for k in IDENTITY_FIELDS}
+    for cik in ciks:
+        facts = filer_facts(cik)
+        if not facts:
+            continue
+        verdict, why = same_legal_entity(record, facts)
+        if verdict != JOIN:
+            log.info("the stated CIK %s is not %s: %s", cik, node_id, why)
+            continue
+        if write_from_edgar(cik, candidates=[node_id]) == node_id:
+            return node_id
     return None
 
 

@@ -314,6 +314,17 @@ class TestTickerNormalize:
         assert _name_similarity("Domino's Pizza, Inc.", "DOMINOS PIZZA INC") == 1.0
 
 
+    @pytest.mark.parametrize("name,key", [
+        ("NV Energy", "nv energy"),                     # findings item 5: was "energy"
+        ("LENNAR CORP /NEW/", "lennar"),                # EDGAR's tag goes first
+        ("Alibaba Group Holding Ltd", "alibaba"),
+        ("Group 1 Automotive Inc", "group 1 automotive"),
+        ("Innovex Co-Invest Fund II, L.P.", "innovex co-invest fund ii"),
+    ])
+    def test_a_legal_form_goes_only_at_the_end(self, name, key):
+        assert _ticker_normalize(name) == key
+
+
 class TestLookupInTickers:
     """_lookup_in_tickers searches a cached dict of EDGAR listed companies."""
 
@@ -355,6 +366,30 @@ class TestLookupInTickers:
         with patch("app.scraper.sec_edgar._tickers_cache", tickers):
             result = _lookup_in_tickers("Apple")
         assert result["name"] == "Apple Inc."
+
+
+    def test_nv_energy_is_not_energy_fuels(self):
+        # findings item 5 (2026-10-30): "nv energy" keyed "energy", a prefix of
+        # "energy fuels" at similarity 0.67, and Energy Fuels' filings were scraped
+        tickers = {"0": {"cik_str": 1385849, "ticker": "UUUU", "title": "ENERGY FUELS INC"}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("NV Energy") is None
+
+    def test_an_adr_programme_is_not_the_company(self):
+        # the user's choice 2026-10-30: MTN Group would take the depositary's CIK
+        tickers = {"0": {"cik_str": 1163420, "ticker": "MTNOY", "title": "MTN GROUP LTD/ADR"},
+                   "1": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("MTN Group") is None
+            assert _lookup_in_tickers("Apple")["cik"] == "0000320193"
+
+    @pytest.mark.parametrize("title,adr", [
+        ("MTN GROUP LTD/ADR", True), ("FOO PLC /ADR/", True), ("BAR SA \\ADR", True),
+        ("ADR HOLDINGS INC", False), ("TOYOTA MOTOR CORP/", False), ("LENNAR CORP /NEW/", False), (None, False),
+    ])
+    def test_is_adr_listing(self, title, adr):
+        from app.scraper.sec_edgar import is_adr_listing
+        assert is_adr_listing(title) is adr
 
 
 class TestSearchCompany:
