@@ -273,16 +273,15 @@ class TestNormalizeAddress:
         assert normalize_address(" , ") is None
 
 
-class TestLeadingTheAndStateTag:
-    """The stored key drops a leading "The" and EDGAR's state tag (findings
-    item 18): "the new york times" and "occidental petroleum /de/" missed
-    the other register's spelling."""
+class TestLeadingThe:
+    """The stored key drops a leading "The" (findings item 18): "the new york
+    times" missed EDGAR's "NEW YORK TIMES CO". EDGAR's state tag is a
+    separate change."""
 
     @pytest.mark.parametrize("a, b, key", [
         ("The New York Times Company", "NEW YORK TIMES CO", "new york times"),
-        ("Occidental Petroleum Corporation", "OCCIDENTAL PETROLEUM CORP /DE/", "occidental petroleum"),
-        ("KeyCorp", "KEYCORP /NEW/", "keycorp"),
-        ("Toyota Motor Corporation", "TOYOTA MOTOR CORP/", "toyota motor"),
+        ("The Coca-Cola Company", "Coca-Cola Co", "coca-cola"),
+        ("The Trade Desk, Inc.", "Trade Desk Inc", "trade desk"),
     ])
     def test_one_key(self, a, b, key):
         assert normalize_entity_name(a) == normalize_entity_name(b) == key
@@ -290,8 +289,7 @@ class TestLeadingTheAndStateTag:
     def test_a_name_that_is_only_the_keeps_it(self):
         assert normalize_entity_name("The Limited") == "the"
 
-    def test_a_slash_inside_a_legal_form_stays(self):
-        assert normalize_entity_name("Novo Nordisk A/S") == "novo nordisk a/s"
+    def test_only_the_word_the(self):
         assert normalize_entity_name("Theravance Inc") == "theravance"
 
 

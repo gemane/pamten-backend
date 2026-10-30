@@ -511,14 +511,12 @@ EDGAR's Domino's never met GLEIF's, so the Exhibit 21 run lost its 19 subsidiari
 gap: EDGAR's `O REILLY AUTOMOTIVE INC` keeps a space where the apostrophe was and still
 keys apart from `O'Reilly`. Stored `name_normalized` values change on the next rebuild.
 
-## A leading "The" and EDGAR's state tag are dropped
+## A leading "The" is dropped
 
-`normalize_entity_name` drops EDGAR's state tag (`/DE/`, `/NEW/`, a bare trailing `/`;
-never the slash of `A/S`) before anything else, and a leading `the` last, unless nothing
-else is left (`The Limited` keys as `the`). NYT's own "The New York Times Company" keyed
-`the new york times` and EDGAR's `NEW YORK TIMES CO` `new york times`; EDGAR's `OCCIDENTAL
-PETROLEUM CORP /DE/` kept its `/de/` (findings item 18, 2026-10-30). `graph_writer._name_key`
-already dropped both. Stored `name_normalized` values change on the next rebuild. A namesake
+`normalize_entity_name` drops a leading `the` last, unless nothing else is left (`The
+Limited` keys as `the`). NYT's own "The New York Times Company" keyed `the new york times`
+and EDGAR's `NEW YORK TIMES CO` `new york times` (findings item 18, 2026-10-30);
+`graph_writer._name_key` already dropped it. Stored `name_normalized` values change on the next rebuild. A namesake
 abroad of a filer whose node has no country can now share its key; the writers match it in
 its own country (`_resolve_by_name`), which SEC nodes carry.
 

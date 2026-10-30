@@ -274,8 +274,6 @@ def normalize_address(text: str | None) -> str | None:
     return norm or None
 
 
-#: "/DE/", "/NEW/" after a space, or a bare trailing "/" — never "A/S"
-_EDGAR_STATE_TAG = re.compile(r"(?:\s+/[a-z]{1,6}/|\s*/)\s*$")
 _LEADING_THE = re.compile(r"^the\s+")
 
 
@@ -289,12 +287,8 @@ def normalize_entity_name(name: str) -> str:
          'JPMorgan Chase & Co.', 'JPMorgan Chase and Company' → 'jpmorgan chase'
          "Domino's Pizza, Inc.", 'DOMINOS PIZZA INC' → 'dominos pizza'
          'The New York Times Company', 'NEW YORK TIMES CO' → 'new york times'
-         'OCCIDENTAL PETROLEUM CORP /DE/' → 'occidental petroleum'
     """
     name = fold_apostrophes(name).lower()
-    # EDGAR's state tag ("/DE/", "/NEW/", a bare "/") is no part of a name;
-    # it kept "occidental petroleum /de/" apart from GLEIF's spelling
-    name = _EDGAR_STATE_TAG.sub("", name)
     name = name.replace(".", "")
     # A run of spaced single letters is an abbreviation written with spaces:
     # GLEIF's "GRUPO TELEVISA S A B" is EDGAR's "Grupo Televisa, S.A.B.", and
