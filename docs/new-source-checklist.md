@@ -372,14 +372,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `prefix:{part}:{part}` from its stable components (the `chpsc:` ids did it wrong,
       shipped, and needed a routing workaround plus a data migration). **And key the id
       on the source's hard id when the writer has one** (`app.node_ids.mint_node_id`:
-      `lei:`, `wd:Q…`, `sec:{cik}`, your register's own prefix): a uuid is re-minted by
+      `lei:`, `sec:{cik}`, `wd:Q…`, your register's own prefix): a uuid is re-minted by
       every rebuild, and every shared link, pin and flag that named the node broke with
       it — 2,225 dev nodes carried a QID or a CIK under a uuid until 2026-10-26. A
       name-only node keeps a uuid; a malformed value is never keyed on. **A writer that
       stamps a hard id onto an existing node re-keys it** (`node_ids.key_on_learning`, the
       return value is the id from then on): an Exhibit 21 row or a 13D party created by
       name and later met with its CIK kept its uuid once the one-off heal was removed
-      (2 after the 2026-10-27 rebuild). A new stamping site calls it too.
+      (2 after the 2026-10-27 rebuild). A new stamping site calls it too — **a keyed node
+      included**: a `sec:` node that takes an LEI must become `lei:`, or the GLEIF delta,
+      which addresses `lei:` ids, never sees it again (findings item 20, 2026-10-30). The
+      id must not depend on which source writes first.
 - [ ] **Match on a hard identifier when the source has one.** Shared LEI/CIK/CH number is
       proof; a shared name is a hint.
 - [ ] **A name is replaced by credibility, never by arrival order.** Write `name_credibility`

@@ -87,9 +87,13 @@ def _nodes(it_db, where, params):
 
 def test_nyt_sec_first_then_gleif_is_one_node(it_db):
     sec_id = _sec("NEW YORK TIMES CO", "0000071691")
-    assert _gleif(NYT_LEI) == sec_id
+    assert sec_id == "sec:0000071691"
+    # the filer takes the LEI and, with it, the LEI's id — the one the GLEIF
+    # importers address it by; the CIK's id forwards (findings item 20)
+    assert _gleif(NYT_LEI) == f"lei:{NYT_LEI}"
     [row] = _nodes(it_db, "lei_id = :l OR sec_cik = :c", {"l": NYT_LEI, "c": "0000071691"})
-    assert row["id"] == sec_id == "sec:0000071691"
+    assert row["id"] == f"lei:{NYT_LEI}"
+    assert it_db.run_sql("SELECT new_id FROM MergedId WHERE old_id = :o", {"o": sec_id})[0]["new_id"] == row["id"]
     assert row["name"] == "NEW YORK TIMES CO"                       # the filer's own name stays
     assert row["lei_source"] == "name+country+address@2021-07-16"
     assert row["gleif_last_update"] == "2021-07-16" and row["hq_street"] == "620 Eighth Avenue"

@@ -241,8 +241,10 @@ class TestJoiningAFiler:
              patch("app.db.arcadedb.run_sql", side_effect=run_sql), \
              patch("app.db.arcadedb.run_command", side_effect=lambda q, p=None: writes.append((q, p))), \
              patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0000071691", "NEW YORK TIMES CO")), \
-             patch("app.scraper.legal_identity.same_legal_entity", return_value=verdict) as rule:
+             patch("app.scraper.legal_identity.same_legal_entity", return_value=verdict) as rule, \
+             patch("app.node_ids.rekey", side_effect=lambda label, node_id: node_id) as rekey:
             got = rp._join_filer("529900J1WEMMIW7BOH57", dict(self.PROPS), list(extra), by_name)
+        self.rekeyed = [c.args for c in rekey.call_args_list]
         return got, sql, writes, rule
 
     def test_a_join_fills_the_filer_node_and_mints_nothing(self):
@@ -255,6 +257,7 @@ class TestJoiningAFiler:
         assert "e.name =" not in q and "e.source_id =" not in q                # the filer's own stay
         assert p["others"] == ["New York Times Co."] and "New York Times Co." in p["search"]
         assert rule.call_args.args[0]["lei_id"] == "529900J1WEMMIW7BOH57"
+        assert self.rekeyed == [("Entity", "sec:0000071691")]   # `lei:` once it carries the LEI
 
     def test_a_refusal_writes_nothing(self):
         got, _, writes, _ = self._run(("refuse", "registered US-MI, filer US-DE"))

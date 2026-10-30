@@ -1424,6 +1424,11 @@ def _apply_entity_merge(dead: dict, keep: dict) -> int:
     record_merge_sql(dead["id"], keep["id"], kind="Entity")
     _record_entity_merge_log(dead, keep)
     run_command("MATCH (e:Entity {id: $id}) DETACH DELETE e", {"id": dead["id"]})
+    # the survivor may now carry a better hard id than its own — often the
+    # loser's (a `lei:` node folded into a `sec:` filer): it takes that id, and
+    # the caller's dict follows, so a group's next merge finds it
+    from app.node_ids import rekey
+    keep["id"] = rekey("Entity", keep["id"])
     return migrated
 
 
@@ -1458,6 +1463,7 @@ def merge_entities_by_id(keep_id: str, dead_id: str, apply: bool = False) -> dic
            "applied": bool(apply)}
     if apply:
         out["migrated"] = _apply_entity_merge(dead, keep)
+        out["keep"]["now_id"] = keep["id"]           # re-keyed when the merge gave it a better id
     return out
 
 
@@ -1517,6 +1523,8 @@ def _bridge_sec_lei(members: list[dict], kept_separate: set, apply: bool = True)
                             "e.lei_source = COALESCE(e.lei_source, $why)",
                             {"id": filer["id"], "lei": node["lei_id"], "url": url,
                              "why": "filing" if hit else evidence})
+            # no re-key here: `lei:{LEI}` is still the GLEIF node's; the merge
+            # that folds the pair next re-keys the survivor (`_apply_entity_merge`)
             filer["lei_id"] = node["lei_id"]
             joined.append({"cik_id": filer["id"], "lei_id": node["lei_id"], "lei_node_id": node["id"],
                            "name": filer.get("name"), "source_url": url,

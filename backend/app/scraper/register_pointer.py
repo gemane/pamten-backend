@@ -224,7 +224,10 @@ def _join_filer(lei: str, props: dict, extra: list[str], by_name: bool = True) -
                     {**fill, "id": node_id, "lei": lei, "why": why, "others": [n for n in others if n],
                      "search": search.strip()})
         log.info("GLEIF %s joined to the filer %s (CIK %s): %s", lei, node_id, node["sec_cik"], why)
-        return node_id
+        # the filer now carries an LEI: `sec:` becomes `lei:`, so the GLEIF
+        # importers, which address the record by `lei:{LEI}`, find it
+        from app.node_ids import rekey
+        return rekey("Entity", node_id)
     return None
 
 
