@@ -2791,3 +2791,18 @@ class TestIncorporationPlace:
         assert subs.call_count == 1
         with patch("app.scraper.sec_edgar._submissions", side_effect=RuntimeError("503")):
             assert fetch_filer_identity("71691") == (None, None)
+
+
+
+class TestDottedAndGermanFormsInTheIssuerCheck:
+    """Findings items 12 and 13: the issuer check's tokens and the ticker key."""
+
+    def test_tokens(self):
+        from app.scraper.sec_edgar import _significant_tokens
+        assert _significant_tokens("Blackstone L.P.") == {"blackstone"}
+        assert _significant_tokens("Henkel AG & Co. KGaA") == {"henkel"}
+        assert _significant_tokens("KG Mobility Corp") == {"kg", "mobility"}
+
+    def test_ticker_key(self):
+        assert _ticker_normalize("Siemens Beteiligungen GmbH & Co. KG") == "siemens beteiligungen"
+        assert _ticker_normalize("Merck KGaA") == "merck"

@@ -540,6 +540,31 @@ slashed names on dev's 1,145 filer nodes, every tag now goes and every name slas
 a legal form leaves when both halves are stripped: `Anheuser-Busch InBev SA/NV` keyed
 `anheuser-busch inbev /`. Stored `name_normalized` values change on the next rebuild.
 
+## Dotted abbreviations and the German partnership forms
+
+`graph_writer._name_key` split "Blackstone L.P." into `(blackstone, l, p)`, which met
+neither EDGAR's `BLACKSTONE LP` nor anything else, and no key knew GmbH, KG or KGaA: "Henkel
+AG & Co. KGaA" keyed `henkel & kgaa` (findings items 12 and 13, 2026-10-30). Now:
+
+- **A run of dotted single letters is one word** before a key splits on punctuation
+  (`mapper.join_dotted_letters`, in `_name_key` and `sec_edgar._significant_tokens`): "l.p."
+  and "l.p" become `lp`, a legal form, so it goes. `normalize_entity_name` and
+  `_ticker_normalize` already dropped the dots. A lone letter stays (`Toys R Us`). Known gap:
+  `J.P. Morgan` keys `(jp, morgan)`, EDGAR's `JPMORGAN` one word.
+- **GmbH is a legal form** in every list (`mapper._LEGAL_SUFFIX_NORM`, `graph_writer._NAME_FORMS`;
+  `sec_edgar._LEGAL_FORM_WORDS` had it). **KG and KGaA only as the last word**
+  (`mapper.strip_partnership_form`, and `_name_key`'s trailing pop): "KG Mobility Corp" keeps
+  its KG. Stripped first, so the "GmbH & Co." before them goes as a legal form too, and the
+  dangling "&" with it: "Siemens Beteiligungen GmbH & Co. KG" keys `siemens beteiligungen`,
+  "Henkel AG & Co. KGaA" `henkel`.
+- `sec_ex21._form_key` keeps legal forms on purpose (the filer test, #489) and is unchanged.
+
+As for every legal form, two companies that differ only in it now share a key ("Merck KGaA"
+and "Merck & Co." are `merck`); the country guard and, for a GLEIF record and an EDGAR filer,
+`legal_identity` (which keeps the form) keep them apart. Known gap: "Novo Nordisk A/S" keeps
+its slash (`novo nordisk a/s`, #491), so it does not meet a plain "AS". Stored
+`name_normalized` values change on the next rebuild.
+
 ## Spaced abbreviations are abbreviations
 
 `normalize_entity_name` joins a run of two or more spaced single letters before it strips
