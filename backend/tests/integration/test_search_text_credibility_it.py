@@ -54,5 +54,5 @@ def test_a_winning_name_still_takes_over_the_index(it_db):
     row = it_db.run_sql("SELECT name, name_normalized, search_text FROM Entity "
                         "WHERE id = 'lo'")[0]
     assert row["name"] == "Newname GmbH"
-    assert row["name_normalized"] == "newname gmbh"
+    assert row["name_normalized"] == "newname"      # GmbH is a legal form (findings item 13)
     assert "newname" in row["search_text"].lower()
