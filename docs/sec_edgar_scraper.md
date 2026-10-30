@@ -176,9 +176,15 @@ registered name. It is a flat JSON object keyed by an arbitrary integer index:
 }
 ```
 
-Matching is done by normalising both the query and the `title` field: lowercase,
-strip punctuation and legal suffixes (Inc, Corp, LLC, etc.), then compare.
-Exact matches win; prefix matches are the fallback.
+Matching is done by normalising both the query and the `title` field: EDGAR's
+tag ("/NEW/") dropped, lowercase, punctuation and the legal forms at the END
+(Inc, Corp, LLC, Group, Holding, etc.) stripped, then compare. Exact matches win;
+prefix matches are the fallback. A form word elsewhere stays: dropped anywhere,
+"NV Energy" keyed "energy" and took ENERGY FUELS INC as its prefix match
+(2026-10-30). A title tagged as an ADR programme ("MTN GROUP LTD/ADR") is skipped
+(`is_adr_listing`): that CIK is the depositary's receipt registration, with no
+10-K, 20-F or holders of its own, and would give the company a CIK that carries
+nothing (the user's choice, 2026-10-30).
 
 **Step 1b — browse-edgar's registered-name index:** companies filing 10-K or 20-F
 whose registered name starts with the query.

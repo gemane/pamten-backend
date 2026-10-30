@@ -114,6 +114,34 @@ class TestNormalizeEntityName:
         assert normalize_entity_name("") == ""
 
 
+    @pytest.mark.parametrize("name,key", [
+        # findings item 5 (2026-10-30): a form word only goes at the END
+        ("NV ENERGY, INC.", "nv energy"),               # Nevada, keyed "energy" and matched Energy Fuels
+        ("SA Recycling LLC", "sa recycling"),
+        ("AG Mortgage Investment Trust", "ag mortgage investment trust"),
+        ("Innovex Co-Invest Fund II, L.P.", "innovex co-invest fund ii"),
+        ("Bimbo SA de CV", "bimbo sa de cv"),
+        ("News Corp UK & Ireland Limited", "news corp uk & ireland"),
+        ("AB Volvo", "ab volvo"),                       # a leading form stays, by decision
+        ("PT Unilever Indonesia Tbk", "pt unilever indonesia tbk"),
+        # every form at the end goes, however many
+        ("Toyota Motor Co., Ltd.", "toyota motor"),
+        ("Anheuser-Busch InBev SA/NV", "anheuser-busch inbev"),
+        ("Siemens Beteiligungen GmbH & Co. KG", "siemens beteiligungen"),
+        ("Frontier Capital Management Co.,Llc", "frontier capital management"),
+        ("Frontier Capital Management Co Llc", "frontier capital management"),
+        # never down to nothing
+        ("Company", "company"),
+    ])
+    def test_a_legal_form_goes_only_at_the_end(self, name, key):
+        assert normalize_entity_name(name) == key
+
+    def test_namesakes_with_a_form_inside_stay_apart(self):
+        # dev 2026-10-30: one key until the form inside the name stopped going
+        assert normalize_entity_name("Chubb Company Services Limited") != normalize_entity_name("Chubb Services Limited")
+        assert normalize_entity_name("LLC Chubb Insurance Company") != normalize_entity_name("Chubb Insurance Company Limited")
+
+
 class TestHasEntitySuffix:
     """A definite company signal, used to veto a wrong person classification."""
 

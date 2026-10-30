@@ -301,3 +301,53 @@ class TestAStatedLei:
              patch.object(rp, "write_from_gleif") as write:
             assert rp.attach_stated_lei(node, "sec:0001088859", ["549300UYMK70HLNJU654"]) is None
         write.assert_not_called()
+
+
+class TestAStatedCik:
+    """A Wikidata item found by its LEI states a CIK the graph lacks: EDGAR is
+    asked (findings item 5 — NV Energy's 0000741508, no longer on EDGAR's
+    tickers, so no name search finds it)."""
+    NODE = {"lei_id": "549300WSWTEW6DURBO45", "sec_cik": None, "name": "NV ENERGY, INC."}
+    RECORD = [{"name": "NV ENERGY, INC.", "lei_id": "549300WSWTEW6DURBO45", "jurisdiction_code": "US-NV"}]
+
+    def _run(self, node=NODE, held=None, verdict=("join", "name+place"), landed="lei:549300WSWTEW6DURBO45"):
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.entity_resolution.resolve_entity_id", return_value=held), \
+             patch("app.database.db.get_session"), \
+             patch("app.db.arcadedb.run_sql", return_value=self.RECORD), \
+             patch("app.scraper.legal_identity.filer_facts", return_value=object()), \
+             patch("app.scraper.legal_identity.same_legal_entity", return_value=verdict) as rule, \
+             patch.object(rp, "write_from_edgar", return_value=landed) as write:
+            got = rp.attach_stated_cik(node, "lei:549300WSWTEW6DURBO45", ["0000741508"])
+        return got, rule, write
+
+    def test_edgar_writes_onto_the_node_when_the_registers_agree(self):
+        got, rule, write = self._run()
+        assert got == "lei:549300WSWTEW6DURBO45"
+        assert rule.call_args.args[0]["jurisdiction_code"] == "US-NV"
+        write.assert_called_once_with("0000741508", candidates=["lei:549300WSWTEW6DURBO45"])
+
+    def test_a_refusal_writes_nothing(self):
+        got, _, write = self._run(verdict=("refuse", "legal name differs"))
+        assert got is None
+        write.assert_not_called()
+
+    def test_a_write_that_landed_elsewhere_is_no_attach(self):
+        assert self._run(landed="sec:0000741508")[0] is None
+
+    @pytest.mark.parametrize("node, held", [
+        ({**NODE, "sec_cik": "0000741508"}, None),    # it has one
+        ({**NODE, "lei_id": None}, None),             # no GLEIF record: nothing for the rule to weigh
+        (NODE, "sec:0000741508"),                     # the graph holds the CIK
+    ])
+    def test_nothing_to_ask(self, node, held):
+        got, rule, write = self._run(node=node, held=held)
+        assert got is None
+        rule.assert_not_called()
+        write.assert_not_called()
+
+    def test_sec_scraping_off_asks_nobody(self):
+        with patch.object(rp, "_sec_enabled", return_value=False), \
+             patch.object(rp, "write_from_edgar") as write:
+            assert rp.attach_stated_cik(self.NODE, "lei:549300WSWTEW6DURBO45", ["0000741508"]) is None
+        write.assert_not_called()

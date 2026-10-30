@@ -766,10 +766,12 @@ def _candidates_by_name(session, name: str, name_norm: str, country: str | None)
     return out
 
 
-_NAME_FORMS = frozenset({"the", "inc", "incorporated", "corp", "corporation", "co", "company",
-                         "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se", "gmbh"})
-#: dropped only at the end of a name (mapper.strip_partnership_form): "KG Mobility Corp" keeps its KG
-_TRAILING_FORMS = ("&", "and", "kg", "kgaa")
+#: dropped only at the end of a name, as many as there are ("GmbH & Co. KG" is
+#: one legal form; "KG Mobility Corp" keeps its KG): anywhere, "NV ENERGY,
+#: INC." keyed ("energy",) and "Innovex Co-Invest" lost its "co" (2026-10-30)
+_NAME_FORMS = frozenset({"inc", "incorporated", "corp", "corporation", "co", "company",
+                         "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se", "gmbh",
+                         "&", "and", "kg", "kgaa"})
 
 
 def _name_key(name: str) -> tuple[str, ...]:
@@ -783,8 +785,10 @@ def _name_key(name: str) -> tuple[str, ...]:
         .encode("ascii", "ignore").decode().lower()
     # "L.P." is one word before the split, or it became the letters "l", "p"
     plain = join_dotted_letters(plain)
-    words = [w for w in re.split(r"[^a-z0-9&]+", plain) if w and w not in _NAME_FORMS]
-    while words and words[-1] in _TRAILING_FORMS:   # "& Co" / "GmbH & Co. KG" is one legal form
+    words = [w for w in re.split(r"[^a-z0-9&]+", plain) if w]
+    if len(words) > 1 and words[0] == "the":        # a leading "the" only
+        words.pop(0)
+    while len(words) > 1 and words[-1] in _NAME_FORMS:   # never down to nothing: "The Limited"
         words.pop()
     return tuple(words)
 
@@ -902,8 +906,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             headquarters: dict | None = None,
                             website: str | None = None,
                             credibility_score: int = 98,
-                            register_name: bool = False) -> str:
+                            register_name: bool = False,
+                            candidates: list[str] | None = None) -> str:
     """Find or create an Entity node matched by CIK, LEI, exact name, or normalized name.
+
+    ``candidates`` are node ids weighed before the name's, on the same terms
+    (`_not_this_filer`): the GLEIF node a Wikidata item resolved to by its LEI
+    when the item states the CIK too (`register_pointer.attach_stated_cik`).
 
     A name says which company only together with where it is registered
     (`_resolve_by_name`): a row that states a ``country`` takes the node of
@@ -912,8 +921,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     Andina S.A.S." in Colombia and in Ecuador; and, since 2026-10-25 for
     every dated row, Chubb's "Chubb Company Services Limited" (England),
     "Chubb Services Limited" (Cayman) and "Chubb Services Corporation"
-    (Illinois), one name key once "Company", "Services" and the suffix are
-    dropped, which had become one node with three parents at 100 %.
+    (Illinois), one name key while "Company" inside a name was dropped too
+    (until 2026-10-30), which had become one node with three parents at 100 %.
 
     ``source_id`` (the calling scraper's Source node — SEC EDGAR or
     OpenCorporates) is stamped so the entity's own provenance shows in the node
@@ -953,7 +962,9 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         edgar_name = name if register_name else None
         if not entity_id:
             entity_id, refused = _first_filer_match(
-                session, _candidates_by_name(session, name, name_norm, country), name, cik, lei, edgar_name)
+                session, list(dict.fromkeys([*(candidates or []),
+                                             *_candidates_by_name(session, name, name_norm, country)])),
+                name, cik, lei, edgar_name)
             # The filing spelled a name EDGAR no longer gives the CIK: the
             # filer is written under the name in force, its former names
             # dated, not under the old spelling.

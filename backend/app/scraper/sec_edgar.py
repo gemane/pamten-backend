@@ -59,7 +59,8 @@ from app import former_names
 from app.roles import canonical_role
 from app.scraper.edge_schema import READ_FIELD, READ_FORM
 from app.scraper.mapper import (derive_ownership_type, fold_apostrophes, join_dotted_letters,
-                                strip_dangling_conjunction, strip_partnership_form)
+                                strip_edgar_tag, strip_partnership_form,
+                                strip_trailing_forms, trailing_form)
 
 log = logging.getLogger(__name__)
 
@@ -529,18 +530,31 @@ _LEGAL_FORM_WORDS = (
     "group", "holding", "holdings",
 )
 
-_LEGAL_SUFFIXES = re.compile(
-    r"\b(" + "|".join(_LEGAL_FORM_WORDS) + r")\b",
-    re.IGNORECASE,
-)
+#: at the end of a name only (`mapper.strip_trailing_forms`): anywhere, "NV
+#: Energy" was "energy" and the tickers file's ENERGY FUELS INC its prefix match
+_LEGAL_SUFFIXES = trailing_form(_LEGAL_FORM_WORDS)
+
 
 def _ticker_normalize(name: str) -> str:
-    """Lowercase, strip apostrophes, punctuation and legal suffixes for name
-    comparison ("Domino's Pizza" is company_tickers.json's "DOMINOS PIZZA INC")."""
-    name = fold_apostrophes(name).lower()
-    name = re.sub(r"[.,]", "", name)
-    name = _LEGAL_SUFFIXES.sub("", strip_partnership_form(name))
-    return strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())
+    """Lowercase, strip EDGAR's tag, apostrophes, punctuation and the legal
+    forms at the end for name comparison ("Domino's Pizza" is
+    company_tickers.json's "DOMINOS PIZZA INC", "Lennar Corporation" its
+    "LENNAR CORP /NEW/")."""
+    name = fold_apostrophes(strip_edgar_tag(name)).lower()
+    name = re.sub(r"\s+", " ", name.replace(".", "").replace(",", " ")).strip()
+    return strip_trailing_forms(strip_partnership_form(name), _LEGAL_SUFFIXES)
+
+
+#: EDGAR's tag on an ADR programme's registration: "MTN GROUP LTD/ADR" is the
+#: depositary's F-6 filer for MTN's American receipts, no 10-K, 20-F or
+#: holders of its own. Matched only by its tag, it would give MTN Group a CIK
+#: that carries nothing (2026-10-30, the user's choice: ADR-only listings out).
+_ADR_TAG = re.compile(r"[/\\]\s*adrs?\s*[/\\]?\s*$", re.IGNORECASE)
+
+
+def is_adr_listing(title: str | None) -> bool:
+    """The tickers file's title names an ADR programme, not the company."""
+    return bool(_ADR_TAG.search(title or ""))
 
 
 # Minimum SequenceMatcher ratio for a match to be accepted.
@@ -593,6 +607,8 @@ def _lookup_in_tickers(query: str) -> dict | None:
 
     for entry in tickers.values():
         title = entry.get("title", "")
+        if is_adr_listing(title):
+            continue
         cik   = str(entry.get("cik_str", "")).zfill(10)
         norm  = _ticker_normalize(title)
         if norm == q:

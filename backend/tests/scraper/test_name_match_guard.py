@@ -23,9 +23,21 @@ from app.scraper.graph_writer import _filer_as_registered, _name_key, _not_this_
     ("Henkel AG & Co. KGaA", "Henkel"),
     ("Robert Bosch GmbH", "ROBERT BOSCH"),
     ("U.S. Bancorp", "US BANCORP"),
+    ("Toyota Motor Co., Ltd.", "TOYOTA MOTOR CORP"),
+    ("Anheuser-Busch InBev SA/NV", "ANHEUSER-BUSCH INBEV"),
 ])
 def test_spellings_of_one_name_agree(a, b):
     assert _name_key(a) == _name_key(b)
+
+
+@pytest.mark.parametrize("name,key", [
+    ("NV ENERGY, INC.", ("nv", "energy")),
+    ("Innovex Co-Invest Fund, L.P.", ("innovex", "co", "invest", "fund")),
+    ("The Limited", ("limited",)),
+    ("AB Volvo", ("ab", "volvo")),
+])
+def test_a_form_or_the_inside_a_name_stays(name, key):
+    assert _name_key(name) == key
 
 
 @pytest.mark.parametrize("a,b", [
@@ -34,6 +46,9 @@ def test_spellings_of_one_name_agree(a, b):
     ("Baillie Gifford & Co", "BAILLIE GIFFORD FUNDS"),
     ("Procter & Gamble", "Procter Gamble"),
     ("KG Mobility Corp", "Mobility Corp"),          # KG is a legal form only at the end
+    # so is every other form (findings item 5, 2026-10-30)
+    ("NV ENERGY, INC.", "ENERGY FUELS INC"),
+    ("NV Energy", "Energy"),
 ])
 def test_another_word_is_another_company(a, b):
     assert _name_key(a) != _name_key(b)

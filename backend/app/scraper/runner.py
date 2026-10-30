@@ -303,6 +303,10 @@ def _upsert_entity(
             # whether it is this filer's (register_pointer.attach_stated_lei)
             if leis and not held.get("lei_id") and held.get("sec_cik"):
                 register_pointer.attach_stated_lei(held, entity_id, leis)
+            # and a CIK the item states on a GLEIF node that lacks one: EDGAR
+            # decides the same way (register_pointer.attach_stated_cik)
+            if ciks and not held.get("sec_cik") and held.get("lei_id"):
+                register_pointer.attach_stated_cik(held, entity_id, ciks)
             # search_text / name_normalized must derive from the name that WINS
             # the credibility contest below, not from the incoming one: Wikidata
             # enriching a GLEIF company must not evict the legal name from the
