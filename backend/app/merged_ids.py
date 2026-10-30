@@ -226,13 +226,17 @@ def rename_node_id(session, label: str, old_id: str, new_id: str) -> bool:
     keeps resolving — the same machinery a merge uses. Graph edges never store
     the id, so they need nothing. Refuses (returns False) when the new id is
     already taken: that is a merge, not a rename. Used by the writers when a
-    uuid-keyed node learns a hard id (`node_ids.key_on_learning`).
+    node learns a better hard id than its id (`node_ids.key_on_learning`).
     """
     clash = session.run(f"MATCH (n:{label} {{id: $id}}) RETURN n.id AS id LIMIT 1",
                         id=new_id).single()
     if clash:
         return False
     session.run(f"MATCH (n:{label} {{id: $old}}) SET n.id = $new", old=old_id, new=new_id)
+    # The new id may have been forwarded away before — a GLEIF node merged
+    # into the filer that now takes its LEI as its id (Altaba): it is a live id
+    # again, and a row from it would forward it to itself.
+    session.run("MATCH (m:MergedId {old_id: $new}) DELETE m", new=new_id)
     # Claims are keyed by a hash of their endpoints, so they are re-keyed, not
     # just re-pointed: a plain UPDATE left the old key on the renamed claim,
     # and the next scrape wrote a second claim for the same assertion.

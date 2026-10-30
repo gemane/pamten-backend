@@ -99,10 +99,13 @@ class TestTheDedup:
         with patch("app.scraper.sec_lei.confirm_filer_lei", return_value={"source_url": URL}):
             out = deduplicate_entities_for(["sec:0000217410"])
         assert out["entities_merged"] == 1
-        # the higher credibility survives, with both ids and the filing
-        assert _unilever() == [{"id": "sec:0000217410", "sec_cik": CIK, "lei_id": LEI,
+        # the higher credibility survives, with both ids and the filing — and,
+        # holding the LEI, under the LEI's id (findings item 20): the GLEIF
+        # delta addresses it by `lei:`; both old ids forward in one hop
+        assert _unilever() == [{"id": f"lei:{LEI}", "sec_cik": CIK, "lei_id": LEI,
                                 "lei_source_url": URL, "country": "GB"}]
-        assert run_sql("SELECT FROM MergedId WHERE old_id = 'gb-coh:00041424'")
+        fwd = {r["old_id"]: r["new_id"] for r in run_sql("SELECT old_id, new_id FROM MergedId")}
+        assert fwd == {"gb-coh:00041424": f"lei:{LEI}", "sec:0000217410": f"lei:{LEI}"}
 
     def test_the_full_dedup_folds_it_too(self, it_db):
         from app.scraper.maintenance import deduplicate_entities
@@ -112,7 +115,7 @@ class TestTheDedup:
             out = deduplicate_entities(limit=None)
         confirm.assert_called_once()
         assert out["entities_merged"] == 1 and len(out["lei_bridged"]) == 1
-        assert [n["id"] for n in _unilever()] == ["sec:0000217410"]
+        assert [n["id"] for n in _unilever()] == [f"lei:{LEI}"]
 
     def test_a_pair_kept_apart_stays_apart(self, it_db):
         from app.scraper.maintenance import deduplicate_entities

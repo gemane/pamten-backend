@@ -1361,7 +1361,8 @@ class TestIdentifierBridge:
         ctx, session = _make_session_mock(single_returns=[
             None, {"id": "sec:0001088859"},
             {"lei_id": None, "sec_cik": "0001088859", "name": "BAILLIE GIFFORD & CO"},
-            {"name": "BAILLIE GIFFORD & CO", "cred": 98, "aliases": None, "descr": None}])
+            {"name": "BAILLIE GIFFORD & CO", "cred": 98, "aliases": None, "descr": None},
+            {"lei": None, "wid": "Q1", "cik": "0001088859"}])
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.register_pointer.attach_stated_lei") as attach:
             eid = _upsert_entity("Baillie Gifford", None, None, None, "Q1",
@@ -1459,7 +1460,8 @@ class TestIdentifierBridge:
             None, {"id": "sec:0001326801"},
             {"lei_id": None, "sec_cik": "0001326801", "name": "Meta Platforms, Inc.",
              "other_names": None, "former_names": ["Facebook Inc|2021-10-27"]},
-            {"name": "Meta Platforms, Inc.", "cred": 98, "aliases": None, "descr": None}])
+            {"name": "Meta Platforms, Inc.", "cred": 98, "aliases": None, "descr": None},
+            {"lei": None, "wid": "Q380", "cik": "0001326801"}])         # key_on_learning: sec: stays
         with patch("app.scraper.runner.db.get_session", ctx):
             eid = _upsert_entity("Meta Platforms", None, None, None, "Q380", aliases=["Facebook"],
                                  sec_cik=["0001326801"])

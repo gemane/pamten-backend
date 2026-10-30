@@ -206,6 +206,8 @@ def cmd_merge_entities(args):
     print(f"  edges to move: {res['edges']}, claims to re-key: {res['claims']}")
     if args.apply:
         print(f"  moved {res['migrated']} edges; the old id forwards to the survivor")
+        if res["keep"].get("now_id") not in (None, res["keep"]["id"]):
+            print(f"  the survivor now carries a better hard id: {res['keep']['now_id']} (both old ids forward)")
 
 
 def cmd_dedupe_entities(args):

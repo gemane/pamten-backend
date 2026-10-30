@@ -31,14 +31,18 @@ def test_dry_run_reports_and_apply_folds_the_loser_into_the_survivor(it_db):
 
     res = merge_entities_by_id("sec:tv", "lei:tv", apply=True)
     assert res["applied"] is True and res["migrated"] >= 1
-    [keep] = it_db.run_sql("SELECT id, name, sec_cik, lei_id, legal_form, description, aliases FROM Entity WHERE id = 'sec:tv'")
+    # the survivor took the loser's LEI, so its id is the LEI's (findings item 20)
+    now = "lei:549300O4AF0C816ILN62"
+    assert res["keep"]["now_id"] == now
+    [keep] = it_db.run_sql(f"SELECT id, name, sec_cik, lei_id, legal_form, description, aliases FROM Entity WHERE id = '{now}'")
     assert keep["name"] == "GRUPO TELEVISA, S.A.B." and keep["sec_cik"] == "0000912892"     # the survivor's own
     assert keep["lei_id"] == "549300O4AF0C816ILN62" and keep["legal_form"] == "Sociedad Anonima Bursatil"  # the loser's filled
     assert "GRUPO TELEVISA S A B" in (keep["aliases"] or [])
-    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE id = 'lei:tv'")[0]["n"] == 0
-    assert it_db.run_sql("SELECT @out.id AS o FROM OWNS")[0]["o"] == "sec:tv"                 # the edge moved
-    assert it_db.run_sql("SELECT from_id FROM Claim")[0]["from_id"] == "sec:tv"               # the claim re-keyed
-    assert it_db.run_sql("SELECT new_id FROM MergedId WHERE old_id = 'lei:tv'")[0]["new_id"] == "sec:tv"
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE id = 'lei:tv' OR id = 'sec:tv'")[0]["n"] == 0
+    assert it_db.run_sql("SELECT @out.id AS o FROM OWNS")[0]["o"] == now                      # the edge moved
+    assert it_db.run_sql("SELECT from_id FROM Claim")[0]["from_id"] == now                    # the claim re-keyed
+    fwd = {r["old_id"]: r["new_id"] for r in it_db.run_sql("SELECT old_id, new_id FROM MergedId")}
+    assert fwd == {"lei:tv": now, "sec:tv": now}                                             # one hop each
     assert it_db.run_sql("SELECT kind, dup_id FROM MergeLog")[0]["dup_id"] == "lei:tv"
 
 
