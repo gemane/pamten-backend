@@ -27,7 +27,7 @@ from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.node_ids import key_on_learning, mint_node_id
 from app import addresses
 from app.scraper.mapper import (fold_apostrophes, is_nominee_name, normalize_cik, normalize_entity_name,
-                                parse_full_name)
+                                parse_full_name, strip_edgar_tag)
 import logging
 
 from app.config import settings
@@ -766,7 +766,6 @@ def _candidates_by_name(session, name: str, name_norm: str, country: str | None)
     return out
 
 
-_STATE_TAG = re.compile(r"\s*/[a-z]{0,6}/?\s*$")       # EDGAR's "/DE/", "/NEW/", a bare "/"
 _NAME_FORMS = frozenset({"the", "inc", "incorporated", "corp", "corporation", "co", "company",
                          "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se"})
 
@@ -778,8 +777,8 @@ def _name_key(name: str) -> tuple[str, ...]:
     stay words, so "BlackRock" and "BlackRock Finance" do not."""
     # apostrophes first: the split below made "Domino's" ("domino", "s") and
     # the ASCII fold made "Domino’s" ("dominos"), EDGAR's spelling
-    plain = unicodedata.normalize("NFKD", fold_apostrophes(name or "")).encode("ascii", "ignore").decode().lower()
-    plain = _STATE_TAG.sub("", plain)
+    plain = unicodedata.normalize("NFKD", fold_apostrophes(strip_edgar_tag(name or ""))) \
+        .encode("ascii", "ignore").decode().lower()
     words = [w for w in re.split(r"[^a-z0-9&]+", plain) if w and w not in _NAME_FORMS]
     while words and words[-1] in ("&", "and"):     # "& Co" / "and Company" is one legal form
         words.pop()

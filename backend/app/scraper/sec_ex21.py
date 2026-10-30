@@ -32,7 +32,7 @@ import unicodedata
 from html.parser import HTMLParser
 
 from app.scraper.edge_schema import READ_LAYOUT, READ_PROSE, READ_TABLE
-from app.scraper.mapper import normalize_entity_name
+from app.scraper.mapper import normalize_entity_name, strip_edgar_tag
 from app.scraper.sec_edgar import SUBMISSIONS_URL, _cik10, _get, _get_text, _iso_date
 
 log = logging.getLogger(__name__)
@@ -483,8 +483,6 @@ def _section_header(row: list[str]) -> dict | None:
     return header if _NOISE.match(name_cell) else None
 
 
-#: EDGAR's tag after a conformed name: "KEYCORP /NEW/", "DOW CHEMICAL CO /DE/"
-_EDGAR_SUFFIX = re.compile(r"\s*/[A-Za-z]{2,5}/\s*$")
 # "Northwest Natural Gas Company (dba NW Natural)": the name is before it
 _ALIAS = re.compile(r"\s*\((?:dba|d/b/a|fka|f/k/a|formerly|aka|a/k/a)\b[^()]*\)", re.I)
 _LEADING_THE = re.compile(r"^\s*the\s+", re.I)
@@ -497,8 +495,9 @@ def _same_company(a: str | None, b: str | None) -> bool:
     accents too: EDGAR names the filer "Almacenes Exito S.A.", its own list
     "Almacenes Éxito S.A."."""
     def key(x):
-        # NFKD splits "É" into "E" and an accent, which the filter below drops
-        plain = unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", x))
+        # NFKD splits "É" into "E" and an accent, which the filter below drops;
+        # normalize_entity_name drops EDGAR's tag
+        plain = unicodedata.normalize("NFKD", x)
         return re.sub(r"[^a-z0-9]", "", normalize_entity_name(plain))
     return bool(a and b) and key(a) == key(b)
 
@@ -507,7 +506,7 @@ def _compact(name: str) -> str:
     """A name's letters and digits, accents and case dropped — legal forms
     kept: "Vía Artika S. A." is "Vía Artika S.A.", "PureCycle Technologies
     LLC" is not "PureCycle Technologies, Inc."."""
-    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", name)).casefold())
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", strip_edgar_tag(name)).casefold())
 
 
 # One legal form, spelled either way.
@@ -517,7 +516,7 @@ _FORM_SPELLING = ((r"\blimited\b", "ltd"), (r"\bcorporation\b", "corp"), (r"\bin
 
 def _form_key(name: str) -> str:
     """``_compact`` with each legal form in one spelling: "Ltd." is "Limited"."""
-    plain = unicodedata.normalize("NFKD", _EDGAR_SUFFIX.sub("", name)).casefold()
+    plain = unicodedata.normalize("NFKD", strip_edgar_tag(name)).casefold()
     for long, short in sorted(_FORM_SPELLING, key=lambda p: -len(p[0])):
         plain = re.sub(long, short, plain)
     return re.sub(r"[^a-z0-9]", "", plain)
@@ -552,7 +551,7 @@ def _is_filer(name: str | None, registrant: str | list[str] | None) -> bool:
     its letters are."""
     if not name:
         return False
-    bare = not _LEGAL_NAME.search(_EDGAR_SUFFIX.sub("", name).strip())
+    bare = not _LEGAL_NAME.search(strip_edgar_tag(name).strip())
     return any(legal_name_key(name) == legal_name_key(n)
                or (bare and _same_company(_LEADING_THE.sub("", name), _LEADING_THE.sub("", n)))
                for n in _filer_names(registrant))

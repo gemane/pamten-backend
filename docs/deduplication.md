@@ -520,6 +520,26 @@ and EDGAR's `NEW YORK TIMES CO` `new york times` (findings item 18, 2026-10-30);
 abroad of a filer whose node has no country can now share its key; the writers match it in
 its own country (`_resolve_by_name`), which SEC nodes carry.
 
+## EDGAR's tag is dropped — one rule for every key
+
+EDGAR adds a tag to a conformed name, and writes it every way: `OCCIDENTAL PETROLEUM CORP
+/DE/`, glued (`WELLS FARGO & CO/MN`, `IDS FINANCIAL CORP/MN/`), without the closing slash
+(`ALLEN HOLDING INC /NY`, `Baupost Group Llc/Ma`), a country code (`/E9/`), a city
+(`Amvescap Plc/London/`), a space after the slash (`… LTD/ CAN`), a number
+(`Corp/132-129/`), the article moved to the end (`Macerich Co/The`), a backslash (`Deutsche
+Bank Ag\`). Until 2026-10-30 three keys had three rules, each missing shapes the others
+caught: `normalize_entity_name` none at all, `graph_writer._name_key` most but it split
+`SA/NV` into letters, `sec_ex21`'s only `/XX/` with a closing slash. `mapper.strip_edgar_tag`
+is now the one rule, applied by `normalize_entity_name`, `_name_key` and the Exhibit 21 keys
+(`_compact`, `_form_key`, `_is_filer`). A tag is a state code, NEW/OLD/ADR/CAN/FA/THE, a
+letter and a digit, a number, or one word between two slashes. A slash that is part of the
+name stays: a legal form (`SA/NV`, `A/S`, `I/S`, `K/S`, `P/S`, `S/A`), `d/b/a`, one in the
+middle (`RiverNorth/DoubleLine …`), or a last word that is no tag (`Fund I/II`). Of the 52
+slashed names on dev's 1,145 filer nodes, every tag now goes and every name slash stays
+(`tests/scraper/test_mapper.py::TestEdgarTag`). `normalize_entity_name` also drops the slash
+a legal form leaves when both halves are stripped: `Anheuser-Busch InBev SA/NV` keyed
+`anheuser-busch inbev /`. Stored `name_normalized` values change on the next rebuild.
+
 ## Spaced abbreviations are abbreviations
 
 `normalize_entity_name` joins a run of two or more spaced single letters before it strips
