@@ -90,3 +90,15 @@ class TestFilerAsRegistered:
     def test_edgar_unreachable_leaves_the_filings_name(self):
         with patch("app.scraper.sec_edgar._submissions", side_effect=RuntimeError("down")):
             assert _filer_as_registered("0001364742", "BlackRock Inc.") is None
+
+
+@pytest.mark.parametrize("name,key", [
+    ("Domino's Pizza, Inc.", ("dominos", "pizza")),
+    ("Domino’s Pizza, Inc.", ("dominos", "pizza")),
+    ("DOMINOS PIZZA INC", ("dominos", "pizza")),
+    ("McDonald's Corp", ("mcdonalds",)),
+    ("McDonald’s Corp", ("mcdonalds",)),
+])
+def test_an_apostrophe_is_dropped_not_a_word_break(name, key):
+    # the split turned the straight one into a stray "s" word (2026-10-30)
+    assert _name_key(name) == key

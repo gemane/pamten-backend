@@ -306,6 +306,13 @@ class TestTickerNormalize:
     def test_passthrough(self):
         assert _ticker_normalize("Tesla") == "tesla"
 
+    def test_apostrophes_meet_edgars_spelling(self):
+        from app.scraper.sec_edgar import _name_similarity, _significant_tokens
+        spellings = ("Domino's Pizza, Inc.", "Domino’s Pizza, Inc.", "DOMINOS PIZZA INC")
+        assert {_ticker_normalize(n) for n in spellings} == {"dominos pizza"}
+        assert all("s" not in _significant_tokens(n) and "dominos" in _significant_tokens(n) for n in spellings)
+        assert _name_similarity("Domino's Pizza, Inc.", "DOMINOS PIZZA INC") == 1.0
+
 
 class TestLookupInTickers:
     """_lookup_in_tickers searches a cached dict of EDGAR listed companies."""
