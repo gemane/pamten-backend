@@ -134,7 +134,7 @@ class TestListInTheMainDocument:
         with patch("app.scraper.sec_ex21._main_document", return_value=(self.URL, doc)), \
              patch("app.scraper.sec_ex21.list_from_earlier_filing", return_value={"x": 1}) as earlier:
             assert ex.list_from_main_document("1", self.FILING, ABI) == {"x": 1}
-        assert earlier.call_args.kwargs == {"confirmed_by": self.URL, "confirmed_on": "2026-03-03"}
+        assert earlier.call_args.kwargs == {"home": None, "confirmed_by": self.URL, "confirmed_on": "2026-03-03"}
 
     def test_fetch_falls_back_to_it_when_no_exhibit_parses(self):
         with patch("app.scraper.sec_ex21.annual_filings", return_value=[self.FILING]), \
@@ -143,7 +143,7 @@ class TestListInTheMainDocument:
              patch("app.scraper.sec_ex21._get_text", return_value="<table><tr><td>Notes</td></tr></table>"), \
              patch("app.scraper.sec_ex21.list_from_main_document", return_value={"subsidiaries": [1]}) as main:
             assert fetch_subsidiaries("1668717", ABI) == {"subsidiaries": [1]}
-        main.assert_called_once_with("1668717", self.FILING, ABI)
+        main.assert_called_once_with("1668717", self.FILING, ABI, None)
 
     def test_no_annual_filing_is_none_without_fetching_anything_else(self):
         with patch("app.scraper.sec_ex21.annual_filings", return_value=[]), \

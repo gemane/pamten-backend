@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from app.scraper.sec_ex21 import (_clean_name, _named_parent, jurisdiction_country,
+from app.scraper.sec_ex21 import (_at_home, _clean_name, _is_filer, _named_parent, jurisdiction_country,
                                   jurisdiction_subdivision, parse_exhibit)
 
 FIX = Path(__file__).parent / "fixtures"
@@ -24,6 +24,10 @@ FIX = Path(__file__).parent / "fixtures"
 
 def _load(name: str, registrant: str | None = None) -> list[dict]:
     return parse_exhibit((FIX / name).read_text(errors="replace"), registrant)
+
+
+def _load_home(name: str, registrant: str, home: str) -> list[dict]:
+    return parse_exhibit((FIX / name).read_text(errors="replace"), registrant, home=home)
 
 
 def _tree(subs: list[dict]) -> dict[str, str | None]:
@@ -97,6 +101,105 @@ class TestIndentationTrees:
         html = "<table>" + "".join(
             f'<tr><td style="padding-left:{i}pt">{n}</td><td>Ireland</td></tr>' for n, i in rows) + "</table>"
         assert _tree(parse_exhibit(html))["D Ltd"] == "A Ltd"        # not "C Ltd"
+
+
+NYT_CHILDREN = 9   # the rows the 2026-10-29b rebuild hung under a copy of NYT
+
+
+class TestTheFilersOwnRow:
+    """A row naming the filer is the filer, not a subsidiary (findings item
+    17): NYT's root line, Occidental's row among its 422."""
+
+    def test_nyts_root_line_under_its_edgar_name(self):
+        subs = _load("nyt_ex21.htm", "NEW YORK TIMES CO")
+        names = [s["name"] for s in subs]
+        assert "The New York Times Company" not in names
+        assert "The New York Times Company Pty Limited" in names      # a real subsidiary
+        direct = [s["name"] for s in subs if s.get("parent_basis") == "indent" and not s.get("parent")]
+        assert len(direct) == NYT_CHILDREN and "NYT Capital, LLC" in direct
+        assert not any((s.get("parent") or "").startswith("The New York Times Company") for s in subs)
+
+    def test_any_of_the_filers_names_will_do(self):
+        # the node's name is GLEIF's or Wikidata's spelling; EDGAR's matches
+        subs = _load("nyt_ex21.htm", ["NYTimes Holdco", "NEW YORK TIMES CO"])
+        assert "The New York Times Company" not in [s["name"] for s in subs]
+
+    def test_without_a_registrant_the_root_line_stays(self):
+        # registrants_part reads the list so, to find the filer's branch
+        assert "The New York Times Company" in [s["name"] for s in _load("nyt_ex21.htm")]
+
+    def test_a_flat_list_drops_the_filer_under_edgars_state_tag(self):
+        rows = [("Anadarko Petroleum Corporation", "Delaware"), ("OXY USA Inc.", "Delaware"),
+                ("Occidental Petroleum Corporation", "Delaware"), ("Oxy Low Carbon Ventures, LLC", "Delaware")]
+        html = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                + "".join(f"<tr><td>{n}</td><td>{j}</td></tr>" for n, j in rows) + "</table>")
+        names = [s["name"] for s in parse_exhibit(html, "OCCIDENTAL PETROLEUM CORP /DE/")]
+        assert names == ["Anadarko Petroleum Corporation", "OXY USA Inc.", "Oxy Low Carbon Ventures, LLC"]
+
+    def test_the_filer_where_it_is_registered_only(self):
+        # Perfect Corp. (Cayman) lists a "Perfect Corp." in Japan and one in
+        # the US: neither is the filer
+        html = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                "<tr><td>Perfect Corp.</td><td>Japan</td></tr>"
+                "<tr><td>Perfect Corp.</td><td>United States</td></tr>"
+                "<tr><td>Perfect Mobile Corp.</td><td>Taiwan</td></tr></table>")
+        assert len(parse_exhibit(html, "Perfect Corp.", home="KY")) == 3
+        assert [s["jurisdiction"] for s in parse_exhibit(html, "Perfect Corp.", home="JP")] == [
+            "United States", "Taiwan"]
+        # NYT's root line says New York, where NYT is incorporated
+        assert "The New York Times Company" not in [
+            s["name"] for s in _load_home("nyt_ex21.htm", "NEW YORK TIMES CO", "US-NY")]
+        assert "The New York Times Company" in [
+            s["name"] for s in _load_home("nyt_ex21.htm", "NEW YORK TIMES CO", "US-DE")]
+
+    @pytest.mark.parametrize("place, home, expected", [
+        ("New York", "US-NY", True),
+        ("Delaware", "US-NY", False),          # a namesake in another state
+        ("United States", "US-NY", True),      # no state stated: cannot tell
+        ("Japan", "KY", False),
+        ("Cayman Islands", "KY", True),
+        ("Delaware", "US", True),
+        ("", "US-NY", True),
+        ("Ruritania", "US-NY", True),          # unmappable: cannot tell
+        ("Japan", None, True),                 # home unknown: the name decides
+    ])
+    def test_at_home(self, place, home, expected):
+        assert _at_home(place, home) is expected
+
+    def test_a_row_the_parent_column_puts_under_the_filers_row_hangs_off_the_filer(self):
+        html = ("<table><tr><td>Name</td><td>Parent</td><td>Jurisdiction</td></tr>"
+                "<tr><td>The Acme Company</td><td></td><td>Delaware</td></tr>"
+                "<tr><td>Acme Widgets LLC</td><td>The Acme Company</td><td>Delaware</td></tr>"
+                "<tr><td>Acme Gears Ltd.</td><td>Acme Widgets LLC</td><td>England</td></tr></table>")
+        by = {s["name"]: s for s in parse_exhibit(html, "ACME CO /DE/", home="US-DE")}
+        assert set(by) == {"Acme Widgets LLC", "Acme Gears Ltd."}
+        assert "parent" not in by["Acme Widgets LLC"] and by["Acme Widgets LLC"]["parent_basis"] == "column"
+        assert by["Acme Gears Ltd."]["parent"] == "Acme Widgets LLC"
+
+    def test_namesakes_with_another_legal_form_stay(self):
+        html = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                "<tr><td>PBF Energy Limited</td><td>British Columbia</td></tr>"
+                "<tr><td>PBF Holding Company LLC</td><td>Delaware</td></tr></table>")
+        assert [s["name"] for s in parse_exhibit(html, "PBF Energy Inc.")] == [
+            "PBF Energy Limited", "PBF Holding Company LLC"]
+
+    @pytest.mark.parametrize("name, registrant, expected", [
+        ("The New York Times Company", "NEW YORK TIMES CO", True),
+        ("Occidental Petroleum Corporation", "OCCIDENTAL PETROLEUM CORP /DE/", True),
+        ("The Coca-Cola Company", "COCA COLA CO", True),
+        ("Domino's Pizza, Inc.", "DOMINOS PIZZA INC", True),
+        ("Northwest Natural Gas Company (dba NW Natural)", "NORTHWEST NATURAL GAS CO", True),
+        ("Chubb", "CHUBB LTD", True),                       # no legal form: its letters
+        ("PBF Energy Limited", "PBF Energy Inc.", False),
+        ("The Trade Desk Limited", "Trade Desk, Inc.", False),
+        ("The New York Times Company Pty Limited", "NEW YORK TIMES CO", False),
+        ("Foo Technologies LLC", "Foo Technologies, Inc.", False),
+        ("The New York Times Company", ["NYTimes Holdco", "NEW YORK TIMES CO"], True),
+        ("The New York Times Company", [], False),
+        ("", "NEW YORK TIMES CO", False),
+    ])
+    def test_is_filer(self, name, registrant, expected):
+        assert _is_filer(name, registrant) is expected
 
 
 class TestHeadings:

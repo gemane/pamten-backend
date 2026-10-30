@@ -2997,6 +2997,31 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
     }
 
 
+def incorporation_place(submissions: dict) -> str | None:
+    """Where the filer is incorporated, as a jurisdiction code: "US-NY" for a
+    US state, the ISO-2 country otherwise ("KY" for Cayman), None when EDGAR
+    does not say. Incorporation only — never the business address (see
+    `sec_country`)."""
+    from app.scraper.maintenance import nationality_to_iso2
+
+    inc_code = (submissions.get("stateOfIncorporation") or "").strip().upper()
+    if inc_code in _US_STATES:
+        return "US" if inc_code == "PR" else f"US-{inc_code}"
+    inc_name = (submissions.get("stateOfIncorporationDescription") or "").strip()
+    return nationality_to_iso2(inc_name) if inc_name else None
+
+
+def fetch_filer_identity(cik: str) -> tuple[str | None, str | None]:
+    """(EDGAR's name for the filer, `incorporation_place`) from one
+    submissions request; (None, None) when it fails."""
+    try:
+        subs = _submissions(cik)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
+        return None, None
+    return (subs.get("name") or "").strip() or None, incorporation_place(subs)
+
+
 def fetch_filer_name(cik: str) -> str | None:
     """The filer's own name from its EDGAR submissions index, or None."""
     try:
