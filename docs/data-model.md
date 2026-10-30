@@ -743,6 +743,21 @@ address only as a fallback.** EDGAR's business address is where the *filing* com
 from — DEUTSCHE BANK AKTIENGESELLSCHAFT lists New York — so trusting it would move
 German banks to the United States. A filer with only a US address and no stated
 incorporation is left blank, because a wrong country is worse than none.
+**The annual report before the company record** (2026-10-30): both the
+incorporation and the headquarters come first from the cover of the filer's
+newest 10-K/20-F/40-F (`sec_edgar.report_cover`: `dei:EntityIncorporationStateCountryCode`
+and `dei:EntityAddress…`, in the registrant's own context), and from EDGAR's company
+record (`stateOfIncorporation`, `addresses.business`) only when the report states none —
+older filers before inline XBRL, deregistered ones, filers without annual reports. The
+record is the filer's own entry in EDGAR's database, checked against nothing: Hong Kong
+for Alibaba (20-F: Cayman Islands), New York for HubSpot (10-K: Delaware), empty for
+MercadoLibre, Embraer and Televisa. A P.O. box on the cover is no headquarters (Inter &
+Co tags its Cayman registered agent's "PO Box 309, Ugland House"); the record's office
+stays. Over the 59 dev filers with an Exhibit 21 the report changes the country of one
+(Alibaba HK → KY), fills four, and changes three headquarters' city (Televisa "Colonia
+Santa Fe" for "MEXICO, D.F.", PayPay "Tokyo", Cogent "Washington, D.C"; Inter & Co's P.O.
+box is refused). Embraer's 20-F names its São Paulo office, the record São José dos Campos.
+A headquarters only ever fills a blank, so stored nodes change on the next rebuild.
 Jurisdiction and headquarters are kept in **separate fields throughout**.
 Coalescing them is tempting when one is missing, and it is what the
 Registered/Headquarters switch on the map exists to avoid — an early country

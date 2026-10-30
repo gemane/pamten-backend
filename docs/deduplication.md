@@ -746,7 +746,8 @@ evidence or the reason:
 2. **The same place of registration**: GLEIF's jurisdiction against where the filer is
    incorporated (`sec_edgar.incorporation_place`): the cover of its newest annual report first
    (`dei:EntityIncorporationStateCountryCode`, `stated_incorporation`), EDGAR's header field
-   `stateOfIncorporation` only when that report states none. The header field is the filer's
+   `stateOfIncorporation` only when that report states none. Point 3's "today's address" is
+   the report's office too (`sec_headquarters`), the record's business address only without one. The header field is the filer's
    own entry in EDGAR's company database, checked against nothing: New York for HubSpot (10-K
    cover: Delaware), Hong Kong for Alibaba (20-F cover: Cayman Islands), empty for
    MercadoLibre, Embraer and Televisa. Another place refuses. GLEIF's bare `US` against

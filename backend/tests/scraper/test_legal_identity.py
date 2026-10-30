@@ -120,6 +120,17 @@ class TestTheExhibitAtD:
         assert self._picked("2020-01-01")[0] == ["a24"]           # the oldest covers it
 
 
+class TestTheFilersOffice:
+    def test_today_s_office_is_the_report_s(self):
+        from app.scraper import legal_identity
+        sub = {"name": "MERCADOLIBRE INC", "addresses": {"business": {"street1": "OLD 1", "city": "OLDTOWN"}}}
+        with patch("app.scraper.sec_edgar._submissions", return_value=sub), \
+             patch("app.scraper.sec_edgar.stated_headquarters",
+                   return_value={"street": "WTC Free Zone Dr. Luis Bonavita 1294", "city": "Montevideo"}):
+            facts = legal_identity.filer_facts("0001099590")
+        assert (facts.street, facts.city) == ("WTC Free Zone Dr. Luis Bonavita 1294", "Montevideo")
+
+
 class TestTheVeto:
     def test_an_open_link_to_a_record_that_is_the_filer_vetoes(self):
         # even a record that passes 1 and 2 is no join while it is the filer's child

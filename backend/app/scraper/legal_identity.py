@@ -340,7 +340,7 @@ def clear_caches() -> None:
 @_cached
 def filer_facts(cik: str) -> Filer | None:
     """EDGAR's facts on a filer for the rule, or None when EDGAR cannot say."""
-    from app.scraper.sec_edgar import _submissions, former_name_entries, incorporation_place
+    from app.scraper.sec_edgar import _submissions, former_name_entries, incorporation_place, sec_headquarters
     try:
         sub = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - EDGAR unreachable: no verdict
@@ -349,12 +349,10 @@ def filer_facts(cik: str) -> Filer | None:
     name = ((sub or {}).get("name") or "").strip()
     if not name:
         return None
-    business = (sub.get("addresses") or {}).get("business") or {}
-    street = " ".join(p for p in ((business.get("street1") or "").strip(),
-                                  (business.get("street2") or "").strip()) if p) or None
+    # today's office: the annual report's, else the company record's
+    office = sec_headquarters(sub) or {}
     return Filer(cik=cik, name=name, former_names=tuple(former_name_entries(sub) or ()),
-                 home=incorporation_place(sub), street=street,
-                 city=(business.get("city") or "").strip() or None)
+                 home=incorporation_place(sub), street=office.get("street"), city=office.get("city"))
 
 
 _HEADER_BLOCK = re.compile(r"<(ISSUER|FILER|SUBJECT-COMPANY|FILED-BY)>(.*?)</\1>", re.S)
