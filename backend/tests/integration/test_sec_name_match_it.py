@@ -30,7 +30,8 @@ def _submissions(edgar):
     def read(cik):
         if cik not in edgar:
             raise RuntimeError("EDGAR unreachable")
-        return {"name": edgar[cik], "formerNames": []}
+        # every filer here is a Delaware corporation, as EDGAR says
+        return {"name": edgar[cik], "formerNames": [], "stateOfIncorporation": "DE"}
     return read
 
 
@@ -47,9 +48,12 @@ def _ids(nid):
 
 
 def test_an_old_filings_spelling_does_not_carry_the_old_cik_onto_the_new_parent(it_db):
-    _node(it_db, f"lei:{NEW_LEI}", "BlackRock, Inc.", "blackrock", lei_id=NEW_LEI, country="US")
+    _node(it_db, f"lei:{NEW_LEI}", "BlackRock, Inc.", "blackrock", lei_id=NEW_LEI, country="US",
+          jurisdiction_code="US-DE")
     old, fetch = _upsert("BlackRock Inc.", OLD_CIK)
-    assert old == f"sec:{OLD_CIK}" and fetch.call_count == 1
+    # GLEIF's node is asked through the registers' rule (legal_identity),
+    # which reads EDGAR's name with its other facts — not fetch_filer_name
+    assert old == f"sec:{OLD_CIK}" and fetch.call_count == 0
     assert _ids(f"lei:{NEW_LEI}")["sec_cik"] is None
     # the new parent's own filer write, with EDGAR's name, lands on GLEIF's node
     new, fetch = _upsert("BlackRock, Inc.", NEW_CIK, register_name=True)
@@ -66,8 +70,8 @@ def test_a_name_prefix_does_not_carry_another_companys_cik(it_db):
 
 
 def test_the_same_name_in_edgars_spelling_takes_the_cik(it_db):
-    _node(it_db, "lei:UWJKFUJFZ02DKWI3RY53", "The Coca-Cola Company", "the coca-cola",
-          lei_id="UWJKFUJFZ02DKWI3RY53")
+    _node(it_db, "lei:UWJKFUJFZ02DKWI3RY53", "The Coca-Cola Company", "coca-cola",
+          lei_id="UWJKFUJFZ02DKWI3RY53", country="US", jurisdiction_code="US-DE")
     nid, _ = _upsert("The Coca-Cola Company", "0000021344")
     assert nid == "lei:UWJKFUJFZ02DKWI3RY53" and _ids(nid)["sec_cik"] == "0000021344"
 

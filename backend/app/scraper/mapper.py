@@ -274,6 +274,9 @@ def normalize_address(text: str | None) -> str | None:
     return norm or None
 
 
+_LEADING_THE = re.compile(r"^the\s+")
+
+
 def normalize_entity_name(name: str) -> str:
     """
     Canonical form of a company name for cross-source deduplication.
@@ -283,6 +286,7 @@ def normalize_entity_name(name: str) -> str:
          'BlackRock'       → 'blackrock'
          'JPMorgan Chase & Co.', 'JPMorgan Chase and Company' → 'jpmorgan chase'
          "Domino's Pizza, Inc.", 'DOMINOS PIZZA INC' → 'dominos pizza'
+         'The New York Times Company', 'NEW YORK TIMES CO' → 'new york times'
     """
     name = fold_apostrophes(name).lower()
     name = name.replace(".", "")
@@ -299,4 +303,8 @@ def normalize_entity_name(name: str) -> str:
     name = _LEGAL_SUFFIX_NORM.sub("", name)
     # "& Co" goes as a whole: stripping "co" alone left "jpmorgan chase &",
     # which "JPMorgan Chase" never matched (23 dev nodes, 2026-10-29)
-    return strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())
+    key = strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())
+    # A leading "the": NYT's own "The New York Times Company" keyed apart from
+    # EDGAR's "NEW YORK TIMES CO" (2026-10-29b). Kept when nothing else is
+    # left — "The Limited" is a name.
+    return _LEADING_THE.sub("", key) or key

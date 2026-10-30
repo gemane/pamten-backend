@@ -297,6 +297,10 @@ def _upsert_entity(
                 log.warning("Wikidata: %s (%s) is not the legal entity of %s — %s; nothing written",
                             name, wikidata_id, entity_id, why)
                 return None
+            # an LEI the item states and the graph lacks: GLEIF decides
+            # whether it is this filer's (register_pointer.attach_stated_lei)
+            if leis and not held.get("lei_id") and held.get("sec_cik"):
+                register_pointer.attach_stated_lei(held, entity_id, leis)
             # search_text / name_normalized must derive from the name that WINS
             # the credibility contest below, not from the incoming one: Wikidata
             # enriching a GLEIF company must not evict the legal name from the

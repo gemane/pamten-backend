@@ -101,6 +101,7 @@ def golden_copy_record(attributes: dict) -> dict:
             "InitialRegistrationDate": _wrap(_api_day(registration.get("initialRegistrationDate"))),
             "RegistrationStatus": _wrap(registration.get("status")),
             "ValidationSources": _wrap(registration.get("corroborationLevel")),
+            "LastUpdateDate": _wrap((registration.get("lastUpdateDate") or "")[:10] or None),
         },
     }
 
@@ -133,10 +134,18 @@ def _sec_enabled() -> bool:
     return bool(settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar"))
 
 
-def write_from_gleif(lei: str) -> str | None:
+def write_from_gleif(lei: str, candidates: list[str] | None = None, by_name: bool = True) -> str | None:
     """The node GLEIF states for this LEI, written by the GLEIF importer's own
     reading of the record; its id, or None when GLEIF does not know the LEI.
-    A node merged away answers with its survivor, which already exists."""
+    A node merged away answers with its survivor, which already exists.
+
+    An EDGAR filer node of the record's name without an LEI may be the same
+    legal entity: when the registers agree (`legal_identity`), that node takes
+    the LEI and GLEIF's facts, filling gaps only, and no second node is minted
+    — NYT's GLEIF node was minted beside its SEC node because the SEC node
+    happened to come first (2026-10-29b). ``candidates`` are node ids to weigh
+    besides the name's (the node a Wikidata item resolved to by its CIK);
+    ``by_name=False`` weighs only them."""
     from app.merged_ids import canonical_id
     from app.scraper.bulk_import import _BatchWriter
     from app.scraper.gleif_lei_cdf import _entity_props
@@ -154,10 +163,65 @@ def write_from_gleif(lei: str) -> str | None:
     if not built:
         return None
     node_id, props = built
+    if joined := _join_filer(lei, props, candidates or [], by_name):
+        return joined
     batch = _BatchWriter()
     batch.entity(node_id, props)
     batch.flush()
     return node_id
+
+
+#: what a GLEIF record never fills on a filer node it joins: the filer's own
+#: name and provenance stay; its other names are united, not replaced
+_JOIN_KEEPS = frozenset({"name", "name_normalized", "search_text", "other_names", "source_id",
+                         "source_url", "name_credibility", "type", "lei_id"})
+
+
+def _join_filer(lei: str, props: dict, extra: list[str], by_name: bool = True) -> str | None:
+    """The id of the EDGAR filer node (CIK, no LEI) the GLEIF record ``props``
+    is the same legal entity as, after stamping the LEI and GLEIF's facts on
+    it; None when there is none. Asking EDGAR is scraping: nothing when SEC
+    scraping is off."""
+    from app.db.arcadedb import run_command, run_sql
+    from app.scraper.legal_identity import JOIN, filer_facts, same_legal_entity
+    from app.scraper.maintenance import _sec_lei_check_enabled
+    from app.scraper.mapper import normalize_entity_name
+    if not _sec_lei_check_enabled():
+        return None
+    keys = {normalize_entity_name(n) for n in [props.get("name"), *(props.get("other_names") or [])] if n} - {""} \
+        if by_name else set()
+    found: dict[str, dict] = {}
+    for nn in sorted(keys):
+        for r in run_sql("SELECT id, sec_cik, lei_id, country, other_names, search_text FROM Entity "
+                         "WHERE name_normalized = :nn AND sec_cik IS NOT NULL AND lei_id IS NULL LIMIT 10",
+                         {"nn": nn}):
+            found.setdefault(r["id"], dict(r))
+    for node_id in extra:
+        for r in run_sql("SELECT id, sec_cik, lei_id, country, other_names, search_text FROM Entity "
+                         "WHERE id = :id AND sec_cik IS NOT NULL AND lei_id IS NULL", {"id": node_id}):
+            found.setdefault(r["id"], dict(r))
+    for node_id, node in found.items():
+        if node.get("country") and props.get("country") and node["country"] != props["country"]:
+            continue
+        facts = filer_facts(node["sec_cik"])
+        if not facts:
+            continue
+        verdict, why = same_legal_entity({**props, "lei_id": lei}, facts)
+        if verdict != JOIN:
+            log.info("GLEIF %s is not the filer %s (CIK %s): %s", lei, node_id, node["sec_cik"], why)
+            continue
+        fill = {k: v for k, v in props.items() if k not in _JOIN_KEEPS and v is not None}
+        others = list(dict.fromkeys([*(node.get("other_names") or []), props.get("name"),
+                                     *(props.get("other_names") or [])]))
+        search = " ".join([node.get("search_text") or ""] + [n for n in others if n and n not in (node.get("search_text") or "")])
+        sets = ", ".join(f"e.{k} = COALESCE(e.{k}, ${k})" for k in sorted(fill))
+        run_command(f"MATCH (e:Entity {{id: $id}}) SET {sets + ', ' if sets else ''}"
+                    "e.lei_id = $lei, e.lei_source = $why, e.other_names = $others, e.search_text = $search",
+                    {**fill, "id": node_id, "lei": lei, "why": why, "others": [n for n in others if n],
+                     "search": search.strip()})
+        log.info("GLEIF %s joined to the filer %s (CIK %s): %s", lei, node_id, node["sec_cik"], why)
+        return node_id
+    return None
 
 
 def write_from_edgar(cik: str) -> str | None:
@@ -188,6 +252,26 @@ def write_from_edgar(cik: str) -> str | None:
                                   register_name=True, country=sec_country(sub),
                                   headquarters=sec_headquarters(sub), website=sec_website(sub),
                                   former_names=former_name_entries(sub) or None)
+
+
+def attach_stated_lei(node: dict, node_id: str, leis: list[str]) -> str | None:
+    """A knowledge base resolved to ``node`` (an EDGAR filer: CIK, no LEI) and
+    states an LEI the graph does not hold: GLEIF is asked, and the node takes
+    the LEI when the registers agree (`legal_identity`); otherwise GLEIF's node
+    is written on its own. Until 2026-10-30 the LEI was dropped (#480): Baillie
+    Gifford & Co's record 549300UYMK70HLNJU654 was never fetched. Returns the
+    node the LEI landed on, or None."""
+    from app.database import db
+    from app.entity_resolution import resolve_entity_id
+    if node.get("lei_id") or not node.get("sec_cik") or not leis or not _gleif_enabled():
+        return None
+    with db.get_session() as session:
+        if any(resolve_entity_id(session, lei_id=x) for x in leis):
+            return None
+    for lei in leis:
+        if landed := write_from_gleif(lei, candidates=[node_id], by_name=False):
+            return landed
+    return None
 
 
 def write_from_pointer(leis: list[str], ciks: list[str]) -> str | None:

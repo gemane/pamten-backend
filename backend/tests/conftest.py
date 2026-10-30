@@ -86,6 +86,16 @@ class NetworkAccessAttempted(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
+def legal_identity_caches():
+    """The registers' answers `legal_identity` caches for a day must not leak
+    from one test's mocks into the next."""
+    from app.scraper.legal_identity import clear_caches
+    clear_caches()
+    yield
+    clear_caches()
+
+
+@pytest.fixture(autouse=True)
 def no_network(request, monkeypatch):
     if "allow_network" in request.keywords:
         return

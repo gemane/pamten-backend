@@ -36,6 +36,7 @@ class TestTheGoldenCopyShape:
         assert props["lei_registration_date"] == "2014-02-20"
         assert props["gleif_registration_status"] == "ISSUED" and props["active"] is True
         assert props["validation_sources"] == "FULLY_CORROBORATED"
+        assert props["gleif_last_update"] == "2026-10-28"
         assert props["name_credibility"] == 92
         assert props["hq_city"] == "New York" and props["hq_street"] == "50 HUDSON YARDS"
         assert props["reg_city"] == "WILMINGTON" and props["reg_postcode"] == "19808"
@@ -117,7 +118,8 @@ class TestFollowingThePointer:
              patch.object(rp, "fetch_gleif_record",
                           return_value=rp.golden_copy_record(_api()["data"]["attributes"])), \
              patch("app.scraper.runner._ensure_source", return_value="gleif"), \
-             patch("app.scraper.bulk_import._BatchWriter", Batch):
+             patch("app.scraper.bulk_import._BatchWriter", Batch), \
+             patch.object(rp, "_join_filer", return_value=None):
             assert rp.write_from_gleif("549300LRIF3NWCU26A80") == "lei:549300LRIF3NWCU26A80"
         assert written[0][0] == "lei:549300LRIF3NWCU26A80" and written[0][1]["source_id"] == "gleif"
         assert written[-1] == "flushed"
@@ -195,3 +197,86 @@ class TestStale:
         assert rp.stale(self.OLD_FILER, ["Something Else"]) is None
         assert rp.stale({"name": "BlackRock Finance, Inc."}, ["BlackRock"]) is None
         assert rp.stale(self.OLD_FILER, [None, ""]) is None
+
+
+class TestJoiningAFiler:
+    """Before GLEIF's node is minted, an EDGAR filer node of its name may be
+    the same legal entity (`legal_identity`, findings item 4): NYT's GLEIF
+    node was minted beside its SEC node because the SEC node came first."""
+    PROPS = {"name": "New York Times Co.", "other_names": [], "country": "US", "lei_id": "529900J1WEMMIW7BOH57",
+             "hq_street": "620 Eighth Avenue", "address": None, "source_id": "gleif", "name_credibility": 92,
+             "gleif_registration_status": "LAPSED", "gleif_last_update": "2021-07-16"}
+    FILER = {"id": "sec:0000071691", "sec_cik": "0000071691", "lei_id": None, "country": "US",
+             "other_names": None, "search_text": "NEW YORK TIMES CO"}
+
+    def _run(self, verdict, rows=None, extra=(), by_name=True):
+        from app.scraper.legal_identity import Filer
+        sql, writes = [], []
+
+        def run_sql(q, params=None):
+            sql.append(params)
+            return [dict(r) for r in (rows if rows is not None else [self.FILER])]
+        with patch("app.scraper.maintenance._sec_lei_check_enabled", return_value=True), \
+             patch("app.db.arcadedb.run_sql", side_effect=run_sql), \
+             patch("app.db.arcadedb.run_command", side_effect=lambda q, p=None: writes.append((q, p))), \
+             patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0000071691", "NEW YORK TIMES CO")), \
+             patch("app.scraper.legal_identity.same_legal_entity", return_value=verdict) as rule:
+            got = rp._join_filer("529900J1WEMMIW7BOH57", dict(self.PROPS), list(extra), by_name)
+        return got, sql, writes, rule
+
+    def test_a_join_fills_the_filer_node_and_mints_nothing(self):
+        got, sql, writes, rule = self._run(("join", "name+country+address@2021-07-16"))
+        assert got == "sec:0000071691"
+        assert sql[0] == {"nn": "new york times"}
+        q, p = writes[0]
+        assert p["lei"] == "529900J1WEMMIW7BOH57" and p["why"] == "name+country+address@2021-07-16"
+        assert "e.hq_street = COALESCE(e.hq_street, $hq_street)" in q          # gaps only
+        assert "e.name =" not in q and "e.source_id =" not in q                # the filer's own stay
+        assert p["others"] == ["New York Times Co."] and "New York Times Co." in p["search"]
+        assert rule.call_args.args[0]["lei_id"] == "529900J1WEMMIW7BOH57"
+
+    def test_a_refusal_writes_nothing(self):
+        got, _, writes, _ = self._run(("refuse", "registered US-MI, filer US-DE"))
+        assert got is None and writes == []
+
+    def test_a_filer_registered_in_another_country_is_not_asked(self):
+        got, _, _, rule = self._run(("join", "x"), rows=[{**self.FILER, "country": "GB"}])
+        assert got is None
+        rule.assert_not_called()
+
+    def test_only_the_given_node(self):
+        got, sql, _, _ = self._run(("join", "name+place"), extra=["sec:0000071691"], by_name=False)
+        assert got == "sec:0000071691" and sql == [{"id": "sec:0000071691"}]
+
+    def test_sec_scraping_off_asks_nobody(self):
+        with patch("app.scraper.maintenance._sec_lei_check_enabled", return_value=False), \
+             patch("app.db.arcadedb.run_sql") as sql:
+            assert rp._join_filer("X", dict(self.PROPS), []) is None
+        sql.assert_not_called()
+
+
+class TestAStatedLei:
+    """A Wikidata item found by its CIK states an LEI the graph lacks: GLEIF is
+    asked (findings item 3 — Baillie Gifford's 549300UYMK70HLNJU654)."""
+    NODE = {"lei_id": None, "sec_cik": "0001088859", "name": "BAILLIE GIFFORD & CO"}
+
+    def test_gleif_decides_on_the_resolved_node_only(self):
+        with patch.object(rp, "_gleif_enabled", return_value=True), \
+             patch("app.entity_resolution.resolve_entity_id", return_value=None), \
+             patch("app.database.db.get_session"), \
+             patch.object(rp, "write_from_gleif", return_value="sec:0001088859") as write:
+            assert rp.attach_stated_lei(self.NODE, "sec:0001088859", ["549300UYMK70HLNJU654"]) == "sec:0001088859"
+        write.assert_called_once_with("549300UYMK70HLNJU654", candidates=["sec:0001088859"], by_name=False)
+
+    @pytest.mark.parametrize("node, held", [
+        ({**NODE, "lei_id": "549300UYMK70HLNJU654"}, None),       # it has one
+        ({**NODE, "sec_cik": None}, None),                        # no filer: the rule needs EDGAR
+        (NODE, "lei:549300UYMK70HLNJU654"),                       # the graph holds the LEI
+    ])
+    def test_nothing_to_ask(self, node, held):
+        with patch.object(rp, "_gleif_enabled", return_value=True), \
+             patch("app.entity_resolution.resolve_entity_id", return_value=held), \
+             patch("app.database.db.get_session"), \
+             patch.object(rp, "write_from_gleif") as write:
+            assert rp.attach_stated_lei(node, "sec:0001088859", ["549300UYMK70HLNJU654"]) is None
+        write.assert_not_called()

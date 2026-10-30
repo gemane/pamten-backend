@@ -175,9 +175,11 @@ class TestTheRankingRule:
         return {"id": names[0], "names": list(names), "label": names[0], "order": 0}
 
     def test_exact_beats_starts_with_beats_contains(self):
-        cands = [self.item("The Acme Group"), self.item("Acme Industries"), self.item("Acme")]
+        cands = [self.item("Global Acme Group"), self.item("Acme Industries"), self.item("Acme")]
         assert [c["id"] for c in rank_by_name(cands, "Acme")] == [
-            "Acme", "Acme Industries", "The Acme Group"]
+            "Acme", "Acme Industries", "Global Acme Group"]
+        # a leading "The" is no part of the name key (findings item 18)
+        assert best_match({"names": ["The Acme Group"]}, "Acme")[0] == 1
 
     def test_best_match_reports_the_tier_and_the_matched_length(self):
         assert best_match({"names": ["Acme"]}, "Acme") == (0, 4)

@@ -310,10 +310,12 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "registration_number", "register_id", "country_registered", "jurisdiction_code",
         "cusip", "lei_id", "sec_cik", "companies_house_id", "wikidata_id", "nace_code",
         # the filer's own filing that states the node's LEI, where that joined
-        # the LEI to an EDGAR CIK (app.scraper.sec_lei)
-        "lei_source_url",
+        # the LEI to an EDGAR CIK (app.scraper.sec_lei); or what joined it
+        # without one (app.scraper.legal_identity: "name+place", ...)
+        "lei_source_url", "lei_source",
         "website", "logo_url", "search_text", "source_id", "source_url",
         "validation_sources", "gleif_registration_status", "lei_registration_date",
+        "gleif_last_update",
         "incorporated_on", "dissolved_on", "company_status",
         "created_at", "last_scraped_at", "sec_13f_scraped_at",
         "sec_ex21_ingested", "sec_acquisitions_ingested", "sec_formd_ingested",

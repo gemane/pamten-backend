@@ -2,6 +2,8 @@
 Tests for mapper.py — pure functions, no mocks needed.
 """
 
+import pytest
+
 from app.scraper.mapper import (
     normalize_entity_name, is_person_name, is_nominee_name, has_entity_suffix, derive_ownership_type,
 )
@@ -269,6 +271,26 @@ class TestNormalizeAddress:
         from app.scraper.mapper import normalize_address
         assert normalize_address(None) is None and normalize_address("") is None
         assert normalize_address(" , ") is None
+
+
+class TestLeadingThe:
+    """The stored key drops a leading "The" (findings item 18): "the new york
+    times" missed EDGAR's "NEW YORK TIMES CO". EDGAR's state tag is a
+    separate change."""
+
+    @pytest.mark.parametrize("a, b, key", [
+        ("The New York Times Company", "NEW YORK TIMES CO", "new york times"),
+        ("The Coca-Cola Company", "Coca-Cola Co", "coca-cola"),
+        ("The Trade Desk, Inc.", "Trade Desk Inc", "trade desk"),
+    ])
+    def test_one_key(self, a, b, key):
+        assert normalize_entity_name(a) == normalize_entity_name(b) == key
+
+    def test_a_name_that_is_only_the_keeps_it(self):
+        assert normalize_entity_name("The Limited") == "the"
+
+    def test_only_the_word_the(self):
+        assert normalize_entity_name("Theravance Inc") == "theravance"
 
 
 class TestApostrophes:

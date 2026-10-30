@@ -156,6 +156,13 @@ class TestEntityProps:
         _, props = _entity_props(_rec("L3", "Quiet Ltd"), "gleif", 92)
         assert props["active"] is True and props["gleif_registration_status"] == ""
 
+    def test_the_day_of_the_last_update(self):
+        # a LAPSED record's data was last true then (legal_identity.reference_day)
+        rec = _rec("L1", "New York Times Co.")
+        rec["Registration"] = {"RegistrationStatus": _w("LAPSED"), "LastUpdateDate": _w("2021-07-16T05:04:45Z")}
+        assert _entity_props(rec, "gleif", 92)[1]["gleif_last_update"] == "2021-07-16"
+        assert "gleif_last_update" not in _entity_props(_rec("L2", "Quiet Ltd"), "gleif", 92)[1]
+
     def test_legal_form_refines_type(self):
         _, props = _entity_props(_rec("L1", "Fidelity Leveraged Company Stock Fund",
                                       other_form="FUND"), "gleif", 92)

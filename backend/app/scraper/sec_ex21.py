@@ -523,6 +523,15 @@ def _form_key(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", plain)
 
 
+def legal_name_key(name: str) -> str:
+    """One legal entity's name, however it is typeset: a leading "The", an
+    alias in brackets, EDGAR's state tag, punctuation, accents and case
+    dropped, the legal form kept and spelled one way — "The New York Times
+    Company" and "NEW YORK TIMES CO" agree, "PBF Energy Limited" and "PBF
+    Energy Inc." do not (`_is_filer`, `legal_identity`)."""
+    return _form_key(_LEADING_THE.sub("", _ALIAS.sub("", name or "")))
+
+
 def _filer_names(registrant: str | list[str] | None) -> list[str]:
     """The filer's names: one, or several — the node's own, its other names,
     EDGAR's conformed name."""
@@ -543,13 +552,9 @@ def _is_filer(name: str | None, registrant: str | list[str] | None) -> bool:
     its letters are."""
     if not name:
         return False
-
-    def key(s):
-        return _form_key(_LEADING_THE.sub("", _ALIAS.sub("", s)))
-
     bare = not _LEGAL_NAME.search(_EDGAR_SUFFIX.sub("", name).strip())
-    return any(key(name) == key(n) or (bare and _same_company(_LEADING_THE.sub("", name),
-                                                             _LEADING_THE.sub("", n)))
+    return any(legal_name_key(name) == legal_name_key(n)
+               or (bare and _same_company(_LEADING_THE.sub("", name), _LEADING_THE.sub("", n)))
                for n in _filer_names(registrant))
 
 

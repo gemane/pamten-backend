@@ -119,7 +119,7 @@ def test_the_filers_own_row_is_not_its_subsidiary(it_db):
     it_db.run_command(
         "CREATE (:Entity {id: 'sec:0000071691', name: 'New York Times Co', "
         "name_normalized: 'new york times', search_text: 'New York Times Co', "
-        "type: 'company', sec_cik: '0000071691', aliases: ['NYT']})")
+        "type: 'company', sec_cik: '0000071691', aliases: ['NYT'], country: 'US'})")
     data = {"subsidiaries": [
         {"name": "The New York Times Company", "jurisdiction": "New York"},
         {"name": "NYT Capital, LLC", "jurisdiction": "Delaware", "parent_basis": "indent"},

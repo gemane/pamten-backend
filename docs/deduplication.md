@@ -511,6 +511,15 @@ EDGAR's Domino's never met GLEIF's, so the Exhibit 21 run lost its 19 subsidiari
 gap: EDGAR's `O REILLY AUTOMOTIVE INC` keeps a space where the apostrophe was and still
 keys apart from `O'Reilly`. Stored `name_normalized` values change on the next rebuild.
 
+## A leading "The" is dropped
+
+`normalize_entity_name` drops a leading `the` last, unless nothing else is left (`The
+Limited` keys as `the`). NYT's own "The New York Times Company" keyed `the new york times`
+and EDGAR's `NEW YORK TIMES CO` `new york times` (findings item 18, 2026-10-30);
+`graph_writer._name_key` already dropped it. Stored `name_normalized` values change on the next rebuild. A namesake
+abroad of a filer whose node has no country can now share its key; the writers match it in
+its own country (`_resolve_by_name`), which SEC nodes carry.
+
 ## Spaced abbreviations are abbreviations
 
 `normalize_entity_name` joins a run of two or more spaced single letters before it strips
@@ -636,6 +645,60 @@ so the group shares a hard id, turns `definitive` and merges as usual: the highe
 
 The SEC scrape asks the same question before it writes, so a fresh database never
 mints the twin (`runner._confirm_stored_lei`).
+
+## When no filing states the LEI — the registers decide (`legal_identity`)
+
+Many filers state their LEI nowhere: NYT, Tencent and Domino's Pizza, Inc. were two nodes
+each after the 2026-10-29b rebuild (findings item 4). Which pair stayed split depended on
+the write order: the SEC writer found a GLEIF node by name, but the GLEIF pointer writer
+minted its node without looking. A name alone cannot join such a pair — Domino's Pizza, Inc.
+and its subsidiary Domino's Pizza LLC share the key `dominos pizza` and one street — so
+`legal_identity.same_legal_entity(gleif_node, filer)` answers JOIN or REFUSE, with the
+evidence or the reason:
+
+1. **The same legal name, legal form kept** (`sec_ex21.legal_name_key`, #489's key): any of
+   GLEIF's names (legal, other, transliterated — Tencent's legal name is Chinese) against
+   EDGAR's current name or the former name in force on the reference day `D`.
+2. **The same place of registration**: GLEIF's jurisdiction against EDGAR's state of
+   incorporation (`sec_edgar.incorporation_place`). Another place refuses. GLEIF's bare `US`
+   against EDGAR's New York contradicts nothing but confirms nothing either.
+3. **A weak record needs one more match, at its own date.** Weak means a country where EDGAR
+   names a state, a LAPSED or RETIRED registration, or ENTITY_SUPPLIED_ONLY data. `D` is the
+   record's `gleif_last_update` when GLEIF no longer maintains it, today otherwise. Then
+   either GLEIF's street and city equal the business address in the header of the filer's
+   filing closest to `D` (postcode aside; today's address, said in the evidence, when no
+   filing lies within a year), or a GLEIF child in force on `D` is a company the filer held
+   then (an OWNS edge open on `D`, or that fiscal year's Exhibit 21), by the same name key in
+   a compatible place. NYT's lapsed record (last updated 2021-07-16) says 620 Eighth Avenue;
+   so does NYT's July 2021 Form 4 header.
+4. **Veto**: never a record GLEIF lists as a direct or ultimate child of a record that passes
+   1 and 2 against the filer, while that link is in force on `D` or today — Domino's Pizza
+   LLC, consolidated by the Inc. since 1999-10-27.
+
+It runs wherever such a pair meets, so the order no longer decides:
+
+- **The GLEIF pointer writer** (`register_pointer.write_from_gleif`) weighs the CIK-only nodes
+  of the record's names in its country before it mints `lei:X`. On JOIN the filer node takes
+  the LEI and GLEIF's facts, filling gaps only (the filer's name and provenance stay; other
+  names are united), and no second node exists.
+- **The SEC writer's name match** (`graph_writer._not_this_filer`) asks it for a candidate
+  that carries an LEI and no CIK; every node of the name is weighed (`_candidates_by_name`),
+  not the first, so the LLC is refused and the Inc. taken. A node without an LEI keeps the
+  `_name_key` test.
+- **This bridge**, when no filing confirms the LEI; its candidates include LEI-only nodes one
+  of whose other names keys as the filer's (`_partners_by_other_name`, through the full-text
+  index).
+- **The Wikidata writer**: an item found by its CIK that states an LEI the graph lacks asks
+  GLEIF, with that node as the only candidate (`register_pointer.attach_stated_lei`; findings
+  item 3, Baillie Gifford's 549300UYMK70HLNJU654). On REFUSE GLEIF's node is written on its own.
+
+Every JOIN leaves its evidence on the node as `lei_source` ("name+place",
+"name+country+address@2021-07-16", "name+country+subsidiary@…", or "filing" for the bridge's
+document route), and is logged; a keep-separate mark is respected as always. Asking EDGAR is
+scraping, so the GLEIF writer and the bridge decide only where SEC scraping may. The answers
+of EDGAR and GLEIF are cached for a day (`legal_identity.CACHE_SECONDS`). Known limit: GLEIF's
+previous legal names land undated in `other_names` (findings item 16a) and count as current
+names in point 1 until that is fixed.
 
 
 # OWNS edge deduplication

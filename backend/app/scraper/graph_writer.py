@@ -738,16 +738,32 @@ def _resolve_by_name(session, name: str, name_norm: str, country: str | None) ->
     name whose country is unknown; a namesake registered elsewhere is a
     company of its own, so None rather than it. Without a country: any node
     of that name, as `resolve_entity_id` finds it."""
-    if not country:
-        return resolve_entity_id(session, name=name, name_normalized=name_norm)
+    found = _candidates_by_name(session, name, name_norm, country)
+    return found[0] if found else None
+
+
+#: how many nodes of one name the writer weighs — Domino's Pizza, Inc. and its
+#: subsidiary Domino's Pizza LLC share the key "dominos pizza" since #488
+_NAME_CANDIDATES = 10
+
+
+def _candidates_by_name(session, name: str, name_norm: str, country: str | None) -> list[str]:
+    """Every node a name alone can stand for, in `_resolve_by_name`'s order
+    (exact name before name key; with a ``country``, registered there before
+    not known). A write that carries a CIK takes the first its register does
+    not contradict (`_not_this_filer`), not merely the first."""
+    out: list[str] = []
+    wheres = (" AND e.country = $country", " AND e.country IS NULL") if country else ("",)
     for field, value in (("name", name), ("name_normalized", name_norm)):
-        for where in ("e.country = $country", "e.country IS NULL"):
-            rec = session.run(
-                f"MATCH (e:Entity) WHERE e.{field} = $v AND {where} RETURN e.id AS id LIMIT 1",
-                v=value, country=country).single()
-            if rec:
-                return rec["id"]
-    return None
+        if not value:
+            continue
+        for where in wheres:
+            for rec in session.run(
+                    f"MATCH (e:Entity) WHERE e.{field} = $v{where} RETURN e.id AS id LIMIT {_NAME_CANDIDATES}",
+                    v=value, country=country):
+                if rec["id"] not in out:
+                    out.append(rec["id"])
+    return out
 
 
 _STATE_TAG = re.compile(r"\s*/[a-z]{0,6}/?\s*$")       # EDGAR's "/DE/", "/NEW/", a bare "/"
@@ -800,6 +816,20 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
         return f"it carries LEI {rec['lei']}"
     if not cik:
         return None
+    if rec.get("lei") and not rec.get("cik") and not lei:
+        # A GLEIF record met by an EDGAR filer's name: one legal entity only
+        # when the registers agree (`legal_identity`) — the name key drops
+        # "Inc." and "LLC", and Domino's Pizza LLC took the Inc.'s CIK.
+        from app.scraper.legal_identity import REFUSE, filer_facts, same_legal_entity
+        facts = filer_facts(cik)
+        if facts:
+            from app.scraper.legal_identity import IDENTITY_FIELDS
+            node = session.run(f"MATCH (e:Entity {{id: $id}}) RETURN {_identity_fields()}", id=entity_id).single()
+            verdict, why = same_legal_entity({k: node.get(k) for k in IDENTITY_FIELDS}, facts)
+            if verdict == REFUSE:
+                return f"its GLEIF record is not filer {cik}: {why}"
+            _JOINED[(entity_id, cik)] = why
+            return None
     if not edgar_name:
         from app.scraper.sec_edgar import fetch_filer_name
         edgar_name = fetch_filer_name(cik)
@@ -809,6 +839,30 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
     if _name_key(edgar_name) in names:
         return None
     return f"EDGAR names CIK {cik} {edgar_name!r}"
+
+
+#: what `legal_identity.same_legal_entity` reads of a GLEIF node
+def _identity_fields() -> str:
+    from app.scraper.legal_identity import IDENTITY_FIELDS
+    return ", ".join(f"e.{f} AS {f}" for f in IDENTITY_FIELDS)
+#: (node id, CIK) → the evidence a GLEIF node was joined to a filer on; stamped
+#: as ``lei_source`` when the write takes the node
+_JOINED: dict[tuple[str, str], str] = {}
+
+
+def _first_filer_match(session, candidates: list[str], name: str, cik: str | None, lei: str | None,
+                       edgar_name: str | None) -> tuple[str | None, bool]:
+    """(the first candidate the write's CIK or LEI does not contradict, whether
+    any was refused)."""
+    refused = False
+    for entity_id in candidates:
+        why = _not_this_filer(session, entity_id, cik, lei, edgar_name) if (cik or lei) else None
+        if not why:
+            return entity_id, refused
+        log.info("%r (CIK %s, LEI %s) matched %s by name only, and %s — not that node",
+                 name, cik, lei, entity_id, why)
+        refused = True
+    return None, refused
 
 
 def _filer_as_registered(cik: str, filed_name: str) -> tuple[str, list[str]] | None:
@@ -895,20 +949,17 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             or (resolve_entity_id(session, lei_id=lei) if lei else None)
         edgar_name = name if register_name else None
         if not entity_id:
-            entity_id = _resolve_by_name(session, name, name_norm, country)
-            if entity_id and (cik or lei) and (why := _not_this_filer(session, entity_id, cik, lei, edgar_name)):
-                log.info("%r (CIK %s, LEI %s) matched %s by name only, and %s — not that node",
-                         name, cik, lei, entity_id, why)
-                entity_id = None
-                # The filing spelled a name EDGAR no longer gives the CIK: the
-                # filer is written under the name in force, its former names
-                # dated, not under the old spelling.
-                if cik and not register_name and (now := _filer_as_registered(cik, name)):
-                    name, former_names, register_name = now[0], former.merge(former_names, now[1]), True
-                    name_norm, edgar_name = normalize_entity_name(name), name
-                    entity_id = _resolve_by_name(session, name, name_norm, country)
-                    if entity_id and _not_this_filer(session, entity_id, cik, lei, edgar_name):
-                        entity_id = None
+            entity_id, refused = _first_filer_match(
+                session, _candidates_by_name(session, name, name_norm, country), name, cik, lei, edgar_name)
+            # The filing spelled a name EDGAR no longer gives the CIK: the
+            # filer is written under the name in force, its former names
+            # dated, not under the old spelling.
+            if refused and not entity_id and cik and not register_name \
+                    and (now := _filer_as_registered(cik, name)):
+                name, former_names, register_name = now[0], former.merge(former_names, now[1]), True
+                name_norm, edgar_name = normalize_entity_name(name), name
+                entity_id, _ = _first_filer_match(
+                    session, _candidates_by_name(session, name, name_norm, country), name, cik, lei, edgar_name)
         if not entity_id and cik:
             # The prefix must end on a WORD boundary, and the candidate must not
             # already belong to a different filer.
@@ -992,6 +1043,9 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                     jurisdiction_code=jurisdiction_code, website=website,
                     **_hq_params(headquarters),
                 )
+            if cik and (joined := _JOINED.pop((entity_id, cik), None)):
+                session.run("MATCH (e:Entity {id: $id}) SET e.lei_source = COALESCE(e.lei_source, $why)",
+                            id=entity_id, why=joined)
             if cik or lei:
                 # an Exhibit 21 row or a 13D party created by name, now met with its CIK
                 entity_id = key_on_learning(session, "Entity", entity_id)
