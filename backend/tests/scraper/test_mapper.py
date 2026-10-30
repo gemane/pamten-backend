@@ -269,3 +269,25 @@ class TestNormalizeAddress:
         from app.scraper.mapper import normalize_address
         assert normalize_address(None) is None and normalize_address("") is None
         assert normalize_address(" , ") is None
+
+
+class TestApostrophes:
+    """One rule for apostrophes in every company-name key (2026-10-30): EDGAR's
+    "DOMINOS PIZZA INC" did not meet GLEIF's "Domino's Pizza, Inc.", and the
+    Exhibit 21 run for Domino's lost its 19 subsidiaries."""
+
+    def test_straight_curly_and_edgar_spellings_share_one_key(self):
+        for group, key in ((["Domino's Pizza, Inc.", "Domino’s Pizza, Inc.", "DOMINOS PIZZA INC",
+                             "Dominoʼs Pizza Inc", "Domino‘s Pizza Inc"], "dominos pizza"),
+                           (["McDonald's Corporation", "McDonald’s Corp", "MCDONALDS CORP"], "mcdonalds")):
+            assert {normalize_entity_name(n) for n in group} == {key}
+
+    def test_no_key_keeps_an_apostrophe(self):
+        for n in ("Moody's Corp", "Macy’s, Inc.", "Kohl's Corporation", "O'Reilly Automotive, Inc."):
+            assert not set("'‘’ʼ") & set(normalize_entity_name(n))
+
+    def test_names_without_one_are_unchanged(self):
+        assert normalize_entity_name("Toys R Us, Inc.") == "toys r us"
+        # known gap: EDGAR's "O REILLY AUTOMOTIVE INC" keeps a space where the apostrophe was
+        assert normalize_entity_name("O'Reilly Automotive, Inc.") == "oreilly automotive"
+        assert normalize_entity_name("O REILLY AUTOMOTIVE INC") == "o reilly automotive"

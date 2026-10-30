@@ -800,7 +800,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       suffix rule with the phrases it is part of ("& Co", "and Company", "GmbH & Co. KG")
       and with a name the word sits inside ("Procter & Gamble"), and keep every key that
       compares names (`normalize_entity_name`, `graph_writer._name_key`,
-      `sec_edgar._ticker_normalize`) in step.
+      `sec_edgar._ticker_normalize`, `sec_edgar._significant_tokens`) in step — the
+      apostrophe was handled three ways in them ("Domino's" kept it, split off an "s",
+      or dropped it) until 2026-10-30; each now calls `mapper.fold_apostrophes` first.
 - [ ] **Group the unread results by layout before writing a rule — and write
       none for a layout one to five filers use.** The 61 real subsidiary lists that
       read nothing fell into a handful of layouts; a rule per layout read 51 of

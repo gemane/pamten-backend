@@ -224,6 +224,18 @@ _LEGAL_SUFFIX_NORM = re.compile(
 _DANGLING_CONJUNCTION = re.compile(r"(?:\s+(?:&|and))+\s*$")
 
 
+#: Straight, curly and modifier-letter apostrophes. EDGAR writes "DOMINOS PIZZA
+#: INC", GLEIF "Domino's Pizza, Inc.", others "Domino’s": one name, and until
+#: 2026-10-30 three keys — the straight one even split off a stray "s" word.
+_APOSTROPHES = re.compile(r"['‘’ʼ]")
+
+
+def fold_apostrophes(name: str) -> str:
+    """Drop apostrophes so "Domino's", "Domino’s" and EDGAR's "DOMINOS" agree.
+    Every company-name key applies it first."""
+    return _APOSTROPHES.sub("", name)
+
+
 def strip_dangling_conjunction(name: str) -> str:
     """'baillie gifford &' → 'baillie gifford'; 'procter & gamble' unchanged."""
     return _DANGLING_CONJUNCTION.sub("", name)
@@ -270,8 +282,9 @@ def normalize_entity_name(name: str) -> str:
          'BLACKROCK INC'   → 'blackrock'
          'BlackRock'       → 'blackrock'
          'JPMorgan Chase & Co.', 'JPMorgan Chase and Company' → 'jpmorgan chase'
+         "Domino's Pizza, Inc.", 'DOMINOS PIZZA INC' → 'dominos pizza'
     """
-    name = name.lower()
+    name = fold_apostrophes(name).lower()
     name = name.replace(".", "")
     # A run of spaced single letters is an abbreviation written with spaces:
     # GLEIF's "GRUPO TELEVISA S A B" is EDGAR's "Grupo Televisa, S.A.B.", and

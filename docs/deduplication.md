@@ -500,6 +500,17 @@ canonical role. The merge once re-keyed without it — a person's roles at a
 company collapsed into one claim and the next scrape doubled them (dev: 343 stale
 keys of 8,678 claims, 119 assertions stored twice).
 
+## Apostrophes are dropped
+
+Every company-name key drops straight, curly and modifier-letter apostrophes first
+(`mapper.fold_apostrophes`, called by `normalize_entity_name`, `graph_writer._name_key`,
+`sec_edgar._ticker_normalize` and `sec_edgar._significant_tokens`). EDGAR writes `DOMINOS
+PIZZA INC`, GLEIF `Domino's Pizza, Inc.`, others `Domino’s`; until 2026-10-30 these were
+three keys — `_name_key` even split the straight apostrophe into a stray `s` word — and
+EDGAR's Domino's never met GLEIF's, so the Exhibit 21 run lost its 19 subsidiaries. Known
+gap: EDGAR's `O REILLY AUTOMOTIVE INC` keeps a space where the apostrophe was and still
+keys apart from `O'Reilly`. Stored `name_normalized` values change on the next rebuild.
+
 ## Spaced abbreviations are abbreviations
 
 `normalize_entity_name` joins a run of two or more spaced single letters before it strips
