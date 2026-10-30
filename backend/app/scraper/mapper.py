@@ -236,6 +236,49 @@ def fold_apostrophes(name: str) -> str:
     return _APOSTROPHES.sub("", name)
 
 
+#: EDGAR's two-letter state codes: its tag after a conformed name is mostly one
+_US_STATE_CODES = frozenset(
+    "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH "
+    "NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR VI GU AS MP".split())
+#: the tag's other words: a re-used name ("/NEW/", "/OLD/"), an ADR, Canada,
+#: the filer-agent mark ("/ FA"), and the article EDGAR moves to the end ("Co/The")
+_EDGAR_TAG_WORDS = frozenset({"new", "old", "adr", "can", "fa", "the"})
+#: the last "/" or "\" segment of a name, with or without spaces and a closing slash
+_EDGAR_TAG = re.compile(r"\s*[/\\]\s*([A-Za-z0-9][A-Za-z0-9-]*)?\s*([/\\])?\s*$")
+#: a legal form written with a slash, which is part of the name: Belgian SA/NV,
+#: Danish A/S, I/S, K/S, P/S, Brazilian S/A, and "d/b/a"
+_SLASHED_FORM = re.compile(r"(?i)\b(?:s\.?a\.?\s*/\s*n\.?v|n\.?v\.?\s*/\s*s\.?a|[aikp]\s*/\s*s|s\s*/\s*a|d\s*/\s*b\s*/\s*a)\.?\s*$")
+
+
+def strip_edgar_tag(name: str) -> str:
+    """The name without EDGAR's tag after a conformed name. EDGAR writes it
+    every way: "OCCIDENTAL PETROLEUM CORP /DE/", glued ("WELLS FARGO & CO/MN",
+    "IDS FINANCIAL CORP/MN/"), without the closing slash ("ALLEN HOLDING INC
+    /NY", "Baupost Group Llc/Ma"), a country code ("/E9/"), a city
+    ("Amvescap Plc/London/"), a space after the slash ("… LTD/ CAN"), a
+    number ("Corp/132-129/"), the article ("Macerich Co/The"), a backslash
+    ("Deutsche Bank Ag\\"). A tag is a state code, one of the words above, a
+    letter and a digit, a number, or any one word between two slashes; a
+    slash in a legal form ("Anheuser-Busch InBev SA/NV", "Novo Nordisk A/S")
+    or in the middle of a name ("RiverNorth/DoubleLine …") stays. Every
+    company-name key applies it (2026-10-30: three rules, each missing
+    shapes the others caught)."""
+    out = name or ""
+    for _ in range(2):                      # "… CORP /DE/ /NEW/"
+        if _SLASHED_FORM.search(out):
+            break
+        m = _EDGAR_TAG.search(out)
+        if not m:
+            break
+        token, closed = m.group(1) or "", bool(m.group(2))
+        if not (token == "" or token.lower() in _EDGAR_TAG_WORDS or token.upper() in _US_STATE_CODES
+                or re.fullmatch(r"[A-Za-z][0-9]|[0-9][0-9-]*", token)
+                or (closed and token.isalpha())):
+            break
+        out = out[:m.start()].rstrip()
+    return out
+
+
 def strip_dangling_conjunction(name: str) -> str:
     """'baillie gifford &' → 'baillie gifford'; 'procter & gamble' unchanged."""
     return _DANGLING_CONJUNCTION.sub("", name)
@@ -288,7 +331,7 @@ def normalize_entity_name(name: str) -> str:
          "Domino's Pizza, Inc.", 'DOMINOS PIZZA INC' → 'dominos pizza'
          'The New York Times Company', 'NEW YORK TIMES CO' → 'new york times'
     """
-    name = fold_apostrophes(name).lower()
+    name = fold_apostrophes(strip_edgar_tag(name)).lower()
     name = name.replace(".", "")
     # A run of spaced single letters is an abbreviation written with spaces:
     # GLEIF's "GRUPO TELEVISA S A B" is EDGAR's "Grupo Televisa, S.A.B.", and
@@ -301,6 +344,8 @@ def normalize_entity_name(name: str) -> str:
     name = _SPACED_LETTERS.sub(lambda m: m.group(0).replace(" ", ""), name)
     name = name.replace(",", "")
     name = _LEGAL_SUFFIX_NORM.sub("", name)
+    # the slash a legal form leaves when both halves go: "SA/NV" keyed "… /"
+    name = re.sub(r"\s*/\s*$", "", name)
     # "& Co" goes as a whole: stripping "co" alone left "jpmorgan chase &",
     # which "JPMorgan Chase" never matched (23 dev nodes, 2026-10-29)
     key = strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())

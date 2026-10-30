@@ -415,6 +415,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (NYT's of 2021). A parent link in force vetoes (Domino's LLC under the Inc.). Run the
       rule in every writer where the pair can meet, or the write order decides
       (`legal_identity`, 2026-10-30).
+- [ ] **Survey a source's decorations before writing the rule that strips them.** EDGAR's
+      tag after a name takes eight shapes on 52 dev names ("/DE/", "CO/MN", "/NY", "/E9/",
+      "/London/", "/ CAN", "Co/The", "\\"), and three keys had grown three rules, each
+      catching some (2026-10-30). Query the real names first, make the result the test
+      table, and give every key the one helper (`mapper.strip_edgar_tag`).
 - [ ] **A similarity score cannot tell a sponsor from its vehicle.** "Baillie Gifford & Co"
       and "BAILLIE GIFFORD FUNDS" score 0.84, and the manager took the funds' CIK. When the
       extra words in a candidate's name make it another kind of entity (a fund, a trust, a

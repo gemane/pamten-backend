@@ -6,6 +6,7 @@ import pytest
 
 from app.scraper.mapper import (
     normalize_entity_name, is_person_name, is_nominee_name, has_entity_suffix, derive_ownership_type,
+    strip_edgar_tag,
 )
 
 
@@ -275,8 +276,7 @@ class TestNormalizeAddress:
 
 class TestLeadingThe:
     """The stored key drops a leading "The" (findings item 18): "the new york
-    times" missed EDGAR's "NEW YORK TIMES CO". EDGAR's state tag is a
-    separate change."""
+    times" missed EDGAR's "NEW YORK TIMES CO". EDGAR's tag: `TestEdgarTag`."""
 
     @pytest.mark.parametrize("a, b, key", [
         ("The New York Times Company", "NEW YORK TIMES CO", "new york times"),
@@ -313,3 +313,70 @@ class TestApostrophes:
         # known gap: EDGAR's "O REILLY AUTOMOTIVE INC" keeps a space where the apostrophe was
         assert normalize_entity_name("O'Reilly Automotive, Inc.") == "oreilly automotive"
         assert normalize_entity_name("O REILLY AUTOMOTIVE INC") == "o reilly automotive"
+
+
+class TestEdgarTag:
+    """EDGAR's tag after a conformed name, in every shape it takes — the
+    filer names on dev, 2026-10-30. One rule for every company-name key."""
+
+    @pytest.mark.parametrize("raw, name", [
+        ("OCCIDENTAL PETROLEUM CORP /DE/", "OCCIDENTAL PETROLEUM CORP"),
+        ("LENNAR CORP /NEW/", "LENNAR CORP"),
+        ("Bamco Inc /Ny/", "Bamco Inc"),
+        ("WELLS FARGO & CO/MN", "WELLS FARGO & CO"),                 # glued
+        ("IDS FINANCIAL CORP/MN/", "IDS FINANCIAL CORP"),
+        ("Southeastern Asset Management Inc/Tn/", "Southeastern Asset Management Inc"),
+        ("ALLEN HOLDING INC /NY", "ALLEN HOLDING INC"),                # no closing slash
+        ("Baupost Group Llc/Ma", "Baupost Group Llc"),
+        ("Westar Energy Inc /Ks", "Westar Energy Inc"),
+        ("CAPITAL VENTURES INTERNATIONAL /E9/", "CAPITAL VENTURES INTERNATIONAL"),   # a country code
+        ("Amvescap Plc/London/", "Amvescap Plc"),                       # a city
+        ("FAIRFAX FINANCIAL HOLDINGS LTD/ CAN", "FAIRFAX FINANCIAL HOLDINGS LTD"),
+        ("APPLE COMPUTER INC/ FA", "APPLE COMPUTER INC"),
+        ("Pension Benefit Guaranty Corp/132-129/", "Pension Benefit Guaranty Corp"),
+        ("Macerich Co/The", "Macerich Co"),                             # the article moved
+        ("Deutsche Bank Ag\\", "Deutsche Bank Ag"),                    # a backslash
+        ("TOYOTA MOTOR CORP/", "TOYOTA MOTOR CORP"),
+        ("ZIONS BANCORPORATION, NATIONAL ASSOCIATION /UT/", "ZIONS BANCORPORATION, NATIONAL ASSOCIATION"),
+        # part of the name: a legal form, a slash inside it, or no tag at all
+        ("Anheuser-Busch InBev SA/NV", "Anheuser-Busch InBev SA/NV"),
+        ("Newbelco SA/NV", "Newbelco SA/NV"),
+        ("Novo Nordisk A/S", "Novo Nordisk A/S"),
+        ("Itau Unibanco Holding S/A", "Itau Unibanco Holding S/A"),
+        ("RiverNorth/DoubleLine Strategic Opp Fund", "RiverNorth/DoubleLine Strategic Opp Fund"),
+        ("1/0 Mortgage Investment, Llc", "1/0 Mortgage Investment, Llc"),
+        ("United American Securities Inc. (d/b/a UAS Asset Management)",
+         "United American Securities Inc. (d/b/a UAS Asset Management)"),
+        ("Partners Fund I/II", "Partners Fund I/II"),                  # not a tag word
+        ("Apple Inc.", "Apple Inc."),
+        ("", ""),
+    ])
+    def test_strip(self, raw, name):
+        assert strip_edgar_tag(raw) == name
+
+    @pytest.mark.parametrize("edgar, other", [
+        ("WELLS FARGO & CO/MN", "Wells Fargo & Company"),
+        ("ALLEN HOLDING INC /NY", "Allen Holding Inc."),
+        ("Amvescap Plc/London/", "AMVESCAP PLC"),
+        ("OCCIDENTAL PETROLEUM CORP /DE/", "Occidental Petroleum Corporation"),
+        ("Anheuser-Busch InBev SA/NV", "Anheuser-Busch InBev"),
+    ])
+    def test_every_key_agrees(self, edgar, other):
+        from app.scraper.graph_writer import _name_key
+        from app.scraper.sec_ex21 import _form_key, _same_company
+        assert normalize_entity_name(edgar) == normalize_entity_name(other)
+        assert _name_key(edgar) == _name_key(other)
+        assert _same_company(edgar, other)
+        if "SA/NV" not in edgar:                    # _form_key keeps the legal form
+            assert _form_key(edgar) == _form_key(other.replace("Company", "Co").replace("Corporation", "Corp"))
+
+    def test_a_slashed_legal_form_leaves_no_slash_in_the_key(self):
+        assert normalize_entity_name("Newbelco SA/NV") == "newbelco"
+        assert normalize_entity_name("Novo Nordisk A/S") == "novo nordisk a/s"     # as before
+
+    def test_the_exhibit_21_keys_drop_it_too(self):
+        from app.scraper.sec_ex21 import _compact, _is_filer
+        assert _compact("PURECYCLE TECHNOLOGIES LLC/DE") == _compact("PureCycle Technologies LLC")
+        # a tagged row with another legal form is a subsidiary, not the filer
+        assert not _is_filer("Foo Technologies LLC /DE/", "Foo Technologies, Inc.")
+        assert _is_filer("FOO TECHNOLOGIES INC/DE", "Foo Technologies, Inc.")
