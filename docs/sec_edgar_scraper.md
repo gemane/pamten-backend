@@ -1248,6 +1248,28 @@ from readers removed again the same day, so 11 remain):
       header spans four grid columns, each level one empty cell further in) — but
       not a column that holds row numbers in some rows. The filer's own line counts
       as the filer only at the root (TripAdvisor's nested "TripAdvisor LLC").
+    - **A row naming the filer is the filer, not a subsidiary** (2026-10-30,
+      findings item 17). NYT's list opens with "The New York Times Company —
+      New York", the root of its tree; Occidental's carries "Occidental
+      Petroleum Corporation — Delaware" among its 422 rows. The table reader
+      keeps that row so the tree sees its root, and until then never dropped
+      it; the runner only skipped it when the name lookup landed on the
+      filer's node, which a leading "The" or EDGAR's "/DE/" defeated — the
+      2026-10-29b rebuild wrote NYT as a copy of itself with nine subsidiaries
+      under it. Now `parse_exhibit` drops it after the tree is drawn (its
+      children hang directly off the filer), and the runner skips it as a
+      safety net. `_is_filer` compares the row with EVERY name the filer goes
+      by — the node's (often GLEIF's or Wikidata's spelling), its aliases and
+      other names, EDGAR's conformed name — with a leading "The", a "(dba …)"
+      aside and the state tag dropped, but the legal form kept, spelled
+      either way: "PBF Energy Limited" (British Columbia) stays a subsidiary
+      of "PBF Energy Inc.", "The New York Times Company Pty Limited" one of
+      NYT. A row with no legal form at all ("Chubb") is the filer when its
+      letters are. And only where the filer is registered (`_at_home`): EDGAR's
+      state of incorporation ("US-NY", "KY"; `incorporation_place`), else the
+      node's own place — Perfect Corp. (Cayman) lists a "Perfect Corp." in
+      Japan, the US and France, three subsidiaries. A row that names no
+      place, or one we cannot map, cannot tell, so the name decides.
     - Letter footnotes "(a)"–"(h)" are no part of a name (Éxito, Crown Castle);
       a page footer "… Form 20-F 2025" is no company (BAT's country rows).
     - **One name in two countries is two nodes** (the user's call, 2026-10-08):

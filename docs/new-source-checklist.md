@@ -867,6 +867,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       partnerships, accepted knowingly. The sentence above Vornado's table
       ("subsidiaries of both the Trust and the L.P.") is the signal a later rule
       could read.
+- [ ] **A document can list its own subject.** A subsidiary list may open
+      with the filer itself (NYT's root line) or carry it among the rows
+      (Occidental). Tell it apart by every name the subject goes by, not only
+      the one on the node — a leading "The" or EDGAR's "/DE/" broke a single
+      name lookup — but keep the legal form ("PBF Energy Limited" is PBF's
+      subsidiary) and the place (Perfect Corp.'s Japanese namesake is too).
 - [ ] **Trust measured behaviour over documented behaviour.** EDGAR's full-text search
       documents 10 results per page and returns ~100, relevance-ordered where date order
       is needed; GLEIF's thumbnail sizes 400 anything off-bucket. Probe the real API once

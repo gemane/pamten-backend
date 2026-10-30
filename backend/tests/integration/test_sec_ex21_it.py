@@ -26,7 +26,8 @@ APPLE_DATA = {
 @pytest.fixture(autouse=True)
 def _flags():
     with patch.object(settings, "SCRAPER_ENABLED", True), \
-         patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+         patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
+         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=(None, None)):   # no network
         yield
 
 
@@ -109,6 +110,39 @@ def test_rerun_is_gated_and_idempotent(it_db):
     assert forced["status"] == "ok"
     n = it_db.run_command("MATCH (:Entity {id:'apple'})-[r:OWNS]->() RETURN count(r) AS n")
     assert dict(n[0])["n"] == 4, "force re-run updates, never doubles edges"
+
+
+def test_the_filers_own_row_is_not_its_subsidiary(it_db):
+    # NYT's list opens with "The New York Times Company" (EDGAR: "NEW YORK
+    # TIMES CO"); the 2026-10-29b rebuild wrote it as a copy of the filer with
+    # nine subsidiaries under it. A reader that keeps the row must not.
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0000071691', name: 'New York Times Co', "
+        "name_normalized: 'new york times', search_text: 'New York Times Co', "
+        "type: 'company', sec_cik: '0000071691', aliases: ['NYT']})")
+    data = {"subsidiaries": [
+        {"name": "The New York Times Company", "jurisdiction": "New York"},
+        {"name": "NYT Capital, LLC", "jurisdiction": "Delaware", "parent_basis": "indent"},
+        {"name": "The New York Times Company Pty Limited", "jurisdiction": "Australia"},
+        # a namesake registered elsewhere is a subsidiary, not the filer
+        {"name": "The New York Times Company", "jurisdiction": "Japan"}],
+        "form": "10-K", "filing_date": "2026-02-25",
+        "url": "https://www.sec.gov/Archives/edgar/data/71691/000007169126000010/nyt-20251228xex21.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data) as fetch, \
+         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=("NEW YORK TIMES CO", "US-NY")):
+        result = runner.run_sec_ex21("New York Times Co")
+    assert result["status"] == "ok"
+    # every name the filer goes by reaches the parser
+    assert fetch.call_args.kwargs["registrant"] == ["New York Times Co", "NYT", "NEW YORK TIMES CO"]
+    assert fetch.call_args.kwargs["home"] == "US-NY"
+    rows = it_db.run_command("MATCH (:Entity {id:'sec:0000071691'})-[:OWNS]->(b:Entity) "
+                             "RETURN b.name AS name, b.country AS country")
+    assert sorted((dict(r)["name"], dict(r)["country"]) for r in rows) == [
+        ("NYT Capital, LLC", "US"), ("The New York Times Company", "JP"),
+        ("The New York Times Company Pty Limited", "AU")]
+    n = it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name = 'The New York Times Company' "
+                      "AND (country IS NULL OR country = 'US')")[0]["n"]
+    assert n == 0, "no copy of the filer"
 
 
 def test_no_cik_asks_for_the_sec_scrape_first(it_db):

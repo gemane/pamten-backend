@@ -402,13 +402,13 @@ class TestParentColumn:
 
     def test_rows_the_filer_holds_beside_the_filers_own_listed_line(self):
         # Atlas lists itself; the rows its column says Atlas holds are under
-        # the filer, not under that line
+        # the filer, not under that line — and the line itself is no subsidiary
         html = ("<table><tr><td>Name</td><td>Parent</td><td>Jurisdiction</td></tr>"
                 "<tr><td>Atlas Corp.</td><td>Poseidon Corp.</td><td>Marshall Islands</td></tr>"
                 "<tr><td>Seaspan Corporation</td><td>Atlas Corp.</td><td>Marshall Islands</td></tr></table>")
-        assert parse_exhibit(html, "Atlas Corp.")[1] == {
+        assert parse_exhibit(html, "Atlas Corp.") == [{
             "name": "Seaspan Corporation", "jurisdiction": "Marshall Islands", "parent_basis": "column",
-            "read_from": "table"}
+            "read_from": "table"}]
 
     def test_the_filer_under_its_edgar_name_and_a_namesake_with_another_legal_form(self):
         html = ("<table><tr><td>Name</td><td>Owned by</td><td>Jurisdiction</td></tr>"

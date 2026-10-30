@@ -2766,3 +2766,28 @@ class TestAnUnreadCoverIsNotAnExit:
             rows = sec_edgar.fetch_filer_holdings("0000000777")
         assert len(rows) == 1 and rows[0]["stake_percent"] == 6.0 and rows[0]["until"] is None
         assert (rows[0]["since"], rows[0]["since_basis"]) == ("2025-03-31", None)
+
+
+class TestIncorporationPlace:
+    """Where a filer is incorporated — Exhibit 21 tells its own row from a
+    namesake abroad by it (findings item 17)."""
+
+    @pytest.mark.parametrize("subs, expected", [
+        ({"stateOfIncorporation": "NY", "stateOfIncorporationDescription": "NY"}, "US-NY"),
+        ({"stateOfIncorporation": "de"}, "US-DE"),
+        ({"stateOfIncorporation": "E9", "stateOfIncorporationDescription": "Cayman Islands"}, "KY"),
+        ({"stateOfIncorporation": "", "addresses": {"business": {"country": "Germany"}}}, None),
+        ({}, None),
+    ])
+    def test_incorporation_place(self, subs, expected):
+        from app.scraper.sec_edgar import incorporation_place
+        assert incorporation_place(subs) == expected
+
+    def test_filer_identity_from_one_request(self):
+        from app.scraper.sec_edgar import fetch_filer_identity
+        with patch("app.scraper.sec_edgar._submissions",
+                   return_value={"name": "NEW YORK TIMES CO", "stateOfIncorporation": "NY"}) as subs:
+            assert fetch_filer_identity("71691") == ("NEW YORK TIMES CO", "US-NY")
+        assert subs.call_count == 1
+        with patch("app.scraper.sec_edgar._submissions", side_effect=RuntimeError("503")):
+            assert fetch_filer_identity("71691") == (None, None)

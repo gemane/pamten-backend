@@ -485,6 +485,9 @@ def _section_header(row: list[str]) -> dict | None:
 
 #: EDGAR's tag after a conformed name: "KEYCORP /NEW/", "DOW CHEMICAL CO /DE/"
 _EDGAR_SUFFIX = re.compile(r"\s*/[A-Za-z]{2,5}/\s*$")
+# "Northwest Natural Gas Company (dba NW Natural)": the name is before it
+_ALIAS = re.compile(r"\s*\((?:dba|d/b/a|fka|f/k/a|formerly|aka|a/k/a)\b[^()]*\)", re.I)
+_LEADING_THE = re.compile(r"^\s*the\s+", re.I)
 
 
 def _same_company(a: str | None, b: str | None) -> bool:
@@ -518,6 +521,50 @@ def _form_key(name: str) -> str:
     for long, short in sorted(_FORM_SPELLING, key=lambda p: -len(p[0])):
         plain = re.sub(long, short, plain)
     return re.sub(r"[^a-z0-9]", "", plain)
+
+
+def _filer_names(registrant: str | list[str] | None) -> list[str]:
+    """The filer's names: one, or several — the node's own, its other names,
+    EDGAR's conformed name."""
+    if not registrant:
+        return []
+    return [n for n in ([registrant] if isinstance(registrant, str) else registrant) if n]
+
+
+def _is_filer(name: str | None, registrant: str | list[str] | None) -> bool:
+    """The row names the filer itself, under any of its names: NYT lists
+    "The New York Times Company" (EDGAR: "NEW YORK TIMES CO") at the root of
+    its tree, Occidental "Occidental Petroleum Corporation" (EDGAR: "… CORP
+    /DE/") among its rows. A leading "The", an alias in brackets and EDGAR's
+    state tag do not count; the legal form does, spelled either way — "PBF
+    Energy Limited" (British Columbia) is a subsidiary of "PBF Energy Inc.",
+    "The New York Times Company Pty Limited" one of NYT. A row with no legal
+    form at all ("Chubb" at the root under "CHUBB LTD") is the filer when
+    its letters are."""
+    if not name:
+        return False
+
+    def key(s):
+        return _form_key(_LEADING_THE.sub("", _ALIAS.sub("", s)))
+
+    bare = not _LEGAL_NAME.search(_EDGAR_SUFFIX.sub("", name).strip())
+    return any(key(name) == key(n) or (bare and _same_company(_LEADING_THE.sub("", name),
+                                                             _LEADING_THE.sub("", n)))
+               for n in _filer_names(registrant))
+
+
+def _at_home(place: str | None, home: str | None) -> bool:
+    """A row's place is the filer's own, or cannot tell otherwise. ``home``
+    is the filer's jurisdiction code ("US-NY", "KY"; None when unknown). A
+    namesake registered elsewhere is a subsidiary: Perfect Corp. (Cayman)
+    lists a "Perfect Corp." in Japan and one in the US."""
+    country = jurisdiction_country(place or "")
+    if not home or not country:
+        return True
+    if country != home.split("-")[0]:
+        return False
+    sub = jurisdiction_subdivision(place or "")
+    return not (sub and "-" in home and sub != home)
 
 
 def _list_key(entry: dict) -> tuple[str, str]:
@@ -559,7 +606,7 @@ _LEVEL_STEP = 4.0
 _INDENT_OUTLIER = 60.0
 
 
-def _assign_indent_parents(entries: list[dict], registrant: str | None = None) -> int:
+def _assign_indent_parents(entries: list[dict], registrant: str | list[str] | None = None) -> int:
     """Parent each entry by the nearest less-indented entry above it, when the
     exhibit draws a tree that way. Returns how many entries got a parent.
 
@@ -600,10 +647,10 @@ def _assign_indent_parents(entries: list[dict], registrant: str | None = None) -
             # indented under a holding, is not the filer "… Technologies, Inc."
             level, row_above = stack[-1]
             above = row_above["name"]
-            e["parent"] = None if level == 0 and _same_company(above, registrant) else above
+            e["parent"] = None if level == 0 and _is_filer(above, registrant) else above
             e["parent_basis"] = "indent"
             assigned += 1
-        elif _same_company(e["name"], registrant):
+        elif _is_filer(e["name"], registrant):
             e["parent_basis"] = "indent"        # the root: the filer's own line
         stack.append((lv, e))
     return assigned
@@ -789,7 +836,7 @@ def _finish(entry: dict, registrant: str | None) -> dict | None:
     registered office ("…, One Capital Place, PO Box 847, Grand Cayman …"),
     the filer itself."""
     name, stake = _clean_name(entry["name"].strip())
-    if len(name) < 2 or len(name) > 150 or _NOISE.match(name) or _same_company(name, registrant) \
+    if len(name) < 2 or len(name) > 150 or _NOISE.match(name) or _is_filer(name, registrant) \
             or re.search(r"\bForm\s+(?:20-F|10-K)\b", name, re.I) or name.count(",") > 3:
         return None
     out = {**entry, "name": name}
@@ -820,11 +867,15 @@ def _country_rows_list(sequence: list, registrant: str | None) -> list[dict]:
     return found if countries >= 3 and len(found) >= 5 and company_like >= 0.6 * len(found) else []
 
 
-def parse_exhibit(html: str, registrant: str | None = None, form: str | None = None) -> list[dict]:
+def parse_exhibit(html: str, registrant: str | list[str] | None = None,
+                  form: str | None = None, home: str | None = None) -> list[dict]:
     """[{name, jurisdiction, stake_percent?, co_owners?, parent?,
     parent_basis?}] from an Ex-21/Ex-8.1 page. ``registrant`` is the filer's
-    name, so a heading or root row naming the filer itself is not taken for
-    an intermediate parent.
+    name, or a list of its names, so a heading or root row naming the filer
+    itself is not taken for an intermediate parent, and a row naming the
+    filer (``_is_filer``) where it is registered (``home``, ``_at_home``) is
+    not a subsidiary. With no registrant the filer's own row stays
+    (``registrants_part`` needs it).
 
     Per table: a header row naming the columns wins (that is how Bank of
     America's Location column is told apart from its Jurisdiction one, and
@@ -869,6 +920,8 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
     place in words ("Bluebottle Limited, a Hong Kong company") — that reader
     was removed 2026-10-08: it read combined filings' sibling lists as the
     filer's own and parents stated in words not at all."""
+    names = _filer_names(registrant)
+    registrant = names[0] if names else None
     kind = declared_type(html)
     if kind and not _subsidiary_document(kind, form):
         return []
@@ -1054,9 +1107,19 @@ def parse_exhibit(html: str, registrant: str | None = None, form: str | None = N
             del e["parent"], e["parent_basis"]
     # The indentation tree is exhibit-wide (a page break must not cut it) and
     # more specific than a section heading, so it wins where both apply.
-    _assign_indent_parents(out, registrant)
+    _assign_indent_parents(out, names)
     for entry in out:
         del entry["_indent"]
+    # The filer's own row is kept until here, so the tree sees its root; no
+    # company is its own subsidiary. A row under it hangs directly off the
+    # filer, as the tree draws it (NYT's nine, 2026-10-29).
+    filer = [_is_filer(e["name"], names) and _at_home(e.get("jurisdiction"), home) for e in out]
+    own = {e["name"] for e, f in zip(out, filer) if f}
+    out = [e for e, f in zip(out, filer) if not f]
+    kept = {e["name"] for e in out}
+    for e in out:
+        if e.get("parent") in own - kept:
+            del e["parent"]
     return out
 
 
@@ -1264,8 +1327,6 @@ def jurisdiction_subdivision(jurisdiction: str | None) -> str | None:
 # parent and siblings its subsidiaries. 40 of 1,829 annual filings measured
 # (2026-10-08) are combined; the SGML header names every registrant.
 _FILER = re.compile(r"<CONFORMED-NAME>([^\n<]*)\s*<CIK>(\d+)")
-# "Northwest Natural Gas Company (dba NW Natural)": the name is before it
-_ALIAS = re.compile(r"\s*\((?:dba|d/b/a|fka|f/k/a|formerly|aka|a/k/a)\b[^()]*\)", re.I)
 
 
 def co_registrants(cik: str, accession: str) -> list[tuple[str, str]]:
@@ -1288,7 +1349,7 @@ def _same_name(a: str, b: str) -> bool:
 
 
 def registrants_part(html: str, form: str | None, subs: list[dict], filers: list[tuple[str, str]],
-                     cik: str, registrant: str | None = None) -> tuple[list[dict], str | None]:
+                     cik: str, registrant: str | list[str] | None = None) -> tuple[list[dict], str | None]:
     """(the part of a combined filing's list that is ``cik``'s own, whose
     list it is — None for the filer's own).
 
@@ -1302,7 +1363,7 @@ def registrants_part(html: str, form: str | None, subs: list[dict], filers: list
     if len(filers) < 2:
         return subs, None                          # one company's filing: no second parse
     full = parse_exhibit(html, None, form)        # the filer's own row kept
-    names = [n for c, n in filers if c == me] + ([registrant] if registrant else [])
+    names = [n for c, n in filers if c == me] + _filer_names(registrant)
     row = next((e["name"] for e in full if any(_same_name(e["name"], n) for n in names)), None)
     owners = [n for c, n in filers if c != me and not any(_same_name(e["name"], n) for e in full)]
     if not row or not owners:
@@ -1325,7 +1386,8 @@ def registrants_part(html: str, form: str | None, subs: list[dict], filers: list
     return out, owners[0]
 
 
-def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
+def fetch_subsidiaries(cik: str, registrant: str | list[str] | None = None,
+                       home: str | None = None) -> dict | None:
     """The latest annual filing's subsidiary list for a CIK, with provenance.
 
     Tries each candidate exhibit until one parses to subsidiaries — filename
@@ -1338,7 +1400,7 @@ def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
         return None
     for meta in exhibit_candidates(cik, *filings[0]):
         html = _get_text(meta["url"])
-        subs = parse_exhibit(html, registrant, meta["form"])
+        subs = parse_exhibit(html, registrant, meta["form"], home)
         if subs:
             subs, group_of = registrants_part(html, meta["form"], subs,
                                               co_registrants(cik, meta["accession"]), cik, registrant)
@@ -1346,7 +1408,7 @@ def fetch_subsidiaries(cik: str, registrant: str | None = None) -> dict | None:
                     "url": meta["url"], **({"group_of": group_of} if group_of else {})}
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
                  meta["url"])
-    return list_from_main_document(cik, filings[0], registrant)
+    return list_from_main_document(cik, filings[0], registrant, home)
 
 
 # The 8.1 entry of a 20-F's exhibit index, up to the next exhibit number:
@@ -1426,7 +1488,8 @@ def _main_document(cik: str, form: str, accession: str) -> tuple[str, str] | Non
     return url, _get_text(url)
 
 
-def list_from_main_document(cik: str, filing: tuple, registrant: str | None = None) -> dict | None:
+def list_from_main_document(cik: str, filing: tuple, registrant: str | list[str] | None = None,
+                            home: str | None = None) -> dict | None:
     """A 20-F with no subsidiary exhibit file: what its exhibit index says
     under 8.1 decides where the list is (measured on all 1,012 20-Fs of 2026):
     - a note of this filing (``note_in_main_document``), or
@@ -1448,13 +1511,13 @@ def list_from_main_document(cik: str, filing: tuple, registrant: str | None = No
         return None
     n = _note_of_entry(entry)
     if n is not None:
-        return note_in_main_document(url, doc, n, form, filed, registrant)
-    return list_from_earlier_filing(cik, entry, text, registrant,
+        return note_in_main_document(url, doc, n, form, filed, registrant, home)
+    return list_from_earlier_filing(cik, entry, text, registrant, home=home,
                                     confirmed_by=url, confirmed_on=_iso_date(filed))
 
 
 def note_in_main_document(url: str, doc: str, n: int, form: str, filed: str,
-                          registrant: str | None = None) -> dict | None:
+                          registrant: str | list[str] | None = None, home: str | None = None) -> dict | None:
     """The list in note ``n`` of the main document: found by its heading (the
     LAST one — a contents page comes first), read up to the next note with the
     exhibit parser, and kept only if it passes the note gate."""
@@ -1464,7 +1527,7 @@ def note_in_main_document(url: str, doc: str, n: int, form: str, filed: str,
         return None
     start = heads[-1].start()
     nxt = _note_heading(n + 1).search(doc, start)
-    subs = parse_exhibit(doc[start:nxt.start() if nxt else len(doc)], registrant)
+    subs = parse_exhibit(doc[start:nxt.start() if nxt else len(doc)], registrant, home=home)
     if not _mostly_places(subs):
         return None
     return {"subsidiaries": subs, "form": form, "filing_date": _iso_date(filed),
@@ -1594,7 +1657,8 @@ def resolve_reference(cik: str, ref: dict) -> list[tuple[str, str, str]]:
     return out
 
 
-def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | None = None,
+def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | list[str] | None = None,
+                             home: str | None = None,
                              confirmed_by: str | None = None,
                              confirmed_on: str | None = None) -> dict | None:
     """The list a 20-F incorporates by reference: the exhibit of the earlier
@@ -1605,7 +1669,7 @@ def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | 
     exhibit_21 = (ref["exhibit"] or "").startswith("21")
     for form, accession, filed in resolve_reference(cik, ref)[:4]:
         for meta in exhibit_candidates(cik, "10-K" if exhibit_21 else "20-F", accession, filed):
-            subs = parse_exhibit(_get_text(meta["url"]), registrant, form)
+            subs = parse_exhibit(_get_text(meta["url"]), registrant, form, home)
             if subs:
                 return {"subsidiaries": subs, "form": form, "filing_date": _iso_date(filed),
                         "url": meta["url"], "exhibit": "21" if exhibit_21 else "8.1",
