@@ -16,6 +16,13 @@ from app.scraper.graph_writer import _filer_as_registered, _name_key, _not_this_
     ("BlackRock, Inc.", "Blackrock, Inc."),
     ("Baillie Gifford & Co", "Baillie Gifford and Company"),
     ("JPMorgan Chase & Co.", "JPMorgan Chase"),
+    # findings items 12 and 13 (2026-10-30)
+    ("Blackstone L.P.", "BLACKSTONE LP"),
+    ("Blackstone L.P", "Blackstone"),
+    ("Siemens Beteiligungen GmbH & Co. KG", "SIEMENS BETEILIGUNGEN"),
+    ("Henkel AG & Co. KGaA", "Henkel"),
+    ("Robert Bosch GmbH", "ROBERT BOSCH"),
+    ("U.S. Bancorp", "US BANCORP"),
 ])
 def test_spellings_of_one_name_agree(a, b):
     assert _name_key(a) == _name_key(b)
@@ -26,6 +33,7 @@ def test_spellings_of_one_name_agree(a, b):
     ("Tencent", "Tencent Music Entertainment Group"),
     ("Baillie Gifford & Co", "BAILLIE GIFFORD FUNDS"),
     ("Procter & Gamble", "Procter Gamble"),
+    ("KG Mobility Corp", "Mobility Corp"),          # KG is a legal form only at the end
 ])
 def test_another_word_is_another_company(a, b):
     assert _name_key(a) != _name_key(b)
@@ -156,3 +164,10 @@ class TestTheFirstCandidateTheRegistersAllow:
         s = MagicMock()
         s.run.side_effect = lambda q, **kw: [{"id": "lei:LLC"}, {"id": "lei:INC"}] if "name_normalized" in q else []
         assert graph_writer._candidates_by_name(s, "DOMINOS PIZZA INC", "dominos pizza", None) == ["lei:LLC", "lei:INC"]
+
+
+def test_dotted_letters_are_one_word_and_a_lone_letter_stays():
+    assert _name_key("Blackstone L.P.") == ("blackstone",)
+    assert _name_key("Toys R Us") == ("toys", "r", "us")
+    # known gap, not widened: EDGAR writes "JPMORGAN" as one word
+    assert _name_key("J.P. Morgan Chase & Co.") == ("jp", "morgan", "chase")

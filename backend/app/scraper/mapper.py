@@ -213,8 +213,29 @@ def derive_ownership_type(stake_pct: float | None, form_type: str | None = None)
 #: Two or more single letters separated by single spaces — "s a b", "j p".
 _SPACED_LETTERS = re.compile(r"(?<![^\s])\w(?: \w(?![^\s]))+(?![^\s])")
 
+#: A dotted abbreviation, "l.p." / "l.p" / "j.p." — one word once its dots go.
+DOTTED_LETTERS = re.compile(r"(?<![a-z0-9])[a-z](?:\.[a-z])+\.?(?![a-z0-9])")
+
+
+def join_dotted_letters(lowered: str) -> str:
+    """"blackstone l.p." → "blackstone lp": a key that splits on punctuation
+    turned a dotted legal form into stray letters ("l", "p") that matched
+    nothing (findings item 12). Expects lower case."""
+    return DOTTED_LETTERS.sub(lambda m: m.group(0).replace(".", ""), lowered)
+
+
+#: The German partnership forms are a legal form only as the last word: "Siemens
+#: Beteiligungen GmbH & Co. KG", "Henkel AG & Co. KGaA" — never "KG Mobility Corp".
+_PARTNERSHIP_FORM = re.compile(r"\s+(?:kgaa|kg)\.?\s*$", re.IGNORECASE)
+
+
+def strip_partnership_form(name: str) -> str:
+    """The name without a trailing KG or KGaA (findings item 13)."""
+    return _PARTNERSHIP_FORM.sub("", name)
+
+
 _LEGAL_SUFFIX_NORM = re.compile(
-    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp)\b\.?",
+    r"\b(inc|corp|corporation|llc|llp|ltd|limited|co|company|plc|sa|ag|nv|bv|lp|gmbh)\b\.?",
     re.IGNORECASE,
 )
 
@@ -343,7 +364,8 @@ def normalize_entity_name(name: str) -> str:
     # A lone letter ("Toys R Us") is left alone: one letter is no abbreviation.
     name = _SPACED_LETTERS.sub(lambda m: m.group(0).replace(" ", ""), name)
     name = name.replace(",", "")
-    name = _LEGAL_SUFFIX_NORM.sub("", name)
+    # KG first, so the "GmbH & Co." before it goes as a legal form too
+    name = _LEGAL_SUFFIX_NORM.sub("", strip_partnership_form(name))
     # the slash a legal form leaves when both halves go: "SA/NV" keyed "… /"
     name = re.sub(r"\s*/\s*$", "", name)
     # "& Co" goes as a whole: stripping "co" alone left "jpmorgan chase &",

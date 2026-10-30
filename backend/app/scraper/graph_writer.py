@@ -26,8 +26,8 @@ from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.node_ids import key_on_learning, mint_node_id
 from app import addresses
-from app.scraper.mapper import (fold_apostrophes, is_nominee_name, normalize_cik, normalize_entity_name,
-                                parse_full_name, strip_edgar_tag)
+from app.scraper.mapper import (fold_apostrophes, is_nominee_name, join_dotted_letters, normalize_cik,
+                                normalize_entity_name, parse_full_name, strip_edgar_tag)
 import logging
 
 from app.config import settings
@@ -767,7 +767,9 @@ def _candidates_by_name(session, name: str, name_norm: str, country: str | None)
 
 
 _NAME_FORMS = frozenset({"the", "inc", "incorporated", "corp", "corporation", "co", "company",
-                         "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se"})
+                         "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se", "gmbh"})
+#: dropped only at the end of a name (mapper.strip_partnership_form): "KG Mobility Corp" keeps its KG
+_TRAILING_FORMS = ("&", "and", "kg", "kgaa")
 
 
 def _name_key(name: str) -> tuple[str, ...]:
@@ -779,8 +781,10 @@ def _name_key(name: str) -> tuple[str, ...]:
     # the ASCII fold made "Domino’s" ("dominos"), EDGAR's spelling
     plain = unicodedata.normalize("NFKD", fold_apostrophes(strip_edgar_tag(name or ""))) \
         .encode("ascii", "ignore").decode().lower()
+    # "L.P." is one word before the split, or it became the letters "l", "p"
+    plain = join_dotted_letters(plain)
     words = [w for w in re.split(r"[^a-z0-9&]+", plain) if w and w not in _NAME_FORMS]
-    while words and words[-1] in ("&", "and"):     # "& Co" / "and Company" is one legal form
+    while words and words[-1] in _TRAILING_FORMS:   # "& Co" / "GmbH & Co. KG" is one legal form
         words.pop()
     return tuple(words)
 

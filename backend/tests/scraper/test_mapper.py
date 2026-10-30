@@ -380,3 +380,31 @@ class TestEdgarTag:
         # a tagged row with another legal form is a subsidiary, not the filer
         assert not _is_filer("Foo Technologies LLC /DE/", "Foo Technologies, Inc.")
         assert _is_filer("FOO TECHNOLOGIES INC/DE", "Foo Technologies, Inc.")
+
+
+class TestDottedLettersAndGermanForms:
+    """Findings items 12 and 13 (2026-10-30)."""
+
+    @pytest.mark.parametrize("a, b, key", [
+        ("Blackstone L.P.", "BLACKSTONE LP", "blackstone"),
+        ("Siemens Beteiligungen GmbH & Co. KG", "SIEMENS BETEILIGUNGEN GMBH & CO KG", "siemens beteiligungen"),
+        ("Henkel AG & Co. KGaA", "HENKEL AG & CO KGAA", "henkel"),
+        ("Robert Bosch GmbH", "ROBERT BOSCH GMBH", "robert bosch"),
+        ("Merck KGaA", "MERCK KGAA", "merck"),
+    ])
+    def test_one_key(self, a, b, key):
+        assert normalize_entity_name(a) == normalize_entity_name(b) == key
+
+    def test_no_key_ends_on_an_ampersand(self):
+        for n in ("Siemens Beteiligungen GmbH & Co. KG", "Henkel AG & Co. KGaA", "Foo GmbH & Co. KG"):
+            assert not normalize_entity_name(n).endswith("&")
+
+    def test_kg_leading_a_name_is_a_word(self):
+        assert normalize_entity_name("KG Mobility Corp") == "kg mobility"
+
+    def test_join_dotted_letters(self):
+        from app.scraper.mapper import join_dotted_letters
+        assert join_dotted_letters("blackstone l.p.") == "blackstone lp"
+        assert join_dotted_letters("blackstone l.p") == "blackstone lp"
+        assert join_dotted_letters("toys r us") == "toys r us"
+        assert join_dotted_letters("amazon.com inc") == "amazon.com inc"     # a word, not letters

@@ -58,7 +58,8 @@ import httpx
 from app import former_names
 from app.roles import canonical_role
 from app.scraper.edge_schema import READ_FIELD, READ_FORM
-from app.scraper.mapper import derive_ownership_type, fold_apostrophes, strip_dangling_conjunction
+from app.scraper.mapper import (derive_ownership_type, fold_apostrophes, join_dotted_letters,
+                                strip_dangling_conjunction, strip_partnership_form)
 
 log = logging.getLogger(__name__)
 
@@ -538,7 +539,7 @@ def _ticker_normalize(name: str) -> str:
     comparison ("Domino's Pizza" is company_tickers.json's "DOMINOS PIZZA INC")."""
     name = fold_apostrophes(name).lower()
     name = re.sub(r"[.,]", "", name)
-    name = _LEGAL_SUFFIXES.sub("", name)
+    name = _LEGAL_SUFFIXES.sub("", strip_partnership_form(name))
     return strip_dangling_conjunction(re.sub(r"\s+", " ", name).strip())
 
 
@@ -1079,7 +1080,8 @@ def _significant_tokens(name: str) -> set:
     # every legitimate filing about an accented-name company.
     # Apostrophes go before that, or "Domino's" splits off a stray "s" token.
     folded = unicodedata.normalize("NFKD", fold_apostrophes(name)).encode("ascii", "ignore").decode()
-    tokens = re.split(r"[^a-z0-9]+", folded.lower())
+    # "L.P." is one word; a trailing KG/KGaA is a legal form
+    tokens = re.split(r"[^a-z0-9]+", strip_partnership_form(join_dotted_letters(folded.lower())))
     return {t for t in tokens if t and t not in _NAME_NOISE}
 
 
