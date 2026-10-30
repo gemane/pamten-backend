@@ -54,3 +54,39 @@ def test_the_search_text_counts_as_it_is_what_the_index_matched():
     # and a description sharing one word is still no match
     ali = {**GROUPS[1], "search_text": "Alibaba Group Holding Limited Chinese multinational technology group"}
     assert _resolve("Voting group · 8 parties", [ali]) is None
+
+
+# The 2026-10-29b rebuild: the pre-2024 BlackRock filer, renamed "BlackRock
+# Finance, Inc." on 2024-09-26, kept "BlackRock, Inc." among its aliases and
+# carried Q219635; with both exact, the item id won every "BlackRock" lookup.
+OLD_FILER = {"id": "sec:0001364742", "name": "BlackRock Finance, Inc.", "name_normalized": "blackrock finance",
+             "wikidata_id": "Q219635", "name_credibility": 98,
+             "aliases": ["BLK", "BlackRock, Inc.", "Blackrock Inc.", "New BlackRock, Inc."],
+             "former_names": ["BlackRock Inc.|2024-09-26", "BlackRock, Inc.|2006-10-05",
+                              "New BlackRock, Inc.|2006-09-29"]}
+NEW_PARENT = {"id": "lei:529900VBK42Y5HHRMD23", "name": "BlackRock, Inc.", "name_normalized": "blackrock",
+              "name_credibility": 92, "sec_cik": "0002012383"}
+
+
+def test_the_name_in_force_beats_a_name_that_ended():
+    for q in ("BlackRock", "BlackRock, Inc.", "BlackRock Inc."):
+        assert _resolve(q, [OLD_FILER, NEW_PARENT])["id"] == NEW_PARENT["id"], q
+        assert _resolve(q, [NEW_PARENT, OLD_FILER])["id"] == NEW_PARENT["id"], q
+
+
+def test_on_a_day_before_the_rename_the_old_name_is_in_force_again():
+    @contextmanager
+    def session():
+        yield MagicMock()
+    with patch.object(search, "_entity_candidate_rows", return_value=[NEW_PARENT, OLD_FILER]), \
+         patch.object(search.db, "get_session", session), \
+         patch.object(search, "load_suppressed_nodes", return_value=set()):
+        assert search.resolve_best_entity("BlackRock", on="2020-01-01")["id"] == OLD_FILER["id"]
+
+
+def test_a_name_that_ended_still_finds_the_company_when_no_one_bears_it_now():
+    meta = {"id": "sec:0001326801", "name": "Meta Platforms, Inc.", "name_normalized": "meta platforms",
+            "aliases": ["Facebook Inc"], "former_names": ["Facebook Inc|2021-10-27"]}
+    other = {"id": "x", "name": "Facebook Fans Club", "name_normalized": "facebook fans club"}
+    assert _resolve("Facebook", [other, meta])["id"] == "sec:0001326801"
+    assert search._rank(meta, "facebook", ["facebook"], 0, "facebook")[0] == 1

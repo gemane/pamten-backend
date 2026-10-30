@@ -808,6 +808,30 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
     return f"EDGAR names CIK {cik} {edgar_name!r}"
 
 
+def _filer_as_registered(cik: str, filed_name: str) -> tuple[str, list[str]] | None:
+    """EDGAR's current name for a CIK and its former names (``app.former_names``
+    entries, the day each ended) — when the current name is not the one a
+    filing spelled; None when it is, or when EDGAR cannot say.
+
+    BlackRock's pre-2024 13G filings say "BlackRock Inc." under CIK
+    0001364742, which EDGAR has named "BlackRock Finance, Inc." since
+    2024-09-26. Written under the filing's spelling, the old filer became a
+    second "BlackRock" of higher credibility than the GLEIF node of the
+    company that bears the name now, and won the lookups for it; written
+    under EDGAR's name with the dated former names, the old spelling is a
+    name that ended (`app.former_names.ended_keys`)."""
+    from app.scraper.sec_edgar import _submissions, former_name_entries
+    try:
+        sub = _submissions(cik)
+    except Exception as exc:  # noqa: BLE001 — EDGAR unreachable: the filing's name stands
+        log.warning("EDGAR submissions for CIK %s unavailable: %s", cik, exc)
+        return None
+    current = ((sub or {}).get("name") or "").strip()
+    if not current or _name_key(current) == _name_key(filed_name):
+        return None
+    return current, former_name_entries(sub)
+
+
 def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             cik: str | None = None,
                             source_id: str | None = None,
@@ -873,6 +897,15 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 log.info("%r (CIK %s, LEI %s) matched %s by name only, and %s — not that node",
                          name, cik, lei, entity_id, why)
                 entity_id = None
+                # The filing spelled a name EDGAR no longer gives the CIK: the
+                # filer is written under the name in force, its former names
+                # dated, not under the old spelling.
+                if cik and not register_name and (now := _filer_as_registered(cik, name)):
+                    name, former_names, register_name = now[0], former.merge(former_names, now[1]), True
+                    name_norm, edgar_name = normalize_entity_name(name), name
+                    entity_id = _resolve_by_name(session, name, name_norm, country)
+                    if entity_id and _not_this_filer(session, entity_id, cik, lei, edgar_name):
+                        entity_id = None
         if not entity_id and cik:
             # The prefix must end on a WORD boundary, and the candidate must not
             # already belong to a different filer.

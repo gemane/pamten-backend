@@ -331,6 +331,25 @@ class TestTheReport:
         assert [(r["qid"], r["node_id"], r["kind"], r["link"]) for r in report["rows"]] == [
             ("Q219635", "lei:" + NEW_LEI, "differs", "refused")]
 
+    def test_an_item_that_names_its_ids_only_by_an_ended_name_is_refused(self):
+        """Q219635's ids agree with the pre-2024 filer — "BlackRock Finance, Inc."
+        since 2024-09-26 — and the item calls it "BlackRock": refused as stale,
+        whether the node holds the item already (dev before the rule) or not."""
+        old_filer = {"id": "sec:0001364742", "name": "BlackRock Finance, Inc.", "lei_id": None,
+                     "sec_cik": "0001364742", "former_names": ["BlackRock Inc.|2024-09-26"]}
+        items = {"Q219635": _item(label="BlackRock", aliases=["BlackRock, Inc."], ciks=["0001364742"])}
+        edgar = {"0001364742": {"names": ["BlackRock Finance, Inc."], "country": "US", "status": None}}
+        report, _ = self._build([], items, US, lambda lei: None, edgar.get, [old_filer],
+                                {"P5531": {"0001364742": ["Q219635"]}})
+        assert report["counts"]["refused_pairs"] == 1
+        [row] = report["rows"]
+        assert (row["qid"], row["kind"], row["property"], row["link"]) == ("Q219635", "refused", "P5531", "refused")
+        assert row["note"] == "refused: the item's name (blackrock) is a former name of BlackRock Finance, Inc."
+        linked, _ = self._build([{**old_filer, "wikidata_id": "Q219635"}], items, US,
+                                lambda lei: None, edgar.get)
+        assert linked["counts"]["refused_pairs"] == 1
+        assert [(r["kind"], r["link"]) for r in linked["rows"]] == [("refused", "refused")]
+
     def test_the_files(self, tmp_path):
         rows = ws.suggestions_for(_node(lei_id=VANGUARD_LEI), _item(),
                                   _registers({("P1278", VANGUARD_LEI): VANGUARD}), US)

@@ -26,9 +26,18 @@ def _node(it_db, nid, name, norm, **ids):
                       {"id": nid, "name": name, "norm": norm, **ids})
 
 
+def _submissions(edgar):
+    def read(cik):
+        if cik not in edgar:
+            raise RuntimeError("EDGAR unreachable")
+        return {"name": edgar[cik], "formerNames": []}
+    return read
+
+
 def _upsert(name, cik, edgar=EDGAR, **kw):
     from app.scraper.graph_writer import _upsert_entity_by_name
-    with patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=edgar.get) as fetch:
+    with patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=edgar.get) as fetch, \
+         patch("app.scraper.sec_edgar._submissions", side_effect=_submissions(edgar)):
         return _upsert_entity_by_name(name=name, cik=cik, source_id="sec-edgar", **kw), fetch
 
 

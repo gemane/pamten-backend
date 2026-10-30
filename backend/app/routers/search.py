@@ -14,7 +14,7 @@ from app.scraper.mapper import normalize_entity_name
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 from app.merged_ids import resolve_current_id
-from app import industry
+from app import former_names, industry
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +27,22 @@ def _clean(row: dict) -> dict:
 
 
 def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
-          nn: str | None = None) -> tuple:
+          nn: str | None = None, on: str | None = None) -> tuple:
     """
     Sort key (all ascending): (exact_norm, -name_token_matches, match_tier,
     notable, -credibility, name_len, db_index).
 
-    - exact_norm: 0 when the node's name_normalized equals the normalized query
-      (so "BlackRock, Inc." leads for that query, above the many "BLACKROCK …
-      FUND, INC." variants that only share common tokens), else 1.
+    - exact_norm: 0 when the node's name_normalized — or an alias's — equals
+      the normalized query (so "BlackRock, Inc." leads for that query, above the
+      many "BLACKROCK … FUND, INC." variants that only share common tokens);
+      1 when only a name that had stopped applying by ``on`` (today when None)
+      equals it; else 2. A name has a time span (`former_names`, the last day
+      each was in force): BlackRock's pre-2024 filer, renamed "BlackRock
+      Finance, Inc." on 2024-09-26, keeps "BlackRock, Inc." among its aliases
+      and carries Q219635, and with the two exact matches tied the item id won
+      — the Exhibit 21 run for "BlackRock" read the old filer's 2024 list and
+      never the new parent's (2026-10-29 rebuild). On a day before the rename
+      the old filer's name is in force and it ties again, as it should.
     - name_token_matches: how many query words appear in the NAME.
     - match_tier: 0 exact, 1 starts-with, 2 contains full query, 3 otherwise.
     - notable: 0 for a curated (wikidata_id) entity, else 1 — so within the same
@@ -69,8 +77,12 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
         return 3
 
     matches = max(sum(1 for t in toks if t and t in n) for n in names)
-    exact_norm = 0 if (nn and (node.get("name_normalized") == nn or any(
-        normalize_entity_name(a) == nn for a in alias_raw if a))) else 1
+    exact_norm = 2
+    if nn and node.get("name_normalized") == nn:
+        exact_norm = 0
+    elif nn and any(normalize_entity_name(a) == nn for a in alias_raw if a):
+        gone = former_names.ended_keys(node.get("former_names"), node.get("name"), on)
+        exact_norm = 1 if nn in gone else 0
     notable = 0 if node.get("wikidata_id") else 1
     tier = min(_tier(n) for n in names)
     credibility = node.get("name_credibility") or 0
@@ -129,10 +141,11 @@ def _entity_candidate_rows(q_lower: str, nn: str | None, country: str | None) ->
     return rows
 
 
-def resolve_best_entity(q: str, country: str | None = None) -> dict | None:
+def resolve_best_entity(q: str, country: str | None = None, on: str | None = None) -> dict | None:
     """The single best-matching (non-suppressed) Entity for a query, using the same
     candidate set + `_rank` as `/search` — the shared 'which DB node does this query
-    mean' resolver the on-demand scrape uses to decide freshness/target."""
+    mean' resolver the on-demand scrape uses to decide freshness/target. ``on``
+    (an ISO day, today when None) is the day the query's name is meant for."""
     q_lower = q.lower()
     tokens = q_lower.split()
     nn = normalize_entity_name(q)
@@ -144,7 +157,7 @@ def resolve_best_entity(q: str, country: str | None = None) -> dict | None:
     rows = [r for r in rows if r.get("id") not in hidden]
     if not rows:
         return None
-    ranked = sorted(enumerate(rows), key=lambda ir: _rank(ir[1], q_lower, tokens, ir[0], nn))
+    ranked = sorted(enumerate(rows), key=lambda ir: _rank(ir[1], q_lower, tokens, ir[0], nn, on))
     best = ranked[0][1]
     # A best guess is not an answer. The candidates come from a full-text
     # query that can match on one shared word, and the on-demand scrape acts on

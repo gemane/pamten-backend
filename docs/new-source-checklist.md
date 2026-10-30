@@ -198,6 +198,17 @@ parser. Anything that does not map is either a new property (document it) or noi
       Inc." while its own filings drew a second node. A node whose register id the
       source's ids contradict gets nothing from that source; test against **every** id
       the source states (Google's item has two CIKs, Barclays' and Unilever's two LEIs).
+- [ ] **A name has a time span — compare against the names in force on the day.**
+      Store a register's former names with the day each ended (`app.former_names`) and
+      let every lookup and every name check read them: an alias or a filing's spelling
+      is not the company's name today. BlackRock's pre-2024 filer kept "BlackRock, Inc."
+      (an old 13G spelling, a Wikidata alias) beside its current "BlackRock Finance,
+      Inc.", tied with the company that bears the name now, and won on Wikidata's item
+      id — whose CIK and LEI were the old filer's, so the id rule saw no contradiction
+      (2026-10-29b rebuild). A record keyed under an old spelling gets the register's
+      current name and its dated former names (`graph_writer._filer_as_registered`); a
+      knowledge-base item naming a node only by an ended name is refused
+      (`register_pointer.stale`). A dated record beats an undated alias of the same key.
 - [ ] **Where a knowledge base and a register disagree, report it — to us and to them.**
       `manage.py wikidata-suggestions` compares each item's LEI/CIK with the node's register
       ids and writes a CSV plus a QuickStatements batch for a person to submit (never an

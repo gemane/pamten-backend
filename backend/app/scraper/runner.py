@@ -234,7 +234,12 @@ def _upsert_entity(
     and the listed BlackRock carried it, was renamed after it and lost its own
     filings to a second node. A node whose register LEI or CIK is not among
     the item's is another legal entity than the item describes, and nothing
-    is written onto it (`register_pointer.contradiction`; it is logged). An
+    is written onto it (`register_pointer.contradiction`; it is logged). Nor
+    onto a node the item's ids name only under a name that had stopped
+    applying (`register_pointer.stale`): Q219635's CIK and LEI are those of
+    the old parent, "BlackRock Finance, Inc." since 2024-09-26, and the item
+    id with its aliases ("BlackRock, Inc.", "BLK") landed there, and won it
+    every "BlackRock" lookup (2026-10-29 rebuild). An
     item without ids, or one no register knows, creates a `wd:` node — the
     searched company only; a related one is skipped.
 
@@ -280,9 +285,14 @@ def _upsert_entity(
         return None
     with db.get_session() as session:
         if entity_id:
-            held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik",
+            held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik, "
+                               "e.name AS name, e.other_names AS other_names, e.former_names AS former_names",
                                id=entity_id).single()
-            why = register_pointer.contradiction({"lei_id": held.get("lei_id"), "sec_cik": held.get("sec_cik")} if held else {}, leis, ciks)
+            held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names")} if held else {}
+            # a register id the item's contradict, or ids that name the node
+            # only under a name it no longer bears (`register_pointer.stale`)
+            why = (register_pointer.contradiction(held, leis, ciks)
+                   or register_pointer.stale(held, [name, *(aliases or [])]))
             if why:
                 log.warning("Wikidata: %s (%s) is not the legal entity of %s — %s; nothing written",
                             name, wikidata_id, entity_id, why)
@@ -512,12 +522,13 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
     creating it would mint an unidentifiable orphan that only clutters search
     and dedup, the litter the depth-2 pass produced for Samsung's
     subsidiaries; or the node found holds a register id the item contradicts,
-    `register_pointer.contradiction`).
+    `register_pointer.contradiction`, or bears the item's name no longer,
+    `register_pointer.stale`).
 
     People are never routed here — Wikidata's coverage of people is a strength
     and person dedup handles them; only company nodes are gated."""
     from app.database import db
-    from app.scraper.register_pointer import contradiction
+    from app.scraper.register_pointer import contradiction, stale
     leis = rel.get("leis") or [x for x in [rel.get("lei")] if x]
     ciks = rel.get("sec_ciks") or [x for x in [rel.get("sec_cik")] if x]
     with db.get_session() as session:
@@ -525,9 +536,12 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
                     or next((i for i in (resolve_entity_id(session, sec_cik=c) for c in ciks) if i), None)
                     or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None))
         if existing:
-            held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik",
+            held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik, "
+                               "e.name AS name, e.other_names AS other_names, e.former_names AS former_names",
                                id=existing).single()
-            why = contradiction({"lei_id": held.get("lei_id"), "sec_cik": held.get("sec_cik")} if held else {}, leis, ciks)
+            held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names")} if held else {}
+            why = (contradiction(held, leis, ciks)
+                   or stale(held, [rel.get("name"), rel.get("label"), *(rel.get("aliases") or [])]))
             if why:
                 log.warning("Wikidata: related %s (%s) is not the legal entity of %s — %s; skipped",
                             rel.get("name") or rel.get("label"), rel.get("qid"), existing, why)

@@ -43,6 +43,28 @@ tells the timeline "Renamed: Facebook Inc → Meta Platforms, Inc." under 2021. 
 `formerNames` entry without a `to` is kept undated (`"NAME|"`) — searchable, but
 with no place on the timeline.
 
+**A former name has a time span, and lookups respect it** (2026-10-30). A name
+counts as the company's on a day only while it was in force (`former_names.ended`
+/ `ended_keys`): `search.resolve_best_entity` and `/search` rank a node whose
+current name or alias is the query above one where only an **ended** name is
+(`_rank`'s first key: 0 in force, 1 ended, 2 no match), so a renamed company is
+still found by its old name when nobody bears it now ("Facebook" → Meta), but
+loses it to the company that does. The case: BlackRock's pre-2024 filer, CIK
+0001364742, "BlackRock Finance, Inc." since 2024-09-26, kept "BlackRock, Inc."
+among its aliases and carried Wikidata's Q219635; with two exact matches the item
+id won, and the Exhibit 21 run for "BlackRock" read the old filer's 2024 list and
+never the new parent's (~80 subsidiaries, 2026-10-29b rebuild). `on` (an ISO day)
+asks for another day — before the rename the old filer is "BlackRock Inc." again.
+For the dates to exist, a filer a filing spells under a name EDGAR no longer gives
+its CIK is written **under EDGAR's current name with its dated former names**
+(`graph_writer._filer_as_registered`, when the name match is refused by
+`_not_this_filer`), and a filer the Wikidata pointer writes carries them too
+(`register_pointer.write_from_edgar`). The Wikidata writer refuses an item whose
+ids name a node only under an ended name (`register_pointer.stale`, below the
+contradiction rule), and the suggestions report lists such a pair as refused.
+Limit: GLEIF's previous legal names arrive in `other_names` without their type or
+a date, so they count as names in force.
+
 ---
 
 ## Finding a Company's CIK

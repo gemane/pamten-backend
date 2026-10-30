@@ -1392,6 +1392,34 @@ class TestIdentifierBridge:
         assert not any("SET e." in c.args[0] or "CREATE (e:Entity" in c.args[0]
                        for c in session.run.call_args_list)
 
+    def test_a_node_the_item_names_only_by_an_ended_name_gets_nothing(self):
+        """The 2026-10-29b rebuild: Q219635's CIK found the pre-2024 filer, which
+        EDGAR has named "BlackRock Finance, Inc." since 2024-09-26 — the item
+        id and its aliases landed there and won it every "BlackRock" lookup."""
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "sec:0001364742"},
+            {"lei_id": None, "sec_cik": "0001364742", "name": "BlackRock Finance, Inc.",
+             "other_names": None, "former_names": ["BlackRock Inc.|2024-09-26"]}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer") as reg:
+            eid = _upsert_entity("BlackRock", None, None, None, "Q219635", aliases=["BlackRock, Inc.", "BLK"],
+                                 lei=["549300LRIF3NWCU26A80"], sec_cik=["0001364742"])
+        assert eid is None
+        reg.assert_not_called()
+        assert not any("SET e." in c.args[0] or "CREATE (e:Entity" in c.args[0]
+                       for c in session.run.call_args_list)
+
+    def test_a_renamed_company_its_item_names_by_the_current_name_is_enriched(self):
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "sec:0001326801"},
+            {"lei_id": None, "sec_cik": "0001326801", "name": "Meta Platforms, Inc.",
+             "other_names": None, "former_names": ["Facebook Inc|2021-10-27"]},
+            {"name": "Meta Platforms, Inc.", "cred": 98, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            eid = _upsert_entity("Meta Platforms", None, None, None, "Q380", aliases=["Facebook"],
+                                 sec_cik=["0001326801"])
+        assert eid == "sec:0001326801"
+
     def test_a_node_whose_id_is_one_of_several_stated_is_not_contradicted(self):
         # Barclays' item states two LEIs; the node holds the second
         ctx, session = _make_session_mock(single_returns=[
@@ -1418,6 +1446,16 @@ class TestRelatedCompanyGate:
             {"id": "lei:AAAAAAAAAAAAAAAAAAAA"}, {"lei_id": "AAAAAAAAAAAAAAAAAAAA", "sec_cik": None}])
         with patch("app.database.db.get_session", ctx):
             assert _resolve_related_company({"qid": "Q1", "name": "Sub", "leis": ["BBBBBBBBBBBBBBBBBBBB"]}) is False
+
+    def test_a_related_node_the_item_names_only_by_an_ended_name_is_skipped(self):
+        from app.scraper.runner import _resolve_related_company
+        ctx, _ = _make_session_mock(single_returns=[
+            None, {"id": "sec:0001364742"},
+            {"lei_id": None, "sec_cik": "0001364742", "name": "BlackRock Finance, Inc.",
+             "former_names": ["BlackRock Inc.|2024-09-26"]}])
+        with patch("app.database.db.get_session", ctx):
+            assert _resolve_related_company({"qid": "Q219635", "name": "BlackRock",
+                                             "sec_ciks": ["0001364742"]}) is False
 
     def test_an_agreeing_node_is_used_and_an_unknown_one_goes_to_its_register(self):
         from app.scraper.runner import _resolve_related_company
