@@ -286,9 +286,11 @@ def _upsert_entity(
     with db.get_session() as session:
         if entity_id:
             held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik, "
-                               "e.name AS name, e.other_names AS other_names, e.former_names AS former_names",
+                               "e.name AS name, e.other_names AS other_names, e.former_names AS former_names, "
+                               "e.gleif_former_names AS gleif_former_names",
                                id=entity_id).single()
-            held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names")} if held else {}
+            held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names",
+                                             "gleif_former_names")} if held else {}
             # a register id the item's contradict, or ids that name the node
             # only under a name it no longer bears (`register_pointer.stale`)
             why = (register_pointer.contradiction(held, leis, ciks)
@@ -541,9 +543,11 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
                     or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None))
         if existing:
             held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik, "
-                               "e.name AS name, e.other_names AS other_names, e.former_names AS former_names",
+                               "e.name AS name, e.other_names AS other_names, e.former_names AS former_names, "
+                               "e.gleif_former_names AS gleif_former_names",
                                id=existing).single()
-            held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names")} if held else {}
+            held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names",
+                                             "gleif_former_names")} if held else {}
             why = (contradiction(held, leis, ciks)
                    or stale(held, [rel.get("name"), rel.get("label"), *(rel.get("aliases") or [])]))
             if why:

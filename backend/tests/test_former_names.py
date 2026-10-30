@@ -108,3 +108,34 @@ class TestEnded:
 
     def test_nothing(self):
         assert ended(None) == [] and ended_keys(None, "X") == set()
+
+
+class TestOfNode:
+    """A node's former names from both properties (findings item 16a): the
+    writers' own and GLEIF's, which its bulk writer overwrites."""
+
+    def test_union_and_a_date_wins(self):
+        from app.former_names import of_node
+        node = {"former_names": ["BlackRock Funding, Inc. /DE|2024-10-01", "Acme|"],
+                "gleif_former_names": ["BLACKROCK FUNDING, INC.|2024-09-30", "acme|2001-02-03"]}
+        assert of_node(node) == ["BlackRock Funding, Inc. /DE|2024-10-01", "acme|2001-02-03",
+                                 "BLACKROCK FUNDING, INC.|2024-09-30"]
+
+    def test_either_alone_and_none(self):
+        from app.former_names import of_node
+        assert of_node({"gleif_former_names": ["Old|"]}) == ["Old|"]
+        assert of_node({"former_names": ["Old|2020-01-01"]}) == ["Old|2020-01-01"]
+        assert of_node({}) == [] and of_node(None) == []
+
+
+
+def test_a_merge_unions_both_former_name_lists_and_the_trading_names():
+    from app.scraper.maintenance import _merge_entity_props
+    keep = {"id": "sec:1", "name": "BlackRock, Inc.", "former_names": ["BlackRock Funding, Inc. /DE|2024-10-01"],
+            "gleif_trading_names": ["BLK"]}
+    dead = {"id": "lei:X", "name": "BlackRock, Inc.", "gleif_former_names": ["BLACKROCK FUNDING, INC.|2024-09-30"],
+            "gleif_trading_names": ["BlackRock"]}
+    out = _merge_entity_props(keep, dead)
+    assert out["gleif_former_names"] == ["BLACKROCK FUNDING, INC.|2024-09-30"]
+    assert "former_names" not in out                         # the survivor's own list is complete
+    assert out["gleif_trading_names"] == ["BLK", "BlackRock"]

@@ -741,9 +741,9 @@ Every JOIN leaves its evidence on the node as `lei_source` ("name+place",
 "name+country+address@2021-07-16", "name+country+subsidiary@…", or "filing" for the bridge's
 document route), and is logged; a keep-separate mark is respected as always. Asking EDGAR is
 scraping, so the GLEIF writer and the bridge decide only where SEC scraping may. The answers
-of EDGAR and GLEIF are cached for a day (`legal_identity.CACHE_SECONDS`). Known limit: GLEIF's
-previous legal names land undated in `other_names` (findings item 16a) and count as current
-names in point 1 until that is fixed.
+of EDGAR and GLEIF are cached for a day (`legal_identity.CACHE_SECONDS`). Point 1 compares
+GLEIF's current names only: its previous legal names live in `gleif_former_names` since
+findings item 16a (docs/sec_edgar_scraper.md, "Former names").
 
 
 # OWNS edge deduplication

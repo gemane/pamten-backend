@@ -62,8 +62,8 @@ class TestOtherNames:
     def test_a_single_entry_arrives_as_a_dict_not_a_list(self):
         # The JSON shape: one entry is a bare dict, several are a list.
         props = self._props({"OtherEntityNames": {"OtherEntityName":
-            {"@type": "PREVIOUS_LEGAL_NAME", "$": "Old Name GmbH"}}})
-        assert props["other_names"] == ["Old Name GmbH"]
+            {"@type": "ALTERNATIVE_LANGUAGE_LEGAL_NAME", "$": "Samsung Electronics Co., Ltd."}}})
+        assert props["other_names"] == ["Samsung Electronics Co., Ltd."]
 
     def test_transliterations_join_from_their_own_container(self):
         props = self._props({"TransliteratedOtherEntityNames":
@@ -77,12 +77,69 @@ class TestOtherNames:
             {"@type": "ALTERNATIVE_LANGUAGE_LEGAL_NAME", "$": "삼성전자(주)"},
             {"@type": "TRADING_OR_OPERATING_NAME", "$": "Samsung"},
             {"@type": "PREVIOUS_LEGAL_NAME", "$": "samsung"}]}})
-        assert props["other_names"] == ["Samsung"]
+        assert props["other_names"] == [] and props["gleif_trading_names"] == ["Samsung"]
+        assert props["gleif_former_names"] == []
 
     def test_no_other_names_is_an_empty_list_and_a_plain_search_text(self):
         props = self._props({})
-        assert props["other_names"] == []
+        # written empty, so a re-import clears what a record no longer states
+        assert props["other_names"] == props["gleif_trading_names"] == props["gleif_former_names"] == []
         assert props["search_text"] == "삼성전자(주)"
+
+
+class TestNamesByType:
+    """GLEIF types every other name; only the current ones are names in force
+    (findings item 16a, 2026-10-30)."""
+
+    def _props(self, names, events=None, legal="BlackRock, Inc."):
+        rec = _rec("529900VBK42Y5HHRMD23", legal)
+        rec["Entity"]["OtherEntityNames"] = {"OtherEntityName": names}
+        if events is not None:
+            rec["Entity"]["LegalEntityEvents"] = {"LegalEntityEvent": events}
+        return _entity_props(rec, "src", 92)[1]
+
+    @staticmethod
+    def _event(day, kind="CHANGE_LEGAL_NAME", status="COMPLETED"):
+        return {"@group_type": "STANDALONE", "@event_status": status,
+                "LegalEntityEventType": {"$": kind},
+                "LegalEntityEventEffectiveDate": {"$": f"{day}T00:00:00+02:00"}}
+
+    def test_all_five_types_go_to_three_lists(self):
+        props = self._props([
+            {"@type": "PREVIOUS_LEGAL_NAME", "$": "Old Co"},
+            {"@type": "TRADING_OR_OPERATING_NAME", "$": "Brand"},
+            {"@type": "ALTERNATIVE_LANGUAGE_LEGAL_NAME", "$": "Alt Co"},
+            {"@type": "PREFERRED_ASCII_TRANSLITERATED_LEGAL_NAME", "$": "Ascii Co"},
+            {"@type": "AUTO_ASCII_TRANSLITERATED_LEGAL_NAME", "$": "Auto Co"},
+            {"$": "Untyped Co"}])
+        assert props["other_names"] == ["Alt Co", "Ascii Co", "Auto Co", "Untyped Co"]
+        assert props["gleif_trading_names"] == ["Brand"]
+        assert props["gleif_former_names"] == ["Old Co|"]
+        for n in ("Old Co", "Brand", "Alt Co"):
+            assert n in props["search_text"]                  # every name still finds it
+
+    def test_blackrock_the_only_previous_name_ends_the_day_before_the_change(self):
+        # 529900VBK42Y5HHRMD23: "BLACKROCK FUNDING, INC.", a name change effective 2024-10-01
+        props = self._props([{"@type": "PREVIOUS_LEGAL_NAME", "$": "BLACKROCK FUNDING, INC."}],
+                            [self._event("2025-03-24", "CHANGE_HQ_ADDRESS"), self._event("2024-10-01")])
+        assert props["gleif_former_names"] == ["BLACKROCK FUNDING, INC.|2024-09-30"]
+
+    def test_the_latest_completed_change_dates_it(self):
+        props = self._props([{"@type": "PREVIOUS_LEGAL_NAME", "$": "Old Co"}],
+                            [self._event("2010-01-01"), self._event("2019-07-01"),
+                             self._event("2026-12-01", status="PENDING")])
+        assert props["gleif_former_names"] == ["Old Co|2019-06-30"]
+
+    def test_several_previous_names_stay_undated(self):
+        # GLEIF names neither which one a change ended nor its listing order
+        props = self._props([{"@type": "PREVIOUS_LEGAL_NAME", "$": "The Blackstone Group L.P."},
+                             {"@type": "PREVIOUS_LEGAL_NAME", "$": "The Blackstone Group Inc."}],
+                            [self._event("2019-07-01")], legal="BLACKSTONE INC.")
+        assert props["gleif_former_names"] == ["The Blackstone Group L.P.|", "The Blackstone Group Inc.|"]
+
+    def test_no_event_no_date(self):
+        props = self._props([{"@type": "PREVIOUS_LEGAL_NAME", "$": "MAWLAW 436 LIMITED"}], [])
+        assert props["gleif_former_names"] == ["MAWLAW 436 LIMITED|"]
 
 
 class TestCountry:

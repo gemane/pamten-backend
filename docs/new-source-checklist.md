@@ -458,8 +458,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       applied) in `former_names` beside the plain name in `aliases`, so the timeline can
       say "Renamed" under the right year. Companies House dropped its dates for a year
       before anyone asked why the register showed a name the graph did not. A source
-      that knows the name but not the date (GLEIF's previous legal names) stores it
-      undated, or leaves it in `other_names` — never invents a date.
+      that knows the name but not the date stores it undated — never invents a date.
+      **Read the source's own type for each other name** before treating it as current:
+      GLEIF types every one, and 306 of 538 on dev were PREVIOUS_LEGAL_NAME, read as
+      names in force until 2026-10-30 (findings item 16a). Date only what the source
+      ties together: GLEIF's name-change event dates the previous name only when there
+      is one, since it lists several in no fixed order.
 - [ ] **A record's `name` may be a display string — read the parts when the source has
       them.** Companies House prints an individual PSC's `name` as title + forenames +
       surname ("Mr Michael Charles Saunders") and puts the parts in `name_elements`;

@@ -88,3 +88,15 @@ def test_a_company_without_former_names_has_no_rename_events(it_db):
     it_db.run_command("CREATE (:Entity {id: 'plain', name: 'Plain Ltd', type: 'company'})")
     events, _ = ownership_history_of("plain")
     assert events == []
+
+
+def test_gleifs_dated_previous_name_is_a_rename_event_too(it_db):
+    """Findings item 16a: the timeline reads both former-name properties."""
+    from app.routers.relationships import ownership_history_of
+
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:529900VBK42Y5HHRMD23', name: 'BlackRock, Inc.', type: 'company', "
+        "gleif_former_names: ['BLACKROCK FUNDING, INC.|2024-09-30', 'Undated Old Name|']})")
+    events, _ = ownership_history_of("lei:529900VBK42Y5HHRMD23")
+    assert [(e["since"], e["former_name"], e["new_name"]) for e in events if e["kind"] == "renamed"] == [
+        ("2024-09-30", "BLACKROCK FUNDING, INC.", "BlackRock, Inc.")]

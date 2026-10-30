@@ -10,9 +10,12 @@ the dated record beside it.
 Stored as ``Entity.former_names``, a list of strings ``"NAME|YYYY-MM-DD"``
 (the ``"City|CC"`` convention of ``hq_locations``), the date being the last
 day the name was in force. A name without a date is ``"NAME|"`` — kept so a
-source that knows the name but not the date (GLEIF's previous legal names,
-should they ever be written here) loses nothing, but it gets no place on the
-timeline. The separator is the LAST ``|``, so a pipe inside a name survives.
+source that knows the name but not the date (most of GLEIF's previous legal
+names) loses nothing, but it gets no place on the timeline. The separator is
+the LAST ``|``, so a pipe inside a name survives.
+
+GLEIF's previous legal names live beside them in ``Entity.gleif_former_names``
+(its bulk writer overwrites what it sets); `of_node` reads both.
 """
 import re
 
@@ -110,6 +113,21 @@ def merge(existing: list[str] | None, new: list[str] | None) -> list[str]:
             out[undated.pop(key)] = e      # the date fills the undated slot in place
         else:
             out.append(e)
+    return out
+
+
+#: the properties that hold a node's dated former names: the writers' own
+#: (EDGAR, Companies House) and GLEIF's, which its bulk writer overwrites
+NODE_PROPERTIES = ("former_names", "gleif_former_names")
+
+
+def of_node(node: dict | None) -> list[str]:
+    """Every former name a node holds, from both properties (`NODE_PROPERTIES`),
+    merged — a date wins over an undated entry of the same name. Every reader
+    of a node's former names goes through this."""
+    out: list[str] = []
+    for prop in NODE_PROPERTIES:
+        out = merge(out, (node or {}).get(prop))
     return out
 
 

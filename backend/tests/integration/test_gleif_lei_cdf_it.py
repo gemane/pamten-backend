@@ -89,3 +89,33 @@ def test_the_full_load_stamps_the_registers_own_status(it_db, tmp_path):
     assert rows["lei:ACTIVELEI000000000011"]["reg"] == "LAPSED"
     assert rows["lei:GONELEI0000000000012"]["active"] is False
     assert rows["lei:GONELEI0000000000012"]["reg"] == "RETIRED"
+
+
+def test_previous_and_trading_names_land_apart_and_a_reimport_replaces_them(it_db, tmp_path):
+    """Findings item 16a: GLEIF's previous legal names are dated former names,
+    its trading names searchable non-legal names; a re-import of a record that
+    no longer states them clears them (the bulk writer overwrites)."""
+    from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
+
+    def load(names, events, n):
+        rec = {"LEI": _w("529900VBK42Y5HHRMD23"),
+               "Entity": {"LegalName": _w("BlackRock, Inc."), "LegalJurisdiction": _w("US-DE"),
+                          "OtherEntityNames": {"OtherEntityName": names},
+                          "LegalEntityEvents": {"LegalEntityEvent": events}}}
+        zpath = tmp_path / f"lei2-names-{n}.json.zip"
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("lei2.json", json.dumps({"records": [rec]}))
+        import_lei_cdf_entities(str(zpath), "gleif", 92)
+        return it_db.run_sql("SELECT other_names, gleif_former_names, gleif_trading_names, search_text "
+                             "FROM Entity WHERE id = 'lei:529900VBK42Y5HHRMD23'")[0]
+
+    row = load([{"@type": "PREVIOUS_LEGAL_NAME", "$": "BLACKROCK FUNDING, INC."},
+                {"@type": "TRADING_OR_OPERATING_NAME", "$": "BlackRock"}],
+               [{"@event_status": "COMPLETED", "LegalEntityEventType": _w("CHANGE_LEGAL_NAME"),
+                 "LegalEntityEventEffectiveDate": _w("2024-10-01T00:00:00+02:00")}], 1)
+    assert list(row["gleif_former_names"]) == ["BLACKROCK FUNDING, INC.|2024-09-30"]
+    assert list(row["gleif_trading_names"]) == ["BlackRock"]
+    assert list(row["other_names"] or []) == []
+    assert "BLACKROCK FUNDING, INC." in row["search_text"]
+    row = load([], [], 2)
+    assert list(row["gleif_former_names"] or []) == [] and list(row["gleif_trading_names"] or []) == []

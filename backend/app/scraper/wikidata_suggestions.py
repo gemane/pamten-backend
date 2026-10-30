@@ -90,14 +90,14 @@ def evidence_url(prop: str, value: str) -> str:
 def graph_nodes() -> list[dict]:
     """Every node with a Wikidata item id, with its register ids (read-only)."""
     from app.db.arcadedb import run_sql
-    return list(run_sql("SELECT id, name, other_names, former_names, wikidata_id, lei_id, sec_cik "
+    return list(run_sql("SELECT id, name, other_names, former_names, gleif_former_names, wikidata_id, lei_id, sec_cik "
                         "FROM Entity WHERE wikidata_id IS NOT NULL"))
 
 
 def unlinked_nodes() -> list[dict]:
     """Every node without a Wikidata item id that carries a register id."""
     from app.db.arcadedb import run_sql
-    return list(run_sql("SELECT id, name, other_names, former_names, lei_id, sec_cik FROM Entity "
+    return list(run_sql("SELECT id, name, other_names, former_names, gleif_former_names, lei_id, sec_cik FROM Entity "
                         "WHERE wikidata_id IS NULL AND (lei_id IS NOT NULL OR sec_cik IS NOT NULL)"))
 
 
