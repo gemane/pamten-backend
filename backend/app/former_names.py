@@ -52,6 +52,38 @@ def names(entries: list[str] | None) -> list[str]:
     return out
 
 
+def ended(entries: list[str] | None, on: str | None = None) -> list[str]:
+    """The names that had stopped applying by ``on`` (an ISO day; today when
+    None) — the time span a former name carries. A dated entry has ended when
+    its last day in force is before ``on``. An undated one has ended today (a
+    former name is no longer in force) but not on a past day, when it may
+    still have applied. Plain names, in entry order."""
+    from datetime import date as _date
+    day = on or _date.today().isoformat()
+    out = []
+    for raw in entries or []:
+        name, until = parse(raw)
+        if name and ((until is None and on is None) or (until is not None and until < day)):
+            out.append(name)
+    return out
+
+
+def ended_keys(entries: list[str] | None, current_name: str | None = None,
+               on: str | None = None) -> set[str]:
+    """The normalised names (``normalize_entity_name``) that no longer named
+    the company on ``on``: the keys of the ended entries, less any key a name
+    still in force on that day shares — the current name, or a former entry
+    not yet ended (BlackRock's old filer was "BlackRock, Inc." until
+    2006-10-05 and "BlackRock Inc." until 2024-09-26: one key, ended only
+    after the second)."""
+    from app.scraper.mapper import normalize_entity_name
+    gone = set(ended(entries, on))
+    live = {current_name or ""} | {n for n, _ in map(parse, entries or []) if n and n not in gone}
+    keys = {normalize_entity_name(n) for n in gone} - {normalize_entity_name(n) for n in live if n}
+    keys.discard("")
+    return keys
+
+
 def merge(existing: list[str] | None, new: list[str] | None) -> list[str]:
     """Union, the existing order first, keyed on (name, date). An undated
     entry yields to a dated one of the same name, whichever side it is on —

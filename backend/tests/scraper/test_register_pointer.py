@@ -91,6 +91,17 @@ class TestFetching:
         assert kw["name"] == "BlackRock Finance, Inc." and kw["cik"] == "0001364742"
         assert kw["register_name"] is True and kw["source_id"] == "sec-edgar"
 
+    def test_edgar_writes_the_former_names_with_their_days(self):
+        # what lets `stale` see that an item pointing here describes the CIK's past
+        sub = {"name": "BlackRock Finance, Inc.",
+               "formerNames": [{"name": "BlackRock Inc.", "from": "2006-10-05T00:00:00.000Z",
+                                "to": "2024-09-26T00:00:00.000Z"}]}
+        with patch("app.scraper.sec_edgar._submissions", return_value=sub), \
+             patch("app.scraper.runner._ensure_source", return_value="sec-edgar"), \
+             patch("app.scraper.graph_writer._upsert_entity_by_name", return_value="sec:0001364742") as up:
+            rp.write_from_edgar("0001364742")
+        assert up.call_args.kwargs["former_names"] == ["BlackRock Inc.|2024-09-26"]
+
 
 class TestFollowingThePointer:
     def test_gleif_writes_the_node_with_the_bulk_writer(self):
@@ -158,3 +169,29 @@ class TestContradiction:
         assert rp.contradiction({"lei_id": "B" * 20}, [], ["0000000001"]) is None   # no CIK on the node
         assert rp.contradiction({}, ["A" * 20], ["0000000001"]) is None
         assert rp.contradiction({"lei_id": "B" * 20, "sec_cik": "0000000001"}, [], []) is None
+
+
+class TestStale:
+    """Q219635's CIK and LEI agree with the pre-2024 BlackRock, which EDGAR has
+    called "BlackRock Finance, Inc." since 2024-09-26 (2026-10-29b rebuild)."""
+    OLD_FILER = {"name": "BlackRock Finance, Inc.", "sec_cik": "0001364742",
+                 "former_names": ["New BlackRock, Inc.|2006-09-29", "BlackRock, Inc.|2006-10-05",
+                                  "BlackRock Inc.|2024-09-26"]}
+
+    def test_an_item_that_names_the_node_only_by_an_ended_name_is_stale(self):
+        why = rp.stale(self.OLD_FILER, ["BlackRock", "BlackRock, Inc.", "BLK"])
+        assert why == "the item's name (blackrock) is a former name of BlackRock Finance, Inc."
+
+    def test_on_a_day_before_the_rename_it_is_not(self):
+        assert rp.stale(self.OLD_FILER, ["BlackRock"], on="2020-01-01") is None
+
+    def test_a_name_the_node_still_bears_wins_over_an_ended_one(self):
+        meta = {"name": "Meta Platforms, Inc.", "former_names": ["Facebook Inc|2021-10-27"]}
+        assert rp.stale(meta, ["Meta Platforms", "Facebook"]) is None
+        # a register's other name is a name in force too
+        assert rp.stale({**self.OLD_FILER, "other_names": ["BlackRock"]}, ["BlackRock"]) is None
+
+    def test_names_that_meet_nothing_and_a_node_without_former_names_say_nothing(self):
+        assert rp.stale(self.OLD_FILER, ["Something Else"]) is None
+        assert rp.stale({"name": "BlackRock Finance, Inc."}, ["BlackRock"]) is None
+        assert rp.stale(self.OLD_FILER, [None, ""]) is None

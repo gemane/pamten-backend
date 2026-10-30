@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.scraper.graph_writer import _name_key, _not_this_filer
+from app.scraper.graph_writer import _filer_as_registered, _name_key, _not_this_filer
 
 
 @pytest.mark.parametrize("a,b", [
@@ -69,3 +69,24 @@ class TestNotThisFiler:
     def test_edgar_silent_means_the_match_stands(self):
         with patch("app.scraper.sec_edgar.fetch_filer_name", return_value=None):
             assert _not_this_filer(_session(name="X"), "n", "0000000001", None, None) is None
+
+
+class TestFilerAsRegistered:
+    """A filing spells the name its filer had then; the node takes the name in
+    force and the dated former names (2026-10-30)."""
+    SUB = {"name": "BlackRock Finance, Inc.",
+           "formerNames": [{"name": "BlackRock Inc.", "to": "2024-09-26T00:00:00.000Z"},
+                           {"name": "BlackRock, Inc.", "to": "2006-10-05T00:00:00.000Z"}]}
+
+    def test_an_old_spelling_gives_edgars_name_and_the_former_names(self):
+        with patch("app.scraper.sec_edgar._submissions", return_value=self.SUB):
+            assert _filer_as_registered("0001364742", "BlackRock Inc.") == (
+                "BlackRock Finance, Inc.", ["BlackRock Inc.|2024-09-26", "BlackRock, Inc.|2006-10-05"])
+
+    def test_the_current_name_in_another_spelling_changes_nothing(self):
+        with patch("app.scraper.sec_edgar._submissions", return_value=self.SUB):
+            assert _filer_as_registered("0001364742", "BLACKROCK FINANCE INC") is None
+
+    def test_edgar_unreachable_leaves_the_filings_name(self):
+        with patch("app.scraper.sec_edgar._submissions", side_effect=RuntimeError("down")):
+            assert _filer_as_registered("0001364742", "BlackRock Inc.") is None

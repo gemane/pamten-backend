@@ -2524,9 +2524,15 @@ def fetch_former_names(cik: str) -> list[str]:
     except Exception as exc:  # noqa: BLE001 - a missing/failed submissions file mustn't abort the scrape
         log.warning("SEC EDGAR: formerNames fetch failed for CIK=%s: %s", cik, exc)
         return []
+    return former_name_entries(sub)
+
+
+def former_name_entries(sub: dict | None) -> list[str]:
+    """A submissions document's ``formerNames`` as ``app.former_names`` entries
+    (the day each ended), distinct by name, order kept."""
     out: list[str] = []
     seen: set[str] = set()
-    for entry in sub.get("formerNames") or []:
+    for entry in (sub or {}).get("formerNames") or []:
         name = (entry.get("name") or "").strip()
         key = name.lower()
         if name and key not in seen:

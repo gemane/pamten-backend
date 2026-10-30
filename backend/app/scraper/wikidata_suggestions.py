@@ -47,6 +47,10 @@ another legal entity than the node, so adding the node's id to it could be
 wrong, and nothing of such a pair goes into the batch. An item stating none
 of a node's ids is not found this way. Pairs that agree are left out: the
 graph has not linked them yet, and that is not a correction to Wikidata.
+A pair whose ids agree is refused too when the item names the node only
+under a name it no longer bears (`register_pointer.stale`): Q219635's CIK and
+LEI are the pre-2024 parent's, "BlackRock Finance, Inc." since 2024-09-26.
+A node that took its item before that rule is reported the same way.
 
 Licences: GLEIF's data is CC0 and EDGAR's is a US-government work, so both may
 go into Wikidata (CC0). Companies House (OGL) is not used here.
@@ -86,15 +90,15 @@ def evidence_url(prop: str, value: str) -> str:
 def graph_nodes() -> list[dict]:
     """Every node with a Wikidata item id, with its register ids (read-only)."""
     from app.db.arcadedb import run_sql
-    return list(run_sql("SELECT id, name, wikidata_id, lei_id, sec_cik FROM Entity "
-                        "WHERE wikidata_id IS NOT NULL"))
+    return list(run_sql("SELECT id, name, other_names, former_names, wikidata_id, lei_id, sec_cik "
+                        "FROM Entity WHERE wikidata_id IS NOT NULL"))
 
 
 def unlinked_nodes() -> list[dict]:
     """Every node without a Wikidata item id that carries a register id."""
     from app.db.arcadedb import run_sql
-    return list(run_sql("SELECT id, name, lei_id, sec_cik FROM Entity WHERE wikidata_id IS NULL "
-                        "AND (lei_id IS NOT NULL OR sec_cik IS NOT NULL)"))
+    return list(run_sql("SELECT id, name, other_names, former_names, lei_id, sec_cik FROM Entity "
+                        "WHERE wikidata_id IS NULL AND (lei_id IS NOT NULL OR sec_cik IS NOT NULL)"))
 
 
 def items_stating(prop: str, values: list[str]) -> dict[str, list[str]]:
@@ -218,6 +222,10 @@ def edgar_facts(cik: str) -> dict | None:
 
 # ── Judging ───────────────────────────────────────────────────────────────────
 
+def _item_names(item: dict) -> list[str]:
+    return [n for n in [item.get("label"), *item.get("aliases", [])] if n]
+
+
 def _name_matches(register_names: list[str], item: dict) -> bool:
     from app.scraper.mapper import normalize_entity_name
     item_names = {normalize_entity_name(n) for n in [item.get("label"), *item.get("aliases", [])] if n}
@@ -284,7 +292,7 @@ def refused_rows(node: dict, item: dict, why: str, register, iso_of: dict[str, s
     ``refused`` row when that judgement says nothing."""
     rows = suggestions_for(node, item, register, iso_of)
     if not rows:
-        prop = "P1278" if why.startswith("LEI") else "P5531"
+        prop = "P1278" if why.startswith("LEI") or not node.get("sec_cik") and not why.startswith("CIK") else "P5531"
         held = _norm(prop, node.get(PROPS[prop]))
         rows = [{"qid": node["wikidata_id"], "label": item.get("label"), "property": prop,
                  "kind": "refused", "action": "review", "confidence": "review",
@@ -304,7 +312,7 @@ def refused_rows(node: dict, item: dict, why: str, register, iso_of: dict[str, s
 def build_report(limit: int | None = None) -> dict:
     """Read the graph, the items and the registers; return the findings and a
     count per kind. Every register record is fetched once."""
-    from app.scraper.register_pointer import contradiction
+    from app.scraper.register_pointer import contradiction, stale
     nodes = sorted(graph_nodes(), key=lambda n: n["wikidata_id"])
     unlinked = sorted(unlinked_nodes(), key=lambda n: n["id"])
     if limit:
@@ -326,19 +334,27 @@ def build_report(limit: int | None = None) -> dict:
         return cache[(prop, value)]
 
     rows = []
+    stale_linked = []
     for node in nodes:
         item = items.get(node["wikidata_id"])
         if item is None:
             log.info("Wikidata item %s of %s is missing or deleted", node["wikidata_id"], node["id"])
             continue
+        if why := stale(node, _item_names(item)):
+            stale_linked.append((node, item, why))  # linked before the writer refused such pairs
+            continue
         rows.extend(suggestions_for(node, item, register, iso_of))
     refused = 0
+    for node, item, why in stale_linked:
+        refused += 1
+        rows.extend(refused_rows(node, item, why, register, iso_of))
     for node, qid in candidates:
         item = items.get(qid)
         if item is None:
             continue
-        why = contradiction({f: _norm(p, node.get(f)) for p, f in PROPS.items()},
-                            item["P1278"], item["P5531"])
+        why = (contradiction({f: _norm(p, node.get(f)) for p, f in PROPS.items()},
+                             item["P1278"], item["P5531"])
+               or stale(node, _item_names(item)))
         if why:
             refused += 1
             rows.extend(refused_rows({**node, "wikidata_id": qid}, item, why, register, iso_of))

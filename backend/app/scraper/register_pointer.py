@@ -162,14 +162,17 @@ def write_from_gleif(lei: str) -> str | None:
 
 def write_from_edgar(cik: str) -> str | None:
     """The filer EDGAR states for this CIK, written as the SEC writer writes a
-    filer it scrapes (EDGAR's name for the CIK, its country and business
-    address); its id, or None when EDGAR has no such CIK."""
+    filer it scrapes (EDGAR's name for the CIK, its former names with the day
+    each ended, its country and business address); its id, or None when EDGAR
+    has no such CIK. The former names are what lets `stale` see that an item
+    pointing here describes the company the CIK used to be."""
     import httpx
 
     from app.scraper.graph_writer import _upsert_entity_by_name
     from app.scraper.runner import (SEC_EDGAR_CREDIBILITY, SEC_EDGAR_SOURCE_NAME,
                                     SEC_EDGAR_SOURCE_URL, _ensure_source)
-    from app.scraper.sec_edgar import _submissions, sec_country, sec_headquarters, sec_website
+    from app.scraper.sec_edgar import (_submissions, former_name_entries, sec_country,
+                                       sec_headquarters, sec_website)
     try:
         sub = _submissions(cik)
     except httpx.HTTPStatusError as exc:
@@ -183,7 +186,8 @@ def write_from_edgar(cik: str) -> str | None:
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     return _upsert_entity_by_name(name=name, entity_type="company", cik=cik, source_id=source_id,
                                   register_name=True, country=sec_country(sub),
-                                  headquarters=sec_headquarters(sub), website=sec_website(sub))
+                                  headquarters=sec_headquarters(sub), website=sec_website(sub),
+                                  former_names=former_name_entries(sub) or None)
 
 
 def write_from_pointer(leis: list[str], ciks: list[str]) -> str | None:
@@ -211,3 +215,28 @@ def contradiction(node: dict, leis: list[str], ciks: list[str]) -> str | None:
     if node.get("sec_cik") and ciks and node["sec_cik"] not in ciks:
         return f"CIK {node['sec_cik']} is not the stated {', '.join(ciks)}"
     return None
+
+
+def stale(node: dict, item_names: list[str], on: str | None = None) -> str | None:
+    """Why a knowledge base's ids name this node only under a name it no longer
+    bears, or None. The item's label and aliases match a name the node's
+    register says had stopped applying (`former_names`, each with its last day
+    in force) and none it still bears (its name, the register's other names).
+    BlackRock's Q219635 states the CIK and the LEI of the pre-2024 parent,
+    which EDGAR has called "BlackRock Finance, Inc." since 2024-09-26 — the ids
+    agree with that node, the names say the item has moved on. An item whose
+    names match none of the node's, ended or not, says nothing either way (a
+    label in another script, a brand) and is no reason to refuse."""
+    from app import former_names
+    from app.scraper.mapper import normalize_entity_name
+    want = {normalize_entity_name(n) for n in item_names if n} - {""}
+    if not want:
+        return None
+    live = {normalize_entity_name(n) for n in [node.get("name"), *(node.get("other_names") or [])] if n}
+    if want & live:
+        return None
+    gone = want & former_names.ended_keys(node.get("former_names"), node.get("name"), on)
+    if not gone:
+        return None
+    return (f"the item's name ({', '.join(sorted(gone))}) is a former name of "
+            f"{node.get('name') or 'the node'}")

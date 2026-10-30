@@ -1,5 +1,5 @@
 """app.former_names — a company's former names with the day each ended."""
-from app.former_names import entry, merge, names, parse, rename_events
+from app.former_names import ended, ended_keys, entry, merge, names, parse, rename_events
 
 
 class TestEntryAndParse:
@@ -81,3 +81,30 @@ class TestRenameEvents:
 
     def test_nothing(self):
         assert rename_events("X", None) == []
+
+
+class TestEnded:
+    """A name has a time span: the last day it was in force (2026-10-30)."""
+    BLACKROCK = ["New BlackRock, Inc.|2006-09-29", "BlackRock, Inc.|2006-10-05", "BlackRock Inc.|2024-09-26"]
+
+    def test_today_every_dated_former_name_has_ended_and_so_has_an_undated_one(self):
+        assert ended(self.BLACKROCK) == ["New BlackRock, Inc.", "BlackRock, Inc.", "BlackRock Inc."]
+        assert ended(["Then Ltd|"]) == ["Then Ltd"]
+
+    def test_on_a_past_day_only_the_names_that_had_stopped_by_then(self):
+        assert ended(self.BLACKROCK, "2020-01-01") == ["New BlackRock, Inc.", "BlackRock, Inc."]
+        # the last day in force is still in force
+        assert ended(self.BLACKROCK, "2024-09-26") == ["New BlackRock, Inc.", "BlackRock, Inc."]
+        # an undated name may still have applied on a past day
+        assert ended(["Then Ltd|"], "2020-01-01") == []
+
+    def test_a_key_still_in_force_through_another_spelling_has_not_ended(self):
+        assert ended_keys(self.BLACKROCK, "BlackRock Finance, Inc.") == {"new blackrock", "blackrock"}
+        # 2020: "BlackRock, Inc." had ended, "BlackRock Inc." (one key) had not
+        assert ended_keys(self.BLACKROCK, "BlackRock Finance, Inc.", "2020-01-01") == {"new blackrock"}
+
+    def test_the_current_name_never_ends(self):
+        assert ended_keys(["ACME LTD|2020-01-01"], "Acme Ltd") == set()
+
+    def test_nothing(self):
+        assert ended(None) == [] and ended_keys(None, "X") == set()
