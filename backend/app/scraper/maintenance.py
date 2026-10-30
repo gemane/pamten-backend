@@ -669,7 +669,8 @@ _MERGE_SKIP_PROPS = frozenset({
     "name_credibility",  # handled explicitly (max)
     "created_at",        # handled explicitly (the earlier of the two)
     "aliases", "countries", "hq_locations",   # lists — unioned, not replaced
-    "former_names",                            # dated names — unioned by (name, date)
+    "former_names", "gleif_former_names",      # dated names — unioned by (name, date)
+    "gleif_trading_names",                     # a list — unioned
 })
 
 
@@ -702,6 +703,7 @@ def _merge_entity_props(keep: dict, dead: dict) -> dict:
         ("aliases", [dead.get("name")]),
         ("countries", []),
         ("hq_locations", []),
+        ("gleif_trading_names", []),
     ):
         merged: list = []
         seen: set = set()
@@ -724,9 +726,10 @@ def _merge_entity_props(keep: dict, dead: dict) -> dict:
     # The dated former names: the same union, keyed on (name, date) so a
     # Companies House date fills in a name SEC knew only undated (and the
     # loser's own name is NOT added here — nobody dated its end).
-    dated = former.merge(keep.get("former_names"), dead.get("former_names"))
-    if dated != list(keep.get("former_names") or []):
-        out["former_names"] = dated
+    for prop in former.NODE_PROPERTIES:
+        dated = former.merge(keep.get(prop), dead.get(prop))
+        if dated != list(keep.get(prop) or []):
+            out[prop] = dated
 
     out["name_credibility"] = max(keep.get("name_credibility") or 0,
                                   dead.get("name_credibility") or 0)

@@ -273,18 +273,31 @@ def _dissolved_on(entity: dict) -> str | None:
     return None
 
 
-def _other_names(entity: dict, legal_name: str) -> list[str]:
-    """Every other name the register publishes for the entity, deduped.
+PREVIOUS_LEGAL_NAME = "PREVIOUS_LEGAL_NAME"
+TRADING_NAME = "TRADING_OR_OPERATING_NAME"
 
-    The bridge for non-Latin jurisdictions: 삼성전자(주) is unfindable by
-    "Samsung" unless the record's own ALTERNATIVE_LANGUAGE_LEGAL_NAME
-    ("SAMSUNG ELECTRONICS CO., LTD") comes along — and before this, it only
-    came along when a Wikidata twin happened to exist. Reads BOTH containers
-    (OtherEntityNames and TransliteratedOtherEntityNames), tolerates the
-    single-dict-instead-of-list shape the JSON uses for one entry, keeps
-    every type (previous legal names are how a renamed company stays
-    findable), and excludes the legal name itself."""
-    out: list[str] = []
+
+def _other_names(entity: dict, legal_name: str) -> tuple[list[str], list[str], list[str]]:
+    """(current, previous, trading): every other name the register publishes
+    for the entity, deduped, sorted by GLEIF's own ``@type``.
+
+    - **current**: transliterations and alternative-language legal names —
+      the bridge for non-Latin jurisdictions: 삼성전자(주) is unfindable by
+      "Samsung" without its ALTERNATIVE_LANGUAGE_LEGAL_NAME, and Tencent's
+      "Tencent Holdings Limited" is how EDGAR's filer meets its GLEIF record
+      (`legal_identity`). An untyped name counts as current.
+    - **previous**: PREVIOUS_LEGAL_NAME — ended, so not a name in force
+      (findings item 16a: 306 of 538 other names on dev were previous ones,
+      and every reader took them for current — the 2024 BlackRock parent's
+      "BLACKROCK FUNDING, INC." among them).
+    - **trading**: TRADING_OR_OPERATING_NAME — in use, never a legal name.
+
+    Reads BOTH containers (OtherEntityNames, TransliteratedOtherEntityNames),
+    tolerates the single-dict-instead-of-list shape the JSON uses for one
+    entry, and excludes the legal name itself."""
+    current: list[str] = []
+    previous: list[str] = []
+    trading: list[str] = []
     seen = {(legal_name or "").strip().casefold()}
     for container, key in (("OtherEntityNames", "OtherEntityName"),
                            ("TransliteratedOtherEntityNames",
@@ -295,10 +308,45 @@ def _other_names(entity: dict, legal_name: str) -> list[str]:
         for item in raw:
             name = _v(item) if isinstance(item, dict) else None
             name = (name or "").strip()
-            if name and name.casefold() not in seen:
-                seen.add(name.casefold())
-                out.append(name)
-    return out
+            if not name or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            kind = item.get("@type") if isinstance(item, dict) else None
+            (previous if kind == PREVIOUS_LEGAL_NAME else trading if kind == TRADING_NAME
+             else current).append(name)
+    return current, previous, trading
+
+
+def _name_change_day(entity: dict) -> str | None:
+    """The effective day of the latest COMPLETED CHANGE_LEGAL_NAME event
+    (``LegalEntityEvents``), as the golden copy states it — its local day:
+    BlackRock's "2024-10-01T00:00:00+02:00", which the API gives as
+    2024-09-30T22:00Z (`register_pointer._api_day` maps it back)."""
+    raw = (entity.get("LegalEntityEvents") or {}).get("LegalEntityEvent") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    days = [(_v(ev.get("LegalEntityEventEffectiveDate")) or "")[:10] for ev in raw
+            if isinstance(ev, dict) and _v(ev.get("LegalEntityEventType")) == "CHANGE_LEGAL_NAME"
+            and (ev.get("@event_status") or "COMPLETED") == "COMPLETED"]
+    days = [d for d in days if re.match(r"^\d{4}-\d{2}-\d{2}$", d)]
+    return max(days) if days else None
+
+
+def _gleif_former_names(entity: dict, previous: list[str]) -> list[str]:
+    """The previous legal names as `app.former_names` entries. Only a single
+    previous name is dated — the day before the latest name change took
+    effect, the last day it applied. With several, GLEIF says neither which
+    one a change ended (no record of 77 on dev carries AffectedFields) nor in
+    which order it lists them (FMR Investment Management (UK) oldest first,
+    Barclays and Eversource newest first), and a change can go unrecorded
+    (Blackstone's 2021 rename has no event): they stay "NAME|", ended on an
+    unknown day."""
+    from datetime import date, timedelta
+
+    from app import former_names
+    day = _name_change_day(entity) if len(previous) == 1 else None
+    until = (date.fromisoformat(day) - timedelta(days=1)).isoformat() if day else None
+    return [e for e in (former_names.entry(n, until) for n in previous) if e]
 
 
 def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[str, dict] | None:
@@ -311,7 +359,7 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         return None
     entity = rec.get("Entity") or {}
     reg_authority, reg_number, reg_code = _registration(entity)
-    other_names = _other_names(entity, name)
+    other_names, previous, trading = _other_names(entity, name)
     props: dict = {
         "name": name,
         "name_normalized": normalize_entity_name(name),
@@ -319,14 +367,22 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         # so a company is findable by the id printed on its own paperwork —
         # and so do the register's OTHER names, which is what makes a company
         # with a non-Latin legal name findable in Latin at all.
-        "search_text": " ".join(p for p in (name, *other_names,
+        # A previous or trading name finds the company too.
+        "search_text": " ".join(p for p in (name, *other_names, *trading, *previous,
                                             reg_number or "") if p),
-        # The register's own other names (alternative-language legal names,
-        # previous names, trading names, transliterations). A separate
-        # property, NOT aliases: the bulk writer overwrites what it sets, and
-        # aliases belong to the Wikidata/SEC writers whose union semantics a
-        # bulk UPSERT cannot honour.
+        # The register's own other CURRENT names (alternative-language legal
+        # names, transliterations). Separate properties, NOT aliases: the bulk
+        # writer overwrites what it sets, and aliases belong to the
+        # Wikidata/SEC writers whose union semantics a bulk UPSERT cannot honour.
         "other_names": other_names,
+        # its trading names: in use, searchable, never a legal name
+        "gleif_trading_names": trading,
+        # its previous legal names, dated where GLEIF allows (app.former_names
+        # entries). Not `former_names`: a GLEIF record can sit on an EDGAR
+        # filer's node (legal_identity), whose `former_names` hold EDGAR's
+        # dates, and the bulk writer would overwrite them. Readers take both
+        # through `former_names.of_node`.
+        "gleif_former_names": _gleif_former_names(entity, previous),
         # Per record, not per source: what this one is worth depends on whether
         # anybody corroborated it (see _validated_credibility).
         "name_credibility": _validated_credibility(rec, credibility_score),

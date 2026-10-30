@@ -62,8 +62,22 @@ its CIK is written **under EDGAR's current name with its dated former names**
 (`register_pointer.write_from_edgar`). The Wikidata writer refuses an item whose
 ids name a node only under an ended name (`register_pointer.stale`, below the
 contradiction rule), and the suggestions report lists such a pair as refused.
-Limit: GLEIF's previous legal names arrive in `other_names` without their type or
-a date, so they count as names in force.
+GLEIF's previous legal names count too (findings item 16a, 2026-10-30). GLEIF types
+every other name; `gleif_lei_cdf._other_names` sorts them: transliterations and
+alternative-language legal names stay current (`other_names`), trading names go to
+`gleif_trading_names` (searchable, never a legal name), PREVIOUS_LEGAL_NAME to
+`gleif_former_names` as `app.former_names` entries — a property of its own, because
+GLEIF's bulk writer overwrites what it sets and a GLEIF record can sit on an EDGAR node
+(`legal_identity`) whose `former_names` hold EDGAR's dates. Every reader takes both through
+`former_names.of_node`: search ranking, the timeline, the stale checks, merges. A
+previous name is dated only when it is the only one: the day before the latest COMPLETED
+CHANGE_LEGAL_NAME event took effect, as the golden copy states the day (the 2024 BlackRock
+parent: "BLACKROCK FUNDING, INC.|2024-09-30"; the API's UTC instant maps back through
+`register_pointer._api_day`). With several GLEIF names no event's AffectedFields (none of 77
+on dev) and lists them in no fixed order (FMR oldest first, Barclays newest first), and a
+change can go unrecorded (Blackstone 2021), so they stay `"NAME|"`: ended today, unknown
+on a past day. Of dev's 306 previous names, 60 carry a date. Dating every rename since 2018
+from GLEIF's monthly archive is a separate, parked option.
 
 ---
 

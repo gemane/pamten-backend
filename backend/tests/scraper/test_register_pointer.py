@@ -27,7 +27,8 @@ class TestTheGoldenCopyShape:
         node_id, props = _entity_props(rp.golden_copy_record(_api()["data"]["attributes"]), "gleif", 92)
         assert node_id == "lei:549300LRIF3NWCU26A80" and props["lei_id"] == "549300LRIF3NWCU26A80"
         assert props["name"] == "BlackRock Finance, Inc."
-        assert props["other_names"] == ["BLACKROCK, INC."]
+        assert props["other_names"] == []
+        assert props["gleif_former_names"] == ["BLACKROCK, INC.|"]     # a previous legal name (16a)
         assert props["country"] == "US" and props["jurisdiction_code"] == "US-DE"
         assert props["registration_authority_code"] == "RA000602" and props["registration_number"] == "4109022"
         assert props["register_id"] == "RA000602:4109022"
@@ -42,6 +43,19 @@ class TestTheGoldenCopyShape:
         assert props["reg_city"] == "WILMINGTON" and props["reg_postcode"] == "19808"
         assert props["address"].startswith("c/o CORPORATION SERVICE COMPANY")
         assert "dissolved_on" not in props
+
+    def test_the_apis_events_date_a_previous_name_as_the_bulk_path_does(self):
+        # the API gives BlackRock's change as 2024-09-30T22:00Z; the golden copy
+        # as 2024-10-01T00:00+02:00 — one day, the day before it the last of the old name
+        from app.scraper.gleif_lei_cdf import _entity_props
+        attrs = _api()["data"]["attributes"]
+        attrs = {**attrs, "entity": {**attrs["entity"], "eventGroups": [
+            {"groupType": "STANDALONE", "events": [
+                {"type": "CHANGE_HQ_ADDRESS", "status": "COMPLETED", "effectiveDate": "2025-03-23T23:00:00Z"}]},
+            {"groupType": "STANDALONE", "events": [
+                {"type": "CHANGE_LEGAL_NAME", "status": "COMPLETED", "effectiveDate": "2024-09-30T22:00:00Z"}]}]}}
+        _, props = _entity_props(rp.golden_copy_record(attrs), "gleif", 92)
+        assert props["gleif_former_names"] == ["BLACKROCK, INC.|2024-09-30"]
 
     @pytest.mark.parametrize("stamp,day", [
         ("2006-02-12T23:00:00Z", "2006-02-13"),       # midnight in Vienna
@@ -192,6 +206,13 @@ class TestStale:
         assert rp.stale(meta, ["Meta Platforms", "Facebook"]) is None
         # a register's other name is a name in force too
         assert rp.stale({**self.OLD_FILER, "other_names": ["BlackRock"]}, ["BlackRock"]) is None
+
+    def test_gleifs_previous_names_count_as_ended(self):
+        # findings item 16a: the 2024 parent's previous legal name, from GLEIF
+        parent = {"name": "BlackRock, Inc.", "gleif_former_names": ["BLACKROCK FUNDING, INC.|2024-09-30"]}
+        assert rp.stale(parent, ["BlackRock Funding"]) == \
+            "the item's name (blackrock funding) is a former name of BlackRock, Inc."
+        assert rp.stale(parent, ["BlackRock Funding"], on="2024-01-01") is None
 
     def test_names_that_meet_nothing_and_a_node_without_former_names_say_nothing(self):
         assert rp.stale(self.OLD_FILER, ["Something Else"]) is None

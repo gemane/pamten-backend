@@ -199,3 +199,19 @@ class TestTheFilingHeader:
     def test_not_the_reporting_owners_and_not_another_ciks(self):
         assert header_address(self.SGML, "1838537") is None
         assert header_address(self.SGML, "320193") is None
+
+
+class TestPreviousNamesAreNotNamesInForce:
+    """Findings item 16a: GLEIF's previous legal names no longer sit in
+    other_names, so point 1 compares current names only."""
+
+    def test_a_filer_named_only_like_a_gleif_previous_name_is_refused(self):
+        parent = {"name": "BlackRock, Inc.", "lei_id": "529900VBK42Y5HHRMD23", "country": "US",
+                  "jurisdiction_code": "US-DE", "gleif_registration_status": "ISSUED",
+                  "gleif_former_names": ["BLACKROCK FUNDING, INC.|2024-09-30"]}
+        funding = Filer("0009999999", "BLACKROCK FUNDING INC", home="US-DE")
+        verdict, why = same_legal_entity(parent, funding, today=TODAY, evidence=fake())
+        assert verdict == REFUSE and "legal name differs" in why
+
+    def test_tencent_still_joins_on_its_transliteration(self):
+        assert same_legal_entity(TENCENT_GLEIF, TENCENT, today=TODAY, evidence=fake())[0] == JOIN

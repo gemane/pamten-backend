@@ -26,6 +26,15 @@ def _clean(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("@")}
 
 
+def _other_spellings(node: dict) -> list[str]:
+    """Every name of a node besides its own: aliases, the register's other
+    current names, GLEIF's trading names and its previous legal names (which
+    `_rank` places below a name in force, as `former_names.ended_keys` says)."""
+    return [*(node.get("aliases") or []), *(node.get("other_names") or []),
+            *(node.get("gleif_trading_names") or []),
+            *former_names.names(node.get("gleif_former_names"))]
+
+
 def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
           nn: str | None = None, on: str | None = None) -> tuple:
     """
@@ -64,7 +73,7 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
     """
     name = (node.get("name") or "").lower()
     toks = tokens if tokens is not None else q.split()
-    alias_raw = list(node.get("aliases") or []) + list(node.get("other_names") or [])
+    alias_raw = _other_spellings(node)
     names = [name] + [(a or "").lower() for a in alias_raw if a]
 
     def _tier(n: str) -> int:
@@ -81,7 +90,7 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
     if nn and node.get("name_normalized") == nn:
         exact_norm = 0
     elif nn and any(normalize_entity_name(a) == nn for a in alias_raw if a):
-        gone = former_names.ended_keys(node.get("former_names"), node.get("name"), on)
+        gone = former_names.ended_keys(former_names.of_node(node), node.get("name"), on)
         exact_norm = 1 if nn in gone else 0
     notable = 0 if node.get("wikidata_id") else 1
     tier = min(_tier(n) for n in names)
@@ -174,7 +183,7 @@ def _credible_match(node: dict, tokens: list[str], nn: str | None) -> bool:
     every word of the query occurs in its name, an alias, a register name or
     its search text.
     Words without a letter or digit ("·", "&", "-") are not words."""
-    alias_raw = list(node.get("aliases") or []) + list(node.get("other_names") or [])
+    alias_raw = _other_spellings(node)
     if nn and (node.get("name_normalized") == nn or any(normalize_entity_name(a) == nn for a in alias_raw if a)):
         return True
     # accents folded on both sides: "Nestlé" is NESTLE S.A. (the name

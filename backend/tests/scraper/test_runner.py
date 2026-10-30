@@ -1424,6 +1424,20 @@ class TestIdentifierBridge:
         assert not any("SET e." in c.args[0] or "CREATE (e:Entity" in c.args[0]
                        for c in session.run.call_args_list)
 
+    def test_an_item_naming_a_node_only_by_a_gleif_previous_name_gets_nothing(self):
+        # findings item 16a: GLEIF's previous legal names are ended names too
+        ctx, session = _make_session_mock(single_returns=[
+            None, None, {"id": "lei:529900VBK42Y5HHRMD23"},
+            {"lei_id": "529900VBK42Y5HHRMD23", "sec_cik": None, "name": "BlackRock, Inc.",
+             "other_names": [], "former_names": None,
+             "gleif_former_names": ["BLACKROCK FUNDING, INC.|2024-09-30"]}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.write_from_pointer"):
+            eid = _upsert_entity("BlackRock Funding", None, None, None, "Q_FUNDING",
+                                 lei=["529900VBK42Y5HHRMD23"])
+        assert eid is None
+        assert not any("SET e." in c.args[0] for c in session.run.call_args_list)
+
     def test_a_renamed_company_its_item_names_by_the_current_name_is_enriched(self):
         ctx, session = _make_session_mock(single_returns=[
             None, {"id": "sec:0001326801"},

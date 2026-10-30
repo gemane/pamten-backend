@@ -96,6 +96,10 @@ def golden_copy_record(attributes: dict) -> dict:
             "EntityStatus": _wrap(entity.get("status")),
             "EntityCreationDate": _wrap(_api_day(entity.get("creationDate"))),
             "EntityExpirationDate": _wrap(_api_day((entity.get("expiration") or {}).get("date"))),
+            "LegalEntityEvents": {"LegalEntityEvent": [
+                {"@event_status": ev.get("status"), "LegalEntityEventType": _wrap(ev.get("type")),
+                 "LegalEntityEventEffectiveDate": _wrap(_api_day(ev.get("effectiveDate")))}
+                for group in entity.get("eventGroups") or [] for ev in group.get("events") or []]},
         },
         "Registration": {
             "InitialRegistrationDate": _wrap(_api_day(registration.get("initialRegistrationDate"))),
@@ -319,7 +323,7 @@ def stale(node: dict, item_names: list[str], on: str | None = None) -> str | Non
     live = {normalize_entity_name(n) for n in [node.get("name"), *(node.get("other_names") or [])] if n}
     if want & live:
         return None
-    gone = want & former_names.ended_keys(node.get("former_names"), node.get("name"), on)
+    gone = want & former_names.ended_keys(former_names.of_node(node), node.get("name"), on)
     if not gone:
         return None
     return (f"the item's name ({', '.join(sorted(gone))}) is a former name of "
