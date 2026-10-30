@@ -11,9 +11,14 @@ one name key and one street — so `same_legal_entity` asks four things:
 1. **The same legal name, legal form kept** (`sec_ex21.legal_name_key`): any
    of GLEIF's names (the legal name, its other and transliterated names)
    against EDGAR's current name or the former name in force on the record's
-   reference day. "Domino's Pizza LLC" is not "DOMINOS PIZZA INC".
+   reference day. "Domino's Pizza LLC" is not "DOMINOS PIZZA INC". A GLEIF
+   name without its form takes the form from its legal-form code: EDGAR's
+   "Anheuser-Busch InBev SA/NV" is GLEIF's "ANHEUSER-BUSCH INBEV" with code
+   R85P, whose abbreviations are NV, SA and AG (`gleif_elf_abbr.json`).
 2. **The same place of registration**: GLEIF's jurisdiction ("US-DE", "KY")
-   against EDGAR's state of incorporation (`sec_edgar.incorporation_place`).
+   against where the filer is incorporated (`sec_edgar.incorporation_place`:
+   its newest annual report's cover first, EDGAR's header field — wrong for
+   HubSpot and Alibaba — only when the report states none).
    GLEIF giving only "US" where EDGAR says New York is no contradiction, but
    no confirmation either: the record is weak (3).
 3. **A weak record needs one more match, at its own date.** Weak: only a
@@ -25,7 +30,7 @@ one name key and one street — so `same_legal_entity` asks four things:
    (today's address when no filing lies within a year, said in the reason) —
    or a subsidiary at ``D``: a GLEIF child in force then that the filer also
    held then (an OWNS edge open on ``D``, or the Exhibit 21 of the fiscal year
-   containing ``D``). NYT's lapsed 2019 record says 620 Eighth Avenue, and so
+   containing ``D``, else the newest filed by ``D``). NYT's lapsed 2019 record says 620 Eighth Avenue, and so
    does NYT's 2021 filing header.
 4. **Veto**: never a record GLEIF lists as a child (direct or ultimate) of a
    record that passes 1 and 2 against the filer, while that link was in force
@@ -68,7 +73,7 @@ class Filer:
     cik: str
     name: str
     former_names: tuple[str, ...] = ()       # app.former_names entries "NAME|YYYY-MM-DD"
-    home: str | None = None                  # incorporation_place: "US-NY", "KY"
+    home: str | None = None                  # incorporation_place: "US-DE", "KY"
     street: str | None = None                # today's business address
     city: str | None = None
 
@@ -99,7 +104,7 @@ def _country(place: str | None) -> str | None:
 
 
 #: what the rule reads of a GLEIF node
-IDENTITY_FIELDS = ("name", "other_names", "lei_id", "jurisdiction_code", "country",
+IDENTITY_FIELDS = ("name", "other_names", "lei_id", "legal_form_code", "jurisdiction_code", "country",
                    "gleif_registration_status", "validation_sources", "gleif_last_update",
                    *(addresses.field(kind, part) for kind in (addresses.HEADQUARTERS, addresses.REGISTERED)
                      for part in ("street", "city")))
@@ -135,6 +140,40 @@ def _same_name(gleif_names: list[str], filer_names: list[str]) -> bool:
     from app.scraper.sec_ex21 import legal_name_key
     keys = {legal_name_key(n) for n in filer_names if n} - {""}
     return any(legal_name_key(n) in keys for n in gleif_names if n)
+
+
+#: the last word of a name, after a space, comma or the slash of "SA/NV"
+_TAIL_WORD = re.compile(r"[\s,/]+([^\s,/]+)\s*$")
+
+
+def _compact(word: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", word.casefold())
+
+
+def _without_form(name: str, forms: set[str]) -> str | None:
+    """``name`` without the legal form at its end when each of its words is
+    one of ``forms`` ("Anheuser-Busch InBev SA/NV" with NV, SA → "Anheuser-Busch
+    InBev"); None when it ends in none of them."""
+    rest, cut = name.strip(), False
+    while (m := _TAIL_WORD.search(rest)) and _compact(m.group(1)) in forms:
+        rest, cut = rest[:m.start()].strip(), True
+    return rest if cut and rest else None
+
+
+def _same_name_by_form_code(node: dict, filer_names: list[str]) -> bool:
+    """GLEIF's legal name gives no form and its legal-form code does: the
+    filer's name, with a form at its end that is one of the code's
+    abbreviations, names the record. GLEIF writes "ANHEUSER-BUSCH INBEV" with
+    ELF code R85P (Belgian NV/SA/AG), EDGAR "Anheuser-Busch InBev SA/NV"
+    (findings item 19, 2026-10-30). The form is still compared — it comes
+    from the code: "Anheuser-Busch InBev Inc." would not pass."""
+    from app.scraper.gleif_reference import legal_form_abbreviations
+    from app.scraper.sec_ex21 import legal_name_key
+    forms = {_compact(a) for a in legal_form_abbreviations(node.get("legal_form_code"))} - {""}
+    if not forms:
+        return False
+    gleif = {legal_name_key(n) for n in _gleif_names(node)} - {""}
+    return any((rest := _without_form(n, forms)) and legal_name_key(rest) in gleif for n in filer_names if n)
 
 
 def _gleif_names(node: dict) -> list[str]:
@@ -216,8 +255,11 @@ def same_legal_entity(node: dict, filer: Filer, *, today: str | None = None,
     day = reference_day(node, today)
     gnames = _gleif_names(node)
     # 1. the same legal name, legal form kept
+    by_code = False
     if not _same_name(gnames, names_at(filer, day)):
-        return REFUSE, f"legal name differs ({node.get('name')!r} / {filer.name!r})"
+        by_code = _same_name_by_form_code(node, names_at(filer, day))
+        if not by_code:
+            return REFUSE, f"legal name differs ({node.get('name')!r} / {filer.name!r})"
     # 2. the same place of registration
     place = gleif_place(node)
     same_place, place_words = _place_verdict(place, filer.home)
@@ -241,7 +283,8 @@ def same_legal_entity(node: dict, filer: Filer, *, today: str | None = None,
         (f"registration {status}", status in _UNMAINTAINED),
         ("entity-supplied data", (node.get("validation_sources") or "").upper() == _SELF_REPORTED),
     ) if hit]
-    basis = "name+place" if same_place else "name+country"
+    basis = ("name+place" if same_place else "name+country") \
+        .replace("name", f"name(form {node.get('legal_form_code')})" if by_code else "name", 1)
     if not weak:
         return JOIN, basis
     # 3. a weak record: the headquarters, or a subsidiary, at D
@@ -297,7 +340,7 @@ def clear_caches() -> None:
 @_cached
 def filer_facts(cik: str) -> Filer | None:
     """EDGAR's facts on a filer for the rule, or None when EDGAR cannot say."""
-    from app.scraper.sec_edgar import _submissions, former_name_entries, incorporation_place
+    from app.scraper.sec_edgar import _submissions, former_name_entries, incorporation_place, sec_headquarters
     try:
         sub = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - EDGAR unreachable: no verdict
@@ -306,12 +349,10 @@ def filer_facts(cik: str) -> Filer | None:
     name = ((sub or {}).get("name") or "").strip()
     if not name:
         return None
-    business = (sub.get("addresses") or {}).get("business") or {}
-    street = " ".join(p for p in ((business.get("street1") or "").strip(),
-                                  (business.get("street2") or "").strip()) if p) or None
+    # today's office: the annual report's, else the company record's
+    office = sec_headquarters(sub) or {}
     return Filer(cik=cik, name=name, former_names=tuple(former_name_entries(sub) or ()),
-                 home=incorporation_place(sub), street=street,
-                 city=(business.get("city") or "").strip() or None)
+                 home=incorporation_place(sub), street=office.get("street"), city=office.get("city"))
 
 
 _HEADER_BLOCK = re.compile(r"<(ISSUER|FILER|SUBJECT-COMPANY|FILED-BY)>(.*?)</\1>", re.S)
@@ -446,7 +487,12 @@ def gleif_children(lei: str) -> list[dict]:
 def filer_held_at(cik: str, day: str) -> list[tuple[str, str | None]]:
     """(name, place) of what the filer held on ``day``: its OWNS edges open
     then (dates compared in Python — Cypher coerces ISO strings), and the
-    Exhibit 21 of the fiscal year containing ``day``."""
+    Exhibit 21 of the fiscal year containing ``day`` — or, when no report
+    covers it yet, the newest one filed by then. Until 2026-10-30 only the
+    former: for a maintained record ``day`` is today, which no fiscal year
+    covers, so no list was ever read and Embraer, MercadoLibre and Televisa
+    (3 of 4, 10 of 12, 5 of 6 GLEIF children on their lists) stayed apart
+    from their GLEIF records (findings item 19)."""
     from app.database import db
     from app.scraper.sec_edgar import _cik10
     out: list[tuple[str, str | None]] = []
@@ -461,11 +507,12 @@ def filer_held_at(cik: str, day: str) -> list[tuple[str, str | None]]:
                 out.append((r["name"], r.get("jc") or r.get("country")))
     try:
         from app.scraper.sec_ex21 import _parse_first, annual_filings, exhibit_candidates
-        for form, accession, filed, period in reversed(annual_filings(cik, include_older=True)):
-            if (period or filed) >= day:
-                got = _parse_first(exhibit_candidates(cik, form, accession, filed, period), cik)
-                out += [(s["name"], s.get("jurisdiction")) for s in (got[0] if got else [])]
-                break
+        filings = annual_filings(cik, include_older=True)                # newest first
+        pick = next((f for f in reversed(filings) if (f[3] or f[2]) >= day), None) \
+            or next((f for f in filings if f[2] <= day), None)
+        if pick:
+            got = _parse_first(exhibit_candidates(cik, *pick), cik)
+            out += [(s["name"], s.get("jurisdiction")) for s in (got[0] if got else [])]
     except Exception as exc:  # noqa: BLE001
         log.info("legal identity: Exhibit 21 of CIK %s at %s unreadable: %s", cik, day, exc)
     return out

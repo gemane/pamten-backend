@@ -1147,7 +1147,9 @@ _EXTRA_PLACES = {"nevis": "KN", "cayman": "KY", "prc": "CN",
                  "cayman island": "KY", "curacao": "CW", "holland": "NL",
                  # BAT; "Congo" alone is the Republic of the Congo
                  "congo, democratic republic of": "CD", "congo, democratic republic of the": "CD",
-                 "democratic republic of the congo": "CD", "democratic republic of congo": "CD"}
+                 "democratic republic of the congo": "CD", "democratic republic of congo": "CD",
+                 # official names on 20-F covers (Televisa, Embraer)
+                 "united mexican states": "MX", "federative republic of brazil": "BR"}
 # "Saudi Arabia, Kingdom of" — inverted official names
 _INVERTED_TAIL = re.compile(r",\s*(kingdom|republic|state|grand duchy)\s+of$", re.I)
 

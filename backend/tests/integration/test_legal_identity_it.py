@@ -14,22 +14,25 @@ pytestmark = pytest.mark.integration
 NYT_LEI, INC_LEI, LLC_LEI, TENCENT_LEI = ("529900J1WEMMIW7BOH57", "25490005ZWM1IF9UXU57",
                                          "254900BIRZMWFO44TO04", "254900N4SLUMW4XUYY11")
 NV_LEI, NV_CIK = "549300WSWTEW6DURBO45", "0000741508"
+ABI_LEI, ABI_CIK = "5493008H3828EMEXB082", "0001668717"
 FILERS = {"0000071691": Filer("0000071691", "NEW YORK TIMES CO", home="US-NY",
                               street="620 EIGHTH AVENUE", city="NEW YORK"),
           "0001286681": Filer("0001286681", "DOMINOS PIZZA INC", home="US-DE"),
           "0001293451": Filer("0001293451", "Tencent Holdings Ltd", home="KY"),
           NV_CIK: Filer(NV_CIK, "NV ENERGY, INC.", home="US-NV", street="6226 WEST SAHARA AVENUE", city="LAS VEGAS"),
-          "0001385849": Filer("0001385849", "ENERGY FUELS INC", home="US-DE")}
+          "0001385849": Filer("0001385849", "ENERGY FUELS INC", home="US-DE"),
+          ABI_CIK: Filer(ABI_CIK, "Anheuser-Busch InBev SA/NV", home="BE")}
 ADDRESSES = {"0000071691": ("620 EIGHTH AVENUE", "NEW YORK", None),
              NV_CIK: ("6226 WEST SAHARA AVENUE", "LAS VEGAS", "today's address: no filing within a year")}
 
 
 def _record(lei, name, jurisdiction, street, city, status="ISSUED", level="FULLY_CORROBORATED",
-            updated="2026-04-07T00:00:00Z", other=()):
+            updated="2026-04-07T00:00:00Z", other=(), form=None):
     addr = {"addressLines": [street], "city": city, "country": jurisdiction[:2], "postalCode": "1"}
     return golden_copy_record({
         "lei": lei,
         "entity": {"legalName": {"name": name}, "jurisdiction": jurisdiction, "status": "ACTIVE",
+                   "legalForm": {"id": form},
                    "legalAddress": addr, "headquartersAddress": addr,
                    "otherNames": [{"name": n, "type": "TRANSLITERATED"} for n in other]},
         "registration": {"status": status, "corroborationLevel": level, "lastUpdateDate": updated,
@@ -45,6 +48,7 @@ RECORDS = {
                          other=["Tencent Holdings Limited"]),
     NV_LEI: _record(NV_LEI, "NV ENERGY, INC.", "US-NV", "6226 West Sahara Avenue", "Las Vegas", status="LAPSED",
                     updated="2023-09-27T00:00:00Z"),
+    ABI_LEI: _record(ABI_LEI, "ANHEUSER-BUSCH INBEV", "BE", "Grand-Place 1", "Brussels", form="R85P"),
 }
 LLC_PARENT = [{"lei": INC_LEI, "names": ["Domino's Pizza, Inc."], "place": "US-DE", "status": "ACTIVE",
                "periods": [{"type": "RELATIONSHIP_PERIOD", "startDate": "1999-10-27T00:00:00Z"}]}]
@@ -69,10 +73,10 @@ def _gleif(lei):
     return write_from_gleif(lei)
 
 
-def _sec(name, cik):
+def _sec(name, cik, country="US"):
     from app.scraper.graph_writer import _upsert_entity_by_name
     return _upsert_entity_by_name(name=name, entity_type="company", cik=cik, source_id="sec",
-                                  register_name=True, country="US")
+                                  register_name=True, country=country)
 
 
 def _nodes(it_db, where, params):
@@ -183,3 +187,18 @@ def test_nv_energy_and_energy_fuels_stay_two_companies(it_db):
     [key] = [r["name_normalized"] for r in it_db.run_sql("SELECT name_normalized FROM Entity WHERE id = :i",
                                                          {"i": f"lei:{NV_LEI}"})]
     assert key == "nv energy"
+
+
+@pytest.mark.parametrize("sec_first", [True, False])
+def test_ab_inbev_joins_on_the_form_its_gleif_code_names(it_db, sec_first):
+    """Findings item 19: GLEIF's "ANHEUSER-BUSCH INBEV" (ELF R85P: NV, SA, AG)
+    is EDGAR's "Anheuser-Busch InBev SA/NV"; the code is read off the stored
+    node as well as off the record."""
+    if sec_first:
+        _sec("Anheuser-Busch InBev SA/NV", ABI_CIK, country="BE")
+    _gleif(ABI_LEI)
+    if not sec_first:
+        _sec("Anheuser-Busch InBev SA/NV", ABI_CIK, country="BE")
+    [row] = _nodes(it_db, "lei_id = :l OR sec_cik = :c", {"l": ABI_LEI, "c": ABI_CIK})
+    assert row["lei_id"] == ABI_LEI and row["sec_cik"] == ABI_CIK
+    assert row["lei_source"] == "name(form R85P)+place"

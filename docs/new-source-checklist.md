@@ -810,6 +810,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       re-scrape does not correct the stored value. Run a mapping over every distinct
       value the source produces (`jurisdiction_country` over all places of a sweep)
       and look at what lands where.
+- [ ] **Prefer what a filing states over a register's metadata about it.** EDGAR's
+      `stateOfIncorporation` is the filer's own database entry, checked against nothing:
+      New York for HubSpot, Hong Kong for Alibaba, whose 10-K and 20-F covers say Delaware
+      and the Cayman Islands (2026-10-30). Read the document's own tagged statement
+      (`dei:EntityIncorporationStateCountryCode`) first, the metadata only when it is silent.
+- [ ] **A rule "as of a day" must work for today.** The Exhibit 21 "of the fiscal year
+      containing D" exists for no D that is today, so the subsidiary evidence of
+      `legal_identity` never fired for a maintained GLEIF record (findings item 19). Test a
+      dated lookup with D = today as well as with a past D.
 - [ ] **A legal form goes only at the end of a name.** Every name key stripped a form word
       wherever it stood: "NV ENERGY, INC." (Nevada) keyed "energy" and the SEC search
       scraped ENERGY FUELS INC for it; "Innovex Co-Invest" lost its "co" (2026-10-30). A

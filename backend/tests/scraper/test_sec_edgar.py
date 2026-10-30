@@ -2818,6 +2818,153 @@ class TestIncorporationPlace:
         from app.scraper.sec_edgar import incorporation_place
         assert incorporation_place(subs) == expected
 
+
+class TestStatedIncorporation:
+    """The newest annual report's cover says where the filer is incorporated;
+    EDGAR's header field only when it does not (findings item 19, 2026-10-30)."""
+
+    @staticmethod
+    def _subs(forms=("10-K",), **header):
+        return {"cik": "1404655", **header,
+                "filings": {"recent": {"form": list(forms),
+                                       "accessionNumber": [f"0001193125-26-04664{i}" for i in range(len(forms))],
+                                       "primaryDocument": [f"doc{i}.htm" for i in range(len(forms))]}}}
+
+    @staticmethod
+    def _tag(value, fmt=None):
+        attr = f' format="{fmt}"' if fmt else ""
+        return (f'<html><ix:nonNumeric contextRef="c-1" name="dei:EntityIncorporationStateCountryCode"{attr}>'
+                f'<span style="font-weight:bold">{value}</span></ix:nonNumeric></html>')
+
+    @pytest.mark.parametrize("value, fmt, expected", [
+        ("Delaware", "ixt-sec:stateprovnameen", "US-DE"),          # HubSpot, whose header says NY
+        ("Cayman Islands", "ixt-sec:edgarprovcountryen", "KY"),    # Alibaba, whose header says Hong Kong
+        ("United Mexican States", "ixt-sec:edgarprovcountryen", "MX"),
+        ("Brazil", "ixt-sec:edgarprovcountryen", "BR"),
+        ("DE", None, "US-DE"),                                     # EDGAR's own code, untransformed
+        ("E9", None, None),
+    ])
+    def test_the_cover_tag(self, value, fmt, expected):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text", return_value=self._tag(value, fmt)):
+            assert sec_edgar.stated_incorporation(self._subs()) == expected
+
+    def test_the_newest_annual_report_is_read(self):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text", return_value=self._tag("Delaware", "ixt-sec:stateprovnameen")) as get:
+            sec_edgar.stated_incorporation(self._subs(forms=("8-K", "10-Q", "20-F", "10-K")))
+        get.assert_called_once_with("https://www.sec.gov/Archives/edgar/data/1404655/000119312526046642/doc2.htm")
+
+    def test_only_the_newest_report_counts(self):
+        # an older report's place may be the one the filer has since left
+        from app.scraper import sec_edgar
+        pages = iter(["<html>untagged</html>", self._tag("New York", "ixt-sec:stateprovnameen")])
+        with patch.object(sec_edgar, "_get_text", side_effect=lambda url: next(pages)):
+            assert sec_edgar.stated_incorporation(self._subs(forms=("10-K", "10-K"))) is None
+
+    @pytest.mark.parametrize("subs", [
+        {"cik": "1404655"},                                        # no filings listed
+        {"filings": {"recent": {"form": ["10-K"], "accessionNumber": ["x"], "primaryDocument": ["d.htm"]}}},
+    ])
+    def test_nothing_to_read(self, subs):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text") as get:
+            assert sec_edgar.stated_incorporation(subs) is None
+        get.assert_not_called()
+
+    def test_the_header_answers_when_the_report_does_not(self):
+        from app.scraper import sec_edgar
+        subs = self._subs(stateOfIncorporation="NY", stateOfIncorporationDescription="NY")
+        with patch.object(sec_edgar, "_get_text", return_value="<html>untagged</html>"):
+            assert sec_edgar.incorporation_place(subs) == "US-NY"
+        with patch.object(sec_edgar, "_get_text", side_effect=RuntimeError("down")):
+            assert sec_edgar.incorporation_place(subs) == "US-NY"
+
+    def test_the_report_beats_the_header(self):
+        from app.scraper import sec_edgar
+        subs = self._subs(stateOfIncorporation="NY", stateOfIncorporationDescription="NY")
+        with patch.object(sec_edgar, "_get_text", return_value=self._tag("Delaware", "ixt-sec:stateprovnameen")):
+            assert sec_edgar.incorporation_place(subs) == "US-DE"
+
+
+class TestReportCover:
+    """Country and headquarters from the newest annual report's cover, the
+    company record only when it states none (2026-10-30)."""
+    SUBS = {"cik": "1577552", "stateOfIncorporation": "K3", "stateOfIncorporationDescription": "Hong Kong",
+            "addresses": {"business": {"street1": "26/F TOWER ONE TIMES SQUARE", "city": "CAUSEWAY BAY",
+                                       "stateOrCountry": "K3", "stateOrCountryDescription": "Hong Kong",
+                                       "zipCode": "00000"}},
+            "filings": {"recent": {"form": ["6-K", "20-F"], "accessionNumber": ["x-1", "0001193125-26-231755"],
+                                   "primaryDocument": ["a.htm", "baba-20260331.htm"]}}}
+
+    @staticmethod
+    def _cover(*facts, context="c-1"):
+        tags = "".join(f'<ix:nonNumeric name="dei:{n}" contextRef="{c}">{v}</ix:nonNumeric>'
+                       for n, v, c in [(*f, context) if len(f) == 2 else f for f in facts])
+        return f"<html>{tags}</html>"
+
+    ALIBABA = staticmethod(lambda: TestReportCover._cover(
+        ("EntityRegistrantName", "Alibaba Group Holding Limited"), ("EntityIncorporationStateCountryCode", "Cayman Islands"),
+        ("EntityAddressAddressLine1", "26/F Tower One"), ("EntityAddressAddressLine2", "Times Square"),
+        ("EntityAddressAddressLine3", "1 Matheson Street"), ("EntityAddressCityOrTown", "Causeway Bay"),
+        ("EntityAddressPostalZipCode", "00000"), ("EntityAddressCountry", "Hong Kong")))
+
+    def test_country_and_office_from_the_report(self):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text", return_value=self.ALIBABA()) as get:
+            assert sec_edgar.sec_country(self.SUBS) == "KY"                  # the record says Hong Kong
+            hq = sec_edgar.sec_headquarters(self.SUBS)
+        assert hq == {"address": "26/F Tower One Times Square 1 Matheson Street, Causeway Bay, HK",
+                      "city": "Causeway Bay", "country": "HK", "street": "26/F Tower One Times Square 1 Matheson Street",
+                      "postcode": None, "state": None}                      # "00000" is no postcode
+        get.assert_called_once()                                              # one report, read once
+
+    def test_a_us_office_carries_its_state(self):
+        from app.scraper import sec_edgar
+        page = self._cover(("EntityRegistrantName", "HubSpot, Inc."), ("EntityAddressAddressLine1", "Two Canal Park"),
+                           ("EntityAddressCityOrTown", "Cambridge"), ("EntityAddressStateOrProvince", "Massachusetts"),
+                           ("EntityAddressPostalZipCode", "02141"))
+        with patch.object(sec_edgar, "_get_text", return_value=page):
+            hq = sec_edgar.stated_headquarters({**self.SUBS, "cik": "1404655"})
+        assert (hq["city"], hq["state"], hq["country"], hq["postcode"]) == ("Cambridge", "MA", "US", "02141")
+
+    def test_the_registrants_own_context_not_the_business_contact(self):
+        # AB InBev's 20-F tags a second address under an axis
+        from app.scraper import sec_edgar
+        page = self._cover(("EntityAddressCityOrTown", "Elsewhere", "contact"),
+                           ("EntityRegistrantName", "Anheuser-Busch InBev SA/NV", "own"),
+                           ("EntityAddressAddressLine1", "Brouwerijplein 1", "own"),
+                           ("EntityAddressCityOrTown", "Leuven", "own"), ("EntityAddressCountry", "Belgium", "own"))
+        with patch.object(sec_edgar, "_get_text", return_value=page):
+            assert sec_edgar.stated_headquarters(self.SUBS)["city"] == "Leuven"
+
+    def test_a_po_box_is_no_office(self):
+        from app.scraper import sec_edgar
+        page = self._cover(("EntityRegistrantName", "Inter & Co, Inc."),
+                           ("EntityAddressAddressLine1", "PO Box 309, Ugland House"),
+                           ("EntityAddressCityOrTown", "Grand Cayman"), ("EntityAddressCountry", "Cayman Islands"))
+        subs = {**self.SUBS, "addresses": {"business": {"street1": "AV BARBACENA 1219", "city": "BELO HORIZONTE",
+                                                        "stateOrCountry": "D5", "stateOrCountryDescription": "Brazil"}}}
+        with patch.object(sec_edgar, "_get_text", return_value=page):
+            assert sec_edgar.sec_headquarters(subs)["city"] == "BELO HORIZONTE"
+
+    def test_no_report_keeps_the_record(self):
+        from app.scraper import sec_edgar
+        subs = {k: v for k, v in self.SUBS.items() if k != "filings"}
+        with patch.object(sec_edgar, "_get_text") as get:
+            assert sec_edgar.sec_country(subs) == "HK"
+            assert sec_edgar.sec_headquarters(subs)["city"] == "CAUSEWAY BAY"
+        get.assert_not_called()
+
+    def test_an_unreadable_report_keeps_the_record_and_is_asked_again(self):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text", side_effect=RuntimeError("down")):
+            assert sec_edgar.sec_country(self.SUBS) == "HK"
+        with patch.object(sec_edgar, "_get_text", return_value=self.ALIBABA()):
+            assert sec_edgar.sec_country(self.SUBS) == "KY"                  # the failure was not kept
+
+
+class TestFilerIdentity:
     def test_filer_identity_from_one_request(self):
         from app.scraper.sec_edgar import fetch_filer_identity
         with patch("app.scraper.sec_edgar._submissions",

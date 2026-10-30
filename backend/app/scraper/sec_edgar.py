@@ -43,6 +43,7 @@ How to verify:
      the XML at <Archives URL>/<accession>/<primary-doc>.xml.
 """
 
+import functools
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -239,10 +240,14 @@ def sec_country(submissions: dict) -> str | None:
     — DEUTSCHE BANK AKTIENGESELLSCHAFT lists New York — so trusting the address
     would move German banks to the United States. Wrong data is worse than the
     blank it replaces, so a filer with only a US address and no stated
-    incorporation returns None rather than a guess.
+    incorporation returns None rather than a guess. The incorporation the
+    newest annual report states comes first (`report_cover`): EDGAR's company
+    record put Alibaba in Hong Kong, its 20-F in the Cayman Islands.
     """
     from app.scraper.maintenance import nationality_to_iso2
 
+    if stated := stated_incorporation(submissions):              # the report first
+        return stated.split("-")[0]
     inc_code = (submissions.get("stateOfIncorporation") or "").strip().upper()
     inc_name = (submissions.get("stateOfIncorporationDescription") or "").strip()
     if inc_code in _US_STATES:
@@ -268,6 +273,10 @@ def sec_headquarters(submissions: dict) -> dict | None:
     throwing it away — 40 of 43 SEC companies in the graph had no headquarters at
     all while EDGAR held their street address.
 
+    The principal executive office the newest annual report states comes
+    first (`stated_headquarters`); the company record's business address only
+    when the report states none.
+
     Returns ``{"address", "city", "country"}`` — country from the same two-letter
     field `sec_country` reads, where a US state code means the United States and
     anything else is one of SEC's own foreign codes. None when there is no
@@ -275,6 +284,8 @@ def sec_headquarters(submissions: dict) -> dict | None:
     """
     from app.scraper.maintenance import nationality_to_iso2
 
+    if stated := stated_headquarters(submissions):              # the report first
+        return stated
     business = (submissions.get("addresses") or {}).get("business") or {}
     street = " ".join(p for p in (
         (business.get("street1") or "").strip(),
@@ -3015,13 +3026,112 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
     }
 
 
+#: A cover-page fact of the newest annual report, tagged in every inline-XBRL
+#: 10-K/20-F (since 2019): its name, its context, its text.
+_COVER_TAG = re.compile(
+    r'<ix:nonNumeric\b(?=[^>]*\bname="dei:(\w+)")(?=[^>]*\bcontextRef="([^"]+)")[^>]*>(.*?)</ix:nonNumeric>',
+    re.S | re.I)
+_COVER_FACTS = frozenset({"EntityRegistrantName", "EntityIncorporationStateCountryCode",
+                          "EntityAddressAddressLine1", "EntityAddressAddressLine2", "EntityAddressAddressLine3",
+                          "EntityAddressCityOrTown", "EntityAddressStateOrProvince",
+                          "EntityAddressPostalZipCode", "EntityAddressCountry"})
+_STATED_FORMS = ("10-K", "20-F", "40-F")
+
+
+@functools.lru_cache(maxsize=256)
+def _cover_of(url: str) -> dict[str, str]:
+    """The cover facts of one annual report, in the registrant's own context
+    (the one its name is tagged in): a 20-F tags a second address, the
+    business contact's, under an axis (AB InBev). Raises when unreadable, so
+    a failure is not remembered. A filing never changes: kept per URL."""
+    facts: dict[str, dict[str, str]] = {}
+    for name, context, text in _COVER_TAG.findall(_get_text(url) or ""):
+        if name in _COVER_FACTS:
+            value = html_lib.unescape(re.sub(r"<[^>]+>", "", text)).replace("\xa0", " ")
+            facts.setdefault(context, {}).setdefault(name, " ".join(value.split()).strip(" ,;"))
+    own = next((c for c, f in facts.items() if "EntityRegistrantName" in f), None)
+    return facts.get(own) or next(iter(facts.values()), {})
+
+
+def report_cover(submissions: dict) -> dict[str, str]:
+    """What the cover of the filer's newest annual report states about it —
+    `{fact: text}`, {} when there is no such report or it tags nothing.
+
+    The report is the filer's own signed statement, renewed every year. EDGAR's
+    company record (`stateOfIncorporation`, `addresses`) is the filer's entry
+    in EDGAR's database, checked against nothing: it says New York for
+    HubSpot, whose 10-K says Delaware, and Hong Kong — its office — for
+    Alibaba, whose 20-F says the Cayman Islands; it is empty for MercadoLibre,
+    Embraer and Televisa (findings item 19, 2026-10-30). So the report comes
+    first wherever EDGAR states a place, the record only when it is silent."""
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    cik = str(submissions.get("cik") or "").strip()
+    if not cik.isdigit():
+        return {}
+    for form, accession, doc in zip(recent.get("form") or [], recent.get("accessionNumber") or [],
+                                    recent.get("primaryDocument") or []):
+        if form not in _STATED_FORMS or not doc:
+            continue
+        url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{doc}"
+        try:
+            return _cover_of(url)
+        except Exception as exc:  # noqa: BLE001 - the company record still answers
+            log.info("SEC EDGAR: annual report %s unreadable: %s", url, exc)
+            return {}
+    return {}
+
+
+def _place_code(text: str | None) -> str | None:
+    """A place as a jurisdiction code: a name ("Delaware", "Cayman Islands")
+    or, untransformed, EDGAR's code — a US state's maps, a foreign one ("E9")
+    does not."""
+    from app.scraper.sec_ex21 import jurisdiction_country, jurisdiction_subdivision
+    return (jurisdiction_subdivision(text) or jurisdiction_country(text)) if text else None
+
+
+def stated_incorporation(submissions: dict) -> str | None:
+    """Where the newest annual report says the filer is incorporated, as a
+    jurisdiction code; None when it does not say (`report_cover`)."""
+    return _place_code(report_cover(submissions).get("EntityIncorporationStateCountryCode"))
+
+
+#: a mailbox is no office: Inter & Co's 20-F tags its Cayman registered agent's
+#: "PO Box 309, Ugland House", where EDGAR's record has Belo Horizonte
+_PO_BOX = re.compile(r"\bP\.?\s*O\.?\s*Box\b", re.I)
+
+
+def stated_headquarters(submissions: dict) -> dict | None:
+    """The principal executive office the newest annual report states, in
+    `sec_headquarters`' shape; None when it states none, or only a P.O. box."""
+    cover = report_cover(submissions)
+    street = " ".join(cover[k] for k in ("EntityAddressAddressLine1", "EntityAddressAddressLine2",
+                                          "EntityAddressAddressLine3") if cover.get(k)).strip()
+    city = cover.get("EntityAddressCityOrTown") or ""
+    if not (street or city) or _PO_BOX.search(street):
+        return None
+    region = _place_code(cover.get("EntityAddressStateOrProvince"))
+    country = _place_code(cover.get("EntityAddressCountry")) or (region or "").split("-")[0] or None
+    if country and "-" in country:
+        country = country.split("-")[0]
+    state = region.split("-")[1] if region and region.startswith("US-") else None
+    # "00000": Alibaba's placeholder for a city without postcodes
+    postcode = (cover.get("EntityAddressPostalZipCode") or "").strip()
+    postcode = "" if not postcode.strip("0") else postcode
+    parts = [p for p in (street, city, state or "", postcode, country or "") if p]
+    return {"address": ", ".join(parts), "city": city or None, "country": country,
+            "street": street or None, "postcode": postcode or None, "state": state}
+
+
 def incorporation_place(submissions: dict) -> str | None:
     """Where the filer is incorporated, as a jurisdiction code: "US-NY" for a
     US state, the ISO-2 country otherwise ("KY" for Cayman), None when EDGAR
     does not say. Incorporation only — never the business address (see
-    `sec_country`)."""
+    `sec_country`). The newest annual report's own statement first
+    (`stated_incorporation`), EDGAR's header field when it has none."""
     from app.scraper.maintenance import nationality_to_iso2
 
+    if stated := stated_incorporation(submissions):
+        return stated
     inc_code = (submissions.get("stateOfIncorporation") or "").strip().upper()
     if inc_code in _US_STATES:
         return "US" if inc_code == "PR" else f"US-{inc_code}"
