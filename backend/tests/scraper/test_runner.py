@@ -1364,12 +1364,46 @@ class TestIdentifierBridge:
             {"name": "BAILLIE GIFFORD & CO", "cred": 98, "aliases": None, "descr": None},
             {"lei": None, "wid": "Q1", "cik": "0001088859"}])
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.register_pointer.attach_stated_lei") as attach:
+             patch("app.scraper.register_pointer.attach_stated_lei", return_value=None) as attach:
             eid = _upsert_entity("Baillie Gifford", None, None, None, "Q1",
                                  lei="549300UYMK70HLNJU654", sec_cik="0001088859")
         assert eid == "sec:0001088859"
         held, node_id, leis = attach.call_args.args
         assert node_id == "sec:0001088859" and leis == ["549300UYMK70HLNJU654"] and held["sec_cik"] == "0001088859"
+
+    def test_the_writes_follow_a_filer_the_stated_lei_re_keyed(self):
+        # findings item 22: the GLEIF join renamed sec:0000070858 to lei:9DJT…,
+        # and the item id and the board seats went to the old id — nowhere
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "sec:0000070858"},
+            {"lei_id": None, "sec_cik": "0000070858", "name": "BANK OF AMERICA CORP /DE/"},
+            {"new_id": "lei:9DJT3UXIJIZJI4WXO774"}, None,          # the forwarding row
+            {"name": "BANK OF AMERICA CORP /DE/", "cred": 98, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.attach_stated_lei",
+                   return_value="lei:9DJT3UXIJIZJI4WXO774"):
+            eid = _upsert_entity("Bank of America", None, None, None, "Q487907",
+                                 lei="9DJT3UXIJIZJI4WXO774", sec_cik="70858")
+        assert eid == "lei:9DJT3UXIJIZJI4WXO774"
+        update = [c for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0]]
+        assert len(update) == 1 and update[0].kwargs["id"] == "lei:9DJT3UXIJIZJI4WXO774"
+
+    def test_a_record_gleif_wrote_on_its_own_leaves_the_filer_in_place(self):
+        # the registers disagree: GLEIF's node is written apart, no forwarding row
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "sec:0001088859"},
+            {"lei_id": None, "sec_cik": "0001088859", "name": "BAILLIE GIFFORD & CO"},
+            None,                                                   # no forwarding row
+            {"name": "BAILLIE GIFFORD & CO", "cred": 98, "aliases": None, "descr": None},
+            {"lei": None, "wid": "Q1", "cik": "0001088859"}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.attach_stated_lei",
+                   return_value="lei:549300UYMK70HLNJU654"):
+            eid = _upsert_entity("Baillie Gifford", None, None, None, "Q1",
+                                 lei="549300UYMK70HLNJU654", sec_cik="0001088859")
+        assert eid == "sec:0001088859"
+        update = [c for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0]]
+        assert update[0].kwargs["id"] == "sec:0001088859"
 
     def test_a_gleif_node_found_by_its_lei_lets_edgar_decide_on_the_stated_cik(self):
         # findings item 5: NV Energy's item states CIK 0000741508, its GLEIF node had none

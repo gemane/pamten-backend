@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from app.config import settings
 from app.database import db
 from app.entity_resolution import resolve_entity_id
+from app.merged_ids import resolve_current_id
 from app import industry
 from app.claims import record_claim, KIND_ROLE
 from app.stake_history import one_statement_per_run
@@ -300,9 +301,15 @@ def _upsert_entity(
                             name, wikidata_id, entity_id, why)
                 return None
             # an LEI the item states and the graph lacks: GLEIF decides
-            # whether it is this filer's (register_pointer.attach_stated_lei)
+            # whether it is this filer's (register_pointer.attach_stated_lei).
+            # A join re-keys the filer `sec:` → `lei:` (app.node_ids), and the
+            # writes below must follow it: on the old id they matched nothing,
+            # and the 2026-10-31 rebuild left 17 companies without their item
+            # id and their Wikidata board seats (findings item 22). A record
+            # GLEIF writes on its own leaves the filer where it was.
             if leis and not held.get("lei_id") and held.get("sec_cik"):
-                register_pointer.attach_stated_lei(held, entity_id, leis)
+                if register_pointer.attach_stated_lei(held, entity_id, leis) not in (None, entity_id):
+                    entity_id = resolve_current_id(session, entity_id) or entity_id
             # and a CIK the item states on a GLEIF node that lacks one: EDGAR
             # decides the same way (register_pointer.attach_stated_cik)
             if ciks and not held.get("sec_cik") and held.get("lei_id"):
