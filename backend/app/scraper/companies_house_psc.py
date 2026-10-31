@@ -72,6 +72,21 @@ _SKIP_KINDS = (
 #: overseas-entity share records in a 3M-record probe used it, and read as no
 #: stake at all until 2026-10-18).
 _BAND = re.compile(r"(?:(\d+)-to-\d+|more-than-(\d+))-percent")
+
+#: A US Employer Identification Number, as filers write it: never a register's
+#: number. 1,319 active US corporate PSCs give one (Berkshire Hathaway's
+#: 47-0813844 beside "US Securities And Exchange Commission Register", Coca-
+#: Cola's 58-0628465 beside "Delaware"), and ~1,100 became a register_id —
+#: an EDGAR or Delaware number no register issued, which kept each such parent
+#: apart from its GLEIF node (findings item 25, 2026-10-31). Only the hyphenated
+#: shape: a plain nine digits may be a state's own file number.
+_US_EIN = re.compile(r"^\d{2}-\d{7}$")
+
+#: Address lines that are not a town: what the last line may not look like
+#: before it is taken for the city a filer moved out of `locality`.
+_NOT_A_TOWN = re.compile(r"\d|\b(floor|suite|unit|room|building|tower|p\.?\s*o\.?\s*box)\b", re.IGNORECASE)
+#: US states that are also the name of a city — a locality saying so is the city.
+_STATE_AND_CITY = frozenset({"new york", "washington"})
 #: The natures that state an ECONOMIC interest: shares of a company, or an LLP
 #: member's share of the surplus assets — the LLP's equivalent, 16,802 records
 #: in the same probe, ignored before.
@@ -341,9 +356,27 @@ def _psc_address(addr: dict | None) -> dict:
 
     lines = [p for p in (_v("premises"), _v("address_line_1"), _v("address_line_2")) if p]
     joined = lines + [p for p in (_v("locality"), _v("region"), _v("postal_code"), _v("country")) if p]
-    return addresses.parts(addresses.REGISTERED, street=", ".join(lines) or None, city=_v("locality"),
+    street, city = lines, _v("locality")
+    if _locality_is_the_state(addr, lines, city):
+        # Berkshire Hathaway's: premises "3555 Farnam Street", line 1 "Omaha",
+        # locality "Nebraska" — the town moved up a line, the state into its place
+        street, city = lines[:-1], lines[-1]
+    return addresses.parts(addresses.REGISTERED, street=", ".join(street) or None, city=city,
                            postcode=_v("postal_code"), full=", ".join(joined) or None,
                            empty=("full", "key", "street", "city", "postcode"))
+
+
+def _locality_is_the_state(addr: dict, lines: list[str], locality: str | None) -> bool:
+    """A US address whose `locality` is a state's name and whose last address
+    line, after the premises, is a town: the filer put the town one field up."""
+    if not locality or len(lines) < 2 or (addr.get("region") or "").strip():
+        return False
+    if _iso2_country(addr.get("country")) != "US" or locality.strip().lower() in _STATE_AND_CITY:
+        return False
+    from app.scraper.sec_ex21 import jurisdiction_subdivision
+    state = jurisdiction_subdivision(locality)
+    return bool(state and state.startswith("US-") and not re.fullmatch(r"[A-Z]{2}", locality.strip())
+                and not _NOT_A_TOWN.search(lines[-1]))
 
 
 @dataclass(frozen=True)
@@ -520,7 +553,7 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
         # companies_house_id already covers the merge); DE's 177 per-court
         # registers sharing HRB numbering yield None for the same reason.
         register_id = None
-        if reg_number:
+        if reg_number and not (_psc_country(ident) == "US" and _US_EIN.match(reg_number)):
             iso2 = _psc_country(ident)
             code, _rule = resolve_register_code(iso2, ident, reg_number)
             if code:

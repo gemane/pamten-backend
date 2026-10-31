@@ -28,6 +28,24 @@ class TestPscAddress:
         assert out["reg_postcode"] == "GL51 0TJ"
         assert not any(k.startswith("hq_") for k in out), "a registered office is not a headquarters"
 
+    def test_a_town_filed_above_its_state_is_the_town(self):
+        # Berkshire Hathaway's: the state in `locality`, the town one line up
+        out = _psc_address({"premises": "3555 Farnam Street", "address_line_1": "Omaha",
+                            "locality": "Nebraska", "postal_code": "68131", "country": "United States"})
+        assert (out["reg_street"], out["reg_city"]) == ("3555 Farnam Street", "Omaha")
+        assert out["address"] == "3555 Farnam Street, Omaha, Nebraska, 68131, United States"   # as filed
+
+    def test_a_state_locality_without_a_town_line_stays(self):
+        for addr in ({"premises": "1 Main St", "address_line_1": "Suite 200", "locality": "Nebraska",
+                      "country": "United States"},                                  # a suite is no town
+                     {"premises": "1 Main St", "address_line_1": "Manhattan", "locality": "New York",
+                      "country": "United States"},                                  # New York is a city too
+                     {"premises": "1 Main St", "address_line_1": "Omaha", "locality": "Nebraska",
+                      "region": "NE", "country": "United States"},                   # the state has its field
+                     {"premises": "1 Rue X", "address_line_1": "Lyon", "locality": "Georgia",
+                      "country": "France"}):                                        # not a US address
+            assert _psc_address(addr)["reg_city"] == addr["locality"], addr
+
     def test_empty_address(self):
         assert _psc_address(None) == {"address": None, "address_normalized": None, "reg_street": None,
                                       "reg_city": None, "reg_postcode": None}
@@ -673,6 +691,17 @@ class TestCorporateRegistration:
         assert mapped.owner_props["register_id"] == "RA000304:HRB12345"
         bare = self._corp("Germany", "HRB 12345")
         assert bare.owner_props["register_id"] is None, "a bare country stays unkeyed"
+
+    def test_a_us_tax_number_is_no_register_id(self):
+        # Berkshire Hathaway's real record: an EIN beside the SEC's name, and
+        # Coca-Cola's beside "Delaware" — numbers no register issued (item 25)
+        brk = self._corp("Usa", "47-0813844", place="Us Securities And Exchange Commission Register")
+        assert brk.owner_props["register_id"] is None
+        assert brk.owner_props["registration_number"] == "47-0813844"      # kept as filed
+        assert self._corp("United States", "58-0628465", place="Delaware").owner_props["register_id"] is None
+        # a state's own file number still keys, and a hyphenated number abroad is untouched
+        assert self._corp("United States", "2908471", place="Delaware").owner_props["register_id"] == "RA000602:2908471"
+        assert self._corp("Panama", "12-3456789").owner_props["register_id"] is not None
 
     def test_a_sole_register_country_yields_a_register_id(self):
         from app.scraper.gleif_reference import sole_register_for_country

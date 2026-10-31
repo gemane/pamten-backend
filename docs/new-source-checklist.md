@@ -473,6 +473,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       one spelling, so keys agree wherever they are minted. And read *every* field the
       source might put the register in: real filings had it in `legal_authority` with
       `place_registered: "N/A"`.
+      A number in the register's field is not always the register's: US filers give
+      their EIN (`NN-NNNNNNN`) beside the register they name — 933 corporate PSCs
+      (findings item 25). Check the number's shape against the register before keying.
 - [ ] **Registers move; don't fight history.** A current-key mismatch is not evidence of a
       different company — Tesla's Delaware pair lives in `former_register_ids` now, the
       dedup matches held-vs-holds, and a refresh that sees a registration change must
