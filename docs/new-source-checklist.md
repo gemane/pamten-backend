@@ -406,6 +406,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       fetches by that id; the name search is the fallback. The SEC scrape searched by name
       only and missed SpaceX (a trade name) and Nestlé (no 10-K/20-F) although both nodes held
       the right CIK (2026-10-27); Exhibit 21, acquisitions and 13F already read by the number.
+      A knowledge base too: the Wikidata scrape searched labels with EDGAR's spelling
+      ("Trade Desk, Inc.", "Wells Fargo & Company/Mn") and answered `no_results` for 14
+      companies whose item states the node's CIK; it now reads the node's QID, then the
+      item stating its CIK, then its LEI (findings item 7, 2026-10-31). An id-found record
+      still passes the kind check — GitLab's CIK sits on the software item.
 - [ ] **A name in a filing is the name its filer had then.** A writer that joins an id to
       a node by name must check the id's register name **now**: BlackRock's pre-2024 13G
       filings name "BlackRock Inc." under the old parent's CIK, and the GLEIF node of the

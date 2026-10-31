@@ -146,6 +146,22 @@ def search_entity(query: str, limit: int = 5) -> list:
     return _api_json(r).get("search", [])
 
 
+def search_by_statement(prop: str, value: str, limit: int = 5) -> list:
+    """The items that state ``value`` for ``prop`` — a hard id, not a name:
+    ``haswbstatement:P5531=0000072971`` is Wells Fargo whatever EDGAR calls it
+    ("Wells Fargo & Company/Mn", which no label search finds). Returns
+    ``[{"id": qid}]``, the shape `pick_candidate` takes."""
+    r = _wd_get(WIKIDATA_API, {
+        "action":   "query",
+        "list":     "search",
+        "srsearch": f"haswbstatement:{prop}={value}",
+        "srlimit":  limit,
+        "format":   "json",
+    }, timeout=10)
+    return [{"id": h["title"]} for h in _api_json(r).get("query", {}).get("search", [])
+            if str(h.get("title", "")).startswith("Q")]
+
+
 # ── Searching inside one country ──────────────────────────────────────────────
 #
 # `search_entity` above asks Wikidata for the best "Alphabet" in the world, and

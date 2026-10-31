@@ -25,7 +25,7 @@ from app.merged_ids import resolve_current_id
 from app import industry
 from app.claims import record_claim, KIND_ROLE
 from app.stake_history import one_statement_per_run
-from app.scraper.wikidata import (search_entity, search_entity_in_country,
+from app.scraper.wikidata import (search_by_statement, search_entity, search_entity_in_country,
                                   fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix, normalize_cik
@@ -806,6 +806,50 @@ def _scrape_node(
 
 # ── Wikidata public entry point ───────────────────────────────────────────────
 
+#: The Wikidata properties of the hard ids a node can hold, in the order they
+#: are asked: SEC CIK, then LEI.
+_ITEM_BY_ID = (("sec_cik", "P5531"), ("lei_id", "P1278"))
+
+
+def _stored_wikidata_item(query: str, country: str | None = None) -> str | None:
+    """The Wikidata item for the node the database already holds for the
+    query, read by id before any name search: the node's own QID, else the
+    item stating its CIK (P5531), else its LEI (P1278). None means the name
+    search, as before.
+
+    A label search takes the name as written, and the names a scrape is asked
+    for are often EDGAR's: "Wells Fargo & Company/Mn", "ONEOK INC /NEW/",
+    "Trade Desk, Inc." found nothing, and 14 companies Wikidata files under
+    the very CIK the node holds came back no_results on every rebuild
+    (findings item 7, 2026-10-31). By id there is no namesake to pick wrong:
+    "Toast Inc" by name is two unrelated "Toast" items, by CIK Toast, Inc.
+
+    An id-found item must still look like a company (`pick_candidate`), and a
+    CIK or LEI must name exactly one: GitLab's CIK sits on the software item,
+    which stays refused."""
+    stored = _stored_entity(query, country)
+    if not stored:
+        return None
+    if stored.get("wikidata_id"):
+        return pick_candidate([{"id": stored["wikidata_id"]}], "company")
+    for field, prop in _ITEM_BY_ID:
+        value = stored.get(field)
+        if not value:
+            continue
+        try:
+            hits = search_by_statement(prop, value)
+            if not hits and prop == "P5531" and value.lstrip("0") != value:
+                hits = search_by_statement(prop, value.lstrip("0"))     # a few items drop the padding
+        except Exception as exc:  # noqa: BLE001 — the lookup only saves a search
+            log.warning("Wikidata: %s=%s lookup failed for %r: %s", prop, value, query, exc)
+            return None
+        if len(hits) == 1:
+            return pick_candidate(hits, "company")
+        if hits:
+            log.info("Wikidata: %d items state %s=%s; left to the name search", len(hits), prop, value)
+    return None
+
+
 @_with_autodedup
 def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
     """
@@ -836,18 +880,20 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
 
     depth = max(0, min(int(depth), 3))  # hard cap at 3 levels
 
-    results = (search_entity_in_country(query, country) if country
-               else search_entity(query, limit=3))
-    if not results:
-        return {"status": "no_results", "query": query, "total": 0, "scraped": [],
-                "requested_country": country}
+    qid = _stored_wikidata_item(query, country)
+    if qid is None:
+        results = (search_entity_in_country(query, country) if country
+                   else search_entity(query, limit=3))
+        if not results:
+            return {"status": "no_results", "query": query, "total": 0, "scraped": [],
+                    "requested_country": country}
 
-    # A name is not a kind. Searching "Steve Jobs" returns the 2015 film first,
-    # the book second and the man third — and taking the top hit wrote a Danny
-    # Boyle picture into the graph as a company, because `infer_entity_type`
-    # falls back to "company" for any P31 it does not recognise. Pick the hit
-    # that actually looks like a company, or say there is not one.
-    qid = pick_candidate(results, "company")
+        # A name is not a kind. Searching "Steve Jobs" returns the 2015 film first,
+        # the book second and the man third — and taking the top hit wrote a Danny
+        # Boyle picture into the graph as a company, because `infer_entity_type`
+        # falls back to "company" for any P31 it does not recognise. Pick the hit
+        # that actually looks like a company, or say there is not one.
+        qid = pick_candidate(results, "company")
     if qid is None:
         log.info("Wikidata: nothing company-shaped among the hits for %r", query)
         return {"status": "not_a_company", "query": query, "total": 0, "scraped": [],
