@@ -398,6 +398,25 @@ PSC mapper, OpenCorporates lookups) passes through it, so the keys agree
 wherever they are minted. Hong Kong's CR and Business Registration numbers
 share a shape but are *different* numbers and are deliberately not folded.
 
+**The PSC filer's spelling** (2026-10-31, findings item 25). Companies House PSC
+filers write a foreign owner's number their own way, and the snapshot title-cases
+it: `Hrb726800` for GLEIF's `HRB 726800`, `Fr572076396` and `RcsParis380129866`
+for a SIREN, `He109917` for Cyprus's Greek `ΗΕ109917`, `Fn50935F` for the
+Firmenbuch's `50935f`, `CvrNo.61056416`, `No931693670mva`, `Gbje109180`. Of the
+same-name PSC × GLEIF pairs on one register, 4,190 shared a key and about 2,800
+did not. `_NUMBER_STYLES` now gives one spelling to 19 registers plus the 176
+German local courts (`_german_court`: section and number, a town in front dropped,
+upper case). Each style rewrites only the shape it recognises (a SIRET gives its
+first nine digits, the SIREN; an ABN its last nine, the ACN; an unknown shape
+stays as written). Measured on the full snapshot and golden copy: **673 more
+pairs share a key** (4,862), and the 75 keys two LEIs newly share all fold
+GLEIF's own DUPLICATE/RETIRED/ANNULLED/MERGED registrations into a live one.
+Gibraltar is left out: zero-insensitive, it would merge two live companies
+(`00012`, `012`). Where GLEIF itself writes two spellings, the majority wins:
+Sweden `556556-2799` (97,819 records against 13,606 undashed). The rest of the
+gap is a different number, not a spelling: Italian REA against the fiscal code,
+Spanish NIF, the Japanese corporate number, US EINs, "N/A".
+
 **Duplicate OWNS edges** (`deduplicate_owns_edges`). `CREATE EDGE` is not
 idempotent, so a re-import doubles edges; every BODS/register import ends with a
 best-effort pass that keeps one edge per (owner, target) pair — the largest stake,

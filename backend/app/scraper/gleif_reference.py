@@ -450,21 +450,53 @@ def make_register_id(code: str | None, number: str | None) -> str | None:
     if num.isdigit() and ra in _zero_insensitive_ras():
         num = num.lstrip("0") or "0"
     ra = _REGISTER_FOLDS.get(ra, ra)
-    style = _NUMBER_STYLES.get(ra)
+    style = _number_style(ra)
     if style:
         num = style(num)
     return f"{ra}:{num}"
 
 
+def _shaped(pattern: str, build):
+    """A number style: when the whole number matches ``pattern`` (case
+    ignored), ``build(match)`` is its spelling; any other number is kept as
+    written — a style only rewrites what it recognises."""
+    rx = re.compile(pattern, re.IGNORECASE)
+
+    def style(num: str) -> str:
+        m = rx.fullmatch(num)
+        return build(m) if m else num
+    return style
+
+
 def _swiss_uid(num: str) -> str:
-    """CHE105909036 / Che-105.909.036 → CHE-105.909.036, the UID's official form."""
-    m = re.fullmatch(r"(?i)CHE[-‑]?(\d{3})\.?(\d{3})\.?(\d{3})", num)
+    """CHE105909036 / Che-105.909.036 / Ch-191.546.434 → CHE-105.909.036, the
+    UID's official form (nine digits: the old CH-…-… federal number has twelve)."""
+    m = re.fullmatch(r"(?i)CHE?[-‑]?(\d{3})[.-]?(\d{3})[.-]?(\d{3})", num)
     return f"CHE-{m.group(1)}.{m.group(2)}.{m.group(3)}" if m else num
 
 
 def _digits_only(num: str) -> str:
     """0402.231.383 → 0402231383: separators are typography, not identity."""
     return num.replace(".", "") if re.fullmatch(r"[\d.]+", num) else num
+
+
+#: SIREN: "542 014 428", "Fr572076396", "RcsParis380129866",
+#: "552037806RcsNanterre" — and a SIRET, whose first nine digits ARE the SIREN
+_siren = _shaped(r"(?:FR|RCS[A-Z]*)?(\d{9})(?:\d{5})?(?:RCS[A-Z]*)?", lambda m: m.group(1))
+#: KBO: ten digits, dots dropped, the old nine-digit numbers with a 0 in
+#: front ("Be0628.573.163", "441131254")
+_kbo = _shaped(r"(?:BE)?(\d{3,4})\.?(\d{3})\.?(\d{3})", lambda m: "".join(m.groups()).zfill(10))
+#: German court registers: the section and number, a town the filer put in
+#: front dropped ("DusseldorfHrb20…", "Hrb726800" → HRB726800; "HRB 123 B")
+_german_court = _shaped(r"[A-ZÄÖÜß.-]*?(HRA|HRB|VR|GNR|GSR|PR)(\d+)([A-Z]{0,2})", lambda m: m.group(0)[m.start(1):].upper())
+_upper = _shaped(r"[0-9A-Z-]+", lambda m: m.group(0).upper())
+
+
+def _no_lead_zeros(prefix: str):
+    """An integer register number: "054657" and "54657" (GLEIF writes both for
+    Irish CRO numbers), the filer's country code in front dropped. Not
+    Gibraltar: GLEIF's "00012" and "012" there are two live companies."""
+    return _shaped(rf"(?:{prefix})?(\d+)", lambda m: m.group(1).lstrip("0") or "0")
 
 
 #: Registers that carry ONE national number under two codes — audited on the
@@ -476,9 +508,41 @@ def _digits_only(num: str) -> str:
 #: register of record; what every earlier node carries), Sirene for France.
 _REGISTER_FOLDS = {"RA000548": "RA000549", "RA000192": "RA000189"}
 
-#: One spelling per register where GLEIF itself uses several for one number.
+#: One spelling per register where GLEIF itself uses several for one number,
+#: or a Companies House PSC filer writes GLEIF's number another way (case,
+#: the country or register in front, separators) — measured on the full PSC
+#: snapshot against the golden copy, 2026-10-31 (findings item 25): each style
+#: only rewrites the shape it recognises, and no two LEIs share a key it made.
 _NUMBER_STYLES = {
     "RA000549": _swiss_uid,          # Swiss UID
-    "RA000189": _digits_only,        # SIREN, occasionally "542 014 428"
-    "RA000025": _digits_only,        # Belgian KBO: 0402.231.383 and 0402231383
+    "RA000189": lambda n: _siren(_digits_only(n)),   # SIREN, "542.014.428" too
+    "RA000025": _kbo,                # Belgian KBO: 0402.231.383 and 0402231383
+    "RA000017": _shaped(r"(?:FN)?(\d+)([A-Z])", lambda m: m.group(1) + m.group(2).lower()),   # Firmenbuch: Fn50935F → 50935f
+    "RA000161": _shaped(r"(?:HE|ΗΕ)(\d+)", lambda m: "ΗΕ" + m.group(1)),   # Cyprus: He109917 → GLEIF's Greek ΗΕ109917
+    "RA000405": _upper,              # Isle of Man: 017226v → 017226V
+    "RA000086": _upper,              # Cayman: Wk-277188 → WK-277188
+    "RA000523": _upper,              # Singapore UEN: 201635013g
+    "RA000394": _upper,              # India CIN: L72200tn1999plc054429
+    "RA000544": _shaped(r"(?:SE)?(\d{6})-?(\d{4})", lambda m: f"{m.group(1)}-{m.group(2)}"),   # Sweden: 556556-2799
+    "RA000188": _shaped(r"(?:FI)?(\d{7})-?(\d)", lambda m: f"{m.group(1)}-{m.group(2)}"),      # Finland: 0532273-8
+    "RA000428": _shaped(r"FL-?(\d{4})[.-]?(\d{3})[.-]?(\d{3})-?(\d)",
+                        lambda m: "FL-{}.{}.{}-{}".format(*m.groups())),                           # Liechtenstein
+    "RA000432": _shaped(r"B[-.]?(\d+(?:[-.]\d+)*)", lambda m: "B" + re.sub(r"\D", "", m.group(1))),  # Luxembourg: B-22-573
+    "RA000170": _shaped(r"(?:DK|CVR(?:NO\.?)?)?(\d{8})", lambda m: m.group(1)),                # Denmark CVR
+    "RA000472": _shaped(r"(?:NO)?(\d{9})(?:MVA)?", lambda m: m.group(1)),                       # Norway: No931693670mva
+    "RA000463": _shaped(r"(?:NL|NETHERLANDS|KVK)?(\d{8})", lambda m: m.group(1)),               # KVK: Netherlands60372958
+    "RA000414": _shaped(r"(?:GBJE|JE|RC)?(\d+)", lambda m: m.group(1)),                         # Jersey: Gbje109180, Rc106478
+    "RA000402": _no_lead_zeros("IE"),                                                            # Ireland CRO
+    "RA000014": _shaped(r"(?:ACN)?(\d{9})|(?:ABN)?\d{2}(\d{9})", lambda m: m.group(1) or m.group(2)),  # ASIC: an ABN ends in the ACN
 }
+
+
+@functools.lru_cache(maxsize=1)
+def _german_courts() -> frozenset:
+    """The 176 German local-court registers (Amtsgericht X), one numbering style."""
+    return frozenset(code for code, entry in _load("gleif_ra.json").items()
+                     if isinstance(entry, dict) and entry.get("countries") == ["DE"])
+
+
+def _number_style(ra: str):
+    return _NUMBER_STYLES.get(ra) or (_german_court if ra in _german_courts() else None)

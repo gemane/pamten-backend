@@ -1,5 +1,7 @@
 """GLEIF reference code-list resolution (bundled ELF + RA lists)."""
 
+import pytest
+
 from app.scraper.gleif_reference import (legal_form_name, make_register_id,
     registration_authority_name, register_for_place)
 
@@ -264,6 +266,61 @@ class TestOneKeyPerNationalNumber:
         from app.scraper.gleif_reference import make_register_id
         assert make_register_id("RA000585", "07524813") == "RA000585:07524813"
         assert make_register_id("RA000242", "HRB 86515") == "RA000242:HRB86515"
+
+
+class TestThePscFilersSpelling:
+    """A Companies House PSC filer writes GLEIF's number its own way — the
+    snapshot title-cases it, puts the country or register in front, drops or
+    adds separators — and the register id joined nothing (findings item 25:
+    about 300 same-name pairs on the full snapshot). Each register's style
+    rewrites only the shape it recognises."""
+
+    @pytest.mark.parametrize("ra, filer, gleif, key", [
+        ("RA000189", "Fr572076396", "572076396", "572076396"),
+        ("RA000189", "RcsParis380129866", "380129866", "380129866"),
+        ("RA000189", "552037806RcsNanterre", "552037806", "552037806"),
+        ("RA000189", "77813049200219", "778130492", "778130492"),          # a SIRET: its SIREN first
+        ("RA000025", "Be0628.573.163", "0628573163", "0628573163"),
+        ("RA000025", "441131254", "0441131254", "0441131254"),
+        ("RA000017", "Fn50935F", "50935f", "50935f"),
+        ("RA000161", "He109917", "ΗΕ109917", "ΗΕ109917"),                 # GLEIF's Greek Eta Epsilon
+        ("RA000405", "017226v", "017226V", "017226V"),
+        ("RA000086", "Wk-277188", "WK-277188", "WK-277188"),
+        ("RA000523", "201635013g", "201635013G", "201635013G"),
+        ("RA000394", "L72200tn1999plc054429", "L72200TN1999PLC054429", "L72200TN1999PLC054429"),
+        ("RA000544", "5565562799", "556556-2799", "556556-2799"),
+        ("RA000188", "05322738", "0532273-8", "0532273-8"),
+        ("RA000428", "Fl-0002-041-317-4", "FL-0002.041.317-4", "FL-0002.041.317-4"),
+        ("RA000432", "B-22-573", "B22573", "B22573"),
+        ("RA000432", "B16.576", "B16576", "B16576"),
+        ("RA000170", "CvrNo.61056416", "61056416", "61056416"),
+        ("RA000472", "No931693670mva", "931693670", "931693670"),
+        ("RA000463", "Netherlands60372958", "60372958", "60372958"),
+        ("RA000414", "Gbje109180", "109180", "109180"),
+        ("RA000402", "Ie431363", "431363", "431363"),
+        ("RA000402", "54657", "054657", "54657"),
+        ("RA000014", "Acn000431827", "000431827", "000431827"),
+        ("RA000014", "92009657489", "009657489", "009657489"),          # an ABN ends in the ACN
+        ("RA000549", "Ch-191.546.434", "CHE-191.546.434", "CHE-191.546.434"),
+        ("RA000549", "Che-108-562.489", "CHE-108.562.489", "CHE-108.562.489"),
+        ("RA000296", "Hrb726800", "HRB 726800", "HRB726800"),            # a German local court
+        ("RA000234", "DusseldorfHrb20", "HRB 20", "HRB20"),
+        ("RA000217", "HRB 123 B", "HRB 123 B", "HRB123B"),
+    ])
+    def test_one_key_for_both_spellings(self, ra, filer, gleif, key):
+        from app.scraper.gleif_reference import make_register_id
+        assert make_register_id(ra, filer) == make_register_id(ra, gleif) == f"{ra}:{key}"
+
+    @pytest.mark.parametrize("ra, number", [
+        ("RA000189", "N/A"), ("RA000189", "5898022610"),        # ten digits is no SIREN
+        ("RA000549", "Ch-550.0.062.944-0"),                      # the old federal number
+        ("RA000463", "Unknown"), ("RA000086", "71581"),          # Cayman: the CR- is the filer's to give
+        ("RA000017", "Fn358787"), ("RA000161", "390331"),
+        ("RA000585", "Hrb176787"),                               # not a German court: case kept
+    ])
+    def test_an_unrecognised_number_stays_as_given(self, ra, number):
+        from app.scraper.gleif_reference import make_register_id
+        assert make_register_id(ra, number) == f"{ra}:{number}"
 
 
 class TestTheShippedGeneralRegisterMap:
