@@ -382,7 +382,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (2 after the 2026-10-27 rebuild). A new stamping site calls it too — **a keyed node
       included**: a `sec:` node that takes an LEI must become `lei:`, or the GLEIF delta,
       which addresses `lei:` ids, never sees it again (findings item 20, 2026-10-30). The
-      id must not depend on which source writes first.
+      id must not depend on which source writes first. A helper that re-keys the node you
+      hold (a GLEIF join) leaves you its old id: follow the forwarding row
+      (`merged_ids.resolve_current_id`) before the next write (findings item 22, 2026-10-31).
 - [ ] **Match on a hard identifier when the source has one.** Shared LEI/CIK/CH number is
       proof; a shared name is a hint.
 - [ ] **A name is replaced by credibility, never by arrival order.** Write `name_credibility`

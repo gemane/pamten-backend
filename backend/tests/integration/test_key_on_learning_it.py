@@ -116,3 +116,29 @@ def test_the_gleif_delta_finds_a_filer_that_took_its_lei(it_db):
     with db.get_session() as session:
         assert key_on_learning(session, "Entity", "sec:0000019617") == "lei:8I5DZWZKVSZI1NUHU748"
     assert "lei:8I5DZWZKVSZI1NUHU748" in existing_lei_ids()
+
+
+def test_the_wikidata_writer_follows_a_filer_its_stated_lei_re_keyed(it_db):
+    """Findings item 22 (rebuild 2026-10-31): Bank of America's item states its
+    LEI, GLEIF joined the record to the filer `sec:0000070858` and re-keyed it
+    `lei:`, and the writer kept the old id — the item id and the board seats
+    went nowhere. GLEIF's join is played by stamping the LEI and re-keying, as
+    `register_pointer._join_filer` does."""
+    from unittest.mock import patch
+    from app.node_ids import rekey
+    from app.scraper.runner import _upsert_entity
+    lei = "9DJT3UXIJIZJI4WXO774"
+    it_db.run_command("CREATE (:Entity {id:'sec:0000070858', name:'BANK OF AMERICA CORP /DE/', "
+                      "name_normalized:'bank of america', sec_cik:'0000070858', type:'company'})")
+
+    def join(lei_id, candidates, by_name):
+        it_db.run_command("MATCH (e:Entity {id: $id}) SET e.lei_id = $lei", {"id": candidates[0], "lei": lei_id})
+        return rekey("Entity", candidates[0])
+
+    with patch("app.scraper.register_pointer._gleif_enabled", return_value=True), \
+         patch("app.scraper.register_pointer.write_from_gleif", side_effect=join):
+        got = _upsert_entity("Bank of America", None, None, "", "Q487907", source_id="wikidata",
+                             lei=lei, sec_cik="70858")
+    assert got == f"lei:{lei}"
+    [row] = it_db.run_sql("SELECT id, wikidata_id, sec_cik FROM Entity")
+    assert (row["id"], row["wikidata_id"], row["sec_cik"]) == (f"lei:{lei}", "Q487907", "0000070858")

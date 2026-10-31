@@ -793,7 +793,8 @@ no tag and keep the header's.
 
 - **The Wikidata writer**: an item found by its CIK that states an LEI the graph lacks asks
   GLEIF, with that node as the only candidate (`register_pointer.attach_stated_lei`; findings
-  item 3, Baillie Gifford's 549300UYMK70HLNJU654). On REFUSE GLEIF's node is written on its own.
+  item 3, Baillie Gifford's 549300UYMK70HLNJU654). On JOIN the filer is re-keyed `lei:` and the
+  writer carries on under that id (findings item 22). On REFUSE GLEIF's node is written on its own.
   The mirror: an item found by its LEI that states a CIK the GLEIF node lacks asks EDGAR
   (`register_pointer.attach_stated_cik`); on JOIN `write_from_edgar` writes the filer onto
   that node (it is weighed before the name's candidates), on REFUSE nothing is written.

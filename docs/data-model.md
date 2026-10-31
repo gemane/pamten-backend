@@ -576,6 +576,16 @@ loses its old forwarding row, so nothing forwards to itself. The bulk importers'
 keys (`gb-coh:`, `chpsc:`) are never replaced. Stored nodes change as writers touch
 them, and all of them on the next rebuild.
 
+**A caller keeps writing to the node under its new id.** A re-key inside a call the
+writer only asked for help (the GLEIF join behind `register_pointer.attach_stated_lei`)
+leaves the writer holding the old id, which names nothing any more: the 2026-10-31
+rebuild left 17 companies whose Wikidata item stated their LEI (Bank of America, Morgan
+Stanley, NYT, State Street, eBay, …) without their item id, and their Wikidata board
+members without the seat that joins them to the Form 4 person — 18 people stood twice
+(findings item 22). The Wikidata writer follows the forwarding row
+(`merged_ids.resolve_current_id`) when the call landed elsewhere than the node it had;
+a GLEIF record written on its own leaves no forwarding row, and the writer stays put.
+
 ### How far GLEIF checked a record
 
 Every LEI record carries `ValidationSources`, GLEIF's own statement of whether an
