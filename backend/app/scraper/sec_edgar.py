@@ -248,7 +248,7 @@ def sec_country(submissions: dict) -> str | None:
     would move German banks to the United States. Wrong data is worse than the
     blank it replaces, so a filer with only a US address and no stated
     incorporation returns None rather than a guess. The incorporation the
-    newest annual report states comes first (`report_cover`): EDGAR's company
+    filer's newest tagged cover states comes first (`report_cover`): EDGAR's company
     record put Alibaba in Hong Kong, its 20-F in the Cayman Islands.
     """
     from app.scraper.maintenance import nationality_to_iso2
@@ -280,7 +280,7 @@ def sec_headquarters(submissions: dict) -> dict | None:
     throwing it away — 40 of 43 SEC companies in the graph had no headquarters at
     all while EDGAR held their street address.
 
-    The principal executive office the newest annual report states comes
+    The principal executive office the filer's newest tagged cover states comes
     first (`stated_headquarters`); the company record's business address only
     when the report states none.
 
@@ -3103,36 +3103,51 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
     }
 
 
-#: A cover-page fact of the newest annual report, tagged in every inline-XBRL
-#: 10-K/20-F (since 2019): its name, its context, its text.
+#: A cover-page fact, tagged in every inline-XBRL 10-K/20-F/10-Q/8-K (since
+#: 2019): its name, its context, its text.
 _COVER_TAG = re.compile(
     r'<ix:nonNumeric\b(?=[^>]*\bname="dei:(\w+)")(?=[^>]*\bcontextRef="([^"]+)")[^>]*>(.*?)</ix:nonNumeric>',
     re.S | re.I)
 _COVER_FACTS = frozenset({"EntityRegistrantName", "EntityIncorporationStateCountryCode",
                           "EntityAddressAddressLine1", "EntityAddressAddressLine2", "EntityAddressAddressLine3",
                           "EntityAddressCityOrTown", "EntityAddressStateOrProvince",
-                          "EntityAddressPostalZipCode", "EntityAddressCountry"})
-_STATED_FORMS = ("10-K", "20-F", "40-F")
+                          "EntityAddressPostalZipCode", "EntityAddressCountry", "EntityCentralIndexKey"})
+#: The filer's own tagged statements about itself, read newest first. Not
+#: only the annual report: Liberty Media converted from Delaware to Nevada on
+#: 2026-05-12, its 10-K of February still said Delaware, and that refused the
+#: join with its GLEIF record, which says Nevada as its 10-Q and 8-Ks do
+#: (findings item 23, 2026-10-31). A 6-K tags nothing.
+_STATED_FORMS = ("10-K", "20-F", "40-F", "10-Q", "8-K")
+#: Covers opened at most for one answer (each is cached for good).
+_MAX_COVERS = 3
 
 
 @functools.lru_cache(maxsize=256)
-def _cover_of(url: str) -> dict[str, str]:
-    """The cover facts of one annual report, in the registrant's own context
-    (the one its name is tagged in): a 20-F tags a second address, the
-    business contact's, under an axis (AB InBev). Raises when unreadable, so
-    a failure is not remembered. A filing never changes: kept per URL."""
+def _cover_of(url: str, cik: str | None = None) -> dict[str, str]:
+    """The cover facts of one filing, in the registrant's own context: the one
+    tagging ``cik`` as its EntityCentralIndexKey — a joint 10-Q or 8-K carries
+    one cover per registrant, parent and subsidiaries — else the one its name
+    is tagged in: a 20-F tags a second address, the business contact's, under
+    an axis (AB InBev). Raises when unreadable, so a failure is not
+    remembered. A filing never changes: kept per URL."""
     facts: dict[str, dict[str, str]] = {}
     for name, context, text in _COVER_TAG.findall(_get_text(url) or ""):
         if name in _COVER_FACTS:
             value = html_lib.unescape(re.sub(r"<[^>]+>", "", text)).replace("\xa0", " ")
             facts.setdefault(context, {}).setdefault(name, " ".join(value.split()).strip(" ,;"))
-    own = next((c for c, f in facts.items() if "EntityRegistrantName" in f), None)
+    want = cik.lstrip("0") if cik else None
+    own = next((c for c, f in facts.items()
+                if want and (f.get("EntityCentralIndexKey") or "").lstrip("0") == want), None) \
+        or next((c for c, f in facts.items() if "EntityRegistrantName" in f), None)
     return facts.get(own) or next(iter(facts.values()), {})
 
 
 def report_cover(submissions: dict) -> dict[str, str]:
-    """What the cover of the filer's newest annual report states about it —
-    `{fact: text}`, {} when there is no such report or it tags nothing.
+    """What the filer's newest tagged cover states about it — `{fact: text}`,
+    {} when there is none or it tags nothing. Newest first among its 10-K,
+    20-F, 40-F, 10-Q and 8-K, the first that states where it is incorporated
+    (at most `_MAX_COVERS` opened): a company that changed its state since its
+    annual report says so on the next quarterly report and every 8-K.
 
     The report is the filer's own signed statement, renewed every year. EDGAR's
     company record (`stateOfIncorporation`, `addresses`) is the filer's entry
@@ -3145,17 +3160,25 @@ def report_cover(submissions: dict) -> dict[str, str]:
     cik = str(submissions.get("cik") or "").strip()
     if not cik.isdigit():
         return {}
+    first: dict[str, str] = {}
+    opened = 0
     for form, accession, doc in zip(recent.get("form") or [], recent.get("accessionNumber") or [],
                                     recent.get("primaryDocument") or []):
         if form not in _STATED_FORMS or not doc:
             continue
+        if opened >= _MAX_COVERS:
+            break
+        opened += 1
         url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/{doc}"
         try:
-            return _cover_of(url)
+            cover = _cover_of(url, cik)
         except Exception as exc:  # noqa: BLE001 - the company record still answers
-            log.info("SEC EDGAR: annual report %s unreadable: %s", url, exc)
-            return {}
-    return {}
+            log.info("SEC EDGAR: filing %s unreadable: %s", url, exc)
+            continue
+        if cover.get("EntityIncorporationStateCountryCode"):
+            return cover
+        first = first or cover
+    return first
 
 
 def _place_code(text: str | None) -> str | None:
@@ -3167,7 +3190,7 @@ def _place_code(text: str | None) -> str | None:
 
 
 def stated_incorporation(submissions: dict) -> str | None:
-    """Where the newest annual report says the filer is incorporated, as a
+    """Where the filer's newest tagged cover says it is incorporated, as a
     jurisdiction code; None when it does not say (`report_cover`)."""
     return _place_code(report_cover(submissions).get("EntityIncorporationStateCountryCode"))
 
@@ -3178,7 +3201,7 @@ _PO_BOX = re.compile(r"\bP\.?\s*O\.?\s*Box\b", re.I)
 
 
 def stated_headquarters(submissions: dict) -> dict | None:
-    """The principal executive office the newest annual report states, in
+    """The principal executive office the filer's newest tagged cover states, in
     `sec_headquarters`' shape; None when it states none, or only a P.O. box."""
     cover = report_cover(submissions)
     street = " ".join(cover[k] for k in ("EntityAddressAddressLine1", "EntityAddressAddressLine2",
@@ -3203,7 +3226,7 @@ def incorporation_place(submissions: dict) -> str | None:
     """Where the filer is incorporated, as a jurisdiction code: "US-NY" for a
     US state, the ISO-2 country otherwise ("KY" for Cayman), None when EDGAR
     does not say. Incorporation only — never the business address (see
-    `sec_country`). The newest annual report's own statement first
+    `sec_country`). The filer's newest tagged cover first
     (`stated_incorporation`), EDGAR's header field when it has none."""
     from app.scraper.maintenance import nationality_to_iso2
 

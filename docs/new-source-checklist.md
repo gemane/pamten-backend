@@ -428,6 +428,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the issuer's LEI, and one document can be filed under two CIKs. So validate the
       identifier's checksum, take a lone LEI only from a document the filer filed alone,
       and otherwise require the name to label the code. A miss is "unknown", never "different".
+- [ ] **A place has a date: take the filer's newest statement of it, in its own context.** The
+      annual report is a year's snapshot — Liberty Media became a Nevada company three months
+      after its 10-K said Delaware, and the join with GLEIF (Nevada) was refused; its 10-Q
+      and 8-Ks said Nevada (findings item 23, 2026-10-31). A joint filing carries one cover
+      per registrant: pick the one tagged with the filer's id, not the first.
 - [ ] **When no document settles it, ask the registers — at the record's own date.** Two
       registers describe one legal entity when the legal name (form kept), the place of
       registration and, for a weak record, the address or a subsidiary agree — compared on

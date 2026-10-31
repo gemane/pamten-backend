@@ -770,10 +770,15 @@ address only as a fallback.** EDGAR's business address is where the *filing* com
 from — DEUTSCHE BANK AKTIENGESELLSCHAFT lists New York — so trusting it would move
 German banks to the United States. A filer with only a US address and no stated
 incorporation is left blank, because a wrong country is worse than none.
-**The annual report before the company record** (2026-10-30): both the
-incorporation and the headquarters come first from the cover of the filer's
-newest 10-K/20-F/40-F (`sec_edgar.report_cover`: `dei:EntityIncorporationStateCountryCode`
-and `dei:EntityAddress…`, in the registrant's own context), and from EDGAR's company
+**The filer's own cover before the company record** (2026-10-30): both the
+incorporation and the headquarters come first from the filer's newest tagged cover —
+10-K/20-F/40-F, and since 2026-10-31 also 10-Q and 8-K, the first of the newest three
+that states its incorporation (`sec_edgar.report_cover`: `dei:EntityIncorporationStateCountryCode`
+and `dei:EntityAddress…`, in the registrant's own context — the one tagging its CIK as
+`dei:EntityCentralIndexKey`, which a joint filing needs: Eversource's 10-Qs gave CL&P, NSTAR
+Electric and PSNH Eversource's Massachusetts cover). Liberty Media converted from Delaware to
+Nevada on 2026-05-12; its February 10-K still said Delaware and refused its GLEIF record
+(Nevada), while its 10-Q and 8-Ks since say Nevada (findings item 23). From EDGAR's company
 record (`stateOfIncorporation`, `addresses.business`) only when the report states none —
 older filers before inline XBRL, deregistered ones, filers without annual reports. The
 record is the filer's own entry in EDGAR's database, checked against nothing: Hong Kong

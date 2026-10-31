@@ -2993,8 +2993,9 @@ class TestIncorporationPlace:
 
 
 class TestStatedIncorporation:
-    """The newest annual report's cover says where the filer is incorporated;
-    EDGAR's header field only when it does not (findings item 19, 2026-10-30)."""
+    """The newest tagged cover (10-K, 20-F, 40-F, 10-Q, 8-K) says where the
+    filer is incorporated; EDGAR's header field only when it does not
+    (findings item 19, 2026-10-30; the 10-Q and 8-K since item 23)."""
 
     @staticmethod
     def _subs(forms=("10-K",), **header):
@@ -3022,18 +3023,50 @@ class TestStatedIncorporation:
         with patch.object(sec_edgar, "_get_text", return_value=self._tag(value, fmt)):
             assert sec_edgar.stated_incorporation(self._subs()) == expected
 
-    def test_the_newest_annual_report_is_read(self):
+    def test_the_newest_tagged_cover_is_read_whatever_the_form(self):
         from app.scraper import sec_edgar
         with patch.object(sec_edgar, "_get_text", return_value=self._tag("Delaware", "ixt-sec:stateprovnameen")) as get:
-            sec_edgar.stated_incorporation(self._subs(forms=("8-K", "10-Q", "20-F", "10-K")))
+            sec_edgar.stated_incorporation(self._subs(forms=("6-K", "8-K/A", "8-K", "10-Q", "10-K")))
         get.assert_called_once_with("https://www.sec.gov/Archives/edgar/data/1404655/000119312526046642/doc2.htm")
 
-    def test_only_the_newest_report_counts(self):
-        # an older report's place may be the one the filer has since left
+    def test_a_change_of_state_after_the_annual_report_is_read(self):
+        # Liberty Media: Delaware → Nevada on 2026-05-12, after its 10-K of
+        # February; the 8-Ks and the 10-Q since say Nevada (findings item 23)
+        from app.scraper import sec_edgar
+        pages = {"doc0.htm": self._tag("Nevada", "ixt-sec:stateprovnameen"),
+                 "doc1.htm": self._tag("Nevada", "ixt-sec:stateprovnameen"),
+                 "doc2.htm": self._tag("Delaware", "ixt-sec:stateprovnameen")}
+        with patch.object(sec_edgar, "_get_text", side_effect=lambda url: pages[url.rsplit("/", 1)[1]]):
+            assert sec_edgar.stated_incorporation(self._subs(forms=("8-K", "10-Q", "10-K"))) == "US-NV"
+
+    def test_an_untagged_cover_passes_to_the_next_within_the_limit(self):
         from app.scraper import sec_edgar
         pages = iter(["<html>untagged</html>", self._tag("New York", "ixt-sec:stateprovnameen")])
         with patch.object(sec_edgar, "_get_text", side_effect=lambda url: next(pages)):
-            assert sec_edgar.stated_incorporation(self._subs(forms=("10-K", "10-K"))) is None
+            assert sec_edgar.stated_incorporation(self._subs(forms=("8-K", "10-K"))) == "US-NY"
+        sec_edgar._cover_of.cache_clear()                    # the same URLs again below
+        untagged = ["<html>untagged</html>"] * sec_edgar._MAX_COVERS
+        pages = iter(untagged + [self._tag("New York", "ixt-sec:stateprovnameen")])
+        with patch.object(sec_edgar, "_get_text", side_effect=lambda url: next(pages)) as get:
+            assert sec_edgar.stated_incorporation(
+                self._subs(forms=("8-K",) * sec_edgar._MAX_COVERS + ("10-K",))) is None
+        assert get.call_count == sec_edgar._MAX_COVERS
+
+    def test_a_joint_filing_gives_each_registrant_its_own_cover(self):
+        # Eversource files its 10-Qs and 8-Ks jointly with CL&P, NSTAR Electric
+        # and PSNH; the first cover is the parent's, Massachusetts
+        from app.scraper import sec_edgar
+        doc = ("<html>"
+               '<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-1">EVERSOURCE ENERGY</ix:nonNumeric>'
+               '<ix:nonNumeric name="dei:EntityCentralIndexKey" contextRef="c-1">0000072741</ix:nonNumeric>'
+               '<ix:nonNumeric name="dei:EntityIncorporationStateCountryCode" contextRef="c-1">Massachusetts</ix:nonNumeric>'
+               '<ix:nonNumeric name="dei:EntityRegistrantName" contextRef="c-2">THE CONNECTICUT LIGHT AND POWER COMPANY</ix:nonNumeric>'
+               '<ix:nonNumeric name="dei:EntityCentralIndexKey" contextRef="c-2">0000023426</ix:nonNumeric>'
+               '<ix:nonNumeric name="dei:EntityIncorporationStateCountryCode" contextRef="c-2">Connecticut</ix:nonNumeric>'
+               "</html>")
+        with patch.object(sec_edgar, "_get_text", return_value=doc):
+            assert sec_edgar.stated_incorporation({**self._subs(), "cik": "23426"}) == "US-CT"
+            assert sec_edgar.stated_incorporation({**self._subs(), "cik": "72741"}) == "US-MA"
 
     @pytest.mark.parametrize("subs", [
         {"cik": "1404655"},                                        # no filings listed
