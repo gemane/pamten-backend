@@ -795,6 +795,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       changes and can be kept forever (`sec_cache`); a submissions feed, a search result or
       a daily index grows, and caching it is how a scraper silently stops seeing new records.
       Decide per URL family, in one function, and test both sides of the line.
+- [ ] **A cap applies to a FIXED order, and only where it saves something.** SPARQL rows come in no
+      order; "the first 15 subsidiaries" was a different 15 on each run, and Alcon was Nestlé's
+      subsidiary on one rebuild and not the next (findings item 24, 2026-10-31). Sort before
+      capping, the records that can be written first, and cap the expensive step (the recursion),
+      not the list.
 - [ ] **Bound a "newest N documents" read by time, not by count, when N decides who is listed.**
       Fifty newest Form 4s was a request budget that silently became the definition of a
       board: a few officers' repeat filings used them up and Bank of America listed 8 of
