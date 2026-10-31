@@ -2421,6 +2421,56 @@ class TestRoleDatesFromForm3:
         assert execs[0]["since"] == "2020-01-15", "the cap stops new insiders, not their Form 3s"
 
 
+class TestTheInsiderWindow:
+    """Insiders come from the Form 3/4s of the last ~15 months, not from the
+    newest 50 documents: a few officers' repeat filings used those up, and
+    Bank of America listed 8 of its 29 insiders (findings item 9)."""
+
+    _xml = TestRoleDatesFromForm3._xml
+    _run = TestRoleDatesFromForm3._run
+
+    def test_directors_behind_a_burst_of_officer_filings_are_listed(self):
+        # 60 Form 4s by two officers, then the annual director grant
+        forms = ["4"] * 64
+        docs = [self._xml("Moynihan Brian", title="CEO", cik="0000001") if i % 2 else
+                self._xml("Borthwick Alastair", title="CFO", cik="0000002") for i in range(60)]
+        docs += [self._xml(f"Director{i} A", officer="0", director="1", cik=f"00001{i:02d}") for i in range(4)]
+        dates = ["2026-10-29"] * 60 + ["2026-05-06"] * 4
+        execs = self._run(forms, docs, dates)
+        assert sorted(e["name"] for e in execs if e["role"] == "Director") == \
+            [f"A Director{i}" for i in range(4)]
+
+    def test_a_filing_before_the_window_lists_no_one(self):
+        forms = ["4", "4"]
+        docs = [self._xml("Moynihan Brian", title="CEO", cik="0000001"),
+                self._xml("Budd Wayne", officer="0", director="1", cik="0000009")]
+        execs = self._run(forms, docs, ["2026-10-29", "2025-07-01"])     # 485 days earlier
+        assert [e["name"] for e in execs] == ["Brian Moynihan"]
+
+    def test_a_form_3_before_the_window_still_dates_a_listed_seat(self):
+        forms = ["4", "3"]
+        docs = [self._xml("Moynihan Brian", title="CEO", cik="0000001"),
+                self._xml("Moynihan Brian", form="3", period="2010-01-01", title="CEO", cik="0000001")]
+        execs = self._run(forms, docs, ["2026-10-29", "2010-01-04"])
+        assert execs[0]["since"] == "2010-01-01"
+
+    def test_the_document_ceiling_still_bounds_the_scan(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "MAX_FORM4_SCAN", 3):
+            forms = ["4"] * 5
+            docs = [self._xml(f"Person{i} A", title="Vice President", cik=f"{i:07d}") for i in range(5)]
+            execs = self._run(forms, docs, ["2026-10-29"] * 5)
+        assert len(execs) == 3
+
+    def test_the_window_counts_from_the_newest_form_3_or_4(self):
+        from app.scraper.sec_edgar import FORM4_WINDOW_DAYS, _form34_window_start
+        assert FORM4_WINDOW_DAYS == 456
+        assert _form34_window_start(["8-K", "4", "3"], ["2026-10-30", "2026-10-29", "2026-01-01"]) == "2025-07-30"
+        assert _form34_window_start(["8-K"], ["2026-10-30"]) is None
+        assert _form34_window_start(["4"], ["not a date"]) is None
+
+
 class TestDeparturesFromEightK:
     """A departing insider files nothing; the company announces it in an 8-K,
     Item 5.02. The submissions index says which 8-Ks carry the item; the text
