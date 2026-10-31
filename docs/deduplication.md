@@ -363,6 +363,16 @@ registration number and nothing else (the 13-digit corporate number is a
 different register). SoftBank Group's PSC record carried that number and stayed a
 name-only twin of its LEI node until this rule.
 
+**A tax number is no register's** (2026-10-31). Whatever register a US filer
+names, a number shaped `NN-NNNNNNN` is its Employer Identification Number, which
+no register issues — and 933 active US corporate PSCs give one: Berkshire Hathaway
+`47-0813844` beside "US Securities And Exchange Commission Register" (→ EDGAR,
+whose id is the CIK), Coca-Cola `58-0628465` beside "Delaware" (→ a Delaware file
+number it is not). Keyed, ~900 became a `register_id` that matched nothing, and each
+such parent stayed beside its GLEIF node (findings item 25). Such a number keys
+nothing (`_US_EIN`); it stays in `registration_number` as filed. A plain nine digits
+may be a state's own file number and is left to the rules above.
+
 **The general-register map** (`general_register_for_country`, 2026-09-20). The
 exactly-one rule reaches 25 of 229 countries, because GLEIF's RA table lists
 sector registries — funds, supervisors, pension bodies — beside the corporate
