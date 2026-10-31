@@ -836,6 +836,50 @@ at `GET /scraper/duplicate-edges/count`; collapse at `POST /scraper/deduplicate-
 The entity profile also dedupes owners/subsidiaries by node id at read time, so the
 UI never shows a node twice even before the DB is cleaned.
 
+## A foreign owner Companies House records — `_bridge_psc_gleif`
+
+A corporate PSC (`chpsc:` — a foreign company as the owner of a UK one) and the GLEIF
+record of the same company share a hard id only when the filer states the register
+number GLEIF holds (Alibaba: the Cayman 90722). Berkshire Hathaway's PSC record, as
+owner of Berkshire Hathaway International Insurance, gives its EIN instead, which keys
+nothing (`_US_EIN`), so the two stayed apart — joined on 2026-10-30 only because the SEC
+scrape's name lookup happened to land on the PSC node (findings item 25).
+
+`legal_identity.psc_same_legal_entity(gleif_node, psc)` asks more than the EDGAR rule,
+because a PSC record is the filer's own unverified words — all three must agree:
+
+1. **the legal name, form kept** — the PSC's name against GLEIF's names, or the form from
+   GLEIF's legal-form code ("Anheuser-Busch InBev SA/NV" against R85P);
+2. **the place** — no contradiction between GLEIF's jurisdiction and the one the PSC
+   states: since 2026-10-31 the importer keeps it as `jurisdiction_code` from the record's
+   legal authority or register ("State Of Delaware" → US-DE, `_psc_jurisdiction`); a
+   country alone does not contradict a state;
+3. **the building** — the PSC's address against GLEIF's legal *or* headquarters address:
+   the house number and street word, in either order ("3555 Farnam Street, Suite 1440" is
+   "3555 Farnam Street"; "Brouwerijplein 1"), and the city or the postcode.
+
+and GLEIF's entity must exist by the day the PSC was notified (the earliest `since` of
+the node's `uk-psc` holdings): when a new holding company takes the old name — Apollo
+(2022), KKR (2021), Welltower, Crane, Tata Motors — a PSC notified before names the old
+company, and GLEIF's record of that name is the new one (`incorporated_on` later).
+
+Of several same-name GLEIF records that agree, a `DUPLICATE`, `ANNULLED`, `RETIRED` or
+`MERGED` registration gives way to the others (`GLEIF_NOT_THE_ENTITY`; alone it still
+joins). Two or more left is no join: a bank and its branch registered under one name at
+one building (Deutsche Bank and its Paris LEI, Société Générale, Intesa, Santander) —
+the importer keeps no `EntityCategory` to tell them apart.
+
+A JOIN stamps the LEI on the PSC node with the evidence as `lei_source` ("name+place+hq",
+"name+country+address"); the hard-id merge then folds the pair onto the `lei:` node, its
+holdings with it. It runs in the full dedup (`bridge_psc_gleif_pairs`, after the SEC
+bridge) and in the scoped one after a scrape. "Berkshire Hathaway LLC", another state or
+another building is refused, and a pair a person kept apart is never asked. Dev: 4
+corporate PSC nodes without an LEI, Berkshire the one joined. Against the full PSC
+snapshot and GLEIF golden copy (2026-10-31): of 96,206 distinct foreign corporate owner
+records, 21,966 have a same-name GLEIF record and 5,599 join — 1,844 that already share
+a register id, 696 whose filer typed GLEIF's number differently or wrongly ("Hrb176787",
+"N/A", an old number), and 3,059 with no shared id; 21 refused for several candidates.
+
 ## Claims-only sources
 
 A source's `data_mode` (`PATCH /scraper/sources/{name}/mode`) decides whether

@@ -273,6 +273,19 @@ def resolve_register_code(iso2: str | None, ident: dict, number: str) -> tuple[s
     return None, None
 
 
+def _psc_jurisdiction(ident: dict, iso2: str | None) -> str | None:
+    """The ISO 3166-2 subdivision a corporate PSC says it is registered in
+    ("State Of Delaware", "Delaware, Usa" → US-DE), from the first of its
+    register fields that names one in its own country; None otherwise."""
+    from app.scraper.sec_ex21 import jurisdiction_subdivision
+    for field in ("legal_authority", "place_registered", "country_registered"):
+        text = re.sub(r"(?i)^\s*(the\s+)?(state|commonwealth)\s+of\s+", "", ident.get(field) or "")
+        code = jurisdiction_subdivision(text)
+        if code and (not iso2 or code.split("-")[0] == iso2):
+            return code
+    return None
+
+
 def _psc_country(ident: dict) -> str | None:
     """The ISO-2 country a corporate PSC is registered in.
 
@@ -580,6 +593,9 @@ def psc_record(rec: dict, source_id: str, credibility_score: int,
             "registration_number": reg_number,
             "registration_authority": (ident.get("place_registered") or "").strip() or None,
             "register_id": register_id,
+            # where the filer says it is registered, to the state ("State Of
+            # Delaware" → US-DE): what the GLEIF join compares (item 25)
+            "jurisdiction_code": _psc_jurisdiction(ident, iso2),
         }
 
     return PscMapped(

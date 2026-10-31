@@ -193,8 +193,56 @@ class TestTheWholeDatabase:
         order = []
         with patch.object(maintenance, "_not_duplicate_pairs", return_value=set()), \
              patch.object(maintenance, "bridge_sec_lei_pairs", side_effect=lambda k: order.append("bridge") or []), \
+             patch.object(maintenance, "bridge_psc_gleif_pairs", side_effect=lambda k: order.append("psc") or []), \
              patch.object(maintenance, "_duplicate_keys", side_effect=lambda p: order.append(p) or []), \
              patch.object(maintenance, "_former_register_groups", return_value=[]):
             out = maintenance.deduplicate_entities(limit=None)
-        assert order[0] == "bridge" and "lei_id" in order
+        assert order[:2] == ["bridge", "psc"] and "lei_id" in order     # both bridges before the grouping
         assert out["lei_bridged"] == []
+
+
+class TestTheCorporatePscBridge:
+    """`_bridge_psc_gleif` asks the rule of every same-name GLEIF record and
+    joins only when exactly one entity agrees (findings item 25)."""
+
+    PSC = {"id": "chpsc:03230337:x", "name": "Berkshire Hathaway Inc.", "country": "US", "jurisdiction_code": "US-DE",
+           "reg_street": "3555 Farnam Street", "reg_city": "Omaha", "reg_postcode": "68131"}
+
+    @staticmethod
+    def gleif(lei, status="ISSUED", **kw):
+        return {"id": f"lei:{lei}", "name": "BERKSHIRE HATHAWAY INC", "lei_id": lei, "jurisdiction_code": "US-DE",
+                "country": "US", "gleif_registration_status": status,
+                "hq_street": "3555 Farnam Street, Suite 1440", "hq_city": "Omaha", "hq_postcode": "68131", **kw}
+
+    def _run(self, gleifs, since=("2016-04-06",)):
+        rows = {self.PSC["id"]: self.PSC, **{g["id"]: g for g in gleifs}}
+        writes = []
+        with patch.object(maintenance, "run_sql", side_effect=lambda q, p=None: [rows[p["id"]]]), \
+             patch.object(maintenance, "run_query", return_value=[{"since": d} for d in since]), \
+             patch.object(maintenance, "run_command", side_effect=lambda q, p=None: writes.append(p)):
+            members = [{"id": self.PSC["id"], "name": self.PSC["name"], "lei_id": None},
+                       *({"id": g["id"], "name": g["name"], "lei_id": g["lei_id"]} for g in gleifs)]
+            joined = maintenance._bridge_psc_gleif(members, set())
+        return [j["lei_id"] for j in joined], writes
+
+    def test_one_record_agrees(self):
+        joined, writes = self._run([self.gleif("A")])
+        assert joined == ["A"] and writes[0]["lei"] == "A"
+
+    def test_a_duplicate_registration_gives_way(self):
+        assert self._run([self.gleif("A", "DUPLICATE"), self.gleif("B")])[0] == ["B"]
+        assert self._run([self.gleif("A", "RETIRED"), self.gleif("B", "LAPSED")])[0] == ["B"]
+
+    def test_a_lone_retired_record_still_joins(self):
+        assert self._run([self.gleif("A", "RETIRED")])[0] == ["A"]
+
+    def test_two_entities_agree_no_join(self):
+        # a bank and its branch, one name and one building
+        joined, writes = self._run([self.gleif("A"), self.gleif("B")])
+        assert joined == [] and writes == []
+
+    def test_the_notice_date_is_the_earliest_holding(self):
+        # the KKR trap: the GLEIF entity was born after the PSC was notified
+        assert self._run([self.gleif("A", incorporated_on="2021-07-01")], since=("2022-01-01", "2019-03-04"))[0] == []
+        assert self._run([self.gleif("A", incorporated_on="2021-07-01")], since=("2022-01-01",))[0] == ["A"]
+        assert self._run([self.gleif("A", incorporated_on="2021-07-01")], since=())[0] == ["A"]

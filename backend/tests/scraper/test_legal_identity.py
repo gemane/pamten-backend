@@ -283,3 +283,63 @@ class TestPreviousNamesAreNotNamesInForce:
 
     def test_tencent_still_joins_on_its_transliteration(self):
         assert same_legal_entity(TENCENT_GLEIF, TENCENT, today=TODAY, evidence=fake())[0] == JOIN
+
+
+class TestACorporatePscAndItsGleifRecord:
+    """A foreign owner as Companies House records it, against GLEIF: the
+    legal name with its form, the place, and the building must all agree
+    (findings item 25: Berkshire Hathaway)."""
+
+    GLEIF = {"name": "BERKSHIRE HATHAWAY INC", "lei_id": "5493000C01ZX7D35SD85", "jurisdiction_code": "US-DE",
+             "country": "US", "reg_street": "C/O THE CORPORATION TRUST COMPANY, 1209 ORANGE ST",
+             "reg_city": "WILMINGTON", "reg_postcode": "19801",
+             "hq_street": "3555 Farnam Street, Suite 1440", "hq_city": "Omaha", "hq_postcode": "68131"}
+    PSC = {"id": "chpsc:03230337:x", "name": "Berkshire Hathaway Inc.", "country": "US", "jurisdiction_code": "US-DE",
+           "reg_street": "3555 Farnam Street", "reg_city": "Omaha", "reg_postcode": "68131"}
+
+    def _verdict(self, gleif=None, **psc):
+        from app.scraper.legal_identity import psc_same_legal_entity
+        return psc_same_legal_entity({**self.GLEIF, **(gleif or {})}, {**self.PSC, **psc})
+
+    def test_name_place_and_headquarters(self):
+        assert self._verdict() == (JOIN, "name+place+hq")
+
+    def test_the_registered_address_counts_too(self):
+        assert self._verdict(reg_street="1209 Orange Street", reg_city="Wilmington", reg_postcode="19801") == \
+            (JOIN, "name+place+address")
+
+    def test_a_country_alone_does_not_contradict(self):
+        # the PSC node as imported before its legal authority was kept, and
+        # its town still in the street line: the postcode carries the building
+        assert self._verdict(jurisdiction_code=None, reg_street="3555 Farnam Street, Omaha",
+                             reg_city="Nebraska") == (JOIN, "name+country+hq")
+
+    def test_another_legal_form_is_another_entity(self):
+        assert self._verdict(name="Berkshire Hathaway LLC")[0] == REFUSE
+
+    def test_another_place_is_another_entity(self):
+        assert self._verdict(jurisdiction_code="US-NV") == (REFUSE, "registered US-DE, filer US-NV")
+        assert self._verdict(jurisdiction_code=None, country="KY")[0] == REFUSE
+
+    def test_another_building_is_no_join(self):
+        assert self._verdict(reg_street="3556 Farnam Street") == (REFUSE, "the address differs")
+        assert self._verdict(reg_street="3555 Dodge Street") == (REFUSE, "the address differs")
+        assert self._verdict(reg_street=None) == (REFUSE, "the address differs")
+
+    def test_the_same_building_in_another_town_is_no_join(self):
+        assert self._verdict(reg_city="Lincoln", reg_postcode="68508")[0] == REFUSE
+
+    def test_the_form_from_gleifs_code(self):
+        abi = {"name": "ANHEUSER-BUSCH INBEV", "legal_form_code": "R85P", "jurisdiction_code": None, "country": "BE",
+               "hq_street": "Brouwerijplein 1", "hq_city": "Leuven", "hq_postcode": "3000"}
+        assert self._verdict(abi, name="Anheuser-Busch InBev SA/NV", jurisdiction_code=None, country="BE",
+                             reg_street="Brouwerijplein 1", reg_city="Leuven", reg_postcode="3000")[0] == JOIN
+
+    def test_an_entity_born_after_the_notice_is_another_one(self):
+        # a new holding company took the old name (Apollo 2022, KKR 2021): the
+        # PSC notified before it names the old company
+        assert self._verdict({"incorporated_on": "2021-07-01"}, notified_on="2019-03-04") == \
+            (REFUSE, "incorporated 2021-07-01, after the PSC notice of 2019-03-04")
+        assert self._verdict({"incorporated_on": "2019-03-04"}, notified_on="2019-03-04")[0] == JOIN
+        assert self._verdict({"incorporated_on": "1998-12-21"}, notified_on="2019-03-04")[0] == JOIN
+        assert self._verdict({"incorporated_on": "2021-07-01"})[0] == JOIN, "no notice date, no guard"

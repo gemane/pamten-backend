@@ -222,6 +222,89 @@ def _address_key(street: str | None, city: str | None) -> str | None:
     return " ".join(_STREET_WORDS.get(w, w) for w in words) or None
 
 
+#: what the PSC rule reads of a corporate PSC node
+PSC_FIELDS = ("id", "name", "country", "jurisdiction_code",
+              *(addresses.field(addresses.REGISTERED, part) for part in ("street", "city", "postcode")))
+#: and of the GLEIF node, beside IDENTITY_FIELDS
+GLEIF_PSC_FIELDS = ("incorporated_on",
+                    *(addresses.field(kind, "postcode") for kind in (addresses.HEADQUARTERS, addresses.REGISTERED)))
+#: GLEIF registrations that stand for no entity of their own — a second LEI
+#: for one entity, one issued in error, or one whose entity is gone: a PSC
+#: names the record beside it, never one of these, when both qualify
+GLEIF_NOT_THE_ENTITY = frozenset({"DUPLICATE", "ANNULLED", "RETIRED", "MERGED"})
+
+#: words of a street line that say where in a building, not which building
+_IN_BUILDING = re.compile(r"\b(ste|suite|fl|floor|unit|room|rm|apt)\b\.?\s*\S*", re.IGNORECASE)
+
+
+def _premises(street: str | None) -> tuple[str, str] | None:
+    """(house number, street word) of a street line, the suite and floor
+    dropped: "3555 Farnam Street, Suite 1440" and "3555 Farnam Street" are
+    ("3555", "farnam"); the European order too — "Brouwerijplein 1" is ("1",
+    "brouwerijplein"). None without a number."""
+    from app.scraper.mapper import normalize_address
+    words = (normalize_address(_IN_BUILDING.sub(" ", street or "")) or "").split()
+    for i, w in enumerate(words):
+        if w.isdigit() and i + 1 < len(words) and not words[i + 1].isdigit():
+            return w, _STREET_WORDS.get(words[i + 1], words[i + 1])
+    for i, w in enumerate(words[1:], 1):
+        if w.isdigit() and not words[i - 1].isdigit():
+            return w, _STREET_WORDS.get(words[i - 1], words[i - 1])
+    return None
+
+
+def _same_premises(a: tuple, b: tuple) -> bool:
+    """Two addresses (street, city, postcode) at the same building: the house
+    number and street word, and the city or the postcode."""
+    pa, pb = _premises(a[0]), _premises(b[0])
+    if not pa or pa != pb:
+        return False
+    city = lambda c: re.sub(r"[^a-z]", "", (c or "").casefold())               # noqa: E731
+    post = lambda p: re.sub(r"[^0-9a-z]", "", (p or "").casefold())[:5]        # noqa: E731
+    return bool((city(a[1]) and city(a[1]) == city(b[1])) or (post(a[2]) and post(a[2]) == post(b[2])))
+
+
+def psc_same_legal_entity(node: dict, psc: dict) -> tuple[str, str]:
+    """(JOIN, evidence) when a corporate PSC (Companies House's record of a
+    foreign owner) and the GLEIF record on ``node`` are one legal entity, else
+    (REFUSE, reason). A PSC record is the filer's own unverified words, so all
+    three must agree:
+
+    1. the legal name, form kept — the PSC's name against GLEIF's names, or
+       the form from GLEIF's legal-form code (as `same_legal_entity`);
+    2. the place — no contradiction between GLEIF's and the one the PSC
+       states (`jurisdiction_code` from its legal authority, else country);
+    3. the building — the PSC's address against GLEIF's legal or
+       headquarters address: house number and street, and city or postcode;
+
+    and GLEIF's entity must exist by the day the PSC was notified
+    (``notified_on``): when a new holding company takes the old name — Apollo
+    in 2022, KKR in 2021 — the old PSC record names the old company, which
+    GLEIF lists under another LEI or not at all.
+
+    Berkshire Hathaway's PSC record (beside BHIIL, "State Of Delaware", 3555
+    Farnam Street, Omaha 68131) is GLEIF's BERKSHIRE HATHAWAY INC (US-DE,
+    headquarters 3555 Farnam Street, Suite 1440, Omaha 68131), and shared
+    no id with it once its EIN stopped posing as a register number
+    (findings item 25, 2026-10-31)."""
+    name = psc.get("name")
+    if not name or not (_same_name(_gleif_names(node), [name]) or _same_name_by_form_code(node, [name])):
+        return REFUSE, "the legal name differs"
+    born, notified = (node.get("incorporated_on") or "")[:10], (psc.get("notified_on") or "")[:10]
+    if born and notified and born > notified:
+        return REFUSE, f"incorporated {born}, after the PSC notice of {notified}"
+    ok, why = _place_verdict(gleif_place(node), psc.get("jurisdiction_code") or psc.get("country"))
+    if ok is False:
+        return REFUSE, why
+    mine = tuple(psc.get(addresses.field(addresses.REGISTERED, p)) for p in ("street", "city", "postcode"))
+    for kind in (addresses.REGISTERED, addresses.HEADQUARTERS):
+        theirs = tuple(node.get(addresses.field(kind, p)) for p in ("street", "city", "postcode"))
+        if _same_premises(mine, theirs):
+            where = "hq" if kind == addresses.HEADQUARTERS else "address"
+            return JOIN, f"name+{'place' if ok else 'country'}+{where}"
+    return REFUSE, "the address differs"
+
+
 _CODE = re.compile(r"^[A-Z]{2}(?:-[A-Z0-9]{1,3})?$")
 
 

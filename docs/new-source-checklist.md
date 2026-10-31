@@ -433,6 +433,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       after its 10-K said Delaware, and the join with GLEIF (Nevada) was refused; its 10-Q
       and 8-Ks said Nevada (findings item 23, 2026-10-31). A joint filing carries one cover
       per registrant: pick the one tagged with the filer's id, not the first.
+- [ ] **A record without a hard id is joined by what it states, all of it.** A foreign owner
+      in another register's file (a corporate PSC) gives its name with the legal form, a
+      place and an address: when they all agree with the register's record, it is that
+      record (`psc_same_legal_entity`, findings item 25). Keep the stated place when you
+      import — it was dropped, and with it the only evidence besides the name.
 - [ ] **When no document settles it, ask the registers — at the record's own date.** Two
       registers describe one legal entity when the legal name (form kept), the place of
       registration and, for a weak record, the address or a subsidiary agree — compared on
