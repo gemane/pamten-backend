@@ -1594,3 +1594,92 @@ class TestSecIndustry:
             except Exception:  # noqa: BLE001 - later phases need more fakes; the record comes first
                 pass
         assert recorded[0] == ("tesla-id", "0001318605", "src")
+
+
+# ── One CIK, one vertex type (findings item 21) ──────────────────────────────
+
+class TestOneCikOneVertexType:
+    """A CIK is one filer, a human being or a company: Embraer became a Person
+    through its Form 4, Dondero an Entity through an HC code."""
+
+    def test_a_stated_code_decides_and_a_suffix_vetoes_a_person(self):
+        from app.scraper.runner import _is_individual
+        with patch("app.scraper.runner._vertex_holding_cik", return_value="Person") as held:
+            assert _is_individual("Jane Doe", False, "1") is False
+            assert _is_individual("Jane Doe", True, "1") is True
+            assert _is_individual("Berkshire Hathaway Inc", True, "1") is False
+        held.assert_not_called()                           # a stated code needs no lookup
+
+    def test_without_a_code_the_vertex_holding_the_cik_decides(self):
+        from app.scraper.runner import _is_individual
+        with patch("app.scraper.runner._vertex_holding_cik", return_value="Person"):
+            assert _is_individual("Dondero James D", None, "0001228922") is True
+        with patch("app.scraper.runner._vertex_holding_cik", return_value="Entity"):
+            assert _is_individual("Dondero James D", None, "0001228922") is False
+        with patch("app.scraper.runner._vertex_holding_cik", return_value=None):
+            assert _is_individual("Dondero James D", None, "0001228922") is True     # the name
+            assert _is_individual("NexPoint Advisors, L.P.", None, None) is False
+
+    def test_the_vertex_lookup(self):
+        from app.scraper.runner import _vertex_holding_cik
+        ctx, session = _make_session_mock()
+        session.run.return_value = [{"id": "sec:0001228922"}]
+        with patch("app.scraper.runner.db.get_session", ctx):
+            assert _vertex_holding_cik("1228922") == "Person"
+        assert session.run.call_args.kwargs["cik"] == "0001228922"
+        session.run.return_value = []
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value="lei:X") as resolve:
+            assert _vertex_holding_cik("0001355444") == "Entity"
+        assert resolve.call_args.kwargs == {"sec_cik": "0001355444"}
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.resolve_entity_id", return_value=None):
+            assert _vertex_holding_cik("0001355444") is None
+        assert _vertex_holding_cik(None) is None
+
+    def _run(self, data, held):
+        from app.scraper.runner import run_scrape_sec_edgar
+        people, entities, roles = [], [], []
+        ctx, _ = _make_session_mock()
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner._ensure_source", return_value="sec"), \
+             patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.runner.stated_by_13dg", return_value=False), \
+             patch("app.scraper.runner._vertex_holding_cik", side_effect=lambda cik: held.get(cik)), \
+             patch("app.scraper.runner._upsert_owns_sec"), \
+             patch("app.scraper.runner._upsert_role_sec", side_effect=lambda *a, **kw: roles.append(a)), \
+             patch("app.scraper.runner._upsert_person_by_name",
+                   side_effect=lambda name, **kw: people.append((name, kw.get("sec_cik"))) or "p"), \
+             patch("app.scraper.runner._upsert_entity_by_name",
+                   side_effect=lambda **kw: entities.append((kw["name"], kw.get("cik"))) or "e"):
+            run_scrape_sec_edgar(data["name"])
+        return people, entities, roles
+
+    def test_an_hc_filer_already_a_person_stays_one(self):
+        # NexPoint's 13D/A: DONDERO JAMES D, type HC — the code decides nothing
+        data = {"cik": "0001620393", "name": "NexPoint", "executives": [],
+                "ownership_filings": [{"investor_name": "Dondero James D", "investor_cik": "0001228922",
+                                       "is_individual": None, "form_type": "SCHEDULE 13D/A",
+                                       "stake_percent": 20.0}]}
+        people, entities, _ = self._run(data, held={"0001228922": "Person"})
+        assert people == [("Dondero James D", "0001228922")]
+        assert ("Dondero James D", "0001228922") not in entities
+
+    def test_a_form_4_cik_an_entity_holds_mints_no_person(self):
+        data = {"cik": "0001823652", "name": "Eve Holding", "ownership_filings": [],
+                "executives": [{"name": "S.a Embraer", "role": "Director", "person_cik": "0001355444",
+                                "shares_owned": 220000000, "stake_percent": 70.0,
+                                "source_url": "https://sec.gov/f4", "source_date": "2026-06-17"}]}
+        people, entities, roles = self._run(data, held={"0001355444": "Entity"})
+        assert people == [] and roles == []
+        assert entities[-1] == ("S.a Embraer", "0001355444")   # the company, found by its CIK
+
+    def test_a_company_director_seat_writes_nothing(self):
+        # as Form 4 now names it: as filed, its legal form intact
+        data = {"cik": "0001823652", "name": "Eve Holding", "ownership_filings": [],
+                "executives": [{"name": "EMBRAER S.A.", "role": "Director", "person_cik": "0001355444",
+                                "shares_owned": None}]}
+        people, entities, roles = self._run(data, held={})
+        assert people == [] and roles == []
+        assert ("EMBRAER S.A.", "0001355444") not in entities

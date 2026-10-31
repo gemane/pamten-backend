@@ -32,9 +32,9 @@ log = logging.getLogger(__name__)
 #: and labels by — and reads `voting_group` on every VotingGroup.
 VOTING_GROUP_TYPE = "voting_group"
 
-#: Item 8 codes meaning a human being, mirrored from sec_edgar so the writer can
-#: classify a group member from what the filer stated rather than from its name.
-_INDIVIDUAL_CODES = {"IN"}
+#: Item 8's answer for a group member, so the writer classifies it from what
+#: the filer stated rather than from its name (None: the name decides).
+from app.scraper.sec_edgar import _individual_by_code  # noqa: E402,F401
 
 
 def _is_control_filing(form_type: str | None) -> bool:
