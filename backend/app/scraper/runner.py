@@ -25,10 +25,10 @@ from app.merged_ids import resolve_current_id
 from app import industry
 from app.claims import record_claim, KIND_ROLE
 from app.stake_history import one_statement_per_run
-from app.scraper.wikidata import (search_by_statement, search_entity, search_entity_in_country,
-                                  fetch_company_data, pick_candidate)
+from app.scraper.wikidata import (classify_candidates, search_by_statement, search_entity,
+                                  search_entity_in_country, fetch_company_data, pick_candidate)
 from app.scraper.sources import KNOWN_SOURCES
-from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix, normalize_cik
+from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix, normalize_cik, strip_edgar_tag
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_edge_parties, _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
@@ -850,6 +850,60 @@ def _stored_wikidata_item(query: str, country: str | None = None) -> str | None:
     return None
 
 
+def _item_by_plain_name(query: str, country: str | None = None) -> str | None:
+    """The item a name names once its legal form and EDGAR tag are dropped —
+    "Lone Pine Capital Llc" is Lone Pine Capital, "Lord Abbett & Co" Lord
+    Abbett — asked only when the name as written found no company.
+
+    A name, not an id, so it is held to a name's standard: the item's own
+    LABEL (not an alias) must reduce to the same words, the words must be at
+    least two, and exactly one company-shaped item may qualify. "Inter & Co,
+    Inc." reduces to "inter", which Inter Milan answers; "Sof Ltd" to "sof",
+    a file format; "SmartStop Self Storage REIT, Inc." is not the label
+    "SmartStop Self Storage". The writer still refuses an item whose LEI or
+    CIK contradicts the node's (findings item 7, 2026-10-31)."""
+    key = normalize_entity_name(strip_edgar_tag(query))
+    if len(key.split()) < 2 or key == query.strip().lower():
+        return None
+    hits = (search_entity_in_country(key, country) if country else search_entity(key, limit=5))
+    same = [h["id"] for h in hits or []
+            if h.get("label") and normalize_entity_name(h["label"]) == key]
+    if not same:
+        return None
+    facts = classify_candidates(same)
+    companies = [q for q in same if facts.get(q, {}).get("is_company")]
+    if len(companies) == 1:
+        return companies[0]
+    if companies:
+        log.info("Wikidata: %d companies are labelled %r; none taken", len(companies), key)
+    return None
+
+
+def _stored_person_item(query: str) -> str | None:
+    """The QID a Person node already holds for the query, read before any
+    name search — only when exactly one person in the graph has the query's
+    name (either word order: EDGAR writes 'MUSK ELON'), so a namesake never
+    hands over another's item. Wikidata hardly states CIKs on people (none for
+    55 dev persons sampled, 2026-10-31), so the QID is the only id worth
+    asking by. Best-effort: a failed lookup means the name search."""
+    words = sorted(normalize_entity_name(query).split())
+    if len(words) < 2:
+        return None
+    try:
+        from app.routers.search import _clean
+        from app.db.arcadedb import run_sql
+        rows = [_clean(r) for r in run_sql(
+            "SELECT id, full_name, wikidata_id FROM Person WHERE search_text CONTAINSTEXT :q LIMIT 25",
+            {"q": query.lower()})]
+    except Exception as exc:  # noqa: BLE001 — the lookup only saves a search
+        log.warning("Wikidata: stored-person lookup failed for %r: %s", query, exc)
+        return None
+    same = [r for r in rows if sorted(normalize_entity_name(r.get("full_name") or "").split()) == words]
+    if len(same) == 1 and same[0].get("wikidata_id"):
+        return pick_candidate([{"id": same[0]["wikidata_id"]}], "person")
+    return None
+
+
 @_with_autodedup
 def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
     """
@@ -884,16 +938,18 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
     if qid is None:
         results = (search_entity_in_country(query, country) if country
                    else search_entity(query, limit=3))
-        if not results:
-            return {"status": "no_results", "query": query, "total": 0, "scraped": [],
-                    "requested_country": country}
 
         # A name is not a kind. Searching "Steve Jobs" returns the 2015 film first,
         # the book second and the man third — and taking the top hit wrote a Danny
         # Boyle picture into the graph as a company, because `infer_entity_type`
         # falls back to "company" for any P31 it does not recognise. Pick the hit
         # that actually looks like a company, or say there is not one.
-        qid = pick_candidate(results, "company")
+        qid = pick_candidate(results, "company") if results else None
+        if qid is None:
+            qid = _item_by_plain_name(query, country)
+        if qid is None and not results:
+            return {"status": "no_results", "query": query, "total": 0, "scraped": [],
+                    "requested_country": country}
     if qid is None:
         log.info("Wikidata: nothing company-shaped among the hits for %r", query)
         return {"status": "not_a_company", "query": query, "total": 0, "scraped": [],
@@ -2441,15 +2497,16 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
     from app.scraper.wikidata import (OWNER_ROLE, fetch_person_companies,
                                       fetch_person_details_for)
 
-    results = (search_entity_in_country(query, country) if country
-               else search_entity(query, limit=3))
-    if not results:
+    qid = _stored_person_item(query)
+    results = [] if qid else (search_entity_in_country(query, country) if country
+                              else search_entity(query, limit=3))
+    if not qid and not results:
         return {"status": "no_results", "query": query, "total": 0, "scraped": [],
                 "requested_country": country}
 
     # The same reason in the other direction: the man is the third hit for his
     # own name, so the first is not the one to ask about.
-    qid = pick_candidate(results, "person")
+    qid = qid or pick_candidate(results, "person")
     detail = fetch_person_details_for(qid) if qid else None
     if not detail or not detail.get("is_human"):
         # Not a person — the company path handles this, and guessing here would

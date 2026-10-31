@@ -248,6 +248,8 @@ Imports corporate ownership data via SPARQL. For a company it fetches subsidiari
 
 - Reads the item **by the id the node already holds** before any name search (2026-10-31): the node's own QID, else the one item stating its CIK (`haswbstatement:P5531`), else its LEI (P1278) — still only when that item looks like a company. EDGAR's spellings ("Wells Fargo & Company/Mn", "ONEOK INC /NEW/") found nothing by label, and 14 companies Wikidata files under the node's own CIK came back `no_results` every rebuild (findings item 7). Otherwise:
 - Searches Wikidata by company name, picks the best-matching entity
+- When the name as written finds no company, asks again **without the legal form and EDGAR's tag** ("Lone Pine Capital Llc" → Lone Pine Capital) — held to a name's standard: the item's own label must reduce to the same words, at least two of them, and exactly one company may qualify ("Inter & Co, Inc." reduces to "inter", which Inter Milan answers). The writer still refuses an item whose LEI or CIK contradicts the node's
+- A person the graph already holds with a QID is read by it — only when no other person has that name (either word order); Wikidata hardly states CIKs on people, so the QID is the only id asked by
 - Reads the day a company ceased (P576, at the statement's precision) as `dissolved_on` and closes what it still held — see *An entity has an end* in [`docs/data-model.md`](docs/data-model.md)
 - Writes to the DB using upsert — safe to re-run, no duplicates
 - Caps at 15 subsidiaries and 3 CEOs per entity

@@ -58,4 +58,22 @@ def test_no_node_means_the_name_search(it_db):
     out, by_id, by_name, _ = _scrape("Some Unknown Holdings Llc", {})
     assert out["status"] == "no_results"
     by_id.assert_not_called()
-    by_name.assert_called_once()
+    # the name as written, then without its legal form (`_item_by_plain_name`)
+    assert [c.args[0] for c in by_name.call_args_list] == ["Some Unknown Holdings Llc", "some unknown holdings"]
+
+
+def test_a_name_without_its_legal_form_finds_the_labelled_item(it_db):
+    """No node, no id: "Lone Pine Capital Llc" finds nothing as written, and
+    the item labelled "Lone Pine Capital" is taken once the form is dropped."""
+    asked = []
+
+    def search(q, limit=3):
+        asked.append(q)
+        return [{"id": "Q22023125", "label": "Lone Pine Capital"}] if q == "lone pine capital" else []
+    with patch("app.scraper.runner.search_entity", side_effect=search), \
+         patch("app.scraper.runner.classify_candidates",
+               side_effect=lambda qids: {q: {"is_company": True} for q in qids}), \
+         patch("app.scraper.runner._scrape_node") as node:
+        out = runner.run_scrape("Lone Pine Capital Llc", depth=0)
+    assert asked == ["Lone Pine Capital Llc", "lone pine capital"]
+    assert out["wikidata_id"] == "Q22023125" and node.call_args.args[0] == "Q22023125"
