@@ -282,6 +282,24 @@ class TestAggregate:
 
 # ── search_entity ─────────────────────────────────────────────────────────────
 
+class TestSearchByStatement:
+    def test_items_stating_the_id(self):
+        from app.scraper.wikidata import search_by_statement
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"query": {"search": [{"title": "Q744149"}, {"title": "Property:P5531"}]}}
+        with patch("httpx.get", return_value=resp) as get, patch("time.sleep"):
+            assert search_by_statement("P5531", "0000072971") == [{"id": "Q744149"}]
+        assert get.call_args.kwargs["params"]["srsearch"] == "haswbstatement:P5531=0000072971"
+
+    def test_an_api_error_is_raised_not_read_as_no_item(self):
+        from app.scraper.wikidata import WikidataApiError, search_by_statement
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"error": {"code": "cirrussearch-too-busy-error", "info": "busy"}}
+        with patch("httpx.get", return_value=resp), patch("time.sleep"):
+            with pytest.raises(WikidataApiError):
+                search_by_statement("P5531", "1")
+
+
 class TestSearchEntity:
     def _mock_response(self, results: list) -> MagicMock:
         resp = MagicMock()

@@ -522,8 +522,22 @@ class TestRunScrapeWikidata:
         Class-level rather than per-test: the dependency belongs to `run_scrape`,
         so every test here has it, and the next one added would inherit the hole."""
         with patch("app.scraper.runner.pick_candidate",
-                   side_effect=lambda results, kind: results[0]["id"] if results else None):
+                   side_effect=lambda results, kind: results[0]["id"] if results else None), \
+             patch("app.scraper.runner._stored_entity", return_value=None):    # no node: the name search
             yield
+
+    def test_the_node_held_item_is_scraped_without_a_name_search(self):
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner._stored_wikidata_item", return_value="Q744149") as by_id, \
+             patch("app.scraper.runner.search_entity") as by_name, \
+             patch("app.scraper.runner._scrape_node") as scrape, \
+             patch("app.scraper.runner._ensure_source", return_value="src-1"):
+            result = run_scrape("Wells Fargo & Company/Mn", depth=1)
+        by_id.assert_called_once_with("Wells Fargo & Company/Mn", None)
+        by_name.assert_not_called()
+        assert scrape.call_args.args[0] == "Q744149"
+        assert result["wikidata_id"] == "Q744149"
 
     def _ctx(self):
         return _make_session_mock()[0]
@@ -1683,3 +1697,62 @@ class TestOneCikOneVertexType:
         people, entities, roles = self._run(data, held={})
         assert people == [] and roles == []
         assert ("EMBRAER S.A.", "0001355444") not in entities
+
+
+# ── The Wikidata item by the id the node holds (findings item 7) ─────────────
+
+class TestStoredWikidataItem:
+    """Read by the id the database already holds before searching by name: the
+    node's QID, else the item stating its CIK (P5531), else its LEI (P1278)."""
+
+    def _run(self, stored, statements=None, company=lambda hits, kind: hits[0]["id"]):
+        from app.scraper.runner import _stored_wikidata_item
+        asked = []
+
+        def fake_statement(prop, value):
+            asked.append((prop, value))
+            return (statements or {}).get((prop, value), [])
+        with patch("app.scraper.runner._stored_entity", return_value=stored), \
+             patch("app.scraper.runner.search_by_statement", side_effect=fake_statement), \
+             patch("app.scraper.runner.pick_candidate", side_effect=company):
+            return _stored_wikidata_item("Wells Fargo & Company/Mn"), asked
+
+    def test_no_node_means_the_name_search(self):
+        assert self._run(None) == (None, [])
+
+    def test_the_nodes_own_qid_comes_first(self):
+        qid, asked = self._run({"id": "lei:X", "wikidata_id": "Q47099", "sec_cik": "0000912892"})
+        assert qid == "Q47099" and asked == []
+
+    def test_the_cik_finds_the_item(self):
+        qid, asked = self._run({"id": "sec:0000072971", "sec_cik": "0000072971"},
+                               {("P5531", "0000072971"): [{"id": "Q744149"}]})
+        assert qid == "Q744149" and asked == [("P5531", "0000072971")]
+
+    def test_an_unpadded_cik_is_tried_too(self):
+        qid, asked = self._run({"id": "sec:0000072971", "sec_cik": "0000072971"},
+                               {("P5531", "72971"): [{"id": "Q744149"}]})
+        assert qid == "Q744149" and asked == [("P5531", "0000072971"), ("P5531", "72971")]
+
+    def test_the_lei_when_the_cik_names_nothing(self):
+        qid, asked = self._run({"id": "lei:L", "sec_cik": "0000000001", "lei_id": "529900VBK42Y5HHRMD23"},
+                               {("P1278", "529900VBK42Y5HHRMD23"): [{"id": "Q219635"}]})
+        assert qid == "Q219635" and asked[-1] == ("P1278", "529900VBK42Y5HHRMD23")
+
+    def test_two_items_on_one_id_are_left_to_the_name(self):
+        qid, _ = self._run({"id": "sec:1", "sec_cik": "0000000001"},
+                           {("P5531", "0000000001"): [{"id": "Q1"}, {"id": "Q2"}]})
+        assert qid is None
+
+    def test_an_id_found_item_must_still_be_a_company(self):
+        # GitLab's CIK sits on the software item
+        qid, _ = self._run({"id": "sec:0001653482", "sec_cik": "0001653482"},
+                           {("P5531", "0001653482"): [{"id": "Q16639197"}]},
+                           company=lambda hits, kind: None)
+        assert qid is None
+
+    def test_a_failed_lookup_falls_back_to_the_name(self):
+        from app.scraper.runner import _stored_wikidata_item
+        with patch("app.scraper.runner._stored_entity", return_value={"id": "sec:1", "sec_cik": "0000000001"}), \
+             patch("app.scraper.runner.search_by_statement", side_effect=RuntimeError("too busy")):
+            assert _stored_wikidata_item("X") is None
