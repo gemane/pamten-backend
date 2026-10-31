@@ -744,7 +744,7 @@ evidence or the reason:
    `scripts/build_gleif_elf_abbr_bundle.py` from GLEIF's CC0 ELF list; evidence
    "name(form R85P)+place").
 2. **The same place of registration**: GLEIF's jurisdiction against where the filer is
-   incorporated (`sec_edgar.incorporation_place`): the cover of its newest annual report first
+   incorporated (`sec_edgar.incorporation_place`): its newest tagged cover first — 10-K, 20-F, 40-F, 10-Q or 8-K, so a change of state after the annual report counts (Liberty Media, Delaware → Nevada on 2026-05-12, findings item 23)
    (`dei:EntityIncorporationStateCountryCode`, `stated_incorporation`), EDGAR's header field
    `stateOfIncorporation` only when that report states none. Point 3's "today's address" is
    the report's office too (`sec_headquarters`), the record's business address only without one. The header field is the filer's

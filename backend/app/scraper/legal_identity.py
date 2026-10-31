@@ -17,7 +17,7 @@ one name key and one street — so `same_legal_entity` asks four things:
    R85P, whose abbreviations are NV, SA and AG (`gleif_elf_abbr.json`).
 2. **The same place of registration**: GLEIF's jurisdiction ("US-DE", "KY")
    against where the filer is incorporated (`sec_edgar.incorporation_place`:
-   its newest annual report's cover first, EDGAR's header field — wrong for
+   its newest tagged cover first (10-K/20-F/40-F/10-Q/8-K), EDGAR's header field — wrong for
    HubSpot and Alibaba — only when the report states none).
    GLEIF giving only "US" where EDGAR says New York is no contradiction, but
    no confirmation either: the record is weak (3).

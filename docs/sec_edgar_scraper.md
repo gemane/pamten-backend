@@ -1325,7 +1325,7 @@ from readers removed again the same day, so 11 remain):
       NYT. A row with no legal form at all ("Chubb") is the filer when its
       letters are. And only where the filer is registered (`_at_home`): EDGAR's
       state of incorporation ("US-NY", "KY"; `incorporation_place` — the
-      newest annual report's cover first, EDGAR's header field else), else the
+      newest tagged cover first — 10-K/20-F/40-F/10-Q/8-K, `report_cover` —, EDGAR's header field else), else the
       node's own place — Perfect Corp. (Cayman) lists a "Perfect Corp." in
       Japan, the US and France, three subsidiaries. A row that names no
       place, or one we cannot map, cannot tell, so the name decides.
