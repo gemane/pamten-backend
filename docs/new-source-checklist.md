@@ -387,6 +387,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (`merged_ids.resolve_current_id`) before the next write (findings item 22, 2026-10-31).
 - [ ] **Match on a hard identifier when the source has one.** Shared LEI/CIK/CH number is
       proof; a shared name is a hint.
+- [ ] **A hard id is one party, of one vertex type.** Give an id only to the name it was
+      stated for: a filing's own CIK on another co-filer's name made Buffett a Person
+      carrying Berkshire's CIK. Decide human or company before touching the name (Form 4
+      "EMBRAER S.A." turned around as 'LAST FIRST' lost its suffix and became a Person),
+      treat a code that allows both (13D/G `HC`) as unknown rather than as a company, and
+      when a CIK already sits on a Person never mint an Entity with it, or the reverse —
+      `sec:0001228922` was both (findings item 21, 2026-10-31).
 - [ ] **A name is replaced by credibility, never by arrival order.** Write `name_credibility`
       with the name, and let an existing node take the incoming name only when the source
       is at least as credible AND the name is the source's own for that id (EDGAR's name for

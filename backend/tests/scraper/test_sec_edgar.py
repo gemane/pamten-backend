@@ -1441,11 +1441,56 @@ class TestPersonSelection:
                            {"name": "B", "cik": "0000000222"}]}
         assert _select_person(xml, "222")["name"] == "B"
 
-    def test_the_first_block_is_used_when_no_cik_matches(self):
-        # 13G person blocks carry no CIK at all.
+    def test_a_block_of_its_own_cik_is_used_when_none_is_the_filer(self):
         from app.scraper.sec_edgar import _select_person
-        xml = {"persons": [{"name": "A", "cik": None}, {"name": "B", "cik": None}]}
-        assert _select_person(xml, "999")["name"] == "A"
+        xml = {"persons": [{"name": "A", "cik": "0000000111"}, {"name": "B", "cik": None}]}
+        assert _select_person(xml, "999") == {"name": "A", "cik": "0000000111"}
+
+    def test_cik_less_blocks_pick_the_one_edgar_names_the_filer(self):
+        # Berkshire's 13Gs: no block carries a CIK and Warren E. Buffett comes
+        # first. The first block on Berkshire's CIK made a Person "Warren E.
+        # Buffett" sec:0001067983 with twelve of Berkshire's stakes (item 21).
+        from app.scraper.sec_edgar import _select_person
+        xml = {"persons": [{"name": "Warren E. Buffett", "cik": None},
+                           {"name": "Berkshire Hathaway Inc.", "cik": None}]}
+        picked = _select_person(xml, "0001067983", lambda cik: "BERKSHIRE HATHAWAY INC")
+        assert picked == {"name": "Berkshire Hathaway Inc.", "cik": "0001067983"}
+        assert xml["persons"][0]["cik"] is None            # never the filer's CIK on another name
+
+    def test_a_person_filer_is_matched_in_edgar_word_order(self):
+        from app.scraper.sec_edgar import _select_person
+        xml = {"persons": [{"name": "Berkshire Hathaway Inc.", "cik": None},
+                           {"name": "Warren E. Buffett", "cik": None}]}
+        picked = _select_person(xml, "0000315090", lambda cik: "BUFFETT WARREN E")
+        assert picked["name"] == "Warren E. Buffett" and picked["cik"] == "0000315090"
+
+    def test_no_block_named_as_the_filer_skips_the_filing(self):
+        from app.scraper.sec_edgar import _select_person
+        xml = {"persons": [{"name": "A Fund", "cik": None}, {"name": "B Fund", "cik": None}]}
+        assert _select_person(xml, "999", lambda cik: "SOMEONE ELSE LLC") is None
+        assert _select_person(xml, "999") is None          # no name to match by
+        assert all(p["cik"] is None for p in xml["persons"])
+
+    def test_a_lone_cik_less_block_is_the_filer(self):
+        from app.scraper.sec_edgar import _select_person
+        asked = []
+        xml = {"persons": [{"name": "Vanguard Capital Management", "cik": None}]}
+        picked = _select_person(xml, "0000102909", asked.append)
+        assert picked["cik"] == "0000102909" and asked == []
+
+    def test_the_name_is_not_fetched_when_a_cik_matches(self):
+        from app.scraper.sec_edgar import _select_person
+        asked = []
+        xml = {"persons": [{"name": "A", "cik": None}, {"name": "B", "cik": "0000000222"}]}
+        assert _select_person(xml, "222", asked.append)["name"] == "B" and asked == []
+
+    def test_the_filer_name_ignores_legal_form_and_word_order(self):
+        from app.scraper.sec_edgar import _same_filer_name
+        assert _same_filer_name("Berkshire Hathaway Inc.", "BERKSHIRE HATHAWAY INC")
+        assert _same_filer_name("Warren E. Buffett", "BUFFETT WARREN E")
+        assert not _same_filer_name("National Indemnity Company", "BERKSHIRE HATHAWAY INC")
+        assert not _same_filer_name("Berkshire Hathaway International Insurance Ltd.",
+                                    "BERKSHIRE HATHAWAY INC")
 
     def test_no_persons_means_no_selection(self):
         from app.scraper.sec_edgar import _select_person
@@ -1541,9 +1586,12 @@ class TestStructuredScrapeEndToEnd:
                "000090221926000292/primary_doc.xml")
         with patch.object(sec_edgar, "_get_text",
                           side_effect=_serve(atom, {url: _fixture("13ga_wellington.xml")})), \
-             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
+             patch.object(sec_edgar, "fetch_filer_name", return_value="WELLINGTON MANAGEMENT GROUP LLP"):
             res = sec_edgar.fetch_ownership_filings("Nasdaq, Inc.", "1120193")
         assert len(res) == 1
+        assert res[0]["investor_name"].lower() == "wellington management group llp"
+        assert res[0]["investor_cik"] == "0000902219"
         names = [g["name"] for g in res[0]["group_members"]]
         assert len(names) == 3
         assert "Wellington Management Company LLP" in names
@@ -2042,6 +2090,72 @@ class TestOldCoverPagesWriteZeroInWords:
                                                  "shared_dispositive": 1_234_567}
 
 
+class TestFilerIsNotTheFirstBlock:
+    """Findings item 21 (b): the filer's CIK goes with the filer's own block."""
+
+    ATOM = TestStructuredScrapeEndToEnd.ATOM.replace("0002100119-26-000139", "0001193125-25-283610")
+    URL = "https://www.sec.gov/Archives/edgar/data/1014473/000119312525283610/primary_doc.xml"
+
+    def _run(self, filer_name):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=_serve(self.ATOM, {self.URL: _fixture("13ga_berkshire_verisign.xml")})), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
+             patch.object(sec_edgar, "fetch_filer_name", return_value=filer_name):
+            return sec_edgar.fetch_ownership_filings("VeriSign, Inc.", "1014473")
+
+    def test_berkshires_13g_is_berkshires_not_buffetts(self):
+        res = self._run("BERKSHIRE HATHAWAY INC")
+        assert len(res) == 1
+        row = res[0]
+        assert row["investor_name"] == "Berkshire Hathaway Inc."
+        assert row["investor_cik"] == "0001067983"
+        assert row["is_individual"] is None                # HC: the runner decides by the name
+        members = {g["name"]: g["cik"] for g in row["group_members"]}
+        assert members == {"Warren E. Buffett": None, "National Indemnity Company": None}
+
+    def test_without_the_filers_name_nothing_is_written(self):
+        assert self._run(None) == []
+
+
+class TestTypeCodes:
+    """Findings item 21 (c): HC is a holding company or a control person."""
+
+    def test_the_codes(self):
+        from app.scraper.sec_edgar import _individual_by_code
+        assert _individual_by_code("IN") is True
+        assert _individual_by_code("IA") is False
+        assert _individual_by_code("HC") is None             # the name decides
+        assert _individual_by_code("HC, CO") is False        # a definite code beside it decides
+        assert _individual_by_code("hc") is None
+        assert _individual_by_code(None) is None and _individual_by_code("") is None
+
+    def test_a_cover_page_hc_says_nothing_either_way(self):
+        from app.scraper import sec_edgar
+        assert sec_edgar._parse_reporter_type_from_text("12 TYPE OF REPORTING PERSON HC ") is None
+        assert sec_edgar._parse_reporter_type_from_text("12 TYPE OF REPORTING PERSON HC, CO ") is False
+        # the prose after the box is not a second code
+        assert sec_edgar._parse_reporter_type_from_text(
+            "12 TYPE OF REPORTING PERSON CO in the aggregate") is False
+
+    def test_dondero_on_nexpoints_13d_is_left_to_the_name(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        xml = {"filer_cik": "0001228922", "issuer_cik": "0001620393", "issuer_name": "NexPoint",
+               "schedule": "13D", "persons": [
+                   {"name": "DONDERO JAMES D", "cik": "0001228922", "type_code": "HC", "percent": 20.0},
+                   {"name": "DONDERO NANCY MARIE", "cik": None, "type_code": "IN", "percent": 1.0}]}
+        atom = TestStructuredScrapeEndToEnd.ATOM.replace("SCHEDULE 13G", "SCHEDULE 13D/A")
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, {})), \
+             patch.object(sec_edgar, "_fetch_13dg_xml", return_value=xml), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("NexPoint", "1620393")
+        assert res[0]["investor_name"].lower() == "dondero james d"
+        assert res[0]["is_individual"] is None
+        assert [g["type_code"] for g in res[0]["group_members"]] == ["IN"]
+
+
 class TestThirteenGCoFilersAreAFamilyNotABloc:
     """Seven of the eleven pre-2024 13G rows on dev read "stake unknown, bloc
     X%": the text path assumed every filer might be in a group, and a 13G
@@ -2149,6 +2263,15 @@ class TestRoleDatesFromForm3:
                                           period="2026-03-31"))
         assert out and out["former"] is True and out["role"] == "CFO"
         assert out["period_of_report"] == "2026-03-31"
+
+    def test_a_company_keeps_its_name_as_filed(self):
+        # Embraer files Form 4s as a director of Eve Holding. Turned around as
+        # a person's 'LAST FIRST' it became "S.a Embraer", lost its legal form
+        # and was minted a Person with Embraer's CIK (findings item 21).
+        out = _parse_form34_xml(self._xml("EMBRAER S.A.", officer="0", director="1",
+                                          cik="0001355444"))
+        assert out and out["name"] == "EMBRAER S.A." and out["person_cik"] == "0001355444"
+        assert _parse_form34_xml(self._xml("COOK TIMOTHY D"))["name"] == "Timothy D Cook"
 
     def test_a_pure_investor_is_still_nobody(self):
         assert _parse_form34_xml(self._xml("Some Fund", officer="0", director="0",

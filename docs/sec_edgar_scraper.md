@@ -283,6 +283,21 @@ Two traps worth naming:
   `.//` lookup hands all four members 5.4.
 * **Absent is not zero.** `_split_stake` reads "no sole-dispositive row" and "sole
   dispositive of nothing" as different facts, so `_xml_num` returns `None`, not 0.
+* **The filer's CIK belongs to the filer's block only.** `_select_person` takes the
+  block whose `reportingPersonCIK` is the filer's (`headerData … <cik>`). 13G blocks
+  carry no CIK, so a lone block is the filer, and among several the filer is the block
+  named as EDGAR names the CIK (`fetch_filer_name`, asked only then; the same words in
+  any order once the legal form is dropped, `_same_filer_name`). It used to fall back to
+  the first block and pair that name with the filer's CIK: Berkshire's 13Gs list Warren
+  E. Buffett first, and a Person "Warren E. Buffett" `sec:0001067983` (Berkshire's CIK)
+  held twelve of Berkshire's stakes (findings item 21, 2026-10-31). When no CIK-less
+  block is the filer, the filing is skipped rather than written to someone else.
+* **Item 8 `HC` is not an entity code.** It means a parent holding company *or a
+  control person*: Berkshire Hathaway Inc. files as HC, and so does James Dondero on
+  NexPoint's 13D/A. `_individual_by_code` returns `None` for it (the runner then decides
+  by the CIK's existing vertex and the name), reads every code a box lists ("HC, CO"
+  is a company), and IN is the only individual code. Read as an entity, HC made an
+  Entity "Dondero James D" with his CIK, which his Form 4 then gave a Person node too.
 
 Numbers appear both as `0` and as `1598232.00` — parse through `float()`.
 
@@ -923,7 +938,14 @@ Televisa" — an officer of Televisa, the CEO of its subsidiary (`_officer_role`
 pointer itself reached the graph as a role on five dev seats, in two spellings.
 
 Names are stored as `LAST FIRST [MIDDLE]` in all caps. The scraper converts
-them to `First [Middle] Last` in title case. The relationship flags are written
+them to `First [Middle] Last` in title case — **a person's only**: a name with a
+legal-entity suffix is kept as filed. Embraer files Form 4s as a director of Eve
+Holding; turned around, "EMBRAER S.A." became "S.a Embraer", lost the suffix that
+tells the runner it is a company, and was minted a Person with Embraer's CIK and a
+Director seat (findings item 21, 2026-10-31). The runner never gives a company a
+Person node or a seat, and a reporting owner whose CIK an Entity already holds is
+that company, whatever the name looks like; its holding is written from that
+Entity, found by the CIK. The relationship flags are written
 as `1` by older filings and as `true` by newer ones (Apple's 2026 Form 3 for its
 new CEO) — read both, or the newest insiders vanish.
 

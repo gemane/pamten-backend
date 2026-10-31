@@ -59,8 +59,8 @@ import httpx
 from app import former_names
 from app.roles import canonical_role
 from app.scraper.edge_schema import READ_FIELD, READ_FORM
-from app.scraper.mapper import (derive_ownership_type, fold_apostrophes, join_dotted_letters,
-                                strip_edgar_tag, strip_partnership_form,
+from app.scraper.mapper import (derive_ownership_type, fold_apostrophes, has_entity_suffix,
+                                join_dotted_letters, normalize_entity_name, strip_edgar_tag, strip_partnership_form,
                                 strip_trailing_forms, trailing_form)
 
 log = logging.getLogger(__name__)
@@ -1048,8 +1048,27 @@ def _plain_text(raw: str) -> str:
 
 
 # SC 13G/13D Item 8 "Type of Reporting Person" codes that mean an individual.
-# All other codes (CO, PN, IA, IC, BK, BD, SA, OO, HC, EP, GP …) are entities.
+# All other codes (CO, PN, IA, IC, BK, BD, SA, OO, EP, GP …) are entities —
+# except the ones below, which say nothing either way.
 _INDIVIDUAL_CODES = {"IN"}
+
+#: "HC" is a parent holding company OR a control person: Berkshire Hathaway
+#: Inc. files as HC, and so does James Dondero on NexPoint's 13D/A, beside
+#: his wife's IN. Read as an entity it minted a company "Dondero James D"
+#: carrying his CIK, which his own Form 4 then gave a Person node too
+#: (findings item 21). The code decides nothing; the name does.
+_EITHER_CODES = {"HC"}
+
+
+def _individual_by_code(code: str | None) -> bool | None:
+    """Item 8's answer to "is this a human being": True for IN, False for an
+    entity code, None when the box is empty or holds only `_EITHER_CODES` —
+    the caller then decides by the name. A box may list several codes
+    ("HC, CO" on Berkshire's covers); the definite ones decide."""
+    codes = {c for c in re.split(r"[\s,;/]+", (code or "").upper()) if c} - _EITHER_CODES
+    if not codes:
+        return None
+    return bool(codes & _INDIVIDUAL_CODES)
 
 def _parse_percent_from_text(text: str) -> float | None:
     """Extract stake % from Item 13 of a SC 13D/13G filing document."""
@@ -1171,17 +1190,19 @@ def _parse_reporter_type_from_text(text: str) -> bool | None:
     """
     Extract Item 8 'Type of Reporting Person' from a SC 13D/13G filing.
     Returns True if the filer is an individual (code IN), False if it is
-    a legal entity (CO, PN, IA, IC, BK, …), or None if the field is absent.
-    This is authoritative — no name heuristics needed.
+    a legal entity (CO, PN, IA, IC, BK, …), or None if the field is absent
+    or says nothing either way (HC, `_individual_by_code`). Every code the
+    box lists is read; the second and later ones only in capitals, so the
+    prose after the box ("CO in the …") is not read as one.
     """
     plain = _plain_text(text)
     m = re.search(
         r'type\s+of\s+reporting\s+person[^a-z]{0,80}'
-        r'\b(IN|CO|PN|IA|IC|BK|BD|SA|OO|HC|EP|GP|LP)\b',
+        r'\b((?:IN|CO|PN|IA|IC|BK|BD|SA|OO|HC|EP|GP|LP)\b(?:[\s,;/]+(?-i:IN|CO|PN|IA|IC|BK|BD|SA|OO|HC|EP|GP|LP)\b)*)',
         plain, re.IGNORECASE | re.DOTALL,
     )
     if m:
-        return m.group(1).upper() in _INDIVIDUAL_CODES
+        return _individual_by_code(m.group(1))
     return None
 
 
@@ -1411,11 +1432,14 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # The XML names the filer, so the index page is not needed at all —
             # one request instead of two — and `_filing_index_url` still gives a
             # readable link for provenance without fetching it.
-            person = _select_person(xml, xml.get("filer_cik"))
+            person = _select_person(xml, xml.get("filer_cik"), fetch_filer_name)
             if person is None:
                 continue
             investor_name = person["name"]
-            investor_cik  = _cik_int(person["cik"] or xml.get("filer_cik") or "").zfill(10)
+            # `_select_person` gave the block the filer's CIK only where the
+            # block IS the filer — never the filer's CIK on another party's name
+            investor_cik  = _cik_int(person["cik"]).zfill(10) if person.get("cik") else ""
+
             index_url     = _filing_index_url(company_cik, raw["accession"])
             primary_url   = None
         else:
@@ -1482,8 +1506,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             shares_total  = (_shares_outstanding(xml.get("comment_text") or "")
                              or _derive_total(person.get("aggregate"), person.get("percent")))
             voting_shares = _shares_voted(person.get("aggregate"), voting)
-            is_individual = (person["type_code"] in _INDIVIDUAL_CODES
-                             if person.get("type_code") else None)
+            is_individual = _individual_by_code(person.get("type_code"))
             group_members = [{"name": o["name"], "cik": o["cik"], "source": "xml",
                               # Item 8's code: IN means a human being. Stated by
                               # the filer, so the writer need not guess from the
@@ -1811,7 +1834,12 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
             return None
         former_role = _title_to_role(m.group("title").strip()) if m.group("title").strip() else "Officer"
 
-    name = _normalize_sec_name(name_elem.text.strip())
+    # 'LAST FIRST' is how EDGAR writes a human being. A company that files a
+    # Form 4 (a director-company, a 10% owner) keeps its name as filed: turned
+    # around, "EMBRAER S.A." became "S.a Embraer", lost its legal form, and the
+    # runner minted a Person with Embraer's CIK and a seat (findings item 21).
+    raw_name = name_elem.text.strip()
+    name = raw_name if has_entity_suffix(raw_name) else _normalize_sec_name(raw_name)
     role = former_role or (_officer_role(officer_title, remarks) if is_officer else "Director")
     if is_officer and _SEE_REMARKS.match(officer_title) and _looks_like_title(remarks):
         officer_title = remarks                           # the title as the filer actually wrote it
@@ -2896,13 +2924,21 @@ def _fetch_13dg_xml(subject_cik: str, accession: str) -> dict | None:
     return _parse_13dg_xml(raw)
 
 
-def _select_person(xml: dict, filer_cik: str | None) -> dict | None:
-    """Which reporting person is *the investor* on this filing.
+def _select_person(xml: dict, filer_cik: str | None, filer_name=None) -> dict | None:
+    """Which reporting person is *the investor* on this filing, with its CIK.
 
     A group files one schedule listing every member, so one block has to be
     chosen as the edge's owner and the rest become the group. Prefer the block
-    whose CIK is the filer's; 13G blocks carry no CIK, so fall back to the
-    first, which is where the form puts the primary filer.
+    whose CIK is the filer's. 13G blocks carry no CIK: a lone block is the
+    filer; among several, the block named as EDGAR names the filer
+    (``filer_name``, a callable CIK → name, asked only then). The chosen block
+    is given the filer's CIK only in those cases.
+
+    Never the first block on the filer's CIK: Berkshire's 13Gs list Warren E.
+    Buffett first, and his name on Berkshire's CIK made a Person
+    "sec:0001067983" holding twelve of Berkshire's stakes (findings item 21).
+    A block of its own CIK is still taken when nothing matched; a CIK-less one
+    is not — None, the filing is skipped.
     """
     persons = xml.get("persons") or []
     if not persons:
@@ -2912,9 +2948,29 @@ def _select_person(xml: dict, filer_cik: str | None) -> dict | None:
         for p in persons:
             if p.get("cik") and _cik_int(p["cik"]) == want:
                 return p
+        if len(persons) == 1 and not persons[0].get("cik"):
+            persons[0]["cik"] = filer_cik
+            return persons[0]
+        name = filer_name(filer_cik) if filer_name else None
+        for p in persons:
+            if not p.get("cik") and name and _same_filer_name(p["name"], name):
+                p["cik"] = filer_cik
+                return p
+    if persons[0].get("cik"):
         log.debug("SEC EDGAR: no reporting person matched filer CIK %s; using the first",
                   filer_cik)
-    return persons[0]
+        return persons[0]
+    log.info("SEC EDGAR: no reporting person is the filer (CIK %s); skipping the filing",
+             filer_cik)
+    return None
+
+
+def _same_filer_name(block_name: str, edgar_name: str) -> bool:
+    """A reporting person's name and EDGAR's name for the filer mean the same
+    party: the same words once the legal form is dropped, in any order —
+    EDGAR writes a person 'BUFFETT WARREN E', the block 'Warren E. Buffett'."""
+    a, b = normalize_entity_name(block_name).split(), normalize_entity_name(edgar_name).split()
+    return bool(a) and sorted(a) == sorted(b)
 
 
 def _parse_13dg_xml(raw: str) -> dict | None:

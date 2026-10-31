@@ -43,7 +43,7 @@ from app.scraper.graph_writer import (
 )
 from app.scraper.sec_writer import (
     VOTING_GROUP_TYPE,                                                           # noqa: F401
-    _INDIVIDUAL_CODES, _is_control_filing, _member_key,                          # noqa: F401
+    _individual_by_code, _is_control_filing, _member_key,                        # noqa: F401
     _retire_superseded_bloc_edge, _roster_overlap, _rosters_match,               # noqa: F401
     _same_member, _split_member_key,                                             # noqa: F401
     _upsert_group_membership, _upsert_owns_sec,                                  # noqa: F401
@@ -1765,6 +1765,35 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
     }
 
 
+def _vertex_holding_cik(cik: str | None) -> str | None:
+    """"Person" or "Entity": which vertex type already carries this SEC CIK,
+    None when neither does. A CIK is one filer, a human being or a company,
+    never both."""
+    cik = normalize_cik(cik)
+    if not cik:
+        return None
+    with db.get_session() as session:
+        if list(session.run("MATCH (p:Person {sec_cik: $cik}) RETURN p.id AS id LIMIT 1", cik=cik)):
+            return "Person"
+        return "Entity" if resolve_entity_id(session, sec_cik=cik) else None
+
+
+def _is_individual(name: str, stated: bool | None, cik: str | None) -> bool:
+    """Is a 13D/G reporting person a human being? Item 8's code when it says
+    (``stated``), else the vertex that already holds the CIK, else the shape
+    of the name. A legal-entity suffix vetoes a person classification the
+    filing got wrong (a misread Item 8 code): "Berkshire Hathaway Inc" is a
+    company however the type field parsed.
+
+    The CIK check keeps one filer one vertex type. Dondero's HC code made an
+    Entity "Dondero James D" with his CIK, and his Form 4 a Person with the
+    same id (findings item 21)."""
+    if stated is None:
+        held = _vertex_holding_cik(cik)
+        stated = held == "Person" if held else is_person_name(name)
+    return bool(stated) and not has_entity_suffix(name)
+
+
 def _find_person(full_name: str, sec_cik: str | None = None) -> str | None:
     """An existing Person by SEC CIK, else by exact name — no creation."""
     with db.get_session() as session:
@@ -1971,14 +2000,8 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         # Prefer the explicit Item 8 "Type of Reporting Person" field parsed
         # from the SC 13D/13G filing (is_individual=True → IN code).
         # Fall back to the name heuristic only when the document wasn't fetched.
-        is_individual = filing.get("is_individual")
-        if is_individual is None:
-            is_individual = is_person_name(investor_name)
-        # A legal-entity suffix vetoes a person classification the filing got
-        # wrong (a misread Item 8 code): "Berkshire Hathaway Inc" is a company
-        # however the type field parsed.
-        if is_individual and has_entity_suffix(investor_name):
-            is_individual = False
+        is_individual = _is_individual(investor_name, filing.get("is_individual"),
+                                       filing.get("investor_cik"))
 
         if is_individual:
             investor_node_id = _upsert_person_by_name(investor_name, source_id=source_id,
@@ -2014,8 +2037,8 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                                      "Person" if is_individual else "Entity", source_id)
             joined = {investor_node_id}
             for m in members:
-                m_individual = (m.get("type_code") in _INDIVIDUAL_CODES
-                                if m.get("type_code") else is_person_name(m["name"]))
+                m_individual = _is_individual(m["name"], _individual_by_code(m.get("type_code")),
+                                              m.get("cik"))
                 if m_individual:
                     mid = _upsert_person_by_name(m["name"], source_id=source_id,
                                                 sec_cik=m.get("cik"))
@@ -2140,11 +2163,13 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         # A 10% owner that files Form 4 is an ENTITY, not an officer — Berkshire
         # Hathaway Inc files Form 4s about the companies it holds. Record its
         # holding as an entity owner; never mint a Person or a director role for
-        # a company. (The role writers below assume a natural person.)
-        if has_entity_suffix(name):
+        # a company. (The role writers below assume a natural person.) A CIK an
+        # Entity already holds is a company too, whatever the name looks like.
+        if has_entity_suffix(name) or _vertex_holding_cik(exec_rec.get("person_cik")) == "Entity":
             shares = exec_rec.get("shares_owned")
             if shares and shares > 0:
                 ent_id = _upsert_entity_by_name(name=name, entity_type="company",
+                                                cik=exec_rec.get("person_cik"),
                                                 source_id=source_id)
                 if stated_by_13dg(ent_id, target_id, source_id):
                     _note_form4_yields(scraped, name, data["name"])
