@@ -882,6 +882,19 @@ the node's `uk-psc` holdings): when a new holding company takes the old name —
 (2022), KKR (2021), Welltower, Crane, Tata Motors — a PSC notified before names the old
 company, and GLEIF's record of that name is the new one (`incorporated_on` later).
 
+**GLEIF's own parent link** stands in for the building: when GLEIF names the record as
+a parent (direct or ultimate, an `OWNS` edge of source `gleif`) of a UK company the PSC
+owns — the two registers' edges meet on the one UK node — the join's evidence is
+"name+place+subsidiary". A filer writes Hitachi's Tokyo address in English and GLEIF in
+Japanese; Citigroup's PSC gives New York, GLEIF its Delaware agent. It never replaces
+the name, the place or the date. It also decides between records: the one GLEIF names
+wins over a same-name branch (BNP Paribas, ICBC's head office), and when GLEIF names a
+same-name record that does not agree, none joins — the one that agreed is a twin or a
+branch, not the owner. A parent of another name (an intermediate holding) vetoes
+nothing. Measured on the full PSC snapshot, GLEIF golden copy and RR file: 488 more
+joins, 3 redirected to the record GLEIF names, 10 refused (BNP Paribas, Société
+Générale, RCI Banque against their branches).
+
 Of several same-name GLEIF records that agree, a `DUPLICATE`, `ANNULLED`, `RETIRED` or
 `MERGED` registration gives way to the others (`GLEIF_NOT_THE_ENTITY`; alone it still
 joins). Two or more left is no join: a bank and its branch registered under one name at

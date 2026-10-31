@@ -264,7 +264,7 @@ def _same_premises(a: tuple, b: tuple) -> bool:
     return bool((city(a[1]) and city(a[1]) == city(b[1])) or (post(a[2]) and post(a[2]) == post(b[2])))
 
 
-def psc_same_legal_entity(node: dict, psc: dict) -> tuple[str, str]:
+def psc_same_legal_entity(node: dict, psc: dict, parent: bool = False) -> tuple[str, str]:
     """(JOIN, evidence) when a corporate PSC (Companies House's record of a
     foreign owner) and the GLEIF record on ``node`` are one legal entity, else
     (REFUSE, reason). A PSC record is the filer's own unverified words, so all
@@ -276,6 +276,10 @@ def psc_same_legal_entity(node: dict, psc: dict) -> tuple[str, str]:
        states (`jurisdiction_code` from its legal authority, else country);
     3. the building — the PSC's address against GLEIF's legal or
        headquarters address: house number and street, and city or postcode;
+       or, in its place, GLEIF's own word that this record is the ``parent``
+       of a UK company the PSC owns (a filer writes Hitachi's Tokyo address
+       in English, GLEIF in Japanese; Citigroup its New York office, GLEIF
+       its Delaware agent);
 
     and GLEIF's entity must exist by the day the PSC was notified
     (``notified_on``): when a new holding company takes the old name — Apollo
@@ -302,6 +306,8 @@ def psc_same_legal_entity(node: dict, psc: dict) -> tuple[str, str]:
         if _same_premises(mine, theirs):
             where = "hq" if kind == addresses.HEADQUARTERS else "address"
             return JOIN, f"name+{'place' if ok else 'country'}+{where}"
+    if parent:
+        return JOIN, f"name+{'place' if ok else 'country'}+subsidiary"
     return REFUSE, "the address differs"
 
 

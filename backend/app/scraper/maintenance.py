@@ -1539,7 +1539,10 @@ def _bridge_psc_gleif(members: list[dict], kept_separate: set, apply: bool = Tru
     GLEIF record: where the registers agree (`legal_identity.psc_same_legal_entity`
     — name with its form, place, building, an entity that existed when the PSC
     was notified) the PSC node takes the LEI, with the evidence as
-    ``lei_source``, and the ordinary merge folds the pair. Of several records
+    ``lei_source``, and the ordinary merge folds the pair. GLEIF's own
+    parent link to a UK company the PSC owns stands in for the building, and
+    decides between records: the one GLEIF names wins, and when it names one
+    that does not agree, none joins. Of several records
     that agree, a DUPLICATE/ANNULLED/RETIRED/MERGED one gives way to the
     others; two left (a bank and its branch under one name — Deutsche Bank's
     Paris LEI) is no join. A pair a human kept apart is never asked. Updates
@@ -1561,6 +1564,11 @@ def _bridge_psc_gleif(members: list[dict], kept_separate: set, apply: bool = Tru
             "MATCH (a:Entity {id: $id})-[r:OWNS]->() WHERE r.source_id = 'uk-psc' AND r.since IS NOT NULL "
             "RETURN r.since AS since", {"id": p["id"]})]
         psc["notified_on"] = min(days) if days else None
+        # the records GLEIF names as a parent (direct or ultimate) of a
+        # company this PSC owns: on one node, both registers' edges meet
+        parents = {r["id"] for r in run_query(
+            "MATCH (a:Entity {id: $id})-[:OWNS]->(c:Entity)<-[r:OWNS]-(g:Entity) WHERE r.source_id = 'gleif' "
+            "RETURN DISTINCT g.id AS id", {"id": p["id"]})}
         agree: list[tuple[dict, str, str]] = []
         for g in gleifs:
             if frozenset((p["id"], g["id"])) in kept_separate:
@@ -1570,12 +1578,21 @@ def _bridge_psc_gleif(members: list[dict], kept_separate: set, apply: bool = Tru
             if not node:
                 continue
             node = dict(node[0])
-            verdict, why = psc_same_legal_entity(node, psc)
+            verdict, why = psc_same_legal_entity(node, psc, parent=g["id"] in parents)
             if verdict != JOIN:
                 log.info("PSC/GLEIF bridge: %s is not %s: %s", p["id"], g["id"], why)
                 continue
             agree.append((g, why, (node.get("gleif_registration_status") or "").upper()))
         live = [a for a in agree if a[2] not in GLEIF_NOT_THE_ENTITY] or agree
+        named = [a for a in live if a[0]["id"] in parents]
+        if named:
+            live = named       # GLEIF's parent beats a same-name branch (BNP Paribas, ICBC)
+        elif live and parents & {g["id"] for g in gleifs}:
+            # GLEIF names ANOTHER record of this name as the parent: the one
+            # that agreed is a twin or a branch, not the owner
+            log.info("PSC/GLEIF bridge: %s: GLEIF names %s as the parent, not %s", p["id"],
+                     ", ".join(sorted(parents & {g["id"] for g in gleifs})), live[0][0]["id"])
+            continue
         if len(live) != 1:
             if live:
                 log.info("PSC/GLEIF bridge: %s agrees with %d records (%s): no join", p["id"], len(live),

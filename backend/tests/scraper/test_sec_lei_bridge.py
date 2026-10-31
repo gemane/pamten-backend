@@ -214,11 +214,12 @@ class TestTheCorporatePscBridge:
                 "country": "US", "gleif_registration_status": status,
                 "hq_street": "3555 Farnam Street, Suite 1440", "hq_city": "Omaha", "hq_postcode": "68131", **kw}
 
-    def _run(self, gleifs, since=("2016-04-06",)):
+    def _run(self, gleifs, since=("2016-04-06",), parents=()):
         rows = {self.PSC["id"]: self.PSC, **{g["id"]: g for g in gleifs}}
         writes = []
         with patch.object(maintenance, "run_sql", side_effect=lambda q, p=None: [rows[p["id"]]]), \
-             patch.object(maintenance, "run_query", return_value=[{"since": d} for d in since]), \
+             patch.object(maintenance, "run_query", side_effect=lambda q, p=None: [{"since": d} for d in since]
+                          if "r.since" in q else [{"id": f"lei:{x}"} for x in parents]), \
              patch.object(maintenance, "run_command", side_effect=lambda q, p=None: writes.append(p)):
             members = [{"id": self.PSC["id"], "name": self.PSC["name"], "lei_id": None},
                        *({"id": g["id"], "name": g["name"], "lei_id": g["lei_id"]} for g in gleifs)]
@@ -246,3 +247,24 @@ class TestTheCorporatePscBridge:
         assert self._run([self.gleif("A", incorporated_on="2021-07-01")], since=("2022-01-01", "2019-03-04"))[0] == []
         assert self._run([self.gleif("A", incorporated_on="2021-07-01")], since=("2022-01-01",))[0] == ["A"]
         assert self._run([self.gleif("A", incorporated_on="2021-07-01")], since=())[0] == ["A"]
+
+    def test_gleifs_parent_link_stands_in_for_the_building(self):
+        # the filer wrote the Tokyo address in English, GLEIF in Japanese
+        far = self.gleif("A", hq_street="1-1 Marunouchi", hq_city="Tokyo", hq_postcode="100")
+        assert self._run([far])[0] == []
+        joined, writes = self._run([far], parents=("A",))
+        assert joined == ["A"] and writes[0]["why"] == "name+place+subsidiary"
+
+    def test_the_parent_gleif_names_beats_a_same_name_branch(self):
+        # BNP Paribas: the head office and its branch, one name, one building
+        assert self._run([self.gleif("A"), self.gleif("B")], parents=("B",))[0] == ["B"]
+
+    def test_gleif_naming_another_record_vetoes_the_join(self):
+        # the record that agreed is not the one GLEIF names as the owner
+        other = self.gleif("B", jurisdiction_code="US-NV")      # GLEIF's parent, but another place
+        joined, writes = self._run([self.gleif("A"), other], parents=("B",))
+        assert joined == [] and writes == []
+
+    def test_a_parent_of_another_name_vetoes_nothing(self):
+        # an intermediate holding is GLEIF's parent: it is no member of this name
+        assert self._run([self.gleif("A")], parents=("ZZZ",))[0] == ["A"]

@@ -76,3 +76,16 @@ def test_a_company_born_after_the_notice_stays_apart(it_db):
     maintenance.deduplicate_entities(limit=None)
     assert [n[:2] for n in _berkshires(it_db)] == [(PSC_ID, None), (f"lei:{LEI}", LEI)]
     assert _owner_of_bhiil(it_db) == [PSC_ID]
+
+
+def test_gleifs_parent_link_stands_in_for_the_building(it_db):
+    # the PSC's address is another building, but GLEIF itself names the LEI
+    # record as BHIIL's parent: on the one UK node the two edges meet
+    from app.scraper import maintenance
+    _seed(it_db, psc_street="1 Main Street")
+    it_db.run_command("MATCH (a:Entity {id: $a}), (b:Entity {id: 'gb-coh:03230337'}) "
+                      "CREATE (a)-[:OWNS {source_id: 'gleif', direct_or_indirect: 'indirect'}]->(b)", {"a": f"lei:{LEI}"})
+    maintenance.deduplicate_entities(limit=None)
+    nodes = _berkshires(it_db)
+    assert len(nodes) == 1 and nodes[0][:2] == (f"lei:{LEI}", LEI)
+    assert _owner_of_bhiil(it_db) == [f"lei:{LEI}"]

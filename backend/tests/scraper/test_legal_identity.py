@@ -343,3 +343,14 @@ class TestACorporatePscAndItsGleifRecord:
         assert self._verdict({"incorporated_on": "2019-03-04"}, notified_on="2019-03-04")[0] == JOIN
         assert self._verdict({"incorporated_on": "1998-12-21"}, notified_on="2019-03-04")[0] == JOIN
         assert self._verdict({"incorporated_on": "2021-07-01"})[0] == JOIN, "no notice date, no guard"
+
+    def test_gleifs_parent_link_in_place_of_the_building(self):
+        from app.scraper.legal_identity import psc_same_legal_entity
+        psc = {**self.PSC, "reg_street": "1 Main Street"}
+        assert psc_same_legal_entity(self.GLEIF, psc) == (REFUSE, "the address differs")
+        assert psc_same_legal_entity(self.GLEIF, psc, parent=True) == (JOIN, "name+place+subsidiary")
+        # but never in place of the name, the place or the date
+        assert psc_same_legal_entity(self.GLEIF, {**psc, "jurisdiction_code": "US-NV"}, parent=True)[0] == REFUSE
+        assert psc_same_legal_entity(self.GLEIF, {**psc, "name": "Berkshire Hathaway LLC"}, parent=True)[0] == REFUSE
+        assert psc_same_legal_entity({**self.GLEIF, "incorporated_on": "2021-07-01"},
+                                     {**psc, "notified_on": "2019-03-04"}, parent=True)[0] == REFUSE
