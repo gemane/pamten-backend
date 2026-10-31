@@ -173,7 +173,12 @@ _OC, _GLEIF, _PSC = (KNOWN_SOURCES["open_corporates"], KNOWN_SOURCES["bods_gleif
 WIKIDATA_SOURCE_NAME  = _WD["label"]
 WIKIDATA_SOURCE_URL   = _WD["url"]
 WIKIDATA_CREDIBILITY  = _WD["credibility"]
-MAX_SUBSIDIARIES      = 15   # per entity, to avoid runaway scrapes
+#: Subsidiaries scraped again one level down, per entity (depth 2–3): the
+#: recursion is what grows ~exponentially. Every subsidiary is still READ and
+#: written at its own level — until 2026-10-31 this capped the list itself, in
+#: SPARQL row order, which is not fixed: Nestlé lists 23, and Alcon fell inside
+#: the first 15 on one run and outside on the next (findings item 24).
+MAX_SUBSIDIARIES_FOLLOWED = 15
 MAX_CEOS              = 3
 MAX_OFFICERS          = 30   # founders + chairpersons + board members combined (large boards)
 MAX_OWNERS            = 10   # owned-by (P127) links
@@ -570,6 +575,15 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
     return None if (leis or ciks) else False
 
 
+def _subsidiary_order(sub: dict) -> tuple:
+    """A fixed order for an item's subsidiaries, which SPARQL returns in no
+    particular one: those a register knows (an LEI or a CIK — the only ones
+    written) first, current before ended, then by QID number."""
+    identified = bool(sub.get("leis") or sub.get("lei") or sub.get("sec_ciks") or sub.get("sec_cik"))
+    qid = str(sub.get("qid") or "")
+    return (not identified, bool(sub.get("until")), int(qid[1:]) if qid[1:].isdigit() else 0, qid)
+
+
 def _scrape_node(
     qid: str,
     depth: int,
@@ -638,8 +652,10 @@ def _scrape_node(
         _upsert_owns(parent_entity_id, entity_id, source_id,
                      source_url=_wikidata_url(qid), read_from=READ_FIELD)
 
-    # Subsidiaries
-    for sub in data.get("subsidiaries", [])[:MAX_SUBSIDIARIES]:
+    # Subsidiaries — all of them, in a fixed order (`_subsidiary_order`); only
+    # the first MAX_SUBSIDIARIES_FOLLOWED written ones are followed down
+    followed = 0
+    for sub in sorted(data.get("subsidiaries", []), key=_subsidiary_order):
         sub_name = sub.get("name") or sub["qid"]
         sub_type = infer_entity_type(list(sub.get("instances", set())))
         gate = _resolve_related_company(sub)
@@ -665,7 +681,8 @@ def _scrape_node(
                      source_url=_wikidata_url(sub["qid"]),
                      since=sub.get("since"), until=sub.get("until"),
                      read_from=READ_FIELD)
-        if depth > 1:
+        if depth > 1 and followed < MAX_SUBSIDIARIES_FOLLOWED:
+            followed += 1
             _scrape_node(sub["qid"], depth - 1, visited, scraped, source_id,
                          parent_entity_id=entity_id, counts=counts)
         elif sub["qid"] not in {s["qid"] for s in scraped}:

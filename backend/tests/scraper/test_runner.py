@@ -1858,3 +1858,66 @@ class TestStoredPersonItem:
         from app.scraper.runner import _stored_person_item
         with patch("app.db.arcadedb.run_sql", side_effect=RuntimeError("down")):
             assert _stored_person_item("Elon Musk") is None
+
+
+# ── Every subsidiary, in a fixed order (findings item 24) ────────────────────
+
+class TestSubsidiaryOrder:
+    """SPARQL returns an item's subsidiaries in no fixed order, and the first
+    15 were all that was read: Alcon, Nestlé's 20th of 23, fell inside on one
+    run and outside on the next. All are read now; only the recursion is
+    capped, after a fixed order."""
+
+    PARENT = {"qid": "Q160746", "name": "Nestlé", "description": "", "instances": ["Q4830453"],
+              "country": "CH", "founded": None, "revenue": None, "parents": [], "ceos": [],
+              "owners": [], "officers": [], "successors": [], "predecessors": []}
+
+    def _subs(self, n_unidentified=20, n_identified=3):
+        subs = [{"qid": f"Q{1000 + i}", "name": f"Unknown {i}", "instances": []} for i in range(n_unidentified)]
+        subs += [{"qid": f"Q{500 + i}", "name": f"Known {i}", "instances": [], "lei": f"LEI{i:017d}"}
+                 for i in range(n_identified)]
+        subs.append({"qid": "Q684825", "name": "Alcon", "instances": [], "lei": "549300LDT5AP8S0NBM78",
+                     "since": "1977-00-00", "until": "2010-00-00"})
+        return subs
+
+    def _scrape(self, subs, depth):
+        from app.scraper.runner import _scrape_node
+        owns, fetched = [], []
+
+        def company(qid):
+            fetched.append(qid)
+            return {**self.PARENT, "qid": qid, "name": qid, "subsidiaries": subs if qid == "Q160746" else []}
+        ctx, _ = _make_session_mock()
+        with patch("app.scraper.runner.fetch_company_data", side_effect=company), \
+             patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner._resolve_related_company",
+                   side_effect=lambda rel: None if rel.get("lei") else False), \
+             patch("app.scraper.runner._upsert_entity", side_effect=lambda **kw: "id-" + kw["wikidata_id"]), \
+             patch("app.scraper.runner._upsert_owns", side_effect=lambda a, b, *x, **kw: owns.append(b)):
+            counts = {}
+            _scrape_node("Q160746", depth, set(), [], "src", counts=counts)
+        return owns, fetched[1:], counts
+
+    def test_every_identified_subsidiary_is_written_however_many_precede_it(self):
+        owns, _, counts = self._scrape(self._subs(), depth=1)
+        assert owns == ["id-Q500", "id-Q501", "id-Q502", "id-Q684825"]   # current first, Alcon (ended) last
+        assert counts["skipped_unidentified"] == 20
+
+    def test_the_order_does_not_depend_on_the_rows(self):
+        subs = self._subs()
+        assert self._scrape(subs, 1)[0] == self._scrape(list(reversed(subs)), 1)[0]
+
+    def test_only_the_recursion_is_capped(self):
+        from unittest.mock import patch as p
+        from app.scraper import runner
+        subs = self._subs(n_unidentified=0, n_identified=5)
+        with p.object(runner, "MAX_SUBSIDIARIES_FOLLOWED", 2):
+            owns, followed, _ = self._scrape(subs, depth=2)
+        assert len(set(owns) - {"id-Q160746"}) == 6                   # all six written (a followed one twice: its parent wires up again)
+        assert followed == ["Q500", "Q501"]                            # two followed down, the first two
+
+    def test_the_order_key(self):
+        from app.scraper.runner import _subsidiary_order
+        rows = [{"qid": "Q99"}, {"qid": "Q10", "until": "2010-00-00", "lei": "X"},
+                {"qid": "Q9", "sec_cik": "0000000001"}, {"qid": "Q100", "lei": "Y"}]
+        assert [r["qid"] for r in sorted(rows, key=_subsidiary_order)] == ["Q9", "Q100", "Q10", "Q99"]
