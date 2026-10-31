@@ -1537,12 +1537,16 @@ def _bridge_psc_gleif(members: list[dict], kept_separate: set, apply: bool = Tru
     """Same-name members that share no hard id because one is a corporate PSC
     (`chpsc:`, a foreign owner as Companies House records it) and the other a
     GLEIF record: where the registers agree (`legal_identity.psc_same_legal_entity`
-    — name with its form, place, building) the PSC node takes the LEI, with the
-    evidence as ``lei_source``, and the ordinary merge folds the pair. A pair a
-    human kept apart is never asked. Updates `members` in place; returns the
-    pairs joined (findings item 25: Berkshire Hathaway)."""
-    from app.scraper.legal_identity import (GLEIF_POSTCODES, IDENTITY_FIELDS, JOIN, PSC_FIELDS,
-                                            psc_same_legal_entity)
+    — name with its form, place, building, an entity that existed when the PSC
+    was notified) the PSC node takes the LEI, with the evidence as
+    ``lei_source``, and the ordinary merge folds the pair. Of several records
+    that agree, a DUPLICATE/ANNULLED/RETIRED/MERGED one gives way to the
+    others; two left (a bank and its branch under one name — Deutsche Bank's
+    Paris LEI) is no join. A pair a human kept apart is never asked. Updates
+    `members` in place; returns the pairs joined (findings item 25: Berkshire
+    Hathaway)."""
+    from app.scraper.legal_identity import (GLEIF_NOT_THE_ENTITY, GLEIF_PSC_FIELDS, IDENTITY_FIELDS, JOIN,
+                                            PSC_FIELDS, psc_same_legal_entity)
     pscs = [m for m in members if str(m.get("id", "")).startswith("chpsc:") and not m.get("lei_id")]
     gleifs = [m for m in members if m.get("lei_id") and not str(m.get("id", "")).startswith("chpsc:")]
     joined: list[dict] = []
@@ -1551,24 +1555,39 @@ def _bridge_psc_gleif(members: list[dict], kept_separate: set, apply: bool = Tru
         if not rows:
             continue
         psc = dict(rows[0])
+        # the day it was notified: the earliest start of its register holdings
+        # (compared in Python — Cypher coerces ISO dates)
+        days = [str(r["since"])[:10] for r in run_query(
+            "MATCH (a:Entity {id: $id})-[r:OWNS]->() WHERE r.source_id = 'uk-psc' AND r.since IS NOT NULL "
+            "RETURN r.since AS since", {"id": p["id"]})]
+        psc["notified_on"] = min(days) if days else None
+        agree: list[tuple[dict, str, str]] = []
         for g in gleifs:
             if frozenset((p["id"], g["id"])) in kept_separate:
                 continue
-            node = run_sql(f"SELECT {', '.join((*IDENTITY_FIELDS, *GLEIF_POSTCODES))} FROM Entity WHERE id = :id",
+            node = run_sql(f"SELECT {', '.join((*IDENTITY_FIELDS, *GLEIF_PSC_FIELDS))} FROM Entity WHERE id = :id",
                            {"id": g["id"]})
             if not node:
                 continue
-            verdict, why = psc_same_legal_entity(dict(node[0]), psc)
+            node = dict(node[0])
+            verdict, why = psc_same_legal_entity(node, psc)
             if verdict != JOIN:
                 log.info("PSC/GLEIF bridge: %s is not %s: %s", p["id"], g["id"], why)
                 continue
-            if apply:
-                run_command("MATCH (e:Entity {id: $id}) SET e.lei_id = $lei, e.lei_source = COALESCE(e.lei_source, $why)",
-                            {"id": p["id"], "lei": g["lei_id"], "why": why})
-            p["lei_id"] = g["lei_id"]
-            joined.append({"psc_id": p["id"], "lei_id": g["lei_id"], "lei_node_id": g["id"],
-                           "name": p.get("name"), "evidence": why})
-            break
+            agree.append((g, why, (node.get("gleif_registration_status") or "").upper()))
+        live = [a for a in agree if a[2] not in GLEIF_NOT_THE_ENTITY] or agree
+        if len(live) != 1:
+            if live:
+                log.info("PSC/GLEIF bridge: %s agrees with %d records (%s): no join", p["id"], len(live),
+                         ", ".join(a[0]["id"] for a in live))
+            continue
+        g, why, _ = live[0]
+        if apply:
+            run_command("MATCH (e:Entity {id: $id}) SET e.lei_id = $lei, e.lei_source = COALESCE(e.lei_source, $why)",
+                        {"id": p["id"], "lei": g["lei_id"], "why": why})
+        p["lei_id"] = g["lei_id"]
+        joined.append({"psc_id": p["id"], "lei_id": g["lei_id"], "lei_node_id": g["id"],
+                       "name": p.get("name"), "evidence": why})
     return joined
 
 

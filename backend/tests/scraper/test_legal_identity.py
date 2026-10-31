@@ -334,3 +334,12 @@ class TestACorporatePscAndItsGleifRecord:
                "hq_street": "Brouwerijplein 1", "hq_city": "Leuven", "hq_postcode": "3000"}
         assert self._verdict(abi, name="Anheuser-Busch InBev SA/NV", jurisdiction_code=None, country="BE",
                              reg_street="Brouwerijplein 1", reg_city="Leuven", reg_postcode="3000")[0] == JOIN
+
+    def test_an_entity_born_after_the_notice_is_another_one(self):
+        # a new holding company took the old name (Apollo 2022, KKR 2021): the
+        # PSC notified before it names the old company
+        assert self._verdict({"incorporated_on": "2021-07-01"}, notified_on="2019-03-04") == \
+            (REFUSE, "incorporated 2021-07-01, after the PSC notice of 2019-03-04")
+        assert self._verdict({"incorporated_on": "2019-03-04"}, notified_on="2019-03-04")[0] == JOIN
+        assert self._verdict({"incorporated_on": "1998-12-21"}, notified_on="2019-03-04")[0] == JOIN
+        assert self._verdict({"incorporated_on": "2021-07-01"})[0] == JOIN, "no notice date, no guard"

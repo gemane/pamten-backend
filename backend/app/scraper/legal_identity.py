@@ -226,7 +226,12 @@ def _address_key(street: str | None, city: str | None) -> str | None:
 PSC_FIELDS = ("id", "name", "country", "jurisdiction_code",
               *(addresses.field(addresses.REGISTERED, part) for part in ("street", "city", "postcode")))
 #: and of the GLEIF node, beside IDENTITY_FIELDS
-GLEIF_POSTCODES = tuple(addresses.field(kind, "postcode") for kind in (addresses.HEADQUARTERS, addresses.REGISTERED))
+GLEIF_PSC_FIELDS = ("incorporated_on",
+                    *(addresses.field(kind, "postcode") for kind in (addresses.HEADQUARTERS, addresses.REGISTERED)))
+#: GLEIF registrations that stand for no entity of their own — a second LEI
+#: for one entity, one issued in error, or one whose entity is gone: a PSC
+#: names the record beside it, never one of these, when both qualify
+GLEIF_NOT_THE_ENTITY = frozenset({"DUPLICATE", "ANNULLED", "RETIRED", "MERGED"})
 
 #: words of a street line that say where in a building, not which building
 _IN_BUILDING = re.compile(r"\b(ste|suite|fl|floor|unit|room|rm|apt)\b\.?\s*\S*", re.IGNORECASE)
@@ -270,7 +275,12 @@ def psc_same_legal_entity(node: dict, psc: dict) -> tuple[str, str]:
     2. the place — no contradiction between GLEIF's and the one the PSC
        states (`jurisdiction_code` from its legal authority, else country);
     3. the building — the PSC's address against GLEIF's legal or
-       headquarters address: house number and street, and city or postcode.
+       headquarters address: house number and street, and city or postcode;
+
+    and GLEIF's entity must exist by the day the PSC was notified
+    (``notified_on``): when a new holding company takes the old name — Apollo
+    in 2022, KKR in 2021 — the old PSC record names the old company, which
+    GLEIF lists under another LEI or not at all.
 
     Berkshire Hathaway's PSC record (beside BHIIL, "State Of Delaware", 3555
     Farnam Street, Omaha 68131) is GLEIF's BERKSHIRE HATHAWAY INC (US-DE,
@@ -280,6 +290,9 @@ def psc_same_legal_entity(node: dict, psc: dict) -> tuple[str, str]:
     name = psc.get("name")
     if not name or not (_same_name(_gleif_names(node), [name]) or _same_name_by_form_code(node, [name])):
         return REFUSE, "the legal name differs"
+    born, notified = (node.get("incorporated_on") or "")[:10], (psc.get("notified_on") or "")[:10]
+    if born and notified and born > notified:
+        return REFUSE, f"incorporated {born}, after the PSC notice of {notified}"
     ok, why = _place_verdict(gleif_place(node), psc.get("jurisdiction_code") or psc.get("country"))
     if ok is False:
         return REFUSE, why

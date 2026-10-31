@@ -848,12 +848,27 @@ because a PSC record is the filer's own unverified words — all three must agre
    the house number and street word, in either order ("3555 Farnam Street, Suite 1440" is
    "3555 Farnam Street"; "Brouwerijplein 1"), and the city or the postcode.
 
+and GLEIF's entity must exist by the day the PSC was notified (the earliest `since` of
+the node's `uk-psc` holdings): when a new holding company takes the old name — Apollo
+(2022), KKR (2021), Welltower, Crane, Tata Motors — a PSC notified before names the old
+company, and GLEIF's record of that name is the new one (`incorporated_on` later).
+
+Of several same-name GLEIF records that agree, a `DUPLICATE`, `ANNULLED`, `RETIRED` or
+`MERGED` registration gives way to the others (`GLEIF_NOT_THE_ENTITY`; alone it still
+joins). Two or more left is no join: a bank and its branch registered under one name at
+one building (Deutsche Bank and its Paris LEI, Société Générale, Intesa, Santander) —
+the importer keeps no `EntityCategory` to tell them apart.
+
 A JOIN stamps the LEI on the PSC node with the evidence as `lei_source` ("name+place+hq",
 "name+country+address"); the hard-id merge then folds the pair onto the `lei:` node, its
 holdings with it. It runs in the full dedup (`bridge_psc_gleif_pairs`, after the SEC
 bridge) and in the scoped one after a scrape. "Berkshire Hathaway LLC", another state or
 another building is refused, and a pair a person kept apart is never asked. Dev: 4
-corporate PSC nodes without an LEI, Berkshire the one joined.
+corporate PSC nodes without an LEI, Berkshire the one joined. Against the full PSC
+snapshot and GLEIF golden copy (2026-10-31): of 96,206 distinct foreign corporate owner
+records, 21,966 have a same-name GLEIF record and 5,599 join — 1,844 that already share
+a register id, 696 whose filer typed GLEIF's number differently or wrongly ("Hrb176787",
+"N/A", an old number), and 3,059 with no shared id; 21 refused for several candidates.
 
 ## Claims-only sources
 

@@ -64,3 +64,15 @@ def test_another_building_stays_apart(it_db):
     maintenance.deduplicate_entities_for([PSC_ID])
     assert [n[0] for n in _berkshires(it_db)] == [PSC_ID, f"lei:{LEI}"]
     assert _berkshires(it_db)[0][1] is None, "no LEI stamped on a refusal"
+
+
+def test_a_company_born_after_the_notice_stays_apart(it_db):
+    # the KKR/Apollo trap: GLEIF's record is a holding company that took the
+    # old name after the PSC was notified
+    from app.scraper import maintenance
+    _seed(it_db)
+    it_db.run_command("MATCH (e:Entity {id: $id}) SET e.incorporated_on = '2021-07-01'", {"id": f"lei:{LEI}"})
+    it_db.run_command("MATCH (:Entity {id: $a})-[r:OWNS]->() SET r.since = '2019-03-04'", {"a": PSC_ID})
+    maintenance.deduplicate_entities(limit=None)
+    assert [n[:2] for n in _berkshires(it_db)] == [(PSC_ID, None), (f"lei:{LEI}", LEI)]
+    assert _owner_of_bhiil(it_db) == [PSC_ID]
