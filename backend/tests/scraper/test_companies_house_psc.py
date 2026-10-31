@@ -2,6 +2,7 @@
 is covered against a real ArcadeDB in tests/integration/test_ch_psc_it.py."""
 
 import json
+import pytest
 import zipfile
 
 from app.scraper.companies_house_psc import (
@@ -817,3 +818,29 @@ class TestOneWriterForTheCorporateOwner:
         assert extra["registration_authority"] == "Office Du Registre Du Commerce Du Canton De Vaud"
         assert extra["country_registered"] == "Not Specified/Other"
         assert calls[1]["country"] is None
+
+
+class TestTheStatedJurisdiction:
+    """Where a corporate PSC says it is registered, to the state — what the
+    PSC↔GLEIF join compares (findings item 25)."""
+
+    def test_the_state_a_filer_names_is_kept(self):
+        # Berkshire Hathaway: legal authority "State Of Delaware" (item 25)
+        brk = psc_record({"company_number": "03230337", "data": {
+            "kind": "corporate-entity-person-with-significant-control", "name": "Berkshire Hathaway Inc.",
+            "identification": {"country_registered": "Usa", "legal_authority": "State Of Delaware",
+                               "legal_form": "Corporation", "place_registered": "Us Securities And Exchange Commission Register",
+                               "registration_number": "47-0813844"},
+            "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+            "links": {"self": "/company/03230337/persons-with-significant-control/corporate-entity/x"}}}, "src", 97)
+        assert brk.owner_props["jurisdiction_code"] == "US-DE"
+
+    @pytest.mark.parametrize("ident, expected", [
+        ({"country_registered": "United States", "legal_authority": "Delaware, Usa"}, "US-DE"),
+        ({"country_registered": "United States", "place_registered": "Commonwealth Of Massachusetts"}, "US-MA"),
+        ({"country_registered": "Cayman Islands", "legal_authority": "Delaware"}, None),   # another country
+        ({"country_registered": "Germany", "legal_authority": "Amtsgericht München"}, None),
+    ])
+    def test_the_jurisdiction(self, ident, expected):
+        from app.scraper.companies_house_psc import _psc_country, _psc_jurisdiction
+        assert _psc_jurisdiction(ident, _psc_country(ident)) == expected

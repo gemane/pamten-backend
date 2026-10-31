@@ -1533,6 +1533,66 @@ def _bridge_sec_lei(members: list[dict], kept_separate: set, apply: bool = True)
     return joined
 
 
+def _bridge_psc_gleif(members: list[dict], kept_separate: set, apply: bool = True) -> list[dict]:
+    """Same-name members that share no hard id because one is a corporate PSC
+    (`chpsc:`, a foreign owner as Companies House records it) and the other a
+    GLEIF record: where the registers agree (`legal_identity.psc_same_legal_entity`
+    — name with its form, place, building) the PSC node takes the LEI, with the
+    evidence as ``lei_source``, and the ordinary merge folds the pair. A pair a
+    human kept apart is never asked. Updates `members` in place; returns the
+    pairs joined (findings item 25: Berkshire Hathaway)."""
+    from app.scraper.legal_identity import (GLEIF_POSTCODES, IDENTITY_FIELDS, JOIN, PSC_FIELDS,
+                                            psc_same_legal_entity)
+    pscs = [m for m in members if str(m.get("id", "")).startswith("chpsc:") and not m.get("lei_id")]
+    gleifs = [m for m in members if m.get("lei_id") and not str(m.get("id", "")).startswith("chpsc:")]
+    joined: list[dict] = []
+    for p in pscs:
+        rows = run_sql(f"SELECT {', '.join(PSC_FIELDS)} FROM Entity WHERE id = :id", {"id": p["id"]})
+        if not rows:
+            continue
+        psc = dict(rows[0])
+        for g in gleifs:
+            if frozenset((p["id"], g["id"])) in kept_separate:
+                continue
+            node = run_sql(f"SELECT {', '.join((*IDENTITY_FIELDS, *GLEIF_POSTCODES))} FROM Entity WHERE id = :id",
+                           {"id": g["id"]})
+            if not node:
+                continue
+            verdict, why = psc_same_legal_entity(dict(node[0]), psc)
+            if verdict != JOIN:
+                log.info("PSC/GLEIF bridge: %s is not %s: %s", p["id"], g["id"], why)
+                continue
+            if apply:
+                run_command("MATCH (e:Entity {id: $id}) SET e.lei_id = $lei, e.lei_source = COALESCE(e.lei_source, $why)",
+                            {"id": p["id"], "lei": g["lei_id"], "why": why})
+            p["lei_id"] = g["lei_id"]
+            joined.append({"psc_id": p["id"], "lei_id": g["lei_id"], "lei_node_id": g["id"],
+                           "name": p.get("name"), "evidence": why})
+            break
+    return joined
+
+
+def bridge_psc_gleif_pairs(kept_separate: set | None = None, apply: bool = True) -> list[dict]:
+    """`_bridge_psc_gleif` across the database: every corporate PSC node
+    without an LEI against the LEI nodes of its name — one indexed name
+    lookup each, the registers' own data only (no request leaves)."""
+    if kept_separate is None:
+        kept_separate = _not_duplicate_pairs()
+    joined: list[dict] = []
+    pscs = run_sql("SELECT id, name, name_normalized FROM Entity WHERE source_id = 'uk-psc' "
+                   "AND lei_id IS NULL AND companies_house_id IS NULL AND name_normalized IS NOT NULL")
+    for r in pscs:
+        psc = {k: v for k, v in dict(r).items() if not k.startswith("@")}
+        if not str(psc.get("id", "")).startswith("chpsc:"):
+            continue
+        partners = run_sql("SELECT id, name, lei_id FROM Entity WHERE name_normalized = :nn "
+                           "AND lei_id IS NOT NULL LIMIT 10", {"nn": psc["name_normalized"]})
+        partners = [{k: v for k, v in dict(x).items() if not k.startswith("@")} for x in partners]
+        if partners:
+            joined += _bridge_psc_gleif([psc, *partners], kept_separate, apply=apply)
+    return joined
+
+
 def _partners_by_other_name(filer: dict, seen: set) -> list[dict]:
     """LEI-only nodes one of whose OTHER names keys as the filer's name:
     Tencent's GLEIF legal name is "騰訊控股有限公司", its transliteration
@@ -1620,6 +1680,9 @@ def deduplicate_entities_for(entity_ids: list[str], apply: bool = True) -> dict:
             # own filings may state the LEI, which makes it definitive
             bridged += _bridge_sec_lei(members, kept_separate, apply=apply)
         if _group_confidence(members) not in ("definitive", "high"):
+            # a corporate PSC and its GLEIF record (name, place, building)
+            bridged += _bridge_psc_gleif(members, kept_separate, apply=apply)
+        if _group_confidence(members) not in ("definitive", "high"):
             review += 1
             continue
         members.sort(key=lambda m: (-(m.get("cred") or 0), m["id"]))
@@ -1685,6 +1748,8 @@ def deduplicate_entities(limit: int | None = 300) -> dict:
     # First the pairs a name proposes and the filer's own filings join (an
     # LEI-only node, a CIK-only filer): they then share an LEI like any other.
     bridged = bridge_sec_lei_pairs(kept_separate)
+    # and a corporate PSC its GLEIF record names by name, place and building
+    bridged += bridge_psc_gleif_pairs(kept_separate)
 
     # All duplicate groups across every hard external identifier (cheap aggregation).
     # A shared LEI / Companies House number / SEC CIK / Wikidata id ⇒ same company,

@@ -193,8 +193,9 @@ class TestTheWholeDatabase:
         order = []
         with patch.object(maintenance, "_not_duplicate_pairs", return_value=set()), \
              patch.object(maintenance, "bridge_sec_lei_pairs", side_effect=lambda k: order.append("bridge") or []), \
+             patch.object(maintenance, "bridge_psc_gleif_pairs", side_effect=lambda k: order.append("psc") or []), \
              patch.object(maintenance, "_duplicate_keys", side_effect=lambda p: order.append(p) or []), \
              patch.object(maintenance, "_former_register_groups", return_value=[]):
             out = maintenance.deduplicate_entities(limit=None)
-        assert order[0] == "bridge" and "lei_id" in order
+        assert order[:2] == ["bridge", "psc"] and "lei_id" in order     # both bridges before the grouping
         assert out["lei_bridged"] == []
