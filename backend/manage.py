@@ -218,7 +218,11 @@ def cmd_dedupe_entities(args):
     from app.scraper.maintenance import deduplicate_entities
     res = deduplicate_entities(limit=getattr(args, "limit", None))
     for b in res.get("lei_bridged") or []:
-        print(f"  {b['name']}: CIK node {b['cik_id']} takes LEI {b['lei_id']} ({b['source_url']})")
+        # two bridges: an EDGAR filer by its filings, a corporate PSC by its registers' words
+        if b.get("psc_id"):
+            print(f"  {b['name']}: PSC node {b['psc_id']} takes LEI {b['lei_id']} ({b['evidence']})")
+        else:
+            print(f"  {b['name']}: CIK node {b['cik_id']} takes LEI {b['lei_id']} ({b['source_url']})")
     print(f"Merged {res['entities_merged']} entities across "
           f"{res['groups_processed']} shared-id groups; {res.get('remaining', 0)} groups remaining")
 
