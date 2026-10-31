@@ -70,7 +70,14 @@ HEADERS = {
     "Accept":     "application/json",
 }
 REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s
-MAX_FORM4_FETCH  = 25     # max unique insiders to fetch Form 3/4 for
+MAX_FORM4_FETCH  = 60     # max unique insiders listed from Form 3/4
+MAX_FORM4_SCAN   = 300    # Form 3/4 documents opened for them, at most
+#: Insiders are read from the Form 3/4s of the last ~15 months, counted back
+#: from the issuer's newest one: every sitting director files at least once a
+#: year (the annual grant). The window replaced a cap of 50 documents, which a
+#: few officers' repeat filings used up — Bank of America listed 8 of its 29
+#: insiders, none of the nine directors of its 2026-05-06 grant (findings item 9).
+FORM4_WINDOW_DAYS = 456
 MAX_FORM3_SCAN   = 40     # Form 3s read past the insider cap, for seat start dates
 MAX_8K_FETCH     = 12     # newest 8-Ks with Item 5.02 read for departures
 
@@ -1879,7 +1886,8 @@ def fetch_executives(cik: str) -> list:
     no HTML parsing or heuristics required.
 
     Strategy: read the most recent Form 3/4 for each unique insider (by filer CIK),
-    up to MAX_FORM4_FETCH unique insiders.
+    over the filings of the last FORM4_WINDOW_DAYS (from the issuer's newest
+    one), up to MAX_FORM4_FETCH insiders and MAX_FORM4_SCAN documents.
 
     EDGAR cross-indexes Form 3/4 filings under the issuer's CIK in Archives, even
     when the accession number starts with a filing agent's CIK. Always use the
@@ -1906,19 +1914,21 @@ def fetch_executives(cik: str) -> list:
     issuer_cik_int = _cik_int(cik)
     scanned  = 0
     form3_scanned = 0
-    SCAN_CAP = MAX_FORM4_FETCH * 2   # bound fetches (many insiders share a filing agent)
+    window_start = _form34_window_start(forms, filing_dates)
 
     # Fetch Form 3/4 filings newest-first and dedupe by the *reporting person* —
     # NOT the accession/filer-CIK prefix, which collapses distinct insiders who
     # share a filing agent (that missed most of a company's insiders). New
-    # insiders stop at MAX_FORM4_FETCH or the scan cap; Form 3s (a few a year)
+    # insiders stop at the window's start, MAX_FORM4_FETCH or MAX_FORM4_SCAN; Form 3s (a few a year)
     # are still read past that, because a person's Form 3 is usually older
     # than their newest Form 4 and it is the one filing that dates the seat.
     for i, form in enumerate(forms):
         if form not in ("3", "4", "3/A", "4/A"):
             continue
         is_form3 = form.startswith("3")
-        full = len(executives) >= MAX_FORM4_FETCH or scanned >= SCAN_CAP
+        filed = filing_dates[i] if i < len(filing_dates) else ""
+        full = (len(executives) >= MAX_FORM4_FETCH or scanned >= MAX_FORM4_SCAN
+                or bool(window_start and filed and filed < window_start))
         if full and (not is_form3 or form3_scanned >= MAX_FORM3_SCAN):
             continue
         # primaryDocument may be prefixed with an XSLT stylesheet dir
@@ -1980,6 +1990,17 @@ def fetch_executives(cik: str) -> list:
     log.info("SEC EDGAR: found %d executives from Form 3/4 for CIK=%s",
              len(executives), cik)
     return executives
+
+
+def _form34_window_start(forms: list, filing_dates: list) -> str | None:
+    """The first filing day inside the insider window: FORM4_WINDOW_DAYS before
+    the issuer's newest Form 3/4 (ISO, comparable as text), or None when there
+    is none or its date does not parse."""
+    newest = next((d for f, d in zip(forms, filing_dates) if f in ("3", "4", "3/A", "4/A") and d), None)
+    try:
+        return (datetime.fromisoformat(newest).date() - timedelta(days=FORM4_WINDOW_DAYS)).isoformat()
+    except (TypeError, ValueError):
+        return None
 
 
 MAX_OLDER_PAGES = 3      # older submissions index pages read for Form 3s

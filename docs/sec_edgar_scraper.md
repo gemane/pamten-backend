@@ -949,6 +949,22 @@ Entity, found by the CIK. The relationship flags are written
 as `1` by older filings and as `true` by newer ones (Apple's 2026 Form 3 for its
 new CEO) — read both, or the newest insiders vanish.
 
+### Which insiders — the last 15 months
+
+Insiders are listed from every Form 3/4 filed in the **15 months** before the
+issuer's newest one (`FORM4_WINDOW_DAYS = 456`), newest first, one per reporting
+person — up to `MAX_FORM4_FETCH = 60` people and `MAX_FORM4_SCAN = 300` documents.
+Every sitting director files at least once a year (the annual grant), so the window
+holds the board; someone whose last filing is older is not listed.
+
+It used to be the newest **50 documents**, and a few officers filing often used them
+up: Bank of America listed 8 of its 29 insiders, none of the nine directors of its
+2026-05-06 grant (Clayton Rose among them) nor its CFO; PBF Energy lost the five
+directors who filed on 2026-04-30, at documents 51–55. Which board a rebuild wrote
+depended on the officers' trading that month (findings item 9, 2026-10-31). Over
+the 136 SEC filers of the scrape list the window is 4,975 documents (median 15,
+Alphabet 226), read once — Archives documents are cached.
+
 ### When a seat began — Form 3
 
 A Form 4 dates a **trade**; it says nothing about when the person took the seat,
@@ -1070,7 +1086,7 @@ other than through its own scrape.
 | Filing index pages (up to 20 investors) | up to 20 |
 | Primary documents for stake % (top 5) | up to 5 |
 | Submissions JSON for executives | 1 |
-| Form 3/4 XML documents (up to 25 insiders) | up to 25 |
+| Form 3/4 XML documents of the last 15 months (up to 60 insiders) | median 15, up to 300 (cached) |
 | Form 3s past the cap, for seat start dates | up to 40 (cached) |
 | Older index pages + their Form 3s, while someone is undated | up to 3 + 60 (documents cached) |
 | 8-Ks with Item 5.02, for departures | up to 12 (cached) |

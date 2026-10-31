@@ -790,6 +790,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       changes and can be kept forever (`sec_cache`); a submissions feed, a search result or
       a daily index grows, and caching it is how a scraper silently stops seeing new records.
       Decide per URL family, in one function, and test both sides of the line.
+- [ ] **Bound a "newest N documents" read by time, not by count, when N decides who is listed.**
+      Fifty newest Form 4s was a request budget that silently became the definition of a
+      board: a few officers' repeat filings used them up and Bank of America listed 8 of
+      its 29 insiders (findings item 9, 2026-10-31). Read the window the facts live in (every
+      director files yearly → 15 months) and keep a count only as a high ceiling.
 - [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_edgar._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
