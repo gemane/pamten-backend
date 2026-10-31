@@ -1756,3 +1756,105 @@ class TestStoredWikidataItem:
         with patch("app.scraper.runner._stored_entity", return_value={"id": "sec:1", "sec_cik": "0000000001"}), \
              patch("app.scraper.runner.search_by_statement", side_effect=RuntimeError("too busy")):
             assert _stored_wikidata_item("X") is None
+
+
+# ── A name without its legal form, held to a name's standard (item 7) ────────
+
+class TestItemByPlainName:
+    def _run(self, query, hits, companies=None, country=None):
+        from app.scraper.runner import _item_by_plain_name
+        asked = []
+
+        def fake_search(q, limit=5):
+            asked.append(q)
+            return hits
+        facts = {h["id"]: {"is_company": h["id"] in (companies if companies is not None
+                                                      else [x["id"] for x in hits])} for h in hits}
+        with patch("app.scraper.runner.search_entity", side_effect=fake_search), \
+             patch("app.scraper.runner.search_entity_in_country",
+                   side_effect=lambda q, c: asked.append((q, c)) or hits), \
+             patch("app.scraper.runner.classify_candidates", side_effect=lambda qids: facts):
+            return _item_by_plain_name(query, country), asked
+
+    def test_the_label_without_the_legal_form_is_taken(self):
+        qid, asked = self._run("Lone Pine Capital Llc", [{"id": "Q22023125", "label": "Lone Pine Capital"}])
+        assert qid == "Q22023125" and asked == ["lone pine capital"]
+
+    def test_the_country_stays_part_of_the_question(self):
+        _, asked = self._run("Lone Pine Capital Llc", [], country="US")
+        assert asked == [("lone pine capital", "US")]
+
+    def test_an_alias_or_a_longer_label_is_not_the_name(self):
+        assert self._run("SmartStop Self Storage REIT, Inc.",
+                         [{"id": "Q108738738", "label": "SmartStop Self Storage"}])[0] is None
+        # the hit matched by an alias: the label is another name
+        assert self._run("Delek US Holdings Inc", [{"id": "Q104664954", "label": "Delek US"}])[0] is None
+
+    def test_one_word_is_not_enough(self):
+        # "Inter & Co, Inc." → "inter", which Inter Milan answers
+        qid, asked = self._run("Inter & Co, Inc.", [{"id": "Q631", "label": "Inter"}])
+        assert qid is None and asked == []
+
+    def test_a_name_with_nothing_to_drop_is_not_asked_again(self):
+        assert self._run("lone pine capital", [{"id": "Q1", "label": "Lone Pine Capital"}]) == (None, [])
+
+    def test_it_must_be_a_company_and_the_only_one(self):
+        hit = [{"id": "Q1", "label": "Harris Associates"}]
+        assert self._run("Harris Associates L P", hit, companies=[])[0] is None
+        two = hit + [{"id": "Q2", "label": "Harris Associates"}]
+        assert self._run("Harris Associates L P", two)[0] is None
+        # a non-company namesake beside the one company does not block it
+        assert self._run("Harris Associates L P", two, companies=["Q2"])[0] == "Q2"
+
+
+class TestRunScrapeNameFallback:
+    def _run(self, raw_hits, plain):
+        from app.scraper.runner import run_scrape
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner._stored_wikidata_item", return_value=None), \
+             patch("app.scraper.runner.search_entity", return_value=raw_hits), \
+             patch("app.scraper.runner.pick_candidate", return_value=None), \
+             patch("app.scraper.runner._item_by_plain_name", return_value=plain) as fallback, \
+             patch("app.scraper.runner._scrape_node") as node, \
+             patch("app.scraper.runner._ensure_source", return_value="src"):
+            return run_scrape("Lone Pine Capital Llc", depth=0), fallback, node
+
+    def test_the_fallback_runs_when_the_name_finds_nothing(self):
+        out, fallback, node = self._run([], "Q22023125")
+        assert out["wikidata_id"] == "Q22023125" and node.call_args.args[0] == "Q22023125"
+
+    def test_the_statuses_stay_what_they_were(self):
+        assert self._run([], None)[0]["status"] == "no_results"
+        assert self._run([{"id": "Q1"}], None)[0]["status"] == "not_a_company"
+
+
+class TestStoredPersonItem:
+    def _run(self, query, rows, human=True):
+        from app.scraper.runner import _stored_person_item
+        with patch("app.db.arcadedb.run_sql", return_value=rows), \
+             patch("app.scraper.runner.pick_candidate",
+                   side_effect=lambda hits, kind: hits[0]["id"] if human else None):
+            return _stored_person_item(query)
+
+    def test_the_one_person_of_that_name_gives_their_qid(self):
+        assert self._run("Musk Elon", [{"id": "wd:Q317521", "full_name": "Elon Musk",
+                                        "wikidata_id": "Q317521"}]) == "Q317521"
+
+    def test_a_namesake_makes_it_the_name_search(self):
+        rows = [{"id": "a", "full_name": "John Smith", "wikidata_id": "Q1"},
+                {"id": "b", "full_name": "John Smith", "wikidata_id": None}]
+        assert self._run("John Smith", rows) is None
+
+    def test_another_name_or_no_qid_gives_nothing(self):
+        assert self._run("Elon Musk", [{"id": "a", "full_name": "Elon R Musk", "wikidata_id": "Q3"}]) is None
+        assert self._run("Elon Musk", [{"id": "a", "full_name": "Elon Musk", "wikidata_id": None}]) is None
+
+    def test_the_item_must_still_be_human(self):
+        assert self._run("Elon Musk", [{"id": "a", "full_name": "Elon Musk", "wikidata_id": "Q3"}],
+                         human=False) is None
+
+    def test_a_failed_lookup_is_the_name_search(self):
+        from app.scraper.runner import _stored_person_item
+        with patch("app.db.arcadedb.run_sql", side_effect=RuntimeError("down")):
+            assert _stored_person_item("Elon Musk") is None

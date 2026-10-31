@@ -247,3 +247,33 @@ class TestWhenTheNameIsNotTheKind:
         with db.get_session() as s:
             names = [r["n"] for r in s.run("MATCH (e:Entity) RETURN e.name AS n")]
         assert "Steve Jobs" not in names, "the film was written as a company again"
+
+
+class TestThePersonsOwnItem:
+    """A person the graph already holds with a QID is read by it, not searched
+    by name — but only when no namesake shares the name (findings item 7)."""
+
+    def _person(self, pid, name, qid):
+        from app.database import db
+        with db.get_session() as s:
+            s.run("CREATE (p:Person {id: $id, full_name: $n, search_text: $n, wikidata_id: $q})",
+                  id=pid, n=name, q=qid)
+
+    def _searched(self, wikidata, monkeypatch):
+        asked = []
+        monkeypatch.setattr(wikidata, "search_entity",
+                            lambda q, limit=3: asked.append(q) or [{"id": "Q4934", "label": q}])
+        return asked
+
+    def test_the_stored_qid_is_used_without_a_search(self, wikidata, monkeypatch):
+        self._person("wd:Q4934", "Larry Page", "Q4934")
+        asked = self._searched(wikidata, monkeypatch)
+        out = wikidata.run_scrape_person("Page Larry")             # EDGAR's word order
+        assert out["status"] == "ok" and out["qid"] == "Q4934" and asked == []
+
+    def test_a_namesake_sends_it_to_the_name_search(self, wikidata, monkeypatch):
+        self._person("wd:Q4934", "Larry Page", "Q4934")
+        self._person("sec:0000000001", "Larry Page", None)
+        asked = self._searched(wikidata, monkeypatch)
+        wikidata.run_scrape_person("Larry Page")
+        assert asked == ["Larry Page"]

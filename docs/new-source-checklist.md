@@ -410,7 +410,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       ("Trade Desk, Inc.", "Wells Fargo & Company/Mn") and answered `no_results` for 14
       companies whose item states the node's CIK; it now reads the node's QID, then the
       item stating its CIK, then its LEI (findings item 7, 2026-10-31). An id-found record
-      still passes the kind check — GitLab's CIK sits on the software item.
+      still passes the kind check — GitLab's CIK sits on the software item. A name without
+      its legal form is asked only after that, and held to a name's standard: the record's
+      own label reduces to the same words, two or more, one candidate ("Inter & Co" → "inter"
+      → Inter Milan).
 - [ ] **A name in a filing is the name its filer had then.** A writer that joins an id to
       a node by name must check the id's register name **now**: BlackRock's pre-2024 13G
       filings name "BlackRock Inc." under the old parent's CIK, and the GLEIF node of the
