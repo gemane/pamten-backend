@@ -192,3 +192,43 @@ def test_an_unpadded_uk_controller_merges_with_its_lei_node(it_db, tmp_path):
         "MATCH (e:Entity {companies_house_id:'00041424'})-[o:OWNS]->(c:Entity {companies_house_id:'00017049'}) "
         "RETURN o.stake_percent AS s")
     assert owns and owns[0]["s"] == 75
+
+
+def test_a_cypriot_psc_in_the_filers_spelling_merges_with_its_lei_node(it_db, tmp_path):
+    """Key (Nominees) Limited's real shape: the PSC filer wrote "He55260",
+    GLEIF writes "ΗΕ 55260" in Greek capitals. One spelling per register
+    (`_NUMBER_STYLES`) gives both one register_id, and the cross-source
+    dedup folds the pair (findings item 25)."""
+    from app.scraper.companies_house_psc import import_ch_psc
+    from app.scraper.gleif_reference import make_register_id
+    from app.scraper.maintenance import deduplicate_entities
+
+    key = make_register_id("RA000161", "ΗΕ 55260")          # as the GLEIF importer mints it
+    assert key == "RA000161:ΗΕ55260"
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:213800TESTCYKEYNOM01', name: 'KEY (NOMINEES) LIMITED', "
+        "name_normalized: 'key nominees', search_text: 'KEY (NOMINEES) LIMITED', type: 'company', "
+        "country: 'CY', register_id: $key, lei_id: '213800TESTCYKEYNOM01', name_credibility: 92})", {"key": key})
+    lines = [{"company_number": "10015167", "data": {
+        "kind": "corporate-entity-person-with-significant-control",
+        "name": "Key (Nominees) Limited",
+        "identification": {"registration_number": "He55260", "country_registered": "Cyprus",
+                           "legal_authority": "Cyprus"},
+        "natures_of_control": ["ownership-of-shares-75-to-100-percent"],
+        "notified_on": "2017-02-18",
+        "links": {"self": "/company/10015167/persons-with-significant-control/corporate-entity/KN"}}}]
+    zpath = tmp_path / "psc-cy.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("persons-with-significant-control-snapshot-2026-10-16.txt",
+                    "\n".join(json.dumps(x) for x in lines))
+
+    assert import_ch_psc(str(zpath), "ukpsc", 97)["entities"] == 1
+    written = it_db.run_command("MATCH (e:Entity) WHERE e.register_id = $key RETURN e.id AS id", {"key": key})
+    assert len(written) == 2, "the PSC node carries the LEI node's register_id"
+
+    deduplicate_entities()
+    left = it_db.run_command("MATCH (e:Entity) WHERE e.register_id = $key RETURN e.lei_id AS lei", {"key": key})
+    assert [r["lei"] for r in left] == ["213800TESTCYKEYNOM01"], "one company, the LEI kept"
+    owns = it_db.run_command("MATCH (e:Entity {register_id: $key})-[:OWNS]->(c:Entity {companies_house_id: '10015167'}) "
+                             "RETURN c.id AS id", {"key": key})
+    assert len(owns) == 1, "the UK subsidiary hangs off the merged node"

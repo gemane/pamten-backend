@@ -475,7 +475,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       register holding ≥ 90% of the country's companies — re-run the audit, never add a
       country by hand. Mint through `make_register_id` and nothing else: it folds the
       registers GLEIF keys one national number under (Swiss UID, French SIREN) and fixes
-      one spelling, so keys agree wherever they are minted. And read *every* field the
+      one spelling, so keys agree wherever they are minted. A new source that writes a
+      register's numbers another way (case, a country or register prefix, separators)
+      gets a style in `_NUMBER_STYLES` that rewrites only the shape it recognises —
+      measure it on the golden copy first: no two live LEIs may come to share a key
+      (Gibraltar's `00012`/`012` did). And read *every* field the
       source might put the register in: real filings had it in `legal_authority` with
       `place_registered: "N/A"`.
       A number in the register's field is not always the register's: US filers give
