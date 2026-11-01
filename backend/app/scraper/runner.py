@@ -1960,6 +1960,33 @@ def _stored_entity(company_name: str, country: str | None = None) -> dict | None
         return None
 
 
+#: the answers of a source that found nothing it would write
+FOUND_NOTHING = ("no_results", "not_a_company")
+
+
+def stored_hard_ids(query: str, country: str | None = None) -> tuple:
+    """(LEI, CIK, QID) of the node the query resolves to; () for none."""
+    stored = _stored_entity(query, country)
+    return (stored.get("lei_id"), stored.get("sec_cik"), stored.get("wikidata_id")) if stored else ()
+
+
+def rerun_for_new_ids(spec, result, ids_before: tuple | None, query: str,
+                      country: str | None = None) -> bool:
+    """Whether `spec` runs once more after the other sources: it reads the
+    stored ids (`reads_stored_ids`), it found nothing, and the node the query
+    names now holds an id it did not hold before the run. Toast, Inc. was new
+    in the 10-31b replay: Wikidata searched "TOAST INC" by name and refused the
+    two unrelated "Toast" items, then the SEC wrote the node with its CIK —
+    the id Wikidata's Toast item states (findings item 27). Unchanged ids mean
+    the same answer again, so no second ask."""
+    if not spec.reads_stored_ids or ids_before is None:
+        return False
+    if not isinstance(result, dict) or result.get("status") not in FOUND_NOTHING:
+        return False
+    after = stored_hard_ids(query, country)
+    return any(after) and after != ids_before
+
+
 def _stored_sec_cik(company_name: str, country: str | None = None) -> str | None:
     """The CIK the database already holds for the company a query names, or None."""
     return (_stored_entity(company_name, country) or {}).get("sec_cik") or None
@@ -2586,17 +2613,28 @@ def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> di
     # Dispatch to every registered scraper — no hardcoded per-source chain, so a new
     # scraper just registers a ScraperSpec (see app/scraper/scraper_registry.py).
     results: dict[str, dict] = {}
-    for spec in registered():
+    specs = registered()
+    ids_before = (stored_hard_ids(query, country)
+                  if any(s.reads_stored_ids and s.enabled() for s in specs) else None)
+
+    def run_one(spec) -> dict:
+        try:
+            return spec.run(query, depth, country)
+        except PermissionError as exc:
+            return {"status": "disabled", "detail": str(exc)}
+        except Exception as exc:  # noqa: BLE001 - one scraper failing mustn't sink the rest
+            log.error("%s scrape failed for %r: %s", spec.name, query, exc)
+            return {"status": "error", "detail": str(exc)}
+
+    for spec in specs:
         if not spec.enabled():
             results[spec.name] = {"status": "disabled"}
             continue
-        try:
-            results[spec.name] = spec.run(query, depth, country)
-        except PermissionError as exc:
-            results[spec.name] = {"status": "disabled", "detail": str(exc)}
-        except Exception as exc:  # noqa: BLE001 - one scraper failing mustn't sink the rest
-            log.error("%s scrape failed for %r: %s", spec.name, query, exc)
-            results[spec.name] = {"status": "error", "detail": str(exc)}
+        results[spec.name] = run_one(spec)
+    # once more, by the id a later source wrote (findings item 27)
+    for spec in specs:
+        if spec.enabled() and rerun_for_new_ids(spec, results.get(spec.name), ids_before, query, country):
+            results[spec.name] = {**run_one(spec), "rerun": "new_ids"}
 
     return {"status": "ok", "query": query, "results": results}
 
@@ -3249,7 +3287,7 @@ def run_gleif_update(interval: str = "auto", lei_file: str | None = None,
 # per-source DB toggle; label/credibility/url come from the KNOWN_SOURCES entry
 # via spec.meta; register() validates all of it loudly at import time.
 register(ScraperSpec("wikidata", lambda q, d, c=None: run_scrape(q, d, c),
-                     depth_aware=True))
+                     depth_aware=True, reads_stored_ids=True))
 register(ScraperSpec("sec_edgar", lambda q, d, c=None: run_scrape_sec_edgar(q, c)))
 register(ScraperSpec("open_corporates", lambda q, d, c=None: run_scrape_open_corporates(q, c),
                      settings_flag="SCRAPER_OPENCORPORATES_ENABLED"))

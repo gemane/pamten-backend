@@ -57,6 +57,12 @@ class ScraperSpec:
     # SCRAPER_<NAME>_ENABLED; declared explicitly where history disagrees with
     # the convention (open_corporates -> SCRAPER_OPENCORPORATES_ENABLED).
     settings_flag: str | None = None
+    # Does this source find its match by the hard ids a node holds (Wikidata
+    # reads the stored CIK/LEI before any name search)? Then a run that found
+    # nothing is repeated once after the others, when they gave the node an id
+    # it lacked — on a first scrape the SEC writes the CIK only after Wikidata
+    # has searched by name (Toast, findings item 27). See `rerun_for_new_ids`.
+    reads_stored_ids: bool = False
 
     @property
     def flag_name(self) -> str:

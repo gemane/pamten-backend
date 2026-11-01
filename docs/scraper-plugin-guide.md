@@ -347,7 +347,16 @@ exists because the dispatchers catch every exception per source — a two-argume
 having run nothing.
 
 `run_scrape_all` applies the enabled/disabled/error wrapping uniformly to every
-registered scraper, so a registered spec is all the wiring `run-all` needs. A
+registered scraper, so a registered spec is all the wiring `run-all` needs.
+
+**A source that finds its match by a stored id** sets `reads_stored_ids=True`, as
+Wikidata does (it reads the node's QID, CIK and LEI before any name search). The
+sources run in registration order, so on a company's first scrape a later source
+may write the id only after this one has looked. Both dispatchers then run the
+source once more when it answered `no_results` or `not_a_company` and the node the
+query names now holds an id it did not hold before (`runner.rerun_for_new_ids`).
+The result carries `"rerun": "new_ids"`, and the on-demand run log has a second row
+with that reason (findings item 27, Toast, Inc.). A
 source that raises comes back as `{"status": "error", "detail": …}`; the run-all
 endpoint then finishes its `ScrapeRun` row as `failed`, naming the source.
 

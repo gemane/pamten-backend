@@ -414,6 +414,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       its legal form is asked only after that, and held to a name's standard: the record's
       own label reduces to the same words, two or more, one candidate ("Inter & Co" → "inter"
       → Inter Milan).
+- [ ] **A reader by id must run after the source that writes the id — or once more.**
+      The sources run in registration order, Wikidata before SEC EDGAR, so on a company's
+      first scrape the SEC wrote the CIK only after Wikidata had searched by name: Toast,
+      Inc. stayed without its item in rebuild 10-31b although the item states that CIK
+      (findings item 27). A source that finds its match by a stored id declares
+      `reads_stored_ids=True`. Both dispatchers (`run_scrape_all` and the on-demand
+      `_run_instant_sources`) then repeat a run that found nothing, once, when the node
+      gained an id during the scrape (`runner.rerun_for_new_ids`; the run log says
+      `new_ids`). Unchanged ids mean no second ask.
 - [ ] **A name in a filing is the name its filer had then.** A writer that joins an id to
       a node by name must check the id's register name **now**: BlackRock's pre-2024 13G
       filings name "BlackRock Inc." under the old parent's CIK, and the GLEIF node of the
