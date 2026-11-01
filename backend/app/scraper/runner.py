@@ -283,10 +283,25 @@ def _upsert_entity(
         # second copy of it.
         entity_id = (resolve_entity_id(session, wikidata_id=wikidata_id)
                      or next((i for i in (resolve_entity_id(session, sec_cik=c) for c in ciks) if i), None)
-                     or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None)
-                     or resolve_entity_id(session, name=name, name_normalized=name_norm))
+                     or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None))
+        other_of_name = None
+        if not entity_id:
+            entity_id = resolve_entity_id(session, name=name, name_normalized=name_norm)
+            # A node found by the NAME alone whose register id is not the
+            # item's is another legal entity of that name, not a reason to
+            # write nothing: J.P. Morgan Securities LLC and PLC share the key
+            # "jp morgan securities", and whichever item came second was lost
+            # (findings item 30). The item's ids then go to their register.
+            if entity_id and (leis or ciks) and register_pointer.contradiction(
+                    _held_ids(session, entity_id), leis, ciks):
+                log.info("Wikidata: %s (%s) shares a name with %s, another legal entity; "
+                         "asking the register", name, wikidata_id, entity_id)
+                other_of_name, entity_id = entity_id, None
     if not entity_id and (leis or ciks):
         entity_id = register_pointer.write_from_pointer(leis, ciks)
+    # No register knows the item's ids: the name's node stands, and the
+    # contradiction below refuses it — rather than a twin of that name.
+    entity_id = entity_id or other_of_name
     if not entity_id and register_required:
         log.info("Wikidata: %s (%s) points at no register that knows it — not written", name, wikidata_id)
         return None
@@ -574,6 +589,13 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
     if existing:
         return existing
     return None if (leis or ciks) else False
+
+
+def _held_ids(session, entity_id: str) -> dict:
+    """The register ids a node holds, as `register_pointer.contradiction` reads them."""
+    rec = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik",
+                      id=entity_id).single()
+    return {"lei_id": rec.get("lei_id"), "sec_cik": rec.get("sec_cik")} if rec else {}
 
 
 def _subsidiary_order(sub: dict) -> tuple:

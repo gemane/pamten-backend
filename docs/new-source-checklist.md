@@ -198,6 +198,15 @@ parser. Anything that does not map is either a new property (document it) or noi
       Inc." while its own filings drew a second node. A node whose register id the
       source's ids contradict gets nothing from that source; test against **every** id
       the source states (Google's item has two CIKs, Barclays' and Unilever's two LEIs).
+- [ ] **A contradiction means "not this node" — say how the node was found before refusing.**
+      A node the item's own ids found and whose register id disagrees is a refusal. A node
+      found by the name alone is only one company of that name: J.P. Morgan Securities LLC
+      and PLC both key "jp morgan securities", the first item's LEI wrote its GLEIF node,
+      the second item found that node by name, its LEI disagreed, and nothing was written —
+      which of the two existed depended on the order of the subsidiary list (findings
+      item 30, 2026-11-01). Set the name hit aside and let the item's ids go to their
+      register (and keep the refusal when none knows them — no twin of the name); the name checks on what the register writes (`register_pointer.stale`)
+      still refuse an item whose ids are an old parent's (BlackRock).
 - [ ] **A name has a time span — compare against the names in force on the day.**
       Store a register's former names with the day each ended (`app.former_names`) and
       let every lookup and every name check read them: an alias or a filing's spelling
