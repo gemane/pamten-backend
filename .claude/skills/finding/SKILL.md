@@ -34,6 +34,14 @@ Usage:
 - **Host has 3.9 GB RAM:** never chain the unit suite and the integration run; start the
   `arcadedb-it` container only for the IT run and stop it afterwards.
 - Never edit Wikidata, never trigger a Render deploy, never `pkill -f`.
+- **A new security issue comes before the finding.** A vulnerability met while working —
+  a red Dependency audit job, a Dependabot alert a push prints, an advisory against a
+  package in either repo, of any severity — is fixed first: put it on the list, fix it in
+  its own PR off develop, merge it, and only then merge the finding's PRs (update their
+  branches from develop so their checks run against the fix). Item 36 (follow-redirects,
+  high) went in before items 34's PRs this way. When the only fix needs a decision — a
+  major-version override that may break its consumer, an exception for a dev-only tool —
+  ask before building on, and hold the finding's merge until it is answered.
 
 ## Step 1 — Analyse (stop: report cause + options)
 
@@ -118,7 +126,7 @@ green)"). Stop and ask to merge.
 
 ## Step 4 — Merge (stop: report, recommend the next item)
 
-On "merge": `gh pr merge <N> --squash`; remove the worktree, delete the branch locally and
+On "merge" — after any open security fix (ground rules) is merged first: `gh pr merge <N> --squash`; remove the worktree, delete the branch locally and
 remotely (`gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<branch>`); `git pull
 --ff-only` in the main checkout; watch develop's run with `gh run watch <id>
 --exit-status`. Update the item ("MERGED <date> (<sha>; verify at the next rebuild)") and
