@@ -2024,3 +2024,48 @@ class TestTheParentRuleRunsAfterACompanyScrape:
         calls = [c.kwargs for c in rule.call_args_list]
         assert {"owned_id": "blk"} in calls and {"owned_id": "dva"} in calls
         assert {"parent_id": "blk"} in calls
+
+
+class TestTheFinalReportReachesTheWriter:
+    """Findings item 35: every 13D/G write of a company scrape passes the
+    filer's last-report day on — the owner, the voting group and the company's
+    own holdings (run_sec_holdings is covered by its integration test)."""
+
+    def _run(self, data):
+        from app.scraper.runner import run_scrape_sec_edgar
+        ids = {"Tesla": "tsla", "Tesla, Inc.": "tsla", "Blackrock, Inc.": "blk", "Nvidia Corp": "nvda",
+               "Member Fund": "mem"}
+        ctx, _ = _make_session_mock()
+        owns: list[dict] = []
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner._ensure_source", return_value="sec"), \
+             patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.runner._upsert_entity_by_name", side_effect=lambda **kw: ids.get(kw["name"], "x")), \
+             patch("app.scraper.runner._upsert_voting_group", return_value="grp"), \
+             patch("app.scraper.runner._upsert_group_membership"), \
+             patch("app.scraper.runner._prune_group_membership"), \
+             patch("app.scraper.runner._retire_superseded_bloc_edge"), \
+             patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)), \
+             patch("app.scraper.runner.set_scrape_target"), \
+             patch("app.scraper.graph_writer.settings.SCRAPER_GEOCODE_ENABLED", False), \
+             patch("app.scraper.sec_writer.close_reported_by_parent", return_value=0):
+            run_scrape_sec_edgar("Tesla")
+        return {kw["owner_id"]: kw.get("final_report") for kw in owns}
+
+    def test_the_owner_the_group_and_the_holdings(self):
+        data = {"cik": "0001318605", "name": "Tesla, Inc.", "executives": [],
+                "ownership_filings": [
+                    {"investor_name": "Blackrock, Inc.", "investor_cik": "0002012383", "form_type": "SCHEDULE 13G/A",
+                     "filing_type": "13G/A", "stake_percent": 4.96, "file_date": "2026-10-27",
+                     "is_individual": False, "final_report": "2026-09-30"},
+                    {"investor_name": "Member Fund", "investor_cik": "0000000001", "form_type": "SCHEDULE 13D/A",
+                     "filing_type": "13D/A", "stake_percent": None, "voting_power_pct": 4.0,
+                     "file_date": "2026-05-01", "is_individual": False, "final_report": "2026-04-30",
+                     "group_members": [{"name": "Other Fund", "cik": None, "type_code": "PN"}]}],
+                "holdings": [{"subject_name": "Nvidia Corp", "subject_cik": None, "stake_percent": 4.1,
+                              "file_date": "2026-08-01", "filing_type": "13G/A", "final_report": "2026-06-30"}]}
+        got = self._run(data)
+        assert got["blk"] == "2026-09-30"
+        assert got["grp"] == "2026-04-30"
+        assert got["tsla"] == "2026-06-30"

@@ -396,7 +396,12 @@ Two rules keep the tiers meaning something on OWNS edges:
   only on a material change, so five years; `maintenance.RESTATEMENT_WINDOW_DAYS`,
   the second pass of `mark-stale`. Register-tier holdings were exempt from every
   stale pass, so a 13G/A from 2014 stood at full strength beside this year's and
-  VeriSign's holders summed to 106 %, Sirius XM's to 202 %, on dev 2026-10-25) —
+  VeriSign's holders summed to 106 %, Sirius XM's to 202 %, on dev 2026-10-25),
+  `final_report` (the holder's last Schedule 13D/G ticks Item 5 — 5 % or less as of
+  `stale_since`, the filing in `stale_source_url`; it reports no more and states no
+  sale, so the holding stays open, dimmed; the restatement pass leaves it to its
+  reason — findings item 35, docs/sec_edgar_scraper.md *A last report is not an exit
+  either*) —
   and `stale_since`, the day that evidence is dated. The history endpoint hands them to the panel's timeline,
   which shows a dated "no longer confirmed" entry under that year with the reason,
   so a reader can see why a holding went grey. Every writer that clears the mark

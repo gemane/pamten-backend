@@ -1882,6 +1882,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
             filing_type=h.get("filing_type"), event_date=h.get("event_date"),
             since_date=h.get("since"), since_basis=h.get("since_basis"),
+            final_report=h.get("final_report"),     # the filer's last report (item 35)
         )
         written += 1
         if h.get("until"):
@@ -2262,6 +2263,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 source_url=filing.get("source_url"),
                 event_date=filing.get("event_date"),
                 since_date=filing.get("since"), since_basis=filing.get("since_basis"),
+                final_report=filing.get("final_report"),   # the group's last report
             )
             # Retire the edge this filing used to produce. Before groups existed
             # the bloc was written straight onto the filer, and that row is not
@@ -2296,6 +2298,8 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             # A newer filing reported no position — the holding is history.
             # The holdings path below has always done this; this one did not.
             until=filing.get("until"),
+            # Item 5 ticked: the filer's last report — dimmed, not closed (item 35)
+            final_report=filing.get("final_report"),
             owner_label="Person" if is_individual else "Entity",
         )
         log.info(
@@ -2341,6 +2345,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             # Set when a later amendment reported 0% — the filer has dropped
             # below the 5% threshold, so this is history, not a live position.
             until=holding.get("until"),
+            final_report=holding.get("final_report"),    # the filer's last report (item 35)
         )
         log.info("SEC EDGAR: wrote OWNS %r → %r (%s%%%s)",
                  data["name"], subject_name, holding.get("stake_percent"),
