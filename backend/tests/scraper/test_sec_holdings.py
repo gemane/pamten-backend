@@ -154,6 +154,25 @@ class TestFetchFilerHoldings:
         assert rows and rows[0]["event_date"] == "2026-03-31"
         assert rows[0]["file_date"] == "2026-04-30"
 
+    def test_a_final_report_is_a_holding_dimmed_from_its_date_of_event(self):
+        """Findings item 35: BlackRock, Inc.'s 13G/A on Tesla of 2026-10-27 ticks
+        Item 5 at 4.96 % as of 2026-09-30 — its last report, not a sale."""
+        import pathlib
+        real = (pathlib.Path(__file__).parent / "fixtures" / "13ga_blackrock_tesla_final.xml").read_text()
+        subs = _subs([("SCHEDULE 13G/A", "a-1", "2026-10-27")])
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for({"a-1": real})):
+            rows = fetch_filer_holdings("0002012383")
+        assert [(r["stake_percent"], r["until"], r["final_report"]) for r in rows] == [(4.96, None, "2026-09-30")]
+
+    def test_a_live_holding_is_no_final_report(self):
+        subs = _subs([("SCHEDULE 13G", "a-1", "2026-04-30")])
+        docs = {"a-1": XML.format(cik="0000105770", name="West Pharmaceutical", pct="7.48")}
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_doc_for(docs)):
+            rows = fetch_filer_holdings("0002100119")
+        assert rows[0]["final_report"] is None
+
     def test_a_filing_about_the_filer_itself_is_not_a_holding(self):
         """EDGAR's index for a CIK carries filings the company is NAMED IN as well
         as ones it submitted, so somebody else's 13G about it appears here — and

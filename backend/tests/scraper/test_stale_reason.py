@@ -11,9 +11,9 @@ class TestTheVocabulary:
             assert f in STALE_CLEAR and f"r.{f} = null" in STALE_CLEAR_CYPHER
         assert STALE_CLEAR["stale"] is False and "r.stale = false" in STALE_CLEAR_CYPHER
 
-    def test_the_five_reasons(self):
+    def test_the_six_reasons(self):
         assert set(STALE_REASONS) == {"13f_not_confirmed", "ex21_not_listed", "unconfirmed",
-                                      "lei_lapsed", "not_restated"}
+                                      "lei_lapsed", "not_restated", "final_report"}
 
     def test_the_sql_clear_names_the_same_four_fields(self):
         from app.scraper.edge_schema import STALE_CLEAR_SQL

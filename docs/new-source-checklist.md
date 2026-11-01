@@ -217,6 +217,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       item 31, 2026-11-01). Read a compound number whole — "1-7-1 Kaigan" is not "3-5-1
       Kaigan". An address is supporting evidence only; a parent and its subsidiary share one
       (Domino's), so the name and legal form decide first.
+- [ ] **Read the form's own "last report" box, not a threshold on the number.** A 13G
+      below 5 % ticks Item 5 and stops filing: a statement that ends the reporting,
+      not the holding. Only a 0 % was read as an end, so 578 dev holdings under 5 %
+      stood as current (findings item 35). Keep such a holding, dimmed with its own
+      reason; decide by the box (XML field, the cover's mark, the sentence), never by
+      the stored percentage — re-divided by a newer share count, it is not the filing's.
 - [ ] **A newer statement can come from another filer of the same group.** Supersede by
       corporate group, not only by filer id: a parent holding company reports its
       subsidiaries' shares, and after BlackRock's 2024 reorganisation the new parent's

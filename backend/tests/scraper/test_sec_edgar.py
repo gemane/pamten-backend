@@ -1884,6 +1884,78 @@ class TestTheBlocsOwnCount:
         assert len(set(aggregates)) == 1
 
 
+class TestTheFinalReport:
+    """Findings item 35: a 13D/G below 5 % is the filer's last report — Item 5,
+    "Ownership of 5 Percent or Less of a Class" — not a sale. It was written as
+    a current holding (BlackRock, Inc. → Tesla 4.96 %, 13G/A 2026-10-27)."""
+
+    TESLA_XML = ("https://www.sec.gov/Archives/edgar/data/1318605/"
+                 "000201238326003852/primary_doc.xml")
+
+    def test_a_13g_that_ticks_item_5(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        d = _parse_13dg_xml(_fixture("13ga_blackrock_tesla_final.xml"))
+        assert d["final_report"] is True and d["event_date"] == "2026-09-30"
+        assert d["persons"][0]["percent"] == 4.96
+
+    def test_an_empty_item_5_is_no_final_report(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        assert _parse_13dg_xml(_fixture("13g_vanguard.xml"))["final_report"] is None
+
+    def test_a_13d_states_the_day_it_ceased_in_item_5e(self):
+        from app.scraper.sec_edgar import _parse_13dg_xml
+        ceased = _fixture("13d_tactical.xml").replace(
+            "<item5/>", "<item5><date5PercentOwnership>03/15/2026</date5PercentOwnership></item5>")
+        assert _parse_13dg_xml(ceased)["final_report"] == "2026-03-15"
+        # Bevco on Life Time, 4.4 %: "Not applicable." — no day, not final
+        open_ = _fixture("13d_tactical.xml").replace(
+            "<item5/>", "<item5><date5PercentOwnership>Not applicable.</date5PercentOwnership></item5>")
+        assert _parse_13dg_xml(open_)["final_report"] is None
+
+    @pytest.mark.parametrize("item5, final", [
+        # the five spellings of the real text covers (2009–2020)
+        ("check the following [X].", True),
+        ("check the following: ý", True),                                     # Fir Tree, Wingdings
+        ("check the following x .", True),                                     # Columbia Wanger
+        ("check the following [_].", None),                                    # Citadel, 4.2 % unticked
+        ("check the following [ ].", None),
+        ("check the following.", None),                                        # Barclays 2009: no mark
+    ])
+    def test_the_box_of_a_text_cover(self, item5, final):
+        from app.scraper.sec_edgar import _parse_final_report_from_text
+        text = ("<p>Item 5. Ownership of Five Percent or Less of a Class</p><p>If this statement is "
+                "being filed to report the fact that as of the date hereof the reporting person has "
+                f"ceased to be the beneficial owner of more than five percent of the class of securities, "
+                f"{item5}</p><p>Item 6. Ownership of More than Five Percent on Behalf of Another Person</p>")
+        assert _parse_final_report_from_text(text) is final
+
+    def test_a_text_cover_that_says_it_outright(self):
+        # T. Rowe Price's covers: no box, the fact stated
+        from app.scraper.sec_edgar import _parse_final_report_from_text
+        assert _parse_final_report_from_text(
+            "Item 5: Ownership of Five Percent or Less of a Class This statement is being filed to report "
+            "the fact that, as of the date of this report, the reporting person(s) has (have) ceased to be "
+            "the beneficial owner of more than five percent of the class of securities. Item 6: …") is True
+
+    def test_the_day_a_final_report_speaks_for(self):
+        from app.scraper.sec_edgar import _final_since
+        assert _final_since(True, "2026-09-30", "2026-10-27") == "2026-09-30"
+        assert _final_since(True, None, "2026-10-27") == "2026-10-27"
+        assert _final_since("2026-03-15", "2026-03-20", "2026-03-25") == "2026-03-15"
+        assert _final_since(None, "2026-09-30", "2026-10-27") is None
+
+    def test_the_owners_reader_carries_it(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = TestAnExitIsNotAZeroPercentHolding._atom(None, ("0002012383-26-003852", "2026-10-27"))
+        with patch.object(sec_edgar, "_get_text",
+                          side_effect=_serve(atom, {self.TESLA_XML: _fixture("13ga_blackrock_tesla_final.xml")})), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]), \
+             patch.object(sec_edgar, "fetch_filer_name", return_value="BlackRock, Inc."):
+            res = sec_edgar.fetch_ownership_filings("Tesla, Inc.", "0001318605")
+        assert [(r["stake_percent"], r["until"], r["final_report"]) for r in res] == [(4.96, None, "2026-09-30")]
+
+
 class TestAnExitIsNotAZeroPercentHolding:
     """The Vanguard Group's January-2026 realignment moved its holdings to
     subsidiaries that file separately, so its 13G/As report 0 in every power

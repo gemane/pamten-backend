@@ -1484,6 +1484,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         shares_total  = None
         voting_shares = None
         event_date    = None
+        final         = None      # the filer's last report (Item 5), findings item 35
         group_members: list[dict] = []
         # How the numbers below were read: a structured schedule's named XML
         # fields, or an older cover page's numbered rows found in its text
@@ -1504,6 +1505,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             pct, voting   = _stake_from_person(xml, person)
             share_class   = xml.get("class_title")
             event_date    = xml.get("event_date")
+            final         = xml.get("final_report")
             rows          = {k: person[k] for k in
                              ("sole_voting", "shared_voting",
                               "sole_dispositive", "shared_dispositive")
@@ -1543,6 +1545,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 is_individual = _parse_reporter_type_from_text(cover)
                 share_class   = _parse_class_title_from_text(text)
                 event_date    = _parse_event_date_from_text(text)
+                final         = _parse_final_report_from_text(text)
                 aggregate     = _parse_aggregate_from_text(cover)
                 shares        = _shares_held(_parse_power_rows(cover), aggregate, in_group=bloc)
                 shares_total  = _shares_outstanding(text)
@@ -1635,6 +1638,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # Set when a NEWER filing by this investor reported nothing: the
             # position is history, and the writer closes the edge with it.
             "until":            closed_since.get(inv["investor_cik"]),
+            # The filer's last report — Item 5 ticked, "5 percent or less": the
+            # holding stays, dimmed from this day, never closed (findings item 35)
+            "final_report":     _final_since(final, event_date, inv["file_date"]),
             # Provenance: the filing index page (readable), with the primary doc
             # as a fallback. file_date is the filing's date.
             "source_url":       inv.get("index_url") or inv.get("primary_url"),
@@ -3127,7 +3133,54 @@ def _parse_13dg_xml(raw: str) -> dict | None:
         "persons":      persons,
         "schedule":     schedule,
         "comment_text": " ".join(comments),
+        # The filer's LAST report (findings item 35): a 13G ticks Item 5,
+        # "Ownership of 5 Percent or Less of a Class" — it has ceased to own
+        # more than 5 % and files nothing more; a 13D states in Item 5(e) the
+        # day it ceased (free text, "Not applicable." while it has not).
+        "final_report": _final_report_of_xml(root, schedule),
     }
+
+
+def _final_report_of_xml(root, schedule: str) -> str | bool | None:
+    """True when a structured 13G ticks Item 5 (ceased to own more than 5 %),
+    the stated day when a 13D's Item 5(e) gives one, else None. BlackRock's
+    13G/A on Tesla of 2026-10-27 states 4.96 % with the box ticked."""
+    if schedule == "13G":
+        box = (_xml_child(root, "classOwnership5PercentOrLess") or "").strip().upper()
+        return True if box in ("Y", "YES", "TRUE", "X") else None
+    return _event_date(_xml_child(root, "date5PercentOwnership"))
+
+
+#: Item 5 of a pre-2024 text cover, up to Item 6: "…ceased to be the
+#: beneficial owner of more than five percent…, check the following [X]."
+_ITEM5_TEXT = re.compile(r"Item\s*5\b.{0,80}?(?:5|five)\s*(?:%|percent)\s*or\s*less(.{0,700}?)Item\s*6\b",
+                         re.IGNORECASE | re.DOTALL)
+#: the box ticked: "[X]", "☒", "x ." — or Wingdings' check glyphs as Latin-1
+#: decodes them ("ý", "þ"; Fir Tree's 13G/A of 2019); "[ ]", "[_]" and a bare
+#: "check the following." are not ticked
+_TICKED = re.compile(r"check\s+the\s+following[\s:.]*(?:box)?[\s:.]*[\[(]?\s*(?:x|☒|☑|✓|✔|■|ý|þ)(?![a-z])",
+                     re.IGNORECASE)
+#: or said outright, without the "If": "This statement is being filed to
+#: report the fact that … has ceased to be …" (T. Rowe Price's covers)
+_STATED = re.compile(r"(?<![Ii]f )\bthis\s+statement\s+is\s+being\s+filed\s+to\s+report\s+the\s+fact\s+that.{0,160}?"
+                     r"(?:has|have)\s*(?:\(have\)\s*)?ceased", re.IGNORECASE)
+
+
+def _parse_final_report_from_text(text: str) -> bool | None:
+    """True when a text/HTML 13G cover ticks Item 5 (the filer's last report,
+    findings item 35); None when the box is empty or not found."""
+    import html as _html
+    flat = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", text or "")))
+    m = _ITEM5_TEXT.search(flat)
+    return True if m and (_TICKED.search(m.group(1)) or _STATED.search(m.group(1))) else None
+
+
+def _final_since(final, event_date: str | None, file_date: str | None) -> str | None:
+    """The day a final report speaks for: a 13D's stated day of ceasing, else
+    the cover's date of event, else the filing date; None when not final."""
+    if not final:
+        return None
+    return final if isinstance(final, str) else (event_date or file_date)
 
 
 def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
@@ -3158,6 +3211,7 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
         "percent":      percent,
         "accession":    accession,
         "event_date":   xml.get("event_date"),
+        "final_report": xml.get("final_report"),
     }
 
 
@@ -3847,6 +3901,9 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             # 2026-10-27 rebuild, while `run_sec_holdings` stamped the same rows.
             "read_from":     READ_FIELD,
             "until":         closed_since.get(sid),
+            # the filer's last report: open, but dimmed from this day (item 35)
+            "final_report":  _final_since(parsed.get("final_report"), parsed.get("event_date"),
+                                          filing["date"]),
             "source_url":    _filing_index_url(cik, filing["accession"]),
         })
 

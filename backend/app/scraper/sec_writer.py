@@ -274,7 +274,7 @@ def stated_by_13dg(owner_id: str, owned_id: str, source_id: str) -> bool:
                for c in claims_for(from_id=owner_id, to_id=owned_id, kind=KIND_OWNS))
 
 
-def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
+def _write_owns_sec(owner_id: str, owned_id: str, source_id: str,
                      ownership_type: str, file_date: str | None,
                      stake_percent: float | None, source_url: str | None = None,
                      owner_label: str = "Entity", credibility_score: int = 98,
@@ -457,7 +457,8 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
                 WHERE r.source_id = $sid {active_only}
                 SET r.last_scraped_at = $now,
                     r.until       = $until,
-                    r.stale       = false,
+                    r.stale       = false, r.stale_since = null,
+                    r.stale_reason = null, r.stale_source_url = null,
                     r.stake_percent    = $stake,
                     r.ownership_type   = $otype,
                     r.voting_power_pct = $vote,
@@ -539,6 +540,53 @@ def _dissolution_closed(session, owner_label: str, owner_id: str, owned_id: str,
         if not dated or not end or str(dated)[:10] <= str(end)[:10]:
             return row
     return None
+
+
+FINAL_REPORT = "final_report"
+
+
+def _upsert_owns_sec(*args, final_report: str | None = None, **kwargs):
+    """Create or update an OWNS edge with SEC EDGAR attribution — see
+    `_write_owns_sec`, which takes the same arguments.
+
+    ``final_report``: the day a 13D/G that is the filer's LAST report speaks
+    for (Item 5 ticked, "5 percent or less" — findings item 35). The holding
+    stays open with its stake, as the filing states it, but is dimmed from that
+    day with `stale_reason = final_report`: the filer reports no more, and
+    nothing says it sold. BlackRock, Inc.'s 13G/A on Tesla of 2026-10-27 (4.96 %,
+    as of 2026-09-30) stood as a current holding. A later report that is not
+    final clears the mark with the rest of the stale fields."""
+    result = _write_owns_sec(*args, **kwargs)
+    if final_report:
+        import inspect
+        bound = inspect.signature(_write_owns_sec).bind(*args, **kwargs)
+        bound.apply_defaults()
+        a = bound.arguments
+        _mark_final_report(a["owner_id"], a["owned_id"], a["source_id"],
+                           label_or_entity(a["owner_label"]), final_report,
+                           a["file_date"], a["source_url"])
+    return result
+
+
+def _mark_final_report(owner_id: str, owned_id: str, source_id: str, owner_label: str,
+                       day: str, file_date: str | None, source_url: str | None) -> None:
+    """Dim the pair's open SEC edge as the filer's final report — only when
+    the edge carries THIS filing (its `source_date`); a newer statement already
+    on it is the current word. Dates are compared in Python."""
+    with db.get_session() as session:
+        for row in session.run(
+                f"""MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+                    WHERE r.source_id = $sid AND r.until IS NULL RETURN r.source_date AS sd""",
+                oid=owner_id, nid=owned_id, sid=source_id):
+            if file_date and str(row.get("sd") or "")[:10] != str(file_date)[:10]:
+                return
+        session.run(
+            f"""MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
+                WHERE r.source_id = $sid AND r.until IS NULL
+                SET r.stale = true, r.stale_reason = $why, r.stale_since = $day,
+                    r.stale_source_url = $url""",
+            oid=owner_id, nid=owned_id, sid=source_id, why=FINAL_REPORT,
+            day=str(day)[:10], url=source_url)
 
 
 #: why a holding's spell ended because its parent's statement took over

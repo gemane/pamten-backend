@@ -192,6 +192,7 @@ STALE_REASONS: dict[str, str] = {
     "unconfirmed":       "no source has confirmed this community-tier edge since `stale_since`",
     "lei_lapsed":        "the GLEIF relationship record lapsed; last updated `stale_since`",
     "not_restated":      "the holder's last Schedule 13D/G, filed `stale_since`, is older than the form's restatement window (maintenance.RESTATEMENT_WINDOW_DAYS)",
+    "final_report":      "the holder's last Schedule 13D/G ticks Item 5 — at 5 % or less as of `stale_since` (`stale_source_url`), it reports no more",
 }
 
 #: The property values that clear the mark — every writer that sets

@@ -647,6 +647,26 @@ event — not a later repeat. **A cover whose percentage cannot be read is not a
 exit**: it is skipped and the holder's older readable filing is used (before,
 `not pct` closed live holdings whenever a cover defeated the parser).
 
+**A last report is not an exit either.** A 13G/A below 5 % ticks Item 5, "Ownership of
+5 Percent or Less of a Class": the holder has ceased to own more than 5 % and files
+nothing more — it states a holding and does not say it sold. The reader keeps the
+holding open with its stated stake and the writer dims it from that day,
+`stale_reason = final_report` (`sec_writer._upsert_owns_sec(final_report=…)`), with the
+filing as `stale_source_url`; a later report that is not final clears all four stale
+fields. Read from the XML box (`item5/classOwnership5PercentOrLess = Y`); on a 13D,
+Item 5(e)'s free-text day of ceasing (`date5PercentOwnership` — "Not applicable." while
+it has not, even at 4.4 %); on a pre-2024 text cover, the box after "check the
+following" (`[X]`, `☒`, `x .`, Wingdings' `ý`/`þ`) or the fact stated outright (T. Rowe
+Price: "This statement is being filed to report the fact that … has ceased"). The box
+decides, never the percentage: Citadel's 13G/A of 2020 on Tesla says 4.2 % with an
+empty `[_]`, Columbia Wanger's of 2015 ticks it at 5.0 %, and the stored stake is
+re-divided by the issuer's newest count (`denominator_date`), so a stored 4.9 % may be
+a filing's 5.1 %. The day is the 13D's stated one, else the cover's date of event, else
+the filing date. Before 2026-11-01 only a 0 % ended anything, and dev showed 578 open
+13D/G holdings under 5 % — BlackRock, Inc. → Tesla 4.96 % (13G/A 2026-10-27, Item 5
+ticked as of 2026-09-30) as a current owner; 22 of 22 sampled covers agree with their
+box (findings item 35).
+
 **Closing touches one period**: the ended edge already carrying this end (a
 re-read), else the open one — never one that began after the end, whether SEC's
 own or another source's shared edge. An 8-K or "Former …" Form 4 departure
