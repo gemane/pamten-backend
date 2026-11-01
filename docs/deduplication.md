@@ -902,8 +902,13 @@ one building (Deutsche Bank and its Paris LEI, Société Générale, Intesa, San
 the importer keeps no `EntityCategory` to tell them apart.
 
 A JOIN stamps the LEI on the PSC node with the evidence as `lei_source` ("name+place+hq",
-"name+country+address"); the hard-id merge then folds the pair onto the `lei:` node, its
-holdings with it. It runs in the full dedup (`bridge_psc_gleif_pairs`, after the SEC
+"name+country+address"); the hard-id merge then folds the pair into one node, its
+holdings with it. The PSC node usually survives, because its name credibility (97) beats
+GLEIF's (92), so the survivor keeps the PSC's name. It then takes the `lei:` id
+(`node_ids._rank` ranks a corporate PSC's `chpsc:` id with a uuid), and the old
+`chpsc:` id forwards to it. Until 2026-11-01 the merged node stayed under the `chpsc:`
+id: Berkshire, Alphabet and SoftBank in rebuild 10-31b (findings item 26). The GLEIF
+delta updates `lei:` ids only, so it never refreshed them, and a full import twins them. It runs in the full dedup (`bridge_psc_gleif_pairs`, after the SEC
 bridge) and in the scoped one after a scrape. "Berkshire Hathaway LLC", another state or
 another building is refused, and a pair a person kept apart is never asked. Dev: 4
 corporate PSC nodes without an LEI, Berkshire the one joined. Against the full PSC

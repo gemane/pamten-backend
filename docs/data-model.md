@@ -572,8 +572,10 @@ join (`register_pointer._join_filer`), the SEC and Wikidata writers and every en
 merge (`maintenance._apply_entity_merge`: the survivor may carry the loser's better
 id) re-key; the merge command reports the new id. An id that had been forwarded away
 and comes back (a `lei:` node folded into its filer, which now takes the LEI's id)
-loses its old forwarding row, so nothing forwards to itself. The bulk importers' own
-keys (`gb-coh:`, `chpsc:`) are never replaced. Stored nodes change as writers touch
+loses its old forwarding row, so nothing forwards to itself. A UK company's `gb-coh:`
+key and a PSC person's `chpsc:` id are never replaced. A corporate PSC's `chpsc:` id
+keys an appointment, not the company, and since 2026-11-01 it ranks with a uuid: when
+the PSC/GLEIF join gives it the LEI, it becomes `lei:` (findings item 26). Stored nodes change as writers touch
 them, and all of them on the next rebuild.
 
 **A caller keeps writing to the node under its new id.** A re-key inside a call the

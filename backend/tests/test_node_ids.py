@@ -66,12 +66,29 @@ class TestKeyOnLearning:
         assert got == node_id
         rename.assert_not_called()
 
-    @pytest.mark.parametrize("node_id", ["lei:549300ZJC0V1K2ZCKG85", "gb-coh:00041424",
-                                         "chpsc:03977902:cdqMtbUIfvMc4RgPpHEhBM8trCs"])
-    def test_the_best_or_a_bulk_key_is_not_even_looked_up(self, node_id):
+    @pytest.mark.parametrize("label, node_id", [("Entity", "lei:549300ZJC0V1K2ZCKG85"),
+                                                ("Entity", "gb-coh:00041424"),
+                                                ("Person", "chpsc:03977902:cdqMtbUIfvMc4RgPpHEhBM8trCs")])
+    def test_the_best_or_a_register_key_is_not_even_looked_up(self, label, node_id):
         session = MagicMock()
-        assert key_on_learning(session, "Entity", node_id) == node_id
+        assert key_on_learning(session, label, node_id) == node_id
         session.run.assert_not_called()
+
+    @pytest.mark.parametrize("held, want", [
+        ({"lei": "5493000C01ZX7D35SD85", "wid": "Q217583", "cik": "0001067983"}, "lei:5493000C01ZX7D35SD85"),
+        ({"lei": None, "wid": None, "cik": "0001067983"}, "sec:0001067983"),
+    ])
+    def test_a_corporate_psc_takes_its_hard_id(self, held, want):
+        # findings item 26: the merge kept Berkshire's PSC node, which held the LEI
+        got, rename = self._learn("chpsc:03230337:VkVz5Am9-v9NnalMlijnYSGP0jE", held)
+        assert got == want
+        rename.assert_called_once()
+
+    def test_a_corporate_psc_without_a_hard_id_keeps_its_id(self):
+        got, rename = self._learn("chpsc:03230337:VkVz5Am9-v9NnalMlijnYSGP0jE",
+                                  {"lei": None, "wid": None, "cik": None})
+        assert got == "chpsc:03230337:VkVz5Am9-v9NnalMlijnYSGP0jE"
+        rename.assert_not_called()
 
     def test_a_taken_id_is_a_twin_not_forced(self):
         got, _ = self._learn("sec:0001011006", {"lei": "549300ZJC0V1K2ZCKG85", "wid": None, "cik": "0001011006"},

@@ -25,8 +25,18 @@ since 2026-10-30, a keyed node too: `sec:` that learns an LEI becomes `lei:`,
 uuid was re-keyed, so the id depended on which source wrote first (findings
 item 20): Viavi was `wd:` in one rebuild and `sec:` in the next, and 22 dev
 `sec:` nodes held an LEI under no `lei:` id, which the GLEIF delta (it updates
-`lei:` ids) never refreshed and a full GLEIF import would have twinned. Ids of
-the bulk importers (`gb-coh:`, `chpsc:`) are a register's own key and stay.
+`lei:` ids) never refreshed and a full GLEIF import would have twinned. A
+`gb-coh:` id is the UK register's own key and stays.
+
+**A corporate PSC ranks with a uuid** (findings item 26, 2026-11-01). Its
+`chpsc:` id keys the appointment in one UK company's register, not the
+company: Berkshire Hathaway as BHIIL's owner. When the PSC/GLEIF join gives it
+the LEI, the merge keeps the PSC node (its name credibility, 97, beats GLEIF's
+92) and the node then takes `lei:`, so the GLEIF delta still finds it. A PSC
+re-import mints the `chpsc:` node again, and the join folds it in once more.
+Before, Berkshire, Alphabet and SoftBank ended up under `chpsc:` ids. A PSC
+person keeps its `chpsc:` id: a re-import would twin it, and no hard id joins
+the twins again.
 """
 import logging
 import re
@@ -60,10 +70,10 @@ def keyed_id(lei: str | None = None, wikidata_id: str | None = None,
     return None
 
 
-def _rank(node_id: str) -> int | None:
-    """Where an id stands in `_RANK` (a uuid last); None for any other id —
-    a bulk importer's register key, which is never replaced."""
-    if is_uuid(node_id):
+def _rank(node_id: str, label: str = "Entity") -> int | None:
+    """Where an id stands in `_RANK` (a uuid or a corporate PSC last); None for
+    any other id — a register's own key, which is never replaced."""
+    if is_uuid(node_id) or (label == "Entity" and node_id.startswith("chpsc:")):
         return len(_RANK)
     return next((i for i, prefix in enumerate(_RANK) if node_id.startswith(prefix)), None)
 
@@ -86,8 +96,8 @@ def key_on_learning(session, label: str, node_id: str) -> str:
     and a forwarding row); any other id is returned as it is. A keyed id
     already taken is a twin for the dedup, never forced — the node keeps its
     id."""
-    current = _rank(node_id or "")
-    if not current:                      # a bulk importer's key, or already `lei:`
+    current = _rank(node_id or "", label)
+    if not current:                      # a register's own key, or already `lei:`
         return node_id
     rec = session.run(f"MATCH (n:{label} {{id: $id}}) RETURN n.lei_id AS lei, "
                       "n.wikidata_id AS wid, n.sec_cik AS cik", id=node_id).single()
