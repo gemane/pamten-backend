@@ -79,6 +79,8 @@ MAX_FORM4_SCAN   = 300    # Form 3/4 documents opened for them, at most
 #: insiders, none of the nine directors of its 2026-05-06 grant (findings item 9).
 FORM4_WINDOW_DAYS = 456
 MAX_FORM3_SCAN   = 40     # Form 3s read past the insider cap, for seat start dates
+MAX_PERSON_CANDIDATES = 5   # filers a person's name search returns, tried in turn
+MAX_PERSON_FORM4 = 20     # a candidate's own Form 4s opened to find one about the issuer
 MAX_8K_FETCH     = 12     # newest 8-Ks with Item 5.02 read for departures
 
 HOLDINGS_DEFAULT_LIMIT = 100    # subjects for an explicit holdings run (CLI)
@@ -2265,54 +2267,109 @@ def fetch_departures(cik: str, names: list[str], limit: int = MAX_8K_FETCH) -> l
     return list(found.values())
 
 
-def _lookup_person_cik(name: str) -> str | None:
-    """Resolve an individual's name to their EDGAR filer CIK (they file Form 4s)."""
-    try:
-        resp = _get_client().get(BROWSE_URL, params={
-            "company": name, "action": "getcompany", "type": "4",
-            "dateb": "", "owner": "include", "count": "5", "output": "atom",
-        })
-        resp.raise_for_status()
-        time.sleep(REQUEST_DELAY)
-    except httpx.HTTPError:
-        return None
-    m = re.search(r"cik=(\d+)", resp.text, re.IGNORECASE)
-    return m.group(1).zfill(10) if m else None
+_NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
+
+
+def _name_words(name: str) -> list[str]:
+    """The words of a person's name, without commas and a Jr./Sr./III suffix."""
+    return [w for w in name.replace(",", " ").split()
+            if w.strip(".").lower() not in _NAME_SUFFIXES]
+
+
+def _lookup_person_ciks(name: str) -> list[str]:
+    """Resolve an individual's name to the EDGAR filer CIKs it may be (they file Form 4s).
+
+    EDGAR names a person surname first ("DENHOLM ROBYN M") and its name search
+    matches from the start, so "Robyn Denholm" — the order Wikidata gives —
+    finds nobody (findings item 29). The surname-first form is asked first,
+    then the name as given (an SEC-styled name already is surname first).
+    A search with one match answers with that filer's name, kept only when it
+    has the given name and the surname; a search with several answers with
+    CIKs alone, each a candidate the caller's issuer check decides."""
+    words = _name_words(name)
+    if not words:
+        return []
+    queries = [f"{words[-1]} {words[0]}"] if len(words) > 1 else []
+    queries.append(" ".join(words))
+    wanted = {w.strip(".").upper() for w in (words[0], words[-1])}
+    found: list[str] = []
+    for query in queries:
+        try:
+            resp = _get_client().get(BROWSE_URL, params={
+                "company": query, "action": "getcompany", "type": "4",
+                "dateb": "", "owner": "include", "count": str(MAX_PERSON_CANDIDATES),
+                "output": "atom",
+            })
+            resp.raise_for_status()
+            time.sleep(REQUEST_DELAY)
+        except httpx.HTTPError:
+            continue
+        conformed = re.search(r"<conformed-name>([^<]*)</conformed-name>", resp.text)
+        if conformed and not wanted <= set(conformed.group(1).upper().replace(",", " ").split()):
+            continue                       # the one filer it found is someone else
+        for cik in re.findall(r"<cik>(\d+)</cik>", resp.text):
+            if cik.zfill(10) not in found:
+                found.append(cik.zfill(10))
+        if found:
+            break
+    return found[:MAX_PERSON_CANDIDATES]
 
 
 def fetch_insider_holding(name: str, issuer_cik: str,
-                          shares_outstanding: "SharesOutstanding | dict | float | None" = None) -> dict | None:
+                          shares_outstanding: "SharesOutstanding | dict | float | None" = None,
+                          person_cik: str | None = None) -> dict | None:
     """
     Person-centric insider lookup (all structured XML): resolve the individual's
     CIK, read THEIR most recent Form 4 that reports on `issuer_cik`, and return
-    their current share holding (+ a stake %% when shares_outstanding is known).
+    their current share holding (+ a stake %% when shares_outstanding is known)
+    and the CIK it was filed under.
 
     Reaches insiders the issuer-side Form-4 scan misses (e.g. a CEO whose filings
-    are flooded out of the company's recent window). Verifying issuerCik on the
-    filing guards against name collisions. Returns None if not found / no shares.
+    are flooded out of the company's recent window, or a director who has not
+    traded within it). ``person_cik`` is the CIK the person already holds; without
+    one the name is searched and each candidate filer tried in turn. Verifying
+    issuerCik on the filing guards against name collisions. Returns None if not
+    found / no shares.
     """
-    cik = _lookup_person_cik(name)
-    if not cik:
-        return None
+    from app.scraper.mapper import normalize_cik
+    issuer_int = str(_cik_int(issuer_cik))
+    for cik in ([normalize_cik(person_cik)] if person_cik else _lookup_person_ciks(name)):
+        found = _own_form4_holding(cik, issuer_int, shares_outstanding)
+        if found is not _NOT_THEIRS:
+            return found
+    return None
+
+
+_NOT_THEIRS = object()     # the candidate filed no Form 4 about the issuer
+
+
+def _own_form4_holding(cik: str, issuer_int: str,
+                       shares_outstanding: "SharesOutstanding | dict | float | None"):
+    """The holding a filer's newest Form 4 about the issuer states (None when
+    it states no shares), or _NOT_THEIRS when none of their newest
+    MAX_PERSON_FORM4 Form 4s is about the issuer."""
     try:
         subs = _submissions(cik)
     except httpx.HTTPError:
-        return None
+        return _NOT_THEIRS
     rec   = subs.get("filings", {}).get("recent", {})
     forms = rec.get("form", [])
     accs  = rec.get("accessionNumber", [])
     docs  = rec.get("primaryDocument", [])
     dates = rec.get("filingDate", [])
-    issuer_int = str(_cik_int(issuer_cik))
 
+    opened = 0
     for i, f in enumerate(forms):
         if f not in ("4", "4/A"):
             continue
+        if opened >= MAX_PERSON_FORM4:
+            break
         acc = accs[i].replace("-", "")
         doc = docs[i] if i < len(docs) else ""
         doc = doc.split("/")[-1] if "/" in doc else doc
         if not doc:
             continue
+        opened += 1
         try:
             xml = _get_text(f"{ARCHIVES_URL}/{int(cik)}/{acc}/{doc}")
         except httpx.HTTPError:
@@ -2329,10 +2386,11 @@ def fetch_insider_holding(name: str, issuer_cik: str,
             return None
         return {
             **pick,
+            "cik":           cik,
             "source_url":    _filing_index_url(cik, accs[i]),
             "source_date":   dates[i] if i < len(dates) else None,
         }
-    return None
+    return _NOT_THEIRS
 
 
 @dataclass(frozen=True)

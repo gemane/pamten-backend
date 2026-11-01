@@ -954,8 +954,11 @@ new CEO) — read both, or the newest insiders vanish.
 Insiders are listed from every Form 3/4 filed in the **15 months** before the
 issuer's newest one (`FORM4_WINDOW_DAYS = 456`), newest first, one per reporting
 person — up to `MAX_FORM4_FETCH = 60` people and `MAX_FORM4_SCAN = 300` documents.
-Every sitting director files at least once a year (the annual grant), so the window
-holds the board; someone whose last filing is older is not listed.
+Most sitting directors file at least once a year (the annual grant), so the window
+holds most of the board; someone whose last filing is older is not listed here.
+Not every board grants yearly: Robyn Denholm, Tesla's chair, last filed on
+2025-05-08 and Meryl Witmer, a Berkshire director, on 2025-03-04 — both outside
+the window. They are reached by the person-centric pass below.
 
 It used to be the newest **50 documents**, and a few officers filing often used them
 up: Bank of America listed 8 of its 29 insiders, none of the nine directors of its
@@ -964,6 +967,31 @@ directors who filed on 2026-04-30, at documents 51–55. Which board a rebuild w
 depended on the officers' trading that month (findings item 9, 2026-10-31). Over
 the 136 SEC filers of the scrape list the window is 4,975 documents (median 15,
 Alphabet 226), read once — Archives documents are cached.
+
+### People the window misses — the person-centric pass
+
+After the issuer-side scan, every person who holds an **open seat** at the company
+(from Wikidata or an earlier scrape) and has no ownership edge to it is looked up
+by their own filings (`runner`, `fetch_insider_holding`): each person once, in id
+order, up to `MAX_INSIDER_LOOKUPS = 15`. A person who already holds a CIK is asked
+by it. Otherwise the name is searched in EDGAR's filer index, and that search
+matches from the start of EDGAR's own spelling, which is **surname first**
+("DENHOLM ROBYN M"): "Robyn Denholm" finds nobody, "Denholm Robyn" finds her. So
+`_lookup_person_ciks` asks surname first (given name, surname; a middle name and
+Jr./Sr./III left out), then the name as given (an SEC-styled name already is surname
+first). A search with one match names the filer, which is kept only when it has the
+given name and the surname; a search with several gives CIKs alone, up to
+`MAX_PERSON_CANDIDATES = 5`, and each candidate is tried in turn: their newest
+`MAX_PERSON_FORM4 = 20` Form 4s are opened until one names the company as issuer
+(`issuerCik`), which is what tells namesakes apart.
+
+The holding found is written as a Form 4 holding, and the CIK it was filed under is
+given to the person when no other vertex holds it (one CIK, one party) — which keys
+them `sec:` (`node_ids`, a CIK outranks a QID), the old id forwarding. Until
+2026-11-01 the search asked with the name as stored, so this pass never found
+anyone whose name came from Wikidata; the 50-document cap had hidden that, and the
+15-month window showed it (findings item 29: Denholm and Witmer lost their CIKs
+and holdings in the rebuild of 2026-10-31b).
 
 ### When a seat began — Form 3
 
@@ -1090,6 +1118,7 @@ other than through its own scrape.
 | Form 3s past the cap, for seat start dates | up to 40 (cached) |
 | Older index pages + their Form 3s, while someone is undated | up to 3 + 60 (documents cached) |
 | 8-Ks with Item 5.02, for departures | up to 12 (cached) |
+| Person-centric pass: per person without a holding (up to 15), 1–2 name searches, then per candidate (up to 5) a submissions JSON and up to 20 Form 4s | usually 3–4 per person (documents cached) |
 | **Total (typical)** | **~40–50** |
 
 At 0.12 s per request this takes roughly 5–8 seconds per company, in addition
