@@ -121,10 +121,12 @@ def test_an_item_whose_ids_another_legal_entity_holds_writes_nothing(it_db):
             "sec_cik": "0001364742", "sec_ciks": ["0001364742"]}
     it_db.run_command("CREATE (:Entity {id: 'existing-sub', name: 'Known Sub SA', "
                       "name_normalized: 'known sub sa', type: 'company', wikidata_id: 'Q_SUB_KNOWN'})")
-    with patch("app.scraper.register_pointer.write_from_pointer") as reg:
+    # found by name alone, so the item's ids are asked of their register
+    # (findings item 30); none writes a node here, and the name's node is refused
+    with patch("app.scraper.register_pointer.write_from_pointer", return_value=None) as reg:
         counts = _scrape(it_db, data)
     assert counts.get("conflicts") == 1
-    reg.assert_not_called()
+    reg.assert_called_once_with(["549300LRIF3NWCU26A80"], ["0001364742"])
     row = it_db.run_sql("SELECT FROM Entity WHERE id = 'lei:529900VBK42Y5HHRMD23'")[0]
     assert row.get("sec_cik") is None and row.get("wikidata_id") is None
     assert row["name"] == "BlackRock, Inc."

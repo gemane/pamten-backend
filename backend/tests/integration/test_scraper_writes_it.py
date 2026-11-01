@@ -11,6 +11,8 @@ because a fake session never parses the Cypher it is handed:
    resolved onto a French company called "ALPHA" and stamped Alphabet Inc's CIK
    and its BlackRock / Vanguard / Fidelity holders onto it.
 """
+from unittest.mock import patch
+
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -55,8 +57,11 @@ def test_a_node_whose_register_id_the_item_contradicts_gets_nothing(it_db):
     it_db.run_command(
         "CREATE (e:Entity {id:'lei:REG', name:'Registered Co', name_normalized:'registered co', "
         "type:'company', lei_id:'REGISTEREDLEI0000001', name_credibility:92})")
-    assert _upsert_entity("Registered Co", None, None, "a description", "Q1",
-                          lei="WIKIDATASAYSOTHER001", sec_cik="0000000001") is None
+    # no register knows the item's ids: no twin of the name either (findings item 30)
+    with patch("app.scraper.register_pointer.write_from_pointer", return_value=None):
+        assert _upsert_entity("Registered Co", None, None, "a description", "Q1",
+                              lei="WIKIDATASAYSOTHER001", sec_cik="0000000001") is None
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity")[0]["n"] == 1
     row = it_db.run_sql("SELECT FROM Entity WHERE id = 'lei:REG'")[0]
     assert row["lei_id"] == "REGISTEREDLEI0000001" and row.get("sec_cik") is None
     assert row.get("wikidata_id") is None and row.get("description") is None

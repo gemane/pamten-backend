@@ -1527,16 +1527,18 @@ class TestIdentifierBridge:
 
     def test_a_contradicted_node_gets_nothing_of_the_item(self):
         """The 2026-10-28 rebuild: Q219635 found the listed BlackRock by name,
-        whose GLEIF LEI is not the one the item states."""
+        whose GLEIF LEI is not the one the item states. Found by name alone, so
+        the item's ids are asked of their register first (findings item 30);
+        none writes a node, and the name's node is refused."""
+        held = {"lei_id": "529900VBK42Y5HHRMD23", "sec_cik": None}
         ctx, session = _make_session_mock(single_returns=[
-            None, None, None, {"id": "lei:529900VBK42Y5HHRMD23"},
-            {"lei_id": "529900VBK42Y5HHRMD23", "sec_cik": None}])
+            None, None, None, {"id": "lei:529900VBK42Y5HHRMD23"}, held, held])
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.register_pointer.write_from_pointer") as reg:
+             patch("app.scraper.register_pointer.write_from_pointer", return_value=None) as reg:
             eid = _upsert_entity("BlackRock", None, None, None, "Q219635",
                                  lei=["549300LRIF3NWCU26A80"], sec_cik=["0001364742"])
         assert eid is None
-        reg.assert_not_called()
+        reg.assert_called_once_with(["549300LRIF3NWCU26A80"], ["0001364742"])
         assert not any("SET e." in c.args[0] or "CREATE (e:Entity" in c.args[0]
                        for c in session.run.call_args_list)
 
@@ -1561,6 +1563,7 @@ class TestIdentifierBridge:
         # findings item 16a: GLEIF's previous legal names are ended names too
         ctx, session = _make_session_mock(single_returns=[
             None, None, {"id": "lei:529900VBK42Y5HHRMD23"},
+            {"lei_id": "529900VBK42Y5HHRMD23", "sec_cik": None},         # _held_ids: no contradiction
             {"lei_id": "529900VBK42Y5HHRMD23", "sec_cik": None, "name": "BlackRock, Inc.",
              "other_names": [], "former_names": None,
              "gleif_former_names": ["BLACKROCK FUNDING, INC.|2024-09-30"]}])
