@@ -845,6 +845,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       board: a few officers' repeat filings used them up and Bank of America listed 8 of
       its 29 insiders (findings item 9, 2026-10-31). Read the window the facts live in (every
       director files yearly → 15 months) and keep a count only as a high ceiling.
+- [ ] **A narrower main path is a test of its fallback — test the fallback with the names it will get.**
+      The person-centric Form 4 lookup searched EDGAR with "Robyn Denholm", and EDGAR matches its
+      own surname-first spelling from the start, so it had never found a Wikidata-named person;
+      the 50-document cap covered for it, and the 15-month window exposed it (findings item 29,
+      2026-11-01). Search a register in the register's own name order, and check a fallback's
+      hit rate on real inputs when the path in front of it shrinks.
 - [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_edgar._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the

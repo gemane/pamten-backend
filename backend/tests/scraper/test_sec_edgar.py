@@ -717,7 +717,7 @@ def _form4(issuer_cik: str, shares: str) -> str:
 
 def test_fetch_insider_holding_computes_stake_when_issuer_matches():
     from app.scraper.sec_edgar import fetch_insider_holding
-    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value="0001059245"), \
+    with patch("app.scraper.sec_edgar._lookup_person_ciks", return_value=["0001059245"]), \
          patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
          patch("app.scraper.sec_edgar._get_text", return_value=_form4("0001364742", "2000")), \
          patch("time.sleep"):
@@ -728,7 +728,7 @@ def test_fetch_insider_holding_computes_stake_when_issuer_matches():
 
 def test_fetch_insider_holding_divides_class_by_class():
     from app.scraper.sec_edgar import fetch_insider_holding
-    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value="0001059245"), \
+    with patch("app.scraper.sec_edgar._lookup_person_ciks", return_value=["0001059245"]), \
          patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
          patch("app.scraper.sec_edgar._get_text", return_value=_BUFFETT_XML), \
          patch("time.sleep"):
@@ -740,7 +740,7 @@ def test_fetch_insider_holding_divides_class_by_class():
 
 def test_fetch_insider_holding_none_when_issuer_mismatch():
     from app.scraper.sec_edgar import fetch_insider_holding
-    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value="0001059245"), \
+    with patch("app.scraper.sec_edgar._lookup_person_ciks", return_value=["0001059245"]), \
          patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
          patch("app.scraper.sec_edgar._get_text", return_value=_form4("0000999999", "2000")), \
          patch("time.sleep"):
@@ -750,8 +750,114 @@ def test_fetch_insider_holding_none_when_issuer_mismatch():
 
 def test_fetch_insider_holding_none_when_no_cik():
     from app.scraper.sec_edgar import fetch_insider_holding
-    with patch("app.scraper.sec_edgar._lookup_person_cik", return_value=None):
+    with patch("app.scraper.sec_edgar._lookup_person_ciks", return_value=[]):
         assert fetch_insider_holding("Nobody", "0001364742") is None
+
+
+def test_fetch_insider_holding_returns_the_cik_it_was_filed_under():
+    from app.scraper.sec_edgar import fetch_insider_holding
+    with patch("app.scraper.sec_edgar._lookup_person_ciks", return_value=["0001059245"]), \
+         patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
+         patch("app.scraper.sec_edgar._get_text", return_value=_form4("0001364742", "2000")), \
+         patch("time.sleep"):
+        out = fetch_insider_holding("Larry Fink", "0001364742")
+    assert out["cik"] == "0001059245"
+
+
+def test_fetch_insider_holding_tries_the_next_candidate():
+    """A name search with several matches names no one: the first candidate
+    files about another company, the second about the issuer."""
+    from app.scraper.sec_edgar import fetch_insider_holding
+    xml = {"1": _form4("0000999999", "50"), "2": _form4("0001364742", "2000")}
+    with patch("app.scraper.sec_edgar._lookup_person_ciks", return_value=["0000000001", "0000000002"]), \
+         patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
+         patch("app.scraper.sec_edgar._get_text", side_effect=lambda url: xml[url.split("/")[-3]]), \
+         patch("time.sleep"):
+        out = fetch_insider_holding("Thomas Murphy", "0001364742")
+    assert out["cik"] == "0000000002" and out["shares_owned"] == 2000.0
+
+
+def test_fetch_insider_holding_uses_the_cik_the_person_holds():
+    from app.scraper.sec_edgar import fetch_insider_holding
+    with patch("app.scraper.sec_edgar._lookup_person_ciks") as lookup, \
+         patch("app.scraper.sec_edgar._get", return_value=_SUBS), \
+         patch("app.scraper.sec_edgar._get_text", return_value=_form4("0001364742", "2000")), \
+         patch("time.sleep"):
+        out = fetch_insider_holding("Larry Fink", "0001364742", person_cik="1059245")
+    lookup.assert_not_called()
+    assert out["cik"] == "0001059245"
+
+
+def test_fetch_insider_holding_opens_a_bounded_number_of_a_candidates_form_4s():
+    from app.scraper import sec_edgar
+    n = sec_edgar.MAX_PERSON_FORM4 + 5
+    subs = {"filings": {"recent": {"form": ["4"] * n,
+                                   "accessionNumber": [f"0001059245-24-{i:06d}" for i in range(n)],
+                                   "primaryDocument": ["form4.xml"] * n,
+                                   "filingDate": ["2024-02-01"] * n}}}
+    with patch("app.scraper.sec_edgar._lookup_person_ciks", return_value=["0001059245"]), \
+         patch("app.scraper.sec_edgar._get", return_value=subs), \
+         patch("app.scraper.sec_edgar._get_text", return_value=_form4("0000999999", "1")) as get_text, \
+         patch("time.sleep"):
+        assert sec_edgar.fetch_insider_holding("Larry Fink", "0001364742") is None
+    assert get_text.call_count == sec_edgar.MAX_PERSON_FORM4
+
+
+class TestPersonCikLookup:
+    """EDGAR names a person surname first and its name search matches from the
+    start: "Robyn Denholm" found nobody, "Denholm Robyn" finds her (findings
+    item 29). The two answer shapes are EDGAR's real ones: one match names the
+    filer (company-info + conformed-name), several give CIKs alone."""
+
+    ONE = ("<feed><company-info><cik>0001242782</cik>"
+           "<conformed-name>DENHOLM ROBYN M</conformed-name></company-info></feed>")
+    MANY = ("<feed><entry><content><company-info name=\"ARRAY(0x1)\"><cik>0001145065</cik>"
+            "</company-info></content></entry><entry><content><company-info name=\"ARRAY(0x2)\">"
+            "<cik>0001235136</cik></company-info></content></entry></feed>")
+    NONE = "<feed><author><name>Webmaster</name></author></feed>"
+
+    def _lookup(self, name, answers):
+        from app.scraper import sec_edgar
+        asked = []
+
+        def get(url, params):
+            asked.append(params["company"])
+            resp = MagicMock()
+            resp.text = answers.get(params["company"], self.NONE)
+            return resp
+        client = MagicMock()
+        client.get.side_effect = get
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            return sec_edgar._lookup_person_ciks(name), asked
+
+    def test_surname_first_is_asked_first(self):
+        found, asked = self._lookup("Robyn Denholm", {"Denholm Robyn": self.ONE})
+        assert found == ["0001242782"] and asked == ["Denholm Robyn"]
+
+    def test_a_middle_initial_and_a_suffix_are_left_out(self):
+        _, asked = self._lookup("Thomas S. Murphy, Jr.", {})
+        assert asked == ["Murphy Thomas", "Thomas S. Murphy"]
+
+    def test_an_sec_styled_name_is_found_as_given(self):
+        found, asked = self._lookup("DENHOLM ROBYN M", {"DENHOLM ROBYN M": self.ONE})
+        assert found == ["0001242782"] and asked == ["M DENHOLM", "DENHOLM ROBYN M"]
+
+    def test_one_match_with_another_name_is_refused(self):
+        found, _ = self._lookup("Robyn Smith", {"Smith Robyn": self.ONE, "Robyn Smith": self.ONE})
+        assert found == []
+
+    def test_several_matches_are_all_candidates(self):
+        found, _ = self._lookup("Thomas Murphy", {"Murphy Thomas": self.MANY})
+        assert found == ["0001145065", "0001235136"]
+
+    def test_a_failed_search_tries_the_name_as_given(self):
+        from app.scraper import sec_edgar
+        import httpx
+        client = MagicMock()
+        ok = MagicMock(text=self.ONE)
+        client.get.side_effect = [httpx.ConnectError("down"), ok]
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            assert sec_edgar._lookup_person_ciks("Robyn M. Denholm") == ["0001242782"]
 
 
 class TestIssuerVerification:

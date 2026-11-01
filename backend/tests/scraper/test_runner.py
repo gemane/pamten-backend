@@ -1051,6 +1051,74 @@ def test_sec_person_centric_insider_owns():
     assert owns[0]["owner_id"] == "fink" and owns[0]["stake_percent"] == 2.0
 
 
+class TestPersonCentricCik:
+    """The person-centric pass gives a person the CIK their own Form 4 was
+    filed under, and asks by the CIK a person already holds (findings item 29:
+    Denholm and Witmer lost theirs once the issuer-side window stopped
+    reaching their filings)."""
+
+    def _run(self, row, holding, held_by=None, stamped_to=None):
+        from contextlib import contextmanager
+        from app.scraper.runner import run_scrape_sec_edgar
+        data = {"cik": "0001318605", "name": "Tesla", "ownership_filings": [],
+                "executives": [], "shares_outstanding": 100000.0}
+
+        @contextmanager
+        def fake_ctx():
+            sess = MagicMock()
+            sess.run.return_value = [row]
+            yield sess
+
+        owns, asked, stamps = [], [], []
+
+        def fake_holding(name, cik, shares_out, person_cik=None):
+            asked.append(person_cik)
+            return holding
+
+        def fake_stamp(session, pid, cik):
+            stamps.append((pid, cik))
+            return stamped_to or pid
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner._ensure_source", return_value="src"), \
+             patch("app.scraper.runner._upsert_entity_by_name", return_value="tsla"), \
+             patch("app.scraper.runner.db.get_session", fake_ctx), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_insider_holding", side_effect=fake_holding), \
+             patch("app.scraper.runner._vertex_holding_cik", return_value=held_by), \
+             patch("app.scraper.runner._stamp_person_cik", side_effect=fake_stamp), \
+             patch("app.scraper.runner.stated_by_13dg", return_value=False), \
+             patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)), \
+             patch("app.scraper.runner.set_scrape_target"), \
+             patch("app.scraper.graph_writer.settings.SCRAPER_GEOCODE_ENABLED", False):
+            run_scrape_sec_edgar("Tesla")
+        return owns, asked, stamps
+
+    HOLDING = {"shares_owned": 85000, "stake_percent": None, "cik": "0001242782",
+               "source_url": "https://sec.gov/f4", "source_date": "2025-05-08"}
+
+    def test_a_person_without_a_cik_gains_the_one_found(self):
+        owns, asked, stamps = self._run({"id": "wd:Q58345040", "name": "Robyn Denholm", "cik": None},
+                                        self.HOLDING)
+        assert asked == [None]
+        assert stamps == [("wd:Q58345040", "0001242782")]
+        assert [o["owner_id"] for o in owns] == ["wd:Q58345040"]
+
+    def test_the_holding_is_written_on_the_id_the_stamp_keyed(self):
+        owns, _, _ = self._run({"id": "u-1", "name": "Robyn Denholm", "cik": None},
+                               self.HOLDING, stamped_to="sec:0001242782")
+        assert [o["owner_id"] for o in owns] == ["sec:0001242782"]
+
+    def test_a_cik_another_vertex_holds_is_not_stamped(self):
+        owns, _, stamps = self._run({"id": "wd:Q58345040", "name": "Robyn Denholm", "cik": None},
+                                    self.HOLDING, held_by="Person")
+        assert stamps == [] and [o["owner_id"] for o in owns] == ["wd:Q58345040"]
+
+    def test_a_person_with_a_cik_is_asked_by_it(self):
+        _, asked, stamps = self._run({"id": "wd:Q58345040", "name": "Robyn Denholm",
+                                      "cik": "0001242782"}, self.HOLDING)
+        assert asked == ["0001242782"] and stamps == []
+
+
 # ── Of record versus beneficial: a 13D/G statement beats the Form 4 count ────
 
 class TestForm4YieldsTo13dg:

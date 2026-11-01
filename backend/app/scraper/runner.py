@@ -31,7 +31,8 @@ from app.scraper.sources import KNOWN_SOURCES
 from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_name, normalize_entity_name, derive_ownership_type, is_nominee_name, has_entity_suffix, normalize_cik, strip_edgar_tag
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
-    _record_edge_parties, _record_touched, _record_touched_entity, _with_autodedup, set_scrape_target,
+    _record_edge_parties, _record_touched, _record_touched_entity, _stamp_person_cik, _with_autodedup,
+    set_scrape_target,
     # The shared write layer lives in graph_writer now (the module split the
     # multi-scraper refactor deferred); re-exported here so existing imports and
     # test patch targets — `app.scraper.runner._upsert_owns` and friends — keep
@@ -1897,6 +1898,17 @@ def _vertex_holding_cik(cik: str | None) -> str | None:
         return "Entity" if resolve_entity_id(session, sec_cik=cik) else None
 
 
+def _stamp_found_cik(person_id: str, cik: str) -> str:
+    """Give a person the CIK their own Form 4 was filed under, which the
+    person-centric lookup found by name (findings item 29). Only when no
+    vertex holds that CIK yet — one CIK, one party — and returns the person's
+    id, the keyed one when they were uuid-keyed."""
+    if _vertex_holding_cik(cik):
+        return person_id
+    with db.get_session() as session:
+        return _stamp_person_cik(session, person_id, cik)
+
+
 def _is_individual(name: str, stated: bool | None, cik: str | None) -> bool:
     """Is a 13D/G reporting person a human being? Item 8's code when it says
     (``stated``), else the vertex that already holds the CIK, else the shape
@@ -2443,14 +2455,18 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     # dated and per class; the bare total only for a scrape result that predates it
     shares_out = data.get("shares_outstanding_detail") or data.get("shares_outstanding")
     if cik:
+        # Each person once, only seats still held, in a fixed order: a person
+        # with two seats took two of the slots, and the cap cut a different
+        # set on every run (findings item 29).
         with db.get_session() as session:
             known = [
-                {"id": r.get("id"), "name": r.get("name")}
+                {"id": r.get("id"), "name": r.get("name"), "cik": r.get("cik")}
                 for r in session.run(
                     """
-                    MATCH (p:Person)-[:HAS_ROLE]->(e:Entity {id: $id})
-                    WHERE NOT (p)-[:OWNS]->(e)
-                    RETURN p.id AS id, p.full_name AS name LIMIT $cap
+                    MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+                    WHERE r.until IS NULL AND NOT (p)-[:OWNS]->(e)
+                    RETURN DISTINCT p.id AS id, p.full_name AS name, p.sec_cik AS cik
+                    ORDER BY id LIMIT $cap
                     """,
                     id=target_id, cap=MAX_INSIDER_LOOKUPS,
                 )
@@ -2459,9 +2475,11 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             pname, pid = row["name"], row["id"]
             if not pname or not pid:
                 continue
-            holding = fetch_insider_holding(pname, cik, shares_out)
+            holding = fetch_insider_holding(pname, cik, shares_out, person_cik=row.get("cik"))
             if not holding:
                 continue
+            if holding.get("cik") and not row.get("cik"):
+                pid = _stamp_found_cik(pid, holding["cik"])
             if stated_by_13dg(pid, target_id, source_id):
                 _note_form4_yields(scraped, pname, data["name"])
                 continue
