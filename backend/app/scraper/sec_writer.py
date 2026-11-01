@@ -430,7 +430,7 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
             existing = _dissolution_closed(session, owner_label, owner_id, owned_id,
                                            since or file_date, source_id=source_id)
             if existing:
-                active_only = "AND r.until_reason = 'dissolution'"
+                active_only = f"AND r.until_reason = '{existing['r'].get('until_reason')}'"
         if existing:
             # The start: combined with what the edge has, earliest wins (an
             # amendment's lower bound never replaces an original's stated day).
@@ -524,20 +524,116 @@ def _upsert_owns_sec(owner_id: str, owned_id: str, source_id: str,
 
 def _dissolution_closed(session, owner_label: str, owner_id: str, owned_id: str,
                         dated: str | None, source_id: str | None = None):
-    """The pair's edge the dissolution rule closed, when a filing dated `dated`
-    falls inside it (no date: it does) — or None. The dates are compared in
-    Python: Cypher coerces ISO strings."""
+    """The pair's edge a rule closed (`_RULE_CLOSED`: the dissolution rule,
+    or the parent's statement taking over — findings item 34), when a filing
+    dated `dated` falls inside it (no date: it does) — or None. The dates are
+    compared in Python: Cypher coerces ISO strings."""
     by_source = "AND r.source_id = $sid" if source_id else ""
     for row in session.run(
             f"""
             MATCH (a:{owner_label} {{id: $oid}})-[r:OWNS]->(b:Entity {{id: $nid}})
-            WHERE r.until_reason = 'dissolution' {by_source} RETURN r
+            WHERE r.until_reason IN $reasons {by_source} RETURN r
             """,
-            oid=owner_id, nid=owned_id, sid=source_id):
+            oid=owner_id, nid=owned_id, sid=source_id, reasons=list(_RULE_CLOSED)):
         end = row["r"].get("until")
         if not dated or not end or str(dated)[:10] <= str(end)[:10]:
             return row
     return None
+
+
+#: why a holding's spell ended because its parent's statement took over
+#: (`close_reported_by_parent`)
+REPORTED_BY_PARENT = "reported_by_parent"
+#: spells closed by a rule rather than by a filing: a re-read of a filing from
+#: inside one updates it instead of drawing a new open edge beside it, and the
+#: rule closes it again after the scrape (app.dissolution, the parent rule)
+_RULE_CLOSED = ("dissolution", REPORTED_BY_PARENT)
+
+
+def _statement_day(edge: dict) -> str:
+    """The day a 13D/G statement was made: its filing date."""
+    return str(edge.get("source_date") or "")[:10]
+
+
+def close_reported_by_parent(owned_id: str | None = None, parent_id: str | None = None) -> int:
+    """Close a subsidiary's 13D/G holding once its parent reports the same
+    company in a newer 13D/G of its own (findings item 34).
+
+    A parent holding company files for its subsidiaries' shares (Item 7 / type
+    HC): BlackRock, Inc. (CIK 0002012383, the parent since the 2024 holding
+    reorganisation) reported DaVita on 2025-04-25; the old parent, CIK
+    0001364742 — renamed BlackRock Finance, Inc. and listed in the new parent's
+    Exhibit 21 — had reported it on 2024-01-31. A newer statement replaces only
+    the same filer's older one, so DaVita listed both (5.2 % + 5.58 %), and 32
+    companies on dev did.
+
+    The subsidiary is S when the parent P holds an open CONTROLLING edge to it
+    (Exhibit 21, 8.1, GLEIF) — a minority stake in S is no group. S's edge to X
+    ends when P's 13D/G statement on X is filed after S's: on P's `since` when
+    that falls after S's statement (P's first report), else on P's statement
+    day; `until_reason` REPORTED_BY_PARENT, no stale mark. Untouched: a
+    statement S filed after P's (Vanguard Capital Management, 2026-04, after
+    the Vanguard Group's 0 % of 2026-03 — the disaggregated filer is the
+    current word) and one of the same day (a joint filing naming both,
+    Berkshire and National Indemnity). A 13F is another rulebook and is not
+    compared. S's claim stays: S did say it.
+
+    Scope: the owners of ``owned_id``, the companies ``parent_id``'s
+    subsidiaries report, or the whole graph (neither). Returns how many
+    holdings it closed. Dates are compared in Python (Cypher coerces ISO
+    strings)."""
+    from app.scraper.maintenance import restatement_family
+    sid = "sec-edgar"
+    with db.get_session() as session:
+        if owned_id:
+            targets = [owned_id]
+        elif parent_id:
+            targets = sorted({r["x"] for r in session.run(
+                """MATCH (p:Entity {id: $p})-[c:OWNS]->(s:Entity)-[b:OWNS]->(x:Entity)
+                   WHERE c.until IS NULL AND c.ownership_type = 'controlling'
+                     AND b.until IS NULL AND b.source_id = $sid
+                   RETURN DISTINCT x.id AS x""", p=parent_id, sid=sid)})
+        else:
+            targets = sorted({r["x"] for r in session.run(
+                """MATCH (s:Entity)-[b:OWNS]->(x:Entity)
+                   WHERE b.until IS NULL AND b.source_id = $sid AND b.filing_type IS NOT NULL
+                   RETURN x.id AS x, count(b) AS n""", sid=sid) if r["n"] > 1})
+        closed = 0
+        for x in targets:
+            held = {r["s"]: dict(r["r"]) for r in session.run(
+                """MATCH (s:Entity)-[r:OWNS]->(x:Entity {id: $x})
+                   WHERE r.until IS NULL AND r.source_id = $sid AND r.filing_type IS NOT NULL
+                   RETURN s.id AS s, r""", x=x, sid=sid)
+                if restatement_family(r["r"].get("filing_type"))}
+            if len(held) < 2:
+                continue
+            for s_id, mine in held.items():
+                parents = [r["p"] for r in session.run(
+                    """MATCH (p:Entity)-[c:OWNS]->(s:Entity {id: $s})
+                       WHERE c.until IS NULL AND c.ownership_type = 'controlling'
+                       RETURN DISTINCT p.id AS p""", s=s_id)]
+                newer = [held[p] for p in parents
+                         if p in held and p != s_id and _statement_day(held[p]) > _statement_day(mine)]
+                if not newer:
+                    continue
+                theirs = min(newer, key=_statement_day)
+                start = str(theirs.get("since") or "")[:10]
+                end = start if start and start > _statement_day(mine) else _statement_day(theirs)
+                session.run(
+                    """MATCH (s:Entity {id: $s})-[r:OWNS]->(x:Entity {id: $x})
+                       WHERE r.until IS NULL AND r.source_id = $sid
+                       SET r.until = $end, r.until_reason = $why, """ + STALE_CLEAR_CYPHER,
+                    s=s_id, x=x, sid=sid, end=end, why=REPORTED_BY_PARENT)
+                log.info("SEC: %s's 13D/G holding of %s ends %s — reported by its parent since",
+                         s_id, x, end)
+                closed += 1
+            # a spell this rule closed that a re-read reopened, and that no
+            # parent statement replaces any longer, carries no stale reason
+            session.run(
+                """MATCH (s:Entity)-[r:OWNS]->(x:Entity {id: $x})
+                   WHERE r.until IS NULL AND r.until_reason = $why
+                   SET r.until_reason = null""", x=x, why=REPORTED_BY_PARENT)
+    return closed
 
 
 def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,

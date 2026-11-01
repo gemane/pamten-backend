@@ -10,6 +10,7 @@ Usage:
   python3 manage.py gleif-repex [options]     # GLEIF reasons for reporting no parent
   python3 manage.py ch-psc-update [options]   # UK PSC incremental refresh (snapshot diff)
   python3 manage.py quality-report            # data quality as numbers
+  python3 manage.py close-reported-by-parent  # end a subsidiary's 13D/G its parent's newer one replaces
   python3 manage.py ch-psc [options]          # Companies House PSC snapshot (UK ownership)
   python3 manage.py ch-company-data [options] # Companies House register (UK company names)
   python3 manage.py seed [options]
@@ -321,6 +322,14 @@ def cmd_mark_stale(args):
     res = mark_not_restated()
     print(f"Schedule 13D/G not restated: marked {res['marked']}, cleared {res['cleared']} "
           f"(of {res['judged']} open 13D/G holdings; windows {res['windows']} days from the filing date)")
+
+def cmd_close_reported_by_parent(args):
+    """End every subsidiary 13D/G holding its parent's newer statement replaces
+    (findings item 34) — the whole graph, for a rebuild where a parent link
+    (GLEIF, Exhibit 21) arrived after both statements."""
+    _apply_direct_db_url(args)
+    from app.scraper.sec_writer import close_reported_by_parent
+    print(f"Closed {close_reported_by_parent()} subsidiary 13D/G holdings now reported by their parent")
 
 def cmd_quality_report(args):
     """Data quality as numbers — run before and after any change to the source mix."""
@@ -1282,6 +1291,12 @@ def _build_parser():
     p_nom = subparsers.add_parser('flag-nominees',
                                   help='Flag nominee/custodian entities (holders of record) by name')
     p_nom.set_defaults(func=cmd_flag_nominees)
+
+    p_crp = subparsers.add_parser('close-reported-by-parent',
+                                  help="End a subsidiary's Schedule 13D/G holding once its parent (an open controlling edge) reports the same company in a newer 13D/G; until_reason reported_by_parent")
+    p_crp.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_crp.set_defaults(func=cmd_close_reported_by_parent)
 
     # mark-stale command
     p_ms = subparsers.add_parser('mark-stale',

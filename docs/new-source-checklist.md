@@ -217,6 +217,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       item 31, 2026-11-01). Read a compound number whole — "1-7-1 Kaigan" is not "3-5-1
       Kaigan". An address is supporting evidence only; a parent and its subsidiary share one
       (Domino's), so the name and legal form decide first.
+- [ ] **A newer statement can come from another filer of the same group.** Supersede by
+      corporate group, not only by filer id: a parent holding company reports its
+      subsidiaries' shares, and after BlackRock's 2024 reorganisation the new parent's
+      13G stood beside the old parent's on 32 companies — read as one stake twice
+      (findings item 34, 2026-11-01). Tie the two through a stated control link
+      (Exhibit 21, GLEIF), never a name, and keep a subsidiary's own later filing.
 - [ ] **A name has a time span — compare against the names in force on the day.**
       Store a register's former names with the day each ended (`app.former_names`) and
       let every lookup and every name check read them: an alias or a filing's spelling
