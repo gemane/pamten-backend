@@ -151,29 +151,42 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
     from app.scraper.scraper_registry import registered
     from app.scraper.run_log import record_run
 
+    from app.scraper.runner import rerun_for_new_ids, stored_hard_ids
+
     names_run: list[str] = []
     # What each source wrote, by name — the number the refresh summary reports.
     # Zero is kept: "Wikidata ran and found nothing" is an answer too.
     source_totals: dict[str, int] = {}
     target_id: str | None = None
-    for spec in registered():
-        if spec.kind != "instant" or not spec.enabled():
-            continue
-        if decision.reason == "deepen" and not spec.depth_aware:
-            continue
+    specs = [spec for spec in registered()
+             if spec.kind == "instant" and spec.enabled()
+             and not (decision.reason == "deepen" and not spec.depth_aware)]
+    ids_before = stored_hard_ids(query, country) if any(s.reads_stored_ids for s in specs) else None
+
+    def run_one(spec, reason: str):
+        nonlocal target_id
         run_depth = decision.need_depth if spec.depth_aware else 0
         try:
-            with record_run(spec.name, query, reason=decision.reason) as run:
+            with record_run(spec.name, query, reason=reason) as run:
                 res = spec.run(query, run_depth, country)
                 if isinstance(res, dict):
                     run["total"] = res.get("total", 0) or 0
                     if res.get("entity_id"):
                         target_id = res["entity_id"]
                         run["entity_id"] = target_id
-            names_run.append(spec.name)
+            if spec.name not in names_run:
+                names_run.append(spec.name)
             source_totals[spec.name] = int(run.get("total") or 0)
+            return res
         except Exception as exc:  # noqa: BLE001 - one source failing mustn't sink the rest
             log.error("on-demand %s scrape failed for %r: %s", spec.name, query, exc)
+            return None
+
+    results = {spec.name: run_one(spec, decision.reason) for spec in specs}
+    # once more, by the id a later source wrote (findings item 27)
+    for spec in specs:
+        if rerun_for_new_ids(spec, results[spec.name], ids_before, query, country):
+            run_one(spec, "new_ids")
     return {"status": "ok", "names_run": names_run, "target_id": target_id,
             "source_totals": source_totals}
 
