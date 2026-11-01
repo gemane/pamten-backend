@@ -366,7 +366,10 @@ def _collapse(slot: _Slot) -> tuple[str, str | None, str | None, dict]:
     if u_until and u_until != until:
         extra["ultimate_until"] = u_until
     if unmaintained and u_unmaintained:
-        extra["stale"] = True
+        # with its evidence, as `_extras` gives a single record's edge: the
+        # mark said neither why nor since when on all 81 such dev edges
+        # (findings item 32) — the later update is when GLEIF last spoke
+        extra.update(stale=True, stale_reason="lei_lapsed", stale_since=latest)
     if stake is not None or u_stake is not None:
         extra["stake_percent"] = stake if stake is not None else u_stake
     # the direct record's checking, as its figure: the ultimate's fills a gap

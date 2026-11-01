@@ -319,7 +319,17 @@ class TestCollapse:
         assert "stale" not in self._folded(("direct", None, None, True), ("indirect", None, None, False))[3]
         assert "stale" not in self._folded(("direct", None, None, False), ("indirect", None, None, True))[3]
         both = self._folded(("direct", None, None, True), ("indirect", None, None, True))[3]
-        assert both == {"also_ultimate": True, "stale": True}
+        assert both == {"also_ultimate": True, "stale": True, "stale_reason": "lei_lapsed", "stale_since": None}
+
+    def test_a_folded_pair_both_lapsed_is_dimmed_with_its_reason_and_the_later_date(self):
+        """Findings item 32: the folded edge was marked stale without why or since
+        when (Microsoft → Activision Blizzard International B.V.)."""
+        pairs: dict = {}
+        _fold(pairs, "P", "C", "direct", "2026-07-01", None, "2026-07-01", unmaintained=True)
+        _fold(pairs, "P", "C", "indirect", "2026-07-01", None, "2025-03-01", unmaintained=True)
+        extra = _collapse(pairs[("P", "C")])[3]
+        assert (extra["stale"], extra["stale_reason"], extra["stale_since"]) == (True, "lei_lapsed", "2026-07-01")
+        assert extra["stale_since"] == extra["source_date"]
 
     def test_the_stated_share_rides_on_the_edge(self):
         assert self._folded(("direct", None, None, False, 100.0))[3] == {"stake_percent": 100.0}

@@ -147,7 +147,8 @@ def _zip_of(tmp_path, name, records):
 def _edge(it_db, parent, child):
     rows = it_db.run_command(
         "MATCH (a:Entity {id:$p})-[r:OWNS]->(b:Entity {id:$c}) "
-        "RETURN r.stale AS stale, r.source_date AS sd, r.until AS until, r.source_id AS src",
+        "RETURN r.stale AS stale, r.source_date AS sd, r.until AS until, r.source_id AS src, "
+        "r.stale_reason AS reason, r.stale_since AS ss, r.also_ultimate AS also",
         {"p": f"lei:{parent}", "c": f"lei:{child}"})
     return rows[0] if rows else None
 
@@ -184,6 +185,25 @@ def test_an_edge_on_a_lapsed_record_is_drawn_stale_and_dated(it_db, tmp_path):
     fresh = _edge(it_db, PARENT, FRESH_CHILD)
     assert not fresh["stale"]
     assert _edge(it_db, PARENT, ANNULLED_CHILD) is None   # no statement, no edge
+
+
+def test_a_pair_stated_both_ways_and_both_lapsed_is_dimmed_with_why_and_since_when(it_db, tmp_path):
+    """Findings item 32: GLEIF names Microsoft both the direct and the ultimate
+    consolidator of Activision Blizzard International B.V., both records LAPSED;
+    the one folded edge was stale with no reason and no date."""
+    from app.scraper.gleif_rr import import_rr_cdf
+
+    import_rr_cdf(_zip_of(tmp_path, "rr-both-lapsed.json.zip", [
+        _rec("IS_DIRECTLY_CONSOLIDATED_BY", LAPSED_CHILD, PARENT, start="2026-07-01T00:00:00Z",
+             rr_status="LAPSED", updated="2026-07-01T16:36:55Z"),
+        _rec("IS_ULTIMATELY_CONSOLIDATED_BY", LAPSED_CHILD, PARENT, start="2026-07-01T00:00:00Z",
+             rr_status="LAPSED", updated="2026-06-30T10:00:00Z"),
+    ]), "gleif-src", 92)
+    edge = _edge(it_db, PARENT, LAPSED_CHILD)
+    assert edge["also"] is True and edge["stale"] is True
+    assert (edge["reason"], edge["ss"]) == ("lei_lapsed", "2026-07-01")
+    from app.quality import quality_report
+    assert quality_report()["contradictions"]["stale_without_reason"] == 0
 
 
 # ── The share the record states ──────────────────────────────────────────────

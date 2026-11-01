@@ -786,7 +786,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
           `stale_reason`, `stale_since` and `stale_source_url`. Without
           `stale_since` the row gets a badge but no dated "No longer confirmed"
           entry. A new `stale_reason` code gets its sentence in
-          `timeline.reason`, as above.
+          `timeline.reason`, as above. Grep for every `stale = True` /
+          `"stale": True` of the writer and set the reason beside each: #400 gave
+          the GLEIF import's single-record edge its reason and missed the folded
+          direct+ultimate edge three screens below, so 81 edges went grey without
+          a timeline entry (findings item 32). `manage.py quality-report` counts
+          them (`stale-without-reason`); run it after a new writer's first import.
         - Every path that confirms the pair again clears all four with
           `STALE_CLEAR` / `STALE_CLEAR_CYPHER` (`edge_schema.py`), never
           `stale = false` alone — un-dim paths sit in several writers; grep

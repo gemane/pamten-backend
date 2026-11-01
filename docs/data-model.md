@@ -402,7 +402,14 @@ Two rules keep the tiers meaning something on OWNS edges:
   so a reader can see why a holding went grey. Every writer that clears the mark
   clears the three fields with it (`edge_schema.STALE_CLEAR`), so a healed edge
   carries no old reason. Edges marked before the fields existed keep a bare
-  `stale = true` until the next pass or refresh re-marks them. The same mark is
+  `stale = true` until the next pass or refresh re-marks them. Every writer that
+  sets the mark sets the reason and the date with it, and the quality report's
+  `stale_without_reason` gauge counts the edges that do not (no known reason, or
+  no `stale_since`) — a regression alarm, kept at zero. Until 2026-11-01 the GLEIF
+  import's folded edge (one parent stated as both the direct and the ultimate
+  consolidator, both records LAPSED) carried the bare mark: 81 dev edges, among
+  them Microsoft → Activision Blizzard International B.V. (findings item 32); its
+  `stale_since` is the later of the two records' last updates, its `source_date`. The same mark is
   set by the writers themselves where a register says a record is no longer
   maintained: a GLEIF relationship record whose registration has **LAPSED** (see
   *The record's own registration status* under GLEIF below), and a 13F holding or
