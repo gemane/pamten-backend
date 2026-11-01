@@ -207,6 +207,16 @@ parser. Anything that does not map is either a new property (document it) or noi
       item 30, 2026-11-01). Set the name hit aside and let the item's ids go to their
       register (and keep the refusal when none knows them — no twin of the name); the name checks on what the register writes (`register_pointer.stale`)
       still refuse an item whose ids are an old parent's (BlackRock).
+- [ ] **Compare a building as a building, against every address the register gives.**
+      Two registers write one building differently: a suite one omits ("1314 DOUGLAS
+      STREET, SUITE 1400" / "1314 DOUGLAS STREET"), "Northwest" for "NW", a building's name
+      in front, a headquarters in Japanese script beside a Latin registered address. Compare
+      house number, street word and city (`legal_identity._same_premises`), and try each
+      address, not the first one present: SoftBank Group, National Indemnity and Lennar stayed
+      two nodes each on an exact street-line match against the headquarters alone (findings
+      item 31, 2026-11-01). Read a compound number whole — "1-7-1 Kaigan" is not "3-5-1
+      Kaigan". An address is supporting evidence only; a parent and its subsidiary share one
+      (Domino's), so the name and legal form decide first.
 - [ ] **A name has a time span — compare against the names in force on the day.**
       Store a register's former names with the day each ended (`app.former_names`) and
       let every lookup and every name check read them: an alias or a filing's spelling

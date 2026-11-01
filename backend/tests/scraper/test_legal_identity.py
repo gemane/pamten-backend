@@ -190,6 +190,72 @@ class TestAWeakRecord:
         assert ev.asked == [TODAY]
 
 
+#: the three LEI-only/CIK-only pairs dev held on 2026-11-01 (findings item 31),
+#: as GLEIF's API and the EDGAR filing headers gave them
+SOFTBANK_GLEIF = {"name": "Softbank Group Corp", "lei_id": "5493003BZYYYCDIO0R13", "country": "JP",
+                  "jurisdiction_code": None, "gleif_registration_status": "ISSUED",
+                  "validation_sources": "FULLY_CORROBORATED", "gleif_last_update": "2026-06-11",
+                  "hq_street": "海岸一丁目７番１号", "hq_city": "東京都 港区", "hq_postcode": "105-7537",
+                  "reg_street": "Tokyo Portcity Takeshiba, 1-7-1 Kaigan, Minato-Ku", "reg_city": "Tokyo",
+                  "reg_postcode": "105-7537"}
+SOFTBANK = Filer("0001065521", "SOFTBANK GROUP CORP.", home=None)
+NICO_GLEIF = {"name": "NATIONAL INDEMNITY COMPANY", "lei_id": "25490048BWQX1WZUAN47", "country": "US",
+              "jurisdiction_code": None, "gleif_registration_status": "ISSUED",
+              "validation_sources": "FULLY_CORROBORATED", "gleif_last_update": "2026-03-02",
+              "hq_street": "1314 DOUGLAS STREET, SUITE 1400", "hq_city": "OMAHA", "hq_postcode": "68102"}
+NICO = Filer("0000314943", "NATIONAL INDEMNITY CO", home="US-NE")
+LENNAR_GLEIF = {"name": "Lennar Corporation", "lei_id": "529900G61XVRLX5TJX09", "country": "US",
+                "jurisdiction_code": None, "gleif_registration_status": "LAPSED",
+                "validation_sources": "ENTITY_SUPPLIED_ONLY", "gleif_last_update": "2021-07-16",
+                "hq_street": "700 Northwest 107th Avenue", "hq_city": "Miami", "hq_postcode": "33172"}
+LENNAR = Filer("0000920760", "LENNAR CORP /NEW/", home="US-DE")
+
+
+class TestTheBuildingOfAWeakRecord:
+    """A weak record's address compared as a building, against every address
+    GLEIF gives (findings item 31, 2026-11-01)."""
+
+    def test_softbank_joins_on_its_latin_registered_address(self):
+        ev = fake(address=("1-7-1 KAIGAN MINATO-KU", "TOKYO", None))
+        assert same_legal_entity(SOFTBANK_GLEIF, SOFTBANK, today=TODAY, evidence=ev) == (
+            JOIN, f"name+country+address@{TODAY}")
+
+    def test_another_block_on_the_same_street_is_another_building(self):
+        ev = fake(address=("3-5-1 KAIGAN MINATO-KU", "TOKYO", None))
+        assert same_legal_entity(SOFTBANK_GLEIF, SOFTBANK, today=TODAY, evidence=ev)[0] == REFUSE
+
+    def test_a_suite_number_does_not_part_one_building(self):
+        ev = fake(address=("1314 DOUGLAS STREET", "OMAHA", None))
+        assert same_legal_entity(NICO_GLEIF, NICO, today=TODAY, evidence=ev) == (
+            JOIN, f"name+country+address@{TODAY}")
+
+    def test_northwest_is_nw(self):
+        ev = fake(address=("700 NW 107TH AVENUE SUITE 400", "MIAMI", None))
+        assert same_legal_entity(LENNAR_GLEIF, LENNAR, today=TODAY, evidence=ev) == (
+            JOIN, "name+country+address@2021-07-16")
+        assert ev.asked == ["2021-07-16"]
+
+    def test_another_house_number_on_the_same_street_is_refused(self):
+        ev = fake(address=("1440 DOUGLAS STREET", "OMAHA", None))
+        assert same_legal_entity(NICO_GLEIF, NICO, today=TODAY, evidence=ev)[0] == REFUSE
+
+    def test_the_same_building_in_another_city_is_refused(self):
+        ev = fake(address=("1314 DOUGLAS STREET", "LINCOLN", None))
+        assert same_legal_entity(NICO_GLEIF, NICO, today=TODAY, evidence=ev)[0] == REFUSE
+
+    def test_the_same_name_and_form_in_another_building_is_refused(self):
+        ev = fake(address=("1-7-1 KAIGAN MINATO-KU", "TOKYO", None))
+        node = {**SOFTBANK_GLEIF, "reg_street": "2-1-1 Shiodome", "reg_city": "Tokyo"}
+        assert same_legal_entity(node, SOFTBANK, today=TODAY, evidence=ev)[0] == REFUSE
+
+    def test_dominos_llc_at_the_inc_s_building_is_still_refused(self):
+        node = {**DOMINOS_LLC_GLEIF, "validation_sources": "ENTITY_SUPPLIED_ONLY",
+                "hq_street": "30 Frank Lloyd Wright Drive", "hq_city": "Ann Arbor"}
+        ev = fake(address=("30 FRANK LLOYD WRIGHT DR", "ANN ARBOR", None))
+        verdict, why = same_legal_entity(node, DOMINOS, today=TODAY, evidence=ev)
+        assert verdict == REFUSE and "legal name differs" in why
+
+
 class TestNamesAndPlaces:
     def test_a_renamed_company_joins_on_the_name_in_force_at_d(self):
         # Meta Platforms was "Facebook, Inc." until 2021-10-28 (EDGAR formerNames)
