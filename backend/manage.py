@@ -1300,7 +1300,7 @@ def _build_parser():
 
     # mark-stale command
     p_ms = subparsers.add_parser('mark-stale',
-                                 help='Mark community-tier OWNS edges unconfirmed for --days as stale (dimmed, never deleted); register-tier and register-vouched edges are exempt. Also dims a Schedule 13D/G holding whose last statement is older than its restatement window (13G 15 months, 13D 5 years)')
+                                 help='Mark community-tier OWNS edges unconfirmed for --days as stale (dimmed, never deleted); register-tier and register-vouched edges are exempt. Also dims a Schedule 13D/G holding whose last statement is older than its restatement window (13G filed before 2024: 15 months; 13D and a 13G filed since 2024: 5 years)')
     p_ms.add_argument('--days', type=int, default=180,
                       help='Confirmation age that counts as stale (default 180)')
     p_ms.add_argument('--db-url',

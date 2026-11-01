@@ -392,8 +392,10 @@ Two rules keep the tiers meaning something on OWNS edges:
   edge since `stale_since`, its last confirmation), `lei_lapsed` (the GLEIF record
   lapsed; `stale_since` is its last update), `not_restated` (the holder's last
   Schedule 13D/G, filed `stale_since`, is older than the form's restatement
-  window — a 13G is restated every February while it lasts, so 15 months; a 13D
-  only on a material change, so five years; `maintenance.RESTATEMENT_WINDOW_DAYS`,
+  window — a 13G filed before 2024 was restated every February while it lasted, so
+  15 months; a 13D only on a material change, so five years, and since the 2024
+  rules a 13G filed from 2024-01-01 likewise (`MATERIAL_CHANGE_13G_SINCE`, findings
+  item 33); `maintenance.RESTATEMENT_WINDOW_DAYS`,
   the second pass of `mark-stale`. Register-tier holdings were exempt from every
   stale pass, so a 13G/A from 2014 stood at full strength beside this year's and
   VeriSign's holders summed to 106 %, Sirius XM's to 202 %, on dev 2026-10-25),
