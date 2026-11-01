@@ -784,14 +784,20 @@ evidence or the reason:
 3. **A weak record needs one more match, at its own date.** Weak means a country where EDGAR
    names a state, a LAPSED or RETIRED registration, or ENTITY_SUPPLIED_ONLY data. `D` is the
    record's `gleif_last_update` when GLEIF no longer maintains it, today otherwise. Then
-   either GLEIF's street and city equal the business address in the header of the filer's
-   filing closest to `D` (postcode aside; today's address, said in the evidence, when no
-   filing lies within a year), or a GLEIF child in force on `D` is a company the filer held
+   either one of GLEIF's addresses — the headquarters or the registered address — is the
+   building of the business address in the header of the filer's filing closest to `D`
+   (today's address, said in the evidence, when no filing lies within a year), or a GLEIF child in force on `D` is a company the filer held
    then (an OWNS edge open on `D`, or that fiscal year's Exhibit 21 — else the newest filed by
    `D`), by the same name key in a compatible place. Until 2026-10-30 only the fiscal year
    containing `D` counted; a maintained record's `D` is today, which no report covers yet, so
    no list was ever read for one. NYT's lapsed record (last updated 2021-07-16) says 620 Eighth Avenue;
    so does NYT's July 2021 Form 4 header.
+   The building is compared as the PSC rule compares it (`_same_premises`): house number and
+   street word, the suite and floor dropped, compass and street words spelled one way
+   (Northwest = NW, Avenue = Ave), a Japanese block number such as 1-7-1 read whole, and the
+   same city. Until 2026-11-01 only the headquarters counted (the registered address only
+   when GLEIF gave no headquarters) and the whole street line had to be equal — no pair whose
+   address differed by a suite, a building name or a script could join (findings item 31).
 4. **Veto**: never a record GLEIF lists as a direct or ultimate child of a record that passes
    1 and 2 against the filer, while that link is in force on `D` or today — Domino's Pizza
    LLC, consolidated by the Inc. since 1999-10-27.
@@ -812,10 +818,17 @@ It runs wherever such a pair meets, so the order no longer decides:
 Findings item 19 (rebuild 2026-10-30): eight pairs that had joined by name before #490 were
 refused. Six join since (AB InBev by the form code; HubSpot and Alibaba by the report's
 place; MercadoLibre, Embraer and Televisa by the report's place, and their newest lists would
-confirm them too: 10 of 12, 3 of 4 and 5 of 6 GLEIF children). **SoftBank Group and National
-Indemnity stay two nodes each, by decision** (2026-10-30): neither files a 10-K or 20-F, EDGAR
-states no incorporation for them, and only an address could confirm them — suite numbers
-and a Japanese-script GLEIF address do not compare, and the user chose not to loosen it.
+confirm them too: 10 of 12, 3 of 4 and 5 of 6 GLEIF children). SoftBank Group and National
+Indemnity stayed two nodes each by a decision of 2026-10-30 not to loosen the address match;
+neither files a 10-K or 20-F, EDGAR states no incorporation for them, so only an address can
+confirm them. **That decision was reversed on 2026-11-01** (findings item 31), when rebuild
+10-31b showed the same two and Lennar (GLEIF's lapsed "700 Northwest 107th Avenue", EDGAR's
+"700 NW 107TH AVENUE SUITE 400") as the only LEI-only/CIK-only same-name pairs left, all three
+for this reason: the building comparison above joins all three — SoftBank by its Latin
+registered address "Tokyo Portcity Takeshiba, 1-7-1 Kaigan" (its headquarters is in Japanese
+script), National Indemnity by 1314 Douglas Street without the suite. A building alone still
+proves nothing: Domino's Pizza LLC sits in the Inc.'s building and is refused on its legal
+form at step 1.
 Measured over the 59 dev filers with an Exhibit 21: the report's place equals the header's
 for 50, fills an empty header for 5, corrects it for 1 (Alibaba), and 3 older filers carry
 no tag and keep the header's.

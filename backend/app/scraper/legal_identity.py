@@ -25,9 +25,16 @@ one name key and one street — so `same_legal_entity` asks four things:
    country where EDGAR names a state, a LAPSED or RETIRED registration (no
    longer maintained), or ENTITY_SUPPLIED_ONLY data. Its reference day ``D``
    is its last update when it is no longer maintained, today otherwise. Then
-   either the headquarters at ``D`` — GLEIF's street and city against the
-   business address in the header of the filer's filing closest to ``D``
-   (today's address when no filing lies within a year, said in the reason) —
+   either the building at ``D`` — GLEIF's headquarters or registered address
+   against the business address in the header of the filer's filing closest
+   to ``D`` (today's address when no filing lies within a year, said in the
+   reason), compared as the PSC rule does: house number and street word, the
+   suite and floor dropped, and the city (`_same_premises`; findings item 31:
+   SoftBank's headquarters is in Japanese script, its registered address
+   "Tokyo Portcity Takeshiba, 1-7-1 Kaigan" is EDGAR's "1-7-1 KAIGAN";
+   National Indemnity's "1314 DOUGLAS STREET, SUITE 1400" is "1314 DOUGLAS
+   STREET"; Lennar's "700 Northwest 107th Avenue" is "700 NW 107TH AVENUE
+   SUITE 400") —
    or a subsidiary at ``D``: a GLEIF child in force then that the filer also
    held then (an OWNS edge open on ``D``, or the Exhibit 21 of the fiscal year
    containing ``D``, else the newest filed by ``D``). NYT's lapsed 2019 record says 620 Eighth Avenue, and so
@@ -209,17 +216,8 @@ def _in_force(periods: list[dict] | None, status: str | None, day: str) -> bool:
 
 _STREET_WORDS = {"avenue": "ave", "street": "st", "drive": "dr", "road": "rd", "boulevard": "blvd",
                  "place": "pl", "suite": "ste", "floor": "fl", "north": "n", "south": "s",
-                 "east": "e", "west": "w", "lane": "ln", "court": "ct", "parkway": "pkwy"}
-
-
-def _address_key(street: str | None, city: str | None) -> str | None:
-    """Street and city without the postcode (Domino's: 48108 and 48105), each
-    street word spelled one way."""
-    from app.scraper.mapper import normalize_address
-    if not street or not city:
-        return None
-    words = (normalize_address(f"{street} {city}") or "").split()
-    return " ".join(_STREET_WORDS.get(w, w) for w in words) or None
+                 "east": "e", "west": "w", "northwest": "nw", "northeast": "ne",
+                 "southwest": "sw", "southeast": "se", "lane": "ln", "court": "ct", "parkway": "pkwy"}
 
 
 #: what the PSC rule reads of a corporate PSC node
@@ -237,18 +235,26 @@ GLEIF_NOT_THE_ENTITY = frozenset({"DUPLICATE", "ANNULLED", "RETIRED", "MERGED"})
 _IN_BUILDING = re.compile(r"\b(ste|suite|fl|floor|unit|room|rm|apt)\b\.?\s*\S*", re.IGNORECASE)
 
 
+#: a number of digit groups joined by hyphens ("1-7-1"), read as one
+_BLOCK_NUMBER = re.compile(r"\b\d+(?:-\d+)+\b")
+
+
 def _premises(street: str | None) -> tuple[str, str] | None:
     """(house number, street word) of a street line, the suite and floor
     dropped: "3555 Farnam Street, Suite 1440" and "3555 Farnam Street" are
     ("3555", "farnam"); the European order too — "Brouwerijplein 1" is ("1",
     "brouwerijplein"). None without a number."""
     from app.scraper.mapper import normalize_address
-    words = (normalize_address(_IN_BUILDING.sub(" ", street or "")) or "").split()
+    # a Japanese block number is one number: "1-7-1 Kaigan" is block 1-7-1, not
+    # house 1 — read apart, "3-5-1 Kaigan" would be the same building (findings item 31)
+    line = _BLOCK_NUMBER.sub(lambda m: m.group(0).replace("-", "_"), _IN_BUILDING.sub(" ", street or ""))
+    words = (normalize_address(line) or "").split()
+    num = lambda w: w.replace("_", "").isdigit()                                 # noqa: E731
     for i, w in enumerate(words):
-        if w.isdigit() and i + 1 < len(words) and not words[i + 1].isdigit():
+        if num(w) and i + 1 < len(words) and not num(words[i + 1]):
             return w, _STREET_WORDS.get(words[i + 1], words[i + 1])
     for i, w in enumerate(words[1:], 1):
-        if w.isdigit() and not words[i - 1].isdigit():
+        if num(w) and not num(words[i - 1]):
             return w, _STREET_WORDS.get(words[i - 1], words[i - 1])
     return None
 
@@ -378,10 +384,13 @@ def same_legal_entity(node: dict, filer: Filer, *, today: str | None = None,
         return JOIN, basis
     # 3. a weak record: the headquarters, or a subsidiary, at D
     hq, reg = addresses.read(node, addresses.HEADQUARTERS), addresses.read(node, addresses.REGISTERED)
-    mine = _address_key(hq.get("street") or reg.get("street"), hq.get("city") or reg.get("city"))
+    # Every address GLEIF gives, compared as a building (findings item 31): SoftBank's
+    # headquarters is in Japanese script, its registered address in Latin script with
+    # the building's name in front; National Indemnity's carries a suite EDGAR omits.
+    mine = [(a.get("street"), a.get("city"), a.get("postcode")) for a in (hq, reg) if a.get("street")]
     if mine:
         got = evidence.address_at(filer.cik, day)
-        if got and _address_key(got[0], got[1]) == mine:
+        if got and any(_same_premises(m, (got[0], got[1], None)) for m in mine):
             note = f" ({got[2]})" if got[2] else ""
             return JOIN, f"{basis}+address@{day}{note}"
     if lei:
