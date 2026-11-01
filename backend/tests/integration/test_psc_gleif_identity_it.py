@@ -19,7 +19,7 @@ def _seed(it_db, psc_street="3555 Farnam Street"):
         {"id": f"lei:{LEI}", "lei": LEI})
     it_db.run_command(
         "CREATE (e:Entity {id: $id, name: 'Berkshire Hathaway Inc.', name_normalized: 'berkshire hathaway', "
-        "country: 'US', jurisdiction_code: 'US-DE', source_id: 'uk-psc', name_credibility: 80, "
+        "country: 'US', jurisdiction_code: 'US-DE', source_id: 'uk-psc', name_credibility: 97, "
         "registration_number: '47-0813844', reg_street: $street, reg_city: 'Omaha', reg_postcode: '68131', "
         "type: 'company'})", {"id": PSC_ID, "street": psc_street})
     it_db.run_command("CREATE (e:Entity {id: 'gb-coh:03230337', name: 'BERKSHIRE HATHAWAY INTERNATIONAL INSURANCE LIMITED', "
@@ -40,12 +40,18 @@ def _owner_of_bhiil(it_db):
 
 
 def test_the_full_dedup_makes_one_node(it_db):
+    # the PSC's name credibility (97) beats GLEIF's (92), as on dev: the PSC
+    # node survives, and takes the LEI's id (findings item 26)
     from app.scraper import maintenance
     _seed(it_db)
     maintenance.deduplicate_entities(limit=None)
     nodes = _berkshires(it_db)
-    assert nodes == [(f"lei:{LEI}", LEI, None)] or (len(nodes) == 1 and nodes[0][:2] == (f"lei:{LEI}", LEI))
+    assert len(nodes) == 1 and nodes[0][:2] == (f"lei:{LEI}", LEI)
     assert _owner_of_bhiil(it_db) == [f"lei:{LEI}"], "the PSC's holding moved onto the one node"
+    names = it_db.run_command("MATCH (e:Entity {id: $id}) RETURN e.name AS n", {"id": f"lei:{LEI}"})
+    assert names[0]["n"] == "Berkshire Hathaway Inc.", "the survivor's name stays"
+    fwd = {r["old_id"]: r["new_id"] for r in it_db.run_sql("SELECT old_id, new_id FROM MergedId")}
+    assert fwd == {PSC_ID: f"lei:{LEI}"}, "the PSC id forwards; the LEI id is live again"
 
 
 def test_the_scoped_dedup_makes_one_node(it_db):

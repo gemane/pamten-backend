@@ -448,6 +448,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       names beats a branch (BNP Paribas, ICBC's head office), and if GLEIF names a
       same-name record that does not agree, none joins (#507, 2026-10-31: +488 joins,
       3 redirected, 10 refused on the full snapshot).
+- [ ] **A merge's survivor and the id it ends up with are two choices.** The survivor is
+      the most credible name (the PSC's 97 against GLEIF's 92), but its id must be the
+      best hard id the pair holds (`node_ids._RANK`: LEI, then CIK, then QID). Berkshire,
+      Alphabet and SoftBank kept their PSC appointment's `chpsc:` id after the PSC/GLEIF
+      join (rebuild 10-31b, findings item 26). The GLEIF delta updates `lei:` ids only, so it
+      never refreshed them, and a full GLEIF import twins them. Treat an importer's id as a register key only if it
+      keys the entity itself: `gb-coh:` does, while a corporate PSC's id keys its
+      appointment and ranks with a uuid. Seed a test with the credibilities the sources
+      really stamp: the IT gave the PSC 80, so the GLEIF node won and the bug never ran.
 - [ ] **When no document settles it, ask the registers — at the record's own date.** Two
       registers describe one legal entity when the legal name (form kept), the place of
       registration and, for a weak record, the address or a subsidiary agree — compared on
