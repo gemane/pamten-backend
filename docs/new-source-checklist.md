@@ -438,6 +438,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       place and an address: when they all agree with the register's record, it is that
       record (`psc_same_legal_entity`, findings item 25). Keep the stated place when you
       import — it was dropped, and with it the only evidence besides the name.
+- [ ] **A link the registers already state between the pair is evidence too.** The
+      PSC/GLEIF join (#505) needed the PSC's address to be GLEIF's building, so it refused
+      Hitachi (the filer wrote English, GLEIF holds Japanese) and Citigroup (a New York
+      office against a Delaware agent) — yet GLEIF itself names that record as the parent
+      of the UK company the PSC owns. Where the two registers' edges meet on one node, a
+      GLEIF OWNS edge from the candidate stands in for the address, never for the name,
+      the place or the date. It also decides between same-name records: the one GLEIF
+      names beats a branch (BNP Paribas, ICBC's head office), and if GLEIF names a
+      same-name record that does not agree, none joins (#507, 2026-10-31: +488 joins,
+      3 redirected, 10 refused on the full snapshot).
 - [ ] **When no document settles it, ask the registers — at the record's own date.** Two
       registers describe one legal entity when the legal name (form kept), the place of
       registration and, for a weak record, the address or a subsidiary agree — compared on
@@ -882,6 +892,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `sec_edgar._ticker_normalize`, `sec_edgar._significant_tokens`) in step — the
       apostrophe was handled three ways in them ("Domino's" kept it, split off an "s",
       or dropped it) until 2026-10-30; each now calls `mapper.fold_apostrophes` first.
+- [ ] **Join dotted letters before splitting; drop an ambiguous form word only at the
+      end.** `_name_key` split "Blackstone L.P." into (blackstone, l, p), so it never met
+      EDGAR's "BLACKSTONE LP". A run of single letters, each followed by a dot, is one
+      word ("L.P." → "lp", "S.A." → "sa", "J.P." → "jp"; `mapper.join_dotted_letters`,
+      #492, 2026-10-30). KG and KGaA are legal forms only as the last word: "Siemens
+      Beteiligungen GmbH & Co. KG" keys "siemens beteiligungen", while "KG Mobility Corp"
+      keeps its "kg". Test a lone letter ("Toys R Us") and a form word that starts a name
+      or sits inside one.
 - [ ] **Group the unread results by layout before writing a rule — and write
       none for a layout one to five filers use.** The 61 real subsidiary lists that
       read nothing fell into a handful of layouts; a rule per layout read 51 of
@@ -1113,6 +1131,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the writer's parameter list silently dropped it, and every mapper unit test stayed
       green. At least one integration test must run record → writer → real database →
       read the fields back.
+- [ ] **A new step that feeds a shared output is tested through every consumer of it.**
+      #505 added PSC rows to the dedupe bridge's result. Their shape (`psc_id`,
+      `evidence`) differed from the EDGAR rows' (`cik_id`, `source_url`), so the
+      `manage.py dedupe-entities` report raised `KeyError`: the merge had already run,
+      but finish-import stopped before geocoding, the search rebuild and the replay, and
+      rebuild 10-31b had to be run again (#508). Every unit test was green — they mocked
+      the printer. Test the command and the report that print the rows, not only the
+      function that makes them, and count an end-to-end run of the import chain as part
+      of verifying a new step.
 - [ ] **Fixtures that enumerate edge properties assert against the schema.** The
       edge-parity tests enforce `set(sample) == set(OWNS_PROPS)`, so adding a property
       updates the fixtures — that friction is the feature.
