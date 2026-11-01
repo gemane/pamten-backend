@@ -1039,6 +1039,7 @@ def test_sec_person_centric_insider_owns():
          patch("app.scraper.runner._ensure_source", return_value="src"), \
          patch("app.scraper.runner._upsert_entity_by_name", return_value="blk"), \
          patch("app.scraper.runner.db.get_session", fake_ctx), \
+         patch("app.scraper.sec_writer.close_reported_by_parent", return_value=0), \
          patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
          patch("app.scraper.sec_edgar.fetch_insider_holding",
                return_value={"shares_owned": 2000, "stake_percent": 2.0,
@@ -1082,6 +1083,7 @@ class TestPersonCentricCik:
              patch("app.scraper.runner._ensure_source", return_value="src"), \
              patch("app.scraper.runner._upsert_entity_by_name", return_value="tsla"), \
              patch("app.scraper.runner.db.get_session", fake_ctx), \
+             patch("app.scraper.sec_writer.close_reported_by_parent", return_value=0), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
              patch("app.scraper.sec_edgar.fetch_insider_holding", side_effect=fake_holding), \
              patch("app.scraper.runner._vertex_holding_cik", return_value=held_by), \
@@ -1140,6 +1142,8 @@ class TestForm4YieldsTo13dg:
             patch("app.scraper.runner.get_source_enabled", return_value=True),
             patch("app.scraper.runner._ensure_source", return_value="sec"),
             patch("app.scraper.runner.db.get_session", extra.pop("ctx", ctx)),
+            # the parent rule reads the db the fake answers with person rows
+            patch("app.scraper.sec_writer.close_reported_by_parent", return_value=0),
             patch("app.scraper.sec_edgar.scrape_company", return_value=data),
             patch("app.scraper.runner.stated_by_13dg", side_effect=fake_stated),
             patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)),
@@ -1992,3 +1996,31 @@ class TestSubsidiaryOrder:
         rows = [{"qid": "Q99"}, {"qid": "Q10", "until": "2010-00-00", "lei": "X"},
                 {"qid": "Q9", "sec_cik": "0000000001"}, {"qid": "Q100", "lei": "Y"}]
         assert [r["qid"] for r in sorted(rows, key=_subsidiary_order)] == ["Q9", "Q100", "Q10", "Q99"]
+
+
+class TestTheParentRuleRunsAfterACompanyScrape:
+    """Findings item 34: a scrape writes the company's owners and the companies
+    it reports; a subsidiary's 13D/G its parent's newer one replaces ends on
+    either side, and a list of this company's subsidiaries may already stand."""
+
+    def test_the_owners_the_holdings_and_the_subsidiaries_are_settled(self):
+        from app.scraper.runner import run_scrape_sec_edgar
+        data = {"cik": "0002012383", "name": "BlackRock, Inc.", "ownership_filings": [], "executives": [],
+                "holdings": [{"subject_name": "DAVITA INC.", "subject_cik": "0000927066",
+                              "stake_percent": 5.58, "file_date": "2025-04-25", "filing_type": "13G/A"}]}
+        ids = {"BlackRock, Inc.": "blk", "DAVITA INC.": "dva"}
+        ctx, _ = _make_session_mock()
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner._ensure_source", return_value="sec"), \
+             patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.runner._upsert_entity_by_name", side_effect=lambda **kw: ids[kw["name"]]), \
+             patch("app.scraper.runner._upsert_owns_sec"), \
+             patch("app.scraper.runner.set_scrape_target"), \
+             patch("app.scraper.graph_writer.settings.SCRAPER_GEOCODE_ENABLED", False), \
+             patch("app.scraper.sec_writer.close_reported_by_parent", return_value=0) as rule:
+            # no database: the freshness stamp and the geocoder are stubbed
+            run_scrape_sec_edgar("BlackRock")
+        calls = [c.kwargs for c in rule.call_args_list]
+        assert {"owned_id": "blk"} in calls and {"owned_id": "dva"} in calls
+        assert {"parent_id": "blk"} in calls

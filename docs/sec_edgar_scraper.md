@@ -710,6 +710,44 @@ r'percent\s+of\s+class\s+represented\s+by\s+amount\s+in\s+row\s+\d+\s+(\d{1,2}\.
 
 ---
 
+### A parent's newer statement ends its subsidiary's
+
+A parent holding company files for the shares its subsidiaries hold (cover type
+HC), so a group's statement can come from another filer than its last one. A newer
+13D/G replaces only the same filer's older one, though — the writer keys a holding by
+its owner node — and BlackRock's 2024 holding reorganisation drew two owners:
+CIK 0001364742, the parent until then (EDGAR renamed it **BlackRock Finance, Inc.**
+on 2024-09-26), reported DaVita on 2024-01-31 at 5.2 %; the new parent **BlackRock,
+Inc.** (CIK 0002012383), whose Exhibit 21 lists the old one, reported it on
+2025-04-25 at 5.58 %. DaVita listed both, and so did 32 companies on dev (findings
+item 34, 2026-11-01).
+
+`sec_writer.close_reported_by_parent` ends the subsidiary's holding when its parent —
+an open **controlling** edge to it (Exhibit 21 / 8.1, GLEIF) — has a 13D/G about the
+same company filed **after** the subsidiary's: on the parent's `since` when that lies
+after the subsidiary's statement (its first report), else on the parent's filing day,
+with `until_reason = reported_by_parent` and no stale mark. The subsidiary's claim
+stays — it did say it. Left open:
+
+- a statement the subsidiary filed after the parent's — Vanguard Capital Management's
+  of 2026-04 after the Vanguard Group's 0 % of 2026-03 (the disaggregated filer is
+  the current word);
+- one of the same day — a joint schedule naming both (Berkshire and National
+  Indemnity on Chevron);
+- a minority stake in the filer, or a link that has ended — no group;
+- a 13F: another rulebook, not compared (BlackRock, Inc.'s 13F on Berkshire beside
+  the old parent's 13G/A of 2024 stays a pair).
+
+It runs after every scrape that writes either side — a company's owners and the
+companies it reports (`_write_sec_edgar`), a filer's holdings (`run_sec_holdings`),
+and an Exhibit 21 run for every parent it wrote (the list can be read after both
+statements) — and over the whole graph with `manage.py close-reported-by-parent`. A
+re-read of the subsidiary's old filing updates the closed spell rather than drawing
+an open twin (`_RULE_CLOSED`, as for the dissolution rule), and the rule closes it
+again. The 16 dev companies only the old filer reports on (Apple, Microsoft,
+Alphabet …, all January–February 2024; BlackRock has filed nothing on them since)
+keep its statement: it is the group's latest word, under the CIK's current name.
+
 ## Quarterly Holdings — Form 13F
 
 **For time travel** a 13F row is an as-of statement, so its quarter is never a

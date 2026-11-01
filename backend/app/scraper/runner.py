@@ -1292,6 +1292,11 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         # What this list no longer names: dimmed, never closed.
         from app.scraper.sec_writer import mark_ex21_stale
         stale = mark_ex21_stale(holders, data["url"], data["filing_date"])
+        # a subsidiary listed now may have filed a 13D/G its parent's newer
+        # one replaces — the list can be read after both (findings item 34)
+        from app.scraper.sec_writer import close_reported_by_parent
+        for holder in sorted(holders):
+            close_reported_by_parent(parent_id=holder)
         with db.get_session() as session:
             session.run("MATCH (e:Entity {id: $id}) SET e.sec_ex21_ingested = $u",
                         id=company_id, u=data["url"])
@@ -1857,6 +1862,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
 
     holdings = fetch_filer_holdings(cik, limit=limit)
     written = closed = 0
+    touched: list[str] = []
     for h in holdings:
         subject_name = (h.get("subject_name") or "").strip()
         if not subject_name:
@@ -1880,6 +1886,11 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
         written += 1
         if h.get("until"):
             closed += 1
+        touched.append(subject_id)
+    # the parent's newer 13D/G replaces its subsidiary's (findings item 34)
+    from app.scraper.sec_writer import close_reported_by_parent
+    for owned in dict.fromkeys(t for t in touched if t):
+        close_reported_by_parent(owned_id=owned)
 
     # Group structure from the 13F cover page — one extra request, and a far
     # better signal than name matching.
@@ -2299,6 +2310,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     # ones it FILES about others (what it owns). An asset manager has no filings
     # about itself — Vanguard is privately held and isn't a listed issuer — so
     # without this its node stays empty no matter how often it is scraped.
+    held_subjects: list[str] = []
     for holding in data.get("holdings", []):
         subject_name = (holding.get("subject_name") or "").strip()
         if not subject_name:
@@ -2310,6 +2322,8 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             source_id=source_id,
         )
         scraped.append({"type": "entity", "name": subject_name, "role": "holding"})
+        if subject_id:
+            held_subjects.append(subject_id)
         _upsert_owns_sec(
             owner_id=target_id,
             owned_id=subject_id,
@@ -2331,6 +2345,14 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         log.info("SEC EDGAR: wrote OWNS %r → %r (%s%%%s)",
                  data["name"], subject_name, holding.get("stake_percent"),
                  f", ended {holding['until']}" if holding.get("until") else "")
+
+    # A subsidiary's 13D/G that its parent's newer one replaces ends here
+    # (findings item 34): this company's owners, and the companies it reports
+    # — the parent's filing and the subsidiary's can each be read last.
+    from app.scraper.sec_writer import close_reported_by_parent
+    for owned in dict.fromkeys([target_id, *held_subjects]):
+        close_reported_by_parent(owned_id=owned)
+    close_reported_by_parent(parent_id=target_id)
 
     # Executives → Person nodes + HAS_ROLE edges
     role_holders: dict[str, str] = {}      # name → person id, for the departures below
