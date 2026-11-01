@@ -925,9 +925,10 @@ _UK_HEAL_COLUMNS = ("id, @rid AS rid, address, "
 
 #: How long a Schedule 13D/G statement speaks for a holding before it is
 #: dimmed as not restated, by form family, in days from its filing date. A
-#: 13G holder restates every February (an annual amendment within 45 days of
-#: the year end while anything changed; quarterly since the 2024 rules) — 15
-#: months covers a cycle and its grace. A 13D is amended only on a material
+#: 13G holder restated every February until 2024 (an annual amendment within
+#: 45 days of the year end while anything changed) — 15 months covers a cycle
+#: and its grace; a 13G filed since 2024 is amended only on a material change
+#: (`MATERIAL_CHANGE_13G_SINCE`). A 13D is amended only on a material
 #: change, so its silence says less: five years. Neither closes the holding:
 #: a 13G/A that reports an exit does that (sec_writer), and silence is not a
 #: sale. Dev had 101 13G and 24 13D holdings from before 2015 drawn at full
@@ -935,12 +936,29 @@ _UK_HEAL_COLUMNS = ("id, @rid AS rid, address, "
 #: to 202 % — because the register tier is exempt from `mark_stale_ownership`.
 RESTATEMENT_WINDOW_DAYS: dict[str, int] = {"13G": 455, "13D": 1826}
 NOT_RESTATED = "not_restated"
+#: The 13G whose silence says no more than a 13D's (findings item 33). The
+#: SEC's 2023 amendments (Release 33-11253, compliance from 2024-09-30)
+#: replaced the annual amendment — within 45 days of a year end in which
+#: anything changed — with one within 45 days of a QUARTER with a MATERIAL
+#: change. The last annual duty fell in February 2024, so a 13G filed since
+#: 2024-01-01 is restated only on a material change, like a 13D: five years.
+#: Berkshire's 35 % of Sirius XM (13G/A 2025-02-14) and BlackRock's 5.58 % of
+#: DaVita (2025-04-25) were dimmed by the old cadence; 126 such dev holdings.
+MATERIAL_CHANGE_13G_SINCE = "2024-01-01"
 
 
 def restatement_family(filing_type: str | None) -> str | None:
     """'13G' for "13G" and "13G/A", '13D' likewise; None for any other record."""
     family = (filing_type or "").split("/")[0].strip().upper()
     return family if family in RESTATEMENT_WINDOW_DAYS else None
+
+
+def restatement_window(family: str, filed: str) -> int:
+    """Days a statement of `family` filed on `filed` speaks for its holding:
+    a 13G filed since MATERIAL_CHANGE_13G_SINCE gets the 13D's window."""
+    if family == "13G" and str(filed)[:10] >= MATERIAL_CHANGE_13G_SINCE:
+        return RESTATEMENT_WINDOW_DAYS["13D"]
+    return RESTATEMENT_WINDOW_DAYS[family]
 
 
 def restated(filing_type: str | None, filed: str | None, today: str) -> bool | None:
@@ -955,7 +973,7 @@ def restated(filing_type: str | None, filed: str | None, today: str) -> bool | N
         age = (date.fromisoformat(today[:10]) - date.fromisoformat(str(filed)[:10])).days
     except ValueError:
         return None
-    return age <= RESTATEMENT_WINDOW_DAYS[family]
+    return age <= restatement_window(family, str(filed))
 
 
 def mark_not_restated(today: str | None = None) -> dict:
@@ -987,7 +1005,8 @@ def mark_not_restated(today: str | None = None) -> dict:
             run_sql(f"UPDATE {r['rid']} SET {STALE_CLEAR_SQL}")
             cleared += 1
     return {"today": today, "judged": judged, "marked": marked, "cleared": cleared,
-            "windows": dict(RESTATEMENT_WINDOW_DAYS)}
+            "windows": {**RESTATEMENT_WINDOW_DAYS,
+                        f"13G since {MATERIAL_CHANGE_13G_SINCE}": restatement_window("13G", MATERIAL_CHANGE_13G_SINCE)}}
 
 
 def mark_stale_ownership(days: int = STALE_AFTER_DAYS) -> dict:

@@ -342,9 +342,17 @@ so a 13G/A from 2014 stood at full strength beside this year's. Since
 2026-10-25 `manage.py mark-stale` also dims a holding whose last 13D/G is
 older than its form's restatement window (`stale_reason = not_restated`,
 `stale_since` = that filing date; `maintenance.RESTATEMENT_WINDOW_DAYS`): a
-13G is restated within 45 days of every year end while anything changed
-(quarterly under the 2024 rules), so 15 months; a 13D is amended only on a
-material change, so five years. Dimmed, never closed — silence is not a sale —
+13G was restated within 45 days of every year end while anything changed, so
+15 months; a 13D is amended only on a material change, so five years — and so
+is a 13G filed since 2024-01-01 (`MATERIAL_CHANGE_13G_SINCE`): the SEC's 2023
+amendments (Release 33-11253, compliance from 2024-09-30) replaced the annual
+amendment with one within 45 days of a quarter with a *material* change, so the
+last annual round fell in February 2024 and a 13G filed since has nothing due
+while its stake holds. Until 2026-11-01 the 15 months applied to every 13G and
+dimmed 126 dev holdings filed since 2024 — Berkshire's 35 % of Sirius XM
+(13G/A 2025-02-14), BlackRock's 5.58 % of DaVita (2025-04-25) — whose silence
+meant "no material change" (findings item 33). A 13G below 5 % that ticks Item 5
+is dimmed as `final_report` regardless (*A last report is not an exit either*). Dimmed, never closed — silence is not a sale —
 and the next amendment the scraper reads clears the mark with the refresh.
 
 A holder who files both — Musk's 13G/A says 19.9 % of the class, his Form 4

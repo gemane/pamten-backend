@@ -22,9 +22,9 @@ class TestTheVocabulary:
 
 
 class TestTheRestatementWindow:
-    """A Schedule 13G is restated every February while it lasts, a 13D only on
-    a material change; a statement older than its window no longer speaks
-    for the holding — dimmed, never closed."""
+    """A Schedule 13G was restated every February until 2024, a 13D only on a
+    material change — and a 13G filed since 2024 too; a statement older than
+    its window no longer speaks for the holding — dimmed, never closed."""
     def setup_method(self):
         from app.scraper.maintenance import RESTATEMENT_WINDOW_DAYS, restated, restatement_family
         self.restated, self.family, self.windows = restated, restatement_family, RESTATEMENT_WINDOW_DAYS
@@ -37,10 +37,27 @@ class TestTheRestatementWindow:
 
     def test_a_13g_speaks_for_fifteen_months(self):
         assert self.windows["13G"] == 455
-        assert self.restated("13G/A", "2025-11-14", "2026-10-25") is True
+        # filed before 2024, under the annual cadence
+        assert self.restated("13G/A", "2022-11-14", "2023-10-25") is True
         assert self.restated("13G/A", "2014-02-14", "2026-10-25") is False
-        assert self.restated("13G", "2025-07-27", "2026-10-25") is True     # 455 days
-        assert self.restated("13G", "2025-07-26", "2026-10-25") is False
+        assert self.restated("13G", "2022-07-27", "2023-10-25") is True     # 455 days
+        assert self.restated("13G", "2022-07-26", "2023-10-25") is False
+
+    def test_a_13g_filed_since_2024_speaks_like_a_13d(self):
+        """Findings item 33: since the 2024 rules a 13G is amended only on a
+        material change — no February restatement after 2024's."""
+        assert self.restated("13G/A", "2025-02-14", "2026-11-01") is True      # Berkshire → Sirius XM
+        assert self.restated("13G/A", "2025-04-25", "2026-11-01") is True      # BlackRock → DaVita
+        assert self.restated("13G/A", "2024-02-12", "2026-11-01") is True      # the last annual round
+        assert self.restated("13G/A", "2024-01-01", "2028-12-31") is True      # the first day, 1826 days on
+        assert self.restated("13G/A", "2024-01-01", "2029-01-01") is False
+        assert self.restated("13G/A", "2023-12-31", "2026-11-01") is False     # the old cadence
+
+    def test_the_window_by_family_and_day(self):
+        from app.scraper.maintenance import restatement_window
+        assert restatement_window("13G", "2023-12-31") == 455
+        assert restatement_window("13G", "2024-01-01") == 1826
+        assert restatement_window("13D", "2009-04-30") == 1826
 
     def test_a_13d_speaks_for_five_years(self):
         assert self.windows["13D"] == 1826

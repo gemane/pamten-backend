@@ -43,6 +43,19 @@ def test_an_old_13g_is_dimmed_from_its_filing_date_and_a_recent_one_is_not(graph
     assert _edge(graph, "h2")["stale"] is False
 
 
+def test_a_13g_filed_since_2024_gets_the_13d_window(graph):
+    # findings item 33: Berkshire's 35 % of Sirius XM, 13G/A 2025-02-14 — dimmed
+    # by the old cadence, though nothing has been due since 2024's round
+    _seed(graph, "h1", "13G/A", "2025-02-14", stale=True, reason="not_restated")
+    _seed(graph, "h2", "13G/A", "2024-02-12")          # the last annual round
+    _seed(graph, "h3", "13G/A", "2023-12-29")          # the old cadence
+    res = mark_not_restated("2026-11-01")
+    assert (res["marked"], res["cleared"]) == (1, 1)
+    assert not _edge(graph, "h1")["stale"] and _edge(graph, "h1")["reason"] is None
+    assert not _edge(graph, "h2")["stale"]
+    assert _edge(graph, "h3")["reason"] == "not_restated"
+
+
 def test_a_13d_gets_the_longer_window(graph):
     _seed(graph, "h1", "13D", "2009-04-30")            # Liberty Media's 2009 13D on Sirius XM
     _seed(graph, "h2", "13D/A", "2023-03-01")

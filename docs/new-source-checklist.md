@@ -217,6 +217,13 @@ parser. Anything that does not map is either a new property (document it) or noi
       item 31, 2026-11-01). Read a compound number whole — "1-7-1 Kaigan" is not "3-5-1
       Kaigan". An address is supporting evidence only; a parent and its subsidiary share one
       (Domino's), so the name and legal form decide first.
+- [ ] **A filing rule has a date — read silence by the rule in force after the filing.**
+      How long a statement speaks for a holding follows from when the next one is
+      due, and that changed: a 13G was restated every February until 2024, and since
+      the SEC's 2024 rules only after a quarter with a material change. A window
+      fixed to the old cadence dimmed 126 dev holdings filed since 2024 whose silence
+      meant "no material change" (findings item 33). Date the rule and test both sides
+      of the change.
 - [ ] **Read the form's own "last report" box, not a threshold on the number.** A 13G
       below 5 % ticks Item 5 and stops filing: a statement that ends the reporting,
       not the holding. Only a 0 % was read as an end, so 578 dev holdings under 5 %
