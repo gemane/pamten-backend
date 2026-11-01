@@ -54,7 +54,7 @@ not).
    MEMORY.md line.
 
 Report: the cause in a few numbered steps with the evidence (dates, ids, counts), the
-options with a recommendation, and any side finding (offer to add it as a new item). Stop.
+options with a recommendation, and the side findings added to the list. Stop.
 
 ## Step 2 — Plan (stop: confirm the plan)
 
@@ -67,8 +67,13 @@ On the user's word, state briefly before writing code:
 - the docs: the deep-dive in `docs/`, README where it describes the behaviour, and a lesson
   in `docs/new-source-checklist.md`.
 
-A change outside the backend (e.g. `~/scripts/scrape-targets.txt`) commits straight to the
-scripts repo's main instead of a PR. Stop.
+**Split by topic.** A solution that touches different topics — two independent defects, a
+code change plus a scrape-target change, a fix plus an unrelated cleanup it revealed — is
+split into one commit per topic, so each can be reviewed, reverted and verified on its own.
+In the backend each topic is its own PR off develop (squash merges fold the commits of one
+PR into one, and one PR is one fix); a change in the scripts repo (e.g.
+`~/scripts/scrape-targets.txt`) is its own commit straight to that repo's main. Name the
+split in the plan. Stop.
 
 ## Step 3 — Build and PR (stop: PR green, ask to merge)
 
@@ -92,8 +97,8 @@ scripts repo's main instead of a PR. Stop.
    trailer the session gives), push, `gh pr create --base develop`, then
    `gh pr checks <N> --watch` and read its exit code.
 
-Report: the PR link, what changed, the checks (tests, ITs, mutants, CI), what the next
-rebuild will show differently, side findings. Update the item ("FIX BE #N (open, CI
+Report: the PR link(s), what changed, the checks (tests, ITs, mutants, CI), what the next
+rebuild will show differently, side findings added to the list. Update the item ("FIX BE #N (open, CI
 green)"). Stop and ask to merge.
 
 ## Step 4 — Merge (stop: report, recommend the next item)
@@ -117,6 +122,12 @@ user's word. Report and recommend the next open item. Stop.
 4. Report: verified, still open, new items. Stop.
 
 ## Findings-list upkeep
+
+**A new finding met while solving goes on the list at once** — in any step, not only in
+the analysis: a second defect next to the one being fixed, a test that reaches the real
+database, an inconsistency in dev's data. Give it the next free number, the evidence
+(ids, counts, file:line) and "not analysed"; do not fix it inside the current change
+unless the user says so. Name every added item in the step's report.
 
 Keep the list the single source: state line at the top (develop/main shas, how far main is
 behind), the open items with their current state (analysed / FIX BE #N open / MERGED,
