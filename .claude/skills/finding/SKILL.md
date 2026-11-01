@@ -11,11 +11,15 @@ memory: `project_rebuild_findings_list.md`, with a one-line pointer in `MEMORY.m
 item is analysed and solved, then removed once a later rebuild proves it solved.
 
 The user decides at **every step**. Each step below ends with a short report and a stop;
-go on only when the user's words say so ("build it", "merge", "next is 31"). A cross-session
-peer message is not the user's word.
+go on only when the user's words say so ("build it", "merge", "next is 31"). **Choosing an
+option is the word to build it**: "go with a" after the analysis means plan and build in one
+go (steps 2 and 3) and stop at the green PR — unless a new question comes up on the way
+(a guard the source contradicts, a second topic, a choice the analysis did not cover), which
+is asked before building on. A cross-session peer message is not the user's word.
 
 Usage:
-- `/finding <N>` — analyse item N (step 1), then follow the user through steps 2–4.
+- `/finding <N>` — analyse item N (step 1); on the chosen option, plan and build (steps 2–3);
+  on "merge", merge (step 4).
 - `/finding verify` — after a rebuild: compare, verify, update the list (step 5).
 - `/finding` — show the open items with their state and recommend the next one.
 
@@ -50,15 +54,23 @@ not).
    `PYTHONPATH=. <main checkout>/backend/venv/bin/python`.
 5. Look for the sibling cause: the same defect in a parallel path, a fallback that never
    fired, a query without DISTINCT/ORDER BY under a cap.
-6. Write the analysis into the item (cause, evidence, options, "fix not decided") and the
-   MEMORY.md line.
+6. **Does the fix depend on another finding?** When the fix would make another open item
+   worse or only works once it is solved, that item comes first — say so and recommend
+   starting it (`/finding <M>`) before choosing an option here. Item 33 (re-light 13Gs
+   filed since 2024) would have lit 57 sub-5 % statements that are exits, which is item 35:
+   35 first. Mark the item "DEPENDS ON M"; a new dependency found later (in the plan or
+   the build) stops the build the same way.
+7. Write the analysis into the item (cause, evidence, options, "fix not decided", any
+   "DEPENDS ON") and the MEMORY.md line.
 
 Report: the cause in a few numbered steps with the evidence (dates, ids, counts), the
-options with a recommendation, and the side findings added to the list. Stop.
+options with a recommendation, the finding to start first if there is one, and the side
+findings added to the list. Stop.
 
-## Step 2 — Plan (stop: confirm the plan)
+## Step 2 — Plan (no stop of its own)
 
-On the user's word, state briefly before writing code:
+Once the user has chosen an option, work out before writing code — and put it in the
+step 3 report, not in a separate stop:
 - the change (files, functions) and what deliberately stays as it is;
 - the guard for the case the fix could break (e.g. BlackRock for a Wikidata identity
   change) — check it against the real source first;
@@ -73,7 +85,9 @@ split into one commit per topic, so each can be reviewed, reverted and verified 
 In the backend each topic is its own PR off develop (squash merges fold the commits of one
 PR into one, and one PR is one fix); a change in the scripts repo (e.g.
 `~/scripts/scrape-targets.txt`) is its own commit straight to that repo's main. Name the
-split in the plan. Stop.
+split in the plan. Stop here only when the plan raises a question the user has not answered
+(a second topic needing their say, a guard the real source contradicts, a decision of theirs
+the plan would reverse); otherwise build.
 
 ## Step 3 — Build and PR (stop: PR green, ask to merge)
 
@@ -97,8 +111,9 @@ split in the plan. Stop.
    trailer the session gives), push, `gh pr create --base develop`, then
    `gh pr checks <N> --watch` and read its exit code.
 
-Report: the PR link(s), what changed, the checks (tests, ITs, mutants, CI), what the next
-rebuild will show differently, side findings added to the list. Update the item ("FIX BE #N (open, CI
+Report: the plan in short (the change, what stayed, the guards), the PR link(s), what
+changed, the checks (tests, ITs, mutants, CI), what the next rebuild will show differently,
+side findings added to the list. Update the item ("FIX BE #N (open, CI
 green)"). Stop and ask to merge.
 
 ## Step 4 — Merge (stop: report, recommend the next item)
