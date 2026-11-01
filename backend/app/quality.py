@@ -22,7 +22,8 @@ What it measures, and why each line is on the report:
   has looked at for a year is a weaker fact.
 * **Contradictions** — the invariants this week's bugs violated (a stake stored
   beside `unknown`, a company owning itself, an edge citing one source with
-  another's link). All were repaired; the report keeps them at zero, and a
+  another's link, a dimmed edge that cannot say why or since when). All were
+  repaired; the report keeps them at zero, and a
   non-zero here is a regression alarm, not information.
 
 Read-only throughout: the report must be safe to run against any database at any
@@ -34,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.arcadedb import run_sql
 from app.database import db
-from app.scraper.edge_schema import READ_GRADES
+from app.scraper.edge_schema import READ_GRADES, STALE_REASONS
 
 log = logging.getLogger(__name__)
 
@@ -164,7 +165,22 @@ def _contradictions(names: dict) -> dict:
         "stake_with_unknown_type": stake_unknown,   # the grey-badge bug (#259)
         "self_owning_edges": self_loops,            # the 7.48% bug (#259/#260)
         "provenance_mismatches": mismatched,        # the wrong-link bug (#261)
+        "stale_without_reason": _stale_without_reason(),   # findings item 32
     }
+
+
+def _stale_without_reason() -> int:
+    """Dimmed edges that cannot say why or since when: no `stale_reason` of
+    `edge_schema.STALE_REASONS`, or no `stale_since`. Every writer that sets
+    the mark must set both (#400); the GLEIF import's folded direct+ultimate
+    edge set the mark alone and 81 dev edges went grey without a timeline
+    entry (findings item 32). Counted by group, so the stale set never travels."""
+    unknown = sum(r["n"] for r in run_sql(
+        "SELECT stale_reason AS reason, count(*) AS n FROM OWNS WHERE stale = true GROUP BY stale_reason")
+        if r.get("reason") not in STALE_REASONS)
+    undated = run_sql("SELECT count(*) AS n FROM OWNS WHERE stale = true AND stale_reason IN :known "
+                      "AND stale_since IS NULL", {"known": list(STALE_REASONS)})[0]["n"]
+    return unknown + undated
 
 
 def quality_report() -> dict:
@@ -202,5 +218,6 @@ def format_report(report: dict) -> str:
     flag = "" if not any(x.values()) else "   ⚠ REGRESSION"
     lines += [f"contradictions: stake-with-unknown={x['stake_with_unknown_type']} "
               f"self-loops={x['self_owning_edges']} "
-              f"provenance-mismatches={x['provenance_mismatches']}{flag}"]
+              f"provenance-mismatches={x['provenance_mismatches']} "
+              f"stale-without-reason={x['stale_without_reason']}{flag}"]
     return "\n".join(lines)

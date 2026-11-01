@@ -112,7 +112,20 @@ class TestTheContradictionGauges:
         from app.quality import quality_report
         assert quality_report()["contradictions"] == {
             "stake_with_unknown_type": 0, "self_owning_edges": 0,
-            "provenance_mismatches": 0}
+            "provenance_mismatches": 0, "stale_without_reason": 0}
+
+    @pytest.mark.parametrize("props, counted", [
+        ("stale:true, stale_reason:'lei_lapsed', stale_since:'2026-07-01'", 0),
+        ("stale:true", 1),                                                  # findings item 32
+        ("stale:true, stale_reason:'lei_lapsed'", 1),                       # no date
+        ("stale:true, stale_reason:'gone_away', stale_since:'2026-07-01'", 1),   # not a known reason
+        ("stale:false", 0),
+    ])
+    def test_a_dimmed_edge_must_say_why_and_since_when(self, graph, props, counted):
+        graph.run_command(
+            f"MATCH (a {{id:'co-b'}}), (b {{id:'co-c'}}) CREATE (a)-[:OWNS {{source_id:'src-gleif', {props}}}]->(b)")
+        from app.quality import quality_report
+        assert quality_report()["contradictions"]["stale_without_reason"] == counted
 
     def test_a_stake_beside_unknown_is_counted(self, graph):
         graph.run_command(
