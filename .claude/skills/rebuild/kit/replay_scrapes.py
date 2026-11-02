@@ -14,6 +14,10 @@ import after the 6 October rebuild (kept fixed since, so rebuilds compare):
   D  the acquisitions reader for the three companies it ran for
   E  13F holders for the two companies it ran for
 
+After A and B, two retries, once each: A2 the Wikidata parts that failed ("too
+busy"), A3 the SEC parts that came back `partial` (a section lost to the
+network, findings item 41).
+
 Each step writes its run-log row, as the API would. Usage: replay_scrapes.py [A|B|C|D|E ...]
 """
 import json
@@ -49,6 +53,10 @@ F13 = ["BERKSHIRE HATHAWAY INC.", "YouTube LLC"]
 
 
 WIKIDATA_FAILED: list[str] = []
+# Findings item 41: an SEC scrape that lost a section (13D/G owners, insiders,
+# holdings) to the network now says `partial`. The rebuild has no later visit to
+# catch up, so those companies get their SEC part once more after A and B.
+SEC_PARTIAL: list[str] = []
 
 
 def run_all(name):
@@ -56,6 +64,11 @@ def run_all(name):
         res = run_scrape_all(name, 1)
         if ((res.get("results") or {}).get("wikidata") or {}).get("status") == "error":
             WIKIDATA_FAILED.append(name)
+        sec = (res.get("results") or {}).get("sec_edgar") or {}
+        if sec.get("status") == "partial":
+            SEC_PARTIAL.append(name)
+            run["status"] = "partial"
+            run["note"] = "lost to the network: sec_edgar: " + ", ".join(sec.get("failed_sections") or [])
         per = [v for v in (res.get("results") or {}).values() if isinstance(v, dict)]
         run["total"] = sum((v or {}).get("total", 0) for v in per)
         run["entity_id"] = next((v["entity_id"] for v in per if v.get("entity_id")), None)
@@ -100,6 +113,21 @@ if WIKIDATA_FAILED:
             run["entity_id"] = res.get("entity_id")
         return (res.get("status"), res.get("total"))
     phase("A2 Wikidata retry for the failed parts", sorted(set(WIKIDATA_FAILED)), retry_wikidata)
+if SEC_PARTIAL:
+    from app.scraper.scraper_registry import registered
+    sec_spec = next(s for s in registered() if s.name == "sec_edgar")
+
+    def retry_sec(name):
+        time.sleep(3)
+        with record_run("sec_edgar", name) as run:
+            res = sec_spec.run(name, 1, None)
+            run["total"] = res.get("total", 0)
+            run["entity_id"] = res.get("entity_id")
+            if res.get("status") == "partial":
+                run["status"] = "partial"
+                run["note"] = "lost to the network: " + ", ".join(res.get("failed_sections") or [])
+        return (res.get("status"), res.get("total"), res.get("failed_sections") or None)
+    phase("A3 SEC retry for the partial parts", sorted(set(SEC_PARTIAL)), retry_sec)
 if "C" in steps:
     phase("C Exhibit 21", TARGETS + EX21_EXTRA, lambda n: short(run_sec_ex21(n)))
 if "D" in steps:

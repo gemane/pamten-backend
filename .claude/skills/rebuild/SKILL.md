@@ -45,8 +45,9 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   back, 6 replay, 7 finishing what the scrapes added (dedupe, geocode,
   close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks + `after.json`.
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
-  Wikidata retry for "too busy" failures, C Exhibit 21, D acquisitions, E 13F, F industry
-  fill. Its target lists are frozen so rebuilds compare; change them only on purpose and
+  Wikidata retry for "too busy" failures, A3 one SEC retry for the companies whose SEC part
+  came back `partial` (a section lost to the network, findings item 41), C Exhibit 21,
+  D acquisitions, E 13F, F industry fill. Its target lists are frozen so rebuilds compare; change them only on purpose and
   say so in the verify.
 - `snapshot.py` — counts per type/source/filing/reason, entities and persons by id, every
   OWNS triple, the run log. `save_accounts.py` / `restore_accounts.py` — `User` and
@@ -70,8 +71,9 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
 - Exit code and `✅ REBUILD DONE`; any `❌ FAILED` (a crash in a step: read the step's
   output, fix forward in a PR — never patch the data by hand; the accounts restore may need
   running by hand when the job died before step 5).
-- The replay's `failed` lines per phase and the A2 Wikidata retries: a source that failed
-  makes its counts not comparable — list it in the verify.
+- The replay's `failed` lines per phase, the A2 Wikidata retries and the A3 SEC retries
+  (`grep -E "partial|=== A3" <kit>/rebuild.log`): a source that failed, or an SEC part still
+  `partial` after A3, makes its counts not comparable — list it in the verify.
 - `schema-audit` and the dissolution dry run in step 8 should be clean.
 - Then `/finding verify` against the last rebuild's `after.json`; record the run (times,
   counts, lessons) in the memory `reference-rebuild-from-agent`.
