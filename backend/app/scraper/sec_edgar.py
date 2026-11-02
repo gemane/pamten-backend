@@ -70,6 +70,7 @@ HEADERS = {
     "Accept":     "application/json",
 }
 REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s
+READ_TIMEOUT     = 10.0   # seconds without a byte before the one retry (item 38)
 MAX_FORM4_FETCH  = 60     # max unique insiders listed from Form 3/4
 MAX_FORM4_SCAN   = 300    # Form 3/4 documents opened for them, at most
 #: Insiders are read from the Form 3/4s of the last ~15 months, counted back
@@ -130,7 +131,13 @@ def _get_client() -> httpx.Client:
                     # timeout per address before falling back to IPv4. httpx has no
                     # Happy Eyeballs, so this bounds the stall (measured on the dev
                     # box: 30 s x 2 IPv6 addresses = 60 s per new connection).
-                    timeout=httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=10.0),
+                    # Short read timeout too (findings item 38): sec.gov leaves
+                    # ~1 request in 30 hanging, and the retry in _response, on a
+                    # new connection, answers in 0.1-0.2 s, so waiting longer is
+                    # pure loss. The timeout is the gap between bytes, not the
+                    # whole download, and the slowest normal answer measured
+                    # (EFTS, browse, submissions, tickers) begins in 0.63 s.
+                    timeout=httpx.Timeout(connect=5.0, read=READ_TIMEOUT, write=30.0, pool=10.0),
                 )
     return _client
 
@@ -151,6 +158,14 @@ def close_client() -> None:
 _RETRY_STATUSES = (429, 503)
 _RETRY_AFTER_CAP = 30.0
 
+# A request sec.gov leaves hanging, or a connection it drops, gets the same one
+# retry (findings item 38). Measured 2026-11-02: 4 of 120 plain archive GETs hung
+# until the read timeout and some 503s took 24-27 s to arrive; the next request,
+# on a new connection, answered every time. httpx discards the connection a
+# timeout or a protocol error broke, so the retry never reuses it. Before this
+# the error went straight to the caller, which drops the data (findings item 41).
+_RETRY_ERRORS = (httpx.ReadTimeout, httpx.ReadError, httpx.RemoteProtocolError)
+
 
 def _response(url: str, params: dict | None) -> httpx.Response:
     # Filings are immutable, so an Archives file is served from the on-disk
@@ -166,14 +181,20 @@ def _response(url: str, params: dict | None) -> httpx.Response:
         if cached is not None:
             return httpx.Response(200, content=cached,
                                   request=httpx.Request("GET", url))
-    r = _get_client().get(url, params=params)
-    if r.status_code in _RETRY_STATUSES:
-        try:
-            wait = min(float(r.headers.get("Retry-After", 2)), _RETRY_AFTER_CAP)
-        except ValueError:            # a date-formatted Retry-After — just pause briefly
-            wait = 2.0
-        time.sleep(wait)
+    try:
         r = _get_client().get(url, params=params)
+    except _RETRY_ERRORS as exc:
+        log.warning("SEC EDGAR: %s on %s, retrying once", type(exc).__name__, url)
+        time.sleep(REQUEST_DELAY)
+        r = _get_client().get(url, params=params)
+    else:
+        if r.status_code in _RETRY_STATUSES:
+            try:
+                wait = min(float(r.headers.get("Retry-After", 2)), _RETRY_AFTER_CAP)
+            except ValueError:        # a date-formatted Retry-After — just pause briefly
+                wait = 2.0
+            time.sleep(wait)
+            r = _get_client().get(url, params=params)
     r.raise_for_status()
     if key:
         sec_cache.store(key, r.content)
@@ -532,10 +553,7 @@ def _get_tickers() -> dict:
     global _tickers_cache
     if _tickers_cache is None:
         log.info("SEC EDGAR: loading company_tickers.json")
-        r = _get_client().get(TICKERS_URL)
-        r.raise_for_status()
-        time.sleep(REQUEST_DELAY)
-        _tickers_cache = r.json()
+        _tickers_cache = _get(TICKERS_URL)    # through _response: the retry (item 38)
     return _tickers_cache
 
 
@@ -671,7 +689,7 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
     """
     for form_type in ("10-K", "20-F"):
         try:
-            resp = _get_client().get(BROWSE_URL, params={
+            resp = _response(BROWSE_URL, {      # the retry (findings item 38)
                 "company":     name,
                 "action":      "getcompany",
                 "type":        form_type,
@@ -680,9 +698,7 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
                 "count":       "5",
                 "search_text": "",
                 "output":      "atom",
-            }, headers=HEADERS, timeout=15)
-            resp.raise_for_status()
-            time.sleep(REQUEST_DELAY)
+            })
         except httpx.HTTPError as exc:
             log.debug("SEC EDGAR: browse-edgar (%s) failed for %r: %s", form_type, name, exc)
             continue
@@ -2301,13 +2317,11 @@ def _lookup_person_ciks(name: str) -> list[str]:
     found: list[str] = []
     for query in queries:
         try:
-            resp = _get_client().get(BROWSE_URL, params={
+            resp = _response(BROWSE_URL, {      # the retry (findings item 38)
                 "company": query, "action": "getcompany", "type": "4",
                 "dateb": "", "owner": "include", "count": str(MAX_PERSON_CANDIDATES),
                 "output": "atom",
             })
-            resp.raise_for_status()
-            time.sleep(REQUEST_DELAY)
         except httpx.HTTPError:
             continue
         conformed = re.search(r"<conformed-name>([^<]*)</conformed-name>", resp.text)
