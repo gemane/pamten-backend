@@ -895,6 +895,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       2026-11-01). Search a register in the register's own name order, and check a fallback's
       hit rate on real inputs when the path in front of it shrinks.
 - [ ] **Back off on 429/5xx**, and respect `Retry-After` when it is sent. (A source using `sec_edgar._get`/`_get_text` inherits this — one capped retry — since the 13F work.)
+- [ ] **Retry a stall too, not only a status code, and keep the read timeout short.** A source
+      can leave a request hanging with no answer at all; a retry on 429/503 never sees that
+      case. sec.gov did this to ~1 request in 30, and each one waited out a 30 s read timeout
+      before its data was dropped. The 2026-11-01 rebuild's run-all took about 2× as long on
+      the same requests, and Gitlab lost 19 owners (findings items 38 and 41). Measure the
+      source's slowest normal answer, set the read timeout a good margin above it (SEC: 10 s
+      against 0.63 s), and retry once on a read timeout or a dropped connection.
+      **Every request goes through the one helper:** three SEC calls used the client directly
+      and got no retry at all. Grep for the client's raw `.get(` when you add one.
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
       easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space

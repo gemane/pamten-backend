@@ -3372,3 +3372,91 @@ class TestDottedAndGermanFormsInTheIssuerCheck:
     def test_ticker_key(self):
         assert _ticker_normalize("Siemens Beteiligungen GmbH & Co. KG") == "siemens beteiligungen"
         assert _ticker_normalize("Merck KGaA") == "merck"
+
+
+class TestStallRetry:
+    """sec.gov leaves ~1 request in 30 hanging until the read timeout, and the
+    next request, on a new connection, answers at once (findings item 38). Every
+    SEC request gets one retry after a stall or a dropped connection, and the
+    three calls that went around _response now go through it."""
+
+    @staticmethod
+    def _client(*answers):
+        import httpx
+        calls = []
+
+        def get(url, params=None):
+            calls.append((url, params))
+            a = answers[len(calls) - 1]
+            if isinstance(a, Exception):
+                raise a
+            if isinstance(a, int):
+                return httpx.Response(a, headers={"Retry-After": "0"},
+                                      request=httpx.Request("GET", url))
+            return httpx.Response(200, text=a, request=httpx.Request("GET", url))
+        client = MagicMock()
+        client.get.side_effect = get
+        return client, calls
+
+    def _get_text(self, *answers):
+        from app.scraper import sec_edgar
+        client, calls = self._client(*answers)
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            return sec_edgar._get_text("https://www.sec.gov/x"), calls
+
+    @pytest.mark.parametrize("error", ["ReadTimeout", "ReadError", "RemoteProtocolError"])
+    def test_a_stall_or_a_dropped_connection_is_retried_once(self, error):
+        import httpx
+        text, calls = self._get_text(getattr(httpx, error)("stalled"), "ok")
+        assert text == "ok" and len(calls) == 2
+
+    def test_a_second_stall_raises(self):
+        import httpx
+        with pytest.raises(httpx.ReadTimeout):
+            self._get_text(httpx.ReadTimeout("stalled"), httpx.ReadTimeout("again"), "never")
+
+    def test_one_retry_in_all_a_stall_then_a_503_raises(self):
+        import httpx
+        with pytest.raises(httpx.HTTPStatusError):
+            self._get_text(httpx.ReadTimeout("stalled"), 503, "never")
+
+    def test_a_connect_error_is_not_retried(self):
+        # a refused or unroutable connection is not the stall this retry is for
+        import httpx
+        with pytest.raises(httpx.ConnectError):
+            self._get_text(httpx.ConnectError("down"), "never")
+
+    def test_the_read_timeout_is_ten_seconds(self):
+        from app.scraper import sec_edgar
+        with patch.object(sec_edgar, "_client", None):
+            client = sec_edgar._get_client()
+            try:
+                assert client.timeout.read == sec_edgar.READ_TIMEOUT == 10.0
+            finally:
+                client.close()
+
+    def test_the_tickers_file_is_retried(self):
+        from app.scraper import sec_edgar
+        import httpx
+        client, calls = self._client(httpx.ReadTimeout("stalled"), '{"0": {"cik_str": 1}}')
+        with patch.object(sec_edgar, "_get_client", return_value=client), \
+             patch.object(sec_edgar, "_tickers_cache", None), patch("time.sleep"):
+            assert sec_edgar._get_tickers() == {"0": {"cik_str": 1}}
+        assert len(calls) == 2
+
+    def test_the_company_name_browse_is_retried(self):
+        from app.scraper import sec_edgar
+        import httpx
+        client, calls = self._client(httpx.ReadTimeout("stalled"), "<feed/>", "<feed/>")
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            sec_edgar._lookup_edgar_by_name("Gitlab")
+        assert [p["type"] for _, p in calls] == ["10-K", "10-K", "20-F"]
+
+    def test_the_person_name_browse_is_retried(self):
+        from app.scraper import sec_edgar
+        import httpx
+        one = TestPersonCikLookup.ONE
+        client, calls = self._client(httpx.ReadTimeout("stalled"), one)
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
+            assert sec_edgar._lookup_person_ciks("Robyn Denholm") == ["0001242782"]
+        assert [p["company"] for _, p in calls] == ["Denholm Robyn", "Denholm Robyn"]

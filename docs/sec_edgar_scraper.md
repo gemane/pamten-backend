@@ -28,6 +28,24 @@ No API key is required. All endpoints are public. The SEC requires a descriptive
 
 **Rate limit:** 10 requests/second. The scraper sleeps 0.12 s between every request.
 
+**Stalls and the one retry.** Every request goes through `sec_edgar._response`
+on one pooled client: the ticker file, the browse searches and the archive
+documents alike. sec.gov leaves about one request in 30 hanging: no byte
+arrives, sometimes a 503 after 24–27 s. Measured 2026-11-02, 4 of 120 plain
+archive GETs hung, 120 of the run's 142 s. It is not a rate limit (still 2 in
+120 at 0.6 s spacing) and not a worn-out connection (a hang hit a connection's
+1st request as often as its 86th). The next request, on a new connection,
+answered in 0.1–0.2 s every time. So the read timeout is 10 s (`READ_TIMEOUT`;
+it is the gap between bytes, not the whole download, and the slowest normal
+answer measured begins in 0.63 s), and a `ReadTimeout`, a `ReadError` or a
+`RemoteProtocolError` gets **one** retry, the same single retry a 429 or 503
+gets (`Retry-After` honoured, capped at 30 s). One retry in all: a stall followed
+by a 503 raises. A connect error is not retried. Each retry logs a warning
+(`SEC EDGAR: ReadTimeout on <url>, retrying once`), so a rebuild log counts the
+stalls. Before this, a stall cost 30 s and the caller dropped the data (findings
+items 38 and 41): the 2026-11-01 rebuild's run-all took about 2× as long as
+the one before on the same requests.
+
 ## Former names → aliases
 
 The submissions JSON carries `formerNames` (prior registered names under the **same
@@ -1189,6 +1207,8 @@ other than through its own scrape.
 
 At 0.12 s per request this takes roughly 5–8 seconds per company, in addition
 to the Wikidata scrape.
+Add about 10 s for each request sec.gov leaves hanging (about 1 in 30; see
+"Stalls and the one retry" above).
 
 ---
 
