@@ -76,7 +76,9 @@ def run_all(name):
 
 
 def short(res):
-    return {k: res.get(k) for k in ("status", "total", "written", "enriched") if k in res}
+    # the 13F selection too (findings item 40): fetched/total and known filers found
+    return {k: res.get(k) for k in ("status", "total", "written", "enriched", "filings_fetched",
+                                    "filings_total", "priority_found", "priority_known") if k in res}
 
 
 def phase(label, names, fn):

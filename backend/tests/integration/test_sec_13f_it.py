@@ -342,3 +342,33 @@ def test_the_first_run_keeps_the_full_discovery_window(it_db):
     _company(it_db)
     _, fetched, _ = _run(it_db)
     assert fetched.call_args.kwargs["window_days"] == 135
+
+
+def test_the_run_log_row_names_the_selection(it_db):
+    # findings item 40: a rebuild that loses the big holders shows it here
+    _company(it_db)
+    _run(it_db, holders={**HOLDERS, "priority_known": 5, "priority_found": 1, "priority_failed": 0})
+    rows = it_db.run_sql("SELECT status, error FROM ScrapeRun WHERE source = 'sec-13f'")
+    assert rows == [{"status": "ok", "error": "2/91 filings read; known filers: 1 of 5 found by CIK"}]
+
+
+def test_a_graph_known_filer_outside_the_relevance_sweep_lands(it_db):
+    """Findings item 40 end to end: the graph's CIKs reach EFTS as `ciks=`,
+    the known filer the relevance sweep never returns is fetched and written."""
+    from tests.scraper.test_sec_13f import GIGA_ACC, _fts_hit, _giga_docs, _serve_by_cik, _small_filers
+    _company(it_db, cusip="84615Q103")
+    it_db.run_command("CREATE (:Entity {id:'giga', name:'Gigafund Management Company, LLC', "
+                      "name_normalized:'gigafund management', sec_cik:'0001713833', type:'fund'})")
+    small, docs = _small_filers(30)
+    giga = _fts_hit(GIGA_ACC, "1713833", "Gigafund Management Company, LLC", "2026-08-12")
+    g, t, searches = _serve_by_cik(small, [giga], {**docs, **_giga_docs()})
+    with g, t, \
+         patch("app.scraper.sec_edgar.fetch_shares_outstanding", return_value=13_100_000_000), \
+         patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+         patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+        res = runner.run_sec_13f("SpaceX", limit=2)
+    assert any("0001713833" in s.get("ciks", "").split(",") for s in searches)
+    owners = {r["id"] for r in it_db.run_command(
+        "MATCH (a:Entity)-[:OWNS]->(:Entity {id:'sx'}) RETURN a.id AS id")}
+    assert "giga" in owners
+    assert res["priority_found"] == 1 and res["filings_fetched"] == 3
