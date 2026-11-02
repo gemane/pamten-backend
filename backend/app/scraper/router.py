@@ -10,7 +10,7 @@ from app.auth.dependencies import (
     require_admin, require_contributor, require_verified, get_current_user_optional,
 )
 from app.scraper import maintenance, proxy_write
-from app.scraper.run_log import record_run, list_runs
+from app.scraper.run_log import list_runs, mark_partial, record_run
 from app.scraper.scraper_registry import get as _get_scraper, registered as _registered_scrapers
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,7 @@ def sec_edgar_run(
             result = run_scrape_sec_edgar(company)
             run["total"] = result.get("total", 0)
             run["entity_id"] = result.get("entity_id")
+            mark_partial(run, result)
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -333,6 +334,14 @@ def _mark_errored_sources(run: dict, result: dict) -> None:
     if errored:
         run["status"] = "failed"
         run["note"] = "; ".join(errored)
+        return
+    # a source that lost sections to the network (findings item 41)
+    partial = [f"{name}: {', '.join(v.get('failed_sections') or [])}"
+               for name, v in (result.get("results") or {}).items()
+               if isinstance(v, dict) and v.get("status") == "partial"]
+    if partial:
+        run["status"] = "partial"
+        run["note"] = "lost to the network: " + "; ".join(partial)
 
 
 # ── Generic per-source endpoints (registry-driven) ────────────────────────────
@@ -393,6 +402,7 @@ def scraper_source_run(
             result = spec.run(company, depth, (country or "").upper() or None)
             run["total"] = result.get("total", 0) if isinstance(result, dict) else 0
             run["entity_id"] = result.get("entity_id") if isinstance(result, dict) else None
+            mark_partial(run, result)
         return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
