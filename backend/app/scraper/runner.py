@@ -32,6 +32,7 @@ from app.scraper.mapper import infer_entity_type, parse_full_name, is_person_nam
 from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_edge_parties, _record_touched, _record_touched_entity, _stamp_person_cik, _with_autodedup,
+    mark_scrape_incomplete,
     set_scrape_target,
     # The shared write layer lives in graph_writer now (the module split the
     # multi-scraper refactor deferred); re-exported here so existing imports and
@@ -2559,11 +2560,19 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     )
     # Mark the target company as on-demand scraped. SEC is depth-blind, so stamp depth 0
     # (the freshness stamp uses max(), so this never lowers a deeper Wikidata pass).
-    if target_id:
+    # A section lost to the network (findings item 41) makes the run `partial`: what
+    # did arrive is written, and the company is scraped again after the cooldown.
+    failed = list(data.get("failed_sections") or [])
+    if failed:
+        log.error("SEC EDGAR runner: %r is partial, lost to the network: %s",
+                  company_name, ", ".join(failed))
+        mark_scrape_incomplete(target_id, 0)
+    elif target_id:
         set_scrape_target(target_id, 0)
 
     return {
-        "status":    "ok",
+        "status":    "partial" if failed else "ok",
+        "failed_sections": failed,
         "company":   company_name,
         "cik":       data.get("cik"),
         "entity_id": target_id,

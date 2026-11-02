@@ -43,6 +43,7 @@ How to verify:
      the XML at <Archives URL>/<accession>/<primary-doc>.xml.
 """
 
+import contextvars
 import functools
 import re
 import time
@@ -70,6 +71,10 @@ HEADERS = {
     "Accept":     "application/json",
 }
 REQUEST_DELAY    = 0.12   # stay comfortably under 10 req/s
+#: the sections a company scrape can lose to the network (findings item 41)
+SECTION_OWNERS   = "13D/G owners"
+SECTION_INSIDERS = "insiders"
+SECTION_HOLDINGS = "holdings"
 READ_TIMEOUT     = 10.0   # seconds without a byte before the one retry (item 38)
 MAX_FORM4_FETCH  = 60     # max unique insiders listed from Form 3/4
 MAX_FORM4_SCAN   = 300    # Form 3/4 documents opened for them, at most
@@ -204,6 +209,36 @@ def _response(url: str, params: dict | None) -> httpx.Response:
 
 def _get(url: str, params: dict | None = None) -> dict:
     return _response(url, params).json()
+
+
+# ── Sections a scrape lost to the network (findings item 41) ──────────────────
+#
+# A whole section of a company scrape rests on one request: the 13D/G list on
+# the browse feed, the insiders and the filer-side holdings on a submissions
+# file. When that request failed, the section came back [], the answer of a
+# company with no such filings, and the run still ended `ok`: the 2026-11-01
+# rebuild lost Gitlab's owners (36 -> 17), HubSpot's (30 -> 14) and Embraer's
+# (10 -> 4) to read timeouts, and nothing said so. `scrape_company` opens a
+# collector; a section whose request fails for a reason other than "not there"
+# (404) is named in it, and the runner reports the run `partial`.
+_failed_sections: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "sec_failed_sections", default=None)
+
+
+def _section_failed(section: str, exc: BaseException) -> bool:
+    """Record `section` as lost when `exc` is a network failure; True if so.
+
+    A 404 is EDGAR saying there is nothing (a CIK with no submissions file),
+    which is an answer, not a loss. Outside a `scrape_company` call there is no
+    collector and nothing is recorded."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
+        return False
+    if not isinstance(exc, httpx.HTTPError):
+        return False
+    bucket = _failed_sections.get()
+    if bucket is not None and section not in bucket:
+        bucket.append(section)
+    return True
 
 
 def _get_text(url: str, params: dict | None = None) -> str:
@@ -1368,6 +1403,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         })
     except httpx.HTTPError as exc:
         log.error("SEC EDGAR: browse request failed for CIK=%s: %s", company_cik, exc)
+        _section_failed(SECTION_OWNERS, exc)
         return []
 
     try:
@@ -1922,6 +1958,7 @@ def fetch_executives(cik: str) -> list:
         submissions = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
     except httpx.HTTPError as exc:
         log.error("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
+        _section_failed(SECTION_INSIDERS, exc)
         return []
 
     recent       = submissions.get("filings", {}).get("recent", {})
@@ -2746,6 +2783,14 @@ def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMI
     neither of the name lookups, while both nodes carried the right CIK from
     Wikidata (2026-10-27). A CIK EDGAR does not know falls back to the name.
     """
+    token = _failed_sections.set([])
+    try:
+        return _scrape_company(company_name, holdings_limit, cik)
+    finally:
+        _failed_sections.reset(token)
+
+
+def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> dict | None:
     company = company_by_cik(cik) if cik else None
     if cik and not company:
         log.warning("SEC EDGAR: stored CIK %s unknown to EDGAR — searching %r by name", cik, company_name)
@@ -2784,6 +2829,8 @@ def scrape_company(company_name: str, holdings_limit: int = HOLDINGS_SCRAPE_LIMI
         "shares_outstanding": shares_out,
         # dated and per class, for the insider lookups the runner adds later
         "shares_outstanding_detail": asdict(detail) if detail else None,
+        # the sections a network failure emptied (findings item 41)
+        "failed_sections":    list(_failed_sections.get() or []),
     }
 
 
@@ -3411,7 +3458,11 @@ def _iter_filing_pages(cik: str):
     try:
         subs = _submissions(cik)
     except Exception as exc:  # noqa: BLE001 - a filer with no submissions file isn't an error
-        log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
+        # ... but a timeout is not "no submissions file" (findings item 41)
+        if _section_failed(SECTION_HOLDINGS, exc):
+            log.error("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
+        else:
+            log.warning("SEC EDGAR: submissions fetch failed for CIK=%s: %s", cik, exc)
         return
 
     yield _holding_filings_in(subs.get("filings", {}).get("recent", {}))

@@ -65,6 +65,18 @@ def record_run(source: str, target: str, reason: str | None = None):
                      out.get("entity_id"))
 
 
+def mark_partial(run: dict, result: dict) -> None:
+    """Finish a run row as `partial` when the scrape says it lost sections.
+
+    `partial` is a run that wrote what arrived and lost the rest to the network
+    (`failed_sections`, findings item 41): not `ok`, which would hide the loss,
+    and not `failed`, which says nothing was written. The note names the lost
+    sections."""
+    if isinstance(result, dict) and result.get("status") == "partial":
+        run["status"] = "partial"
+        run["note"] = "lost to the network: " + ", ".join(result.get("failed_sections") or [])
+
+
 def _safe_create(run_id: str, source: str, target: str, reason: str | None = None) -> None:
     try:
         with db.get_session() as s:

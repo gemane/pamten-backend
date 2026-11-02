@@ -319,7 +319,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "validation_sources", "gleif_registration_status", "lei_registration_date",
         "gleif_last_update",
         "incorporated_on", "dissolved_on", "company_status",
-        "created_at", "last_scraped_at", "sec_13f_scraped_at",
+        "created_at", "last_scraped_at", "sec_13f_scraped_at", "scrape_incomplete_at",
         "sec_ex21_ingested", "sec_acquisitions_ingested", "sec_formd_ingested",
         "no_direct_parent_reason", "no_ultimate_parent_reason",
     ),
@@ -488,6 +488,7 @@ _TIMESTAMP_PATTERN = ("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}([
                       "(Z|[+-][0-9]{2}:[0-9]{2})$")
 _TIMESTAMPS: list[tuple[str, str]] = [
     ("Entity", "created_at"), ("Entity", "last_scraped_at"), ("Entity", "sec_13f_scraped_at"),
+    ("Entity", "scrape_incomplete_at"),
     ("Person", "created_at"),
     ("VotingGroup", "created_at"), ("VotingGroup", "last_scraped_at"),
     ("OWNS", "last_scraped_at"), ("HAS_ROLE", "last_scraped_at"), ("RELATED_TO", "last_scraped_at"),

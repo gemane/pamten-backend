@@ -46,6 +46,24 @@ stalls. Before this, a stall cost 30 s and the caller dropped the data (findings
 items 38 and 41): the 2026-11-01 rebuild's run-all took about 2× as long as
 the one before on the same requests.
 
+**When the retry fails too: a `partial` run.** A whole section of a company
+scrape rests on one request: the 13D/G owners on the browse feed, the insiders
+and the filer-side holdings on a submissions file. That request's failure used
+to come back as `[]`, the answer of a company with no such filings, and the run
+ended `ok`. The 2026-11-01 rebuild lost Gitlab's owners (36 → 17), HubSpot's
+(30 → 14) and Embraer's (10 → 4) this way (findings item 41). Now
+`scrape_company` opens a collector (`_failed_sections`) and each of the three
+records its section when its request fails for a reason other than a 404
+(`_section_failed`; a 404 is EDGAR saying there is nothing). The runner then:
+writes what arrived; returns `status: "partial"` with `failed_sections`; logs
+an ERROR; and stamps the company with `scrape_incomplete_at`, so the next
+on-demand request scrapes it again after the cooldown, not after 30 days. The
+run log row is `partial`, its `error` naming the sections. Existing 13D/G edges
+are never closed by a missing answer: the 13D/G path does not stale what a run
+did not see, so a live refresh that loses the section keeps the stored owners.
+Per-filing failures (one index page, one Form 4) still drop just that filing
+and are not counted.
+
 ## Former names → aliases
 
 The submissions JSON carries `formerNames` (prior registered names under the **same

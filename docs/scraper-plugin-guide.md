@@ -359,6 +359,12 @@ The result carries `"rerun": "new_ids"`, and the on-demand run log has a second 
 with that reason (findings item 27, Toast, Inc.). A
 source that raises comes back as `{"status": "error", "detail": …}`; the run-all
 endpoint then finishes its `ScrapeRun` row as `failed`, naming the source.
+A source that wrote what arrived but lost a section to the network returns
+`{"status": "partial", "failed_sections": [...]}` and calls
+`graph_writer.mark_scrape_incomplete(target_id)` in place of `set_scrape_target`;
+every dispatcher finishes its row `partial` through `run_log.mark_partial`, and
+the company is scraped again after the cooldown (findings item 41). A 404 is not
+a loss: "there is nothing" is an answer.
 
 ---
 

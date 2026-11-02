@@ -457,6 +457,15 @@ each one (`sec_edgar: …`) and the total of the sources that did write; until
 2026-10-28 it read `ok` whatever a source raised, so a Toast SEC failure
 showed nowhere.
 
+A row is **`partial`** when a scrape wrote what arrived but lost a whole
+section to the network: the SEC scrape's 13D/G owners, insiders or holdings
+when the one request each rests on failed for a reason other than a 404. Its
+`error` names the sections (`lost to the network: 13D/G owners`), and the
+company gets `scrape_incomplete_at`, so the next on-demand request scrapes it
+again once the cooldown has passed instead of after the 30-day TTL. Until
+2026-11-02 such a run read `ok`: the 11-01 rebuild lost 19 of Gitlab's owners to
+one read timeout and nothing said so (findings item 41).
+
 The endpoint is **public**: what the platform ingests, against which company and
 when, is the kind of thing an ownership-transparency project should be open
 about, and the frontend shows the feed to every visitor. The `error` field is the

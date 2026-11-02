@@ -61,9 +61,25 @@ def set_scrape_target(entity_id: str, depth: int = 0) -> None:
         return
     depth = int(depth)
     cur = _scrape_target.get()
+    incomplete = False
     if cur and cur.get("id") == entity_id:
         depth = max(depth, int(cur.get("depth", 0)))
-    _scrape_target.set({"id": entity_id, "depth": depth})
+        incomplete = bool(cur.get("incomplete"))
+    _scrape_target.set({"id": entity_id, "depth": depth, "incomplete": incomplete})
+
+
+def mark_scrape_incomplete(entity_id: str, depth: int = 0) -> None:
+    """`set_scrape_target`, for a scrape that lost a section to the network.
+
+    The stamp still lands, so the cooldown holds and a source that is down is
+    not asked again on every view, but it also sets `scrape_incomplete_at`,
+    and `ondemand.decide_scrape` scrapes again once the cooldown has passed
+    instead of after the 30-day TTL (findings item 41). Another source in
+    the same scope cannot clear it: only a complete scrape does."""
+    if not entity_id:
+        return
+    set_scrape_target(entity_id, depth)
+    _scrape_target.set({**_scrape_target.get(), "incomplete": True})
 
 
 def _stamp_scrape_freshness(target: dict) -> None:
@@ -77,8 +93,11 @@ def _stamp_scrape_freshness(target: dict) -> None:
             "MATCH (e:Entity {id: $id}) "
             "SET e.last_scraped_at = $now, e.on_demand_scraped = true, "
             "e.scrape_depth = CASE WHEN $d > coalesce(e.scrape_depth, -1) "
-            "THEN $d ELSE e.scrape_depth END",
-            {"id": target["id"], "now": now, "d": int(target.get("depth", 0))})
+            "THEN $d ELSE e.scrape_depth END, "
+            # set by a scrape that lost a section, cleared by a complete one (item 41)
+            "e.scrape_incomplete_at = $inc",
+            {"id": target["id"], "now": now, "d": int(target.get("depth", 0)),
+             "inc": now if target.get("incomplete") else None})
     except Exception as exc:  # noqa: BLE001 - never fail a scrape on the freshness stamp
         log.error("Freshness stamp failed for %s: %s", target.get("id"), exc)
 

@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class ScrapeDecision:
     should_scrape: bool
-    reason: str          # forced | absent | never_on_demand | stale | deepen | fresh | cooldown
+    reason: str          # forced | absent | never_on_demand | incomplete | stale | deepen | fresh | cooldown
     need_depth: int
 
 
@@ -45,8 +45,8 @@ def decide_scrape(entity: dict | None, *, requested_depth: int, force: bool,
                   now: datetime, ttl_days: int | None = None,
                   cooldown_hours: int | None = None) -> ScrapeDecision:
     """Should we scrape, and to what depth? Pure — `entity` is the resolved DB row (or
-    None). Branch order: cooldown (force only) → force → absent → never-on-demand → stale →
-    deepen → fresh."""
+    None). Branch order: cooldown (force only) → force → absent → never-on-demand →
+    incomplete → stale → deepen → fresh."""
     ttl = settings.SCRAPER_ONDEMAND_TTL_DAYS if ttl_days is None else ttl_days
     cooldown = settings.SCRAPER_ONDEMAND_COOLDOWN_HOURS if cooldown_hours is None else cooldown_hours
     depth = int(requested_depth)
@@ -65,6 +65,11 @@ def decide_scrape(entity: dict | None, *, requested_depth: int, force: bool,
         return ScrapeDecision(True, "absent", depth)
     if not entity.get("on_demand_scraped"):
         return ScrapeDecision(True, "never_on_demand", depth)
+    # The last scrape lost a section to the network (findings item 41): again once
+    # the cooldown has passed, not after the TTL. Within it, served from the DB like
+    # any fresh company, so a source that is down is not asked on every view.
+    if entity.get("scrape_incomplete_at") and not within_cooldown:
+        return ScrapeDecision(True, "incomplete", depth)
     if last is None or (now - last) > timedelta(days=ttl):
         return ScrapeDecision(True, "stale", depth)
     if depth > int(entity.get("scrape_depth") or 0):
@@ -149,7 +154,7 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
     The nested runners (each `@_with_autodedup`) become no-ops for dedup/freshness and feed
     the shared collector; the combined merge + the single freshness stamp run here."""
     from app.scraper.scraper_registry import registered
-    from app.scraper.run_log import record_run
+    from app.scraper.run_log import mark_partial, record_run
 
     from app.scraper.runner import rerun_for_new_ids, stored_hard_ids
 
@@ -171,6 +176,7 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
                 res = spec.run(query, run_depth, country)
                 if isinstance(res, dict):
                     run["total"] = res.get("total", 0) or 0
+                    mark_partial(run, res)
                     if res.get("entity_id"):
                         target_id = res["entity_id"]
                         run["entity_id"] = target_id

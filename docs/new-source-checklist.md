@@ -904,6 +904,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       against 0.63 s), and retry once on a read timeout or a dropped connection.
       **Every request goes through the one helper:** three SEC calls used the client directly
       and got no retry at all. Grep for the client's raw `.get(` when you add one.
+- [ ] **A failed request is not an empty answer.** When a section of the scrape rests on one
+      request, its failure must not come back as `[]`: that is the answer of "nothing there",
+      and the run reads `ok`. SEC's 13D/G browse did exactly that, and the 2026-11-01 rebuild
+      lost Gitlab's owners to one timeout with nothing in the run log (findings item 41). Tell
+      a 404 (an answer) from a timeout or a 5xx (a loss), and on a loss return `status:
+      "partial"` with `failed_sections` and call `mark_scrape_incomplete` (see the plugin
+      guide), so the run log says so and the company is retried after the cooldown.
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
       easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space
