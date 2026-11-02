@@ -1750,6 +1750,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
         # CUSIPs have no single authority), and each stored one becomes a
         # search term next run.
         all_cusips = sorted({*known_cusips, *(data.get("cusips_seen") or [])})
+        extra_filers = 0
         if all_cusips != sorted(known_cusips):
             with db.get_session() as session:
                 session.run("MATCH (e:Entity {id: $id}) "
@@ -1769,6 +1770,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                                        priority_ciks=priority_ciks)
             have = {h["filer_cik"] for h in holders}
             extra = [h for h in second["holders"] if h["filer_cik"] not in have]
+            extra_filers = len({h["filer_cik"] for h in extra})
             if extra:
                 log.info("SEC EDGAR 13F: cusip second pass found %d filers the "
                          "first search missed", len(extra))
@@ -1814,6 +1816,9 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                         id=company_id, now=datetime.now(timezone.utc).isoformat())
 
         run["total"] = written
+        # What was selected, in the run log (findings item 40): a rebuild that
+        # loses the big holders must show it here, not only in a later diff.
+        run["note"] = _13f_selection_note(data, extra_filers)
         log.info("SEC 13F: %d holder edges for %r (%d/%d filings read)",
                  written, company, data["filings_fetched"], data["filings_total"])
         return {"status": "ok", "company": company, "entity_id": company_id,
@@ -1821,7 +1826,25 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 "cusip": data["cusip_seen"],
                 "period": data["period"], "shares_outstanding": outstanding,
                 "filings_fetched": data["filings_fetched"],
-                "filings_total": data["filings_total"]}
+                "filings_total": data["filings_total"],
+                "priority_known": data.get("priority_known", 0),
+                "priority_found": data.get("priority_found", 0),
+                "priority_failed": data.get("priority_failed", 0)}
+
+
+def _13f_selection_note(data: dict, extra_filers: int = 0) -> str:
+    """The 13F run's selection in one line for its run-log row (findings item
+    40): filings read of those on EDGAR, and how many graph-known filers the
+    by-CIK search found. The first pass's figures; the CUSIP second pass adds
+    `extra_filers`."""
+    note = (f"{data.get('filings_fetched', 0)}/{data.get('filings_total', 0)} filings read; "
+            f"known filers: {data.get('priority_found', 0)} of "
+            f"{data.get('priority_known', 0)} found by CIK")
+    if data.get("priority_failed"):
+        note += f", {data['priority_failed']} CIK searches failed"
+    if extra_filers:
+        note += f"; second pass +{extra_filers} filers"
+    return note
 
 
 @_with_autodedup

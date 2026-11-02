@@ -3571,6 +3571,80 @@ _13F_PAGE = 10          # EFTS returns 10 document hits per page
 # smoke run wrote "current" positions with as-of dates spanning four years.
 _13F_WINDOW_DAYS = 135
 
+# Graph-known filers per EFTS request when they are asked for by CIK (findings
+# item 40). Measured 2026-11-02: 500 CIKs in one `ciks=` list work, 1,200 are a
+# 400 (the URL is too long); 250 leaves room for long query terms.
+_13F_CIK_BATCH = 250
+
+
+def _13f_base_params(window_days: int) -> dict:
+    params: dict = {"forms": "13F-HR"}
+    if window_days:
+        start = (datetime.now(timezone.utc) - timedelta(days=window_days)).date()
+        params |= {"dateRange": "custom", "startdt": start.isoformat(),
+                   "enddt": datetime.now(timezone.utc).date().isoformat()}
+    return params
+
+
+def _13f_entry(hit: dict) -> dict | None:
+    """One EFTS hit as {accession, filer_cik, file_date, display_name}."""
+    src = hit.get("_source", {})
+    accession = (hit.get("_id") or "").split(":")[0]
+    ciks = src.get("ciks") or []
+    if not accession or not ciks:
+        return None
+    return {"accession": accession, "filer_cik": ciks[0].lstrip("0") or "0",
+            "file_date": src.get("file_date") or "",
+            "display_name": (src.get("display_names") or [""])[0]}
+
+
+def _13f_priority_filings(queries: list[str], window_days: int,
+                          priority: list[str]) -> tuple[dict[str, dict], int]:
+    """The newest 13F naming any of `queries` for each graph-known filer, asked
+    for BY CIK: ({10-digit CIK: entry}, failed requests).
+
+    Relevance ranks a mega-filer's one row among thousands at the tail of every
+    query, so the relevance sweep never reaches it, and priority could only
+    reorder what that sweep found. Berkshire lost BlackRock, Vanguard, JPMorgan
+    and 43 more this way on 2026-11-01: on its class-B CUSIP and its name they
+    ranked past the 2,500-hit cap, 3 and 6 of 46 found (findings item 40).
+    EFTS filters by filer with `ciks=`, and one request per term found 43-46
+    of the 46. A failed batch is logged and counted, never fatal: the relevance
+    sweep still stands."""
+    base = _13f_base_params(window_days)
+    found: dict[str, dict] = {}
+    failed = 0
+    for query in queries:
+        for i in range(0, len(priority), _13F_CIK_BATCH):
+            batch = priority[i:i + _13F_CIK_BATCH]
+            wanted = set(batch)
+            params = {**base, "q": f'"{query}"', "ciks": ",".join(batch)}
+            offset = 0
+            while True:
+                try:
+                    data = _get(SEARCH_URL, {**params, "from": offset})
+                except httpx.HTTPError as exc:
+                    log.warning("SEC EDGAR: 13F search %r by %d CIKs failed (%s)",
+                                query, len(batch), exc)
+                    failed += 1
+                    break
+                hits = data.get("hits", {}).get("hits", [])
+                qtotal = data.get("hits", {}).get("total", {}).get("value", 0)
+                for h in hits:
+                    entry = _13f_entry(h)
+                    cik = entry and _cik_int(entry["filer_cik"]).zfill(10)
+                    # only the filers asked for: a co-filer on the same
+                    # filing is not a graph-known holder
+                    if not entry or cik not in wanted:
+                        continue
+                    best = found.get(cik)
+                    if best is None or entry["file_date"] > best["file_date"]:
+                        found[cik] = entry
+                offset += max(len(hits), _13F_PAGE)
+                if not hits or offset >= qtotal:
+                    break
+    return found, failed
+
 
 def _13f_filings_for(queries: list[str], limit: int,
                      window_days: int = _13F_WINDOW_DAYS) -> tuple[list[dict], int]:
@@ -3591,11 +3665,7 @@ def _13f_filings_for(queries: list[str], limit: int,
     (13F-HR/A) restate the whole table, so per filer only the newest accession
     survives.
     """
-    base_params: dict = {"forms": "13F-HR"}
-    if window_days:
-        start = (datetime.now(timezone.utc) - timedelta(days=window_days)).date()
-        base_params |= {"dateRange": "custom", "startdt": start.isoformat(),
-                        "enddt": datetime.now(timezone.utc).date().isoformat()}
+    base_params = _13f_base_params(window_days)
     seen_acc: set[str] = set()
     by_filer: dict[str, dict] = {}
     total = 0
@@ -3636,15 +3706,10 @@ def _13f_filings_for(queries: list[str], limit: int,
         for h in hits:
             if len(seen_acc) >= discover_cap:
                 break
-            src = h.get("_source", {})
-            accession = (h.get("_id") or "").split(":")[0]
-            ciks = src.get("ciks") or []
-            if not accession or accession in seen_acc or not ciks:
+            entry = _13f_entry(h)
+            if not entry or entry["accession"] in seen_acc:
                 continue
-            seen_acc.add(accession)
-            entry = {"accession": accession, "filer_cik": ciks[0].lstrip("0") or "0",
-                     "file_date": src.get("file_date") or "",
-                     "display_name": (src.get("display_names") or [""])[0]}
+            seen_acc.add(entry["accession"])
             best = by_filer.get(entry["filer_cik"])
             if best is None or entry["file_date"] > best["file_date"]:
                 by_filer[entry["filer_cik"]] = entry
@@ -3781,15 +3846,25 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
     # discovered (a filer using a third identifier still spells some name).
     queries = [*dict.fromkeys([*(cusips or []), company_name])]
     discovered, total = _13f_filings_for(queries, limit, window_days)
-    # WHO gets fetched: filers the graph already knows come FIRST, whatever
-    # their relevance rank — a mega-filer's single SpaceX row among a thousand
+    # WHO gets fetched: every filer the graph already knows, whatever its
+    # relevance rank — a mega-filer's single SpaceX row among a thousand
     # positions ranks near the bottom of 5,000 hits, which is exactly how
-    # NVIDIA and Alphabet stayed invisible at any sane fetch limit. The rest
-    # fill the remaining budget in relevance order.
-    prio = {_cik_int(c).zfill(10) for c in (priority_ciks or set()) if c}
-    ranked = sorted(discovered,
-                    key=lambda f: 0 if _cik_int(f["filer_cik"]).zfill(10) in prio else 1)
-    filings = ranked[:limit]
+    # NVIDIA and Alphabet stayed invisible at any sane fetch limit. Known
+    # filers are asked for by CIK as well (findings item 40): reordering only
+    # what the relevance sweep found lost Berkshire's 46 biggest holders. All
+    # of them are fetched; `limit` more fill in relevance order.
+    prio = sorted({_cik_int(c).zfill(10) for c in (priority_ciks or set()) if c})
+    by_cik = {_cik_int(f["filer_cik"]).zfill(10): f for f in discovered}
+    by_prio, prio_failed = (_13f_priority_filings(queries, window_days, prio)
+                            if prio else ({}, 0))
+    for cik, entry in by_prio.items():
+        held = by_cik.get(cik)
+        if held is None or entry["file_date"] > held["file_date"]:
+            by_cik[cik] = entry
+    known = set(prio)
+    priority_filings = [f for cik, f in by_cik.items() if cik in known]
+    others = [f for f in discovered if _cik_int(f["filer_cik"]).zfill(10) not in known]
+    filings = [*priority_filings, *others[:limit]]
     known_cusips = set(cusips or [])
     holders: list[dict] = []
     period_seen = None
@@ -3852,12 +3927,16 @@ def fetch_13f_holders(company_name: str, known_names: list | None = None,
     cusip_seen = next(iter(sorted(
         (c for c in cusip_counts if c in corroborated),
         key=lambda c: -cusip_counts[c])), (cusips[0] if cusips else None))
-    log.info("SEC EDGAR 13F: %d holders of %r from %d filings (%d total on EDGAR)",
-             len(holders), company_name, len(filings), total)
+    log.info("SEC EDGAR 13F: %d holders of %r from %d filings (%d total on EDGAR; "
+             "%d of %d known filers found by CIK)", len(holders), company_name,
+             len(filings), total, len(priority_filings), len(prio))
     return {"cusip_seen": cusip_seen,
             "cusips_seen": sorted(c for c in cusip_counts if c in corroborated),
             "period": period_seen,
             "filings_total": total, "filings_fetched": len(filings),
+            # the selection, for the run log (findings item 40)
+            "priority_known": len(prio), "priority_found": len(priority_filings),
+            "priority_failed": prio_failed,
             "holders": holders}
 
 

@@ -91,6 +91,146 @@ class TestPriorityFilers:
             "the graph-known filer was fetched despite ranking last"
 
 
+def _serve_by_cik(relevance_hits, by_cik_hits, docs, fail_cik_search=False):
+    """Like `_serve_13f`, but EFTS answers a `ciks=` request from `by_cik_hits`
+    (filtered to the CIKs asked for, as EDGAR does) and every other search from
+    `relevance_hits`. Records each search's params."""
+    import httpx
+    searches = []
+
+    def _get(url, params=None):
+        params = params or {}
+        if url == sec_edgar.SEARCH_URL:
+            searches.append(dict(params))
+            frm = int(params.get("from", 0))
+            if "ciks" in params:
+                if fail_cik_search:
+                    req = httpx.Request("GET", url)
+                    raise httpx.HTTPStatusError("500", request=req,
+                                                response=httpx.Response(500, request=req))
+                asked = set(params["ciks"].split(","))
+                pool = [h for h in by_cik_hits if h["_source"]["ciks"][0] in asked]
+            else:
+                pool = relevance_hits
+            return {"hits": {"total": {"value": len(pool)}, "hits": pool[frm:frm + 10]}}
+        if url.endswith("/index.json"):
+            key = url.split("/data/")[1].rsplit("/", 1)[0]
+            return {"directory": {"item": [{"name": n} for n in docs.get(f"{key}/index", [])]}}
+        raise httpx.ConnectError(f"unexpected JSON fetch: {url}")
+
+    def _get_text(url, params=None):
+        key = url.split("/data/")[1]
+        if key in docs:
+            return docs[key]
+        raise httpx.ConnectError(f"unexpected text fetch: {url}")
+
+    return (patch.object(sec_edgar, "_get", side_effect=_get),
+            patch.object(sec_edgar, "_get_text", side_effect=_get_text), searches)
+
+
+def _small_filers(n, start=9000):
+    hits = [_fts_hit(f"0001140361-26-9{i:05d}", str(start + i), f"Fund {i}", "2026-08-01")
+            for i in range(n)]
+    docs = {f"{start + i}/00011403612 69{i:05d}".replace(" ", "") + "/index": [] for i in range(n)}
+    return hits, docs
+
+
+class TestKnownFilersByCik:
+    """Findings item 40: Berkshire's 46 biggest 13F holders (BlackRock, Vanguard,
+    JPMorgan …) ranked past the relevance sweep on two of its three search
+    terms, and priority could only reorder what the sweep found. Known filers
+    are now asked for by CIK, and every one found is fetched."""
+
+    NAMES = ["Space Exploration Technologies Corp."]
+
+    def test_a_known_filer_the_relevance_sweep_never_reaches_is_found_by_cik(self):
+        small, docs = _small_filers(30)
+        giga = _fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")
+        g, t, searches = _serve_by_cik(small, [giga], {**docs, **_giga_docs()})
+        with g, t:
+            out = fetch_13f_holders("SpaceX", limit=2, known_names=self.NAMES,
+                                    priority_ciks={"0001713833", "0000000042"})
+        assert any(h["filer_cik"] == "1713833" for h in out["holders"])
+        assert (out["priority_known"], out["priority_found"], out["priority_failed"]) == (2, 1, 0)
+        assert any(s.get("ciks") == "0000000042,0001713833" for s in searches)
+
+    def test_every_known_filer_found_is_fetched_beyond_the_limit(self):
+        small, docs = _small_filers(30)
+        known, kdocs = _small_filers(5, start=7000)
+        g, t, _ = _serve_by_cik(small, known, {**docs, **kdocs})
+        with g, t:
+            out = fetch_13f_holders("X", known_names=["X"], limit=2,
+                                    priority_ciks={str(7000 + i) for i in range(5)})
+        assert out["priority_found"] == 5 and out["filings_fetched"] == 5 + 2
+
+    def test_the_ciks_go_in_batches(self):
+        g, t, searches = _serve_by_cik([], [], {})
+        prio = {str(100000 + i) for i in range(600)}
+        with g, t:
+            fetch_13f_holders("X", known_names=["X"], priority_ciks=prio)
+        lists = [s["ciks"].split(",") for s in searches if "ciks" in s]
+        assert [len(c) for c in lists] == [250, 250, 100]
+        assert len({c for lst in lists for c in lst}) == 600
+
+    def test_each_query_term_is_asked_by_cik(self):
+        g, t, searches = _serve_by_cik([], [], {})
+        with g, t:
+            fetch_13f_holders("X", known_names=["X"], cusips=["084670108"],
+                              priority_ciks={"0000000042"})
+        assert sorted(s["q"] for s in searches if "ciks" in s) == ['"084670108"', '"X"']
+
+    def test_a_hit_for_a_filer_not_asked_for_is_ignored(self):
+        # a co-filer on a filing is not a graph-known holder
+        # `_serve_13f` ignores `ciks=` and answers with the stranger anyway
+        stranger = _fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")
+        g, t = _serve_13f([stranger], _giga_docs())
+        with g, t:
+            out = sec_edgar._13f_priority_filings(["X"], 135, ["0000000042"])
+        assert out == ({}, 0)
+
+    def test_the_newest_filing_per_filer_wins_across_both_searches(self):
+        old = _fts_hit("0001140361-26-000001", "1713833", "Gigafund", "2026-05-01")
+        new = _fts_hit(GIGA_ACC, "1713833", "Gigafund", "2026-08-12")
+        g, t, _ = _serve_by_cik([old], [new], _giga_docs())
+        with g, t:
+            out = fetch_13f_holders("SpaceX", known_names=self.NAMES,
+                                    priority_ciks={"1713833"})
+        assert out["filings_fetched"] == 1 and out["holders"][0]["filer_cik"] == "1713833"
+
+    def test_a_failed_cik_search_is_counted_not_fatal(self):
+        small, docs = _small_filers(3)
+        g, t, _ = _serve_by_cik(small, [], docs, fail_cik_search=True)
+        with g, t:
+            out = fetch_13f_holders("X", known_names=["X"], limit=5,
+                                    priority_ciks={"0000000042"})
+        assert out["priority_failed"] == 1 and out["filings_fetched"] == 3
+
+    def test_a_long_cik_answer_is_paged(self):
+        known, kdocs = _small_filers(25, start=7000)
+        g, t, searches = _serve_by_cik([], known, kdocs)
+        with g, t:
+            out = fetch_13f_holders("X", known_names=["X"],
+                                    priority_ciks={str(7000 + i) for i in range(25)})
+        assert out["priority_found"] == 25
+        assert sorted(int(s["from"]) for s in searches if "ciks" in s) == [0, 10, 20]
+
+    def test_without_known_filers_no_cik_search(self):
+        g, t, searches = _serve_by_cik([], [], {})
+        with g, t:
+            out = fetch_13f_holders("X", known_names=["X"])
+        assert not any("ciks" in s for s in searches) and out["priority_known"] == 0
+
+
+class TestSelectionNote:
+    def test_the_run_log_note_names_the_selection(self):
+        from app.scraper.runner import _13f_selection_note
+        data = {"filings_fetched": 146, "filings_total": 8127, "priority_found": 46,
+                "priority_known": 1196, "priority_failed": 0}
+        assert _13f_selection_note(data) == "146/8127 filings read; known filers: 46 of 1196 found by CIK"
+        assert _13f_selection_note({**data, "priority_failed": 2}, 12).endswith(
+            "found by CIK, 2 CIK searches failed; second pass +12 filers")
+
+
 class Test13FIssuerMatching:
     """Row acceptance is stricter than the 13D/G name check: 13F rows come
     from OTHER issuers' tables in the same filing, and the tolerant check

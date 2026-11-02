@@ -904,6 +904,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       against 0.63 s), and retry once on a read timeout or a dropped connection.
       **Every request goes through the one helper:** three SEC calls used the client directly
       and got no retry at all. Grep for the client's raw `.get(` when you add one.
+- [ ] **Ask for what you already know by key, not through relevance.** A full-text search
+      ranks a big filer's one row among thousands at the tail, past any sane sweep; a
+      priority list that only reorders what the search returned cannot reach it. Berkshire's
+      46 biggest 13F holders were lost this way on 2026-11-01 (findings item 40). When the
+      source can filter by id (EFTS: `ciks=`), ask for the known ids explicitly, in batches
+      that fit the URL, and log what was selected in the run log, so a loss shows in the
+      run, not only in the next rebuild's diff.
 - [ ] **A failed request is not an empty answer.** When a section of the scrape rests on one
       request, its failure must not come back as `[]`: that is the answer of "nothing there",
       and the run reads `ok`. SEC's 13D/G browse did exactly that, and the 2026-11-01 rebuild

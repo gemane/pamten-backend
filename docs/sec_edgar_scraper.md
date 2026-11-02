@@ -880,6 +880,21 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   it is a sample, and the command prints fetched-vs-total so nobody mistakes
   one for the other. Amendments (13F-HR/A) restate the whole table, so only
   the newest accession per filer is read.
+- **Filers the graph knows are asked for by CIK, and all of them are read.**
+  Relevance ranks a mega-filer's single row among thousands at the tail of
+  every query: on Berkshire's class-A CUSIP (2,352 hits) BlackRock, Vanguard,
+  JPMorgan and 43 more sat at a median rank of 2,227; on the class-B CUSIP and
+  the name (~8,000 hits each) mostly past the 2,500-hit discovery sweep (3 and 6
+  of 46 found). Priority used to reorder only what the sweep found, so the
+  2026-11-01 rebuild lost all 46 (findings item 40). Now every entity's
+  `sec_cik` is also sent to EFTS as `ciks=` (`_13f_priority_filings`, 250 CIKs
+  a request: 500 work, 1,200 are a 400 for the URL length), per query term and
+  paged. Only hits for a filer asked for count, so a co-filer is not taken for a
+  known holder. Every known filer found is fetched; `--limit` more fill in
+  relevance order. A failed CIK batch is logged and counted, never fatal. The
+  run-log row's note says what was selected: `146/8127 filings read; known
+  filers: 46 of 1196 found by CIK`, plus the CIK searches that failed and the
+  filers the CUSIP second pass added. The rebuild replay prints the same counts.
 - **Every SEC-written edge and claim carries `filing_type`** — "13F", "13G/A",
   "Form 4" — via `_short_form()`, which collapses both eras' spellings
   ("SCHEDULE 13G/A" / "SC 13G/A" → "13G/A"). GLEIF RR edges carry "RR" and UK
