@@ -24,7 +24,9 @@ Fields returned and Owlgraph mapping:
   share structures where voting power differs from economic ownership.
 
 Rate limits:
-  Same as sec_edgar.py — max 10 req/s, 0.12 s sleep, User-Agent required.
+  Every request goes through sec_edgar._response (findings item 42): the pooled
+  client and its User-Agent, the 0.12 s spacing, one retry on a stall or a
+  429/503, the Archives cache, and the "request lost" log (findings item 45).
   Docs: https://www.sec.gov/os/accessing-edgar-data
 
 Data licence:
@@ -49,11 +51,9 @@ from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-HEADERS = {"User-Agent": "Owlgraph/1.0 contact@owlgraph.org"}
 BROWSE_URL      = "https://www.sec.gov/cgi-bin/browse-edgar"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions"
 ARCHIVES_URL    = "https://www.sec.gov/Archives/edgar/data"
-_TIMEOUT        = 25.0
 
 _NS_A = {"a": "http://www.w3.org/2005/Atom"}
 
@@ -63,9 +63,15 @@ _MIN_SIM = 0.45
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
 
+# Through the SEC scraper's one request helper (findings item 42). This module
+# used to call `httpx.get` itself: a new connection per request (~60 s to set
+# up on a host with a dead IPv6 route), no spacing, no retry, no cache — and no
+# status check, so a 503 page was parsed as the proxy statement and reported
+# "Could not locate beneficial ownership table". `_response` raises on any
+# error status; the callers turn that into their `error` result.
 def _get(url: str, **params) -> httpx.Response:
-    return httpx.get(url, headers=HEADERS, timeout=_TIMEOUT,
-                     follow_redirects=True, params=params or None)
+    from app.scraper.sec_edgar import _response
+    return _response(url, params or None)
 
 
 def _get_json(url: str) -> dict:
@@ -505,7 +511,12 @@ def fetch_proxy_ownership(company_name: str) -> dict:
         }
     or {"error": str, "owners": []} on failure.
     """
-    found = _find_company(company_name)
+    try:
+        found = _find_company(company_name)
+    except httpx.HTTPError as exc:
+        # the browse search or a submissions file failed (already logged as a
+        # lost request) — not "this company files no proxy"
+        return {"error": f"EDGAR search failed: {exc}", "owners": []}
     if not found:
         return {"error": f"No DEF 14A found on EDGAR for '{company_name}'", "owners": []}
 
@@ -515,7 +526,7 @@ def fetch_proxy_ownership(company_name: str) -> dict:
 
     try:
         resp = _get(doc_url)
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         return {"error": f"Failed to fetch filing: {exc}", "owners": []}
 
     soup  = BeautifulSoup(resp.content, "lxml")
