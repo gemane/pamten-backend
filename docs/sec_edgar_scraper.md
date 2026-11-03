@@ -42,7 +42,9 @@ answer measured begins in 0.63 s), and a `ReadTimeout`, a `ReadError` or a
 gets (`Retry-After` honoured, capped at 30 s). One retry in all: a stall followed
 by a 503 raises. A connect error is not retried. Each retry logs a warning
 (`SEC EDGAR: ReadTimeout on <url>, retrying once`), so a rebuild log counts the
-stalls. Before this, a stall cost 30 s and the caller dropped the data (findings
+stalls. The DEF 14A reader (`proxy_statement.py`) goes through the same
+`_response` since findings item 42; it had its own `httpx.get`, without the
+retry, the cache or even a status check. Before this, a stall cost 30 s and the caller dropped the data (findings
 items 38 and 41): the 2026-11-01 rebuild's run-all took about 2× as long as
 the one before on the same requests.
 

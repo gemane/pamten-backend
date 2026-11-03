@@ -907,7 +907,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       source's slowest normal answer, set the read timeout a good margin above it (SEC: 10 s
       against 0.63 s), and retry once on a read timeout or a dropped connection.
       **Every request goes through the one helper:** three SEC calls used the client directly
-      and got no retry at all. Grep for the client's raw `.get(` when you add one.
+      and got no retry at all, and the DEF 14A reader (`proxy_statement.py`) had its own
+      `httpx.get` with no status check, so a 503 page was parsed as the filing (findings
+      item 42). Grep for the client's raw `.get(` and for `httpx.get(` when you add one.
 - [ ] **Ask for what you already know by key, not through relevance.** A full-text search
       ranks a big filer's one row among thousands at the tail, past any sane sweep; a
       priority list that only reorders what the search returned cannot reach it. Berkshire's
