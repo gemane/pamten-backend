@@ -173,29 +173,29 @@ class TestTheSitesThatScanned:
         def run_query(cypher, params=None):
             queries.append(cypher)
             if "(c:Entity {id: $id})" in cypher:
-                return [{"id": "e1", "name": "Acme Corp"}]
+                return [{"id": "e1", "name": "Acme Corp", "sec_cik": None}]
             return [{"oid": "p1", "olabel": "Person", "matched_name": "Brin Sergey",
-                     "stake": 5.0, "file_date": None, "source_id": "s",
-                     "ownership_type": "minority", "since": None}]
+                     "stake": 5.0, "ownership_type": "minority"}]
         monkeypatch.setattr(proxy_write, "run_query", run_query)
         monkeypatch.setattr(proxy_write, "run_command",
                             lambda cypher, params=None: commands.append(cypher))
+        monkeypatch.setattr("app.claims.record_claim", lambda **k: None)
+        monkeypatch.setattr("app.scraper.graph_writer._ensure_source", lambda *a, **k: "sec")
         # The proxy parser (bs4) is imported lazily inside the writer; stub the
         # module so this stays a query-text test, not a parser one.
         import sys
         import types
         stub = types.ModuleType("app.scraper.proxy_statement")
-        stub.fetch_proxy_ownership = lambda company: {
+        stub.fetch_proxy_ownership = lambda company, cik=None: {
             "owners": [{"name": "Sergey Brin", "voting_power_pct": 5.0}]}
         monkeypatch.setitem(sys.modules, "app.scraper.proxy_statement", stub)
         res = proxy_write.write_proxy_ownership("Acme Corp", entity_id="e1")
         assert res.get("db_error") is None
         assert "MATCH (c:Entity {id: $id})" in queries[0]
         assert "(c:Entity {id: $cid})" in queries[1] and "labels(n)[0] AS olabel" in queries[1]
-        # the reorder rename and the edge update both anchor on the owner's label
-        assert any("MATCH (n:Person {id: $oid})\n" in c for c in commands)
-        assert any("MATCH (n:Person {id: $oid})-[r:OWNS]->(c:Entity {id: $cid})" in c
-                   for c in commands)
+        # the edge update anchors on the owner's label; the owner is never renamed
+        assert commands and all("MATCH (n:Person {id: $oid})-[r:OWNS]->(c:Entity {id: $cid})" in c
+                                for c in commands)
 
     def test_federation_import_labels_both_ends(self, fake_db, monkeypatch):
         from app.routers import federation

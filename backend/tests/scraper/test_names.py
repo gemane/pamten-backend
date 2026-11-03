@@ -4,7 +4,6 @@ from app.scraper.names import (
     _name_words,
     _person_name_variants,
     _entity_name_variants,
-    _is_reordering,
 )
 
 
@@ -43,17 +42,3 @@ def test_entity_variants_strip_leading_the_and_punctuation():
     assert "The Vanguard Group Inc" in variants  # punctuation only
 
 
-def test_is_reordering_true_for_same_words_different_order():
-    assert _is_reordering("Sergey Brin", "Brin Sergey") is True
-
-
-def test_is_reordering_false_for_identical_names():
-    assert _is_reordering("Sergey Brin", "Sergey Brin") is False
-
-
-def test_is_reordering_false_for_different_words():
-    assert _is_reordering("Sergey Brin", "Larry Page") is False
-
-
-def test_is_reordering_ignores_case_and_punctuation():
-    assert _is_reordering("Warren E. Buffett", "buffett warren e") is True

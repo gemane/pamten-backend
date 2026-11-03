@@ -106,11 +106,3 @@ def _entity_name_variants(name: str) -> list[str]:
         no_punct = base.replace(",", "").replace(".", "")
         variants.append(no_punct)
     return list(dict.fromkeys(variants))
-
-
-def _is_reordering(proxy_name: str, db_name: str) -> bool:
-    """True when proxy and DB name contain exactly the same words in a different order."""
-    pw = sorted(_name_words(proxy_name.lower()))
-    dw = sorted(_name_words(db_name.lower()))
-    return pw == dw and proxy_name.replace(".", "").replace(",", "").strip() != \
-           db_name.replace(".", "").replace(",", "").strip()
