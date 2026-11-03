@@ -223,7 +223,7 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/scraper/proxy-statement/run` | contributor | Parse a company's latest DEF 14A proxy and return per-person voting power (read-only) |
+| POST | `/scraper/proxy-statement/run` | contributor | Read a company's latest DEF 14A ownership table and return each owner's voting power (read-only): `{cik, filing_date, filing_url, share_class_structure, basis, owners: [{name, voting_power_pct, below_one_percent}], note?}` — a multi-class filing without a voting-power column returns no owners |
 | POST | `/scraper/proxy-statement/write` | contributor | Fetch the latest DEF 14A and write `voting_power_pct` onto OWNS edges (`entity_id` overrides name lookup) |
 | GET | `/scraper/duplicate-edges/count` | admin | Count duplicate OWNS edges — active twins, or edges closed on the same day (read-only): `{active_edges, distinct_pairs, duplicate_pairs, redundant_edges, closed_duplicate_pairs}` |
 | POST | `/scraper/deduplicate-edges` | admin | Collapse duplicate OWNS edges — active twins and edges closed on the same day — keeping the largest stake (by @rid, provenance-preserving); what the others said is first folded into the survivor. Returns `{duplicates_removed, pairs_cleaned, closed_pairs_cleaned, survivors_folded}` |

@@ -934,6 +934,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] **Never write the current year into a cut-off.** "Recent" is counted from today's
       date: the DEF 14A reader's window was `2026 - 4`, which stops moving on 1 January
       2027 (findings item 48). Take `today` as a parameter so the test can set the clock.
+- [ ] **Read a table by its headers, never by position, and never fill a blank.** The DEF
+      14A reader took "the last non-empty cell" as voting power and read `*` ("less than
+      1 %") as 0.4: a director with no shares got the group row's 92.2 %, and four
+      officers a made-up 0.4 % (findings item 47). Expand colspan and rowspan into columns,
+      name each column from the header rows, read every value from under its header, and
+      keep "less than 1 %" as a flag, not a number. A percent of one class is not a share
+      of the votes when the company has another class.
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
       easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space
