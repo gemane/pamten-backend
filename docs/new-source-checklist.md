@@ -931,6 +931,9 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       could not say which of its 85 retries lost a filing (findings item 45). Log every
       request that ends in an error other than "not there" in the helper, after the retry,
       and count them into the run result (`lost_requests`), so two rebuilds compare.
+- [ ] **Never write the current year into a cut-off.** "Recent" is counted from today's
+      date: the DEF 14A reader's window was `2026 - 4`, which stops moving on 1 January
+      2027 (findings item 48). Take `today` as a parameter so the test can set the clock.
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
       easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space
