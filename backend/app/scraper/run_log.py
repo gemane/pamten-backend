@@ -75,6 +75,20 @@ def mark_partial(run: dict, result: dict) -> None:
     if isinstance(result, dict) and result.get("status") == "partial":
         run["status"] = "partial"
         run["note"] = "lost to the network: " + ", ".join(result.get("failed_sections") or [])
+    lost = lost_requests_note(result)
+    if lost:
+        run["note"] = "; ".join(n for n in (run.get("note"), lost) if n)
+
+
+def lost_requests_note(result: dict) -> str:
+    """"N request(s) lost to the network" for a scrape that lost single
+    requests (findings item 45), else "".
+
+    A lost request is one filing, not a section: the run stays `ok` (what the
+    caller could not read it skipped, as before), and the note says so, on the
+    row the health page and the digest read."""
+    n = result.get("lost_requests") if isinstance(result, dict) else None
+    return f"{n} request(s) lost to the network" if n else ""
 
 
 def _safe_create(run_id: str, source: str, target: str, reason: str | None = None) -> None:

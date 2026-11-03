@@ -10,7 +10,7 @@ from app.auth.dependencies import (
     require_admin, require_contributor, require_verified, get_current_user_optional,
 )
 from app.scraper import maintenance, proxy_write
-from app.scraper.run_log import list_runs, mark_partial, record_run
+from app.scraper.run_log import list_runs, lost_requests_note, mark_partial, record_run
 from app.scraper.scraper_registry import get as _get_scraper, registered as _registered_scrapers
 
 logger = logging.getLogger(__name__)
@@ -342,6 +342,12 @@ def _mark_errored_sources(run: dict, result: dict) -> None:
     if partial:
         run["status"] = "partial"
         run["note"] = "lost to the network: " + "; ".join(partial)
+    # single requests a source lost (findings item 45): named, status unchanged
+    lost = [f"{name}: {lost_requests_note(v)}"
+            for name, v in (result.get("results") or {}).items()
+            if isinstance(v, dict) and lost_requests_note(v)]
+    if lost:
+        run["note"] = "; ".join(n for n in (run.get("note"), *lost) if n)
 
 
 # ── Generic per-source endpoints (registry-driven) ────────────────────────────

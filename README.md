@@ -466,6 +466,12 @@ again once the cooldown has passed instead of after the 30-day TTL. Until
 2026-11-02 such a run read `ok`: the 11-01 rebuild lost 19 of Gitlab's owners to
 one read timeout and nothing said so (findings item 41).
 
+A lost **single** request (one Form 4, one filing index) leaves an SEC run
+`ok` — the scrape goes on without that filing — but the log says
+`SEC EDGAR: request lost (…) on <url>` and the row's `error` reads
+`N request(s) lost to the network`, so a rebuild can tell a gap the network
+made from one the code made (findings item 45).
+
 The endpoint is **public**: what the platform ingests, against which company and
 when, is the kind of thing an ownership-transparency project should be open
 about, and the frontend shows the feed to every visitor. The `error` field is the

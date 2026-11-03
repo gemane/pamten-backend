@@ -2119,6 +2119,22 @@ def run_scrape_sec_edgar(company_name: str, country: str | None = None) -> dict:
             "SEC EDGAR source is disabled. Enable it in the Scraper panel."
         )
 
+    # Every SEC request the scrape and its writer lose to the network is counted
+    # into the result (findings item 45): a lost Form 4 or 13D/G document is
+    # dropped by its caller so the scrape goes on, and only the count tells a
+    # rebuild that a company's numbers rest on a gap.
+    from app.scraper.sec_edgar import collect_lost_requests
+    with collect_lost_requests() as lost:
+        out = _scrape_sec_edgar(company_name, country)
+    if isinstance(out, dict):
+        out["lost_requests"] = len(lost)
+        if lost:
+            log.error("SEC EDGAR runner: %r lost %d request(s) to the network",
+                      company_name, len(lost))
+    return out
+
+
+def _scrape_sec_edgar(company_name: str, country: str | None) -> dict:
     # Import here to avoid circular imports and to keep the cold-start fast
     from app.scraper.sec_edgar import fetch_filer_country, scrape_company
 

@@ -922,6 +922,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       a 404 (an answer) from a timeout or a 5xx (a loss), and on a loss return `status:
       "partial"` with `failed_sections` and call `mark_scrape_incomplete` (see the plugin
       guide), so the run log says so and the company is retried after the cooldown.
+- [ ] **Tell the loss where it happens, not where it is caught.** A per-filing failure is
+      fine to swallow — one missing Form 4 must not sink a scrape — but then the request
+      helper is the only place that sees it. SEC's helper logged "retrying once" and
+      nothing after, ~20 callers dropped the error at debug, and the 2026-11-02 rebuild
+      could not say which of its 85 retries lost a filing (findings item 45). Log every
+      request that ends in an error other than "not there" in the helper, after the retry,
+      and count them into the run result (`lost_requests`), so two rebuilds compare.
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
       easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space

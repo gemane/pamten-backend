@@ -43,6 +43,7 @@ How to verify:
      the XML at <Archives URL>/<accession>/<primary-doc>.xml.
 """
 
+import contextlib
 import contextvars
 import functools
 import re
@@ -172,6 +173,52 @@ _RETRY_AFTER_CAP = 30.0
 _RETRY_ERRORS = (httpx.ReadTimeout, httpx.ReadError, httpx.RemoteProtocolError)
 
 
+# ── Requests lost to the network (findings item 45) ───────────────────────────
+#
+# `_response` used to log "retrying once" and nothing after it: when the retry
+# failed too, or a 429/503 came back twice, or an error it does not retry (a
+# refused connection, a 500, a 403) ended the request, the exception went to the
+# caller — and about twenty callers drop it at debug level (a Form 4, a 13D/G
+# document, a filing index), because one missing filing must not sink a scrape.
+# The 2026-11-02 rebuild logged 85 "retrying once" lines and could not say which
+# of them lost a filing: a Form 4 stalled during Morgan Stanley's scrape, whose
+# SEC count was 70 against 75 in the two rebuilds before. So the loss is told
+# where it happens: one warning per request that ended in an error, and a count
+# for the scrape that asked (`collect_lost_requests`). A 404 is EDGAR saying
+# "not there", an answer, and is neither.
+_lost_requests: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "sec_lost_requests", default=None)
+
+
+@contextlib.contextmanager
+def collect_lost_requests():
+    """Collect the URLs of the SEC requests lost inside the block.
+
+    The runner wraps a whole company scrape in it — the scrape itself and the
+    lookups its writer makes afterwards (an insider's own Form 4) — and reports
+    the count as the run's `lost_requests`."""
+    bucket: list[str] = []
+    token = _lost_requests.set(bucket)
+    try:
+        yield bucket
+    finally:
+        _lost_requests.reset(token)
+
+
+def _request_lost(url: str, params: dict | None, exc: BaseException, retried: bool) -> None:
+    """Log and count a request that ended in an error; a 404 is not one."""
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
+        return
+    shown = str(httpx.URL(url, params=params)) if params else url
+    what = (f"HTTP {exc.response.status_code}" if isinstance(exc, httpx.HTTPStatusError)
+            else type(exc).__name__)
+    log.warning("SEC EDGAR: request lost (%s%s) on %s", what,
+                ", after the retry" if retried else "", shown)
+    bucket = _lost_requests.get()
+    if bucket is not None:
+        bucket.append(shown)
+
+
 def _response(url: str, params: dict | None) -> httpx.Response:
     # Filings are immutable, so an Archives file is served from the on-disk
     # cache when SEC_CACHE_DIR is set; searches and listings never are — see
@@ -186,21 +233,30 @@ def _response(url: str, params: dict | None) -> httpx.Response:
         if cached is not None:
             return httpx.Response(200, content=cached,
                                   request=httpx.Request("GET", url))
+    retried = False
     try:
-        r = _get_client().get(url, params=params)
-    except _RETRY_ERRORS as exc:
-        log.warning("SEC EDGAR: %s on %s, retrying once", type(exc).__name__, url)
-        time.sleep(REQUEST_DELAY)
-        r = _get_client().get(url, params=params)
-    else:
-        if r.status_code in _RETRY_STATUSES:
-            try:
-                wait = min(float(r.headers.get("Retry-After", 2)), _RETRY_AFTER_CAP)
-            except ValueError:        # a date-formatted Retry-After — just pause briefly
-                wait = 2.0
-            time.sleep(wait)
+        try:
             r = _get_client().get(url, params=params)
-    r.raise_for_status()
+        except _RETRY_ERRORS as exc:
+            log.warning("SEC EDGAR: %s on %s, retrying once", type(exc).__name__, url)
+            retried = True
+            time.sleep(REQUEST_DELAY)
+            r = _get_client().get(url, params=params)
+        else:
+            if r.status_code in _RETRY_STATUSES:
+                try:
+                    wait = min(float(r.headers.get("Retry-After", 2)), _RETRY_AFTER_CAP)
+                except ValueError:        # a date-formatted Retry-After — just pause briefly
+                    wait = 2.0
+                log.warning("SEC EDGAR: HTTP %d on %s, retrying once after %.0f s",
+                            r.status_code, url, wait)
+                retried = True
+                time.sleep(wait)
+                r = _get_client().get(url, params=params)
+        r.raise_for_status()
+    except httpx.HTTPError as exc:
+        _request_lost(url, params, exc, retried)
+        raise
     if key:
         sec_cache.store(key, r.content)
     time.sleep(REQUEST_DELAY)

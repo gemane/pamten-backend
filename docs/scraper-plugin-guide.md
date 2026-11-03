@@ -365,6 +365,11 @@ A source that wrote what arrived but lost a section to the network returns
 every dispatcher finishes its row `partial` through `run_log.mark_partial`, and
 the company is scraped again after the cooldown (findings item 41). A 404 is not
 a loss: "there is nothing" is an answer.
+A source that lost single requests (one document each) may add
+`"lost_requests": N` to an `ok` or `partial` result; `mark_partial` and the
+run-all row then add `N request(s) lost to the network` to the row's `error`
+without changing its status (findings item 45 — SEC counts them in its request
+helper with `sec_edgar.collect_lost_requests()`).
 
 ---
 
