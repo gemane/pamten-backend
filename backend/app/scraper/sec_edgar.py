@@ -1356,16 +1356,17 @@ def _fetch_filing_index(index_url: str) -> tuple[str | None, str | None, str | N
         name = html_lib.unescape(m.group(1).strip())
         cik  = m.group(2).zfill(10)
 
-    # Extract primary document URL: first doc-table row whose type cell says SC 13
-    primary_url = None
-    m2 = re.search(
-        r'href="(/Archives/edgar/data/\d+/[^"]+\.(?:htm|txt))"[^>]*>[^<]*</a>\s*</td>\s*<td[^>]*>SC\s*13',
-        html, re.DOTALL | re.IGNORECASE,
-    )
-    if m2:
-        primary_url = f"https://www.sec.gov{m2.group(1)}"
+    return name, cik, _primary_doc_url(html)
 
-    return name, cik, primary_url
+
+def _primary_doc_url(index_html: str) -> str | None:
+    """The cover document of a pre-2025 13D/G: the first row of the index
+    page's document table whose type cell says SC 13."""
+    m = re.search(
+        r'href="(/Archives/edgar/data/\d+/[^"]+\.(?:htm|txt))"[^>]*>[^<]*</a>\s*</td>\s*<td[^>]*>SC\s*13',
+        index_html, re.DOTALL | re.IGNORECASE,
+    )
+    return f"https://www.sec.gov{m.group(1)}" if m else None
 
 
 # ── Ownership filings (SC 13D / SC 13G) ──────────────────────────────────────
@@ -3273,7 +3274,74 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
         "accession":    accession,
         "event_date":   xml.get("event_date"),
         "final_report": xml.get("final_report"),
+        "read_from":    READ_FIELD,
     }
+
+
+#: The subject company's block on a filing index page: "Alibaba Group Holding
+#: Ltd (Subject)" and, a few tags on, its CIK.
+_SUBJECT_ROW = re.compile(r'class="companyName">\s*([^<(]+?)\s*\(Subject\).*?CIK=(\d+)',
+                          re.DOTALL | re.IGNORECASE)
+
+
+def _parse_holding_filing_text(filer_cik: str, accession: str,
+                               filer_name: str | None) -> dict | None:
+    """Subject company + stake from a pre-2025 "SC 13D"/"SC 13G", or None.
+
+    Those filings have no `primary_doc.xml` (findings item 44): asking for it
+    was a 404 on every old filing — up to 175 per filer and scrape, never
+    cached because only answers are — and the stake was never read. Read it
+    the way the issuer side reads its old filings instead: the index page
+    names the subject company with its CIK and links the cover document, and
+    the cover page gives the percentage (`form`: the SEC's numbered rows).
+
+    The filer's index also lists filings ABOUT the filer by others. Those are
+    recognised from the index page alone (subject == filer) and cost no
+    second request; the caller drops them.
+
+    The index page's subject is the filing agent's say; the cover's "(Name of
+    Issuer)" is the filer's. When the two disagree the filing is dropped, as
+    the issuer side drops Embraer's Eve Holding 13D/A — the subject's former
+    names count as agreement, so a 2016 "Yahoo! Inc." cover still matches
+    ALTABA INC.
+    """
+    index_url = _filing_index_url(filer_cik, accession)
+    try:
+        html = _get_text(index_url)
+    except httpx.HTTPError as exc:
+        log.debug("SEC EDGAR: index fetch failed %s: %s", index_url, exc)
+        return None
+    m = _SUBJECT_ROW.search(html)
+    if not m:
+        return None
+    subject_cik  = m.group(2).zfill(10)
+    subject_name = html_lib.unescape(m.group(1).strip())
+    row = {"subject_cik": subject_cik, "subject_name": subject_name, "percent": None,
+           "accession": accession, "event_date": None, "final_report": None,
+           "read_from": READ_FORM}
+    if subject_cik == _cik_int(filer_cik).zfill(10):
+        return row                      # inbound: the caller skips it, unread
+    doc_url = _primary_doc_url(html)
+    if not doc_url:
+        return None
+    try:
+        text = _get_text(doc_url)
+    except httpx.HTTPError as exc:
+        log.debug("SEC EDGAR: cover fetch failed %s: %s", doc_url, exc)
+        return None
+    issuer = _parse_issuer_from_text(text)
+    # The former names are asked only on a mismatch, and an empty list is no
+    # agreement (`_issuer_matches` reads "no names" as nothing to contradict).
+    if not _issuer_matches([subject_name], issuer) and not (
+            (former := former_names.names(fetch_former_names(subject_cik)))
+            and _issuer_matches(former, issuer)):
+        log.info("SEC EDGAR: dropping holding %s — its cover names %r, the index %r",
+                 accession, issuer, subject_name)
+        return None
+    row.update(percent=_parse_percent_from_text(_cover_page_for(text, filer_name)),
+               event_date=_parse_event_date_from_text(text),
+               final_report=_parse_final_report_from_text(text))
+    return row
 
 
 #: A cover-page fact, tagged in every inline-XBRL 10-K/20-F/10-Q/8-K (since
@@ -3982,6 +4050,7 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
     closed_since: dict[str, str] = {}   # subject -> date of the newest 0% amendment
     done: set[str] = set()
     fetched = 0
+    filer_name: str | None = None       # for a joint old filing's cover page; asked once
 
     # Newest first, so the first non-zero filing seen for a subject is its most
     # recent real stake, and any 0% already seen for it is the exit that followed.
@@ -3996,7 +4065,14 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             if not filings:
                 break
         filing = filings.pop(0)
-        parsed = _parse_holding_filing(cik, filing["accession"])
+        # Each filing in the format it has: a "SCHEDULE 13G" (since Dec 2024)
+        # is XML, an "SC 13G" is a text/HTML cover (findings item 44).
+        if _is_structured(filing["form"]):
+            parsed = _parse_holding_filing(cik, filing["accession"])
+        else:
+            if filer_name is None:
+                filer_name = fetch_filer_name(cik) or ""
+            parsed = _parse_holding_filing_text(cik, filing["accession"], filer_name)
         fetched += 1
         if not parsed:
             continue
@@ -4039,11 +4115,10 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             "since_basis":   _stake_start(filing["form"], parsed.get("event_date"), filing["date"])[1],
             "form_type":     filing["form"],
             "filing_type":   _short_form(filing["form"]),
-            # Only the schedule's XML is read here (`_parse_holding_filing`), so
-            # every row is `field`. The scrape's holdings loop writes whatever the
-            # row says — without this, 681 13D/G edges had no grade after the
-            # 2026-10-27 rebuild, while `run_sec_holdings` stamped the same rows.
-            "read_from":     READ_FIELD,
+            # `field` from a schedule's XML, `form` from an old cover page.
+            # Both writers take the row's word — without it, 681 13D/G edges
+            # had no grade after the 2026-10-27 rebuild.
+            "read_from":     parsed["read_from"],
             "until":         closed_since.get(sid),
             # the filer's last report: open, but dimmed from this day (item 35)
             "final_report":  _final_since(parsed.get("final_report"), parsed.get("event_date"),

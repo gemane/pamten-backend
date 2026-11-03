@@ -292,9 +292,32 @@ which is why it grades above a layout reading and well above prose. The two
 paths used to be indistinguishable afterwards — both cite the index page — and
 the text path is where every misread 13D/G came from (Bozano, Altria). Among
 SEC's own claims the field beats the form; it never outranks a more credible
-source. The filer side (`fetch_filer_holdings`, what a filer owns) reads the XML
-only, so each of its rows carries `read_from: field` itself — both writers of
-those rows, the company scrape and `run_sec_holdings`, record it.
+source. The filer side (`fetch_filer_holdings`, what a filer owns) reads each
+filing in the format it has, and each row carries its own `read_from` — both
+writers of those rows, the company scrape and `run_sec_holdings`, record it
+(`run_sec_holdings` used to stamp `field` on every row).
+
+**The filer side's old filings** (findings item 44). A "SCHEDULE 13G/13D" is
+read from its XML (`field`). An "SC 13G/13D" — everything before December 2024 —
+has no `primary_doc.xml`; until 2026-11 the filer side asked for it anyway, a
+certain 404 on every old filing (up to 175 per filer and scrape, never cached,
+because the SEC cache keeps only answers — 76 of the 85 sec.gov stalls of the
+2026-11-02 rebuild hit those requests, Altaba alone 484 s) and read nothing.
+Now `_parse_holding_filing_text` reads it like the subject side's legacy path:
+the filing index page names the subject company with its CIK and links the
+cover document; the filer's own cover page (`_cover_page_for`, a joint filing
+has one per reporting person) gives the percentage, and the cover's date of
+event and Item 5 box the rest (`form`). The filer's submissions index also lists
+13Gs that OTHERS filed about it (Delta: 166 of 175); those are recognised from
+the index page alone (subject = filer) and cost no second request. The index
+page's subject is the filing agent's word, so the cover's "(Name of Issuer)"
+must agree with it or with one of the subject's EDGAR former names (a 2016
+"Yahoo! Inc." cover against ALTABA INC.), else the filing is dropped. What this
+adds: pre-2025 stakes the filer side never saw — Altaba → Alibaba (11.0 % in
+2019, final 0.2 %), Delta → LATAM, Clear Secure, Gol. Old stakes no newer
+filing restates stay open and are dimmed by the `not_restated` stale pass like
+any other 13D/G edge. Both kinds of request are answers, so the SEC cache serves
+them on every later run.
 
 **There are two schemas, one per schedule**, and they spell the same facts differently:
 

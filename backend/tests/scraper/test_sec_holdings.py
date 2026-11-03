@@ -298,14 +298,136 @@ def test_scrape_company_can_skip_holdings():
     assert not fh.called
 
 
-@pytest.mark.parametrize("form", ["SCHEDULE 13G", "SCHEDULE 13G/A", "SC 13D", "SC 13G/A"])
-def test_all_13dg_form_spellings_are_recognised(form):
-    # EDGAR uses both "SCHEDULE 13G" and the older "SC 13G".
+@pytest.mark.parametrize("form", ["SCHEDULE 13G", "SCHEDULE 13G/A", "SCHEDULE 13D"])
+def test_the_new_13dg_spellings_are_read_from_xml(form):
+    # Since December 2024 EDGAR calls them "SCHEDULE 13G" and files XML.
     subs = _subs([(form, "a-1", "2026-04-30")])
     with patch("app.scraper.sec_edgar._get", return_value=subs), \
          patch("app.scraper.sec_edgar._get_text",
                return_value=XML.format(cik="0000859737", name="Hologic Inc", pct="7.49")):
         assert len(fetch_filer_holdings("0002100119")) == 1
+
+
+# ── Old "SC 13D/G" filings: no XML, a cover page (findings item 44) ───────────
+#
+# Before December 2024 there is no primary_doc.xml. The holdings path asked for
+# it anyway on every old filing — a certain 404, up to 175 per filer and scrape,
+# never cached — and read nothing. Fixtures are the real Altaba → Alibaba 13G/A
+# of 2019-02-14 (index page trimmed to its document table and filer blocks, the
+# cover document as its plain text) and Farallon's 13G/A ABOUT Altaba, which
+# Altaba's own filing index lists too.
+
+def _fixture(name: str) -> str:
+    import pathlib
+    return (pathlib.Path(__file__).parent / "fixtures" / name).read_text()
+
+
+ALTABA = "0001011006"
+OLD_OUT = "0001193125-19-039407"       # Altaba's own 13G/A on Alibaba
+OLD_IN = "0001214659-20-001388"        # Farallon's 13G/A on Altaba
+
+
+def _old_docs(cover=None, requested=None):
+    pages = {
+        OLD_OUT.replace("-", "") + "/" + OLD_OUT + "-index.htm": _fixture("13ga_old_altaba_alibaba_index.htm"),
+        "d657317dsc13ga.htm": cover if cover is not None else _fixture("13ga_old_altaba_alibaba.txt"),
+        OLD_IN.replace("-", "") + "/" + OLD_IN + "-index.htm": _fixture("13ga_old_farallon_altaba_index.htm"),
+    }
+
+    def _get_text(url, params=None):
+        if requested is not None:
+            requested.append(url)
+        for key, body in pages.items():
+            if url.endswith(key):
+                return body
+        import httpx
+        raise httpx.HTTPStatusError("404", request=httpx.Request("GET", url),
+                                    response=httpx.Response(404))
+    return _get_text
+
+
+def _old_holdings(filings, cover=None, requested=None, former=()):
+    from app.scraper import sec_edgar
+    with patch("app.scraper.sec_edgar._get", return_value=_subs(filings)), \
+         patch("app.scraper.sec_edgar._get_text", side_effect=_old_docs(cover, requested)), \
+         patch.object(sec_edgar, "fetch_filer_name", return_value="ALTABA INC."), \
+         patch.object(sec_edgar, "fetch_former_names", return_value=list(former)):
+        return fetch_filer_holdings(ALTABA)
+
+
+class TestOldFilings:
+    def test_an_old_13g_is_read_from_its_cover_page(self):
+        rows = _old_holdings([("SC 13G/A", OLD_OUT, "2019-02-14")])
+        assert len(rows) == 1
+        h = rows[0]
+        assert (h["subject_cik"], h["subject_name"]) == ("0001577552", "Alibaba Group Holding Ltd")
+        assert h["stake_percent"] == 11.0          # Altaba Inc.'s own cover, row 11
+        assert h["event_date"] == "2018-12-31"
+        assert (h["since"], h["since_basis"]) == ("2018-12-31", "amendment")
+        assert h["read_from"] == "form"            # the SEC's numbered rows, not XML fields
+        assert h["filing_type"] == "13G/A"
+        assert h["source_url"].endswith(OLD_OUT + "-index.htm")
+
+    def test_a_joint_filing_is_read_from_the_filers_own_cover_page(self):
+        # The same 13G/A carries Altaba Holdings Hong Kong Limited on its second
+        # cover page at 9.7 %; read as that filer, the first page's 11.0 % is
+        # someone else's figure.
+        from app.scraper import sec_edgar
+        with patch("app.scraper.sec_edgar._get", return_value=_subs([("SC 13G/A", OLD_OUT, "2019-02-14")])), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_old_docs()), \
+             patch.object(sec_edgar, "fetch_filer_name", return_value="Altaba Holdings Hong Kong Limited"), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            rows = fetch_filer_holdings(ALTABA)
+        assert [r["stake_percent"] for r in rows] == [9.7]
+
+    def test_no_xml_is_asked_for_an_old_filing(self):
+        requested: list[str] = []
+        _old_holdings([("SC 13G/A", OLD_OUT, "2019-02-14"), ("SC 13G/A", OLD_IN, "2020-02-14")],
+                      requested=requested)
+        assert not [u for u in requested if u.endswith("primary_doc.xml")]
+
+    def test_a_filing_about_the_filer_costs_only_its_index_page(self):
+        requested: list[str] = []
+        rows = _old_holdings([("SC 13G/A", OLD_IN, "2020-02-14")], requested=requested)
+        assert rows == []
+        assert requested == [f"https://www.sec.gov/Archives/edgar/data/1011006/"
+                             f"{OLD_IN.replace('-', '')}/{OLD_IN}-index.htm"]
+
+    def test_a_cover_naming_another_issuer_is_dropped(self):
+        # The index page's subject is the filing agent's say (Embraer's agent
+        # filed its Eve Holding 13D/A under EMBRAER); the cover decides.
+        cover = _fixture("13ga_old_altaba_alibaba.txt").replace(
+            "Alibaba Group Holding Limited (Name of Issuer)", "Weibo Corporation (Name of Issuer)")
+        assert _old_holdings([("SC 13G/A", OLD_OUT, "2019-02-14")], cover=cover) == []
+
+    def test_a_cover_under_the_subjects_former_name_is_kept(self):
+        cover = _fixture("13ga_old_altaba_alibaba.txt").replace(
+            "Alibaba Group Holding Limited (Name of Issuer)", "Yahoo! Inc. (Name of Issuer)")
+        rows = _old_holdings([("SC 13G/A", OLD_OUT, "2019-02-14")], cover=cover,
+                             former=["Yahoo! Inc.|2017-06-16"])
+        assert [r["subject_cik"] for r in rows] == ["0001577552"]
+
+    def test_an_unreadable_cover_is_skipped_not_an_exit(self):
+        rows = _old_holdings([("SC 13G/A", OLD_OUT, "2019-02-14")],
+                             cover="Alibaba Group Holding Limited (Name of Issuer) nothing else")
+        assert rows == []
+
+    def test_old_and_new_filings_mix_newest_first(self):
+        # A zero in the new XML closes the stake an old cover disclosed.
+        from app.scraper import sec_edgar
+        zero = XML.format(cik="0001577552", name="Alibaba Group Holding Limited", pct="0")
+        old = _old_docs()
+
+        def _get_text(url, params=None):
+            return zero if url.endswith("primary_doc.xml") else old(url)
+        subs = _subs([("SCHEDULE 13G/A", "0001011006-25-000001", "2025-02-14"),
+                      ("SC 13G/A", OLD_OUT, "2019-02-14")])
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_get_text), \
+             patch.object(sec_edgar, "fetch_filer_name", return_value="ALTABA INC."), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            rows = fetch_filer_holdings(ALTABA)
+        assert [(r["stake_percent"], r["until"], r["read_from"]) for r in rows] == [(11.0, "2025-02-14", "form")]
 
 
 # ── Archived filing pages ─────────────────────────────────────────────────────

@@ -3144,9 +3144,9 @@ class TestAnUnreadCoverIsNotAnExit:
         filings = [{"form": "SCHEDULE 13G/A", "accession": "a-2", "date": "2026-05-01"},
                    {"form": "SCHEDULE 13G", "accession": "a-1", "date": "2025-05-01"}]
         parsed = {"a-2": {"subject_cik": "0000000222", "subject_name": "Example", "percent": None,
-                          "accession": "a-2", "event_date": "2026-03-31"},
+                          "accession": "a-2", "event_date": "2026-03-31", "read_from": "field"},
                   "a-1": {"subject_cik": "0000000222", "subject_name": "Example", "percent": 6.0,
-                          "accession": "a-1", "event_date": "2025-03-31"}}
+                          "accession": "a-1", "event_date": "2025-03-31", "read_from": "field"}}
         with patch.object(sec_edgar, "_iter_filing_pages", return_value=iter([filings])), \
              patch.object(sec_edgar, "_parse_holding_filing", side_effect=lambda c, a: parsed[a]):
             rows = sec_edgar.fetch_filer_holdings("0000000777")

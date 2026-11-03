@@ -43,3 +43,54 @@ def test_the_scrape_grades_a_filer_side_holding(it_db):
     assert [dict(e) for e in edges] == [{"rf": "field", "ft": "13G", "pct": 7.48}]
     claims = run_sql("SELECT read_from FROM Claim WHERE kind = 'owns' AND filing_type = '13G'")
     assert [c["read_from"] for c in claims] == ["field"]
+
+
+def _old_altaba_holdings():
+    """Altaba's real 2019 13G/A on Alibaba, read through the old-filing path
+    (index page + cover text, no XML — findings item 44)."""
+    from app.scraper import sec_edgar
+    from tests.scraper.test_sec_holdings import OLD_OUT, _old_docs
+    with patch("app.scraper.sec_edgar._get", return_value=_subs([("SC 13G/A", OLD_OUT, "2019-02-14")])), \
+         patch("app.scraper.sec_edgar._get_text", side_effect=_old_docs()), \
+         patch.object(sec_edgar, "fetch_filer_name", return_value="ALTABA INC."), \
+         patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+        return sec_edgar.fetch_filer_holdings("0001011006")
+
+
+def _alibaba_edges():
+    return [dict(e) for e in run_query(
+        "MATCH (a:Entity)-[r:OWNS]->(b:Entity {sec_cik: '0001577552'}) "
+        "RETURN r.read_from AS rf, r.filing_type AS ft, r.stake_percent AS pct")]
+
+
+def test_the_scrape_grades_an_old_cover_page_holding_form(it_db):
+    from app.scraper import runner, sec_edgar
+    holdings = _old_altaba_holdings()
+    payload = {"name": "ALTABA INC.", "cik": "0001011006", "lei": None,
+               "former_names": [], "ownership_filings": [], "holdings": holdings, "executives": []}
+    with patch.object(sec_edgar, "scrape_company", return_value=payload), \
+         patch.object(sec_edgar, "fetch_filer_country", return_value="US"), \
+         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
+         patch.object(sec_edgar, "fetch_filer_sic", return_value=None), \
+         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
+         patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
+        runner.run_scrape_sec_edgar("Altaba")
+    assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]
+    claims = run_sql("SELECT read_from FROM Claim WHERE kind = 'owns' AND filing_type = '13G/A'")
+    assert [c["read_from"] for c in claims] == ["form"]
+
+
+def test_the_holdings_run_grades_an_old_cover_page_holding_form(it_db):
+    # `run_sec_holdings` wrote `field` for every row whatever it was read from.
+    from app.scraper import runner, sec_edgar
+    holdings = _old_altaba_holdings()
+    with patch.object(sec_edgar, "fetch_filer_name", return_value="ALTABA INC."), \
+         patch.object(sec_edgar, "fetch_filer_holdings", return_value=holdings), \
+         patch.object(sec_edgar, "fetch_affiliated_managers", return_value=[]), \
+         patch.object(sec_edgar, "fetch_filer_country", return_value="US"), \
+         patch.object(sec_edgar, "fetch_filer_headquarters", return_value=None), \
+         patch.object(sec_edgar, "fetch_filer_website", return_value=None), \
+         patch.object(sec_edgar, "fetch_filer_sic", return_value=None):
+        runner.run_sec_holdings("0001011006")
+    assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]

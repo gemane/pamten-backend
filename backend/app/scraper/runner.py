@@ -1900,7 +1900,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
         _record_sec_industry(subject_id, h.get("subject_cik"), source_id)
         _upsert_owns_sec(
             owner_id=filer_id, owned_id=subject_id, source_id=source_id,
-            read_from=READ_FIELD,  # filer-side 13D/G: XML only, see fetch_filer_holdings
+            read_from=h.get("read_from"),  # XML `field` or old cover `form` (item 44)
             ownership_type="minority", file_date=h.get("file_date"),
             stake_percent=h.get("stake_percent"), source_url=h.get("source_url"),
             voting_power_pct=h.get("voting_power_pct"), until=h.get("until"),
