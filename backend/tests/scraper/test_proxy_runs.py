@@ -13,6 +13,7 @@ from app.config import settings
 from app.scraper import runner, sec_edgar
 
 ROWS: list[dict] = []
+FETCHED: list = []
 
 
 @contextmanager
@@ -25,15 +26,18 @@ def _fake_run(source, target, reason=None):
 @pytest.fixture(autouse=True)
 def _env():
     ROWS.clear()
+    FETCHED.clear()
     with patch.object(settings, "SCRAPER_ENABLED", True), \
          patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
          patch("app.scraper.run_log.record_run", _fake_run), \
-         patch("app.routers.search.resolve_best_entity", return_value={"id": "e-goog"}):
+         patch("app.routers.search.resolve_best_entity",
+               return_value={"id": "e-goog", "sec_cik": "0001652044"}):
         yield
 
 
 def _read(result, lose=0):
-    def fetch(company):
+    def fetch(company, cik=None):
+        FETCHED.append(cik)
         for _ in range(lose):        # a request the reader lost (#528 counts it)
             sec_edgar._request_lost("https://www.sec.gov/x", None, httpx.ReadTimeout("x"), True)
         return result
@@ -46,6 +50,10 @@ OWNERS = [{"name": "Larry Page", "voting_power_pct": 27.4},
 
 
 class TestTheReadRun:
+    def test_the_graphs_cik_is_passed_to_the_reader(self):
+        _read({"owners": OWNERS})
+        assert FETCHED == ["0001652044"]
+
     def test_an_ok_read_counts_the_owners_with_a_figure_and_names_the_company(self):
         out = _read({"owners": OWNERS, "filing_date": "2026-04-24"})
         assert out["owners"] == OWNERS

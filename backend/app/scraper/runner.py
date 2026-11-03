@@ -1578,7 +1578,8 @@ def run_proxy_statement(company: str) -> dict:
     with record_run("sec-proxy", company) as run:
         run["entity_id"] = entity["id"] if entity else None
         with collect_lost_requests() as lost:
-            result = fetch_proxy_ownership(company)
+            # the CIK the graph holds beats a name search (findings item 47)
+            result = fetch_proxy_ownership(company, cik=(entity or {}).get("sec_cik"))
         run["total"] = sum(1 for o in result.get("owners") or []
                            if o.get("voting_power_pct") is not None)
         _finish_proxy_run(run, result, lost)
