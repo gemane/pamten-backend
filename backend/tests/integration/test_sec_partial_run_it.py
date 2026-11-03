@@ -89,3 +89,29 @@ def test_the_run_log_row_is_partial(it_db):
     assert r.status_code == 200 and r.json()["status"] == "partial"
     rows = it_db.run_sql("SELECT status, error FROM ScrapeRun WHERE source = 'sec_edgar'")
     assert rows == [{"status": "partial", "error": "lost to the network: holdings"}]
+
+
+def test_a_lost_request_is_noted_on_an_ok_row(it_db):
+    # findings item 45: a single request lost to the network (a Form 4 the scrape
+    # went on without) leaves the run `ok` and the company not flagged — the
+    # row's note says how many, which the rebuild's verify can count
+    import httpx
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.auth.dependencies import require_contributor
+    from app.scraper import sec_edgar
+
+    def scrape(*a, **k):
+        sec_edgar._request_lost("https://www.sec.gov/Archives/x/form4.xml", None,
+                                httpx.ReadTimeout("stalled"), True)
+        return _data([])
+    app.dependency_overrides[require_contributor] = lambda: {"id": "u", "role": "contributor"}
+    try:
+        with patch("app.scraper.sec_edgar.scrape_company", side_effect=scrape):
+            r = TestClient(app).post("/scraper/sec-edgar/run", params={"company": "GitLab Inc."})
+    finally:
+        app.dependency_overrides.pop(require_contributor, None)
+    assert r.status_code == 200 and r.json()["status"] == "ok" and r.json()["lost_requests"] == 1
+    rows = it_db.run_sql("SELECT status, error FROM ScrapeRun WHERE source = 'sec_edgar'")
+    assert rows == [{"status": "ok", "error": "1 request(s) lost to the network"}]
+    assert _node(it_db)["scrape_incomplete_at"] is None

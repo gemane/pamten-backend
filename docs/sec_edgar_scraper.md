@@ -61,8 +61,28 @@ on-demand request scrapes it again after the cooldown, not after 30 days. The
 run log row is `partial`, its `error` naming the sections. Existing 13D/G edges
 are never closed by a missing answer: the 13D/G path does not stale what a run
 did not see, so a live refresh that loses the section keeps the stored owners.
-Per-filing failures (one index page, one Form 4) still drop just that filing
-and are not counted.
+
+**A single lost request is told and counted.** Per-filing failures (one index
+page, one Form 4, one 13D/G document) still drop just that filing, so the
+scrape goes on; about twenty callers swallow the error. Until 2026-11-03 the
+only trace was the "retrying once" line written *before* the retry: the
+2026-11-02 rebuild logged 85 of them and could not say which lost a filing (a
+Form 4 stalled during Morgan Stanley's scrape, whose count was 70 against 75
+before; findings item 45). Now `_response` itself tells every request that
+ends in an error other than a 404 — a retry that failed too, a 429/503 that
+came back twice, and the errors it does not retry (a refused connection, a
+500, a 403):
+
+    SEC EDGAR: request lost (ReadTimeout, after the retry) on <url>
+
+The 429/503 retry logs a line of its own (`HTTP 503 on <url>, retrying once
+after N s`). `run_scrape_sec_edgar` wraps the scrape and its writer's lookups
+(an insider's own Form 4) in `collect_lost_requests()` and returns the count
+as `lost_requests`; the run stays `ok` (or `partial`, for a lost section) and
+its run-log row's `error` adds `N request(s) lost to the network`. A rebuild
+compares companies by that count: a target whose number dropped while it lost
+requests is the network, not the code. The other SEC runners (Exhibit 21, 13F,
+acquisitions, holdings) get the log line, not the count.
 
 ## Former names → aliases
 
