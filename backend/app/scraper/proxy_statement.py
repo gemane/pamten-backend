@@ -108,9 +108,9 @@ def _search_recent_for_def14a(recent: dict) -> tuple[str, str, str] | None:
     docs    = recent.get("primaryDocument", [])
     dates   = recent.get("filingDate", [])
 
-    for form, acc, doc, date in zip(forms, accnums, docs, dates):
+    for form, acc, doc, filed in zip(forms, accnums, docs, dates):
         if form == "DEF 14A" and doc:
-            return acc.replace("-", ""), doc, date
+            return acc.replace("-", ""), doc, filed
     return None
 
 
@@ -200,8 +200,8 @@ def _browse_edgar_def14a(search_name: str) -> tuple[str, str, str, str] | None:
         s, _, sub = item
         recent  = sub.get("filings", {}).get("recent", {})
         filing  = _search_recent_for_def14a(recent)
-        date    = filing[2] if filing else ""
-        return (s, date)
+        filed   = filing[2] if filing else ""
+        return (s, filed)
 
     candidates.sort(key=_sort_key, reverse=True)
 
