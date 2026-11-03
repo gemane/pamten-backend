@@ -64,6 +64,9 @@ _SEC_FAMILIES: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"^Form\s*[345]\b", re.I), "insider"),        # Form 3 / 4 / 5
     (re.compile(r"^EX-21\b", re.I), "ex21"),
     (re.compile(r"^EX-8\.1\b", re.I), "ex81"),
+    # the proxy statement's voting power (findings item 46): its own claim
+    # beside the pair's 13D/G or Form 4 one, never folded into it
+    (re.compile(r"^DEF\s*14A\b", re.I), "def14a"),
 )
 
 

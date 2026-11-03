@@ -946,6 +946,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `SCRAPER_SEC_EDGAR_ENABLED` check and no `ScrapeRun` row, so a failed read showed
       nowhere (findings item 42). Route an endpoint through a runner function that checks
       the flags (PermissionError → 403) and opens `record_run` with the company's `entity_id`.
+- [ ] **Every figure a writer puts on an edge has a claim, and no writer renames a node.**
+      The proxy writer SET `voting_power_pct` with no claim behind it, so nothing said
+      where the figure came from and a rebuild lost it, and it renamed people to the
+      proxy's spelling (findings item 46). Record the claim (source, filing type, reading
+      grade, URL, date) with a key of its own, and leave a node's name to its source.
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
       easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space

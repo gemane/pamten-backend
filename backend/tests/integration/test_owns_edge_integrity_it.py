@@ -114,7 +114,7 @@ class TestTheProxyWriterKeepsTheEdgeItFound:
         import types
 
         stub = types.ModuleType("app.scraper.proxy_statement")
-        stub.fetch_proxy_ownership = lambda company: {
+        stub.fetch_proxy_ownership = lambda company, cik=None: {
             "owners": [{"name": "Sergey Brin", "voting_power_pct": 51.0}]}
         monkeypatch.setitem(sys.modules, "app.scraper.proxy_statement", stub)
 

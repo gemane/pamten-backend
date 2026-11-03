@@ -1255,7 +1255,19 @@ the one SEC document that states each person's share of the **votes** across
 share classes: Page 27.4 % and Brin 25.3 % of Alphabet's, Zuckerberg 60.8 % of
 Meta's, Buffett 30.2 % of Berkshire's — numbers a Form 4 (shares per class) or a
 13D/G (a group's bloc) never give. Manual only: `POST /scraper/proxy-statement/run`
-reads, `/write` adds `voting_power_pct` to existing OWNS edges.
+reads, `/write` records it.
+
+**What `/write` records** (`proxy_write.py`, findings item 46). For every owner
+with a figure that the graph already links to the company, an SEC EDGAR
+**claim** — `filing_type` "DEF 14A" (its own filing family, so it sits beside
+the pair's 13D/G or Form 4 claim instead of overwriting it), `voting_power_pct`,
+`read_from` "table", the filing as `source_url`, its date as `source_date` — and
+the figure on the pair's active OWNS edge. It draws no new edge (the table names
+people, not the stake's evidence), writes nothing for "below 1 %", and never
+renames a node: until 2026-11-03 it set "Brin Sergey" to "Sergey Brin" with no
+claim or history, and wrote the figure with no claim at all. The company is
+found by `entity_id` or the shared resolver, and its stored CIK goes to the
+reader; the old name lookup asked for `(c:Company)`, a type that does not exist.
 
 **The company** is resolved like every SEC scrape: the CIK the caller holds,
 else `search_company`; then the newest `DEF 14A` in the submissions file. The
