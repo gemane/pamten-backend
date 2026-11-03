@@ -42,6 +42,7 @@ HTML structure varies widely across companies and years; may require tuning per 
 import re
 import warnings
 import xml.etree.ElementTree as ET
+from datetime import date
 from difflib import SequenceMatcher
 
 import httpx
@@ -218,13 +219,17 @@ def _browse_edgar_def14a(search_name: str) -> tuple[str, str, str, str] | None:
 _MAX_FILING_AGE_YEARS = 4
 
 
-def _is_recent(filing_date: str) -> bool:
-    """Return True if the filing is recent enough to be useful."""
+def _is_recent(filing_date: str, today: date | None = None) -> bool:
+    """Return True if the filing is recent enough to be useful.
+
+    Counted from today (findings item 48): the cut-off was written as
+    `2026 - 4`, so from 2027 on the window would have stopped moving and a
+    proxy from 2022 would still count as recent."""
     try:
         year = int(filing_date[:4])
-        return year >= (2026 - _MAX_FILING_AGE_YEARS)
     except (ValueError, TypeError):
         return False
+    return year >= (today or date.today()).year - _MAX_FILING_AGE_YEARS
 
 
 def _find_company(company_name: str) -> tuple[str, str, str, str] | None:
