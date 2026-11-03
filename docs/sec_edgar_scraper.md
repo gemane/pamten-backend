@@ -1247,6 +1247,50 @@ them.
 
 ---
 
+## Voting power — the proxy statement (DEF 14A)
+
+`app/scraper/proxy_statement.py` reads the "Security Ownership of Certain
+Beneficial Owners and Management" table of a company's latest DEF 14A. It is
+the one SEC document that states each person's share of the **votes** across
+share classes: Page 27.4 % and Brin 25.3 % of Alphabet's, Zuckerberg 60.8 % of
+Meta's, Buffett 30.2 % of Berkshire's — numbers a Form 4 (shares per class) or a
+13D/G (a group's bloc) never give. Manual only: `POST /scraper/proxy-statement/run`
+reads, `/write` adds `voting_power_pct` to existing OWNS edges.
+
+**The company** is resolved like every SEC scrape: the CIK the caller holds,
+else `search_company`; then the newest `DEF 14A` in the submissions file. The
+old browse-edgar name search matched the start of the registered name, so
+"Amazon.com" never found AMAZON COM INC (findings item 47).
+
+**The table is read as a grid** (findings item 47). Each `<table>` is expanded
+into columns — colspan and rowspan — the rows above the first owner row name
+the columns, and every figure is read from under its header:
+
+- the **total voting power** column ("Total Voting Power", "Percentage of
+  Aggregate Voting Power"; a total beats a per-class voting column), or
+- the **percent of class** column, but only when the company has **one** voting
+  class. A filing that names a second class anywhere ("Class B common stock",
+  "Class B Stock") is multi-class, and its percent of class is not a share of
+  the votes: Vanguard's 11.68 % of Ford's common stock is not 11.68 % of Ford's
+  votes, the Class B stock carries 40 %. A multi-class filing without a voting
+  column (Ford, Nike, Comcast in 2026) states nobody's voting power, and the
+  reader returns none, with a note.
+
+`*` is the proxies' "less than 1 %": the owner gets `below_one_percent: true`
+and no number. Section headings ("Executive Officers and Directors", "5%
+Shareholders") and the group total ("All executive officers and directors as a
+group") are not owners. A person's second row (Berkshire's Class B line, no
+name) continues the person above. Footnote marks, superscripts and a street
+address after the name (Amazon, Microsoft) are dropped; an owner listed twice
+(Tesla's Musk, as a 5 % holder and as an officer) is kept once.
+
+The old reader guessed by position and read `*` as 0.4: Pichai, Porat, Hennessy
+and Shriram got 0.4 % of Alphabet's votes, and Robin L. Washington, who holds
+no shares, 92.2 % — the Class B column of the group row below her. It took a
+defined-terms table at Nike and a director's biography at Comcast for the
+ownership table. The tests read the real 2026 tables of all ten issuers
+(`tests/scraper/fixtures/def14a_*_2026.html`).
+
 ## Industry — the filer's SIC code
 
 EDGAR assigns every filer a Standard Industrial Classification code, in the
