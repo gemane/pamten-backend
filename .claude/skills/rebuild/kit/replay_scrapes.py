@@ -72,7 +72,10 @@ def run_all(name):
         per = [v for v in (res.get("results") or {}).values() if isinstance(v, dict)]
         run["total"] = sum((v or {}).get("total", 0) for v in per)
         run["entity_id"] = next((v["entity_id"] for v in per if v.get("entity_id")), None)
-    return {k: (v.get("status"), v.get("total")) for k, v in (res.get("results") or {}).items() if isinstance(v, dict)}
+    # a third element when a source lost single requests to the network (findings
+    # item 45): a count that dropped next to it is the network, not the code
+    return {k: (v.get("status"), v.get("total")) + ((f"lost {v['lost_requests']}",) if v.get("lost_requests") else ())
+            for k, v in (res.get("results") or {}).items() if isinstance(v, dict)}
 
 
 def short(res):

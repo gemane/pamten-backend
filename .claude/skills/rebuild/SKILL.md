@@ -74,6 +74,9 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
 - The replay's `failed` lines per phase, the A2 Wikidata retries and the A3 SEC retries
   (`grep -E "partial|=== A3" <kit>/rebuild.log`): a source that failed, or an SEC part still
   `partial` after A3, makes its counts not comparable — list it in the verify.
+- Single requests lost to the network (findings item 45): `grep -c "request lost" <kit>/rebuild.log`,
+  and the per-target `lost N` in the replay lines; a target whose count dropped next to a
+  `lost N` is the network, not the code — say so in the verify.
 - `schema-audit` and the dissolution dry run in step 8 should be clean.
 - Then `/finding verify` against the last rebuild's `after.json`; record the run (times,
   counts, lessons) in the memory `reference-rebuild-from-agent`.
