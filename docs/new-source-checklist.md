@@ -941,6 +941,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       name each column from the header rows, read every value from under its header, and
       keep "less than 1 %" as a flag, not a number. A percent of one class is not a share
       of the votes when the company has another class.
+- [ ] **Every entry point honours the switches and writes a run row.** The two proxy-statement
+      endpoints called the reader and writer directly: no `SCRAPER_ENABLED` /
+      `SCRAPER_SEC_EDGAR_ENABLED` check and no `ScrapeRun` row, so a failed read showed
+      nowhere (findings item 42). Route an endpoint through a runner function that checks
+      the flags (PermissionError → 403) and opens `record_run` with the company's `entity_id`.
 - [ ] **Probe ~10 real filers before writing a parser, and span the size band** — mega-caps
       publish the cleanest documents, so a parser probed only on them is probed on the
       easy third. The small/mid-cap Exhibit 21 probes are what surfaced a zero-width-space

@@ -9,7 +9,7 @@ from app.scraper.runner import (
 from app.auth.dependencies import (
     require_admin, require_contributor, require_verified, get_current_user_optional,
 )
-from app.scraper import maintenance, proxy_write
+from app.scraper import maintenance
 from app.scraper.run_log import list_runs, lost_requests_note, mark_partial, record_run
 from app.scraper.scraper_registry import get as _get_scraper, registered as _registered_scrapers
 
@@ -639,10 +639,21 @@ def proxy_statement_run(
     """
     Parse the most recent DEF 14A proxy statement for a company and return
     per-person voting power percentages from the beneficial ownership table.
-    Read-only — does not write to the database.
+    Read-only on the graph; writes its ScrapeRun row. 403 when the scraper or
+    SEC EDGAR is switched off (findings item 42).
     """
-    from app.scraper.proxy_statement import fetch_proxy_ownership
-    return fetch_proxy_ownership(company)
+    from app.scraper.runner import run_proxy_statement
+    return _proxy_call("Proxy statement read", company, lambda: run_proxy_statement(company))
+
+
+def _proxy_call(what: str, company: str, call):
+    try:
+        return call()
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception:
+        logger.exception("%s failed (company=%r)", what, company)
+        raise HTTPException(status_code=500, detail=f"{what} failed. Check server logs for details.")
 
 
 @router.post("/proxy-statement/write")
@@ -657,8 +668,10 @@ def proxy_statement_write(
     ),
     _: dict = Depends(require_contributor),
 ):
-    """Fetch the latest DEF 14A and write voting_power_pct onto OWNS edges."""
-    return proxy_write.write_proxy_ownership(company, entity_id)
+    """Fetch the latest DEF 14A and write voting_power_pct onto OWNS edges.
+    403 when the scraper or SEC EDGAR is switched off (findings item 42)."""
+    from app.scraper.runner import run_proxy_write
+    return _proxy_call("Proxy statement write", company, lambda: run_proxy_write(company, entity_id))
 
 
 # ── Ownership-type migration endpoint ────────────────────────────────────────

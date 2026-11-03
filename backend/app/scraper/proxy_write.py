@@ -149,6 +149,7 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
 
     return {
         "company":              company_name,
+        "entity_id":            company_id,     # the run row names it (findings item 42)
         "filing_date":          proxy.get("filing_date"),
         "share_class_structure": proxy.get("share_class_structure"),
         "updated":              updated,

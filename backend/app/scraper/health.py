@@ -25,6 +25,8 @@ _RUNLOG_LABELS = {
     "sec-ex21": "SEC Exhibit 21 subsidiaries",
     "sec-formd": "SEC Form D boards",
     "sec-acquisitions": "SEC acquisitions (XBRL)",
+    "sec-proxy": "SEC proxy statement (read)",
+    "sec-proxy-write": "SEC proxy statement voting power",
     "gleif-update": "GLEIF daily delta",
     "ch-psc-update": "UK PSC refresh",
     "deduplicate-entities": "Entity dedup",
