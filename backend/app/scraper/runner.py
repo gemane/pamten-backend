@@ -1537,6 +1537,73 @@ def run_sec_ex21_history(company: str, max_filings: int | None = None) -> dict:
                 "oldest_filing": read[-1]["filing_date"], "earliest_dated": oldest}
 
 
+def _proxy_flags() -> None:
+    if not settings.SCRAPER_ENABLED:
+        raise PermissionError("Scraper is disabled. Set SCRAPER_ENABLED=true to enable.")
+    if not settings.SCRAPER_SEC_EDGAR_ENABLED:
+        raise PermissionError("SEC EDGAR scraper is disabled. "
+                              "Set SCRAPER_SEC_EDGAR_ENABLED=true to enable.")
+
+
+def _finish_proxy_run(run: dict, result: dict, lost: list[str]) -> None:
+    """The run row of a proxy-statement call: `skipped` when the company files
+    no DEF 14A or is not in the graph, `failed` when EDGAR could not be read,
+    the note naming why; lost requests noted as on every SEC run (#528)."""
+    from app.scraper.run_log import mark_partial
+    error = result.get("error") or result.get("db_error")
+    if error and not result.get("owners"):
+        run["status"] = ("skipped" if error.startswith("No DEF 14A") or result.get("db_error")
+                         else "failed")
+        run["note"] = error
+    elif result.get("note"):
+        run["note"] = result["note"]
+    mark_partial(run, {"lost_requests": len(lost)})
+
+
+@_with_autodedup
+def run_proxy_statement(company: str) -> dict:
+    """Read a company's latest DEF 14A ownership table (read-only) — the run
+    behind POST /scraper/proxy-statement/run.
+
+    Findings item 42: the endpoint called the reader directly — it ignored
+    SCRAPER_ENABLED and SCRAPER_SEC_EDGAR_ENABLED, which every other SEC run
+    honours, and left no ScrapeRun row, so a failed read showed nowhere."""
+    _proxy_flags()
+    from app.routers.search import resolve_best_entity
+    from app.scraper.proxy_statement import fetch_proxy_ownership
+    from app.scraper.run_log import record_run
+    from app.scraper.sec_edgar import collect_lost_requests
+
+    entity = resolve_best_entity(company, None)
+    with record_run("sec-proxy", company) as run:
+        run["entity_id"] = entity["id"] if entity else None
+        with collect_lost_requests() as lost:
+            result = fetch_proxy_ownership(company)
+        run["total"] = sum(1 for o in result.get("owners") or []
+                           if o.get("voting_power_pct") is not None)
+        _finish_proxy_run(run, result, lost)
+    return result
+
+
+@_with_autodedup
+def run_proxy_write(company: str, entity_id: str | None = None) -> dict:
+    """Read the latest DEF 14A and add voting power to existing OWNS edges —
+    the run behind POST /scraper/proxy-statement/write (findings item 42: the
+    same flags and run row as every SEC write)."""
+    _proxy_flags()
+    from app.scraper.proxy_write import write_proxy_ownership
+    from app.scraper.run_log import record_run
+    from app.scraper.sec_edgar import collect_lost_requests
+
+    with record_run("sec-proxy-write", company) as run:
+        with collect_lost_requests() as lost:
+            result = write_proxy_ownership(company, entity_id)
+        run["entity_id"] = result.get("entity_id") or entity_id
+        run["total"] = len(result.get("updated") or [])
+        _finish_proxy_run(run, result, lost)
+    return result
+
+
 @_with_autodedup
 def run_sec_formd(company: str, force: bool = False) -> dict:
     """Ingest one issuer's board and officers from its newest SEC Form D.
