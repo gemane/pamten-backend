@@ -842,6 +842,19 @@ no tag and keep the header's.
   that node (it is weighed before the name's candidates), on REFUSE nothing is written.
   NV Energy's Q1961658 states CIK 0000741508, a filer EDGAR has not listed since 2014, so no
   name search finds it (findings item 5, 2026-10-30).
+- **The Wikidata writer, a node found by name**: when an item's QID, CIK and LEI find no
+  node and its name finds one that holds a register id, none of them the item's, the item's
+  ids are asked of their register FIRST, with that node as the candidate
+  (`register_pointer.unconfirmed`, `write_from_pointer(..., candidates=[node])`): GLEIF's join
+  or EDGAR's filer match takes the node when the registers agree, else the register writes
+  its own node, which takes the item. Only when no register knows the ids does the name's
+  node stand. Before, the name decided and `attach_stated_lei` asked GLEIF afterwards; a
+  REFUSE then left the item on the namesake: Liberty Media's Q1516562 (LEI
+  549300ZKUTPIBZLWLL89, the Nevada company, no CIK on the item) took the Delaware filer
+  "LIBERTY MEDIA CORPORATION" (CIK 0000869614) that a Berkshire SC 13G/A had written an hour
+  earlier, and the GLEIF node was written without it — the outcome depended on which node was
+  written first (findings item 50, rebuild 2026-11-03). A name hit without any register id
+  is still enriched as before: no register can join it.
 
 Every JOIN leaves its evidence on the node as `lei_source` ("name+place",
 "name+country+address@2021-07-16", "name+country+subsidiary@…", or "filing" for the bridge's
