@@ -215,6 +215,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       its own node without the item (findings item 50, 2026-11-04). Ask the item's register
       first, with the name's node as its candidate, and let its answer pick the node — then
       the order of the writes no longer decides.
+- [ ] **A capped sample churns at its boundary — record what selected an edge, so a diff can
+      tell drift from loss.** The 13F run reads every graph-known filer and the 100 best-ranked
+      others; the hundredth changes as filings arrive, and a rebuild diff that sees only an
+      edge gone with its node reads it as a loss. Dixon Financial sat at rank 100 of 100 and
+      came and went across three rebuilds (findings item 51, 2026-11-04). The snapshot now
+      carries each edge's `filing_type`, and the diff lists a 13F edge that came or went with
+      its filer node apart, as expected churn — while a 13F edge lost by a filer the graph
+      keeps stays a finding (item 40).
 - [ ] **Compare a building as a building, against every address the register gives.**
       Two registers write one building differently: a suite one omits ("1314 DOUGLAS
       STREET, SUITE 1400" / "1314 DOUGLAS STREET"), "Northwest" for "NW", a building's name

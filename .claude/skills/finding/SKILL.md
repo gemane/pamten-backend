@@ -135,8 +135,13 @@ user's word. Report and recommend the next open item. Stop.
 
 ## Step 5 — After a rebuild (`/finding verify`)
 
-1. Diff the new `after.json` against the previous rebuild's (keep the diff script in the
-   scratchpad): counts per label/source, ids by prefix, and the per-item ids.
+1. Diff the new `after.json` against the previous rebuild's with the kit's
+   `diff_snapshots.py <previous> <new>` (a one-off probe may live in the scratchpad; a
+   comparison worth repeating goes into the script): counts per label/source, ids by prefix,
+   the per-item ids, and the OWNS edges by a stable key. The "13F sample churn" it lists
+   apart — a 13F holder that came or went together with its filer node — is the 100-filer
+   relevance sample's boundary moving as filings arrive, not a finding (item 51: Dixon
+   Financial, rank 100 of 100); a 13F edge lost by a filer the graph keeps IS one (item 40).
 2. For each item marked "verify at the next rebuild", check the concrete expectation
    written in it (an id, a QID on a node, an edge, a count). Verified items are removed
    from the list, with one line under "Verified by rebuild <date>".

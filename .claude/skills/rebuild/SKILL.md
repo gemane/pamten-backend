@@ -50,7 +50,10 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   D acquisitions, E 13F, F industry fill. Its target lists are frozen so rebuilds compare; change them only on purpose and
   say so in the verify.
 - `snapshot.py` — counts per type/source/filing/reason, entities and persons by id, every
-  OWNS triple, the run log. `save_accounts.py` / `restore_accounts.py` — `User` and
+  OWNS edge with its source, `until` and filing type, the run log. `diff_snapshots.py
+  <previous after.json> <new after.json>` — the verify's diff: counts, hard-id nodes gone
+  and new, uuid nodes by name, OWNS edges by a stable key; a 13F edge that came or went
+  WITH its filer node is listed apart as the relevance sample's churn (findings item 51). `save_accounts.py` / `restore_accounts.py` — `User` and
   `RefreshToken` rows by key, so nobody has to log in again (file 0600, never in memory).
 
 A step a merged change added to `finish-import.sh` usually also belongs in step 7, because

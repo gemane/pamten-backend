@@ -943,7 +943,14 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   within the window. For SpaceX (91 filings) that is complete; for a mega-cap
   it is a sample, and the command prints fetched-vs-total so nobody mistakes
   one for the other. Amendments (13F-HR/A) restate the whole table, so only
-  the newest accession per filer is read.
+  the newest accession per filer is read. The sample's boundary moves from day
+  to day: the 100 non-known filers are the top of EFTS's relevance order, and a
+  filing that arrives and scores higher pushes the hundredth out. Dixon
+  Financial Services (48 rows, 5 Class A + 620 Class B of Berkshire) ranked
+  exactly 100th among the non-known filers on 2026-11-03 — in the sample on
+  11-02, out on 11-01 and 11-03 (findings item 51). The rebuild's snapshot
+  diff lists such a holder, come or gone together with its node, apart as
+  sample churn rather than as a lost edge.
 - **Filers the graph knows are asked for by CIK, and all of them are read.**
   Relevance ranks a mega-filer's single row among thousands at the tail of
   every query: on Berkshire's class-A CUSIP (2,352 hits) BlackRock, Vanguard,
