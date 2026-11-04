@@ -3822,6 +3822,13 @@ def _13f_filings_for(queries: list[str], limit: int,
     filers report CUSIPs 84615Q103 and 69608A108 side by side, and NVIDIA
     abbreviates the name to "SPACE EXPLORATION TECHN CORP" — a single
     exact-phrase query misses whole classes of filers whichever term it uses.
+    That holds for a rarely-held issuer, whose queries all fit under the
+    discovery cap below. The cap is shared by the queries and spent by the
+    first one for a widely-held issuer — Berkshire's class-A CUSIP alone
+    returns 2,466 filings — so the later queries add nothing to the pool and
+    the relevance sample of non-known filers comes from the first query; the
+    graph-known filers are asked for by CIK per query regardless
+    (`_13f_priority_filings`), so no holder is lost to it (findings item 53).
 
     Full-text search matches the information-table DOCUMENT, so each hit is one
     filing naming the issuer. Hits are relevance-ordered, NOT date-ordered, so
@@ -3845,10 +3852,12 @@ def _13f_filings_for(queries: list[str], limit: int,
     # filings — FMR's ranked outside a 1,250 sweep and Fidelity went missing);
     # a mega-cap's 10,000-hit universe stays a prioritised sample either way.
     discover_cap = max(limit * 5, 2500)
+    # No early exit between queries when the cap is spent: the loop below then
+    # asks a later query for its FIRST page only — the guards take no hit and
+    # stop — which reads its total, so `filings_total` is the largest of every
+    # query's count and not the first query's alone (findings item 53).
     for query in queries:
       params = {**base_params, "q": f'"{query}"'}
-      if len(seen_acc) >= discover_cap:
-          break
       offset = 0
       while offset < discover_cap:
         try:

@@ -951,6 +951,18 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   11-02, out on 11-01 and 11-03 (findings item 51). The rebuild's snapshot
   diff lists such a holder, come or gone together with its node, apart as
   sample churn rather than as a lost edge.
+- **The discovery cap is shared by the queries, and a widely-held issuer's
+  first query spends it.** The sweep stops at 2,500 filings across the
+  queries [stored CUSIPs…, name]; Berkshire's class-A CUSIP alone returns
+  2,466, so the class-B query (8,462 filings) adds ~34 and the name query is
+  never swept. Nothing is lost by it: graph-known filers are asked for by CIK
+  per query whatever the sweep found (6 class-B-only known filers all hold
+  their edge), and the 100 non-known filers are taken in first-seen order, so
+  every first-query filer precedes a later query's anyway. The several
+  identifiers serve the rarely-held issuer (SpaceX: two CUSIPs and an
+  abbreviated name, all under the cap). `filings_total` stays the largest of
+  **every** query's total: a query the cap skips is still asked once for its
+  count (findings item 53, 2026-11-04).
 - **Filers the graph knows are asked for by CIK, and all of them are read.**
   Relevance ranks a mega-filer's single row among thousands at the tail of
   every query: on Berkshire's class-A CUSIP (2,352 hits) BlackRock, Vanguard,

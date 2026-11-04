@@ -230,6 +230,13 @@ parser. Anything that does not map is either a new property (document it) or noi
       spelling was re-keyed to `sec:` — the id depended on how two sources spelled a name
       (findings item 39, 2026-11-04). Return the id the node lives under, and let the caller
       continue with it (a group's next merge, the endpoint's answer).
+- [ ] **A cap shared across queries is spent by the first — measure what each query adds
+      before claiming the list covers "whole classes of filers".** The 13F sweep's 2,500
+      across [class-A CUSIP, class-B CUSIP, name] is 2,466 class-A for Berkshire; the other
+      two add nothing to the pool, and no holder is lost only because the known filers are
+      asked by CIK per query and the non-known sample is first-seen order anyway. Say which
+      query the sample comes from, and read a skipped query's total so the reported count is
+      not the first query's (findings item 53, 2026-11-04).
 - [ ] **Compare a building as a building, against every address the register gives.**
       Two registers write one building differently: a suite one omits ("1314 DOUGLAS
       STREET, SUITE 1400" / "1314 DOUGLAS STREET"), "Northwest" for "NW", a building's name
