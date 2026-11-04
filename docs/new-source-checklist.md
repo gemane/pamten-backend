@@ -1254,6 +1254,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       lookup), so they passed while reading nothing. Use the `fake_arcadedb` fixture
       (records every statement, answers `[]` or what `respond()` scripts), or mark a
       deliberate request `@pytest.mark.allow_db`.
+- [ ] **A capped list must not be cut before it is filtered.** The 13D/G holder list
+      read one 100-entry browse page and dropped the company's own filings after the
+      cut: a bank's page was 98 outbound to 2 inbound, and every filing the company made
+      pushed an old holder off the end — so the result depended on the scrape date
+      (findings item 49). Page until the FILTERED list is long enough (or the feed ends),
+      cap the pages, and keep a separate budget for the requests the items cost.
 - [ ] **A module cache is test state — fix its start in `tests/conftest.py`.** A
       writer that reads a cached lookup through `db.get_session` (the source data-mode
       cache behind `edge_writes_suppressed`, 60 s) reads it through the test's mock when
