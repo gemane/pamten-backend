@@ -1249,6 +1249,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `run_command` (pass it in), not import its own. **Prove it** by running
       the unit suite with the local ArcadeDB stopped: any test that still needs a
       database fails loudly instead of writing quietly.
+- [ ] **A module cache is test state — fix its start in `tests/conftest.py`.** A
+      writer that reads a cached lookup through `db.get_session` (the source data-mode
+      cache behind `edge_writes_suppressed`, 60 s) reads it through the test's mock when
+      the cache is cold, and a test counting `session.run` calls then passes only after
+      an earlier test warmed it (findings item 43: three writer tests failed alone). Give
+      every new module cache an autouse fixture beside `legal_identity_caches` /
+      `source_mode_cache`, and run a call-counting test alone once
+      (`pytest <nodeid> -p no:xdist`) before trusting its count.
 - [ ] **Drive the WRITE path, not just the mapper.** A pure mapper computing a field
       proves nothing about storage: the PSC mapper carried `register_id` for weeks while
       the writer's parameter list silently dropped it, and every mapper unit test stayed

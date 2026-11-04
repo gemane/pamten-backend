@@ -100,6 +100,28 @@ def legal_identity_caches():
 
 
 @pytest.fixture(autouse=True)
+def source_mode_cache():
+    """Every test starts with the source data-mode cache warm and empty:
+    every source draws (``full``) and no writer reads the Source nodes.
+
+    Every OWNS/SUCCEEDED_BY writer asks `sources.edge_writes_suppressed`, which
+    reads the Source nodes through `db.get_session` when its 60 s cache is
+    cold. In a unit test that session is the test's mock, so a cold cache
+    added one `session.run` the test did not expect. Three writer tests
+    counted calls and passed only when an earlier test in the same worker had
+    warmed the cache less than a minute before; alone, or first, they failed
+    (findings item 43). Tests of the mode itself (test_data_mode.py) reset
+    the cache in their own fixture, which runs after this one."""
+    import time
+    from app.scraper import sources
+    sources._MODE_CACHE["at"] = time.monotonic()
+    sources._MODE_CACHE["by_source_id"] = {}
+    yield
+    sources._MODE_CACHE["at"] = None
+    sources._MODE_CACHE["by_source_id"] = {}
+
+
+@pytest.fixture(autouse=True)
 def no_network(request, monkeypatch):
     if "allow_network" in request.keywords:
         return
