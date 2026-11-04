@@ -204,6 +204,19 @@ Every merge upserts a `MergeLog` vertex keyed on `(keep_id, dup_name)`, so
 repeated auto-merges of a re-scraped node bump `count`/`at` instead of piling up
 rows. `GET /persons/merge-log` returns them newest-first.
 
+**The survivor is re-keyed when the merge gave it a better hard id** (2026-11-04,
+findings item 39). A merge is a way of learning an id: the Wikidata person takes the SEC
+twin's CIK, and `merge_person_records` ends with `node_ids.key_on_learning`, as the
+entity merge has since 2026-10-30 — `wd:Q912811` that absorbs `sec:0001195071` becomes
+`sec:0001195071`. It returns the id the person lives under; the auto-dedup merges a
+group's next twin into that id and reports it, and `POST /persons/merge` answers with it
+(`keep_id` may differ from the one sent; the sent id still resolves). The rename deletes
+the twin's forwarding row — its id is the survivor's now, live again — and writes
+`wd:…→sec:…`, so every old link resolves in one hop. Before, the survivor kept `wd:` while
+the same person met under EDGAR's own spelling (`_upsert_person_by_name` stamps the CIK
+and re-keys) became `sec:`: after the 2026-11-03 rebuild 90 persons with a QID and a CIK
+were `wd:` and 36 `sec:`, by spelling alone.
+
 ## Endpoint summary
 
 | Endpoint | Purpose |
