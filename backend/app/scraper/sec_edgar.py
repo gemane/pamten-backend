@@ -1427,6 +1427,113 @@ def _primary_doc_url(index_html: str) -> str | None:
 
 # ── Ownership filings (SC 13D / SC 13G) ──────────────────────────────────────
 
+OWNERSHIP_FEED_PAGE      = 100   # entries per browse-edgar page (EDGAR's maximum)
+OWNERSHIP_FEED_MAX_PAGES = 10    # pages read for one issuer's 13D/G list, at most
+# Filings opened for one issuer's 13D/G list, at most — the most one page could
+# ever cost before paging. A filer whose own SC 13s go in under a filing
+# agent's accession prefix (Berkshire: 100 of 100) looks inbound to the feed
+# filter and is only dropped once opened, so paging alone would have opened
+# up to a thousand. Paging widens the window; this keeps the bill (item 49).
+OWNERSHIP_MAX_OPENED     = 100
+
+
+def _ownership_feed_entries(company_cik: str):
+    """The SC 13D/G filings ABOUT a company, newest first, from EDGAR's browse feed.
+
+    The feed lists the filings where the company is the subject OR the filer, and
+    a page holds at most 100. Until 2026-11-04 one page was read and the
+    company's own (outbound) filings were dropped after the cut — so a bank or
+    asset manager that files SC 13s itself saw its holders crowded out: Bank of
+    America's page was 98 outbound to 2 inbound and reached back only nine
+    months, JPMorgan 98/2, Goldman and BlackRock 100/0. Worse, the window moved
+    with every filing the company made: three outbound filings on 2026-11-03
+    pushed Vanguard Group's 13G/A of 2026-01-30 to position 101, and its closed
+    holding of Bank of America vanished between two rebuilds (findings item 49).
+
+    A generator, so a page is fetched only when the caller still needs more:
+    the next page is asked for while the last one was full, up to
+    OWNERSHIP_FEED_MAX_PAGES. A failed first page loses the section, as before;
+    a failed later page loses it too (the list is incomplete) but keeps what
+    was read.
+    """
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    # Normalise company CIK to 10-digit zero-padded form for comparisons
+    norm_company_cik = company_cik.zfill(10)
+    for page in range(OWNERSHIP_FEED_MAX_PAGES):
+        try:
+            atom_text = _get_text(BROWSE_URL, {
+                "action": "getcompany",
+                "CIK":    company_cik,
+                # "SC", not "SC 13": EDGAR matches this as a PREFIX, and the
+                # December-2024 modernization renamed the forms from "SC 13G" to
+                # "SCHEDULE 13G". The two sets are disjoint, so "SC 13" quietly
+                # stopped returning anything filed after early 2024 — on Apple, the
+                # newest hit was 2024-02-14 while the company had filings from 2026.
+                # "SC" spans both; the SC TO-*/SC 14* noise it also matches is
+                # dropped by the `"13" not in form_type` test below, before any
+                # request is spent on it.
+                "type":   "SC",
+                "dateb":  "",
+                "owner":  "include",
+                "start":  str(page * OWNERSHIP_FEED_PAGE),
+                "count":  str(OWNERSHIP_FEED_PAGE),
+                "output": "atom",
+            })
+        except httpx.HTTPError as exc:
+            log.error("SEC EDGAR: browse request failed for CIK=%s (page %d): %s",
+                      company_cik, page + 1, exc)
+            _section_failed(SECTION_OWNERS, exc)
+            return
+
+        try:
+            root = ET.fromstring(atom_text)
+        except ET.ParseError as exc:
+            log.error("SEC EDGAR: Atom feed parse error: %s", exc)
+            return
+
+        entries = root.findall("a:entry", ns)
+        # Parse entries from Atom feed; grab filing-href for each.
+        # Pre-filter outbound filings (where this company is the FILER, not the
+        # subject) by reading the accession number's embedded filer-CIK directly
+        # from the feed — no HTTP request needed.
+        for entry in entries:
+            cat       = entry.find("a:category", ns)
+            form_type = (cat.get("term") or "").strip() if cat is not None else ""
+            if "13" not in form_type:
+                continue
+
+            content = entry.find("a:content", ns)
+            if content is None:
+                continue
+            href_elem = content.find("a:filing-href", ns)
+            date_elem = content.find("a:filing-date", ns)
+            acc_elem  = content.find("a:accession-number", ns)
+            index_url = (href_elem.text or "").strip() if href_elem is not None else ""
+            file_date = (date_elem.text or "").strip() if date_elem is not None else None
+            accession = (acc_elem.text  or "").strip() if acc_elem  is not None else ""
+
+            if not index_url:
+                continue
+
+            # Skip filings submitted BY this company (outbound) — filer CIK is the
+            # first 10 digits of the accession number (after stripping dashes).
+            if accession:
+                filer_cik = accession.replace("-", "")[:10].zfill(10)
+                if filer_cik == norm_company_cik:
+                    continue
+
+            yield {
+                "index_url": index_url,
+                "form_type": form_type,
+                "file_date": file_date,
+                "accession": accession,      # builds the structured-XML URL
+            }
+        if len(entries) < OWNERSHIP_FEED_PAGE:
+            return          # the last page: the feed has nothing older
+    log.info("SEC EDGAR: 13D/G feed for CIK=%s cut at %d pages", company_cik,
+             OWNERSHIP_FEED_MAX_PAGES)
+
+
 def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                             limit: int = 20) -> list:
     """
@@ -1440,78 +1547,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         return []
 
     log.info("SEC EDGAR: fetching SC 13D/13G via browse for CIK=%s (%r)", company_cik, company_name)
-    try:
-        atom_text = _get_text(BROWSE_URL, {
-            "action": "getcompany",
-            "CIK":    company_cik,
-            # "SC", not "SC 13": EDGAR matches this as a PREFIX, and the
-            # December-2024 modernization renamed the forms from "SC 13G" to
-            # "SCHEDULE 13G". The two sets are disjoint, so "SC 13" quietly
-            # stopped returning anything filed after early 2024 — on Apple, the
-            # newest hit was 2024-02-14 while the company had filings from 2026.
-            # "SC" spans both; the SC TO-*/SC 14* noise it also matches is
-            # dropped by the `"13" not in form_type` test below, before any
-            # request is spent on it.
-            "type":   "SC",
-            "dateb":  "",
-            "owner":  "include",
-            "count":  "100",  # large institutions file many outbound SC 13s; need room for inbound
-            "output": "atom",
-        })
-    except httpx.HTTPError as exc:
-        log.error("SEC EDGAR: browse request failed for CIK=%s: %s", company_cik, exc)
-        _section_failed(SECTION_OWNERS, exc)
-        return []
-
-    try:
-        root = ET.fromstring(atom_text)
-    except ET.ParseError as exc:
-        log.error("SEC EDGAR: Atom feed parse error: %s", exc)
-        return []
-
-    ns = {"a": "http://www.w3.org/2005/Atom"}
-
-    # Normalise company CIK to 10-digit zero-padded form for comparisons
+    # Read lazily, page by page: the loop below asks for the next page only
+    # while it still needs holders (findings item 49).
+    raw_entries = _ownership_feed_entries(company_cik)
     norm_company_cik = company_cik.zfill(10)
-
-    # Parse entries from Atom feed; grab filing-href for each.
-    # Pre-filter outbound filings (where this company is the FILER, not the subject)
-    # by reading the accession number's embedded filer-CIK directly from the feed —
-    # no HTTP request needed. Investment managers (JPMorgan, BlackRock) file hundreds
-    # of outbound SC 13s per year; without this filter they swamp the count limit.
-    raw_entries: list[dict] = []
-    for entry in root.findall("a:entry", ns):
-        cat       = entry.find("a:category", ns)
-        form_type = (cat.get("term") or "").strip() if cat is not None else ""
-        if "13" not in form_type:
-            continue
-
-        content = entry.find("a:content", ns)
-        if content is None:
-            continue
-        href_elem = content.find("a:filing-href", ns)
-        date_elem = content.find("a:filing-date", ns)
-        acc_elem  = content.find("a:accession-number", ns)
-        index_url = (href_elem.text or "").strip() if href_elem is not None else ""
-        file_date = (date_elem.text or "").strip() if date_elem is not None else None
-        accession = (acc_elem.text  or "").strip() if acc_elem  is not None else ""
-
-        if not index_url:
-            continue
-
-        # Skip filings submitted BY this company (outbound) — filer CIK is the
-        # first 10 digits of the accession number (after stripping dashes).
-        if accession:
-            filer_cik = accession.replace("-", "")[:10].zfill(10)
-            if filer_cik == norm_company_cik:
-                continue
-
-        raw_entries.append({
-            "index_url": index_url,
-            "form_type": form_type,
-            "file_date": file_date,
-            "accession": accession,      # builds the structured-XML URL
-        })
 
     # One pass per filing: fetch, verify, then claim the investor's slot.
     #
@@ -1538,9 +1577,14 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
     known_names: list[str] | None = None
 
     results: list[dict] = []
-    for raw in raw_entries:
-        if len(results) >= limit:
+    opened = 0
+    # Checked BEFORE the next entry is pulled: pulling it may fetch the feed's
+    # next page, which is wasted once enough holders are in.
+    while len(results) < limit and opened < OWNERSHIP_MAX_OPENED:
+        raw = next(raw_entries, None)
+        if raw is None:
             break
+        opened += 1
 
         xml = None
         if _is_structured(raw["form_type"]) and raw.get("accession"):

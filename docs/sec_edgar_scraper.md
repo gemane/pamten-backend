@@ -534,20 +534,39 @@ families' side of that bloc completely and Altria's side not at all.
 ### Finding filings for a company
 
 The EDGAR company browse endpoint with `output=atom` returns an Atom XML feed of
-all SC 13 filings where a given company is the **subject/issuer**:
+the SC filings where a given company is the **subject/issuer — or the filer**:
 
 ```
 GET https://www.sec.gov/cgi-bin/browse-edgar
     ?action=getcompany
     &CIK={issuer_cik}
-    &type=SC+13
+    &type=SC
     &owner=include
-    &count=30
+    &start={0, 100, 200, …}
+    &count=100
     &output=atom
 ```
 
 The `owner=include` parameter is critical — without it, EDGAR only returns
-filings made BY the company, not filings ABOUT it.
+filings made BY the company, not filings ABOUT it. With it, the feed holds both,
+and the company's own (outbound) filings are dropped by their accession prefix.
+
+**The feed is read page by page** (`_ownership_feed_entries`, findings item 49).
+A page holds at most 100 entries, and a bank or asset manager files SC 13s
+itself: Bank of America's first page was 98 of its own filings to 2 about it and
+reached back nine months; JPMorgan 98/2, Goldman and BlackRock 100/0. Reading
+one page made the holder list depend on how much the company itself had filed
+lately: three outbound filings on 2026-11-03 pushed Vanguard Group's 13G/A of
+2026-01-30 to position 101, and the closed holding it carried vanished between
+two rebuilds. The next page is fetched lazily, only while the last one was full
+and fewer than `limit` holders are in, up to `OWNERSHIP_FEED_MAX_PAGES` (10).
+Filings opened stay within `OWNERSHIP_MAX_OPENED` (100) — the most one page could
+cost before — because a filer whose own SC 13s go in under a filing agent's
+accession prefix (Berkshire, 100 of 100) looks inbound and is dropped only once
+opened. A failed later page keeps what was read and marks the owners section
+partial. Live 2026-11-04: Bank of America 3 holders (Vanguard Group 8.91 % closed
+2026-03-13, Berkshire 7.94 %, Vanguard Capital Management 6.59 %) for 4 feed and
+~100 document requests; JPMorgan 3 holders for 10 pages.
 
 The feed is returned most-recent-first, which enables deduplication: process
 entries in order and skip any investor already seen (SC 13G/A amendments share
@@ -1328,7 +1347,7 @@ other than through its own scrape.
 | Step | Requests |
 |---|---|
 | Tickers file (cached per process) | 1 (first company only) |
-| Company browse Atom feed | 1 |
+| Company browse Atom feed | 1, up to 10 pages for a company that files SC 13s itself |
 | Filing index pages (up to 20 investors) | up to 20 |
 | Primary documents for stake % (top 5) | up to 5 |
 | Submissions JSON for executives | 1 |
@@ -1355,9 +1374,9 @@ Add about 10 s for each request sec.gov leaves hanging (about 1 in 30; see
   *Quarterly Holdings* above. 13F has its own limits: quarterly with a 45-day
   lag, institutional managers over $100M only (an insider's personal stake
   never appears), and only securities on the SEC's 13(f) list.
-- **Amendment deduplication is conservative.** The Atom feed with `count=30`
-  may not include all historic amendments; only the most recent filing per
-  investor is retained.
+- **Amendment deduplication is conservative.** The feed is read to at most 10
+  pages and 100 opened filings, so an issuer's oldest amendments may be left
+  unread; only the most recent filing per investor is retained.
 - **Stake percentages for the 6th+ investor are not fetched** (capped at 5 to
   limit HTTP request count). The `stake_percent` field will be `null` for those.
 - **Form 3/4 titles change over time.** The scraper reads the most recent
