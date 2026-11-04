@@ -135,6 +135,7 @@ def test_scraper_source_run_master_off_and_unknown(client, make_token, monkeypat
     assert client.post("/scraper/source/nope/run", params={"company": "Acme"}, headers=tok).status_code == 404
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 def test_scraper_source_run_dispatches_to_registered(client, make_token, monkeypatch):
     from app.config import settings
     import app.scraper.scraper_registry as reg
@@ -593,6 +594,7 @@ def test_create_dual_listed_404_when_entity_missing(client, fake_db, make_token)
     assert r.status_code == 404
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 def test_create_owns_persists_provenance(client, fake_db, make_token):
     fake_db.queue([{"id": "a"}],                  # owner label lookup: Entity hit
                   [{"r": {"source_id": "s1"}}])   # CREATE ... RETURN r

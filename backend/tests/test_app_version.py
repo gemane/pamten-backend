@@ -109,6 +109,7 @@ class TestFailingOpen:
         assert app_version(platform="ios", version="0.0.1")["update_required"] is False
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 class TestReachability:
     def test_it_is_served_unauthenticated(self, client):
         """A client too old to authenticate still has to learn it must upgrade."""

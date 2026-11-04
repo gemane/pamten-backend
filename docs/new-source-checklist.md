@@ -1246,9 +1246,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       query, stub `app.db.arcadedb.run_sql` — a suite that quietly hits a real server is
       no longer testing what it claims, and repeated failed auth locks ArcadeDB out.
       A shared helper called from a mocked module must use that module's
-      `run_command` (pass it in), not import its own. **Prove it** by running
-      the unit suite with the local ArcadeDB stopped: any test that still needs a
-      database fails loudly instead of writing quietly.
+      `run_command` (pass it in), not import its own. **Enforced since findings item
+      52:** a unit test (anything outside `tests/integration/`) that sends a request
+      to the database is refused and FAILS at teardown, naming the code that sent it
+      — 72 tests had been sending 162 requests, nearly all swallowed by best-effort
+      helpers (claims, stake history, seat rules, freshness stamp, stored-entity
+      lookup), so they passed while reading nothing. Use the `fake_arcadedb` fixture
+      (records every statement, answers `[]` or what `respond()` scripts), or mark a
+      deliberate request `@pytest.mark.allow_db`.
 - [ ] **A module cache is test state — fix its start in `tests/conftest.py`.** A
       writer that reads a cached lookup through `db.get_session` (the source data-mode
       cache behind `edge_writes_suppressed`, 60 s) reads it through the test's mock when

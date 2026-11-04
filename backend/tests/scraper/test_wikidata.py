@@ -934,6 +934,7 @@ class TestActionApiErrorBody:
         finally:
             wikidata.country_item.cache_clear()
 
+    @pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
     def test_a_scrape_fails_instead_of_reporting_no_results(self):
         from app.scraper import runner
         from app.scraper.wikidata import WikidataApiError
