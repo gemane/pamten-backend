@@ -460,7 +460,10 @@ def deduplicate_high_confidence(apply: bool = True, seed_ids: list[str] | None =
                 continue
             if apply:
                 try:
-                    merge_person_records(keep, m["id"])
+                    # the survivor may come back under a better id (a `wd:`
+                    # person that took the twin's CIK is `sec:` now): the
+                    # group's next merge and the report use that id
+                    keep = merge_person_records(keep, m["id"])
                 except ValueError:
                     continue  # node vanished (already merged in a prior group)
             done.append(m["full_name"])
@@ -567,12 +570,15 @@ def merge_persons(data: PersonMergeRequest, _: dict = Depends(require_contributo
     kept person, backfills any blank bio fields, then DETACH DELETEs the dup.
     """
     try:
-        merge_person_records(data.keep_id, data.dup_id)
+        keep_id = merge_person_records(data.keep_id, data.dup_id)
     except ValueError as exc:
         # keep==dup is a bad request; a missing node is a 404
         status = 400 if "differ" in str(exc) else 404
         raise HTTPException(status_code=status, detail=str(exc))
-    return {"message": "Persons merged", "keep_id": data.keep_id, "removed_id": data.dup_id}
+    # `keep_id` is where the person lives NOW — the survivor is re-keyed when
+    # the merge gave it a better hard id (findings item 39); the id the caller
+    # sent still resolves through the forwarding row
+    return {"message": "Persons merged", "keep_id": keep_id, "removed_id": data.dup_id}
 
 
 def _earliest_birth(keep_id: str, dup_id: str) -> str | None:
@@ -584,10 +590,22 @@ def _earliest_birth(keep_id: str, dup_id: str) -> str | None:
     return earliest(*(r.get("created_at") for r in rows))
 
 
-def merge_person_records(keep: str, dup: str) -> None:
+def merge_person_records(keep: str, dup: str) -> str:
     """
     Fold person `dup` into person `keep` (see merge_persons). Raises ValueError if
     the ids are equal or either node is missing — callers map that to HTTP status.
+
+    Returns the id the kept person lives under afterwards. A merge is a way of
+    learning a hard id — the Wikidata person takes the SEC twin's CIK — and
+    the survivor is re-keyed like any node that learns one
+    (`node_ids.key_on_learning`, as the entity merge has done since
+    2026-10-30): `wd:Q912811` that absorbs `sec:0001195071` becomes
+    `sec:0001195071`. Until 2026-11-04 the survivor kept its `wd:` id, while the
+    same person met under the same spelling (`_upsert_person_by_name`, which
+    stamps the CIK and re-keys) became `sec:` — 90 `wd:` and 36 `sec:` persons
+    with both ids on dev, by spelling alone (findings item 39). The twin's
+    forwarding row `sec:…→wd:…` is deleted by the rename (its old id is live
+    again) and `wd:…→sec:…` written, so every old link resolves in one hop.
     """
     if keep == dup:
         raise ValueError("keep_id and dup_id must differ")
@@ -708,6 +726,9 @@ def merge_person_records(keep: str, dup: str) -> None:
         migrate_claims(dup, keep)
 
         session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
+
+        from app.node_ids import key_on_learning
+        return key_on_learning(session, "Person", keep)
 
 
 @router.post("/", response_model=PersonResponse)

@@ -223,6 +223,13 @@ parser. Anything that does not map is either a new property (document it) or noi
       carries each edge's `filing_type`, and the diff lists a 13F edge that came or went with
       its filer node apart, as expected churn — while a 13F edge lost by a filer the graph
       keeps stays a finding (item 40).
+- [ ] **A merge is an id-learning path: re-key the survivor.** Every place a node gains a
+      hard id must end with `node_ids.key_on_learning` — the writers' COALESCE stamps do, the
+      entity merge does, the person merge did not: a `wd:` person that absorbed its `sec:`
+      twin kept `wd:` with the CIK on it, while the same person met under EDGAR's own
+      spelling was re-keyed to `sec:` — the id depended on how two sources spelled a name
+      (findings item 39, 2026-11-04). Return the id the node lives under, and let the caller
+      continue with it (a group's next merge, the endpoint's answer).
 - [ ] **Compare a building as a building, against every address the register gives.**
       Two registers write one building differently: a suite one omits ("1314 DOUGLAS
       STREET, SUITE 1400" / "1314 DOUGLAS STREET"), "Northwest" for "NW", a building's name

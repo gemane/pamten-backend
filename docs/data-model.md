@@ -572,7 +572,10 @@ the new endpoint, re-points the stored references and leaves a MergedId forwardi
 row, so old links keep opening. A keyed id already taken is a twin for the dedup and
 is never forced. Until 2026-10-28 a one-off heal did this after the fact; the
 2026-10-27 rebuild, run without it, left WARBURG PINCUS LLC and Steven Sarracino
-under uuids.
+under uuids. A merge is one more way of learning: the survivor of a person merge takes
+the twin's CIK and is re-keyed the same way (2026-11-04, findings item 39 — the entity
+merge did this since 2026-10-30, the person merge did not, and 90 Wikidata persons kept
+`wd:` with a CIK on them while 36 met under EDGAR's spelling became `sec:`).
 
 **A keyed node that learns a better id is re-keyed too** (2026-10-30, findings
 item 20). The ranking is `lei:` > `sec:` > `wd:` > uuid, the user's call: a
