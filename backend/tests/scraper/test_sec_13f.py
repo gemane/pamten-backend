@@ -462,6 +462,56 @@ class TestFetch13FHolders:
         assert out["filings_fetched"] == 15
 
 
+def _serve_sweep(totals: dict, hits_for: dict, fail: set = frozenset()):
+    """Mock _get for the discovery sweep alone: `totals[q]` is a query's total,
+    `hits_for[q]` its hits, served 100 a page (as EFTS does); a query in `fail`
+    answers 500."""
+    import httpx
+    asked: dict = {}
+
+    def _get(url, params=None):
+        assert url == sec_edgar.SEARCH_URL
+        q = (params or {}).get("q", "").strip('"')
+        asked.setdefault(q, []).append(int((params or {}).get("from", 0)))
+        if q in fail:
+            raise httpx.HTTPStatusError("500", request=None, response=httpx.Response(500))
+        frm = asked[q][-1]
+        return {"hits": {"total": {"value": totals[q]}, "hits": hits_for.get(q, [])[frm:frm + 100]}}
+    return patch.object(sec_edgar, "_get", side_effect=_get), asked
+
+
+def _filers(prefix, n):
+    return [_fts_hit(f"{prefix}{i:06d}-26-000001", str(int(prefix) * 10 ** 6 + i), f"F{prefix}-{i}", "2026-10-01")
+            for i in range(n)]
+
+
+class TestDiscoveryCap:
+    """findings item 53: the cap is shared by the queries and spent by the first
+    for a widely-held issuer; the count still covers every query."""
+
+    def test_a_later_query_still_reports_its_total_when_the_cap_is_spent(self):
+        g, asked = _serve_sweep({"A": 2600, "B": 9000, "X": 5000},
+                                {"A": _filers("1", 2600), "B": _filers("2", 300)})
+        with g:
+            filings, total = sec_edgar._13f_filings_for(["A", "B", "X"], 100)
+        assert total == 9000, "the largest total of every query, not of the queries swept"
+        assert asked["B"] == [0] and asked["X"] == [0], "one request each, no sweep"
+        assert len(filings) == 2500 and not any(f["filer_cik"].startswith("2") for f in filings), \
+            "the pool holds the first query's filers only"
+
+    def test_a_failed_total_read_keeps_the_count_already_known(self):
+        g, asked = _serve_sweep({"A": 2600, "B": 9000}, {"A": _filers("1", 2600)}, fail={"B"})
+        with g:
+            _, total = sec_edgar._13f_filings_for(["A", "B"], 100)
+        assert total == 2600 and asked["B"] == [0]
+
+    def test_under_the_cap_every_query_still_feeds_the_pool(self):
+        g, asked = _serve_sweep({"A": 50, "B": 60}, {"A": _filers("1", 50), "B": _filers("2", 60)})
+        with g:
+            filings, total = sec_edgar._13f_filings_for(["A", "B"], 100)
+        assert total == 60 and len(filings) == 110
+
+
 class TestQuarterlyDeadlines:
     """The gate's calendar: quarter end + 45 days, computed not hardcoded."""
 
