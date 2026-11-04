@@ -317,17 +317,20 @@ def attach_stated_cik(node: dict, node_id: str, ciks: list[str]) -> str | None:
     return None
 
 
-def write_from_pointer(leis: list[str], ciks: list[str]) -> str | None:
+def write_from_pointer(leis: list[str], ciks: list[str], candidates: list[str] | None = None) -> str | None:
     """The node a register writes for the first id it knows — an LEI before a
     CIK (GLEIF states the legal entity; a CIK names a filer) — or None when no
-    register that is switched on knows any of them."""
+    register that is switched on knows any of them. ``candidates`` are nodes
+    the register weighs as that legal entity on its own terms (the GLEIF join,
+    the EDGAR filer match): the node a knowledge base's item found by name
+    (findings item 50)."""
     if leis and _gleif_enabled():
         for lei in leis:
-            if node_id := write_from_gleif(lei):
+            if node_id := (write_from_gleif(lei, candidates=candidates) if candidates else write_from_gleif(lei)):
                 return node_id
     if ciks and _sec_enabled():
         for cik in ciks:
-            if node_id := write_from_edgar(cik):
+            if node_id := (write_from_edgar(cik, candidates=candidates) if candidates else write_from_edgar(cik)):
                 return node_id
     return None
 
@@ -342,6 +345,19 @@ def contradiction(node: dict, leis: list[str], ciks: list[str]) -> str | None:
     if node.get("sec_cik") and ciks and node["sec_cik"] not in ciks:
         return f"CIK {node['sec_cik']} is not the stated {', '.join(ciks)}"
     return None
+
+
+def unconfirmed(node: dict, leis: list[str], ciks: list[str]) -> bool:
+    """Whether a node found by NAME holds a register id (an LEI or a CIK) and
+    none of the ones the knowledge base's item states — so only a register
+    can say it is that legal entity (findings item 50). The item's ids are
+    then asked first, with the node as the candidate. A node without register
+    ids is not judged here: no register can join it, and the item stays its
+    enrichment, as before."""
+    held_lei, held_cik = node.get("lei_id"), node.get("sec_cik")
+    if not (held_lei or held_cik) or not (leis or ciks):
+        return False
+    return not ((held_lei and held_lei in leis) or (held_cik and held_cik in ciks))
 
 
 def stale(node: dict, item_names: list[str], on: str | None = None) -> str | None:

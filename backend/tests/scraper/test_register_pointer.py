@@ -157,6 +157,17 @@ class TestFollowingThePointer:
              patch.object(rp, "write_from_edgar", return_value="sec:0000000001"):
             assert rp.write_from_pointer(["A" * 20], ["0000000001"]) == "sec:0000000001"
 
+    def test_candidates_go_to_the_register_that_is_asked(self):
+        # findings item 50: the node an item found by name is weighed by the
+        # register, which joins it or writes its own node
+        with patch.object(rp, "_gleif_enabled", return_value=True), \
+             patch.object(rp, "_sec_enabled", return_value=True), \
+             patch.object(rp, "write_from_gleif", return_value=None) as gl, \
+             patch.object(rp, "write_from_edgar", return_value="sec:0000000001") as ed:
+            assert rp.write_from_pointer(["A" * 20], ["0000000001"], candidates=["sec:X"]) == "sec:0000000001"
+        gl.assert_called_once_with("A" * 20, candidates=["sec:X"])
+        ed.assert_called_once_with("0000000001", candidates=["sec:X"])
+
     def test_gleif_follows_the_catalogue_switch_alone(self):
         # no environment flag besides it: the default settings must not
         # switch the lookup off (2026-10-29: no LEI ever wrote a node)
@@ -354,3 +365,23 @@ class TestAStatedCik:
              patch.object(rp, "write_from_edgar") as write:
             assert rp.attach_stated_cik(self.NODE, "lei:549300WSWTEW6DURBO45", ["0000741508"]) is None
         write.assert_not_called()
+
+
+class TestUnconfirmed:
+    """findings item 50: a node found by name that holds a register id, none
+    of them the item's, is the item's legal entity only on its register's word."""
+    LEI, CIK = "549300ZKUTPIBZLWLL89", "0000869614"
+
+    def test_a_filer_met_by_an_item_stating_only_an_lei(self):
+        assert rp.unconfirmed({"lei_id": None, "sec_cik": self.CIK}, [self.LEI], []) is True
+
+    def test_a_gleif_node_met_by_an_item_stating_only_a_cik(self):
+        assert rp.unconfirmed({"lei_id": self.LEI, "sec_cik": None}, [], [self.CIK]) is True
+
+    def test_a_node_holding_one_of_the_items_ids_is_confirmed(self):
+        assert rp.unconfirmed({"lei_id": self.LEI, "sec_cik": self.CIK}, [self.LEI], ["0000000001"]) is False
+        assert rp.unconfirmed({"lei_id": None, "sec_cik": self.CIK}, [], [self.CIK]) is False
+
+    def test_a_node_without_register_ids_or_an_item_without_ids_is_not_judged(self):
+        assert rp.unconfirmed({"lei_id": None, "sec_cik": None}, [self.LEI], [self.CIK]) is False
+        assert rp.unconfirmed({"lei_id": None, "sec_cik": self.CIK}, [], []) is False

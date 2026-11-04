@@ -286,23 +286,39 @@ def _upsert_entity(
                      or next((i for i in (resolve_entity_id(session, sec_cik=c) for c in ciks) if i), None)
                      or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None))
         other_of_name = None
+        unconfirmed = None
         if not entity_id:
             entity_id = resolve_entity_id(session, name=name, name_normalized=name_norm)
+            held_by_name = _held_ids(session, entity_id) if entity_id and (leis or ciks) else None
             # A node found by the NAME alone whose register id is not the
             # item's is another legal entity of that name, not a reason to
             # write nothing: J.P. Morgan Securities LLC and PLC share the key
             # "jp morgan securities", and whichever item came second was lost
             # (findings item 30). The item's ids then go to their register.
-            if entity_id and (leis or ciks) and register_pointer.contradiction(
-                    _held_ids(session, entity_id), leis, ciks):
+            if held_by_name and register_pointer.contradiction(held_by_name, leis, ciks):
                 log.info("Wikidata: %s (%s) shares a name with %s, another legal entity; "
                          "asking the register", name, wikidata_id, entity_id)
                 other_of_name, entity_id = entity_id, None
+            # A node found by the NAME alone that holds a register id, none of
+            # them the item's, is the item's legal entity only if that register
+            # says so: the item's ids are asked first, with the node as the
+            # candidate the register may join. Taken on the name, the item went
+            # wherever a namesake happened to be written first — Q1516562
+            # (Liberty Media, LEI 549300ZKUTPIBZLWLL89, the Nevada company)
+            # landed on the Delaware filer CIK 0000869614 that a Berkshire 13G
+            # had written an hour earlier; GLEIF refused that join and wrote
+            # its own node without the item (findings item 50).
+            elif held_by_name and register_pointer.unconfirmed(held_by_name, leis, ciks):
+                log.info("Wikidata: %s (%s) found %s by name only; asking the register",
+                         name, wikidata_id, entity_id)
+                unconfirmed, entity_id = entity_id, None
     if not entity_id and (leis or ciks):
-        entity_id = register_pointer.write_from_pointer(leis, ciks)
-    # No register knows the item's ids: the name's node stands, and the
-    # contradiction below refuses it — rather than a twin of that name.
-    entity_id = entity_id or other_of_name
+        entity_id = (register_pointer.write_from_pointer(leis, ciks, candidates=[unconfirmed])
+                     if unconfirmed else register_pointer.write_from_pointer(leis, ciks))
+    # No register knows the item's ids: the name's node stands — enriched
+    # when it was only unconfirmed, refused by the contradiction below when it
+    # contradicts them — rather than a twin of that name.
+    entity_id = entity_id or other_of_name or unconfirmed
     if not entity_id and register_required:
         log.info("Wikidata: %s (%s) points at no register that knows it — not written", name, wikidata_id)
         return None

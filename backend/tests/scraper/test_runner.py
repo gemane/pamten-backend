@@ -1540,6 +1540,59 @@ class TestIdentifierBridge:
         assert not any("CREATE (e:Entity" in q for q in runs)
         assert any("SET e.wikidata_id" in q for q in runs)
 
+    # findings item 50: Q1516562 (Liberty Media, LEI 549300ZKUTPIBZLWLL89, the
+    # Nevada company) states no CIK; a Berkshire 13G had written the Delaware
+    # filer "LIBERTY MEDIA CORPORATION" (CIK 0000869614) an hour earlier, and
+    # the item took it by name
+    _LM_LEI, _LM_DE = "549300ZKUTPIBZLWLL89", "sec:0000869614"
+
+    def _liberty(self, register_answer, after_register):
+        ctx, session = _make_session_mock(single_returns=[
+            None, None, {"id": self._LM_DE},                     # QID, LEI, name
+            {"lei_id": None, "sec_cik": "0000869614"},           # _held_ids of the name's node
+            *after_register])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.key_on_learning", side_effect=lambda s, label, i: i), \
+             patch("app.scraper.register_pointer.attach_stated_lei", return_value=None), \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value=register_answer) as reg:
+            eid = _upsert_entity("Liberty Media", None, None, None, "Q1516562", lei=[self._LM_LEI])
+        return eid, session, reg
+
+    @staticmethod
+    def _stamped(session):
+        return [c.kwargs["id"] for c in session.run.call_args_list if "SET e.wikidata_id" in c.args[0]]
+
+    def test_a_name_hit_holding_another_register_id_asks_the_register_first(self):
+        held = {"lei_id": self._LM_LEI, "sec_cik": None, "name": "LIBERTY MEDIA CORPORATION",
+                "other_names": [], "former_names": None, "gleif_former_names": None}
+        eid, session, reg = self._liberty(f"lei:{self._LM_LEI}", [
+            held, {"name": "LIBERTY MEDIA CORPORATION", "cred": 92, "aliases": None, "descr": None}])
+        assert eid == f"lei:{self._LM_LEI}"
+        reg.assert_called_once_with([self._LM_LEI], [], candidates=[self._LM_DE])
+        assert self._stamped(session) == [f"lei:{self._LM_LEI}"]
+
+    def test_the_name_hit_stands_when_no_register_knows_the_ids(self):
+        held = {"lei_id": None, "sec_cik": "0000869614", "name": "LIBERTY MEDIA CORPORATION",
+                "other_names": [], "former_names": None, "gleif_former_names": None}
+        eid, session, reg = self._liberty(None, [
+            held, {"name": "LIBERTY MEDIA CORPORATION", "cred": 98, "aliases": None, "descr": None}])
+        assert eid == self._LM_DE
+        reg.assert_called_once()
+        assert self._stamped(session) == [self._LM_DE]
+
+    def test_a_name_hit_without_register_ids_is_not_asked_about(self):
+        ctx, session = _make_session_mock(single_returns=[
+            None, None, {"id": "u-liberty"}, {"lei_id": None, "sec_cik": None},
+            {"lei_id": None, "sec_cik": None, "name": "Liberty Media", "other_names": None,
+             "former_names": None, "gleif_former_names": None},
+            {"name": "Liberty Media", "cred": 50, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner.key_on_learning", side_effect=lambda s, label, i: i), \
+             patch("app.scraper.register_pointer.write_from_pointer") as reg:
+            eid = _upsert_entity("Liberty Media", None, None, None, "Q1516562", lei=[self._LM_LEI])
+        assert eid == "u-liberty"
+        reg.assert_not_called()
+
     def test_a_contradicted_node_gets_nothing_of_the_item(self):
         """The 2026-10-28 rebuild: Q219635 found the listed BlackRock by name,
         whose GLEIF LEI is not the one the item states. Found by name alone, so

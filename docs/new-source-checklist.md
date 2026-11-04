@@ -207,6 +207,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       item 30, 2026-11-01). Set the name hit aside and let the item's ids go to their
       register (and keep the refusal when none knows them — no twin of the name); the name checks on what the register writes (`register_pointer.stale`)
       still refuse an item whose ids are an old parent's (BlackRock).
+- [ ] **A name hit that holds another register id is unconfirmed, not agreed — ask the
+      register before writing onto it.** "No contradiction" is not "the same company": an
+      item that states only an LEI cannot contradict a filer that holds only a CIK. Liberty
+      Media's item (the Nevada company's LEI) took the Delaware filer of the same name that a
+      Berkshire 13G had written first, and GLEIF, asked afterwards, refused the join and wrote
+      its own node without the item (findings item 50, 2026-11-04). Ask the item's register
+      first, with the name's node as its candidate, and let its answer pick the node — then
+      the order of the writes no longer decides.
 - [ ] **Compare a building as a building, against every address the register gives.**
       Two registers write one building differently: a suite one omits ("1314 DOUGLAS
       STREET, SUITE 1400" / "1314 DOUGLAS STREET"), "Northwest" for "NW", a building's name
