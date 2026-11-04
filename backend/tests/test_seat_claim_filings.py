@@ -30,6 +30,7 @@ def _session(rows=()):
     return session, _ctx
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 class TestTheWritersPassIt:
     def test_a_seat_write_records_the_filing_on_its_claim(self):
         _, ctx = _session()

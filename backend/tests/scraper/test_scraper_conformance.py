@@ -15,6 +15,12 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+# Whole scrapes run here: their helpers that query through run_sql themselves
+# (claims, stake history, seat rules, freshness stamp, stored-entity lookup)
+# answer from a fake instead of localhost:2480 (findings item 52).
+pytestmark = pytest.mark.usefixtures("fake_arcadedb")
+
+
 def _fake_response(json_val=None, text=""):
     r = MagicMock()
     r.json.return_value = {} if json_val is None else json_val

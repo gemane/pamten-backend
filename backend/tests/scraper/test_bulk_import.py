@@ -103,6 +103,7 @@ class TestLegalFormType:
 # ── _BatchWriter: batching and flush semantics ───────────────────────────────
 
 class TestBatchWriter:
+    @pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
     def test_flushes_when_batch_size_reached(self):
         from app.scraper.bulk_import import _BatchWriter
 
@@ -158,6 +159,7 @@ class TestBatchWriter:
             mock_sql.assert_not_called()
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 class TestBatchWriterClaims:
     """Every bulk edge write also records what that source asserted.
 

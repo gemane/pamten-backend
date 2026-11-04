@@ -17,6 +17,12 @@ from app.config import settings
 from app.scraper import runner
 
 
+# Whole scrapes run here: their helpers that query through run_sql themselves
+# (claims, stake history, seat rules, freshness stamp, stored-entity lookup)
+# answer from a fake instead of localhost:2480 (findings item 52).
+pytestmark = pytest.mark.usefixtures("fake_arcadedb")
+
+
 @pytest.fixture(autouse=True)
 def _scraper_on(monkeypatch):
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)

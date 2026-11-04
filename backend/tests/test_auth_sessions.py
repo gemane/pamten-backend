@@ -272,6 +272,7 @@ def test_password_reset_revokes_every_session(client, fake_db, refresh_rows):
     assert refresh_rows[rt.hash_token(session)]["revoked_at"] > 0
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 def test_account_deletion_erases_the_token_rows(client, fake_db, make_token, refresh_rows):
     """Erasure, not revocation — no record of logins after the account is gone."""
     import app.auth.refresh as rt

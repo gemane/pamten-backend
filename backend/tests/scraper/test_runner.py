@@ -40,6 +40,12 @@ from app.config import settings
 
 # ── Provenance URL helpers (pure) ──────────────────────────────────────────────
 
+# Whole scrapes run here: their helpers that query through run_sql themselves
+# (claims, stake history, seat rules, freshness stamp, stored-entity lookup)
+# answer from a fake instead of localhost:2480 (findings item 52).
+pytestmark = pytest.mark.usefixtures("fake_arcadedb")
+
+
 class TestProvenanceUrlHelpers:
     def test_wikidata_url_builds_qid_page(self):
         assert _wikidata_url("Q95") == "https://www.wikidata.org/wiki/Q95"
@@ -121,10 +127,15 @@ class TestPermissionGuards:
              patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"), \
              patch("app.scraper.runner.one_statement_per_run", fake_run), \
              patch("app.scraper.runner._write_sec_edgar",
-                   side_effect=lambda *a: (events.append("write"), {"status": "ok"})[1]) as write:
+                   side_effect=lambda *a: (events.append("write"), {"status": "ok"})[1]) as write, \
+             patch("app.scraper.graph_writer._run_scoped_autodedup",
+                   return_value={"entity_deduplication": {"merged_count": 0}}) as dedup:
             res = run_scrape_sec_edgar("Tesla, Inc.")
         assert res["status"] == "ok"
-        assert "entity_deduplication" in res        # a standalone scrape opens its own scope
+        # a standalone scrape opens its own scope — and closes it with the dedup
+        # (stubbed: it reads the database through run_sql, findings item 52)
+        dedup.assert_called_once()
+        assert "entity_deduplication" in res
         assert events == ["enter", "write", "exit"]
         write.assert_called_once_with("Tesla, Inc.", data, "US")
 

@@ -75,6 +75,7 @@ class TestScrapePathStampsIt:
 
 
 class TestBulkWriter:
+    @pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
     def test_every_node_flush_sets_it_once(self):
         from app.scraper.bulk_import import _BatchWriter
         flushes: list = []

@@ -640,6 +640,7 @@ def _deletion_row(role="viewer", email="me@example.com", password="oldpassword")
     return [{"hash": hash_password(password), "email": email, "role": role}]
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 def test_delete_own_account_removes_the_user(client, fake_db, make_token):
     fake_db.queue(_deletion_row(), [], [])
     r = _del(client, make_token)
@@ -663,6 +664,7 @@ def test_delete_own_account_requires_authentication(client):
     assert r.status_code in (401, 403)
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 def test_delete_own_account_anonymises_flags_instead_of_deleting_them(client, fake_db, make_token):
     # The reports are about companies, not about the reporter — deleting them
     # would rewrite moderation history. Only the link to the person is severed.
@@ -700,6 +702,7 @@ def test_delete_own_account_refuses_when_it_would_leave_no_admin(client, fake_db
     assert all("DELETE u" not in c for c, _ in fake_db.calls)
 
 
+@pytest.mark.usefixtures("fake_arcadedb")   # its helpers query past the mock (item 52)
 def test_admin_can_delete_own_account_when_another_admin_remains(client, fake_db, make_token, monkeypatch):
     monkeypatch.setattr(auth_router.settings, "ADMIN_EMAIL", None)
     fake_db.queue(_deletion_row(role="admin"), [{"n": 2}], [], [])

@@ -121,15 +121,58 @@ def source_mode_cache():
     sources._MODE_CACHE["by_source_id"] = {}
 
 
+class DatabaseAccessAttempted(RuntimeError):
+    """A unit test sent a request to the database (findings item 52)."""
+
+
+def _database_address(var: str):
+    from urllib.parse import urlsplit
+    parts = urlsplit(os.environ.get(var) or "")
+    return (parts.hostname, parts.port) if parts.hostname else None
+
+
+def _is_database(url) -> bool:
+    here = (getattr(url, "host", None), getattr(url, "port", None))
+    return here in {_database_address(v) for v in ("ARCADEDB_URL", "ARCADEDB_IT_URL")}
+
+
+def _app_call_site() -> str:
+    """The innermost app frame outside app/db — the code that has to be stubbed."""
+    import traceback
+    frames = [f for f in traceback.extract_stack()
+              if "/app/" in f.filename and "/app/db/" not in f.filename]
+    if not frames:
+        return "?"
+    f = frames[-1]
+    return f"app/{f.filename.split('/app/', 1)[1]}:{f.lineno} {f.name}"
+
+
 @pytest.fixture(autouse=True)
 def no_network(request, monkeypatch):
     if "allow_network" in request.keywords:
+        yield
         return
     import httpx
 
     real_send = httpx.Client.send
+    # The database stays reachable for the integration suite only. A unit test
+    # mocks `db.get_session`, but a helper that queries through `run_sql`
+    # directly went out to localhost:2480 with the unit-test credentials:
+    # 162 requests from 72 tests, nearly all swallowed by best-effort code, so
+    # the test passed while the path it claimed to cover read nothing — and
+    # with the IT container up every one was a failed login towards the
+    # brute-force lockout (findings item 52). Refused here, and the test FAILS
+    # at teardown, because the swallowing code would hide a mere refusal.
+    unit = ("tests" + os.sep + "integration" + os.sep) not in str(request.node.path)
+    allow_db = "allow_db" in request.keywords
+    reached: list[str] = []
 
     def guarded(self, request_, *a, **kw):
+        if unit and not allow_db and _is_database(request_.url):
+            reached.append(f"{request_.url.path} from {_app_call_site()}")
+            raise DatabaseAccessAttempted(
+                f"unit test sent {request_.url.path} to the database from "
+                f"{_app_call_site()} — stub it, or mark the test `@pytest.mark.allow_db`")
         if not _allowed(request_.url):
             raise NetworkAccessAttempted(
                 f"test tried to reach {request_.url.host} — mock it, or mark the test "
@@ -137,6 +180,48 @@ def no_network(request, monkeypatch):
         return real_send(self, request_, *a, **kw)
 
     monkeypatch.setattr(httpx.Client, "send", guarded)
+    yield
+    if reached:
+        pytest.fail("unit test reached the database (stub the call, findings item 52):\n  "
+                    + "\n  ".join(dict.fromkeys(reached)), pytrace=False)
+
+
+class FakeArcadeDB:
+    """Stands in for ArcadeDB's HTTP API in a unit test: every statement sent
+    through `app.db.arcadedb` (run_sql, run_query, run_command, sqlscript and
+    the `db` session that wraps them) is recorded and answered with no rows,
+    unless `respond` scripted an answer for a statement containing a phrase."""
+
+    def __init__(self):
+        self.statements: list[tuple[str, str, dict]] = []   # (language, statement, params)
+        self._answers: list[tuple[str, list]] = []
+
+    def respond(self, phrase: str, rows: list) -> None:
+        self._answers.append((phrase, rows))
+
+    def sent(self, phrase: str) -> list[tuple[str, str, dict]]:
+        return [s for s in self.statements if phrase in s[1]]
+
+    def post_raw(self, endpoint, statement, params, language="cypher", timeout=None):
+        self.statements.append((language, statement, dict(params or {})))
+        for phrase, rows in self._answers:
+            if phrase in statement:
+                return {"result": rows}
+        return {"result": []}
+
+
+@pytest.fixture
+def fake_arcadedb(monkeypatch):
+    """Opt-in: a unit test whose code reaches the database past the mocked
+    session (helpers that call `run_sql` themselves — the claims ledger, the
+    stake history, the seat rules, the run log, the scrape's freshness stamp,
+    the stored-entity lookup) answers them here instead of at localhost:2480
+    (findings item 52). The guard in `no_network` fails any unit test that
+    still sends one."""
+    from app.db import arcadedb
+    fake = FakeArcadeDB()
+    monkeypatch.setattr(arcadedb, "_post_raw", fake.post_raw)
+    return fake
 
 
 # ── Router / auth test support ─────────────────────────────────────────────────
