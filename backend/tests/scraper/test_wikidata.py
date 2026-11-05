@@ -341,6 +341,42 @@ class TestSearchEntity:
         assert out == [{"id": "Q1", "label": "Apple Inc."}]
         assert get.call_count == 2                        # retried once after the 502
 
+    def test_retries_a_read_timeout_then_succeeds(self):
+        # A request lost to the network is as transient as a 503 (findings item 54):
+        # the 2026-11-04 rebuild lost four label searches to one 10 s read timeout
+        # each, and the SEC part behind each ran without the item.
+        import httpx
+        ok = self._mock_response([{"id": "Q3511946", "label": "T. Rowe Price"}])
+        ok.status_code = 200
+        with patch("httpx.get", side_effect=[httpx.ReadTimeout("The read operation timed out"), ok]) as get, \
+             patch("time.sleep"):
+            out = search_entity("T. Rowe Price Associates, Inc.")
+        assert out == [{"id": "Q3511946", "label": "T. Rowe Price"}]
+        assert get.call_count == 2                        # retried once after the timeout
+
+    def test_retries_a_dropped_connection_then_succeeds(self):
+        import httpx
+        ok = self._mock_response([{"id": "Q1", "label": "Apple Inc."}])
+        ok.status_code = 200
+        lost = [httpx.ConnectError("connection reset"), httpx.RemoteProtocolError("closed mid-body"), ok]
+        with patch("httpx.get", side_effect=lost) as get, patch("time.sleep"):
+            out = search_entity("Apple")
+        assert out == [{"id": "Q1", "label": "Apple Inc."}]
+        assert get.call_count == 3
+
+    def test_gives_up_after_max_retries_on_lost_requests(self):
+        import httpx
+        with patch("httpx.get", side_effect=httpx.ReadTimeout("stalled")) as get, patch("time.sleep"):
+            with pytest.raises(httpx.ReadTimeout):
+                search_entity("Apple")
+        assert get.call_count == 5                        # initial + _MAX_RETRIES
+
+    def test_an_error_that_is_not_the_network_is_not_retried(self):
+        with patch("httpx.get", side_effect=ValueError("bad url")) as get, patch("time.sleep"):
+            with pytest.raises(ValueError):
+                search_entity("Apple")
+        assert get.call_count == 1
+
     def test_gives_up_after_max_retries(self):
         import httpx
         throttled = MagicMock(status_code=429, headers={})
