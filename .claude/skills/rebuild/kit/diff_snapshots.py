@@ -27,9 +27,21 @@ def _is_uuid(i: str) -> bool:
     return ":" not in i
 
 
+def group_key(row: list) -> str:
+    """A VotingGroup's stable key: its name key (which carries the issuer) and
+    its members, sorted — the roster is the group's identity, and one issuer can
+    carry several blocs (findings item 56)."""
+    return f"{row[2]} [{', '.join(row[3])}]"
+
+
 def names(snap: dict) -> dict:
-    """node id → the key an edge end is named by: a hard id as it is, a uuid by its name."""
-    return {r[0]: (r[0] if not _is_uuid(r[0]) else r[1]) for r in snap["entities"] + snap["persons"]}
+    """node id → the key an edge end is named by: a hard id as it is, a uuid by
+    its name, a VotingGroup (a uuid re-minted by every rebuild) by its issuer
+    and roster. A snapshot from before item 56 lists no groups, and their
+    edges keep the raw uuid as before."""
+    m = {r[0]: (r[0] if not _is_uuid(r[0]) else r[1]) for r in snap["entities"] + snap["persons"]}
+    m.update({r[0]: group_key(r) for r in snap.get("voting_groups", [])})
+    return m
 
 
 def edge(row: list) -> dict:
@@ -93,6 +105,12 @@ def _print_nodes(P: dict, N: dict) -> None:
         for k2, n in sorted((ub - ua).items(), key=str): print("  u+", k2, n)
         for x, y in sorted((a[i], b[i]) for i in set(a) & set(b) if a[i][3:] != b[i][3:]):
             print("  ~", x, "->", y[3:])
+    # groups by issuer + roster: a roster that changed shows as one gone, one new
+    ga = collections.Counter(group_key(r) for r in P.get("voting_groups", []))
+    gb = collections.Counter(group_key(r) for r in N.get("voting_groups", []))
+    print(f"\n== voting groups: {sum(ga.values())} -> {sum(gb.values())}")
+    for k, n in sorted((ga - gb).items()): print("  -", k, n)
+    for k, n in sorted((gb - ga).items()): print("  +", k, n)
 
 
 def _print_edges(P: dict, N: dict) -> None:

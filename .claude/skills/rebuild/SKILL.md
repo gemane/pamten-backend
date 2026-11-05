@@ -50,11 +50,13 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   SEC part came back `partial` (a section lost to the network, findings item 41), C Exhibit 21,
   D acquisitions, E 13F, F industry fill. Its target lists are frozen so rebuilds compare; change them only on purpose and
   say so in the verify.
-- `snapshot.py` — counts per type/source/filing/reason, entities and persons by id, every
-  OWNS edge with its source, `until` and filing type, the run log. `diff_snapshots.py
-  <previous after.json> <new after.json>` — the verify's diff: counts, hard-id nodes gone
-  and new, uuid nodes by name, OWNS edges by a stable key; a 13F edge that came or went
-  WITH its filer node is listed apart as the relevance sample's churn (findings item 51). `save_accounts.py` / `restore_accounts.py` — `User` and
+- `snapshot.py` — counts per type/source/filing/reason, entities and persons by id, the
+  13D voting groups with their members, every OWNS edge with its source, `until` and
+  filing type, the run log. `diff_snapshots.py <previous after.json> <new after.json>` —
+  the verify's diff: counts, hard-id nodes gone and new, uuid nodes by name, voting groups
+  by issuer + roster (their uuid is re-minted by every rebuild, findings item 56), OWNS
+  edges by a stable key; a 13F edge that came or went WITH its filer node is listed apart
+  as the relevance sample's churn (findings item 51). `save_accounts.py` / `restore_accounts.py` — `User` and
   `RefreshToken` rows by key, so nobody has to log in again (file 0600, never in memory).
 
 A step a merged change added to `finish-import.sh` usually also belongs in step 7, because
@@ -95,3 +97,7 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
 - A crash in finish-import after the merges ran (2026-10-31b, #505's new row shape) needed
   the accounts restored by hand; when a CLI printer meets a new row shape, test it.
 - Edge counts: count with Cypher `MATCH`, not SQL `in.id`/`out.id` (0 rows).
+- Every vertex type that owns an edge needs a stable name in the snapshot: the diff named
+  an edge end by the Entity/Person lists only, and the 37 VotingGroup-owned edges read as
+  gone + new at every verify until the groups were dumped with their rosters (item 56).
+  A new vertex type with OWNS edges goes into `snapshot.take` and `diff_snapshots.names`.
