@@ -213,3 +213,81 @@ def test_the_same_mark_on_both_sides_still_merges(it_db):
                           {"p": pid})
     res = deduplicate_high_confidence(apply=True)
     assert res["merged_count"] == 1 and res["merged"][0]["keep_id"] == "bg"
+
+
+# ── The direction the variants cannot take (findings item 55, 2026-11-05) ────
+# `_name_lookup_variants` only SHORTENS a name, so a seed written under the fuller
+# spelling found its twin and a seed written under the shorter one never did. The
+# 2026-11-04 rebuild wrote News Corp's insiders from EDGAR first and the Wikidata
+# part two hours later in its own scope: "Lachlan Murdoch" stayed beside "Lachlan
+# K. Murdoch", "Robert James Thomson" beside "Robert J Thomson" — pairs the full
+# scan rated high at once. The fetch goes through the FULL_TEXT index on
+# `search_text`, which every written person carries (`_person_search_text`).
+
+def _person_with_search_text(it_db, pid, full_name, aliases=(), wikidata_id=None, sec_cik=None):
+    it_db.run_command(
+        "CREATE (:Person {id:$id, full_name:$n, aliases:$aliases, wikidata_id:$wid, sec_cik:$cik, "
+        "search_text:$st})",
+        {"id": pid, "n": full_name, "aliases": list(aliases), "wid": wikidata_id, "cik": sec_cik,
+         "st": " ".join([full_name, *aliases])})
+
+
+def _news_corp(it_db, *pids):
+    it_db.run_command("CREATE (:Entity {id:'nws', name:'News Corp', type:'company'})")
+    for pid in pids:
+        it_db.run_command("MATCH (p:Person {id:$p}),(e:Entity {id:'nws'}) CREATE (p)-[:HAS_ROLE {role:'Director'}]->(e)",
+                          {"p": pid})
+
+
+def test_the_shorter_spelling_reaches_the_longer_one(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _person_with_search_text(it_db, "sec-lachlan", "Lachlan K. Murdoch", sec_cik="0001242818")
+    _person_with_search_text(it_db, "wd-lachlan", "Lachlan Murdoch", wikidata_id="Q3215817")
+    _news_corp(it_db, "sec-lachlan", "wd-lachlan")
+
+    res = deduplicate_high_confidence(apply=True, seed_ids=["wd-lachlan"])     # the Wikidata-only scope
+    assert res["merged_count"] == 1
+    left = it_db.run_command("MATCH (p:Person) WHERE p.full_name CONTAINS 'Murdoch' RETURN p.id AS id, p.sec_cik AS cik")
+    assert len(left) == 1 and left[0]["cik"] == "0001242818"                  # one person, the CIK kept
+
+
+def test_an_alias_reaches_the_longer_spelling_too(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _person_with_search_text(it_db, "sec-thomson", "Robert J Thomson", sec_cik="0001579380")
+    _person_with_search_text(it_db, "wd-thomson", "Robert James Thomson", aliases=["Robert Thomson"],
+                             wikidata_id="Q7346054")
+    _news_corp(it_db, "sec-thomson", "wd-thomson")
+
+    res = deduplicate_high_confidence(apply=True, seed_ids=["wd-thomson"])
+    assert res["merged_count"] == 1
+    assert it_db.run_command("MATCH (p:Person) WHERE p.full_name CONTAINS 'Thomson' RETURN count(p) AS n")[0]["n"] == 1
+
+
+def test_the_wider_fetch_still_keeps_relatives_apart(it_db):
+    """The fetch only puts more pairs in front of the scorer; its guards decide.
+    A Wikidata "Thomas Murphy" whose item states one CIK, beside an EDGAR
+    "Thomas S. Murphy" filing under another, is a father and son — fetched,
+    grouped, and left alone."""
+    from app.routers.persons import deduplicate_high_confidence
+    _person_with_search_text(it_db, "sec-sr", "Thomas S. Murphy", sec_cik="0000001111")
+    _person_with_search_text(it_db, "wd-tm", "Thomas Murphy", wikidata_id="Q3525537", sec_cik="0000002222")
+    _news_corp(it_db, "sec-sr", "wd-tm")
+
+    res = deduplicate_high_confidence(apply=True, seed_ids=["wd-tm"])
+    assert res["merged_count"] == 0
+    assert it_db.run_command("MATCH (p:Person) WHERE p.full_name CONTAINS 'Murphy' RETURN count(p) AS n")[0]["n"] == 2
+    (group,) = [g for g in res["needs_review"] if {m["id"] for m in g["members"]} == {"sec-sr", "wd-tm"}]
+    assert group["likely_distinct"] is True and "DIFFERENT SEC CIKs" in group["reason"]
+
+
+def test_an_initial_alone_fetches_no_namesakes(it_db):
+    """"J. Smith" has one substantive word; fetching every Smith would hand the
+    scorer the whole graph for nothing (its own `_name_key` keeps the initial
+    for the same reason). Scoped from that seed, the other Smith is never seen."""
+    from app.routers.persons import deduplicate_high_confidence
+    _person_with_search_text(it_db, "js", "J. Smith")
+    _person_with_search_text(it_db, "jsmith", "John Smith")
+    _news_corp(it_db, "js", "jsmith")
+
+    res = deduplicate_high_confidence(apply=True, seed_ids=["js"])
+    assert res["merged_count"] == 0 and res["review_count"] == 0

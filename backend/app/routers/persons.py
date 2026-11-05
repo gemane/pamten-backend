@@ -62,8 +62,10 @@ def _name_lookup_variants(name: str) -> set[str]:
     drop the initials, and swap a two-token name's order.
 
     Deliberately not exhaustive — no string can enumerate every spelling with a
-    given key. Nickname and cross-spelling matches against pre-existing persons
-    stay the periodic full scan's job, as `_candidate_persons` has always said.
+    given key: every variant here is SHORTER than the name, so a seed written
+    under the fuller spelling finds its twin and one written under the shorter
+    never did. `_fulltext_name_candidates` fetches that direction. Nickname
+    matches against pre-existing persons stay the full scan's job.
     """
     toks = [t for t in re.findall(r"[A-Za-z0-9.'-]+", name or "") if t.lower().strip(".") not in _HONORIFICS]
     full = [t for t in toks if len(t.strip(".")) > 1]
@@ -181,16 +183,19 @@ def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
     that would defeat the point. (`$name IN p.aliases` is the other direction — one
     value against a stored list — and is served by the element-wise index on
     Person.aliases declared in db/schema.py.)
-    Cross-spelling matches against *pre-existing* persons (surname/birth signals) are
-    left to the periodic full scan; the common within-scrape cross-source duplicates
-    are all in the seed set and grouped here."""
+    A spelling LONGER than a seed's — EDGAR's initialled name against Wikidata's
+    label — is fetched through the full-text index on `search_text`
+    (`_fulltext_name_candidates`). Nickname matches against *pre-existing* persons
+    are left to the full scan (`POST /persons/deduplicate`); the common
+    within-scrape cross-source duplicates are all in the seed set and grouped here."""
     rows: dict[str, dict] = {}
     for pid in dict.fromkeys(seed_ids):                       # de-dup, keep order
         r = session.run(f"MATCH (p:Person {{id:$id}}) {_PERSON_RETURN}", id=pid).single()
         if r:
             rows[pid] = _person_row(r)
     # Expand from the SEEDS only (one hop) — exact full_name/alias and wikidata_id.
-    names = {n for p in rows.values() for n in [p["full_name"], *p["aliases"]] if n}
+    seed_names = {n for p in rows.values() for n in [p["full_name"], *p["aliases"]] if n}
+    names = set(seed_names)
     names |= {v for n in list(names) for v in _name_lookup_variants(n)}
     wids  = {p["wikidata_id"] for p in rows.values() if p["wikidata_id"]}
     for name in names:
@@ -207,7 +212,57 @@ def _candidate_persons(session, seed_ids: list[str]) -> list[dict]:
     for wid in wids:
         for r in session.run(f"MATCH (p:Person) WHERE p.wikidata_id = $w {_PERSON_RETURN}", w=wid):
             rows.setdefault(r.get("id"), _person_row(r))
+    # …and the spellings no exact string can enumerate: the ones LONGER than the
+    # seed's. The variants above only shorten a name, so a seed written under
+    # the fuller spelling ("Lachlan K. Murdoch") retrieved its twin and a seed
+    # written under the shorter one never could. The 2026-11-04 rebuild wrote
+    # News Corp's insiders from EDGAR first and the Wikidata part two hours
+    # later, in its own scope: "Lachlan Murdoch" and "Robert James Thomson"
+    # (alias "Robert Thomson") stayed beside "Lachlan K. Murdoch" and "Robert J
+    # Thomson", pairs the scorer rates high as soon as it sees them (findings
+    # item 55). The scorer still decides — its CIK, item, generation-mark and
+    # birth guards are untouched; this only puts the pair in front of it.
+    for name in seed_names:
+        for r in _fulltext_name_candidates(name):
+            rows.setdefault(r.get("id"), _person_row(r))
     return list(rows.values())
+
+
+#: namesakes fetched per seed name — the scorer needs a shared company or birth
+#: date anyway, and a twin hidden behind more namesakes than this waits for the
+#: full scan rather than costing every scrape a long read
+_FULLTEXT_CANDIDATE_CAP = 50
+
+_FULLTEXT_PERSON_SELECT = (
+    "SELECT id, full_name, wikidata_id, sec_cik, birth_date, birth_place, "
+    "first_name, last_name, aliases FROM Person "
+    "WHERE search_text CONTAINSTEXT :q AND search_text.toLowerCase() LIKE :pat "
+    f"LIMIT {_FULLTEXT_CANDIDATE_CAP}"
+)
+
+
+def _fulltext_name_candidates(name: str) -> list[dict]:
+    """Persons whose search text carries `name`'s surname as a word and its given
+    name anywhere — the fetch for spellings longer than the seed's.
+
+    `CONTAINSTEXT` is OR-only over its tokens (reference: routers/search.py), so
+    the indexed word is ONE token, the surname — the rarer word of a name — and
+    the given name narrows that set with a LIKE, which composes with the index
+    lookup as an AND filter. Word order does not matter: both words must be
+    present, so "Murdoch Lachlan" fetches the same rows. A name with fewer than
+    two substantive words is skipped — "J. Smith" would fetch every Smith, and
+    the scorer's own guard keeps such a name's initial for the same reason."""
+    toks = [t for t in re.findall(r"[a-z0-9]+", (name or "").lower())
+            if t not in _HONORIFICS and t not in _GENERATION_WORDS]
+    full = [t for t in toks if len(t) > 1]
+    if len(full) < 2:
+        return []
+    surname, given = full[-1], full[0]
+    return run_sql(_FULLTEXT_PERSON_SELECT, {"q": surname, "pat": f"%{given}%"}) or []
+
+
+#: a generational mark is not a surname — "Thomas S Murphy Jr" is a Murphy
+_GENERATION_WORDS = {"jr", "sr", "ii", "iii", "iv"}
 
 
 def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:

@@ -137,9 +137,22 @@ survived every scrape while the *full* scan found them instantly:
   Groups are matched on `_name_key`, but candidates can only be *fetched* by
   exact string — so without this a seed could never retrieve the node it would
   then have matched.
+* the **longer spelling** is fetched through the full-text index
+  (`_fulltext_name_candidates`, 2026-11-05, findings item 55). Every variant above
+  *shortens* a name, so a seed written under the fuller spelling found its twin and
+  a seed written under the shorter one never did: the 2026-11-04 rebuild wrote News
+  Corp's insiders from EDGAR first and the Wikidata part two hours later in its own
+  scope, and "Lachlan Murdoch" stayed beside "Lachlan K. Murdoch", "Robert James
+  Thomson" (alias "Robert Thomson") beside "Robert J Thomson" — pairs the full scan
+  rated high at once. The fetch asks `search_text CONTAINSTEXT <surname>` (the
+  index is OR-only over tokens, so one word, the rarer) narrowed by
+  `LIKE '%<given name>%'`, capped at 50 namesakes; a name with fewer than two
+  substantive words sends no query ("J. Smith" would fetch every Smith). It only
+  puts the pair in front of the scorer, whose CIK, item, generation-mark and birth
+  guards are unchanged.
 
 Cross-spelling matches beyond those mechanical families (nicknames, unrelated
-spellings) against *pre-existing* persons are still left to the periodic full scan
+spellings) against *pre-existing* persons are still left to the full scan
 (`POST /persons/deduplicate`). The dismissed-pairs
 (`NOT_DUPLICATE`) lookup is short-circuited by a SQL count so it never full-scans
 persons when there are none.
