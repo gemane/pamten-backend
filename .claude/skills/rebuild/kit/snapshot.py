@@ -68,6 +68,17 @@ def take(q, cy) -> dict:
     snap["owns_edges"] = sorted(([r["a"], r["b"], r.get("s"), r.get("u"), r.get("f")] for r in cy(
         "MATCH (a)-[r:OWNS]->(b) RETURN a.id AS a, b.id AS b, r.source_id AS s, r.until AS u, r.filing_type AS f")),
         key=lambda x: [str(v) for v in x])
+    # The 13D filing groups (findings item 56): a VotingGroup owns the bloc's
+    # OWNS edge under a uuid minted anew by every rebuild, and it is neither an
+    # Entity nor a Person, so the diff had no name for it — 37 edges "gone" and
+    # 37 "new" at every verify. Its identity is the issuer plus the roster (the
+    # writer matches groups by roster overlap; one issuer can carry several
+    # blocs — 24 distinct name keys for 37 groups on dev), so the members go in.
+    snap["voting_groups"] = sorted(([r["id"], r.get("name"), r.get("nn"), sorted(m for m in (r.get("members") or []) if m)]
+                                    for r in cy("MATCH (g:VotingGroup) OPTIONAL MATCH (m)-[:MEMBER_OF]->(g) "
+                                                "RETURN g.id AS id, g.name AS name, g.name_normalized AS nn, "
+                                                "collect(coalesce(m.name, m.full_name)) AS members")),
+                                   key=lambda x: x[0])
     snap["users"] = [r["email"] for r in q("SELECT email FROM User")]
     return snap
 

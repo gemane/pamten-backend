@@ -40,17 +40,27 @@ def _fake_sql(sql):
     return []
 
 
+GROUP = "33333333-3333-3333-3333-333333333333"
+
+
 def _fake_cypher(cy):
     if "[r:OWNS]" in cy:
         return [{"a": DIXON, "b": BRK, "s": "sec-edgar", "u": None, "f": "13F"},
-                {"a": BLK, "b": BRK, "s": "sec-edgar", "u": "2026-03-13", "f": "13G/A"}]
+                {"a": BLK, "b": BRK, "s": "sec-edgar", "u": "2026-03-13", "f": "13G/A"},
+                {"a": GROUP, "b": BRK, "s": "sec-edgar", "u": None, "f": "13D"}]
+    if "VotingGroup" in cy:
+        # collect() gives the members in storage order, with a None for a party
+        # whose node has neither name nor full_name
+        return [{"id": GROUP, "name": "Voting group · 3 parties", "nn": "voting group berkshire hathaway",
+                 "members": ["Warren Buffett", "GEICO Corporation", None, "BNSF Master Retirement Trust"]}]
     return []
 
 
 class TestSnapshot:
     def test_every_owns_row_carries_its_filing_type(self):
         snap = snapshot.take(_fake_sql, _fake_cypher)
-        assert snap["owns_edges"] == [[BLK, BRK, "sec-edgar", "2026-03-13", "13G/A"],
+        assert snap["owns_edges"] == [[GROUP, BRK, "sec-edgar", None, "13D"],
+                                      [BLK, BRK, "sec-edgar", "2026-03-13", "13G/A"],
                                       [DIXON, BRK, "sec-edgar", None, "13F"]]
         assert all(len(row) == len(diff.OWNS_FIELDS) for row in snap["owns_edges"])
 
@@ -63,9 +73,28 @@ class TestSnapshot:
         owns = next(q for q in asked if "[r:OWNS]" in q)
         assert "r.filing_type AS f" in owns
 
+    def test_voting_groups_are_dumped_with_their_members_sorted(self):
+        # findings item 56: a group's uuid is minted anew by every rebuild; its
+        # identity is the issuer (in the name key) and the roster
+        snap = snapshot.take(_fake_sql, _fake_cypher)
+        assert snap["voting_groups"] == [[GROUP, "Voting group · 3 parties", "voting group berkshire hathaway",
+                                         ["BNSF Master Retirement Trust", "GEICO Corporation", "Warren Buffett"]]]
 
-def _snap(entities, edges):
-    return {"entities": entities, "persons": [], "owns_edges": edges}
+    def test_the_group_cypher_reads_the_members_through_member_of(self):
+        asked = []
+        def cy(q):
+            asked.append(q)
+            return _fake_cypher(q)
+        snapshot.take(_fake_sql, cy)
+        groups = next(q for q in asked if "VotingGroup" in q)
+        assert "OPTIONAL MATCH (m)-[:MEMBER_OF]->(g)" in groups and "coalesce(m.name, m.full_name)" in groups
+
+
+def _snap(entities, edges, groups=None):
+    snap = {"entities": entities, "persons": [], "owns_edges": edges}
+    if groups is not None:
+        snap["voting_groups"] = groups
+    return snap
 
 
 ISSUER = [BRK, "BERKSHIRE HATHAWAY INC", "gleif", "0001067983", "5493000C01ZX7D35SD85", None]
@@ -113,6 +142,45 @@ class TestDiff:
         new = _snap([ISSUER, [u2, "Sub LLC", "sec-edgar", None, None, None]], [[BRK, u2, "sec-edgar", None, "EX-21"]])
         c = diff.classify(prev, new)
         assert not c["gone"] and not c["new"]
+
+
+G1, G2 = "44444444-4444-4444-4444-444444444444", "55555555-5555-5555-5555-555555555555"
+ROSTER_A = ["BNSF Master Retirement Trust", "GEICO Corporation", "Warren Buffett"]
+ROSTER_B = ["Berkshire Hathaway Consolidated Pension Plan Master Trust", "GEICO Corporation"]
+
+
+def _group(gid, roster, nn="voting group berkshire hathaway"):
+    return [gid, f"Voting group · {len(roster)} parties", nn, roster]
+
+
+class TestDiffVotingGroups:
+    """findings item 56: 37 group-owned edges read as gone + new at every verify."""
+
+    def test_a_groups_edge_survives_the_re_minted_uuid(self):
+        prev = _snap([ISSUER], [[G1, BRK, "sec-edgar", None, "13D"]], [_group(G1, ROSTER_A)])
+        new = _snap([ISSUER], [[G2, BRK, "sec-edgar", None, "13D"]], [_group(G2, ROSTER_A)])
+        c = diff.classify(prev, new)
+        assert not c["gone"] and not c["new"]
+
+    def test_two_blocs_over_one_issuer_are_two_keys(self):
+        # the name key carries only the issuer: Better Home & Finance has six
+        # groups on dev, 24 distinct name keys for 37 groups
+        assert diff.group_key(_group(G1, ROSTER_A)) != diff.group_key(_group(G2, ROSTER_B))
+        prev = _snap([ISSUER], [[G1, BRK, "sec-edgar", None, "13D"]], [_group(G1, ROSTER_A)])
+        new = _snap([ISSUER], [[G2, BRK, "sec-edgar", None, "13D"]], [_group(G2, ROSTER_B)])
+        c = diff.classify(prev, new)
+        assert sum(c["gone"].values()) == 1 and sum(c["new"].values()) == 1, "a changed roster is a changed group"
+
+    def test_the_key_names_the_issuer_and_the_members(self):
+        assert diff.group_key(_group(G1, ROSTER_A)) == (
+            "voting group berkshire hathaway [BNSF Master Retirement Trust, GEICO Corporation, Warren Buffett]")
+
+    def test_a_snapshot_from_before_item_56_keeps_the_raw_uuid(self):
+        prev = _snap([ISSUER], [[G1, BRK, "sec-edgar", None, "13D"]])            # no voting_groups list
+        new = _snap([ISSUER], [[G2, BRK, "sec-edgar", None, "13D"]], [_group(G2, ROSTER_A)])
+        assert diff.names(prev)[BRK] == BRK and G1 not in diff.names(prev)
+        c = diff.classify(prev, new)
+        assert sum(c["gone"].values()) == 1 and sum(c["new"].values()) == 1, "the one-time transition, never silent"
 
 
 @pytest.mark.parametrize("value, expected", [("13F", True), ("13F-HR", True), ("13G/A", False), (None, False)])
