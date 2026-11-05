@@ -215,6 +215,17 @@ parser. Anything that does not map is either a new property (document it) or noi
       its own node without the item (findings item 50, 2026-11-04). Ask the item's register
       first, with the name's node as its candidate, and let its answer pick the node — then
       the order of the writes no longer decides.
+- [ ] **A knowledge base's alias is not the register's name — a node that bears the name
+      beats a node that merely lists it.** Wikidata's one item for T. Rowe Price carries
+      "T. Rowe Price Associates, Inc." as an alias and points at the GROUP's CIK, while the
+      adviser of that name is a filer of its own (CIK 80255, the 13G/13F filer, a Maryland
+      subsidiary on the Group's Exhibit 21). The resolver ranked both exact and let the
+      item id decide, so the scrape list's "T. Rowe Price Associates, Inc." meant the
+      Group whenever Wikidata had answered and the adviser when it had not (findings item
+      54, 2026-11-05). Rank the node's own name and the register's other names above an
+      alias (`routers/search._rank`); an alias still finds the node when no node bears
+      the name. When a knowledge base conflates two legal entities, name BOTH in the
+      scrape list, each by the name its register uses.
 - [ ] **A capped sample churns at its boundary — record what selected an edge, so a diff can
       tell drift from loss.** The 13F run reads every graph-known filer and the 100 best-ranked
       others; the hundredth changes as filings arrive, and a rebuild diff that sees only an

@@ -26,6 +26,21 @@ def _clean(row: dict) -> dict:
     return {k: v for k, v in row.items() if not k.startswith("@")}
 
 
+def _same_words(a: str, b: str) -> bool:
+    """Whether two normalised names are the same words in another order:
+    EDGAR's surname-first "price t rowe associates" is "t rowe price
+    associates". Asked of the node's OWN name only, never of an alias."""
+    return bool(a and b) and sorted(a.split()) == sorted(b.split())
+
+
+def _register_names(node: dict) -> list[str]:
+    """The names a REGISTER gives the node besides its own: the register's
+    other current names and GLEIF's trading names — the legal entity's, as
+    much as `name` is. Not `aliases`: those are other sources' spellings and
+    a knowledge base's (findings item 54), ranked below a name the node bears."""
+    return [*(node.get("other_names") or []), *(node.get("gleif_trading_names") or [])]
+
+
 def _other_spellings(node: dict) -> list[str]:
     """Every name of a node besides its own: aliases, the register's other
     current names, GLEIF's trading names and its previous legal names (which
@@ -41,17 +56,34 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
     Sort key (all ascending): (exact_norm, -name_token_matches, match_tier,
     notable, -credibility, name_len, db_index).
 
-    - exact_norm: 0 when the node's name_normalized — or an alias's — equals
-      the normalized query (so "BlackRock, Inc." leads for that query, above the
-      many "BLACKROCK … FUND, INC." variants that only share common tokens);
-      1 when only a name that had stopped applying by ``on`` (today when None)
-      equals it; else 2. A name has a time span (`former_names`, the last day
-      each was in force): BlackRock's pre-2024 filer, renamed "BlackRock
-      Finance, Inc." on 2024-09-26, keeps "BlackRock, Inc." among its aliases
-      and carries Q219635, and with the two exact matches tied the item id won
-      — the Exhibit 21 run for "BlackRock" read the old filer's 2024 list and
-      never the new parent's (2026-10-29 rebuild). On a day before the rename
-      the old filer's name is in force and it ties again, as it should.
+    - exact_norm: 0 when the node's OWN name — its name_normalized (also in
+      another word order), one of the register's other current names
+      (`other_names`, GLEIF's trading names), or a former legal name still in
+      force on ``on`` (today when None) — equals the normalized query (so
+      "BlackRock, Inc." leads for that query, above the many "BLACKROCK …
+      FUND, INC." variants that only share common tokens); 1 when an alias
+      another source gave the node equals it; 2 when only a name that had
+      stopped applying by ``on`` equals it; else 3.
+      Whose name it is matters: an alias is another source's spelling, and a
+      knowledge base's may name a company of its own. Wikidata's one item for
+      T. Rowe Price (Q3511946) carries "T. Rowe Price Associates, Inc." as an
+      alias and points at the GROUP's CIK, while the adviser of that name is a
+      legal entity of its own (CIK 80255, the 13G/13F filer, a Maryland
+      subsidiary on the Group's Exhibit 21); with both exact the Group won on
+      `notable`, and the scrape list's "T. Rowe Price Associates, Inc." was
+      the Group whenever Wikidata had answered and the adviser when it had not
+      (findings item 54, 2026-11-05). A node that bears the name itself is the
+      company the name means — also in another word order, since EDGAR files
+      "PRICE T ROWE ASSOCIATES INC /MD/" surname-first (`_same_words`); the
+      alias still finds the node when no node bears the name ("Google" →
+      Alphabet, "Samsung" → 삼성전자(주)).
+      A name has a time span (`former_names`, the last day each was in force):
+      BlackRock's pre-2024 filer, renamed "BlackRock Finance, Inc." on
+      2024-09-26, keeps "BlackRock, Inc." among its aliases and carries
+      Q219635, and with the two exact matches tied the item id won — the
+      Exhibit 21 run for "BlackRock" read the old filer's 2024 list and never
+      the new parent's (2026-10-29 rebuild). On a day before the rename the
+      old filer's name is in force again and it ties again, as it should.
     - name_token_matches: how many query words appear in the NAME.
     - match_tier: 0 exact, 1 starts-with, 2 contains full query, 3 otherwise.
     - notable: 0 for a curated (wikidata_id) entity, else 1 — so within the same
@@ -86,12 +118,24 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
         return 3
 
     matches = max(sum(1 for t in toks if t and t in n) for n in names)
-    exact_norm = 2
-    if nn and node.get("name_normalized") == nn:
+    exact_norm = 3
+    own = node.get("name_normalized") or ""
+    if nn and (own == nn
+               # the register's other current names are the node's own
+               or any(normalize_entity_name(a) == nn for a in _register_names(node) if a)
+               # the own name in another word order — EDGAR files "PRICE T ROWE
+               # ASSOCIATES INC /MD/" surname-first, and "T. Rowe Price
+               # Associates, Inc." is that filer, not a namesake (items 54, 59)
+               or _same_words(nn, own)):
         exact_norm = 0
     elif nn and any(normalize_entity_name(a) == nn for a in alias_raw if a):
-        gone = former_names.ended_keys(former_names.of_node(node), node.get("name"), on)
-        exact_norm = 1 if nn in gone else 0
+        # a former LEGAL name is the company's own on a day it was in force
+        # (BlackRock's old filer on 2020-01-01), no name of its on a day it
+        # had ended; any other alias is another source's spelling
+        former = former_names.of_node(node)
+        gone = former_names.ended_keys(former, node.get("name"), on)
+        legal = {normalize_entity_name(n) for n in former_names.names(former)}
+        exact_norm = 2 if nn in gone else 0 if nn in legal else 1
     notable = 0 if node.get("wikidata_id") else 1
     tier = min(_tier(n) for n in names)
     credibility = node.get("name_credibility") or 0

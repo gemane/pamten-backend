@@ -291,3 +291,62 @@ class TestAliasAwareRank:
         parent = {"name": "Heineken Holding", "name_normalized": "heineken holding",
                   "wikidata_id": "Q1", "name_credibility": 98}
         assert self._key(subsidiary, "heineken vietnam") < self._key(parent, "heineken vietnam")
+
+    # Findings item 54 (2026-11-05): Wikidata's one item for T. Rowe Price
+    # (Q3511946) carries "T. Rowe Price Associates, Inc." as an alias and
+    # points at the GROUP's CIK, while the adviser of that name is a legal
+    # entity of its own (CIK 80255). With both exact, the Group won on
+    # `notable`, and the scrape list's "T. Rowe Price Associates, Inc." meant
+    # the Group whenever Wikidata had answered and the adviser when it had not.
+    GROUP = {"name": "PRICE T ROWE GROUP INC", "name_normalized": "price t rowe group",
+             "aliases": ["T. Rowe Price Associates, Inc.", "T. Rowe Price Group, Inc."],
+             "wikidata_id": "Q3511946", "name_credibility": 98}
+    ASSOCIATES = {"name": "PRICE T ROWE ASSOCIATES INC /MD/", "name_normalized": "price t rowe associates",
+                  "aliases": ["T. Rowe Price Associates, Inc."], "name_credibility": 98}
+    ADVISER_BY_NAME = {"name": "T. Rowe Price Associates, Inc.", "name_normalized": "t rowe price associates",
+                       "name_credibility": 98}
+
+    def test_a_nodes_own_name_beats_another_nodes_alias(self):
+        q = "t. rowe price associates, inc."
+        assert self._key(self.ADVISER_BY_NAME, q) < self._key(self.GROUP, q)
+
+    def test_the_own_name_in_another_word_order_is_the_own_name(self):
+        # EDGAR files the adviser surname-first; the natural spelling is the
+        # same filer, not a namesake — and so beats the Group's alias (item 59
+        # is the search side of the same inversion)
+        q = "t. rowe price associates, inc."
+        assert self._key(self.ASSOCIATES, q)[0] == 0
+        assert self._key(self.ASSOCIATES, q) < self._key(self.GROUP, q)
+
+    def test_the_own_name_in_the_natural_order_finds_the_group(self):
+        q = "t. rowe price group, inc."
+        assert self._key(self.GROUP, q) < self._key(self.ADVISER_BY_NAME, q)
+        assert self._key(self.GROUP, q)[0] == 0 and self._key(self.ADVISER_BY_NAME, q)[0] == 3
+
+    def test_an_alias_in_other_words_is_an_alias(self):
+        from app.routers.search import _same_words
+        assert _same_words("price t rowe associates", "t rowe price associates")
+        assert not _same_words("price t rowe group", "t rowe price associates")
+        assert not _same_words("", "") and not _same_words("acme", "")
+        # the Group lists the adviser's name; its own words are others
+        assert self._key(self.GROUP, "t. rowe price associates, inc.")[0] == 1
+        # and the alias still finds the node no node is named by
+        kr = {"name": "삼성전자(주)", "name_normalized": "삼성전자(주)", "aliases": ["Samsung"]}
+        assert self._key(kr, "samsung")[0] == 1
+
+    def test_the_registers_other_name_is_the_nodes_own(self):
+        register = {"name": "삼성전자(주)", "name_normalized": "삼성전자(주)",
+                    "other_names": ["SAMSUNG ELECTRONICS CO., LTD"], "name_credibility": 92}
+        wiki = {"name": "Samsung Electronics America, Inc.", "name_normalized": "samsung electronics america",
+                "aliases": ["Samsung Electronics"], "wikidata_id": "Q1", "name_credibility": 80}
+        assert self._key(register, "samsung electronics") < self._key(wiki, "samsung electronics")
+        assert self._key(register, "samsung electronics")[0] == 0
+
+    def test_an_alias_in_force_beats_a_name_that_ended(self):
+        in_force = {"name": "Acme Holdings plc", "name_normalized": "acme holdings",
+                    "aliases": ["Acme"], "name_credibility": 92}
+        ended = {"name": "Zenith Corp", "name_normalized": "zenith",
+                 "aliases": ["Acme"], "former_names": ["Acme|2020-01-01"], "name_credibility": 98,
+                 "wikidata_id": "Q9"}
+        assert self._key(in_force, "acme") < self._key(ended, "acme")
+        assert self._key(in_force, "acme")[0] == 1 and self._key(ended, "acme")[0] == 2
