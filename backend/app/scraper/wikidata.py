@@ -69,12 +69,19 @@ SPARQL_URL    = "https://query.wikidata.org/sparql"
 USER_AGENT    = "Owlgraph/1.0 (https://pamten-frontend.onrender.com)"
 HEADERS       = {"User-Agent": USER_AGENT}
 REQUEST_DELAY = 0.4   # polite spacing between Wikidata calls
-_MAX_RETRIES  = 4     # retries on a transient rate-limit / gateway error
+_MAX_RETRIES  = 4     # retries on a transient rate-limit / gateway error or a lost request
 _MAX_BACKOFF  = 30.0  # cap on the backoff wait (seconds)
 # Transient statuses worth retrying: 429 rate-limit, plus 502/503/504 — query.wikidata.org
 # sits behind a proxy that intermittently returns Bad Gateway / Service Unavailable /
 # Gateway Timeout under load; a short backoff-and-retry clears them.
 _RETRY_STATUS = frozenset({429, 502, 503, 504})
+# A request lost to the network — a read timeout, a dropped or refused connection,
+# a truncated answer — is as transient as a 503 and retried the same way. Until
+# 2026-11-05 only a STATUS was retried: the 2026-11-04 rebuild lost four label
+# searches to one 10 s read timeout each (right after a 120 s rate-limit backoff),
+# and with the item gone the SEC part of every one of them resolved the name on
+# its own — T. Rowe Price's landed on another legal entity (findings item 54).
+_RETRY_ERRORS = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
 
 
 def _retry_after(resp: httpx.Response) -> float | None:
@@ -94,12 +101,21 @@ def _wd_get(url: str, params: dict, timeout: int) -> httpx.Response:
     IP — exceeds its budget, and its fronting proxy intermittently returns 502/504 under
     load. On any of these (see `_RETRY_STATUS`) we wait per the `Retry-After` header (else
     an exponential backoff with jitter, capped) and retry up to `_MAX_RETRIES`, instead of
-    failing the query. Any other status raises; the final transient status raises if
-    retries run out."""
+    failing the query. A request the network lost (`_RETRY_ERRORS`) is retried the same
+    way. Any other status or error raises; the final transient status or lost request
+    raises if retries run out."""
     delay = REQUEST_DELAY
     for attempt in range(_MAX_RETRIES + 1):
         time.sleep(delay)
-        r = httpx.get(url, params=params, headers=HEADERS, timeout=timeout)
+        try:
+            r = httpx.get(url, params=params, headers=HEADERS, timeout=timeout)
+        except _RETRY_ERRORS as exc:
+            if attempt >= _MAX_RETRIES:
+                raise                         # exhausted → surface the lost request
+            delay = min(2.0 ** attempt, _MAX_BACKOFF) + random.uniform(0, 0.5)
+            log.warning("Wikidata request lost (%s: %s); backing off %.1fs (retry %d/%d)",
+                        type(exc).__name__, exc, delay, attempt + 1, _MAX_RETRIES)
+            continue
         if r.status_code not in _RETRY_STATUS:
             r.raise_for_status()
             return r

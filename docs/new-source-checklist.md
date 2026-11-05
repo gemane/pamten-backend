@@ -936,6 +936,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the same requests, and Gitlab lost 19 owners (findings items 38 and 41). Measure the
       source's slowest normal answer, set the read timeout a good margin above it (SEC: 10 s
       against 0.63 s), and retry once on a read timeout or a dropped connection.
+      Wikidata's helper (`_wd_get`) retried 429/5xx and nothing else until 2026-11-05: the
+      2026-11-04 rebuild lost four label searches to one 10 s read timeout each, and with the
+      item gone the SEC part behind each resolved the name on its own — T. Rowe Price's
+      scrape landed on another legal entity (findings item 54). A lost request is retried
+      like a 503 (`_RETRY_ERRORS`); when you add a client helper, grep the existing ones
+      for the status set AND the exception tuple.
       **Every request goes through the one helper:** three SEC calls used the client directly
       and got no retry at all, and the DEF 14A reader (`proxy_statement.py`) had its own
       `httpx.get` with no status check, so a 503 page was parsed as the filing (findings
