@@ -647,6 +647,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       helpers inserted between it and `run_scrape_sec_edgar` / `run_sec_ex21`, so the
       standalone SEC scrape and EX-21 run had no scope at all;
       `tests/scraper/test_scrape_scope.py` now names every `run_*` that must open one.
+      **A fetch by exact string must work from BOTH spellings.** The scoped scan
+      fetched candidates by a seed's name and its *shortened* variants, so a seed
+      written under the fuller spelling found its twin and one written under the
+      shorter spelling never could — News Corp's Wikidata retry, two hours after
+      EDGAR had written "Lachlan K. Murdoch", created "Lachlan Murdoch" beside it
+      (findings item 55). When a matcher compares on a normalised key, check that
+      the candidate fetch can reach every spelling that key covers, from either
+      side; the direction no string enumerates goes through the full-text index.
 - [ ] **A code field never carries words.** `country` (and every other ISO-coded
       field) holds the code or nothing; a filer's text that resolves to no code is kept
       as written in a field of its own (`country_registered` for PSCs). "Not
