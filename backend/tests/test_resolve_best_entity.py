@@ -89,7 +89,7 @@ def test_a_name_that_ended_still_finds_the_company_when_no_one_bears_it_now():
             "aliases": ["Facebook Inc"], "former_names": ["Facebook Inc|2021-10-27"]}
     other = {"id": "x", "name": "Facebook Fans Club", "name_normalized": "facebook fans club"}
     assert _resolve("Facebook", [other, meta])["id"] == "sec:0001326801"
-    assert search._rank(meta, "facebook", ["facebook"], 0, "facebook")[0] == 1
+    assert search._rank(meta, "facebook", ["facebook"], 0, "facebook")[0] == 2   # ended: below an alias in force
 
 
 def test_a_gleif_previous_name_ranks_below_the_company_that_bears_it_now():
@@ -98,7 +98,7 @@ def test_a_gleif_previous_name_ranks_below_the_company_that_bears_it_now():
     parent = {"id": "lei:529900VBK42Y5HHRMD23", "name": "BlackRock, Inc.", "name_normalized": "blackrock",
               "gleif_former_names": ["BLACKROCK FUNDING, INC.|2024-09-30"]}
     funding = {"id": "x", "name": "BlackRock Funding, Inc.", "name_normalized": "blackrock funding"}
-    assert search._rank(parent, "blackrock funding", ["blackrock", "funding"], 0, "blackrock funding")[0] == 1
+    assert search._rank(parent, "blackrock funding", ["blackrock", "funding"], 0, "blackrock funding")[0] == 2
     assert search._rank(funding, "blackrock funding", ["blackrock", "funding"], 1, "blackrock funding")[0] == 0
     # on a day it was still in force it is the company's name
     assert search._rank(parent, "blackrock funding", ["blackrock", "funding"], 0, "blackrock funding",
@@ -109,3 +109,25 @@ def test_a_gleif_trading_name_is_a_name_in_force():
     node = {"id": "lei:X", "name": "Alphabet Holdings LLC", "name_normalized": "alphabet holdings",
             "gleif_trading_names": ["Google"]}
     assert search._rank(node, "google", ["google"], 0, "google")[0] == 0
+
+
+# Findings item 54 (2026-11-05): Wikidata's one item for T. Rowe Price carries
+# the adviser's name as an alias and points at the Group's CIK; the adviser is a
+# legal entity of its own (CIK 80255, the 13G/13F filer). With both exact, the
+# Group won on `notable`, so "T. Rowe Price Associates, Inc." meant the Group
+# whenever Wikidata had answered and the adviser when it had not.
+GROUP = {"id": "sec:0001113169", "name": "PRICE T ROWE GROUP INC", "name_normalized": "price t rowe group",
+         "aliases": ["T. Rowe Price Associates, Inc.", "T. Rowe Price Group, Inc."],
+         "wikidata_id": "Q3511946", "name_credibility": 98}
+# EDGAR's own spelling for the filer is surname-first; the natural spelling it
+# was first written under stays an alias (the register's name replaced it)
+ASSOCIATES = {"id": "sec:0000080255", "name": "PRICE T ROWE ASSOCIATES INC /MD/",
+              "name_normalized": "price t rowe associates", "aliases": ["T. Rowe Price Associates, Inc."],
+              "name_credibility": 98}
+
+
+def test_the_node_that_bears_the_name_beats_the_node_that_has_it_as_an_alias():
+    for rows in ([GROUP, ASSOCIATES], [ASSOCIATES, GROUP]):
+        assert _resolve("T. Rowe Price Associates, Inc.", rows)["id"] == ASSOCIATES["id"]
+        # the alias still finds the Group when no node bears the name itself
+        assert _resolve("T. Rowe Price Group, Inc.", rows)["id"] == GROUP["id"]
