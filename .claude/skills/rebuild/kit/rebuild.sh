@@ -49,6 +49,9 @@ python3 "$R/replay_scrapes.py" || echo "  ! replay ended with an error (see abov
 
 t "7 finishing what the scrapes added"
 python3 manage.py dedupe-entities --limit 100000 || echo "  ! dedupe failed"
+# the persons two scopes wrote twice — a Wikidata part retried hours after the SEC
+# part wrote the same insiders under EDGAR's spelling (findings item 55)
+python3 manage.py dedupe-persons || echo "  ! dedupe-persons failed"
 python3 manage.py geocode || echo "  ! geocode failed"
 python3 manage.py close-reported-by-parent || echo "  ! close-reported-by-parent failed"
 python3 manage.py mark-shortcuts || echo "  ! mark-shortcuts failed"

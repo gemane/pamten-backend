@@ -1338,6 +1338,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the printer. Test the command and the report that print the rows, not only the
       function that makes them, and count an end-to-end run of the import chain as part
       of verifying a new step.
+- [ ] **A job the docs call "periodic" exists as a command and runs somewhere.**
+      `deduplication.md` left the twins the scoped post-scrape dedup cannot see to "the
+      periodic full scan" — whose only callers were the panel's button and federation,
+      so no chain ever ran it, and the 2026-11-04 rebuild kept two pairs the scan rates
+      high at once (findings item 55). When a design hands a case to a later pass, name
+      the command that pass is and the chain that runs it (`manage.py dedupe-persons`,
+      the rebuild's step 7), or the hand-off is a gap with a comforting name.
 - [ ] **Fixtures that enumerate edge properties assert against the schema.** The
       edge-parity tests enforce `set(sample) == set(OWNS_PROPS)`, so adding a property
       updates the fixtures — that friction is the feature.
