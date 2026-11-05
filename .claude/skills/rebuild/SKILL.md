@@ -42,7 +42,7 @@ Copy this skill's `kit/` to a fresh `~/.cache/rebuild-<YYYY-MM-DD>/` (a letter s
 second run that day), `chmod 700` it. The scripts find their folder themselves.
 - `rebuild.sh` — 0 golden copies, 1 drop/create/schema (refuses without `accounts.json`),
   2 bulk import under the import lock, 3 `finish-import.sh`, 4 GLEIF history, 5 accounts
-  back, 6 replay, 7 finishing what the scrapes added (dedupe, geocode,
+  back, 6 replay, 7 finishing what the scrapes added (dedupe entities and persons, geocode,
   close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks + `after.json`.
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
   run-all retry (every source, not Wikidata alone — findings item 54) for the companies whose

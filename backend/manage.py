@@ -227,6 +227,36 @@ def cmd_dedupe_entities(args):
     print(f"Merged {res['entities_merged']} entities across "
           f"{res['groups_processed']} shared-id groups; {res.get('remaining', 0)} groups remaining")
 
+
+def _hard_id_person_ids() -> list[str]:
+    """The persons a scrape wrote: those carrying a SEC CIK or a Wikidata item."""
+    from app.db.arcadedb import run_sql
+    return [r["id"] for r in run_sql(
+        "SELECT id FROM Person WHERE sec_cik IS NOT NULL OR wikidata_id IS NOT NULL") or []]
+
+
+def cmd_dedupe_persons(args):
+    """Merge the persons two sources wrote as two nodes — the net under the
+    post-scrape dedup. That dedup sees only the persons one scrape touched, plus
+    what it can fetch for them, so a twin an earlier scrape wrote under another
+    spelling can stay. The docs promised "the periodic full scan" for those and
+    nothing ran one: the 2026-11-04 rebuild left Wikidata's "Lachlan Murdoch"
+    beside EDGAR's "Lachlan K. Murdoch", a pair the scan rates high at once
+    (findings item 55). Full scan by default — a second for 1,500 persons, but it
+    loads every person, so on a graph carrying the UK PSC's millions
+    `--scraped-only` seeds the scoped scan from the persons with a hard id
+    instead (188 s for 1,480 on dev, the same groups). High-confidence groups
+    merge; the rest are reported for review, as after a scrape."""
+    _apply_direct_db_url(args)
+    from app.routers.persons import deduplicate_high_confidence
+    seeds = _hard_id_person_ids() if getattr(args, "scraped_only", False) else None
+    dry = getattr(args, "dry_run", False)
+    res = deduplicate_high_confidence(apply=not dry, seed_ids=seeds)
+    for g in res["merged"]:
+        print(f"  {g['keep_name']} ({g['keep_id']}) takes {', '.join(g['merged'])}")
+    print(f"{'Would merge' if dry else 'Merged'} {res['merged_count']} persons across "
+          f"{len(res['merged'])} groups; {res['review_count']} groups need review")
+
 def cmd_audit_registers(args):
     """Scan the LEI-CDF golden copy and write the general-register map.
 
@@ -1085,6 +1115,17 @@ def _build_parser():
     p_de.add_argument('--limit', type=int, help='Max shared-id groups to process (default: all)')
     p_de.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_de.set_defaults(func=cmd_dedupe_entities)
+
+    p_dp = subparsers.add_parser('dedupe-persons',
+        help='Merge the persons two sources wrote as two nodes — same name, a shared company or '
+             'birth date, high confidence only; the rest is reported for review. The net under the '
+             'post-scrape dedup, which sees only what one scrape touched')
+    p_dp.add_argument('--scraped-only', action='store_true',
+                      help='Seed from the persons with a SEC CIK or Wikidata item instead of scanning '
+                           'everyone — bounded on a graph with millions of register persons')
+    p_dp.add_argument('--dry-run', action='store_true', help='Report what would merge; change nothing')
+    p_dp.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_dp.set_defaults(func=cmd_dedupe_persons)
 
     # audit-registers command (the general-register map, from the LEI-CDF golden copy)
     p_ar = subparsers.add_parser('audit-registers',

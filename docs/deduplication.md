@@ -102,8 +102,14 @@ scan (`_all_pairs_dismissed`).
 `high`-confidence, non-`likely_distinct`** groups; everything else is returned
 under `needs_review`. It runs:
 
-- on demand via `POST /persons/deduplicate` (`apply=false` = dry run) — a **full**
-  scan of every person, and
+- on demand via `POST /persons/deduplicate` (`apply=false` = dry run) and
+  `manage.py dedupe-persons` (`--dry-run`) — a **full** scan of every person
+  (`--scraped-only` seeds the scoped scan from the persons with a SEC CIK or
+  Wikidata item instead, bounded on a graph with millions of register persons:
+  188 s for 1,480 seeds on dev against 1 s for the full scan of 1,509, the same
+  groups). The rebuild runs it in step 7, after the replay: until 2026-11-05
+  nothing ran a full scan, and the twins the scoped dedup cannot see (a spelling
+  written in an earlier scope — findings item 55) stayed for good, and
 - automatically after **every** scrape — `run-all` *and* the single-source runs
   (`/scraper/run`, `/scraper/sec-edgar/run`, `/scraper/open-corporates/run`, the SEC
   enrichments: EX-21 and its history, acquisitions, Form D, 13F, a filer's holdings), gated by
