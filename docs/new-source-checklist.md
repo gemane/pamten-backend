@@ -288,6 +288,18 @@ parser. Anything that does not map is either a new property (document it) or noi
       current name and its dated former names (`graph_writer._filer_as_registered`); a
       knowledge-base item naming a node only by an ended name is refused
       (`register_pointer.stale`). A dated record beats an undated alias of the same key.
+- [ ] **`aliases` is a bag of other names, not the entity's own names.** It merges what
+      every source calls the node — EDGAR's former names of the same CIK, but also
+      Wikidata's aliases, which can name ANOTHER legal entity: the item for T. Rowe Price
+      lists "T. Rowe Price Associates, Inc." (the adviser, its own CIK) as an alias of the
+      Group. A rule that asks whether a name IS the entity (the Exhibit 21 own-row rule,
+      `sec_ex21.own_names`) reads the node's name, the register's `other_names` and the
+      dated `former_names` of its own ids — never `aliases`; with the bag in the set the
+      adviser's row read as the Group's own and two rebuilds wrote 34 of 35 rows
+      (findings item 58, 2026-11-05). And compare names word-order insensitively where a
+      source re-orders them: EDGAR conforms a filer named after a person surname first
+      ("PRICE T ROWE GROUP INC"), which hid the gap — the alias carried the natural
+      spelling. Search may read the bag; identity may not.
 - [ ] **Where a knowledge base and a register disagree, report it — to us and to them.**
       `manage.py wikidata-suggestions` compares each item's LEI/CIK with the node's register
       ids and writes a CSV plus a QuickStatements batch for a person to submit (never an

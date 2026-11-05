@@ -1144,7 +1144,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
     from app.scraper.run_log import record_run
     from app.scraper.sec_edgar import fetch_filer_identity
     from app.scraper.sec_ex21 import (_at_home, _is_filer, fetch_subsidiaries, jurisdiction_country,
-                                       jurisdiction_subdivision)
+                                       jurisdiction_subdivision, own_names)
     from app.scraper.sec_writer import detach_owns_sec
 
     entity = resolve_best_entity(company, None)
@@ -1161,15 +1161,14 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         run["entity_id"] = company_id
         source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL,
                                    SEC_EDGAR_CREDIBILITY)
-        # Every name the filer goes by: the node's may be GLEIF's or
+        # Every name the filer goes by ITSELF: the node's may be GLEIF's or
         # Wikidata's spelling, the list's is the filer's own (NYT's "The New
-        # York Times Company", EDGAR's "NEW YORK TIMES CO"). Where it is
-        # registered tells its own row from a namesake abroad.
+        # York Times Company", EDGAR's "NEW YORK TIMES CO"). Not the aliases
+        # bag — a Wikidata alias can name another company (findings item 58).
+        # Where it is registered tells its own row from a namesake abroad.
         edgar_name, home = fetch_filer_identity(entity["sec_cik"])
         home = home or entity.get("jurisdiction_code") or entity.get("country")
-        filer_names = [entity.get("name"), *(entity.get("aliases") or []),
-                       *(entity.get("other_names") or []), edgar_name]
-        filer_names = list(dict.fromkeys(n for n in filer_names if n))
+        filer_names = own_names(entity, edgar_name)
         data = fetch_subsidiaries(entity["sec_cik"], registrant=filer_names, home=home)
         if not data:
             from app.scraper.sec_ex21 import annual_filings

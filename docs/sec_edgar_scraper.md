@@ -99,7 +99,11 @@ name is searchable ("Facebook" → Meta Platforms), and the dated entries into
 `former_names` (unioned by name and date), from which `/relationships/history`
 tells the timeline "Renamed: Facebook Inc → Meta Platforms, Inc." under 2021. A
 `formerNames` entry without a `to` is kept undated (`"NAME|"`) — searchable, but
-with no place on the timeline.
+with no place on the timeline. `aliases` is thus a merged bag — EDGAR's former
+names beside Wikidata's aliases, which can name another company — and a rule
+that asks "is this the filer's own name?" reads `former_names` through
+`former_names.of_node`, never `aliases` (the Exhibit 21 own-row rule, findings
+item 58).
 
 **A former name has a time span, and lookups respect it** (2026-10-30). A name
 counts as the company's on a day only while it was in force (`former_names.ended`
@@ -1603,13 +1607,25 @@ from readers removed again the same day, so 11 remain):
       2026-10-29b rebuild wrote NYT as a copy of itself with nine subsidiaries
       under it. Now `parse_exhibit` drops it after the tree is drawn (its
       children hang directly off the filer), and the runner skips it as a
-      safety net. `_is_filer` compares the row with EVERY name the filer goes
-      by — the node's (often GLEIF's or Wikidata's spelling), its aliases and
-      other names, EDGAR's conformed name — with a leading "The", a "(dba …)"
-      aside and the state tag dropped, but the legal form kept, spelled
-      either way: "PBF Energy Limited" (British Columbia) stays a subsidiary
-      of "PBF Energy Inc.", "The New York Times Company Pty Limited" one of
-      NYT. A row with no legal form at all ("Chubb") is the filer when its
+      safety net. `_is_filer` compares the row with every name the filer goes
+      by ITSELF (`own_names`) — the node's (often GLEIF's or Wikidata's
+      spelling), the register's other names, the dated former names of its
+      own CIK or LEI (`former_names`, `gleif_former_names`), EDGAR's conformed
+      name — with a leading "The", a "(dba …)" aside and the state tag
+      dropped, but the legal form kept, spelled either way: "PBF Energy
+      Limited" (British Columbia) stays a subsidiary of "PBF Energy Inc.",
+      "The New York Times Company Pty Limited" one of NYT. The words may come
+      in another order: EDGAR conforms a filer named after a person surname
+      first, "PRICE T ROWE GROUP INC" for "T. Rowe Price Group, Inc."
+      (`_unordered_key`). **Never the `aliases` bag** (2026-11-05, findings
+      item 58): it merges Wikidata's aliases with EDGAR's former names, and a
+      Wikidata alias can name another legal entity — the item for T. Rowe
+      Price lists "T. Rowe Price Associates, Inc." (the adviser, its own CIK)
+      as an alias of the Group, so the adviser's row read as the filer's own
+      and both rebuilds wrote 34 of the list's 35 rows. The alias was only
+      load-bearing because the comparison was word-order sensitive: an
+      EDGAR-named node recognised its own row in natural spelling through
+      Wikidata alone. A row with no legal form at all ("Chubb") is the filer when its
       letters are. And only where the filer is registered (`_at_home`): EDGAR's
       state of incorporation ("US-NY", "KY"; `incorporation_place` — the
       newest tagged cover first — 10-K/20-F/40-F/10-Q/8-K, `report_cover` —, EDGAR's header field else), else the

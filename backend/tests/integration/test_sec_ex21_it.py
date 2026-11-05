@@ -116,10 +116,14 @@ def test_the_filers_own_row_is_not_its_subsidiary(it_db):
     # NYT's list opens with "The New York Times Company" (EDGAR: "NEW YORK
     # TIMES CO"); the 2026-10-29b rebuild wrote it as a copy of the filer with
     # nine subsidiaries under it. A reader that keeps the row must not.
+    # the aliases bag (Wikidata's and EDGAR's former names merged) is NOT the
+    # filer's names (findings item 58); the dated former names of its own CIK are
     it_db.run_command(
         "CREATE (:Entity {id: 'sec:0000071691', name: 'New York Times Co', "
         "name_normalized: 'new york times', search_text: 'New York Times Co', "
-        "type: 'company', sec_cik: '0000071691', aliases: ['NYT'], country: 'US'})")
+        "type: 'company', sec_cik: '0000071691', aliases: ['NYT', 'NYT Capital, LLC'], "
+        "other_names: ['NEW YORK TIMES CO'], former_names: ['New York Times Co Inc|1990-01-01'], "
+        "country: 'US'})")
     data = {"subsidiaries": [
         {"name": "The New York Times Company", "jurisdiction": "New York"},
         {"name": "NYT Capital, LLC", "jurisdiction": "Delaware", "parent_basis": "indent"},
@@ -132,8 +136,9 @@ def test_the_filers_own_row_is_not_its_subsidiary(it_db):
          patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=("NEW YORK TIMES CO", "US-NY")):
         result = runner.run_sec_ex21("New York Times Co")
     assert result["status"] == "ok"
-    # every name the filer goes by reaches the parser
-    assert fetch.call_args.kwargs["registrant"] == ["New York Times Co", "NYT", "NEW YORK TIMES CO"]
+    # every name the filer goes by ITSELF reaches the parser — not its aliases
+    assert fetch.call_args.kwargs["registrant"] == [
+        "New York Times Co", "NEW YORK TIMES CO", "New York Times Co Inc"]
     assert fetch.call_args.kwargs["home"] == "US-NY"
     rows = it_db.run_command("MATCH (:Entity {id:'sec:0000071691'})-[:OWNS]->(b:Entity) "
                              "RETURN b.name AS name, b.country AS country")
@@ -143,6 +148,35 @@ def test_the_filers_own_row_is_not_its_subsidiary(it_db):
     n = it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name = 'The New York Times Company' "
                       "AND (country IS NULL OR country = 'US')")[0]["n"]
     assert n == 0, "no copy of the filer"
+
+
+def test_a_wikidata_alias_naming_another_company_does_not_drop_its_row(it_db):
+    # Findings item 58: Wikidata lists "T. Rowe Price Associates, Inc." (the
+    # adviser, CIK 80255) as an alias of the Group's item. With the aliases bag
+    # among the filer's names the adviser's row read as the filer's own: both
+    # rebuilds wrote 34 of the list's 35 rows. EDGAR names the Group surname
+    # first, "PRICE T ROWE GROUP INC" — the Group's own row is still dropped.
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0001113169', name: 'T. Rowe Price Group, Inc.', "
+        "name_normalized: 't rowe price group', search_text: 'T. Rowe Price Group, Inc.', "
+        "type: 'company', sec_cik: '0001113169', "
+        "aliases: ['T. Rowe Price Associates, Inc.', 'T. Rowe Price'], country: 'US'})")
+    data = {"subsidiaries": [
+        {"name": "T. Rowe Price Group, Inc.", "jurisdiction": "Maryland"},
+        {"name": "T. Rowe Price Associates, Inc.", "jurisdiction": "Maryland"},
+        {"name": "T. Rowe Price Investment Services, Inc.", "jurisdiction": "Maryland"}],
+        "form": "10-K", "filing_date": "2026-02-13",
+        "url": "https://www.sec.gov/Archives/edgar/data/1113169/000111316926000013/trow-20251231xex21.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data) as fetch, \
+         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=("PRICE T ROWE GROUP INC", "US-MD")):
+        result = runner.run_sec_ex21("T. Rowe Price Group")
+    assert result["status"] == "ok"
+    assert fetch.call_args.kwargs["registrant"] == ["T. Rowe Price Group, Inc.", "PRICE T ROWE GROUP INC"]
+    rows = it_db.run_command("MATCH (:Entity {id:'sec:0001113169'})-[:OWNS]->(b:Entity) RETURN b.name AS name")
+    assert sorted(dict(r)["name"] for r in rows) == [
+        "T. Rowe Price Associates, Inc.", "T. Rowe Price Investment Services, Inc."]
+    n = it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name = 'T. Rowe Price Group, Inc.'")[0]["n"]
+    assert n == 1, "no copy of the filer under its natural-order name"
 
 
 def test_no_cik_asks_for_the_sec_scrape_first(it_db):
