@@ -954,6 +954,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       a 404 (an answer) from a timeout or a 5xx (a loss), and on a loss return `status:
       "partial"` with `failed_sections` and call `mark_scrape_incomplete` (see the plugin
       guide), so the run log says so and the company is retried after the cooldown.
+- [ ] **A source that raised is a lost source, not a finished one.** The dispatchers catch
+      a source's exception so the others still run — and then stamped the company fresh for
+      30 days on what the others wrote. Wikidata's label search for "T. Rowe Price
+      Associates, Inc." timed out in the 2026-11-04 rebuild; the SEC part reads the item's
+      CIK pointer from the node Wikidata writes, had none, resolved the name on its own to
+      the adviser (CIK 80255) instead of the Group (CIK 1113169), and the rebuild's one
+      Wikidata retry never re-ran the SEC part (findings item 54). A source that raised
+      calls `mark_source_lost` in the dispatcher, the company is incomplete, and the retry
+      — on demand after the cooldown, in the rebuild kit's A2 — runs EVERY source again.
 - [ ] **Tell the loss where it happens, not where it is caught.** A per-filing failure is
       fine to swallow — one missing Form 4 must not sink a scrape — but then the request
       helper is the only place that sees it. SEC's helper logged "retrying once" and

@@ -359,6 +359,14 @@ The result carries `"rerun": "new_ids"`, and the on-demand run log has a second 
 with that reason (findings item 27, Toast, Inc.). A
 source that raises comes back as `{"status": "error", "detail": …}`; the run-all
 endpoint then finishes its `ScrapeRun` row as `failed`, naming the source.
+Both dispatchers also note the loss (`graph_writer.mark_source_lost`): nothing of
+that source was written, and the sources after it ran without what it would have
+written, so the company's freshness stamp says incomplete and the next ensure after
+the cooldown runs every source again (findings item 54: Wikidata's label search for
+T. Rowe Price timed out, the SEC part resolved the name on its own to another legal
+entity, and the company was fresh for 30 days with that entity's data). The result
+carries `"lost_sources": [...]`. A source that found nothing is not lost: `no_results`
+is an answer.
 A source that wrote what arrived but lost a section to the network returns
 `{"status": "partial", "failed_sections": [...]}` and calls
 `graph_writer.mark_scrape_incomplete(target_id)` in place of `set_scrape_target`;

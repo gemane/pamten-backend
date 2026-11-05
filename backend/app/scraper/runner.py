@@ -33,6 +33,7 @@ from app.scraper.sources import get_source_enabled
 from app.scraper.graph_writer import (
     _record_edge_parties, _record_touched, _record_touched_entity, _stamp_person_cik, _with_autodedup,
     mark_scrape_incomplete,
+    mark_source_lost,
     set_scrape_target,
     # The shared write layer lives in graph_writer now (the module split the
     # multi-scraper refactor deferred); re-exported here so existing imports and
@@ -2823,6 +2824,9 @@ def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> di
             return {"status": "disabled", "detail": str(exc)}
         except Exception as exc:  # noqa: BLE001 - one scraper failing mustn't sink the rest
             log.error("%s scrape failed for %r: %s", spec.name, query, exc)
+            # nothing of it was written, and the sources after it run without what
+            # it would have written: the target is stamped incomplete (item 54)
+            mark_source_lost(spec.name)
             return {"status": "error", "detail": str(exc)}
 
     for spec in specs:

@@ -49,6 +49,11 @@ _edge_entities: contextvars.ContextVar = contextvars.ContextVar("edge_entities",
 # stamp its on-demand freshness — distinct from the touched-sets (which hold every node
 # the scrape brushed). Holds {"id", "depth"} or None.
 _scrape_target: contextvars.ContextVar = contextvars.ContextVar("scrape_target", default=None)
+# The sources that RAISED inside the scope and so wrote nothing — a knowledge base
+# whose label search timed out, a register whose API was down. Holds a set while a
+# scope is open, None outside one. Any entry makes the stamped scrape incomplete,
+# whatever node ends up the target (findings item 54).
+_lost_sources: contextvars.ContextVar = contextvars.ContextVar("lost_sources", default=None)
 
 
 def set_scrape_target(entity_id: str, depth: int = 0) -> None:
@@ -80,6 +85,26 @@ def mark_scrape_incomplete(entity_id: str, depth: int = 0) -> None:
         return
     set_scrape_target(entity_id, depth)
     _scrape_target.set({**_scrape_target.get(), "incomplete": True})
+
+
+def mark_source_lost(source: str) -> None:
+    """Note a source that RAISED in the active scrape scope, so the freshness
+    stamp says incomplete whatever node the other sources make the target.
+
+    The sibling of `mark_scrape_incomplete` (a section lost inside a source,
+    item 41) for a whole source lost: nothing of it was written, and the
+    other sources ran without what it would have written. Wikidata's label
+    search for "T. Rowe Price Associates, Inc." timed out in the 2026-11-04
+    rebuild; the SEC part, which reads the item's CIK pointer from the node
+    Wikidata writes, resolved the name on its own to another legal entity
+    (the adviser, CIK 80255, instead of the Group's 1113169), and the company
+    was stamped fresh for 30 days with that entity's data (findings item 54).
+    Marked incomplete, `ondemand.decide_scrape` runs every source again once
+    the cooldown has passed. A source that found nothing is NOT lost:
+    "no_results" is an answer. Outside a scope nothing is recorded."""
+    bucket = _lost_sources.get()
+    if bucket is not None and source:
+        bucket.add(source)
 
 
 def _stamp_scrape_freshness(target: dict) -> None:
@@ -248,6 +273,7 @@ def _with_autodedup(fn):
         etoken = _touched_entities.set(set())
         edtoken = _edge_entities.set(set())
         ttoken = _scrape_target.set(None)
+        ltoken = _lost_sources.set(set())
         target = None
         try:
             result = fn(*args, **kwargs)
@@ -255,14 +281,22 @@ def _with_autodedup(fn):
             touched_e = list(_touched_entities.get() or [])
             edge_e = list(_edge_entities.get() or [])
             target = _scrape_target.get()
+            lost = sorted(_lost_sources.get() or ())
         finally:
             _touched_persons.reset(ptoken)
             _touched_entities.reset(etoken)
             _edge_entities.reset(edtoken)
             _scrape_target.reset(ttoken)
+            _lost_sources.reset(ltoken)
         if target:
+            # a source that raised wrote nothing: the scrape is incomplete however
+            # complete the others were (findings item 54, `mark_source_lost`)
+            if lost:
+                target = {**target, "incomplete": True}
             _stamp_scrape_freshness(target)
         if isinstance(result, dict):
+            if lost:
+                result["lost_sources"] = lost
             result.update(_run_scoped_autodedup(touched_p, touched_e))
             result.update(_end_dissolved_after_scrape(touched_e + edge_e))
             # After the dedup, not before: a merge can fold the target into a

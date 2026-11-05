@@ -115,3 +115,38 @@ def test_a_lost_request_is_noted_on_an_ok_row(it_db):
     rows = it_db.run_sql("SELECT status, error FROM ScrapeRun WHERE source = 'sec_edgar'")
     assert rows == [{"status": "ok", "error": "1 request(s) lost to the network"}]
     assert _node(it_db)["scrape_incomplete_at"] is None
+
+
+def test_a_source_that_raised_flags_the_company_incomplete(it_db, monkeypatch):
+    """Findings item 54: the Wikidata part raised (a read timeout) and the SEC
+    part wrote the company — the company carries `scrape_incomplete_at`, the
+    next ensure after the cooldown runs every source again, and a run-all in
+    which every source answers clears it."""
+    import httpx
+    from app.scraper.scraper_registry import ScraperSpec, register
+    monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+    answers = {"wikidata": "raise"}
+
+    def wikidata(q, d, c=None):
+        if answers["wikidata"] == "raise":
+            raise httpx.ReadTimeout("The read operation timed out")
+        return {"status": "no_results", "total": 0}
+    register(ScraperSpec("wikidata", wikidata, lambda: True, depth_aware=True, reads_stored_ids=True))
+    register(ScraperSpec("sec_edgar", lambda q, d, c=None: runner.run_scrape_sec_edgar(q, c), lambda: True))
+
+    with patch("app.scraper.sec_edgar.scrape_company", return_value=_data([])):
+        out = runner.run_scrape_all("GitLab Inc.", 1)
+    assert out["results"]["wikidata"]["status"] == "error"
+    assert out["results"]["sec_edgar"]["status"] == "ok"
+    assert out["lost_sources"] == ["wikidata"]
+    node = _node(it_db)
+    assert node["on_demand_scraped"] is True and node["last_scraped_at"]
+    assert node["scrape_incomplete_at"] == node["last_scraped_at"]
+    later = datetime.now(timezone.utc) + timedelta(hours=25)
+    assert decide_scrape(node, requested_depth=1, force=False, now=later).reason == "incomplete"
+
+    answers["wikidata"] = "answer"
+    with patch("app.scraper.sec_edgar.scrape_company", return_value=_data([])):
+        out = runner.run_scrape_all("GitLab Inc.", 1)
+    assert "lost_sources" not in out
+    assert _node(it_db)["scrape_incomplete_at"] is None
