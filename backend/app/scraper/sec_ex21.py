@@ -31,6 +31,7 @@ import re
 import unicodedata
 from html.parser import HTMLParser
 
+from app import former_names
 from app.scraper.edge_schema import READ_LAYOUT, READ_PROSE, READ_TABLE
 from app.scraper.mapper import normalize_entity_name, strip_edgar_tag
 from app.scraper.sec_edgar import SUBMISSIONS_URL, _cik10, _get, _get_text, _iso_date
@@ -514,12 +515,24 @@ _FORM_SPELLING = ((r"\blimited\b", "ltd"), (r"\bcorporation\b", "corp"), (r"\bin
                   (r"\bcompany\b", "co"), (r"\bpublic limited company\b", "plc"))
 
 
-def _form_key(name: str) -> str:
-    """``_compact`` with each legal form in one spelling: "Ltd." is "Limited"."""
+def _form_plain(name: str) -> str:
+    """The name casefolded, accents and EDGAR's state tag dropped, each legal
+    form in one spelling: "Ltd." is "Limited"."""
     plain = unicodedata.normalize("NFKD", strip_edgar_tag(name)).casefold()
     for long, short in sorted(_FORM_SPELLING, key=lambda p: -len(p[0])):
         plain = re.sub(long, short, plain)
-    return re.sub(r"[^a-z0-9]", "", plain)
+    return plain
+
+
+def _form_key(name: str) -> str:
+    """``_compact`` with each legal form in one spelling: "Ltd." is "Limited"."""
+    return re.sub(r"[^a-z0-9]", "", _form_plain(name))
+
+
+def _own_name(name: str) -> str:
+    """A name without what is not the name: a leading "The", an alias in
+    brackets ("(dba NW Natural)")."""
+    return _LEADING_THE.sub("", _ALIAS.sub("", name or ""))
 
 
 def legal_name_key(name: str) -> str:
@@ -528,15 +541,41 @@ def legal_name_key(name: str) -> str:
     dropped, the legal form kept and spelled one way — "The New York Times
     Company" and "NEW YORK TIMES CO" agree, "PBF Energy Limited" and "PBF
     Energy Inc." do not (`_is_filer`, `legal_identity`)."""
-    return _form_key(_LEADING_THE.sub("", _ALIAS.sub("", name or "")))
+    return _form_key(_own_name(name))
+
+
+def _unordered_key(name: str) -> tuple[str, ...]:
+    """``legal_name_key``'s words, sorted — the same legal name with its words
+    in another order. EDGAR conforms a filer named after a person surname
+    first: "PRICE T ROWE GROUP INC" is "T. Rowe Price Group, Inc." (findings
+    item 58). A possessive is no word of its own: "Domino's" stays one word,
+    as `_form_key` keeps it."""
+    plain = re.sub(r"['’]", "", _form_plain(_own_name(name)))
+    return tuple(sorted(re.findall(r"[a-z0-9]+", plain)))
 
 
 def _filer_names(registrant: str | list[str] | None) -> list[str]:
     """The filer's names: one, or several — the node's own, its other names,
-    EDGAR's conformed name."""
+    EDGAR's conformed name (`own_names`)."""
     if not registrant:
         return []
     return [n for n in ([registrant] if isinstance(registrant, str) else registrant) if n]
+
+
+def own_names(entity: dict, edgar_name: str | None) -> list[str]:
+    """The names a filer node goes by ITSELF, for the own-row rule: its name
+    (GLEIF's or Wikidata's spelling), the register's other names, the dated
+    former names of its own CIK or LEI (`app.former_names`), EDGAR's conformed
+    name — never its ``aliases``. That bag merges Wikidata's aliases, which
+    can name another legal entity: Wikidata lists "T. Rowe Price Associates,
+    Inc." (the adviser, its own CIK) as an alias of the Group's item, and with
+    it among the filer's names the adviser's row read as the filer's own and
+    was dropped — 34 of the 35 rows of the Group's Exhibit 21 (findings item
+    58, 2026-11-05). The former names of the same CIK are the filer's; they
+    reach ``aliases`` too, but dated and by themselves only here."""
+    names = [entity.get("name"), *(entity.get("other_names") or []),
+             *former_names.names(former_names.of_node(entity)), edgar_name]
+    return list(dict.fromkeys(n for n in names if n))
 
 
 def _is_filer(name: str | None, registrant: str | list[str] | None) -> bool:
@@ -548,11 +587,15 @@ def _is_filer(name: str | None, registrant: str | list[str] | None) -> bool:
     Energy Limited" (British Columbia) is a subsidiary of "PBF Energy Inc.",
     "The New York Times Company Pty Limited" one of NYT. A row with no legal
     form at all ("Chubb" at the root under "CHUBB LTD") is the filer when
-    its letters are."""
+    its letters are. The words may come in another order: EDGAR's "PRICE T
+    ROWE GROUP INC" is the list's "T. Rowe Price Group, Inc." (findings item
+    58) — before, that row was the filer's only through a Wikidata alias."""
     if not name:
         return False
     bare = not _LEGAL_NAME.search(strip_edgar_tag(name).strip())
-    return any(legal_name_key(name) == legal_name_key(n)
+    key, words = legal_name_key(name), _unordered_key(name)
+    return any(key == legal_name_key(n)
+               or (words and words == _unordered_key(n))
                or (bare and _same_company(_LEADING_THE.sub("", name), _LEADING_THE.sub("", n)))
                for n in _filer_names(registrant))
 

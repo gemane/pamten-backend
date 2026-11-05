@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from app.scraper.sec_ex21 import (_at_home, _clean_name, _is_filer, _named_parent, jurisdiction_country,
-                                  jurisdiction_subdivision, parse_exhibit)
+from app.scraper.sec_ex21 import (_at_home, _clean_name, _is_filer, _named_parent, _unordered_key,
+                                  jurisdiction_country, jurisdiction_subdivision, own_names, parse_exhibit)
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -197,9 +197,59 @@ class TestTheFilersOwnRow:
         ("The New York Times Company", ["NYTimes Holdco", "NEW YORK TIMES CO"], True),
         ("The New York Times Company", [], False),
         ("", "NEW YORK TIMES CO", False),
+        # EDGAR conforms a filer named after a person surname first: the same
+        # words in another order are the filer (findings item 58)
+        ("T. Rowe Price Group, Inc.", "PRICE T ROWE GROUP INC", True),
+        ("T. Rowe Price Group, Inc.", "T. Rowe Price Group, Inc.", True),
+        ("Schwab Charles Corp", "The Charles Schwab Corporation", True),
+        # the adviser is another company: a word more, a word less
+        ("T. Rowe Price Associates, Inc.", ["PRICE T ROWE GROUP INC", "T. Rowe Price Group, Inc."], False),
+        ("T. Rowe Price Group Holdings, Inc.", "PRICE T ROWE GROUP INC", False),
+        ("T. Rowe Price Group, LLC", "PRICE T ROWE GROUP INC", False),      # another legal form
     ])
     def test_is_filer(self, name, registrant, expected):
         assert _is_filer(name, registrant) is expected
+
+    def test_unordered_key_is_the_legal_names_words_sorted(self):
+        assert _unordered_key("The T. Rowe Price Group, Incorporated") == ("group", "inc", "price", "rowe", "t")
+        assert _unordered_key("PRICE T ROWE GROUP INC /MD/") == ("group", "inc", "price", "rowe", "t")
+        assert _unordered_key("Domino's Pizza, Inc.") == ("dominos", "inc", "pizza")   # a possessive is no word
+        assert _unordered_key("Northwest Natural Gas Company (dba NW Natural)") == ("co", "gas", "natural", "northwest")
+
+    def test_the_filers_own_row_is_dropped_under_edgars_surname_first_name(self):
+        # T. Rowe Price Group's list opens with the Group itself; EDGAR names
+        # the filer "PRICE T ROWE GROUP INC". Before item 58 the row was the
+        # filer's only through a Wikidata alias in natural word order.
+        html = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
+                "<tr><td>T. Rowe Price Group, Inc.</td><td>Maryland</td></tr>"
+                "<tr><td>T. Rowe Price Associates, Inc.</td><td>Maryland</td></tr>"
+                "<tr><td>T. Rowe Price Investment Services, Inc.</td><td>Maryland</td></tr></table>")
+        assert [s["name"] for s in parse_exhibit(html, "PRICE T ROWE GROUP INC", home="US-MD")] == [
+            "T. Rowe Price Associates, Inc.", "T. Rowe Price Investment Services, Inc."]
+
+
+class TestOwnNames:
+    """The filer-name set of the own-row rule: the node's own names, never the
+    aliases bag (findings item 58)."""
+
+    def test_aliases_are_not_the_filers_names(self):
+        # Wikidata lists the adviser as an alias of the Group's item
+        entity = {"name": "T. Rowe Price Group, Inc.",
+                  "aliases": ["T. Rowe Price Associates, Inc.", "T. Rowe Price"]}
+        assert own_names(entity, "PRICE T ROWE GROUP INC") == [
+            "T. Rowe Price Group, Inc.", "PRICE T ROWE GROUP INC"]
+
+    def test_other_names_and_dated_former_names_of_both_properties_are(self):
+        entity = {"name": "Meta Platforms, Inc.", "aliases": ["Facebook Inc", "Meta"],
+                  "other_names": ["META PLATFORMS, INC."],
+                  "former_names": ["Facebook Inc|2021-10-27"],
+                  "gleif_former_names": ["FACEBOOK, INC.|2021-10-28", "Facebook Inc|"]}
+        assert own_names(entity, "Meta Platforms, Inc.") == [
+            "Meta Platforms, Inc.", "META PLATFORMS, INC.", "Facebook Inc", "FACEBOOK, INC."]
+
+    def test_missing_fields_and_no_edgar_name(self):
+        assert own_names({"name": "Acme Corp"}, None) == ["Acme Corp"]
+        assert own_names({}, "ACME CORP") == ["ACME CORP"]
 
 
 class TestHeadings:
