@@ -465,6 +465,12 @@ company gets `scrape_incomplete_at`, so the next on-demand request scrapes it
 again once the cooldown has passed instead of after the 30-day TTL. Until
 2026-11-02 such a run read `ok`: the 11-01 rebuild lost 19 of Gitlab's owners to
 one read timeout and nothing said so (findings item 41).
+A source that raised inside a run-all or an on-demand scrape — Wikidata's label
+search timed out — wrote nothing, and the company the other sources resolved gets
+`scrape_incomplete_at` the same way (`graph_writer.mark_source_lost`), so every
+source runs again after the cooldown; until 2026-11-05 it was fresh for 30 days
+on what the others wrote, and for T. Rowe Price that was another legal entity
+(findings item 54).
 
 A lost **single** request (one Form 4, one filing index) leaves an SEC run
 `ok` — the scrape goes on without that filing — but the log says

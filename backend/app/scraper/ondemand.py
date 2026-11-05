@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.config import settings
-from app.scraper.graph_writer import _with_autodedup
+from app.scraper.graph_writer import _with_autodedup, mark_source_lost
 from app.scraper.mapper import normalize_entity_name
 
 log = logging.getLogger(__name__)
@@ -186,6 +186,9 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
             return res
         except Exception as exc:  # noqa: BLE001 - one source failing mustn't sink the rest
             log.error("on-demand %s scrape failed for %r: %s", spec.name, query, exc)
+            # the company is stamped incomplete and every source runs again after
+            # the cooldown, not after the TTL (findings item 54)
+            mark_source_lost(spec.name)
             return None
 
     results = {spec.name: run_one(spec, decision.reason) for spec in specs}

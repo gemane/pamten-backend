@@ -14,9 +14,13 @@ import after the 6 October rebuild (kept fixed since, so rebuilds compare):
   D  the acquisitions reader for the three companies it ran for
   E  13F holders for the two companies it ran for
 
-After A and B, two retries, once each: A2 the Wikidata parts that failed ("too
-busy"), A3 the SEC parts that came back `partial` (a section lost to the
-network, findings item 41).
+After A and B, two retries, once each: A2 the whole run-all again for the
+companies whose Wikidata part failed ("too busy", a read timeout) — EVERY
+source, not Wikidata alone: the SEC part reads the item's CIK pointer from the
+node Wikidata writes, and without it resolved "T. Rowe Price Associates, Inc."
+to another legal entity; the 2026-11-04 Wikidata-only retry then wrote the item
+and never re-ran the SEC part (findings item 54) — and A3 the SEC parts that
+came back `partial` (a section lost to the network, findings item 41).
 
 Each step writes its run-log row, as the API would. Usage: replay_scrapes.py [A|B|C|D|E ...]
 """
@@ -105,19 +109,18 @@ if "A" in steps:
 if "B" in steps:
     phase("B run-all for the panel refreshes", REFRESHED, run_all)
 # 2026-10-29: 28 Wikidata searches answered "too busy" and the rebuild compared
-# counts with a hole in them. A failed Wikidata part is retried once, Wikidata only.
+# counts with a hole in them. A company whose Wikidata part failed gets its whole
+# run-all once more — every source, as the on-demand gate re-runs an incomplete
+# company (findings item 54): a Wikidata-only retry (2026-10-29 … 2026-11-04) wrote
+# the item but left the SEC part where it had landed without the item's pointer.
+# A second failure in A2 adds nothing (the list below is a copy); a `partial` SEC
+# part in A2 still gets its A3 retry.
 if WIKIDATA_FAILED:
-    from app.scraper.scraper_registry import registered
-    wd = next(s for s in registered() if s.name == "wikidata")
-
-    def retry_wikidata(name):
+    def retry_all(name):
         time.sleep(3)
-        with record_run("wikidata", name) as run:
-            res = wd.run(name, 1, None)
-            run["total"] = res.get("total", 0)
-            run["entity_id"] = res.get("entity_id")
-        return (res.get("status"), res.get("total"))
-    phase("A2 Wikidata retry for the failed parts", sorted(set(WIKIDATA_FAILED)), retry_wikidata)
+        return run_all(name)
+    phase("A2 run-all retry for the companies whose Wikidata part failed",
+          sorted(set(WIKIDATA_FAILED)), retry_all)
 if SEC_PARTIAL:
     from app.scraper.scraper_registry import registered
     sec_spec = next(s for s in registered() if s.name == "sec_edgar")

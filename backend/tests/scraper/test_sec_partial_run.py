@@ -138,6 +138,82 @@ class TestFreshnessStamp:
             graph_writer._scrape_target.reset(token)
 
 
+class TestAFailedSourceMarksTheScrapeIncomplete:
+    """Findings item 54: a source that RAISES wrote nothing, and the sources after
+    it ran without what it would have written. Wikidata's label search for
+    "T. Rowe Price Associates, Inc." timed out in the 2026-11-04 rebuild; the SEC
+    part, which reads the item's CIK pointer from the node Wikidata writes,
+    resolved the name on its own to the adviser (CIK 80255) instead of the Group
+    the item points at (CIK 1113169), and the company was stamped fresh for 30
+    days with the adviser's data. Both dispatchers now stamp it incomplete, so
+    every source runs again after the cooldown. Registry faked (no DB/network)."""
+
+    TARGET = "sec:0000080255"
+
+    @pytest.fixture
+    def world(self, monkeypatch, fake_sources):
+        import app.scraper.runner  # noqa: F401 - registers the built-ins before the swap
+        from app.config import settings
+        from app.scraper.scraper_registry import ScraperSpec, register
+        fake_sources("wd", "sec")
+        monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
+        monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)
+        monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+        monkeypatch.setattr("app.scraper.runner._stored_entity", lambda q, c=None: None)
+        state = {"wd": "raise", "stamped": []}
+
+        def wd(q, d, c=None):
+            if state["wd"] == "raise":
+                raise httpx.ReadTimeout("The read operation timed out")
+            return {"status": "no_results", "total": 0}
+
+        def sec(q, d, c=None):
+            graph_writer.set_scrape_target(self.TARGET, 0)
+            return {"status": "ok", "total": 26, "entity_id": self.TARGET}
+
+        register(ScraperSpec("wd", wd, lambda: True, depth_aware=True, reads_stored_ids=True))
+        register(ScraperSpec("sec", sec, lambda: True))
+        monkeypatch.setattr(graph_writer, "_stamp_scrape_freshness", state["stamped"].append)
+        monkeypatch.setattr(graph_writer, "_geocode_after_scrape", lambda t: {})
+        monkeypatch.setattr(graph_writer, "_end_dissolved_after_scrape", lambda ids: {})
+        monkeypatch.setattr(graph_writer, "_scrape_target_after", lambda t: t)   # follows MergedId in the DB
+        return state
+
+    def test_run_all_stamps_the_target_incomplete(self, world):
+        from app.scraper.runner import run_scrape_all
+        out = run_scrape_all("T. Rowe Price Associates, Inc.", 1)
+        assert out["results"]["wd"]["status"] == "error"
+        assert out["results"]["sec"]["status"] == "ok"
+        assert out["lost_sources"] == ["wd"]
+        assert world["stamped"] == [{"id": self.TARGET, "depth": 0, "incomplete": True}]
+
+    def test_a_source_that_found_nothing_is_not_lost(self, world):
+        from app.scraper.runner import run_scrape_all
+        world["wd"] = "answer"
+        out = run_scrape_all("T. Rowe Price Associates, Inc.", 1)
+        assert "lost_sources" not in out
+        assert world["stamped"] == [{"id": self.TARGET, "depth": 0, "incomplete": False}]
+
+    def test_the_on_demand_dispatcher_stamps_it_too(self, world):
+        from contextlib import contextmanager
+        from app.scraper import ondemand
+
+        @contextmanager
+        def fake_record_run(*a, **k):
+            yield {"total": 0}
+        with patch("app.scraper.run_log.record_run", fake_record_run):
+            out = ondemand._run_instant_sources("T. Rowe Price Associates, Inc.",
+                                                ondemand.ScrapeDecision(True, "absent", 1), None)
+        assert out["names_run"] == ["sec"] and out["target_id"] == self.TARGET
+        assert out["lost_sources"] == ["wd"]
+        assert world["stamped"] == [{"id": self.TARGET, "depth": 0, "incomplete": True}]
+
+    def test_outside_a_scope_nothing_is_recorded(self):
+        assert graph_writer._lost_sources.get() is None
+        graph_writer.mark_source_lost("wd")
+        assert graph_writer._lost_sources.get() is None
+
+
 class TestTheNextEnsureRetries:
     NOW = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
 
