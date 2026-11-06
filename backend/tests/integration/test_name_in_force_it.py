@@ -31,7 +31,9 @@ SUBMISSIONS = {
 
 def _edgar():
     return (patch("app.scraper.sec_edgar._submissions", side_effect=lambda cik: SUBMISSIONS[cik]),
-            patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda cik: SUBMISSIONS[cik]["name"]))
+            patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda cik: SUBMISSIONS[cik]["name"]),
+            # no filing states the LEI: the registers decide, as the case is about (item 64)
+            patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None))
 
 
 def _seed_new_parent(it_db):
@@ -43,8 +45,8 @@ def _seed_new_parent(it_db):
 
 def _old_filer_from_an_old_13g():
     from app.scraper.graph_writer import _upsert_entity_by_name
-    a, b = _edgar()
-    with a, b:
+    a, b, c = _edgar()
+    with a, b, c:
         return _upsert_entity_by_name(name="BlackRock Inc.", cik=OLD_CIK, source_id="sec-edgar")
 
 
@@ -80,8 +82,8 @@ def test_the_lookup_answers_with_the_company_that_bears_the_name_now(it_db):
     from app.scraper.graph_writer import _upsert_entity_by_name
     _seed_new_parent(it_db)
     _old_filer_from_an_old_13g()
-    a, b = _edgar()
-    with a, b:   # the new parent's own filings: EDGAR's name, on GLEIF's node
+    a, b, c = _edgar()
+    with a, b, c:   # the new parent's own filings: EDGAR's name, on GLEIF's node
         assert _upsert_entity_by_name(name="BlackRock, Inc.", cik=NEW_CIK, source_id="sec-edgar",
                                       register_name=True) == f"lei:{NEW_LEI}"
     for q in ("BlackRock", "BlackRock, Inc.", "BlackRock Inc."):

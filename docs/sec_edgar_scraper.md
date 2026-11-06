@@ -180,6 +180,9 @@ the node by its name (exact, by name key, or by a name prefix) rather than by an
 id, the write's CIK goes onto it only if (`graph_writer._not_this_filer`):
 
 - the node carries no other CIK or LEI — before, the `SET` replaced it;
+- a node that carries an LEI and no CIK is the filer only when the filer's own filings
+  state that LEI (`sec_lei.confirm_filer_lei`, asked first and kept as `lei_source_url`;
+  findings item 64) or, failing that, when the registers agree (`legal_identity`);
 - EDGAR's **current** name for the CIK is one of the node's names (its name or
   GLEIF's other names), compared on `_name_key`: legal forms, "the", accents,
   punctuation and EDGAR's "/DE/" tags dropped, every other word kept — "The

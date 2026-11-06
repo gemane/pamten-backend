@@ -841,9 +841,16 @@ It runs wherever such a pair meets, so the order no longer decides:
   the LEI and GLEIF's facts, filling gaps only (the filer's name and provenance stay; other
   names are united), and no second node exists.
 - **The SEC writer's name match** (`graph_writer._not_this_filer`) asks it for a candidate
-  that carries an LEI and no CIK; every node of the name is weighed (`_candidates_by_name`),
-  not the first, so the LLC is refused and the Inc. taken. A node without an LEI keeps the
-  `_name_key` test. The candidates include, through the full-text index, the nodes whose
+  that carries an LEI and no CIK — after asking the filer's own filings for the record's LEI
+  (`sec_lei.confirm_filer_lei`, as this bridge and `attach_stated_cik` ask them): a filing
+  that states the LEI joins at once, with the filing as `lei_source_url` and `lei_source`
+  `filing`; only without one do the registers compare. Until 2026-11-06 only the registers
+  were asked here, and Capital Ventures International's 13G write met its GLEIF node by
+  name, was refused as a weak record (a P.O. box the filer's address omits), minted a
+  `sec:` twin, and the bridge merged the pair by the filer's N-PX twelve seconds later — a
+  merge and a re-key per such pair in every rebuild (findings item 64). Every node of the
+  name is weighed (`_candidates_by_name`), not the first, so the LLC is refused and the
+  Inc. taken. A node without an LEI keeps the `_name_key` test. The candidates include, through the full-text index, the nodes whose
   register other name is the written name with its legal form kept and the nodes whose own
   name is it in another word order (`_namesakes_by_other_name`, findings item 62) — so the
   SEC writer meets GLEIF's 騰訊控股有限公司 under "Tencent Holdings Ltd" as this bridge does,
