@@ -1859,6 +1859,16 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 log.info("SEC EDGAR 13F: cusip second pass found %d filers the "
                          "first search missed", len(extra))
                 holders = [*holders, *extra]
+            # The run's figures cover both passes (findings item 57): on a fresh
+            # database the first pass searched Berkshire's stored class-A CUSIP
+            # and the name (8,283 filings on EDGAR) while the class-B CUSIP it
+            # learned from the tables had 8,459 — the second pass's total — and
+            # the run reported the smaller search as if it were the whole. Reads
+            # are summed (both passes fetched), the total is the larger search's.
+            data = {**data,
+                    "filings_fetched": data.get("filings_fetched", 0) + second.get("filings_fetched", 0),
+                    "filings_total": max(data.get("filings_total", 0), second.get("filings_total", 0)),
+                    "passes": 2}
 
         written = 0
         for h in holders:
@@ -1911,6 +1921,7 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
                 "period": data["period"], "shares_outstanding": outstanding,
                 "filings_fetched": data["filings_fetched"],
                 "filings_total": data["filings_total"],
+                "passes": data.get("passes", 1),
                 "priority_known": data.get("priority_known", 0),
                 "priority_found": data.get("priority_found", 0),
                 "priority_failed": data.get("priority_failed", 0)}
@@ -1918,10 +1929,12 @@ def run_sec_13f(company: str, limit: int = 100, window_days: int | None = None,
 
 def _13f_selection_note(data: dict, extra_filers: int = 0) -> str:
     """The 13F run's selection in one line for its run-log row (findings item
-    40): filings read of those on EDGAR, and how many graph-known filers the
-    by-CIK search found. The first pass's figures; the CUSIP second pass adds
+    40): filings read of those on EDGAR — both passes' reads over the larger
+    search's total when the CUSIP second pass ran (findings item 57) — and how
+    many graph-known filers the by-CIK search found; the second pass adds
     `extra_filers`."""
-    note = (f"{data.get('filings_fetched', 0)}/{data.get('filings_total', 0)} filings read; "
+    passes = " in two passes" if data.get("passes", 1) > 1 else ""
+    note = (f"{data.get('filings_fetched', 0)}/{data.get('filings_total', 0)} filings read{passes}; "
             f"known filers: {data.get('priority_found', 0)} of "
             f"{data.get('priority_known', 0)} found by CIK")
     if data.get("priority_failed"):

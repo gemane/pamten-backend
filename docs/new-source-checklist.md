@@ -233,7 +233,10 @@ parser. Anything that does not map is either a new property (document it) or noi
       came and went across three rebuilds (findings item 51, 2026-11-04). The snapshot now
       carries each edge's `filing_type`, and the diff lists a 13F edge that came or went with
       its filer node apart, as expected churn — while a 13F edge lost by a filer the graph
-      keeps stays a finding (item 40).
+      keeps stays a finding (item 40). And the figures a run reports describe the whole run:
+      the 13F ingest searches twice when it learns a CUSIP, and reported the first search's
+      filing total (8,283 for Berkshire on a fresh database) while the second had 8,459 — a
+      verify compared the wrong number for a day (findings item 57, 2026-11-06).
 - [ ] **A merge is an id-learning path: re-key the survivor.** Every place a node gains a
       hard id must end with `node_ids.key_on_learning` — the writers' COALESCE stamps do, the
       entity merge does, the person merge did not: a `wd:` person that absorbed its `sec:`
