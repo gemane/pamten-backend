@@ -1209,8 +1209,17 @@ Alphabet 226), read once — Archives documents are cached.
 
 After the issuer-side scan, every person who holds an **open seat** at the company
 (from Wikidata or an earlier scrape) and has no ownership edge to it is looked up
-by their own filings (`runner`, `fetch_insider_holding`): each person once, in id
-order, up to `MAX_INSIDER_LOOKUPS = 15`. A person who already holds a CIK is asked
+by their own filings (`runner._seat_holders_pass`, `fetch_insider_holding`): each
+person once, in id order, up to `MAX_INSIDER_LOOKUPS = 15`. The pass — these lookups
+and the 8-K departures below — runs at the end of the SEC scrape and **once more at
+the end of a run-all** when a later source added seat holders without a holding
+(`runner.rerun_for_new_seats` → `run_sec_seat_holders`, the issuer's share count from
+the cached XBRL fetch; the result carries `seats_rerun`, the on-demand run log a row
+with reason `new_seats`). The registers run before the knowledge bases (findings item
+60), so on the SEC's own run Wikidata's officers are not there yet: in the 2026-11-06
+rebuild 22 of them kept their CIK but lost their item id, five lost their Form 4
+holding and their CIK, and the big filers' run-all totals fell by exactly those persons
+(findings item 67). A person who already holds a CIK is asked
 by it. Otherwise the name is searched in EDGAR's filer index, and that search
 matches from the start of EDGAR's own spelling, which is **surname first**
 ("DENHOLM ROBYN M"): "Robyn Denholm" finds nobody, "Denholm Robyn" finds her. So

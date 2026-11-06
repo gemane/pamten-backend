@@ -56,6 +56,34 @@ def _scrape(holding):
     return asked
 
 
+def test_the_pass_alone_writes_the_holding_of_a_seat_added_after_the_scrape(graph):
+    """findings item 67: with the registers running first, Wikidata's officers
+    arrive after the SEC part ran; run-all asks the seats once more at the end
+    (`run_sec_seat_holders`) — Denholm's open seats are looked up, Eberhard's
+    ended one is not, the holding and the CIK land as on the SEC's own run."""
+    from app.scraper import runner, sec_edgar
+    asked = []
+
+    def fake_holding(name, cik, shares_out, person_cik=None):
+        asked.append(name)
+        return HOLDING
+    assert runner.seat_holders_without_holdings("tsla") == frozenset({"wd:Q58345040"})
+    sec = {"status": "ok", "cik": "0001318605", "entity_id": "tsla", "company": "Tesla, Inc.", "seats_asked": []}
+    assert runner.rerun_for_new_seats(sec) is True                         # a seat the SEC run never looked up
+    with patch.object(sec_edgar, "fetch_shares_outstanding_detail", return_value=None), \
+         patch.object(sec_edgar, "fetch_departures", return_value=[]), \
+         patch.object(sec_edgar, "fetch_insider_holding", side_effect=fake_holding), \
+         patch.object(runner, "get_source_enabled", return_value=True), \
+         patch.object(runner.settings, "SCRAPER_ENABLED", True), \
+         patch.object(runner.settings, "SCRAPER_SEC_EDGAR_ENABLED", True):
+        out = runner.run_sec_seat_holders("tsla", "0001318605", "Tesla, Inc.")
+    assert asked == ["Robyn Denholm"] and out["total"] == 1 and out["status"] == "ok"
+    assert graph.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 1
+    [row] = graph.run_sql("SELECT id, sec_cik, wikidata_id FROM Person WHERE wikidata_id = 'Q58345040'")
+    assert row["sec_cik"] == "0001242782" and row["id"] == "sec:0001242782"      # keyed by the CIK found
+    assert runner.rerun_for_new_seats(sec) is False                          # nothing left to look up
+
+
 def test_a_director_without_a_window_form_4_gains_holding_and_cik(graph):
     asked = _scrape(HOLDING)
     assert asked == [("Robyn Denholm", None)]          # once, and not the ended seat

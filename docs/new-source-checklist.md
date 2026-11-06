@@ -570,7 +570,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `reads_stored_ids=True`. Both dispatchers (`run_scrape_all` and the on-demand
       `_run_instant_sources`) then repeat a run that found nothing, once, when the node
       gained an id during the scrape (`runner.rerun_for_new_ids`; the run log says
-      `new_ids`). Unchanged ids mean no second ask.
+      `new_ids`). Unchanged ids mean no second ask. The same for a reader of the graph's
+      PEOPLE: the SEC's seat-holders pass looks up the Form 4s and departures of everyone
+      with an open seat, and the knowledge base that writes the officers now runs after it
+      — 22 persons kept their CIK and lost their item id, five lost their Form 4 holding,
+      and Alphabet's run-all total fell 41 → 38 in the 2026-11-06 rebuild. Both dispatchers
+      run that pass once more when the filer gained seat holders without a holding
+      (`runner.rerun_for_new_seats`; the run log says `new_seats`; findings item 67). A
+      backfill that "only fills blanks" must fill the item id too — the person writer
+      filled aliases and never `wikidata_id` for a person the SEC had written first.
 - [ ] **A name-only row meets a node by every name its register gives it — never by a
       label someone else gave it.** A register's other current names (GLEIF's transliterations,
       alternative-language legal names) are the entity's own, with the legal form kept; a
