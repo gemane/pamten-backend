@@ -349,10 +349,21 @@ having run nothing.
 `run_scrape_all` applies the enabled/disabled/error wrapping uniformly to every
 registered scraper, so a registered spec is all the wiring `run-all` needs.
 
+**The sources run registers first** — statutory and official registers, then
+aggregators of registers, then community knowledge bases, by the catalogue's
+`quality` band (`scraper_registry.registered`, `_BAND_ORDER`; registration order
+within a band): a register writes the node a knowledge base enriches. Until
+2026-11-06 they ran in registration order, Wikidata before SEC EDGAR, and an item
+stating no register id became a `wd:` node seconds before the SEC wrote the filer
+beside it (Shentel, findings item 60). The Wikidata scrape also hands the node the
+query resolved to into the searched item's write (`run_scrape` → `_upsert_entity(…,
+anchor=)`): an item with no register id whose own names find no node enriches that
+node when it bears one of the node's names with the legal form kept.
+
 **A source that finds its match by a stored id** sets `reads_stored_ids=True`, as
-Wikidata does (it reads the node's QID, CIK and LEI before any name search). The
-sources run in registration order, so on a company's first scrape a later source
-may write the id only after this one has looked. Both dispatchers then run the
+Wikidata does (it reads the node's QID, CIK and LEI before any name search). A
+source in a later band may still write an id only after this one has looked (a
+register that is off, a filer the name search misses). Both dispatchers then run the
 source once more when it answered `no_results` or `not_a_company` and the node the
 query names now holds an id it did not hold before (`runner.rerun_for_new_ids`).
 The result carries `"rerun": "new_ids"`, and the on-demand run log has a second row

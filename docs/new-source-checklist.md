@@ -524,11 +524,22 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       company, so it is held to an exact name, never a similarity (findings item 63,
       2026-11-06). Probe a new index with a lone match, a list, and a name the source holds
       twice before trusting its parser.
+- [ ] **Registers write the node, knowledge bases enrich it — so registers run first, and
+      the item found for a company lands on that company's node.** The sources ran in
+      registration order, Wikidata before SEC EDGAR: Shentel's item states no register id,
+      so the run wrote wd:Q23073960 named by the label, and the SEC wrote the filer
+      SHENANDOAH TELECOMMUNICATIONS CO/VA/ five seconds later beside it — the legal name sat
+      only in the item's aliases, which no writer reads (findings item 60, 2026-11-05).
+      `registered()` now orders the sources by the catalogue's quality band, and the Wikidata
+      scrape hands the node the query resolved to into the searched item's write (`anchor`):
+      an item with no register id enriches it when it bears one of the node's names with the
+      legal form kept. Order is a declared property of the registry, never a hope.
 - [ ] **A reader by id must run after the source that writes the id — or once more.**
-      The sources run in registration order, Wikidata before SEC EDGAR, so on a company's
+      The sources ran in registration order, Wikidata before SEC EDGAR, so on a company's
       first scrape the SEC wrote the CIK only after Wikidata had searched by name: Toast,
       Inc. stayed without its item in rebuild 10-31b although the item states that CIK
-      (findings item 27). A source that finds its match by a stored id declares
+      (findings item 27; the registers run first since item 60, which settles the common
+      case, not a register that is off). A source that finds its match by a stored id declares
       `reads_stored_ids=True`. Both dispatchers (`run_scrape_all` and the on-demand
       `_run_instant_sources`) then repeat a run that found nothing, once, when the node
       gained an id during the scrape (`runner.rerun_for_new_ids`; the run log says

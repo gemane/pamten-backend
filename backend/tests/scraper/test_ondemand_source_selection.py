@@ -70,9 +70,10 @@ def test_absent_runs_all_enabled_instant_sources_never_bulk(monkeypatch):
     out = ondemand.ensure_scrape("Acme", depth=1, force=False)
     assert out["scraped"] and out["reason"] == "absent"
     names = [c[0] for c in calls]
-    assert names == ["wikidata", "sec_edgar"]          # instant + enabled; oc off, gleif bulk
+    # instant + enabled; oc off, gleif bulk; the register before the knowledge base (item 60)
+    assert names == ["sec_edgar", "wikidata"]
     assert "gleif" not in names and "open_corporates" not in names
-    assert out["sources_run"] == ["wikidata", "sec_edgar"]
+    assert out["sources_run"] == ["sec_edgar", "wikidata"]
     # depth-aware source gets the requested depth; depth-blind gets 0
     assert {c[0]: c[1] for c in calls} == {"wikidata": 1, "sec_edgar": 0}
 
@@ -95,7 +96,7 @@ def test_the_answer_says_what_each_source_wrote(monkeypatch):
 def test_enabled_open_corporates_participates(monkeypatch):
     calls = _setup(monkeypatch, entity=None, enable_oc=True)
     ondemand.ensure_scrape("Acme", depth=1, force=False)
-    assert [c[0] for c in calls] == ["wikidata", "sec_edgar", "open_corporates"]
+    assert [c[0] for c in calls] == ["sec_edgar", "open_corporates", "wikidata"]   # register, aggregator, knowledge base
 
 
 def test_deepen_runs_only_depth_aware_sources(monkeypatch):

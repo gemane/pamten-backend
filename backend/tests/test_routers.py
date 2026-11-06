@@ -108,7 +108,8 @@ def test_scraper_registry_lists_builtins(client, monkeypatch):
     monkeypatch.setattr("app.scraper.scraper_registry.get_source_enabled", lambda name: True)
     r = client.get("/scraper/registry")
     assert r.status_code == 200
-    assert [s["name"] for s in r.json()["scrapers"]] == ["wikidata", "sec_edgar", "open_corporates"]
+    # registers first, aggregators next, knowledge bases last (findings item 60)
+    assert [s["name"] for s in r.json()["scrapers"]] == ["sec_edgar", "open_corporates", "wikidata"]
 
 
 def test_scraper_source_status_known_and_unknown(client, monkeypatch):

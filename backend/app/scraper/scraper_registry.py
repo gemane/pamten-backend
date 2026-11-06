@@ -146,9 +146,20 @@ def register(spec: ScraperSpec) -> None:
     _registry[spec.name] = spec
 
 
+#: The order the dispatchers run the sources in, by the catalogue's quality
+#: band: a register writes the node a knowledge base enriches (findings item
+#: 60). Statutory and official registers first, aggregators of registers next,
+#: community knowledge bases last; registration order within a band. Until
+#: 2026-11-06 the sources ran in registration order, Wikidata before SEC
+#: EDGAR, and a company's item that states no register id became a `wd:` node
+#: five seconds before the SEC wrote the filer beside it (Shentel).
+_BAND_ORDER = {"statutory": 0, "official": 0, "aggregated": 1, "community": 2}
+
+
 def registered() -> list[ScraperSpec]:
-    """The registered scrapers, in registration order."""
-    return list(_registry.values())
+    """The registered scrapers: registers first, aggregators next, knowledge
+    bases last (`_BAND_ORDER`), in registration order within a band."""
+    return sorted(_registry.values(), key=lambda s: _BAND_ORDER.get(s.meta.get("quality"), 1))
 
 
 def get(name: str) -> "ScraperSpec | None":
