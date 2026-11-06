@@ -281,7 +281,19 @@ def _upsert_entity(
     """
     from app.scraper import register_pointer
     name_norm = normalize_entity_name(name)
-    leis = [x for x in ([lei] if isinstance(lei, str) else lei or []) if x]
+    item_names = [name, *(aliases or [])]
+    # Several stated LEIs are asked in the pointer's order (`ordered_leis`:
+    # the parent per GLEIF first, the item's names as the tie-break) — in
+    # the lookup below as much as in `write_from_pointer`. Asked in
+    # Wikidata's order, Barclays' Q245343 took the Bank, the first of its
+    # two LEIs, in two rebuilds running: the order #554 taught the pointer
+    # was never reached, because this lookup found the node first (findings
+    # item 61, 2026-11-06 rebuild). The CIK stays ahead of the LEI here: on
+    # dev, two of the four items whose LEI and CIK name different nodes
+    # state a SUBSIDIARY's LEI (Chevron U.S.A. Inc. for Chevron Corp,
+    # WesBanco Bank for WesBanco Inc), and the filer the CIK names is the
+    # organisation the item describes (findings item 66, guard 2026-11-06).
+    leis = register_pointer.ordered_leis([x for x in ([lei] if isinstance(lei, str) else lei or []) if x], item_names)
     ciks = [c for c in (normalize_cik(x) for x in ([sec_cik] if isinstance(sec_cik, str) else sec_cik or [])) if c]
     # FULL_TEXT search field (name + description + aliases), so scraped entities
     # are findable via /search — same content as manage.py backfill-search. The
@@ -294,7 +306,7 @@ def _upsert_entity(
         # Entity type on ArcadeDB (see app.entity_resolution). The item's
         # stated ids come ahead of the name, so a company Wikidata knows the
         # LEI for attaches to its existing GLEIF node instead of becoming a
-        # second copy of it.
+        # second copy of it — the LEIs in the order above.
         entity_id = (resolve_entity_id(session, wikidata_id=wikidata_id)
                      or next((i for i in (resolve_entity_id(session, sec_cik=c) for c in ciks) if i), None)
                      or next((i for i in (resolve_entity_id(session, lei_id=x) for x in leis) if i), None))
@@ -327,7 +339,6 @@ def _upsert_entity(
                 unconfirmed, entity_id = entity_id, None
     if not entity_id and (leis or ciks):
         # the item names break a tie among several stated LEIs (findings item 61)
-        item_names = [name, *(aliases or [])]
         entity_id = (register_pointer.write_from_pointer(leis, ciks, candidates=[unconfirmed], names=item_names)
                      if unconfirmed else register_pointer.write_from_pointer(leis, ciks, names=item_names))
     # The item found for the company the query named, stating no register id
@@ -628,8 +639,11 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
     People are never routed here — Wikidata's coverage of people is a strength
     and person dedup handles them; only company nodes are gated."""
     from app.database import db
-    from app.scraper.register_pointer import contradiction, stale
-    leis = rel.get("leis") or [x for x in [rel.get("lei")] if x]
+    from app.scraper.register_pointer import contradiction, ordered_leis, stale
+    # several stated LEIs in the pointer's order, as `_upsert_entity` asks
+    # them (findings item 61)
+    leis = ordered_leis(rel.get("leis") or [x for x in [rel.get("lei")] if x],
+                        [n for n in [rel.get("name"), rel.get("label"), *(rel.get("aliases") or [])] if n])
     ciks = rel.get("sec_ciks") or [x for x in [rel.get("sec_cik")] if x]
     with db.get_session() as session:
         existing = (resolve_entity_id(session, wikidata_id=rel.get("qid"))
