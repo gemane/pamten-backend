@@ -48,7 +48,14 @@ t "6 replaying the scrapes"
 python3 "$R/replay_scrapes.py" || echo "  ! replay ended with an error (see above)"
 
 t "7 finishing what the scrapes added"
-python3 manage.py dedupe-entities --limit 100000 || echo "  ! dedupe failed"
+# The entity dedup's SEC/LEI bridge reads EDGAR (`_bridge_sec_lei`, gated by
+# `_sec_lei_check_enabled`), and the backend .env has scraping off: every
+# rebuild's step 7 printed "Merged 0 entities" and never asked a filing for a
+# same-name LEI/CIK pair — on the server ops.sh runs with the flags on. The
+# replay forces them in-process; this step gets them for the dedupe alone
+# (findings item 70, 2026-11-06).
+SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true SCRAPER_BODS_GLEIF_ENABLED=true \
+  python3 manage.py dedupe-entities --limit 100000 || echo "  ! dedupe failed"
 # the persons two scopes wrote twice — a Wikidata part retried hours after the SEC
 # part wrote the same insiders under EDGAR's spelling (findings item 55)
 python3 manage.py dedupe-persons || echo "  ! dedupe-persons failed"
