@@ -383,6 +383,28 @@ class TestLookupInTickers:
             assert _lookup_in_tickers("MTN Group") is None
             assert _lookup_in_tickers("Apple")["cik"] == "0000320193"
 
+    def test_a_surname_first_title_is_the_same_words_in_another_order(self):
+        # findings item 59: the file's "PRICE T ROWE GROUP INC" is "T. Rowe Price Group, Inc.";
+        # neither the exact nor the prefix match saw it, and the similarity (0.29) would have refused it
+        tickers = {"0": {"cik_str": 1113169, "ticker": "TROW", "title": "PRICE T ROWE GROUP INC"},
+                   "1": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("T. Rowe Price Group, Inc.") == {"cik": "0001113169", "name": "PRICE T ROWE GROUP INC"}
+            assert _lookup_in_tickers("T Rowe Price Group") == {"cik": "0001113169", "name": "PRICE T ROWE GROUP INC"}
+
+    def test_two_words_swapped_are_not_the_same_company(self):
+        # the unordered tier needs three words or more (the writers' rule, item 58)
+        tickers = {"0": {"cik_str": 1385849, "ticker": "UUUU", "title": "FUELS ENERGY INC"}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("Energy Fuels") is None
+
+    def test_an_exact_title_wins_over_a_reordered_one(self):
+        # both key to the same words ("group" is a form word at the end); the exact order comes first
+        tickers = {"0": {"cik_str": 1, "ticker": "AAA", "title": "PRICE T ROWE GROUP INC"},
+                   "1": {"cik_str": 1113169, "ticker": "TROW", "title": "T Rowe Price Group Inc"}}
+        with patch("app.scraper.sec_edgar._tickers_cache", tickers):
+            assert _lookup_in_tickers("T. Rowe Price Group, Inc.")["cik"] == "0001113169"
+
     @pytest.mark.parametrize("title,adr", [
         ("MTN GROUP LTD/ADR", True), ("FOO PLC /ADR/", True), ("BAR SA \\ADR", True),
         ("ADR HOLDINGS INC", False), ("TOYOTA MOTOR CORP/", False), ("LENNAR CORP /NEW/", False), (None, False),

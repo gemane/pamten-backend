@@ -690,6 +690,9 @@ def is_adr_listing(title: str | None) -> bool:
 # Rejects EFTS false positives (e.g. a Chesapeake Corp 10-K that merely
 # *mentions* Nestlé in its text) and overly loose prefix matches.
 _MIN_NAME_SIMILARITY = 0.55
+#: the tickers lookup's unordered tier needs this many words — the writers' rule
+#: for a name in another word order (`graph_writer._UNORDERED_MIN_WORDS`, item 58)
+_UNORDERED_MIN_WORDS = 3
 
 #: Words that make a name a fund vehicle — an investment company registered
 #: under its sponsor's name, not the sponsor.
@@ -733,6 +736,15 @@ def _lookup_in_tickers(query: str) -> dict | None:
     q = _ticker_normalize(query)
     exact: list[tuple[str, str, int]] = []   # (title, cik, len)
     prefix: list[tuple[str, str, int]] = []
+    # EDGAR conforms a filer named after a person surname first: the file's
+    # "PRICE T ROWE GROUP INC" is "T. Rowe Price Group, Inc." — the same words in
+    # another order, which neither the exact nor the prefix match sees
+    # (findings item 59, 2026-11-05/06). Held to three words or more, as the
+    # writers' unordered rule is (item 58): two words swapped are too often
+    # another company.
+    unordered: list[tuple[str, str, int]] = []
+    q_words = tuple(sorted(q.split()))
+    q_unordered = q_words if len(q_words) >= _UNORDERED_MIN_WORDS else None
 
     for entry in tickers.values():
         title = entry.get("title", "")
@@ -744,6 +756,8 @@ def _lookup_in_tickers(query: str) -> dict | None:
             exact.append((title, cik, len(title)))
         elif norm.startswith(q):
             prefix.append((title, cik, len(title)))
+        elif q_unordered and tuple(sorted(norm.split())) == q_unordered:
+            unordered.append((title, cik, len(title)))
 
     for pool in (exact, prefix):
         if pool:
@@ -758,6 +772,13 @@ def _lookup_in_tickers(query: str) -> dict | None:
                 continue
             log.info("SEC EDGAR: tickers matched %r → %r (CIK=%s, sim=%.2f)", query, title, cik, sim)
             return {"cik": cik, "name": title}
+    if unordered:
+        # the words are the same, so no similarity hold: it would reject the
+        # very order difference this tier is for (0.29 for T. Rowe Price)
+        unordered.sort(key=lambda x: x[2])
+        title, cik, _ = unordered[0]
+        log.info("SEC EDGAR: tickers matched %r → %r (CIK=%s, the same words in another order)", query, title, cik)
+        return {"cik": cik, "name": title}
 
     return None
 

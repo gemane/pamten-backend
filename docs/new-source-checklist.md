@@ -329,7 +329,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       (findings item 58, 2026-11-05). And compare names word-order insensitively where a
       source re-orders them: EDGAR conforms a filer named after a person surname first
       ("PRICE T ROWE GROUP INC"), which hid the gap — the alias carried the natural
-      spelling. Search may read the bag; identity may not.
+      spelling. Search may read the bag; identity may not. The same order rule belongs in
+      every name lookup a source re-orders for: the tickers file keyed 'price t rowe group'
+      and the query 't rowe price group' met neither its exact nor its prefix match, and
+      the similarity (0.29) would have refused the only right answer — the lookup now takes
+      the same words in another order, three words or more (findings item 59, 2026-11-06).
 - [ ] **Where a knowledge base and a register disagree, report it — to us and to them.**
       `manage.py wikidata-suggestions` compares each item's LEI/CIK with the node's register
       ids and writes a CSV plus a QuickStatements batch for a person to submit (never an
