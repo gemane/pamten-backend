@@ -533,6 +533,54 @@ class TestBrowseEdgarByName:
         assert result == {"cik": "0001011712", "name": "CAPITAL VENTURES INTERNATIONAL"}
         assert asked == ["10-K", "20-F", ""]
 
+    def _lookup_by_query(self, name, feeds, submissions=None):
+        """Like `_lookup`, keyed by (form type, company query): the base-name
+        retry asks the index with other words than the name (findings item 69).
+        Returns (result, the (type, company) pairs asked)."""
+        import re
+        import httpx
+        from app.scraper import sec_edgar
+        submissions = submissions or {}
+        asked = []
+
+        def get(url, params=None):
+            req = httpx.Request("GET", url)
+            if "browse-edgar" in url:
+                asked.append((params["type"], params["company"]))
+                return httpx.Response(200, text=feeds.get((params["type"], params["company"]), self.EMPTY), request=req)
+            m = re.search(r"CIK(\d{10})\.json", url)
+            if m and m.group(1) in submissions:
+                return httpx.Response(200, json=submissions[m.group(1)], request=req)
+            return httpx.Response(404, request=req)
+        client = MagicMock()
+        client.get.side_effect = get
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"), \
+             patch.object(sec_edgar, "_tickers_cache", {}):
+            return sec_edgar._lookup_edgar_by_name(name), asked
+
+    def test_a_registrant_under_another_form_word_is_found_by_the_base_name(self):
+        # YouTube LLC, 2026-11-06 rebuild: the index lists YOUTUBE INC for "YouTube",
+        # never for "YouTube LLC" (a prefix search); the exact key folds the form
+        result, asked = self._lookup_by_query("YouTube LLC", {("", "youtube"): self.lone("0001343726", "YouTube Inc")})
+        assert result == {"cik": "0001343726", "name": "YouTube Inc"}
+        assert asked == [("10-K", "YouTube LLC"), ("20-F", "YouTube LLC"), ("", "YouTube LLC"), ("", "youtube")]
+
+    def test_the_base_name_pass_still_holds_the_exact_key(self):
+        # "Nestlé Holdings" is not Nestlé: the base words list the parent too,
+        # and the hold refuses what is not the query's name
+        result, asked = self._lookup_by_query("Nestlé Holdings", {("", "nestle holdings"): self.lone("0000792990", "NESTLE SA")})
+        assert result is None and asked[-1] == ("", "nestle holdings")
+
+    def test_a_name_that_is_its_own_base_asks_once(self):
+        # no form word to strip: the type-free pass is not asked twice
+        result, asked = self._lookup_by_query("Carlsberg", {})
+        assert result is None and asked == [("10-K", "Carlsberg"), ("20-F", "Carlsberg"), ("", "Carlsberg")]
+
+    def test_a_registrant_the_full_name_lists_needs_no_second_ask(self):
+        result, asked = self._lookup_by_query("YouTube Inc", {("", "YouTube Inc"): self.lone("0001343726", "YouTube Inc")})
+        assert result == {"cik": "0001343726", "name": "YouTube Inc"}
+        assert asked[-1] == ("", "YouTube Inc")
+
     def test_the_type_free_pass_takes_the_exact_name_only(self):
         # "Nestlé" lists the US holding and the Swiss parent at the same similarity
         # (0.83); only the parent's name IS the query's

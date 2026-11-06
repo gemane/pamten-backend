@@ -923,32 +923,55 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
     (`_browse_registrants`).
     """
     for form_type in _BROWSE_PASSES:
-        try:
-            resp = _response(BROWSE_URL, {      # the retry (findings item 38)
-                "company":     name,
-                "action":      "getcompany",
-                "type":        form_type,
-                "dateb":       "",
-                "owner":       "include",
-                "count":       _BROWSE_COUNT.get(form_type, _BROWSE_COUNT_DEFAULT),
-                "search_text": "",
-                "output":      "atom",
-            })
-        except httpx.HTTPError as exc:
-            log.debug("SEC EDGAR: browse-edgar (%s) failed for %r: %s", form_type or "any form", name, exc)
+        registrants = _browse_index(name, form_type)
+        if registrants is None:
             continue
-        try:
-            root = ET.fromstring(resp.content)
-        except (ET.ParseError, TypeError):
-            continue
-        registrants = _browse_registrants(root)
         match = (_closest_registrant(name, registrants, form_type) if form_type
                  else _exact_registrant(name, registrants))
         if match:
             return match
 
+    # The index is a PREFIX search on the registered spelling, so a query
+    # carrying another form word than the registrant's never lists it:
+    # "YouTube LLC" lists nothing, "YouTube" lists YOUTUBE INC (CIK 0001343726,
+    # the registrant Wikidata's item states), whose exact key the hold already
+    # accepts — the form folded (findings item 69, 2026-11-06 rebuild). So the
+    # type-free pass asks once more with the name's base words when the full
+    # name listed no registrant of its key; the hold is the same exact key.
+    base = " ".join(name_key(name))
+    if base and base.casefold() != name.casefold():
+        registrants = _browse_index(base, "")
+        if registrants and (match := _exact_registrant(name, registrants)):
+            return match
+
     log.info("SEC EDGAR: browse-edgar found no registered match for %r", name)
     return None
+
+
+def _browse_index(query: str, form_type: str) -> list[tuple[str, str | None]] | None:
+    """The registrants browse-edgar lists for ``query`` (a prefix of the
+    registered name) filtered to ``form_type`` filers ("" for every
+    registrant), in both of EDGAR's answer shapes; None when the request or
+    its parse failed."""
+    try:
+        resp = _response(BROWSE_URL, {      # the retry (findings item 38)
+            "company":     query,
+            "action":      "getcompany",
+            "type":        form_type,
+            "dateb":       "",
+            "owner":       "include",
+            "count":       _BROWSE_COUNT.get(form_type, _BROWSE_COUNT_DEFAULT),
+            "search_text": "",
+            "output":      "atom",
+        })
+    except httpx.HTTPError as exc:
+        log.debug("SEC EDGAR: browse-edgar (%s) failed for %r: %s", form_type or "any form", query, exc)
+        return None
+    try:
+        root = ET.fromstring(resp.content)
+    except (ET.ParseError, TypeError):
+        return None
+    return _browse_registrants(root)
 
 
 # ── EDGAR search helpers ──────────────────────────────────────────────────────

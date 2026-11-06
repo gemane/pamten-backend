@@ -263,7 +263,14 @@ Investment Management" scores the Japanese K.K. 1.00 and is neither subsidiary.
 An ADR programme ("Naspers Ltd/ADR") is skipped as in step 1. EDGAR holds some
 names twice — CITADEL SECURITIES LLC is CIK 0001307720 (SC 13D/G, Form 4) and
 0001146184 (broker-dealer FOCUS reports) — and the registrant that files what the
-scraper reads wins, then the one that filed last.
+scraper reads wins, then the one that filed last. The index is a prefix search on the
+registered spelling, so a query carrying another form word than the registrant's never
+lists it: "YouTube LLC" lists nothing while "YouTube" lists YOUTUBE INC (CIK 0001343726,
+the pre-acquisition registrant — the CIK Wikidata's item for YouTube, LLC states), whose
+key the hold already accepts with the form folded. When the full name lists no registrant
+of its key, the type-free pass asks once more with the name's base words (the key's words:
+"youtube", "grupo bimbo") and holds the answer to the same exact key — one more browse
+request, never for a name that is its own base (findings item 69, 2026-11-06 rebuild).
 
 EDGAR answers a company search two ways, and every pass reads both
 (`_browse_registrants`): several matches come as a list of registrants (Atom

@@ -550,7 +550,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       unfiltered index lists holdings, subsidiaries, ADR programmes and namesakes beside the
       company, so it is held to an exact name, never a similarity (findings item 63,
       2026-11-06). Probe a new index with a lone match, a list, and a name the source holds
-      twice before trusting its parser.
+      twice before trusting its parser. And know what the index matches ON: browse-edgar
+      matches a PREFIX of the registered spelling, so "YouTube LLC" lists nothing and
+      "YouTube" lists YOUTUBE INC — the exact key folds the form, the index does not. Ask it
+      once more with the name's base words when the full name lists no registrant of the
+      key, and hold the answer to the same key (findings item 69, 2026-11-06).
 - [ ] **Registers write the node, knowledge bases enrich it — so registers run first, and
       the item found for a company lands on that company's node.** The sources ran in
       registration order, Wikidata before SEC EDGAR: Shentel's item states no register id,
