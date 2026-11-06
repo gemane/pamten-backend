@@ -230,6 +230,14 @@ class TestSelectionNote:
         assert _13f_selection_note({**data, "priority_failed": 2}, 12).endswith(
             "found by CIK, 2 CIK searches failed; second pass +12 filers")
 
+    def test_two_passes_are_said(self):
+        # findings item 57: the figures are both passes' once the CUSIP pass ran
+        from app.scraper.runner import _13f_selection_note
+        data = {"filings_fetched": 296, "filings_total": 8459, "priority_found": 84, "priority_known": 1530,
+                "passes": 2}
+        assert _13f_selection_note(data, 3).startswith("296/8459 filings read in two passes; ")
+        assert "in two passes" not in _13f_selection_note({**data, "passes": 1})
+
 
 class Test13FIssuerMatching:
     """Row acceptance is stricter than the 13D/G name check: 13F rows come

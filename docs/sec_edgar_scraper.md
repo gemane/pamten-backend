@@ -1008,7 +1008,13 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
   relevance order. A failed CIK batch is logged and counted, never fatal. The
   run-log row's note says what was selected: `146/8127 filings read; known
   filers: 46 of 1196 found by CIK`, plus the CIK searches that failed and the
-  filers the CUSIP second pass added. The rebuild replay prints the same counts.
+  filers the CUSIP second pass added. When that second pass ran, the figures
+  are both passes' — reads summed, the total the larger search's (its CUSIP
+  set is a superset), the note says `in two passes` and the result carries
+  `passes: 2`: on a fresh database Berkshire's first pass (the stored class-A
+  CUSIP and the name) totalled 8,283 while the class-B CUSIP it learned had
+  8,459, and the run reported the smaller search as if it were the whole
+  (findings item 57, 2026-11-06). The rebuild replay prints the same counts.
 - **Every SEC-written edge and claim carries `filing_type`** — "13F", "13G/A",
   "Form 4" — via `_short_form()`, which collapses both eras' spellings
   ("SCHEDULE 13G/A" / "SC 13G/A" → "13G/A"). GLEIF RR edges carry "RR" and UK

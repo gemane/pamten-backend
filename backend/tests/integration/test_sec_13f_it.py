@@ -111,7 +111,7 @@ def test_first_run_does_a_cusip_second_pass_and_merges_new_filers(it_db):
     # AGAIN with it in the same run, or the first ingest silently lacks the
     # biggest holders.
     _company(it_db)   # no cusip stored → name search first
-    second = {**HOLDERS, "holders": [
+    second = {**HOLDERS, "filings_total": 120, "filings_fetched": 3, "holders": [
         HOLDERS["holders"][0],   # overlap: already found by name
         {"filer_cik": "1045810", "filer_name": "NVIDIA CORP",
          "shares": 1300000, "value_usd": 222040000, "share_class": "CL A",
@@ -131,6 +131,12 @@ def test_first_run_does_a_cusip_second_pass_and_merges_new_filers(it_db):
         "MATCH (a)-[:OWNS]->(:Entity {id:'sx'}) RETURN a.name AS n")}
     assert "NVIDIA CORP" in names, "the abbreviating filer arrived via the cusip pass"
     assert res["total"] == 3, "two from the name pass + one new; the overlap not doubled"
+    # findings item 57: the run's figures are both passes', not the first's —
+    # reads summed, the total the larger search's (the CUSIP set is a superset)
+    assert (res["filings_fetched"], res["filings_total"], res["passes"]) == (2 + 3, 120, 2)
+    [row] = it_db.run_sql("SELECT error AS note FROM ScrapeRun WHERE source = 'sec-13f'")   # the row's note field
+    assert row["note"].startswith("5/120 filings read in two passes; ")
+    assert row["note"].endswith("; second pass +1 filers")
 
 
 def test_a_second_cusip_joins_the_union_and_future_searches(it_db):
@@ -346,7 +352,7 @@ def test_the_first_run_keeps_the_full_discovery_window(it_db):
 
 def test_the_run_log_row_names_the_selection(it_db):
     # findings item 40: a rebuild that loses the big holders shows it here
-    _company(it_db)
+    _company(it_db, cusip="84615Q103")     # the CUSIP stored: one pass, the figures that search's (item 57)
     _run(it_db, holders={**HOLDERS, "priority_known": 5, "priority_found": 1, "priority_failed": 0})
     rows = it_db.run_sql("SELECT status, error FROM ScrapeRun WHERE source = 'sec-13f'")
     assert rows == [{"status": "ok", "error": "2/91 filings read; known filers: 1 of 5 found by CIK"}]
