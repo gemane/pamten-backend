@@ -843,7 +843,12 @@ It runs wherever such a pair meets, so the order no longer decides:
 - **The SEC writer's name match** (`graph_writer._not_this_filer`) asks it for a candidate
   that carries an LEI and no CIK; every node of the name is weighed (`_candidates_by_name`),
   not the first, so the LLC is refused and the Inc. taken. A node without an LEI keeps the
-  `_name_key` test.
+  `_name_key` test. The candidates include, through the full-text index, the nodes whose
+  register other name is the written name with its legal form kept and the nodes whose own
+  name is it in another word order (`_namesakes_by_other_name`, findings item 62) — so the
+  SEC writer meets GLEIF's 騰訊控股有限公司 under "Tencent Holdings Ltd" as this bridge does,
+  before a twin exists. A node's `aliases` are never a candidate's door: a knowledge base's
+  labels and other filers' spellings name brands and relatives.
 - **This bridge**, when no filing confirms the LEI; its candidates include LEI-only nodes one
   of whose other names keys as the filer's (`_partners_by_other_name`, through the full-text
   index).

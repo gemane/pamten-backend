@@ -530,6 +530,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `_run_instant_sources`) then repeat a run that found nothing, once, when the node
       gained an id during the scrape (`runner.rerun_for_new_ids`; the run log says
       `new_ids`). Unchanged ids mean no second ask.
+- [ ] **A name-only row meets a node by every name its register gives it — never by a
+      label someone else gave it.** A register's other current names (GLEIF's transliterations,
+      alternative-language legal names) are the entity's own, with the legal form kept; a
+      filer EDGAR conforms surname first bears its name in another word order. A node's
+      `aliases` mix a knowledge base's labels and other filers' spellings, which name brands
+      and relatives: on dev "MESA AIRLINES INC" sits on Republic Airways Holdings' node and
+      "T. Rowe Price Associates, Inc." on the Group's as on the adviser's, so an alias match
+      would have joined a subsidiary to its parent. The writer read `name` and
+      `name_normalized` only while the GLEIF→filer join read the other names too, and eight
+      Exhibit 21 rows were uuid twins of the register's node (findings item 62, 2026-11-06).
+      Probe a new match rule against every name-only node in the database before trusting it.
 - [ ] **A name in a filing is the name its filer had then.** A writer that joins an id to
       a node by name must check the id's register name **now**: BlackRock's pre-2024 13G
       filings name "BlackRock Inc." under the old parent's CIK, and the GLEIF node of the

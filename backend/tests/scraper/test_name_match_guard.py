@@ -195,7 +195,77 @@ class TestTheFirstCandidateTheRegistersAllow:
         from app.scraper import graph_writer
         s = MagicMock()
         s.run.side_effect = lambda q, **kw: [{"id": "lei:LLC"}, {"id": "lei:INC"}] if "name_normalized" in q else []
-        assert graph_writer._candidates_by_name(s, "DOMINOS PIZZA INC", "dominos pizza", None) == ["lei:LLC", "lei:INC"]
+        with patch("app.db.arcadedb.run_sql", return_value=[]):
+            assert graph_writer._candidates_by_name(s, "DOMINOS PIZZA INC", "dominos pizza", None) == ["lei:LLC", "lei:INC"]
+
+
+class TestNamesakesByOtherName:
+    """findings item 62: a name-only row meets the node that bears its name as
+    a register's other name (legal form kept) or in another word order — never
+    by a node's aliases. The full-text index proposes, the key decides."""
+
+    TENCENT = {"id": "lei:254900N4SLUMW4XUYY11", "name": "騰訊控股有限公司",
+               "other_names": ["Tencent Holdings Limited"], "country": "KY"}
+    ARM = {"id": "lei:2138001E66EELTE7Y904", "name": "ARM HOLDINGS PLC", "other_names": [], "country": "GB"}
+    PRICE = {"id": "sec:0000080255", "name": "PRICE T ROWE ASSOCIATES INC /MD/", "other_names": None, "country": "US"}
+    GROUP = {"id": "sec:0001113169", "name": "PRICE T ROWE GROUP INC", "other_names": None, "country": "US"}
+    NYT = {"id": "lei:529900J1WEMMIW7BOH57", "name": "NEW YORK TIMES CO", "other_names": ["New York Times Co."],
+           "country": "US"}
+
+    def _namesakes(self, name, rows, country=None):
+        from app.scraper import graph_writer
+        from app.scraper.mapper import normalize_entity_name
+        with patch("app.db.arcadedb.run_sql", return_value=rows) as ft:
+            got = graph_writer._namesakes_by_other_name(name, normalize_entity_name(name), country)
+        return got, ft
+
+    def test_a_registers_other_name_with_the_form_kept(self):
+        got, ft = self._namesakes("Tencent Holdings Ltd", [self.ARM, self.TENCENT], country="KY")
+        assert got == ["lei:254900N4SLUMW4XUYY11"]
+        assert "CONTAINSTEXT" in ft.call_args.args[0] and ft.call_args.args[1] == {"q": "tencent holdings"}
+
+    def test_another_legal_form_is_another_company(self):
+        # "New York Times Limited" is the UK subsidiary, not NEW YORK TIMES CO —
+        # even in the same country the form-stripped key would have joined them
+        assert self._namesakes("New York Times Limited", [self.NYT], country="US")[0] == []
+
+    def test_the_own_name_in_another_word_order(self):
+        # EDGAR conforms a filer named after a person surname first (item 58's rule)
+        got, _ = self._namesakes("T. Rowe Price Associates, Inc.", [self.PRICE, self.GROUP], country="US")
+        assert got == ["sec:0000080255"]
+
+    def test_two_words_do_not_swap(self):
+        rows = [{"id": "sec:1", "name": "Research Capital Inc", "other_names": None, "country": "US"}]
+        assert self._namesakes("Capital Research Inc", rows, country="US")[0] == []
+
+    def test_aliases_are_no_door(self):
+        # "MESA AIRLINES INC" sits on Republic Airways Holdings' node (dev, 2026-11-06)
+        rows = [{"id": "sec:0000810332", "name": "REPUBLIC AIRWAYS HOLDINGS INC.", "other_names": None,
+                 "aliases": ["MESA AIR GROUP INC", "MESA AIRLINES INC"], "country": "US"}]
+        assert self._namesakes("Mesa Airlines, Inc.", rows, country="US")[0] == []
+
+    def test_a_namesake_registered_elsewhere_is_excluded_an_unknown_country_ranked_after(self):
+        kr = {"id": "lei:KR", "name": "애플코리아 유한회사", "other_names": ["APPLE KOREA LIMITED"], "country": "KR"}
+        unknown = {**kr, "id": "lei:??", "country": None}
+        elsewhere = {**kr, "id": "lei:US", "country": "US"}
+        got, _ = self._namesakes("Apple Korea Limited", [unknown, elsewhere, kr], country="KR")
+        assert got == ["lei:KR", "lei:??"]
+        # without a country every bearer counts, in the index's order
+        assert self._namesakes("Apple Korea Limited", [unknown, elsewhere, kr])[0] == ["lei:??", "lei:US", "lei:KR"]
+
+    def test_the_exact_tiers_come_first_and_nothing_twice(self):
+        from app.scraper import graph_writer
+        s = MagicMock()
+        s.run.side_effect = lambda q, **kw: [{"id": "sec:EXACT"}, {"id": "lei:TWIN"}] if "name_normalized" in q else []
+        with patch("app.db.arcadedb.run_sql", return_value=[self.TENCENT, {**self.TENCENT, "id": "lei:TWIN"}]):
+            got = graph_writer._candidates_by_name(s, "Tencent Holdings Ltd", "tencent holdings", None)
+        assert got == ["sec:EXACT", "lei:TWIN", "lei:254900N4SLUMW4XUYY11"]
+
+    def test_no_name_asks_the_index_nothing(self):
+        from app.scraper import graph_writer
+        with patch("app.db.arcadedb.run_sql") as ft:
+            assert graph_writer._namesakes_by_other_name("", "", None) == []
+        ft.assert_not_called()
 
 
 def test_dotted_letters_are_one_word_and_a_lone_letter_stays():

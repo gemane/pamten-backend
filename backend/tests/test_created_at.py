@@ -68,7 +68,9 @@ class TestScrapePathStampsIt:
 
     def test_name_keyed_entity_and_person(self):
         from app.scraper import graph_writer
-        q, kw = self._create_query("graph_writer", lambda: graph_writer._upsert_entity_by_name("Acme Ltd"))
+        # the name's third tier asks the full-text index outside the session (item 62)
+        with patch("app.db.arcadedb.run_sql", return_value=[]):
+            q, kw = self._create_query("graph_writer", lambda: graph_writer._upsert_entity_by_name("Acme Ltd"))
         assert "created_at: $created_at" in q and kw["created_at"]
         q, kw = self._create_query("graph_writer", lambda: graph_writer._upsert_person_by_name("Jane Doe"))
         assert "created_at: $created_at" in q and kw["created_at"]
