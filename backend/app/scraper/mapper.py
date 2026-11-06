@@ -4,6 +4,7 @@ Covers both Wikidata (QID-based) and SEC EDGAR (name-based) sources.
 """
 
 import re
+import unicodedata
 
 # The stored vocabulary lives with the model, not here — this module derives a
 # value, it does not get to define the set. (models imports nothing from scraper,
@@ -269,13 +270,45 @@ def fold_apostrophes(name: str) -> str:
     return _APOSTROPHES.sub("", name)
 
 
+#: dropped only at the end of a name, as many as there are ("GmbH & Co. KG" is
+#: one legal form; "KG Mobility Corp" keeps its KG): anywhere, "NV ENERGY,
+#: INC." keyed ("energy",) and "Innovex Co-Invest" lost its "co" (2026-10-30)
+NAME_FORMS = frozenset({"inc", "incorporated", "corp", "corporation", "co", "company",
+                        "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se", "gmbh",
+                        "&", "and", "kg", "kgaa"})
+
+
+def name_key(name: str) -> tuple[str, ...]:
+    """Two spellings of one name agree on this key: GLEIF's "The Coca-Cola
+    Company" and EDGAR's "COCA COLA CO", "Amazon.com, Inc." and "AMAZON COM
+    INC", "Bank of America Corporation" and "BANK OF AMERICA CORP /DE/". Words
+    stay words, so "BlackRock" and "BlackRock Finance" do not — nor "Nestlé"
+    and "NESTLE HOLDINGS INC" (the Swiss parent and its US holding; findings
+    item 63). The graph writer's key for a filer met by name; the EDGAR name
+    search's for a registrant found without a form filter."""
+    # apostrophes first: the split below made "Domino's" ("domino", "s") and
+    # the ASCII fold made "Domino’s" ("dominos"), EDGAR's spelling
+    plain = unicodedata.normalize("NFKD", fold_apostrophes(strip_edgar_tag(name or ""))) \
+        .encode("ascii", "ignore").decode().lower()
+    # "L.P." is one word before the split, or it became the letters "l", "p"
+    plain = join_dotted_letters(plain)
+    words = [w for w in re.split(r"[^a-z0-9&]+", plain) if w]
+    if len(words) > 1 and words[0] == "the":        # a leading "the" only
+        words.pop(0)
+    while len(words) > 1 and words[-1] in NAME_FORMS:   # never down to nothing: "The Limited"
+        words.pop()
+    return tuple(words)
+
+
 #: EDGAR's two-letter state codes: its tag after a conformed name is mostly one
 _US_STATE_CODES = frozenset(
     "AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH "
     "NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR VI GU AS MP".split())
 #: the tag's other words: a re-used name ("/NEW/", "/OLD/"), an ADR, Canada,
-#: the filer-agent mark ("/ FA"), and the article EDGAR moves to the end ("Co/The")
-_EDGAR_TAG_WORDS = frozenset({"new", "old", "adr", "can", "fa", "the"})
+#: the filer-agent mark ("/ FA"), a foreign issuer ("SAMSUNG ELECTRONICS CO LTD
+#: /FI", "NESTLE SA /FI" — 14 titles in the tickers file, findings item 63),
+#: and the article EDGAR moves to the end ("Co/The")
+_EDGAR_TAG_WORDS = frozenset({"new", "old", "adr", "can", "fa", "fi", "the"})
 #: the last "/" or "\" segment of a name, with or without spaces and a closing slash
 _EDGAR_TAG = re.compile(r"\s*[/\\]\s*([A-Za-z0-9][A-Za-z0-9-]*)?\s*([/\\])?\s*$")
 #: a legal form written with a slash, which is part of the name: Belgian SA/NV,

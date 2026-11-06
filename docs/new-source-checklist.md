@@ -509,6 +509,18 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       its legal form is asked only after that, and held to a name's standard: the record's
       own label reduces to the same words, two or more, one candidate ("Inter & Co" → "inter"
       → Inter Milan).
+- [ ] **A name search must find every registrant of the name, whatever it files — and read
+      every shape the index answers in.** A lookup filtered to the forms the issuers file
+      (10-K, 20-F) never finds a filer that only holds: Tesla's seven 13D/G holders were in
+      the target list for their own holdings and had a CIK only because Tesla's scrape had
+      written them first; the night Tesla's 13D/G page was lost to the network they scraped
+      nothing (93 edges, 56 issuer nodes). The same lookup read only EDGAR's list answer,
+      so a name with exactly one registrant (Sears Holdings Corp) came back as its filing
+      feed and was "not found", while the person lookup beside it read both shapes. An
+      unfiltered index lists holdings, subsidiaries, ADR programmes and namesakes beside the
+      company, so it is held to an exact name, never a similarity (findings item 63,
+      2026-11-06). Probe a new index with a lone match, a list, and a name the source holds
+      twice before trusting its parser.
 - [ ] **A reader by id must run after the source that writes the id — or once more.**
       The sources run in registration order, Wikidata before SEC EDGAR, so on a company's
       first scrape the SEC wrote the CIK only after Wikidata had searched by name: Toast,

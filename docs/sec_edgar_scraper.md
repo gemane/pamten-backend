@@ -248,8 +248,35 @@ prefix matches are the fallback. A form word elsewhere stays: dropped anywhere,
 10-K, 20-F or holders of its own, and would give the company a CIK that carries
 nothing (the user's choice, 2026-10-30).
 
-**Step 1b — browse-edgar's registered-name index:** companies filing 10-K or 20-F
-whose registered name starts with the query.
+**Step 1b — browse-edgar's registered-name index:** registrants whose registered
+name starts with the query, in three passes (`_BROWSE_PASSES`): 10-K filers, 20-F
+filers, then every registrant. The two filtered passes take the closest name
+(`_name_similarity` ≥ 0.55 over the whole list, so a subsidiary listed ahead of
+its parent does not win by position). The type-free pass is what finds a filer
+with no annual report — a 13D/G holder (Capital Ventures International, Tencent
+Holdings Ltd), a Form 4 reporting owner (NESTLE SA), a 13F manager — and, since
+it lists the company's holdings, subsidiaries, the depositary's ADR programme and
+namesakes abroad alike, it takes an **exact name** only (`mapper.name_key`: legal
+form, EDGAR's tag, case, accents and punctuation aside): "Nestlé" scores NESTLE
+HOLDINGS INC and NESTLE SA alike by similarity and is NESTLE SA by key; "MFS
+Investment Management" scores the Japanese K.K. 1.00 and is neither subsidiary.
+An ADR programme ("Naspers Ltd/ADR") is skipped as in step 1. EDGAR holds some
+names twice — CITADEL SECURITIES LLC is CIK 0001307720 (SC 13D/G, Form 4) and
+0001146184 (broker-dealer FOCUS reports) — and the registrant that files what the
+scraper reads wins, then the one that filed last.
+
+EDGAR answers a company search two ways, and every pass reads both
+(`_browse_registrants`): several matches come as a list of registrants (Atom
+entries whose `<id>` carries the CIK; the name is lost to a server-side bug and
+read from the submissions document, one request each), a single match as that
+registrant's own filing feed with a `<company-info>` block. Until 2026-11-06 the
+lookup read the list only, stopped after 20-F, and so found neither a name with
+exactly one registrant (Sears Holdings Corp, a 10-K filer) nor any holder-only
+filer: a holder in the target list for its own holdings had a CIK only when an
+issuer's scrape had happened to write it first, and when Tesla's 13D/G page was
+lost to the network its seven holder-targets scraped nothing (findings item 63).
+Request budget: one browse request per pass, plus a submissions request per list
+entry (at most 5 on a filtered pass, 20 on the type-free one).
 
 **Step 2 — EFTS full-text search (fallback):**
 For companies not in the tickers file (private companies, foreign names), the

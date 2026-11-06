@@ -280,7 +280,7 @@ Note that the CIK a user searches for may be the retired one — which is exactl
 Company lookup uses a three-vector strategy to avoid false matches:
 
 1. **`company_tickers.json`** — instant lookup for all US-listed companies
-2. **`browse-edgar` name index** — EDGAR's registered company-name search; returns 0 results for companies not on EDGAR (Nestlé, Samsung, Volkswagen, etc.), preventing false positives from full-text matches
+2. **`browse-edgar` name index** — EDGAR's registered company-name search: 10-K and 20-F filers by the closest name, then any registrant of exactly that name whatever it files (a 13D/G holder, a Form 4 owner, a 13F manager); a company that is no registrant at all (Heineken, Saudi Aramco) stays unfound here, preventing false positives from full-text matches
 3. **EFTS full-text search** — last resort, guarded by a name-similarity check (SequenceMatcher ratio ≥ 0.55 after stripping legal suffixes)
 
 Investor names are classified as Person or Entity using heuristics that recognise common legal suffixes including European forms (S.A.R.L., GmbH, S.A., N.V., AG, etc.).

@@ -12,8 +12,6 @@ writers live in `sec_writer.py`; orchestration stays in `runner.py`, which
 re-exports these names for compatibility.
 """
 import contextvars
-import re
-import unicodedata
 import functools
 from datetime import datetime, timezone
 
@@ -26,8 +24,8 @@ from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.node_ids import key_on_learning, mint_node_id
 from app import addresses
-from app.scraper.mapper import (fold_apostrophes, is_nominee_name, join_dotted_letters, normalize_cik,
-                                normalize_entity_name, parse_full_name, strip_edgar_tag)
+from app.scraper.mapper import (is_nominee_name, name_key, normalize_cik, normalize_entity_name,
+                                parse_full_name)
 import logging
 
 from app.config import settings
@@ -819,31 +817,9 @@ def _candidates_by_name(session, name: str, name_norm: str, country: str | None)
     return out
 
 
-#: dropped only at the end of a name, as many as there are ("GmbH & Co. KG" is
-#: one legal form; "KG Mobility Corp" keeps its KG): anywhere, "NV ENERGY,
-#: INC." keyed ("energy",) and "Innovex Co-Invest" lost its "co" (2026-10-30)
-_NAME_FORMS = frozenset({"inc", "incorporated", "corp", "corporation", "co", "company",
-                         "ltd", "limited", "plc", "llc", "lp", "llp", "sa", "ag", "nv", "se", "gmbh",
-                         "&", "and", "kg", "kgaa"})
-
-
-def _name_key(name: str) -> tuple[str, ...]:
-    """Two spellings of one name agree on this key: GLEIF's "The Coca-Cola
-    Company" and EDGAR's "COCA COLA CO", "Amazon.com, Inc." and "AMAZON COM
-    INC", "Bank of America Corporation" and "BANK OF AMERICA CORP /DE/". Words
-    stay words, so "BlackRock" and "BlackRock Finance" do not."""
-    # apostrophes first: the split below made "Domino's" ("domino", "s") and
-    # the ASCII fold made "Domino’s" ("dominos"), EDGAR's spelling
-    plain = unicodedata.normalize("NFKD", fold_apostrophes(strip_edgar_tag(name or ""))) \
-        .encode("ascii", "ignore").decode().lower()
-    # "L.P." is one word before the split, or it became the letters "l", "p"
-    plain = join_dotted_letters(plain)
-    words = [w for w in re.split(r"[^a-z0-9&]+", plain) if w]
-    if len(words) > 1 and words[0] == "the":        # a leading "the" only
-        words.pop(0)
-    while len(words) > 1 and words[-1] in _NAME_FORMS:   # never down to nothing: "The Limited"
-        words.pop()
-    return tuple(words)
+#: two spellings of one name agree on this key (`mapper.name_key`; it lived
+#: here until the EDGAR name search needed it too, findings item 63)
+_name_key = name_key
 
 
 def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
