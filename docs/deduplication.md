@@ -928,6 +928,18 @@ no tag and keep the header's.
   EDGAR finds counts only under the exact name (`mapper.name_key`; the similarity pass
   hands "Franklin Resources" a Canadian subsidiary); a node without a CIK, or with EDGAR
   off, keeps `stale`'s refusal — no register can say the name stayed.
+- **The Wikidata writer, a related company the registers wrote first**: a subsidiary,
+  owner, successor or predecessor whose stated CIK or LEI finds a node WITHOUT an item goes
+  through the writer like a searched company (`_resolve_related_company` returns None, then
+  `_upsert_entity` with `register_required`): the item lands on that node and its other
+  stated id goes to its register (`attach_stated_lei` / `attach_stated_cik`). Until
+  2026-11-06 the gate returned any existing node as it stood and only the edge was drawn —
+  harmless while Wikidata ran first and the node was its own, but with the registers first
+  (item 60) MUFG's filer sec:0000067088, written from a 13D/A minutes earlier, took Morgan
+  Stanley's owner edge and kept neither Q1542175 nor the LEI the item states; Sprint's and
+  Alcon's filers likewise, and their GLEIF nodes of earlier rebuilds were gone (findings item
+  66). A node that carries the item already still takes just the edge; a node the item's ids
+  contradict or whose ended name moved to another registrant is still skipped.
 - **The Wikidata writer, a node found by name**: when an item's QID, CIK and LEI find no
   node and its name finds one that holds a register id, none of them the item's, the item's
   ids are asked of their register FIRST, with that node as the candidate

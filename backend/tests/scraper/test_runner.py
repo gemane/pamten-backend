@@ -1702,13 +1702,34 @@ class TestRelatedCompanyGate:
     def test_an_agreeing_node_is_used_and_an_unknown_one_goes_to_its_register(self):
         from app.scraper.runner import _resolve_related_company
         ctx, _ = _make_session_mock(single_returns=[
-            {"id": "lei:AAAAAAAAAAAAAAAAAAAA"}, {"lei_id": "AAAAAAAAAAAAAAAAAAAA", "sec_cik": None}])
+            {"id": "lei:AAAAAAAAAAAAAAAAAAAA"}, {"lei_id": "AAAAAAAAAAAAAAAAAAAA", "sec_cik": None, "wikidata_id": "Q1"}])
         with patch("app.database.db.get_session", ctx):
             assert _resolve_related_company({"qid": "Q1", "leis": ["AAAAAAAAAAAAAAAAAAAA"]}) == "lei:AAAAAAAAAAAAAAAAAAAA"
         ctx, _ = _make_session_mock()
         with patch("app.database.db.get_session", ctx):
             assert _resolve_related_company({"qid": "Q1", "lei": "AAAAAAAAAAAAAAAAAAAA"}) is None
             assert _resolve_related_company({"qid": "Q1"}) is False
+
+    def test_an_existing_node_without_the_item_goes_to_the_writer(self):
+        """MUFG, 2026-11-06 rebuild (findings item 66): the SEC part had written
+        sec:0000067088 from a 13D/A; Morgan Stanley's item then named Q1542175
+        (that CIK, LEI 353800V2V8PUY9TK3E06) as an owner, and the gate drew the
+        edge to the bare filer — no item, no LEI. The writer attaches both."""
+        from app.scraper.runner import _resolve_related_company
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "sec:0000067088"},
+            {"lei_id": None, "sec_cik": "0000067088", "name": "Mitsubishi Ufj Financial Group, Inc.", "wikidata_id": None}])
+        with patch("app.database.db.get_session", ctx):
+            assert _resolve_related_company({"qid": "Q1542175", "name": "Mitsubishi UFJ Financial Group",
+                                             "sec_ciks": ["0000067088"], "leis": ["353800V2V8PUY9TK3E06"]}) is None
+        # the item check reads the node's item id — a query without it sees None for every node
+        assert any("e.wikidata_id AS wikidata_id" in c.args[0] for c in session.run.call_args_list)
+        # the same node carrying the item: the edge goes to it, nothing to attach
+        ctx, _ = _make_session_mock(single_returns=[
+            {"id": "sec:0000067088"},
+            {"lei_id": None, "sec_cik": "0000067088", "name": "Mitsubishi Ufj Financial Group, Inc.", "wikidata_id": "Q1542175"}])
+        with patch("app.database.db.get_session", ctx):
+            assert _resolve_related_company({"qid": "Q1542175", "sec_ciks": ["0000067088"]}) == "sec:0000067088"
 
 
 class TestARenamedRegistrantKeepsItsItem:
@@ -1743,7 +1764,7 @@ class TestARenamedRegistrantKeepsItsItem:
 
     def test_the_related_gate_asks_the_same(self):
         from app.scraper.runner import _resolve_related_company
-        ctx, _ = _make_session_mock(single_returns=[None, {"id": "sec:0000038777"}, self.HELD])
+        ctx, _ = _make_session_mock(single_returns=[None, {"id": "sec:0000038777"}, {**self.HELD, "wikidata_id": "Q744683"}])
         with patch("app.database.db.get_session", ctx), \
              patch("app.scraper.register_pointer.moved_on", return_value=None) as moved:
             assert _resolve_related_company({"qid": "Q744683", "name": "Franklin Templeton Investments",
@@ -1811,7 +1832,8 @@ class TestTheLookupAsksTheIdsAsThePointerDoes:
     def test_a_related_company_is_looked_up_the_same_way(self):
         from app.scraper.runner import _resolve_related_company
         ctx, session = _make_session_mock(single_returns=[
-            None, {"id": f"lei:{self._PLC}"}, {"lei_id": self._PLC, "sec_cik": None, "name": "BARCLAYS PLC"}])
+            None, {"id": f"lei:{self._PLC}"},
+            {"lei_id": self._PLC, "sec_cik": None, "name": "BARCLAYS PLC", "wikidata_id": "Q245343"}])
         with patch("app.database.db.get_session", ctx), \
              patch("app.scraper.register_pointer.ordered_leis", return_value=[self._PLC, self._BANK]) as order:
             gate = _resolve_related_company({"qid": "Q245343", "name": "Barclays", "aliases": ["Barclays PLC"],
