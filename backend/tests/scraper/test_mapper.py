@@ -366,6 +366,8 @@ class TestEdgarTag:
         ("Deutsche Bank Ag\\", "Deutsche Bank Ag"),                    # a backslash
         ("TOYOTA MOTOR CORP/", "TOYOTA MOTOR CORP"),
         ("ZIONS BANCORPORATION, NATIONAL ASSOCIATION /UT/", "ZIONS BANCORPORATION, NATIONAL ASSOCIATION"),
+        ("SAMSUNG ELECTRONICS CO LTD /FI", "SAMSUNG ELECTRONICS CO LTD"),  # a foreign issuer (item 63)
+        ("BAE SYSTEMS PLC /FI/", "BAE SYSTEMS PLC"),
         # part of the name: a legal form, a slash inside it, or no tag at all
         ("Anheuser-Busch InBev SA/NV", "Anheuser-Busch InBev SA/NV"),
         ("Newbelco SA/NV", "Newbelco SA/NV"),

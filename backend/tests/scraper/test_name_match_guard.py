@@ -25,9 +25,21 @@ from app.scraper.graph_writer import _filer_as_registered, _name_key, _not_this_
     ("U.S. Bancorp", "US BANCORP"),
     ("Toyota Motor Co., Ltd.", "TOYOTA MOTOR CORP"),
     ("Anheuser-Busch InBev SA/NV", "ANHEUSER-BUSCH INBEV"),
+    # the EDGAR name search's exact-name rule (findings item 63)
+    ("Nestlé", "NESTLE SA"),
+    ("Nestlé", "NESTLE SA /FI"),                    # EDGAR's foreign-issuer tag
+    ("Samsung Electronics", "SAMSUNG ELECTRONICS CO LTD /FI"),
+    ("Bertelsmann SE", "Bertelsmann SE & Co. KGaA"),
+    ("Tencent Holdings Ltd", "Tencent Holdings Limited"),
 ])
 def test_spellings_of_one_name_agree(a, b):
     assert _name_key(a) == _name_key(b)
+
+
+def test_the_key_is_the_mappers():
+    # one key for the writer and the EDGAR name search (findings item 63)
+    from app.scraper.mapper import name_key
+    assert _name_key is name_key
 
 
 @pytest.mark.parametrize("name,key", [
@@ -49,6 +61,11 @@ def test_a_form_or_the_inside_a_name_stays(name, key):
     # so is every other form (findings item 5, 2026-10-30)
     ("NV ENERGY, INC.", "ENERGY FUELS INC"),
     ("NV Energy", "Energy"),
+    # a holding, a subsidiary abroad: the type-free name search lists them
+    # beside the company (findings item 63)
+    ("Nestlé", "NESTLE HOLDINGS INC"),
+    ("MFS Investment Management", "MFS Investment Management K.K."),
+    ("MFS Investment Management", "MFS INVESTMENT MANAGEMENT CANADA LTD"),
 ])
 def test_another_word_is_another_company(a, b):
     assert _name_key(a) != _name_key(b)

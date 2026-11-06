@@ -62,8 +62,8 @@ from app import former_names
 from app.roles import canonical_role
 from app.scraper.edge_schema import READ_FIELD, READ_FORM
 from app.scraper.mapper import (derive_ownership_type, fold_apostrophes, has_entity_suffix,
-                                join_dotted_letters, normalize_entity_name, strip_edgar_tag, strip_partnership_form,
-                                strip_trailing_forms, trailing_form)
+                                join_dotted_letters, name_key, normalize_entity_name, strip_edgar_tag,
+                                strip_partnership_form, strip_trailing_forms, trailing_form)
 
 log = logging.getLogger(__name__)
 
@@ -764,21 +764,165 @@ def _lookup_in_tickers(query: str) -> dict | None:
 
 # ── EDGAR company-name index lookup (second vector) ───────────────────────────
 
+#: The passes of the name index, in order: 10-K filers, 20-F filers, then every
+#: registrant ("" = no form filter). The first two take the closest name
+#: (`_closest_registrant`); the last, which lists subsidiaries, ADR programmes
+#: and namesakes alike, takes an exact name only (`_exact_registrant`).
+_BROWSE_PASSES = ("10-K", "20-F", "")
+#: registrants browse-edgar lists per pass: 5 was enough for a filtered pass,
+#: and the type-free pass must reach the exact name past the prefix namesakes
+#: (10 registrants start with "Nestle"); each list entry costs a submissions request
+_BROWSE_COUNT = {"": "20"}
+_BROWSE_COUNT_DEFAULT = "5"
+
+#: What the scraper reads of a filer: holder statements (both namings, the
+#: Dec-2024 rename), insider forms, 13F reports, the annual and quarterly
+#: reports (Exhibit 21, acquisitions, cover). EDGAR holds some names twice —
+#: CITADEL SECURITIES LLC is CIK 0001307720 (SC 13D/G and Form 4) and
+#: 0001146184 (broker-dealer FOCUS reports) — and the one that files what we
+#: read is the one a company name means here (findings item 63).
+_READ_FORM_PREFIXES = ("SC 13D", "SC 13G", "SCHEDULE 13D", "SCHEDULE 13G", "13F-HR", "10-K", "20-F", "10-Q")
+_READ_FORMS = frozenset({"3", "4", "5", "3/A", "4/A", "5/A"})
+
+
+def _browse_registrants(root: ET.Element) -> list[tuple[str, str | None]]:
+    """(CIK, conformed name or None) for every registrant a browse-edgar
+    company search names.
+
+    EDGAR answers two ways. Several matches come as a list of registrants:
+    Atom entries whose <id> carries the CIK and whose name a server-side bug
+    leaves empty (the submissions document supplies it). A single match comes
+    as that registrant's own filing feed: a <company-info> block at the root,
+    with the CIK and the conformed name, over entries that are filings, not
+    companies. The lookup read the list only, so a name with exactly one
+    registrant was "not found" — Sears Holdings Corp, a 10-K filer, and every
+    holder that files under a name of its own (findings item 63). The person
+    lookup (`_lookup_person_ciks`) always read both shapes."""
+    out: list[tuple[str, str | None]] = []
+    ns_a = {"a": "http://www.w3.org/2005/Atom"}
+    info = root.find("{*}company-info")           # a direct child: the lone shape only
+    if info is not None and (cik := (info.findtext("{*}cik") or "").strip()):
+        out.append((cik.zfill(10), (info.findtext("{*}conformed-name") or "").strip() or None))
+        return out
+    for entry in root.findall("a:entry", ns_a):
+        id_text = (entry.findtext("a:id", "", ns_a) or "").strip()
+        m = re.search(r"cik=(\d+)", id_text, re.IGNORECASE)
+        cik = m.group(1) if m else (entry.findtext(".//{*}company-info/{*}cik") or "").strip()
+        if cik and cik.zfill(10) not in {c for c, _ in out}:
+            out.append((cik.zfill(10), None))
+    return out
+
+
+def _registrant(cik: str, conformed: str | None) -> tuple[str | None, dict | None]:
+    """The registrant's name — from the feed when the answer named it, else
+    from its submissions document — and that document when it was read."""
+    if conformed:
+        return conformed, None
+    try:
+        sub = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
+    except httpx.HTTPError:
+        return None, None
+    return (sub.get("name") or "").strip() or None, sub
+
+
+def _closest_registrant(name: str, registrants: list[tuple[str, str | None]], form_type: str) -> dict | None:
+    """The filtered passes' rule: the registrant closest to the query by
+    `_name_similarity`, at least `_MIN_NAME_SIMILARITY` — chosen over the whole
+    list, so a subsidiary listed ahead of its parent does not win by position."""
+    best_sim = 0.0
+    best: dict | None = None
+    for cik, conformed in registrants:
+        registered, _ = _registrant(cik, conformed)
+        if not registered:
+            continue
+        s = _name_similarity(name, registered)
+        log.debug("SEC EDGAR: browse-edgar candidate (sim=%.2f): %r vs %r", s, name, registered)
+        if s > best_sim:
+            best_sim, best = s, {"cik": cik, "name": registered}
+    if best and best_sim >= _MIN_NAME_SIMILARITY:
+        log.info("SEC EDGAR: browse-edgar matched %r → %r (CIK=%s, sim=%.2f, form=%s)",
+                 name, best["name"], best["cik"], best_sim, form_type)
+        return best
+    return None
+
+
+def _files_what_we_read(sub: dict) -> bool:
+    forms = ((sub.get("filings") or {}).get("recent") or {}).get("form") or []
+    return any(f in _READ_FORMS or f.startswith(_READ_FORM_PREFIXES) for f in forms)
+
+
+def _latest_filing(sub: dict) -> str:
+    return max(((sub.get("filings") or {}).get("recent") or {}).get("filingDate") or [], default="")
+
+
+def _exact_registrant(name: str, registrants: list[tuple[str, str | None]]) -> dict | None:
+    """The type-free pass's rule (findings item 63): a registrant of exactly the
+    query's name (`mapper.name_key`: legal form, tag, case, accents and
+    punctuation aside), whatever it files.
+
+    Without a form filter the index lists every registrant whose name starts
+    with the query — the company, its holdings and subsidiaries, the depositary's
+    ADR programme, and namesakes abroad — and similarity cannot tell them apart:
+    "Nestlé" scores NESTLE HOLDINGS INC and NESTLE SA alike (0.83), "MFS
+    Investment Management" scores the Japanese K.K. 1.00. The exact key takes
+    NESTLE SA and refuses both MFS subsidiaries (the adviser is MASSACHUSETTS
+    FINANCIAL SERVICES CO, found by no name); an ADR programme is never the
+    company (`is_adr_listing`, the user's rule of 2026-10-30). EDGAR's
+    duplicates of one name go to the registrant that files what the scraper
+    reads, then to the one that filed last."""
+    key = name_key(name)
+    if not key:
+        return None
+    found: list[tuple[str, str, dict | None]] = []
+    for cik, conformed in registrants:
+        registered, sub = _registrant(cik, conformed)
+        if not registered or is_adr_listing(registered):
+            continue
+        if name_key(registered) != key:
+            log.debug("SEC EDGAR: browse-edgar registrant %r is not %r by name", registered, name)
+            continue
+        found.append((cik, registered, sub))
+    if not found:
+        return None
+    if len(found) > 1:
+        ranked = []
+        for cik, registered, sub in found:
+            if sub is None:
+                try:
+                    sub = _submissions(cik)
+                except httpx.HTTPError:
+                    sub = {}
+            ranked.append(((_files_what_we_read(sub), _latest_filing(sub)), cik, registered))
+        ranked.sort(key=lambda r: r[0], reverse=True)       # stable: the feed's order last
+        log.info("SEC EDGAR: %d registrants named %r; taking CIK %s (files what we read: %s, last filing %s)",
+                 len(ranked), name, ranked[0][1], *ranked[0][0])
+        found = [(ranked[0][1], ranked[0][2], None)]
+    cik, registered, _ = found[0]
+    log.info("SEC EDGAR: browse-edgar matched %r → %r (CIK=%s, exact name, any form)", name, registered, cik)
+    return {"cik": cik, "name": registered}
+
+
 def _lookup_edgar_by_name(name: str) -> dict | None:
     """
     Second vector: EDGAR's registered company-name index via browse-edgar.
 
     Unlike the EFTS full-text search, browse-edgar only returns companies whose
     *registered name* starts with the query — filing text that merely mentions
-    the company never shows up here.  This correctly returns 0 results for
-    foreign companies not registered with the SEC (Nestlé, Samsung, etc.) even
-    though their names may appear in other filers' filings.
+    the company never shows up here, so a company that is no registrant at
+    all (Heineken, Saudi Aramco) stays unfound however often filings name it.
 
-    The Atom feed has a server-side bug that loses the company name from <title>,
-    so we extract the CIK from <id> and verify the official name from the
-    submissions JSON.
+    Three passes (`_BROWSE_PASSES`): 10-K filers, 20-F filers — the closest
+    name wins — and then every registrant, where only the exact name does.
+    The third is what finds a filer with no annual report: a 13D/G holder
+    (Capital Ventures International, Tencent Holdings Ltd), a Form 4 reporting
+    owner (NESTLE SA), a 13F manager. Until 2026-11-06 the lookup stopped after
+    20-F, and a holder in the target list for its own holdings had a CIK only
+    when an issuer's scrape had happened to write it first: Tesla's 13D/G page
+    was lost to the network and its seven holder-targets scraped nothing
+    (findings item 63). Each pass reads both of EDGAR's answer shapes
+    (`_browse_registrants`).
     """
-    for form_type in ("10-K", "20-F"):
+    for form_type in _BROWSE_PASSES:
         try:
             resp = _response(BROWSE_URL, {      # the retry (findings item 38)
                 "company":     name,
@@ -786,58 +930,22 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
                 "type":        form_type,
                 "dateb":       "",
                 "owner":       "include",
-                "count":       "5",
+                "count":       _BROWSE_COUNT.get(form_type, _BROWSE_COUNT_DEFAULT),
                 "search_text": "",
                 "output":      "atom",
             })
         except httpx.HTTPError as exc:
-            log.debug("SEC EDGAR: browse-edgar (%s) failed for %r: %s", form_type, name, exc)
+            log.debug("SEC EDGAR: browse-edgar (%s) failed for %r: %s", form_type or "any form", name, exc)
             continue
-
         try:
             root = ET.fromstring(resp.content)
         except (ET.ParseError, TypeError):
             continue
-        ns_a = {"a": "http://www.w3.org/2005/Atom"}
-
-        # Collect all candidates, then pick highest similarity so we don't
-        # accidentally prefer a subsidiary that appears before the parent company.
-        best_sim  = 0.0
-        best_match: dict | None = None
-
-        for entry in root.findall("a:entry", ns_a):
-            id_text = (entry.findtext("a:id", "", ns_a) or "").strip()
-            m = re.search(r"cik=(\d+)", id_text, re.IGNORECASE)
-            if not m:
-                continue
-            cik = m.group(1).zfill(10)
-
-            # Official company name from submissions (one extra request, but
-            # browse-edgar's Atom feed loses the name due to a server-side bug)
-            try:
-                sub  = _get(f"{SUBMISSIONS_URL}/CIK{cik}.json")
-                registered_name = sub.get("name", "")
-            except httpx.HTTPError:
-                continue
-
-            if not registered_name:
-                continue
-
-            s = _name_similarity(name, registered_name)
-            log.debug(
-                "SEC EDGAR: browse-edgar candidate (sim=%.2f): %r vs %r",
-                s, name, registered_name,
-            )
-            if s > best_sim:
-                best_sim   = s
-                best_match = {"cik": cik, "name": registered_name}
-
-        if best_match and best_sim >= _MIN_NAME_SIMILARITY:
-            log.info(
-                "SEC EDGAR: browse-edgar matched %r → %r (CIK=%s, sim=%.2f, form=%s)",
-                name, best_match["name"], best_match["cik"], best_sim, form_type,
-            )
-            return best_match
+        registrants = _browse_registrants(root)
+        match = (_closest_registrant(name, registrants, form_type) if form_type
+                 else _exact_registrant(name, registrants))
+        if match:
+            return match
 
     log.info("SEC EDGAR: browse-edgar found no registered match for %r", name)
     return None
@@ -869,10 +977,14 @@ def search_company(name: str) -> dict | None:
 
     Three-vector strategy:
     1. company_tickers.json      — fast, unambiguous for all US-listed companies.
-    2. browse-edgar name index   — EDGAR's registered company-name search; correctly
-                                   returns nothing for companies not on EDGAR
-                                   (Nestlé, Samsung…) since their names never appear
-                                   as filer names, only inside other filings' text.
+    2. browse-edgar name index   — EDGAR's registered company-name search: 10-K and
+                                   20-F filers by the closest name, then any registrant
+                                   of exactly that name, whatever it files (a 13D/G
+                                   holder, a Form 4 owner, a 13F manager; findings
+                                   item 63). A company that is no registrant at all
+                                   (Heineken, Saudi Aramco) stays unfound here, since
+                                   its name never appears as a filer's — only inside
+                                   other filers' text.
     3. EFTS full-text search     — last resort, guarded by name-similarity check.
 
     Returns {cik: zero-padded-10-digit, name: str} or None.

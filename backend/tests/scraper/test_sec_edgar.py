@@ -459,6 +459,146 @@ class TestSearchCompany:
             assert search_company("Baillie Gifford & Co") is None
 
 
+class TestBrowseEdgarByName:
+    """`_lookup_edgar_by_name` (findings item 63): EDGAR's two answer shapes, and
+    the type-free pass that finds a registrant whatever it files — by the exact
+    name only, never an ADR programme, EDGAR's duplicates by what they file."""
+
+    ATOM = "http://www.w3.org/2005/Atom"
+    EMPTY = f'<feed xmlns="{ATOM}"><author><name>Webmaster</name></author></feed>'
+
+    @classmethod
+    def many(cls, *ciks):
+        """The list shape: one entry per registrant, the CIK in the id, the name
+        lost to EDGAR's server-side bug (name="ARRAY(0x1)")."""
+        entries = "".join(
+            f'<entry><title></title><id>urn:tag:www.sec.gov:cik={c}</id>'
+            f'<content type="text/xml"><company-info name="ARRAY(0x1)"><cik>{c}</cik></company-info></content>'
+            f'</entry>' for c in ciks)
+        return f'<feed xmlns="{cls.ATOM}"><title>Companies</title>{entries}</feed>'
+
+    @classmethod
+    def lone(cls, cik, name):
+        """The lone shape: the registrant's own filing feed, <company-info> at
+        the root, entries that are filings."""
+        return (f'<feed xmlns="{cls.ATOM}"><title>{name}</title>'
+                f'<company-info><cik>{cik}</cik><conformed-name>{name}</conformed-name></company-info>'
+                f'<entry><title>10-K</title><id>urn:tag:sec.gov,2008:accession-number={cik}-18-000006</id></entry>'
+                f'</feed>')
+
+    @staticmethod
+    def sub(name, forms=("10-K",), dates=("2025-03-01",)):
+        return {"name": name, "filings": {"recent": {"form": list(forms), "filingDate": list(dates)}}}
+
+    def _lookup(self, name, browse, submissions=None, fn=None):
+        """browse: form type ("10-K", "20-F", "") → feed body; submissions: CIK →
+        document. Returns (result, the browse types asked, the CIKs read)."""
+        import re
+        import httpx
+        from app.scraper import sec_edgar
+        submissions = submissions or {}
+        asked, read = [], []
+
+        def get(url, params=None):
+            req = httpx.Request("GET", url)
+            if "browse-edgar" in url:
+                asked.append(params["type"])
+                return httpx.Response(200, text=browse.get(params["type"], self.EMPTY), request=req)
+            m = re.search(r"CIK(\d{10})\.json", url)
+            if m and m.group(1) in submissions:
+                read.append(m.group(1))
+                return httpx.Response(200, json=submissions[m.group(1)], request=req)
+            if "efts" in url:
+                return httpx.Response(200, json={"hits": {"hits": []}}, request=req)
+            return httpx.Response(404, request=req)
+        client = MagicMock()
+        client.get.side_effect = get
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"), \
+             patch.object(sec_edgar, "_tickers_cache", {}):
+            return (fn or sec_edgar._lookup_edgar_by_name)(name), asked, read
+
+    def test_a_lone_registrant_is_found_on_the_filtered_pass(self):
+        # one 10-K filer of the name: EDGAR answers with its filing feed, which
+        # the lookup never read — Sears Holdings Corp was "not found" (2026-11-06)
+        result, asked, read = self._lookup("Sears Holdings Corp",
+                                           {"10-K": self.lone("0001310067", "SEARS HOLDINGS CORP")})
+        assert result == {"cik": "0001310067", "name": "SEARS HOLDINGS CORP"}
+        assert asked == ["10-K"] and read == []        # the feed named it: no submissions request
+
+    def test_a_filer_with_no_annual_report_is_found_on_the_type_free_pass(self):
+        # Capital Ventures International files SC 13D/G only: the 10-K and 20-F
+        # passes list nothing, the type-free pass answers with its feed
+        result, asked, _ = self._lookup("Capital Ventures International",
+                                        {"": self.lone("0001011712", "CAPITAL VENTURES INTERNATIONAL")})
+        assert result == {"cik": "0001011712", "name": "CAPITAL VENTURES INTERNATIONAL"}
+        assert asked == ["10-K", "20-F", ""]
+
+    def test_the_type_free_pass_takes_the_exact_name_only(self):
+        # "Nestlé" lists the US holding and the Swiss parent at the same similarity
+        # (0.83); only the parent's name IS the query's
+        subs = {"0000923122": self.sub("NESTLE HOLDINGS INC"), "0000792990": self.sub("NESTLE SA", forms=("4",))}
+        result, _, _ = self._lookup("Nestlé", {"": self.many("0000923122", "0000792990")}, subs)
+        assert result == {"cik": "0000792990", "name": "NESTLE SA"}
+
+    def test_a_subsidiary_of_the_name_is_not_the_company(self):
+        # the adviser is MASSACHUSETTS FINANCIAL SERVICES CO; its Japanese and
+        # Canadian subsidiaries score 1.00 and 0.88 by similarity
+        subs = {"0001442857": self.sub("MFS Investment Management K.K."),
+                "0001140601": self.sub("MFS INVESTMENT MANAGEMENT CANADA LTD")}
+        result, _, _ = self._lookup("MFS Investment Management", {"": self.many("0001442857", "0001140601")}, subs)
+        assert result is None
+
+    def test_a_form_or_tag_apart_is_still_the_name(self):
+        subs = {"0000879316": self.sub("SAMSUNG ELECTRONICS CO LTD /FI", forms=("SC 13G",)),
+                "0001087051": self.sub("Bertelsmann SE & Co. KGaA")}
+        assert self._lookup("Samsung Electronics", {"": self.many("0000879316")}, subs)[0]["cik"] == "0000879316"
+        assert self._lookup("Bertelsmann SE", {"": self.many("0001087051")}, subs)[0]["cik"] == "0001087051"
+
+    def test_the_filtered_passes_keep_the_closest_name(self):
+        # the 10-K/20-F passes' rule stays similarity: "Tesla Motors" is TESLA INC
+        # at 0.73 though the keys differ — a filtered list has no namesakes to fear
+        subs = {"0001318605": self.sub("TESLA INC")}
+        result, asked, _ = self._lookup("Tesla Motors", {"10-K": self.many("0001318605")}, subs)
+        assert result == {"cik": "0001318605", "name": "TESLA INC"} and asked == ["10-K"]
+
+    def test_an_adr_programme_is_not_the_company(self):
+        # the user's rule of 2026-10-30, applied where the type-free pass meets it
+        subs = {"0001668748": self.sub("Naspers Ltd/ADR", forms=("F-6",)), "0001106051": self.sub("NASPERS LTD"),
+                "0001163420": self.sub("MTN GROUP LTD/ADR", forms=("F-6",))}
+        assert self._lookup("Naspers", {"": self.many("0001668748", "0001106051")}, subs)[0]["cik"] == "0001106051"
+        assert self._lookup("MTN Group", {"": self.many("0001163420")}, subs)[0] is None
+
+    def test_edgar_duplicates_go_to_the_one_that_files_what_we_read(self):
+        # CITADEL SECURITIES LLC twice: the broker-dealer's FOCUS reports (listed
+        # first, filed last) and the SC 13D/G + Form 4 filer
+        subs = {"0001146184": self.sub("CITADEL SECURITIES LLC", forms=("X-17A-5", "FOCUSN"), dates=("2026-02-27",)),
+                "0001307720": self.sub("CITADEL SECURITIES LLC", forms=("SC 13G", "4"), dates=("2022-09-13",))}
+        result, _, _ = self._lookup("Citadel Securities Llc", {"": self.many("0001146184", "0001307720")}, subs)
+        assert result["cik"] == "0001307720"
+
+    def test_edgar_duplicates_then_to_the_one_that_filed_last(self):
+        # NESTLE SA twice, neither with a form we read: the live registrant wins
+        subs = {"0000800921": self.sub("NESTLE SA /FI", forms=("ARS",), dates=("2009-07-07",)),
+                "0000792990": self.sub("NESTLE SA", forms=("F-6",), dates=("2026-02-20",))}
+        result, _, _ = self._lookup("Nestle", {"": self.many("0000800921", "0000792990")}, subs)
+        assert result["cik"] == "0000792990"
+
+    def test_search_company_asks_the_index_before_the_full_text_search(self):
+        from app.scraper import sec_edgar
+        result, asked, _ = self._lookup("Valor Management Corp.",
+                                        {"": self.lone("0001512888", "Valor Management Corp.")},
+                                        fn=sec_edgar.search_company)
+        assert result == {"cik": "0001512888", "name": "Valor Management Corp."}
+        assert asked == ["10-K", "20-F", ""]
+
+    def test_the_list_shape_reads_the_cik_from_the_entry_when_the_id_lacks_it(self):
+        import xml.etree.ElementTree as ET
+        from app.scraper import sec_edgar
+        feed = (f'<feed xmlns="{self.ATOM}"><entry><id>urn:tag:www.sec.gov:x</id><content>'
+                f'<company-info><cik>51734</cik></company-info></content></entry></feed>')
+        assert sec_edgar._browse_registrants(ET.fromstring(feed)) == [("0000051734", None)]
+
+
 class TestFundVehicles:
     def test_a_fund_word_the_query_lacks_scores_zero(self):
         from app.scraper.sec_edgar import _name_similarity
@@ -3447,10 +3587,10 @@ class TestStallRetry:
     def test_the_company_name_browse_is_retried(self):
         from app.scraper import sec_edgar
         import httpx
-        client, calls = self._client(httpx.ReadTimeout("stalled"), "<feed/>", "<feed/>")
+        client, calls = self._client(httpx.ReadTimeout("stalled"), "<feed/>", "<feed/>", "<feed/>")
         with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
             sec_edgar._lookup_edgar_by_name("Gitlab")
-        assert [p["type"] for _, p in calls] == ["10-K", "10-K", "20-F"]
+        assert [p["type"] for _, p in calls] == ["10-K", "10-K", "20-F", ""]     # "" = any form (item 63)
 
     def test_the_person_name_browse_is_retried(self):
         from app.scraper import sec_edgar
