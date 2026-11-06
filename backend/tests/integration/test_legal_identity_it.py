@@ -73,7 +73,8 @@ def _registers():
          patch("app.scraper.legal_identity.gleif_parents", side_effect=lambda lei: LLC_PARENT if lei == LLC_LEI else []), \
          patch("app.scraper.legal_identity.gleif_children", return_value=[]), \
          patch("app.scraper.legal_identity.filer_held_at", return_value=[]), \
-         patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda cik: FILERS[cik].name):
+         patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=lambda cik: FILERS[cik].name), \
+         patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):   # no filing states an LEI here
         yield
 
 
