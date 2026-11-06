@@ -885,6 +885,14 @@ no tag and keep the header's.
   record names a P.O. box the filer's address omits, so the registers called it weak and
   refused, while the filer's N-PX states the LEI — until 2026-11-06 the CIK stayed off the
   node until the dedup bridge joined the pair hours later (findings item 63).
+- **The Wikidata writer, several stated LEIs**: an item describes an organisation, and one
+  that states several LEIs usually describes a group, whose node is its top legal entity.
+  The register is asked for the LEI GLEIF names as the parent of another stated one first,
+  then for the one whose record bears the item's label or an alias with the legal form kept,
+  then in the stated order (`register_pointer.ordered_leis`, used by `write_from_pointer`
+  and `attach_stated_lei`). Barclays' Q245343 states the Bank's and the PLC's LEI at equal
+  rank; the Bank, listed first, took the item and its aliases while BARCLAYS PLC — the
+  parent, the filer with CIK 0000312069 — got nothing (findings item 61, 2026-11-06).
 - **The Wikidata writer, a node found by name**: when an item's QID, CIK and LEI find no
   node and its name finds one that holds a register id, none of them the item's, the item's
   ids are asked of their register FIRST, with that node as the candidate

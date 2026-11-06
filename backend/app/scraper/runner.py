@@ -314,8 +314,10 @@ def _upsert_entity(
                          name, wikidata_id, entity_id)
                 unconfirmed, entity_id = entity_id, None
     if not entity_id and (leis or ciks):
-        entity_id = (register_pointer.write_from_pointer(leis, ciks, candidates=[unconfirmed])
-                     if unconfirmed else register_pointer.write_from_pointer(leis, ciks))
+        # the item's names break a tie among several stated LEIs (findings item 61)
+        item_names = [name, *(aliases or [])]
+        entity_id = (register_pointer.write_from_pointer(leis, ciks, candidates=[unconfirmed], names=item_names)
+                     if unconfirmed else register_pointer.write_from_pointer(leis, ciks, names=item_names))
     # No register knows the item's ids: the name's node stands — enriched
     # when it was only unconfirmed, refused by the contradiction below when it
     # contradicts them — rather than a twin of that name.
@@ -347,7 +349,7 @@ def _upsert_entity(
             # id and their Wikidata board seats (findings item 22). A record
             # GLEIF writes on its own leaves the filer where it was.
             if leis and not held.get("lei_id") and held.get("sec_cik"):
-                if register_pointer.attach_stated_lei(held, entity_id, leis) not in (None, entity_id):
+                if register_pointer.attach_stated_lei(held, entity_id, leis, [name, *(aliases or [])]) not in (None, entity_id):
                     entity_id = resolve_current_id(session, entity_id) or entity_id
             # and a CIK the item states on a GLEIF node that lacks one: EDGAR
             # decides the same way (register_pointer.attach_stated_cik)

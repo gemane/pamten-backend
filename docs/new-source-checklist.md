@@ -198,6 +198,10 @@ parser. Anything that does not map is either a new property (document it) or noi
       Inc." while its own filings drew a second node. A node whose register id the
       source's ids contradict gets nothing from that source; test against **every** id
       the source states (Google's item has two CIKs, Barclays' and Unilever's two LEIs).
+      And when a source states several ids of one register, decide which the node is by
+      the register's own word, never by the list's order: an item for a group is its top
+      legal entity — Barclays' two LEIs at equal rank put the item on the Bank, a
+      subsidiary, until the parent per GLEIF came first (findings item 61, 2026-11-06).
 - [ ] **A contradiction means "not this node" — say how the node was found before refusing.**
       A node the item's own ids found and whose register id disagrees is a refusal. A node
       found by the name alone is only one company of that name: J.P. Morgan Securities LLC

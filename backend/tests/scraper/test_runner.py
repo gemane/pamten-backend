@@ -615,7 +615,7 @@ class TestRunScrapeWikidata:
             run_scrape("Apple", depth=1)
         assert len(owns_calls) >= 1
         # the register writes the subsidiary Wikidata points at
-        reg.assert_any_call(["SUB0000000000000APPL"], [])
+        assert any(c.args[:2] == (["SUB0000000000000APPL"], []) for c in reg.call_args_list)
 
     def test_an_unidentified_subsidiary_is_skipped_not_minted(self):
         # No LEI/CIK and no existing node (mock .single() → None): creating it
@@ -1465,8 +1465,9 @@ class TestIdentifierBridge:
             eid = _upsert_entity("Baillie Gifford", None, None, None, "Q1",
                                  lei="549300UYMK70HLNJU654", sec_cik="0001088859")
         assert eid == "sec:0001088859"
-        held, node_id, leis = attach.call_args.args
+        held, node_id, leis, names = attach.call_args.args
         assert node_id == "sec:0001088859" and leis == ["549300UYMK70HLNJU654"] and held["sec_cik"] == "0001088859"
+        assert names == ["Baillie Gifford"]          # the item's names break a tie among several LEIs (item 61)
 
     def test_the_writes_follow_a_filer_the_stated_lei_re_keyed(self):
         # findings item 22: the GLEIF join renamed sec:0000070858 to lei:9DJT…,
@@ -1524,7 +1525,7 @@ class TestIdentifierBridge:
              patch("app.scraper.register_pointer.write_from_pointer", return_value=None) as reg:
             eid = _upsert_entity("Microsoft", 1975, None, None, "Q2283",
                                  lei="INR2EJN1ERAN0W5ZP974", sec_cik="789019")
-        reg.assert_called_once_with(["INR2EJN1ERAN0W5ZP974"], ["0000789019"])
+        reg.assert_called_once_with(["INR2EJN1ERAN0W5ZP974"], ["0000789019"], names=["Microsoft"])
         create = [c for c in session.run.call_args_list if "CREATE (e:Entity" in c.args[0]]
         assert len(create) == 1 and eid == "wd:Q2283"
         assert "lei_id" not in create[0].args[0] and "sec_cik" not in create[0].args[0]
@@ -1568,7 +1569,7 @@ class TestIdentifierBridge:
         eid, session, reg = self._liberty(f"lei:{self._LM_LEI}", [
             held, {"name": "LIBERTY MEDIA CORPORATION", "cred": 92, "aliases": None, "descr": None}])
         assert eid == f"lei:{self._LM_LEI}"
-        reg.assert_called_once_with([self._LM_LEI], [], candidates=[self._LM_DE])
+        reg.assert_called_once_with([self._LM_LEI], [], candidates=[self._LM_DE], names=["Liberty Media"])
         assert self._stamped(session) == [f"lei:{self._LM_LEI}"]
 
     def test_the_name_hit_stands_when_no_register_knows_the_ids(self):
@@ -1606,7 +1607,7 @@ class TestIdentifierBridge:
             eid = _upsert_entity("BlackRock", None, None, None, "Q219635",
                                  lei=["549300LRIF3NWCU26A80"], sec_cik=["0001364742"])
         assert eid is None
-        reg.assert_called_once_with(["549300LRIF3NWCU26A80"], ["0001364742"])
+        reg.assert_called_once_with(["549300LRIF3NWCU26A80"], ["0001364742"], names=["BlackRock"])
         assert not any("SET e." in c.args[0] or "CREATE (e:Entity" in c.args[0]
                        for c in session.run.call_args_list)
 
