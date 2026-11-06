@@ -633,14 +633,23 @@ def _anchored(anchor: str, wikidata_id: str, item_names: list[str]) -> str | Non
 def _resolve_related_company(rel: dict) -> str | None | bool:
     """Decide whether a Wikidata-related COMPANY may be written.
 
-    Returns an existing node id (write the edge to it), None (proceed: the
-    item points at a register, which writes the node — `_upsert_entity` with
-    ``register_required``), or False (SKIP — no existing node, no LEI/CIK, so
+    Returns an existing node id that already carries the item (write the edge
+    to it), None (proceed to `_upsert_entity` with ``register_required``: the
+    item points at a register, which writes a node the graph lacks — or the
+    node its ids find lacks the item, and the writer attaches the item and
+    its stated ids to it), or False (SKIP — no existing node, no LEI/CIK, so
     creating it would mint an unidentifiable orphan that only clutters search
     and dedup, the litter the depth-2 pass produced for Samsung's
     subsidiaries; or the node found holds a register id the item contradicts,
-    `register_pointer.contradiction`, or bears the item's name no longer,
-    `register_pointer.stale`).
+    `register_pointer.contradiction`, or bears the item's name no longer and
+    another registrant bears it now, `register_pointer.moved_on`).
+
+    Until 2026-11-06 an existing node was returned as it stood, item or no
+    item: the edge was drawn and nothing else. While Wikidata ran first that
+    node was its own; with the registers first (findings item 60) the SEC
+    part had written MUFG's filer sec:0000067088 from a 13D/A before Morgan
+    Stanley's item named Q1542175 as an owner, and the filer kept neither the
+    item nor the LEI the item states (findings item 66).
 
     People are never routed here — Wikidata's coverage of people is a strength
     and person dedup handles them; only company nodes are gated."""
@@ -658,16 +667,22 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
         if existing:
             held = session.run("MATCH (e:Entity {id: $id}) RETURN e.lei_id AS lei_id, e.sec_cik AS sec_cik, "
                                "e.name AS name, e.other_names AS other_names, e.former_names AS former_names, "
-                               "e.gleif_former_names AS gleif_former_names",
+                               "e.gleif_former_names AS gleif_former_names, e.wikidata_id AS wikidata_id",
                                id=existing).single()
             held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names",
-                                             "gleif_former_names")} if held else {}
+                                             "gleif_former_names", "wikidata_id")} if held else {}
             why = (contradiction(held, leis, ciks)
                    or moved_on(held, [rel.get("name"), rel.get("label"), *(rel.get("aliases") or [])]))
             if why:
                 log.warning("Wikidata: related %s (%s) is not the legal entity of %s — %s; skipped",
                             rel.get("name") or rel.get("label"), rel.get("qid"), existing, why)
                 return False
+            if not held.get("wikidata_id"):
+                # the node its ids found carries no item yet: the writer attaches
+                # this one and the ids it states (findings item 66)
+                log.info("Wikidata: related %s (%s) enriches %s, which its ids found without an item",
+                         rel.get("name") or rel.get("label"), rel.get("qid"), existing)
+                return None
     if existing:
         return existing
     return None if (leis or ciks) else False

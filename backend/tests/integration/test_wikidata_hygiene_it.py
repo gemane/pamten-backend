@@ -156,6 +156,31 @@ def test_an_item_stating_several_leis_lands_on_the_parent_per_gleif(it_db):
     assert by_id[f"lei:{bank}"].get("wikidata_id") is None
 
 
+def test_a_related_company_the_registers_wrote_first_takes_the_item(it_db):
+    """MUFG, 2026-11-06 rebuild (findings item 66): the owner's filer node
+    existed from a 13D/A when the item named it; the gate drew the edge and
+    left the node without the item. Now the writer enriches it: the QID lands,
+    the stated LEI goes to GLEIF (`attach_stated_lei`, mocked here), the edge
+    is drawn once."""
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0000067088', name: 'Mitsubishi Ufj Financial Group, Inc.', "
+        "name_normalized: 'mitsubishi ufj financial group', search_text: 'Mitsubishi Ufj Financial Group, Inc.', "
+        "type: 'company', sec_cik: '0000067088', name_credibility: 98})")
+    data = {**_company_data([]),
+            "owners": [{"qid": "Q1542175", "label": "Mitsubishi UFJ Financial Group", "instances": ["Q4830453"],
+                        "sec_cik": "0000067088", "sec_ciks": ["0000067088"],
+                        "lei": "353800V2V8PUY9TK3E06", "leis": ["353800V2V8PUY9TK3E06"]}]}
+    with patch("app.scraper.register_pointer.attach_stated_lei", return_value=None) as attach:
+        counts = _scrape(it_db, data)
+    row = dict(it_db.run_sql("SELECT id, wikidata_id, name, sec_cik FROM Entity WHERE sec_cik = '0000067088'")[0])
+    assert row["id"] == "sec:0000067088" and row["wikidata_id"] == "Q1542175"
+    assert row["name"] == "Mitsubishi Ufj Financial Group, Inc."           # EDGAR's name stays (98 > 80)
+    assert attach.call_args.args[1] == "sec:0000067088" and attach.call_args.args[2] == ["353800V2V8PUY9TK3E06"]
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE wikidata_id = 'Q1542175'")[0]["n"] == 1
+    assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 1
+    assert not counts.get("skipped_unidentified") and not counts.get("conflicts")
+
+
 def test_a_renamed_registrant_keeps_the_item(it_db):
     """Franklin, 2026-11-06 rebuild (findings item 66): EDGAR renamed CIK
     0000038777 FRANKLIN TEMPLETON INC; the item's alias is the old name and no

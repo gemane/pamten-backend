@@ -210,6 +210,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       reads well, yet on dev two of the four items whose LEI and CIK name different nodes
       state a subsidiary's LEI beside the parent's CIK (Chevron U.S.A. Inc., WesBanco
       Bank) — the lookup kept the CIK first (findings items 61 and 66, guard 2026-11-06).
+      And a related item (a subsidiary, an owner, a successor) that finds an existing node
+      must still go through the writer when that node lacks the item: "the node exists, draw
+      the edge" was right only while the knowledge base wrote its nodes itself; once the
+      registers wrote them first, MUFG's filer took Morgan Stanley's owner edge and kept
+      neither the item nor the LEI it states (`_resolve_related_company`, findings item 66).
 - [ ] **A contradiction means "not this node" — say how the node was found before refusing.**
       A node the item's own ids found and whose register id disagrees is a refusal. A node
       found by the name alone is only one company of that name: J.P. Morgan Securities LLC
