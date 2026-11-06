@@ -126,7 +126,8 @@ def test_an_item_whose_ids_another_legal_entity_holds_writes_nothing(it_db):
     with patch("app.scraper.register_pointer.write_from_pointer", return_value=None) as reg:
         counts = _scrape(it_db, data)
     assert counts.get("conflicts") == 1
-    reg.assert_called_once_with(["549300LRIF3NWCU26A80"], ["0001364742"])
+    assert reg.call_args.args == (["549300LRIF3NWCU26A80"], ["0001364742"]) and reg.call_count == 1
+    assert reg.call_args.kwargs["names"][0] == "BlackRock"        # the item names break an LEI tie (item 61)
     row = it_db.run_sql("SELECT FROM Entity WHERE id = 'lei:529900VBK42Y5HHRMD23'")[0]
     assert row.get("sec_cik") is None and row.get("wikidata_id") is None
     assert row["name"] == "BlackRock, Inc."
