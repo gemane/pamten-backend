@@ -572,6 +572,22 @@ EDGAR's Domino's never met GLEIF's, so the Exhibit 21 run lost its 19 subsidiari
 gap: EDGAR's `O REILLY AUTOMOTIVE INC` keeps a space where the apostrophe was and still
 keys apart from `O'Reilly`. Stored `name_normalized` values change on the next rebuild.
 
+## Accents and dashes are folded
+
+`normalize_entity_name` folds Latin accents and makes every dash plain (`mapper.fold_marks`:
+NFKD, the combining diacritical marks dropped, NFC back): `MercadoPago Perú S.R.L.` and
+GLEIF's `MERCADOPAGO PERU S.R.L.` key alike, `Embraer Aviation International – EAI` and
+`… - EAI` too. Until 2026-11-06 the stored key kept them while `name_key` and
+`legal_name_key` folded them — the sibling gap — so an accented Exhibit 21 row minted a
+twin of the GLEIF node whose record spells the name plain: 7 pairs on dev (Corporación
+Novavisión, Televisión Internacional, Yaborã Indústria Aeronáutica, Derematecom de México,
+MercadoPago Perú, BlackRock México Infraestructura I–III, Embraer Aviation International –
+EAI; findings item 65). Every script keeps its letters: a fullwidth Latin letter widens to the
+plain one (`ｅＦｒｏｎｔ株式会社` → `efront株式会社`), a voiced kana and a Hangul syllable are
+split by NFKD and put back by NFC (`ソフトバンクグループ` unchanged — a kana's voicing mark is
+not an accent), `ø`, `ß` and `æ` stay as they are. Stored `name_normalized` values change on
+the next rebuild.
+
 ## A leading "The" is dropped
 
 `normalize_entity_name` drops a leading `the` last, unless nothing else is left (`The

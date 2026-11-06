@@ -1179,7 +1179,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       compares names (`normalize_entity_name`, `graph_writer._name_key`,
       `sec_edgar._ticker_normalize`, `sec_edgar._significant_tokens`) in step — the
       apostrophe was handled three ways in them ("Domino's" kept it, split off an "s",
-      or dropped it) until 2026-10-30; each now calls `mapper.fold_apostrophes` first.
+      or dropped it) until 2026-10-30; each now calls `mapper.fold_apostrophes` first. The
+      accents were the same story: `name_key` and `legal_name_key` folded them, the stored
+      `normalize_entity_name` did not, so "MercadoPago Perú S.R.L." minted a twin of GLEIF's
+      MERCADOPAGO PERU S.R.L. — 7 pairs on dev. Fold them in the stored key too
+      (`mapper.fold_marks`), and fold ONLY the Latin marks: a kana's voicing mark is a
+      combining mark as well, and dropping every mark renamed ソフトバンクグループ; NFC puts a
+      split kana or Hangul syllable back together. Never ASCII-encode a key every script
+      passes through (findings item 65, 2026-11-06).
 - [ ] **Join dotted letters before splitting; drop an ambiguous form word only at the
       end.** `_name_key` split "Blackstone L.P." into (blackstone, l, p), so it never met
       EDGAR's "BLACKSTONE LP". A run of single letters, each followed by a dot, is one
