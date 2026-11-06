@@ -1717,42 +1717,29 @@ def _id_lookups(session) -> list[tuple[str, str]]:
 
 
 class TestTheLookupAsksTheIdsAsThePointerDoes:
-    """The lookup that finds an item's node asks the stated ids as the pointer
-    writes them — the LEIs before the CIKs, several LEIs in `ordered_leis`'
-    order. Asked CIK-first, Nestlé's Q160746 took the filer the SEC part had
-    just written and left the GLEIF node without the item; asked in Wikidata's
-    order, Barclays' Q245343 took the Bank twice over, and #554's pointer order
-    was never reached (findings items 61 and 66, 2026-11-06 rebuild)."""
+    """The lookup that finds an item's node asks several stated LEIs in the
+    pointer's order (`ordered_leis`: the parent per GLEIF first, the item's
+    names as the tie-break). Asked in Wikidata's order, Barclays' Q245343 took
+    the Bank twice over, and #554's pointer order was never reached because
+    the lookup found the node first (findings item 61, 2026-11-06 rebuild).
+    The CIK stays ahead of the LEI: on dev, Chevron's and WesBanco's items
+    state a subsidiary's LEI next to the parent's CIK (guard, item 66)."""
 
-    _NESTLE, _NESTLE_CIK = "KY37LUS27QQX7BB93L28", "0000792990"
     _BANK, _PLC = "G5GSEF7VJP5I7OUK5573", "213800LBQA1Y9L22JB70"
 
-    def test_an_item_stating_both_ids_is_looked_up_by_its_lei_first(self):
-        # both nodes exist; the second `.single()` answers the FIRST id lookup
+    def test_the_cik_stays_ahead_of_the_lei(self):
+        # Chevron's Q319642: CIK 0000093410 (Chevron Corp) + LEI VA8TZDWPEZYU430RZ444
+        # (Chevron U.S.A. Inc., a subsidiary); both nodes exist — the filer's wins
         ctx, session = _make_session_mock(single_returns=[
-            None, {"id": f"lei:{self._NESTLE}"}, {"lei_id": self._NESTLE, "sec_cik": None, "name": "Nestle S.A."},
-            {"name": "Nestle S.A.", "cred": 92, "aliases": None, "descr": None}])
-        with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.register_pointer.attach_stated_cik", return_value=None) as attach:
-            eid = _upsert_entity("Nestlé", None, None, None, "Q160746",
-                                 lei=self._NESTLE, sec_cik=self._NESTLE_CIK)
-        assert eid == f"lei:{self._NESTLE}"
-        assert _id_lookups(session) == [("wikidata_id", "Q160746"), ("lei_id", self._NESTLE)], \
-            "the CIK was asked before the LEI — the filer node wins over the legal entity's"
-        assert attach.call_args.args[1] == f"lei:{self._NESTLE}"       # the CIK goes to EDGAR, on that node
-
-    def test_the_cik_is_asked_when_no_stated_lei_finds_a_node(self):
-        ctx, session = _make_session_mock(single_returns=[
-            None, None, {"id": f"sec:{self._NESTLE_CIK}"},
-            {"lei_id": None, "sec_cik": self._NESTLE_CIK, "name": "NESTLE SA"},
-            {"name": "NESTLE SA", "cred": 98, "aliases": None, "descr": None},
-            {"lei": None, "wid": "Q160746", "cik": self._NESTLE_CIK}])        # the re-key check after the write
+            None, {"id": "sec:0000093410"}, {"lei_id": None, "sec_cik": "0000093410", "name": "CHEVRON CORP"},
+            {"name": "CHEVRON CORP", "cred": 98, "aliases": None, "descr": None},
+            {"lei": None, "wid": "Q319642", "cik": "0000093410"}])          # the re-key check after the write
         with patch("app.scraper.runner.db.get_session", ctx), \
              patch("app.scraper.register_pointer.attach_stated_lei", return_value=None):
-            eid = _upsert_entity("Nestlé", None, None, None, "Q160746",
-                                 lei=self._NESTLE, sec_cik=self._NESTLE_CIK)
-        assert eid == f"sec:{self._NESTLE_CIK}"
-        assert [f for f, _ in _id_lookups(session)] == ["wikidata_id", "lei_id", "sec_cik"]
+            eid = _upsert_entity("Chevron", None, None, None, "Q319642",
+                                 lei="VA8TZDWPEZYU430RZ444", sec_cik="0000093410")
+        assert eid == "sec:0000093410"
+        assert _id_lookups(session) == [("wikidata_id", "Q319642"), ("sec_cik", "0000093410")]
 
     def test_several_stated_leis_are_looked_up_in_the_pointers_order(self):
         ctx, session = _make_session_mock(single_returns=[
@@ -1782,7 +1769,7 @@ class TestTheLookupAsksTheIdsAsThePointerDoes:
         with patch("app.database.db.get_session", ctx), \
              patch("app.scraper.register_pointer.ordered_leis", return_value=[self._PLC, self._BANK]) as order:
             gate = _resolve_related_company({"qid": "Q245343", "name": "Barclays", "aliases": ["Barclays PLC"],
-                                             "leis": [self._BANK, self._PLC], "sec_ciks": ["0000312069"]})
+                                             "leis": [self._BANK, self._PLC]})
         assert gate == f"lei:{self._PLC}"
         assert _id_lookups(session) == [("wikidata_id", "Q245343"), ("lei_id", self._PLC)]
         order.assert_called_once_with([self._BANK, self._PLC], ["Barclays", "Barclays PLC"])

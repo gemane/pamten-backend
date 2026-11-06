@@ -903,15 +903,15 @@ no tag and keep the header's.
   rank; the Bank, listed first, took the item and its aliases while BARCLAYS PLC — the
   parent, the filer with CIK 0000312069 — got nothing (findings item 61, 2026-11-06).
   The lookup that FINDS the item's node (`_upsert_entity`, `_resolve_related_company`) asks
-  the stated ids in the same order — the LEIs first, in `ordered_leis`' order, then the
-  CIKs. It used to ask the CIKs first and the LEIs as Wikidata lists them: Barclays' item
-  landed on the Bank in two rebuilds although the pointer had learnt the order, because
-  both LEI nodes existed and the lookup found the Bank before any pointer ran; and with
-  the registers running first (item 60), Nestlé's Q160746 — LEI KY37LUS27QQX7BB93L28 and
-  CIK 0000792990 — found the filer sec:0000792990 the SEC part had just written and left
-  the GLEIF node without the item (findings item 66, 2026-11-06 rebuild). A node the
-  item's other id names stays its register's business (`attach_stated_cik`, the dedup
-  bridge); the item itself sits on the legal entity.
+  several LEIs in the same order. It used to ask them as Wikidata lists them: Barclays' item
+  landed on the Bank in the next rebuild although the pointer had learnt the order, because
+  both LEI nodes existed and the lookup found the Bank before any pointer ran (2026-11-06).
+  The CIK stays ahead of the LEI in that lookup: of the four items on dev whose stated LEI
+  and CIK name two different nodes, two state a subsidiary's LEI beside the parent's CIK
+  (Chevron's Q319642 → Chevron U.S.A. Inc.; WesBanco's Q7983629 → WesBanco Bank, Inc.), and
+  the filer the CIK names is the organisation the item describes. The other two (Nestlé,
+  Sirius XM) are one legal entity under two nodes the registers cannot join by their rules
+  — the twin is theirs to settle (findings items 66 and 68), not the lookup's.
 - **The Wikidata writer, a node found by name**: when an item's QID, CIK and LEI find no
   node and its name finds one that holds a register id, none of them the item's, the item's
   ids are asked of their register FIRST, with that node as the candidate

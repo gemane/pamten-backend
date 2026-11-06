@@ -205,10 +205,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       And apply that order wherever the ids are asked — the lookup that finds the node
       as much as the pointer that writes one. The pointer learnt the order and the item
       still landed on the Bank in the next rebuild: both LEI nodes existed, and the lookup
-      found the first-listed one before any pointer ran. Likewise an LEI before a CIK —
-      GLEIF states the legal entity, a CIK names a filer: asked CIK-first after the
-      registers started running first, Nestlé's item took the filer node written a minute
-      earlier and left its GLEIF node bare (findings items 61 and 66, 2026-11-06 rebuild).
+      found the first-listed one before any pointer ran (2026-11-06). But do not reorder
+      the REGISTERS on a principle without a guard over every item: "an LEI before a CIK"
+      reads well, yet on dev two of the four items whose LEI and CIK name different nodes
+      state a subsidiary's LEI beside the parent's CIK (Chevron U.S.A. Inc., WesBanco
+      Bank) — the lookup kept the CIK first (findings items 61 and 66, guard 2026-11-06).
 - [ ] **A contradiction means "not this node" — say how the node was found before refusing.**
       A node the item's own ids found and whose register id disagrees is a refusal. A node
       found by the name alone is only one company of that name: J.P. Morgan Securities LLC
