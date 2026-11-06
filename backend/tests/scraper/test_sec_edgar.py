@@ -559,16 +559,38 @@ class TestBrowseEdgarByName:
             return sec_edgar._lookup_edgar_by_name(name), asked
 
     def test_a_registrant_under_another_form_word_is_found_by_the_base_name(self):
-        # YouTube LLC, 2026-11-06 rebuild: the index lists YOUTUBE INC for "YouTube",
-        # never for "YouTube LLC" (a prefix search); the exact key folds the form
-        result, asked = self._lookup_by_query("YouTube LLC", {("", "youtube"): self.lone("0001343726", "YouTube Inc")})
-        assert result == {"cik": "0001343726", "name": "YouTube Inc"}
-        assert asked == [("10-K", "YouTube LLC"), ("20-F", "YouTube LLC"), ("", "YouTube LLC"), ("", "youtube")]
+        # Independent Franchise Partners, Llp (a 13F filer, 2026-11-06 guard): the index
+        # lists it for "independent franchise partners", never for the name as given
+        # (a prefix search); the exact key folds the form
+        ifp = "0001483866"
+        result, asked = self._lookup_by_query(
+            "Independent Franchise Partners, Llp",
+            {("", "independent franchise partners"): self.lone(ifp, "Independent Franchise Partners LLP")},
+            submissions={ifp: self.sub("Independent Franchise Partners LLP", forms=("13F-HR", "SC 13G"))})
+        assert result == {"cik": ifp, "name": "Independent Franchise Partners LLP"}
+        assert asked == [("10-K", "Independent Franchise Partners, Llp"), ("20-F", "Independent Franchise Partners, Llp"),
+                         ("", "Independent Franchise Partners, Llp"), ("", "independent franchise partners")]
+
+    def test_a_dormant_registrant_the_base_name_lists_alone_is_not_taken(self):
+        # "t rowe price group" lists T ROWE PRICE GROUP INC (no-action letters, 2015) and
+        # never the filer PRICE T ROWE GROUP INC, conformed surname first (item 59): a lone
+        # registrant that files nothing the scraper reads is no answer. YouTube Inc (two
+        # REGDEX of 2006) likewise.
+        result, asked = self._lookup_by_query(
+            "T. Rowe Price Group, Inc.", {("", "t rowe price group"): self.lone("0001214556", "T ROWE PRICE GROUP INC")},
+            submissions={"0001214556": self.sub("T ROWE PRICE GROUP INC", forms=("NO ACT", "NO ACT"))})
+        assert result is None and asked[-1] == ("", "t rowe price group")
+        result, _ = self._lookup_by_query(
+            "YouTube LLC", {("", "youtube"): self.lone("0001343726", "YouTube Inc")},
+            submissions={"0001343726": self.sub("YouTube Inc", forms=("REGDEX",))})
+        assert result is None
 
     def test_the_base_name_pass_still_holds_the_exact_key(self):
         # "Nestlé Holdings" is not Nestlé: the base words list the parent too,
         # and the hold refuses what is not the query's name
-        result, asked = self._lookup_by_query("Nestlé Holdings", {("", "nestle holdings"): self.lone("0000792990", "NESTLE SA")})
+        result, asked = self._lookup_by_query(
+            "Nestlé Holdings", {("", "nestle holdings"): self.lone("0000792990", "NESTLE SA")},
+            submissions={"0000792990": self.sub("NESTLE SA", forms=("SC 13G", "4"))})     # a filer we read, wrong name
         assert result is None and asked[-1] == ("", "nestle holdings")
 
     def test_a_name_that_is_its_own_base_asks_once(self):

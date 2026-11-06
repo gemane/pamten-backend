@@ -933,16 +933,29 @@ def _lookup_edgar_by_name(name: str) -> dict | None:
 
     # The index is a PREFIX search on the registered spelling, so a query
     # carrying another form word than the registrant's never lists it:
-    # "YouTube LLC" lists nothing, "YouTube" lists YOUTUBE INC (CIK 0001343726,
-    # the registrant Wikidata's item states), whose exact key the hold already
-    # accepts — the form folded (findings item 69, 2026-11-06 rebuild). So the
-    # type-free pass asks once more with the name's base words when the full
-    # name listed no registrant of its key; the hold is the same exact key.
+    # "Independent Franchise Partners, Llp" lists nothing, "independent
+    # franchise partners" lists the 13F filer (findings item 69, 2026-11-06
+    # rebuild). So the type-free pass asks once more with the name's base words
+    # when the full name listed no registrant of its key; the hold is the same
+    # exact key — and the registrant must file what the scraper reads
+    # (`_files_what_we_read`): the broader query lists EDGAR's dormant
+    # duplicates alone when the filer is spelled otherwise — "t rowe price
+    # group" lists T ROWE PRICE GROUP INC (five no-action letters, 2015) and
+    # never the filer PRICE T ROWE GROUP INC, conformed surname first (item
+    # 59) — and a record with nothing to read (YouTube Inc, two REGDEX of
+    # 2006) gives the scrape nothing a name search should decide.
     base = " ".join(name_key(name))
     if base and base.casefold() != name.casefold():
         registrants = _browse_index(base, "")
         if registrants and (match := _exact_registrant(name, registrants)):
-            return match
+            try:
+                sub = _submissions(match["cik"])
+            except httpx.HTTPError:
+                sub = {}
+            if _files_what_we_read(sub):
+                return match
+            log.info("SEC EDGAR: %r by its base name is %r (CIK %s), which files nothing the scraper reads — not taken",
+                     name, match["name"], match["cik"])
 
     log.info("SEC EDGAR: browse-edgar found no registered match for %r", name)
     return None
