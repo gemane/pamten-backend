@@ -226,6 +226,7 @@ def _upsert_entity(
     logo_url: str | None = None,             # P154/P18 → direct Commons thumb (display only)
     dissolved_on: str | None = None,         # P576 — the day the entity ceased (app.dissolution)
     register_required: bool = False,
+    anchor: str | None = None,               # the node the query named (run_scrape; findings item 60)
 ) -> str | None:
     """
     Find entity by wikidata_id, the item's stated ids or name, update it if
@@ -233,6 +234,17 @@ def _upsert_entity(
     writes nothing: the node found holds a register id the item contradicts,
     or (``register_required``, a related company) the item points at no
     register that knows it.
+
+    ``anchor`` is the node the QUERY named — the searched company's, as the
+    resolver found it before the scrape (`run_scrape`). An item that states
+    no register id and whose own names find no node enriches the anchor when
+    it bears one of the anchor's names, legal form kept (`_anchored`), instead
+    of becoming a `wd:` node beside it: Shentel's Q23073960 states no id and
+    is labelled "Shentel", the query was EDGAR's "SHENANDOAH TELECOMMUNICATIONS
+    CO", and the item's alias is that company's legal name — the run wrote
+    wd:Q23073960 five seconds before the SEC wrote sec:0000354963 (findings
+    item 60, 2026-11-05 rebuild). The registers now run first, so the filer
+    node exists when the item arrives.
 
     **Wikidata writes no hard id** (2026-10-29). ``lei`` / ``sec_cik`` (one
     value or every value the item states) find the node, and a register writes
@@ -314,10 +326,15 @@ def _upsert_entity(
                          name, wikidata_id, entity_id)
                 unconfirmed, entity_id = entity_id, None
     if not entity_id and (leis or ciks):
-        # the item's names break a tie among several stated LEIs (findings item 61)
+        # the item names break a tie among several stated LEIs (findings item 61)
         item_names = [name, *(aliases or [])]
         entity_id = (register_pointer.write_from_pointer(leis, ciks, candidates=[unconfirmed], names=item_names)
                      if unconfirmed else register_pointer.write_from_pointer(leis, ciks, names=item_names))
+    # The item found for the company the query named, stating no register id
+    # and found no node of its own names: it enriches the query node when
+    # the item bears one of that node names (findings item 60).
+    if not entity_id and anchor and not (leis or ciks) and not other_of_name and not unconfirmed:
+        entity_id = _anchored(anchor, wikidata_id, [name, *(aliases or [])])
     # No register knows the item's ids: the name's node stands — enriched
     # when it was only unconfirmed, refused by the contradiction below when it
     # contradicts them — rather than a twin of that name.
@@ -571,6 +588,31 @@ def _upsert_person(
 
 # ── Recursive scrape ──────────────────────────────────────────────────────────
 
+def _anchored(anchor: str, wikidata_id: str, item_names: list[str]) -> str | None:
+    """The node the query named, when the item bears one of its names — the
+    node's own name or a register's other name, legal form kept
+    (`sec_ex21.legal_name_key`) — and the node carries no item yet; else None
+    (findings item 60). Not the node's aliases: a knowledge base's labels and
+    other filers' spellings name brands and relatives (findings item 62). The
+    item's label is often a brand ("Shentel"); its aliases hold the legal
+    name ("Shenandoah Telecommunications Company"), which EDGAR's "SHENANDOAH
+    TELECOMMUNICATIONS CO/VA/" keys alike."""
+    from app.scraper.sec_ex21 import legal_name_key
+    with db.get_session() as session:
+        rec = session.run("MATCH (e:Entity {id: $id}) RETURN e.wikidata_id AS qid, e.name AS name, "
+                          "e.other_names AS other", id=anchor).single()
+    if not rec or rec.get("qid"):
+        return None
+    borne = {legal_name_key(n) for n in [rec.get("name"), *(rec.get("other") or [])] if n} - {""}
+    if any(legal_name_key(n) in borne for n in item_names if n):
+        log.info("Wikidata: %s (%s) enriches %s, the company the query named — the item bears its name",
+                 item_names[0] if item_names else "", wikidata_id, anchor)
+        return anchor
+    log.info("Wikidata: %s (%s) bears none of %s's names — its own node", item_names[0] if item_names else "",
+             wikidata_id, anchor)
+    return None
+
+
 def _resolve_related_company(rel: dict) -> str | None | bool:
     """Decide whether a Wikidata-related COMPANY may be written.
 
@@ -635,7 +677,10 @@ def _scrape_node(
     source_id: str,
     parent_entity_id: str | None = None,
     counts: dict | None = None,
+    anchor: str | None = None,
 ):
+    # `anchor`: the node the query names (`run_scrape`), for the searched item
+    # only — a related company never inherits it (findings item 60).
     # `counts` accumulates hygiene stats across the recursion: skipped_unidentified
     # (related companies with no existing node and no id a register knows, not
     # written) and conflicts (an item whose ids a node's register ids contradict,
@@ -677,6 +722,7 @@ def _scrape_node(
         lei=data.get("leis") or data.get("lei"),
         sec_cik=data.get("sec_ciks") or data.get("sec_cik"),
         source_id=source_id,
+        anchor=anchor,
     )
     if entity_id is None:
         # the node found is another legal entity than the item's ids describe:
@@ -1020,7 +1066,13 @@ def run_scrape(query: str, depth: int = 2, country: str | None = None) -> dict:
     visited: set  = set()
     counts: dict  = {}
 
-    _scrape_node(qid, depth, visited, scraped, source_id, counts=counts)
+    # The node the QUERY names, for the item found by searching that name: an
+    # item stating no register id enriches it rather than becoming a `wd:`
+    # twin beside it, when the item bears one of its names (`_anchored`,
+    # findings item 60). A node that already carries an item is no anchor.
+    stored = _stored_entity(query, country)
+    anchor = stored["id"] if stored and stored.get("id") and not stored.get("wikidata_id") else None
+    _scrape_node(qid, depth, visited, scraped, source_id, counts=counts, anchor=anchor)
 
     # Mark the TARGET (the searched company) as on-demand scraped at this depth, so the
     # freshness gate + the depth-2 "deepen" pass can decide correctly next time. Only the

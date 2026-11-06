@@ -1953,6 +1953,7 @@ class TestRunScrapeNameFallback:
         with patch.object(settings, "SCRAPER_ENABLED", True), \
              patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner._stored_wikidata_item", return_value=None), \
+             patch("app.scraper.runner._stored_entity", return_value=None), \
              patch("app.scraper.runner.search_entity", return_value=raw_hits), \
              patch("app.scraper.runner.pick_candidate", return_value=None), \
              patch("app.scraper.runner._item_by_plain_name", return_value=plain) as fallback, \
@@ -2134,3 +2135,78 @@ class TestTheFinalReportReachesTheWriter:
         assert got["blk"] == "2026-09-30"
         assert got["grp"] == "2026-04-30"
         assert got["tsla"] == "2026-06-30"
+
+
+class TestTheQuerysNodeAnchorsTheItem:
+    """findings item 60: the item found for the company a query names enriches
+    that company's node when it states no register id and bears one of the
+    node's names — instead of a `wd:` twin named by its label (Shentel)."""
+    FILER = "sec:0000354963"
+    NAMES = ["Shentel", "Shenandoah Telecommunications Company", "nTelos"]
+
+    def _anchored(self, node, names=NAMES):
+        from app.scraper.runner import _anchored
+        ctx, _ = _make_session_mock(single_returns=[node])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            return _anchored(self.FILER, "Q23073960", names)
+
+    def test_the_item_bears_the_nodes_name_form_kept(self):
+        node = {"qid": None, "name": "SHENANDOAH TELECOMMUNICATIONS CO/VA/", "other": None}
+        assert self._anchored(node) == self.FILER
+        assert self._anchored(node, ["Shentel", "nTelos"]) is None            # a brand, an acquired company
+        assert self._anchored(node, ["Shenandoah Telecommunications Limited"]) is None   # another form
+
+    def test_a_registers_other_name_counts_a_held_item_refuses(self):
+        node = {"qid": None, "name": "騰訊控股有限公司", "other": ["Tencent Holdings Limited"]}
+        assert self._anchored(node, ["Tencent", "Tencent Holdings Ltd"]) == self.FILER
+        assert self._anchored({"qid": "Q1", "name": "SHENANDOAH TELECOMMUNICATIONS CO/VA/", "other": None}) is None
+        assert self._anchored(None) is None
+
+    def test_the_writer_asks_the_anchor_only_for_an_id_less_item_found_nowhere(self):
+        from app.scraper.runner import _upsert_entity
+        ctx, _ = _make_session_mock()                                          # every lookup misses
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner._anchored", return_value=None) as anchored:
+            _upsert_entity("Shentel", None, None, None, "Q23073960", aliases=self.NAMES[1:], anchor=self.FILER)
+        anchored.assert_called_once_with(self.FILER, "Q23073960", self.NAMES)
+        # an item that states a register id goes to the register, not the anchor —
+        # also when no register knows the id (a wd: node then, never the anchor)
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner._anchored") as anchored, \
+             patch("app.scraper.register_pointer.write_from_pointer", return_value=None):
+            assert _upsert_entity("Shentel", None, None, None, "Q23073960", lei="A" * 20, anchor=self.FILER) \
+                == "wd:Q23073960"
+        anchored.assert_not_called()
+        # a node found by the item's own name stands
+        ctx, _ = _make_session_mock(single_returns=[{"id": "wd:Q23073960"}, {"lei_id": None, "sec_cik": None},
+                                                    {"name": "Shentel", "cred": 0, "aliases": None, "descr": None},
+                                                    None])                      # key_on_learning: no better id
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.runner._anchored") as anchored:
+            assert _upsert_entity("Shentel", None, None, None, "Q23073960", anchor=self.FILER) == "wd:Q23073960"
+        anchored.assert_not_called()
+
+    def test_run_scrape_hands_the_querys_node_to_the_searched_item(self):
+        from app.scraper.runner import run_scrape
+        with patch.object(settings, "SCRAPER_ENABLED", True), \
+             patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner._stored_wikidata_item", return_value=None), \
+             patch("app.scraper.runner._stored_entity", return_value={"id": self.FILER, "wikidata_id": None}), \
+             patch("app.scraper.runner.search_entity", return_value=[{"id": "Q23073960"}]), \
+             patch("app.scraper.runner.pick_candidate", return_value="Q23073960"), \
+             patch("app.scraper.runner._scrape_node") as node, \
+             patch("app.scraper.runner._ensure_source", return_value="src"):
+            run_scrape("SHENANDOAH TELECOMMUNICATIONS CO", depth=0)
+        assert node.call_args.kwargs["anchor"] == self.FILER
+        # a node that already carries an item is no anchor; no node, none either
+        for stored in ({"id": self.FILER, "wikidata_id": "Q1"}, None):
+            with patch.object(settings, "SCRAPER_ENABLED", True), \
+                 patch("app.scraper.runner.get_source_enabled", return_value=True), \
+                 patch("app.scraper.runner._stored_wikidata_item", return_value=None), \
+                 patch("app.scraper.runner._stored_entity", return_value=stored), \
+                 patch("app.scraper.runner.search_entity", return_value=[{"id": "Q23073960"}]), \
+                 patch("app.scraper.runner.pick_candidate", return_value="Q23073960"), \
+                 patch("app.scraper.runner._scrape_node") as node, \
+                 patch("app.scraper.runner._ensure_source", return_value="src"):
+                run_scrape("SHENANDOAH TELECOMMUNICATIONS CO", depth=0)
+            assert node.call_args.kwargs["anchor"] is None
