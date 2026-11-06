@@ -533,6 +533,76 @@ class TestBrowseEdgarByName:
         assert result == {"cik": "0001011712", "name": "CAPITAL VENTURES INTERNATIONAL"}
         assert asked == ["10-K", "20-F", ""]
 
+    def _lookup_by_query(self, name, feeds, submissions=None):
+        """Like `_lookup`, keyed by (form type, company query): the base-name
+        retry asks the index with other words than the name (findings item 69).
+        Returns (result, the (type, company) pairs asked)."""
+        import re
+        import httpx
+        from app.scraper import sec_edgar
+        submissions = submissions or {}
+        asked = []
+
+        def get(url, params=None):
+            req = httpx.Request("GET", url)
+            if "browse-edgar" in url:
+                asked.append((params["type"], params["company"]))
+                return httpx.Response(200, text=feeds.get((params["type"], params["company"]), self.EMPTY), request=req)
+            m = re.search(r"CIK(\d{10})\.json", url)
+            if m and m.group(1) in submissions:
+                return httpx.Response(200, json=submissions[m.group(1)], request=req)
+            return httpx.Response(404, request=req)
+        client = MagicMock()
+        client.get.side_effect = get
+        with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"), \
+             patch.object(sec_edgar, "_tickers_cache", {}):
+            return sec_edgar._lookup_edgar_by_name(name), asked
+
+    def test_a_registrant_under_another_form_word_is_found_by_the_base_name(self):
+        # Independent Franchise Partners, Llp (a 13F filer, 2026-11-06 guard): the index
+        # lists it for "independent franchise partners", never for the name as given
+        # (a prefix search); the exact key folds the form
+        ifp = "0001483866"
+        result, asked = self._lookup_by_query(
+            "Independent Franchise Partners, Llp",
+            {("", "independent franchise partners"): self.lone(ifp, "Independent Franchise Partners LLP")},
+            submissions={ifp: self.sub("Independent Franchise Partners LLP", forms=("13F-HR", "SC 13G"))})
+        assert result == {"cik": ifp, "name": "Independent Franchise Partners LLP"}
+        assert asked == [("10-K", "Independent Franchise Partners, Llp"), ("20-F", "Independent Franchise Partners, Llp"),
+                         ("", "Independent Franchise Partners, Llp"), ("", "independent franchise partners")]
+
+    def test_a_dormant_registrant_the_base_name_lists_alone_is_not_taken(self):
+        # "t rowe price group" lists T ROWE PRICE GROUP INC (no-action letters, 2015) and
+        # never the filer PRICE T ROWE GROUP INC, conformed surname first (item 59): a lone
+        # registrant that files nothing the scraper reads is no answer. YouTube Inc (two
+        # REGDEX of 2006) likewise.
+        result, asked = self._lookup_by_query(
+            "T. Rowe Price Group, Inc.", {("", "t rowe price group"): self.lone("0001214556", "T ROWE PRICE GROUP INC")},
+            submissions={"0001214556": self.sub("T ROWE PRICE GROUP INC", forms=("NO ACT", "NO ACT"))})
+        assert result is None and asked[-1] == ("", "t rowe price group")
+        result, _ = self._lookup_by_query(
+            "YouTube LLC", {("", "youtube"): self.lone("0001343726", "YouTube Inc")},
+            submissions={"0001343726": self.sub("YouTube Inc", forms=("REGDEX",))})
+        assert result is None
+
+    def test_the_base_name_pass_still_holds_the_exact_key(self):
+        # "Nestlé Holdings" is not Nestlé: the base words list the parent too,
+        # and the hold refuses what is not the query's name
+        result, asked = self._lookup_by_query(
+            "Nestlé Holdings", {("", "nestle holdings"): self.lone("0000792990", "NESTLE SA")},
+            submissions={"0000792990": self.sub("NESTLE SA", forms=("SC 13G", "4"))})     # a filer we read, wrong name
+        assert result is None and asked[-1] == ("", "nestle holdings")
+
+    def test_a_name_that_is_its_own_base_asks_once(self):
+        # no form word to strip: the type-free pass is not asked twice
+        result, asked = self._lookup_by_query("Carlsberg", {})
+        assert result is None and asked == [("10-K", "Carlsberg"), ("20-F", "Carlsberg"), ("", "Carlsberg")]
+
+    def test_a_registrant_the_full_name_lists_needs_no_second_ask(self):
+        result, asked = self._lookup_by_query("YouTube Inc", {("", "YouTube Inc"): self.lone("0001343726", "YouTube Inc")})
+        assert result == {"cik": "0001343726", "name": "YouTube Inc"}
+        assert asked[-1] == ("", "YouTube Inc")
+
     def test_the_type_free_pass_takes_the_exact_name_only(self):
         # "Nestlé" lists the US holding and the Swiss parent at the same similarity
         # (0.83); only the parent's name IS the query's

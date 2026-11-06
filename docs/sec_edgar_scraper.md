@@ -263,7 +263,21 @@ Investment Management" scores the Japanese K.K. 1.00 and is neither subsidiary.
 An ADR programme ("Naspers Ltd/ADR") is skipped as in step 1. EDGAR holds some
 names twice — CITADEL SECURITIES LLC is CIK 0001307720 (SC 13D/G, Form 4) and
 0001146184 (broker-dealer FOCUS reports) — and the registrant that files what the
-scraper reads wins, then the one that filed last.
+scraper reads wins, then the one that filed last. The index is a prefix search on the
+registered spelling, so a query carrying another form word than the registrant's never
+lists it: "Independent Franchise Partners, Llp" lists nothing while "independent franchise
+partners" lists the 13F filer, whose key the hold already accepts with the form folded.
+When the full name lists no registrant of its key, the type-free pass asks once more with
+the name's base words (the key's words) and holds the answer to the same exact key **and to
+a registrant that files what the scraper reads**: the broader query lists EDGAR's dormant
+duplicates alone when the filer is spelled otherwise — "t rowe price group" lists T ROWE
+PRICE GROUP INC (five no-action letters, 2015) and never the filer PRICE T ROWE GROUP INC,
+conformed surname first (item 59) — and a record with nothing to read (YouTube Inc, CIK
+0001343726, two REGDEX of 2006; GitHub, Inc., two Form D) gives the scrape nothing a name
+search should decide, so "YouTube LLC" stays unfound and its node lives through Wikidata's
+item. One more browse request and one submissions request, never for a name that is its
+own base (findings item 69, 2026-11-06 rebuild; guard: Independent Franchise Partners and
+Perpetual Investment Management found, T. Rowe's duplicates refused).
 
 EDGAR answers a company search two ways, and every pass reads both
 (`_browse_registrants`): several matches come as a list of registrants (Atom
