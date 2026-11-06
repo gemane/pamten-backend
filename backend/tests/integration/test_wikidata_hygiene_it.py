@@ -154,3 +154,41 @@ def test_an_item_stating_several_leis_lands_on_the_parent_per_gleif(it_db):
     assert by_id[f"lei:{plc}"]["wikidata_id"] == "Q_PARENT"
     assert "Barclays PLC" in (by_id[f"lei:{plc}"].get("aliases") or [])
     assert by_id[f"lei:{bank}"].get("wikidata_id") is None
+
+
+def test_a_renamed_registrant_keeps_the_item(it_db):
+    """Franklin, 2026-11-06 rebuild (findings item 66): EDGAR renamed CIK
+    0000038777 FRANKLIN TEMPLETON INC; the item's alias is the old name and no
+    other registrant bears it — a rename, not a move. The item lands."""
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0000038777', name: 'FRANKLIN TEMPLETON INC', name_normalized: 'franklin templeton', "
+        "search_text: 'FRANKLIN TEMPLETON INC', type: 'company', sec_cik: '0000038777', name_credibility: 98, "
+        "former_names: ['FRANKLIN RESOURCES INC|2026-08-14']})")
+    data = {**_company_data([]), "name": "Franklin Templeton Investments", "aliases": ["Franklin Resources"],
+            "sec_cik": "0000038777", "sec_ciks": ["0000038777"]}
+    with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
+         patch("app.scraper.sec_edgar.search_company",
+               return_value={"cik": "0000038777", "name": "FRANKLIN TEMPLETON INC"}) as search:
+        counts = _scrape(it_db, data)
+    search.assert_called_once_with("Franklin Resources")
+    row = dict(it_db.run_sql("SELECT wikidata_id, name, aliases FROM Entity WHERE id = 'sec:0000038777'")[0])
+    assert row["wikidata_id"] == "Q_PARENT" and not counts.get("conflicts")
+    assert row["name"] == "FRANKLIN TEMPLETON INC"                    # EDGAR's name stays (98 > 80)
+
+
+def test_a_name_another_registrant_now_bears_still_refuses(it_db):
+    """BlackRock (findings item 22): the item's CIK is the old parent's, and
+    EDGAR lists "BlackRock, Inc." under the new parent's CIK — the item has
+    moved on; nothing is written."""
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0001364742', name: 'BlackRock Finance, Inc.', name_normalized: 'blackrock finance', "
+        "search_text: 'BlackRock Finance, Inc.', type: 'company', sec_cik: '0001364742', name_credibility: 98, "
+        "former_names: ['BlackRock Inc.|2024-09-26']})")
+    data = {**_company_data([]), "name": "BlackRock", "aliases": ["BlackRock, Inc."],
+            "sec_cik": "0001364742", "sec_ciks": ["0001364742"]}
+    with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
+         patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
+        counts = _scrape(it_db, data)
+    assert counts.get("conflicts") == 1
+    row = dict(it_db.run_sql("SELECT wikidata_id FROM Entity WHERE id = 'sec:0001364742'")[0])
+    assert row.get("wikidata_id") is None

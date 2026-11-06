@@ -1619,8 +1619,11 @@ class TestIdentifierBridge:
             None, {"id": "sec:0001364742"},
             {"lei_id": None, "sec_cik": "0001364742", "name": "BlackRock Finance, Inc.",
              "other_names": None, "former_names": ["BlackRock Inc.|2024-09-26"]}])
+        # EDGAR lists "BlackRock, Inc." under the new parent's CIK: the name moved (item 66)
         with patch("app.scraper.runner.db.get_session", ctx), \
-             patch("app.scraper.register_pointer.write_from_pointer") as reg:
+             patch("app.scraper.register_pointer.write_from_pointer") as reg, \
+             patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
             eid = _upsert_entity("BlackRock", None, None, None, "Q219635", aliases=["BlackRock, Inc.", "BLK"],
                                  lei=["549300LRIF3NWCU26A80"], sec_cik=["0001364742"])
         assert eid is None
@@ -1689,7 +1692,10 @@ class TestRelatedCompanyGate:
             None, {"id": "sec:0001364742"},
             {"lei_id": None, "sec_cik": "0001364742", "name": "BlackRock Finance, Inc.",
              "former_names": ["BlackRock Inc.|2024-09-26"]}])
-        with patch("app.database.db.get_session", ctx):
+        # EDGAR lists "BlackRock, Inc." under the new parent's CIK: the name moved (item 66)
+        with patch("app.database.db.get_session", ctx), \
+             patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
             assert _resolve_related_company({"qid": "Q219635", "name": "BlackRock",
                                              "sec_ciks": ["0001364742"]}) is False
 
@@ -1703,6 +1709,46 @@ class TestRelatedCompanyGate:
         with patch("app.database.db.get_session", ctx):
             assert _resolve_related_company({"qid": "Q1", "lei": "AAAAAAAAAAAAAAAAAAAA"}) is None
             assert _resolve_related_company({"qid": "Q1"}) is False
+
+
+class TestARenamedRegistrantKeepsItsItem:
+    """The writer and the related gate ask `register_pointer.moved_on`, not the
+    bare `stale`: a rename of the same registrant keeps the item, a name that
+    moved to another registrant still refuses (findings item 66)."""
+    HELD = {"lei_id": None, "sec_cik": "0000038777", "name": "FRANKLIN TEMPLETON INC",
+            "other_names": None, "former_names": ["FRANKLIN RESOURCES INC|2026-08-14"], "gleif_former_names": None}
+
+    def test_the_writer_asks_whether_the_name_moved(self):
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": "sec:0000038777"}, self.HELD,
+            {"name": "FRANKLIN TEMPLETON INC", "cred": 98, "aliases": None, "descr": None},
+            {"lei": None, "wid": "Q744683", "cik": "0000038777"}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.moved_on", return_value=None) as moved, \
+             patch("app.scraper.register_pointer.attach_stated_lei", return_value=None):
+            eid = _upsert_entity("Franklin Templeton Investments", None, None, None, "Q744683",
+                                 aliases=["Franklin Resources"], lei="RIFQSET379FOGTEFKS80", sec_cik="0000038777")
+        assert eid == "sec:0000038777"
+        assert moved.call_args.args[1] == ["Franklin Templeton Investments", "Franklin Resources"]
+        assert any("SET e.wikidata_id" in c.args[0] for c in session.run.call_args_list)
+
+    def test_a_name_that_moved_still_refuses(self):
+        held = {**self.HELD, "sec_cik": "0001364742", "name": "BlackRock Finance, Inc.",
+                "former_names": ["BlackRock Inc.|2024-09-26"]}
+        ctx, session = _make_session_mock(single_returns=[None, {"id": "sec:0001364742"}, held])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.moved_on", return_value="moved"):
+            assert _upsert_entity("BlackRock", None, None, None, "Q219635", sec_cik="0001364742") is None
+        assert not any("SET e.wikidata_id" in c.args[0] for c in session.run.call_args_list)
+
+    def test_the_related_gate_asks_the_same(self):
+        from app.scraper.runner import _resolve_related_company
+        ctx, _ = _make_session_mock(single_returns=[None, {"id": "sec:0000038777"}, self.HELD])
+        with patch("app.database.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.moved_on", return_value=None) as moved:
+            assert _resolve_related_company({"qid": "Q744683", "name": "Franklin Templeton Investments",
+                                             "sec_ciks": ["0000038777"]}) == "sec:0000038777"
+        moved.assert_called_once()
 
 
 def _id_lookups(session) -> list[tuple[str, str]]:

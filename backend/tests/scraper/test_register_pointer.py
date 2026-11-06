@@ -231,6 +231,74 @@ class TestStale:
         assert rp.stale(self.OLD_FILER, [None, ""]) is None
 
 
+class TestMovedOn:
+    """A former name the item bears is a move only when EDGAR says another
+    registrant now bears it; a rename of the same registrant keeps the item
+    (findings item 66, 2026-11-06 rebuild: Franklin Resources → Franklin
+    Templeton, Inc. was refused as stale once the registers ran first)."""
+    FRANKLIN = {"name": "FRANKLIN TEMPLETON INC", "sec_cik": "0000038777",
+                "former_names": ["FRANKLIN RESOURCES INC|2026-08-14"]}
+    NAMES = ["Franklin Templeton Investments", "Franklin Resources"]
+
+    def test_a_rename_of_the_same_registrant_is_no_move(self):
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company",
+                   return_value={"cik": "0000038777", "name": "FRANKLIN TEMPLETON INC"}) as search:
+            assert rp.moved_on(self.FRANKLIN, self.NAMES) is None
+        search.assert_called_once_with("Franklin Resources")        # only the ended name is asked
+
+    def test_a_name_nobody_bears_is_no_move(self):
+        # Wellington Management Company: EDGAR finds no registrant of that name
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company", return_value=None):
+            assert rp.moved_on(self.FRANKLIN, self.NAMES) is None
+
+    def test_a_name_another_registrant_bears_is_a_move(self):
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company",
+                   return_value={"cik": "2012383", "name": "BlackRock, Inc."}):
+            why = rp.moved_on(TestStale.OLD_FILER, ["BlackRock", "BLK"])
+        assert why == ("the item's name (blackrock) is a former name of BlackRock Finance, Inc.; "
+                       "EDGAR lists BlackRock, Inc. (CIK 0002012383) under that name")
+
+    def test_edgar_answering_with_the_registrants_own_former_name_is_no_move(self):
+        # browse-edgar indexes former names: 'Mesa Air Group' answers CIK 0000810332 as
+        # 'MESA AIR GROUP INC' — the node's own CIK, the item's own ended name
+        mesa = {"name": "REPUBLIC AIRWAYS HOLDINGS INC.", "sec_cik": "0000810332",
+                "former_names": ["MESA AIR GROUP INC|2025-11-24", "MESA AIRLINES INC|1995-02-15"]}
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company",
+                   return_value={"cik": "0000810332", "name": "MESA AIR GROUP INC"}):
+            assert rp.moved_on(mesa, ["Mesa Air Group"]) is None
+
+    def test_a_registrant_of_a_similar_name_is_not_that_name(self):
+        # EDGAR's similarity pass hands 'Franklin Resources' a Canadian subsidiary
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company",
+                   return_value={"cik": "0001132702", "name": "FRANKLIN TEMPLETON INVESTMENTS CORP"}):
+            assert rp.moved_on(self.FRANKLIN, self.NAMES) is None
+
+    def test_without_a_cik_or_edgar_the_stale_verdict_stands(self):
+        lei_only = {"name": "GRUPO TELEVISA, S.A.B.", "lei_id": "549300O4AF0C816ILN62",
+                    "former_names": ["GRUPO TELEVISA S A|2007-06-22"]}
+        with patch("app.scraper.sec_edgar.search_company") as search:
+            assert (rp.moved_on(lei_only, ["Grupo Televisa"]) or "").startswith("the item's name (grupo televisa)")
+            with patch.object(rp, "_sec_enabled", return_value=False):
+                assert rp.moved_on(self.FRANKLIN, self.NAMES) == rp.stale(self.FRANKLIN, self.NAMES)
+        search.assert_not_called()
+
+    def test_a_lost_request_keeps_the_refusal(self):
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company", side_effect=RuntimeError("EFTS 500")):
+            assert rp.moved_on(self.FRANKLIN, self.NAMES) == rp.stale(self.FRANKLIN, self.NAMES)
+
+    def test_an_item_that_is_not_stale_asks_nothing(self):
+        with patch.object(rp, "_sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company") as search:
+            assert rp.moved_on(self.FRANKLIN, ["Franklin Templeton"]) is None
+        search.assert_not_called()
+
+
 class TestJoiningAFiler:
     """Before GLEIF's node is minted, an EDGAR filer node of its name may be
     the same legal entity (`legal_identity`, findings item 4): NYT's GLEIF

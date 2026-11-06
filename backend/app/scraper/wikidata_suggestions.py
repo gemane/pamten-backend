@@ -48,9 +48,13 @@ wrong, and nothing of such a pair goes into the batch. An item stating none
 of a node's ids is not found this way. Pairs that agree are left out: the
 graph has not linked them yet, and that is not a correction to Wikidata.
 A pair whose ids agree is refused too when the item names the node only
-under a name it no longer bears (`register_pointer.stale`): Q219635's CIK and
-LEI are the pre-2024 parent's, "BlackRock Finance, Inc." since 2024-09-26.
-A node that took its item before that rule is reported the same way.
+under a name it no longer bears and another registrant bears now
+(`register_pointer.moved_on`, as the writer judges): Q219635's CIK and LEI are
+the pre-2024 parent's, "BlackRock Finance, Inc." since 2024-09-26, and EDGAR
+lists "BlackRock, Inc." under the new parent's CIK. A renamed registrant whose
+old name nobody took (Franklin Resources → Franklin Templeton, Inc.) is not
+refused (findings item 66). A node that took its item before that rule is
+reported the same way.
 
 Licences: GLEIF's data is CC0 and EDGAR's is a US-government work, so both may
 go into Wikidata (CC0). Companies House (OGL) is not used here.
@@ -312,7 +316,7 @@ def refused_rows(node: dict, item: dict, why: str, register, iso_of: dict[str, s
 def build_report(limit: int | None = None) -> dict:
     """Read the graph, the items and the registers; return the findings and a
     count per kind. Every register record is fetched once."""
-    from app.scraper.register_pointer import contradiction, stale
+    from app.scraper.register_pointer import contradiction, moved_on
     nodes = sorted(graph_nodes(), key=lambda n: n["wikidata_id"])
     unlinked = sorted(unlinked_nodes(), key=lambda n: n["id"])
     if limit:
@@ -340,7 +344,7 @@ def build_report(limit: int | None = None) -> dict:
         if item is None:
             log.info("Wikidata item %s of %s is missing or deleted", node["wikidata_id"], node["id"])
             continue
-        if why := stale(node, _item_names(item)):
+        if why := moved_on(node, _item_names(item)):
             stale_linked.append((node, item, why))  # linked before the writer refused such pairs
             continue
         rows.extend(suggestions_for(node, item, register, iso_of))
@@ -354,7 +358,7 @@ def build_report(limit: int | None = None) -> dict:
             continue
         why = (contradiction({f: _norm(p, node.get(f)) for p, f in PROPS.items()},
                              item["P1278"], item["P5531"])
-               or stale(node, _item_names(item)))
+               or moved_on(node, _item_names(item)))
         if why:
             refused += 1
             rows.extend(refused_rows({**node, "wikidata_id": qid}, item, why, register, iso_of))
