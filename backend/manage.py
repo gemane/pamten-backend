@@ -257,6 +257,43 @@ def cmd_dedupe_persons(args):
     print(f"{'Would merge' if dry else 'Merged'} {res['merged_count']} persons across "
           f"{len(res['merged'])} groups; {res['review_count']} groups need review")
 
+
+def cmd_gleif_isin_bridge(args):
+    """The securities bridge (findings item 71): an EDGAR issuer's CUSIP -> its US
+    ISIN -> GLEIF's daily LEI-ISIN file -> the issuer's LEI. Dry run unless --apply;
+    --apply takes the import lock (it merges nodes). Needs
+    the GLEIF source on (its catalogue switch)."""
+    _apply_direct_db_url(args)
+    from app.scraper import gleif_isin
+
+    def go():
+        return gleif_isin.run(apply_writes=args.apply, path=args.file, allow_stale=args.allow_stale)
+    try:
+        res = _run_guarded_import("gleif-isin-bridge", go) if args.apply else go()
+    except PermissionError as exc:
+        print(f"❌ {exc}")
+        sys.exit(1)
+    if res is None:
+        return
+    plan = res["plan"]
+    for r in plan["joins"]:
+        print(f"  join   {r['id']} ({r['name']}) <-> {r['lei_node']} ({r.get('lei_node_name')}) by {r['isin']}")
+    for r in plan["attaches"]:
+        print(f"  attach {r['id']} ({r['name']}) takes LEI {r['lei']} by {r['isin']}")
+    for r in plan["umbrellas"]:
+        print(f"  skip   {r['id']} ({r['name']}): its CUSIPs map to {len(r['leis'])} LEIs (an umbrella)")
+    for r in plan["contradictions"]:
+        print(f"  skip   {r['id']} ({r['name']}): {r['why']}")
+    for r in plan["kept_apart"]:
+        print(f"  skip   {r['id']} ({r['name']}): kept apart from {r['lei_node']}")
+    for r in (res.get("written") or {}).get("skipped", []):
+        print(f"  not written {r['id']} ({r['name']}): {r['why']}")
+    verb = "Wrote" if args.apply else "Would write"
+    print(f"{res['file']} ({res['day']}): {res['nodes']} nodes with a CUSIP - {res['confirmed']} confirmed, "
+          f"{res['joins']} joins, {res['attaches']} attaches, {res['umbrellas']} umbrellas, "
+          f"{res['contradictions']} contradictions, {res['kept_apart']} kept apart, {res['unmapped']} unmapped. "
+          f"{verb} {res['joins'] + res['attaches']}.")
+
 def cmd_audit_registers(args):
     """Scan the LEI-CDF golden copy and write the general-register map.
 
@@ -1306,6 +1343,17 @@ def _build_parser():
     p_lock.add_argument('--holder', help='Holder label for acquire (default: manual)')
     p_lock.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_lock.set_defaults(func=cmd_import_lock)
+
+    # gleif-isin-bridge command (the securities bridge, findings item 71)
+    p_gi = subparsers.add_parser('gleif-isin-bridge',
+                                 help="Join EDGAR issuers to their LEI through GLEIF's LEI-ISIN file "
+                                      "(CUSIP -> US ISIN -> LEI). Dry run unless --apply")
+    p_gi.add_argument('--apply', action='store_true', help='Write the joins (default: report what would be written)')
+    p_gi.add_argument('--file', help="A local isin-lei-YYYYMMDDTHHMMSS.zip instead of downloading GLEIF's newest")
+    p_gi.add_argument('--allow-stale', dest='allow_stale', action='store_true',
+                      help='Use a file older than three days')
+    p_gi.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_gi.set_defaults(func=cmd_gleif_isin_bridge)
 
     # gleif-update command (retirement-aware daily delta on top of the full load)
     p_gu = subparsers.add_parser('gleif-update',
