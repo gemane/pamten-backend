@@ -38,7 +38,8 @@ def _submissions(edgar):
 def _upsert(name, cik, edgar=EDGAR, **kw):
     from app.scraper.graph_writer import _upsert_entity_by_name
     with patch("app.scraper.sec_edgar.fetch_filer_name", side_effect=edgar.get) as fetch, \
-         patch("app.scraper.sec_edgar._submissions", side_effect=_submissions(edgar)):
+         patch("app.scraper.sec_edgar._submissions", side_effect=_submissions(edgar)), \
+         patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):   # no filing: the names decide (item 64)
         return _upsert_entity_by_name(name=name, cik=cik, source_id="sec-edgar", **kw), fetch
 
 

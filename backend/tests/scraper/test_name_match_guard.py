@@ -154,7 +154,8 @@ class TestAGleifNodeMetByAFilersName:
     def test_the_rule_refuses_the_llc(self):
         from app.scraper import graph_writer
         from app.scraper.legal_identity import Filer
-        with patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0001286681", "DOMINOS PIZZA INC")), \
+        with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
+             patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0001286681", "DOMINOS PIZZA INC")), \
              patch("app.scraper.legal_identity.same_legal_entity",
                    return_value=("refuse", "legal name differs")) as rule:
             why = _not_this_filer(self._lei_node(), "lei:254900BIRZMWFO44TO04", "0001286681", None, None)
@@ -165,13 +166,43 @@ class TestAGleifNodeMetByAFilersName:
     def test_a_join_is_remembered_for_the_write(self):
         from app.scraper import graph_writer
         from app.scraper.legal_identity import Filer
-        with patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0001286681", "DOMINOS PIZZA INC")), \
+        with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
+             patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0001286681", "DOMINOS PIZZA INC")), \
              patch("app.scraper.legal_identity.same_legal_entity", return_value=("join", "name+place")):
             assert _not_this_filer(self._lei_node(), "lei:INC", "0001286681", None, None) is None
-        assert graph_writer._JOINED.pop(("lei:INC", "0001286681")) == "name+place"
+        assert graph_writer._JOINED.pop(("lei:INC", "0001286681")) == ("name+place", None)
+
+    def test_the_filers_own_filing_joins_before_the_registers_are_asked(self):
+        """findings item 64: Capital Ventures International's 13G write met its
+        GLEIF node by name; the registers called the record weak and refused,
+        while the filer's N-PX states the LEI — the bridge merged the twin
+        twelve seconds later. The filing is asked first, and is the evidence."""
+        from app.scraper import graph_writer
+        hit = {"cik": "0001011712", "lei": "PIRK3IP22W3DKV63YG19", "form": "N-PX",
+               "source_url": "https://www.sec.gov/Archives/edgar/data/1011712/000101171224000004/primary_doc.xml"}
+        node = _session(name="CAPITAL VENTURES INTERNATIONAL", other=["CVI"], lei="PIRK3IP22W3DKV63YG19")
+        with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=hit) as filing, \
+             patch("app.scraper.legal_identity.filer_facts") as facts, \
+             patch("app.scraper.legal_identity.same_legal_entity") as rule:
+            assert _not_this_filer(node, "lei:PIRK3IP22W3DKV63YG19", "0001011712", None, None) is None
+        filing.assert_called_once_with("0001011712", "PIRK3IP22W3DKV63YG19", ["CAPITAL VENTURES INTERNATIONAL", "CVI"])
+        facts.assert_not_called()
+        rule.assert_not_called()
+        assert graph_writer._JOINED.pop(("lei:PIRK3IP22W3DKV63YG19", "0001011712")) == ("filing", hit["source_url"])
+
+    def test_no_filing_states_the_lei_so_the_registers_decide(self):
+        from app.scraper.legal_identity import Filer
+        with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
+             patch("app.scraper.legal_identity.filer_facts", return_value=Filer("0001286681", "DOMINOS PIZZA INC")), \
+             patch("app.scraper.legal_identity.same_legal_entity",
+                   return_value=("refuse", "weak record (place only KY) and no address")) as rule:
+            why = _not_this_filer(self._lei_node(), "lei:254900BIRZMWFO44TO04", "0001286681", None, None)
+        assert why == "its GLEIF record is not filer 0001286681: weak record (place only KY) and no address"
+        rule.assert_called_once()
 
     def test_edgar_silent_falls_back_to_the_name(self):
-        with patch("app.scraper.legal_identity.filer_facts", return_value=None), \
+        with patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None), \
+             patch("app.scraper.legal_identity.filer_facts", return_value=None), \
              patch("app.scraper.sec_edgar.fetch_filer_name", return_value="DOMINOS PIZZA INC"):
             assert _not_this_filer(self._lei_node(), "n", "0001286681", None, None) is None
 

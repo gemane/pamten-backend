@@ -907,9 +907,21 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
     if not cik:
         return None
     if rec.get("lei") and not rec.get("cik") and not lei:
-        # A GLEIF record met by an EDGAR filer's name: one legal entity only
+        # A GLEIF record met by an EDGAR filer's name: one legal entity when
+        # the filer's own filings state the record's LEI (`sec_lei`), else
         # when the registers agree (`legal_identity`) — the name key drops
-        # "Inc." and "LLC", and Domino's Pizza LLC took the Inc.'s CIK.
+        # "Inc." and "LLC", and Domino's Pizza LLC took the Inc.'s CIK. The
+        # filing is asked first, as the dedup bridge and the pointer ask it
+        # (`maintenance._bridge_sec_lei`, `register_pointer.attach_stated_cik`):
+        # until 2026-11-06 only the registers were asked here, and Capital
+        # Ventures International's 13G write met its GLEIF node by name, was
+        # refused as a weak record, minted a sec: twin, and the bridge merged
+        # the pair by the filer's N-PX twelve seconds later (findings item 64).
+        from app.scraper.sec_lei import confirm_filer_lei
+        names = [n for n in [rec.get("name"), *(rec.get("other") or [])] if n]
+        if hit := confirm_filer_lei(cik, rec["lei"], names):
+            _JOINED[(entity_id, cik)] = ("filing", hit.get("source_url"))
+            return None
         from app.scraper.legal_identity import REFUSE, filer_facts, same_legal_entity
         facts = filer_facts(cik)
         if facts:
@@ -918,7 +930,7 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
             verdict, why = same_legal_entity({k: node.get(k) for k in IDENTITY_FIELDS}, facts)
             if verdict == REFUSE:
                 return f"its GLEIF record is not filer {cik}: {why}"
-            _JOINED[(entity_id, cik)] = why
+            _JOINED[(entity_id, cik)] = (why, None)
             return None
     if not edgar_name:
         from app.scraper.sec_edgar import fetch_filer_name
@@ -935,9 +947,10 @@ def _not_this_filer(session, entity_id: str, cik: str | None, lei: str | None,
 def _identity_fields() -> str:
     from app.scraper.legal_identity import IDENTITY_FIELDS
     return ", ".join(f"e.{f} AS {f}" for f in IDENTITY_FIELDS)
-#: (node id, CIK) → the evidence a GLEIF node was joined to a filer on; stamped
-#: as ``lei_source`` when the write takes the node
-_JOINED: dict[tuple[str, str], str] = {}
+#: (node id, CIK) → (the evidence a GLEIF node was joined to a filer on, the
+#: filing that states the LEI or None); stamped as ``lei_source`` and
+#: ``lei_source_url`` when the write takes the node
+_JOINED: dict[tuple[str, str], tuple[str, str | None]] = {}
 
 
 def _first_filer_match(session, candidates: list[str], name: str, cik: str | None, lei: str | None,
@@ -1141,8 +1154,10 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                     **_hq_params(headquarters),
                 )
             if cik and (joined := _JOINED.pop((entity_id, cik), None)):
-                session.run("MATCH (e:Entity {id: $id}) SET e.lei_source = COALESCE(e.lei_source, $why)",
-                            id=entity_id, why=joined)
+                why, url = joined
+                session.run("MATCH (e:Entity {id: $id}) SET e.lei_source = COALESCE(e.lei_source, $why), "
+                            "e.lei_source_url = COALESCE(e.lei_source_url, $url)",
+                            id=entity_id, why=why, url=url)
             if cik or lei:
                 # an Exhibit 21 row or a 13D party created by name, now met with its CIK
                 entity_id = key_on_learning(session, "Entity", entity_id)
