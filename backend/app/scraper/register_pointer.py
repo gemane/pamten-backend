@@ -471,3 +471,47 @@ def stale(node: dict, item_names: list[str], on: str | None = None) -> str | Non
         return None
     return (f"the item's name ({', '.join(sorted(gone))}) is a former name of "
             f"{node.get('name') or 'the node'}")
+
+
+def moved_on(node: dict, item_names: list[str], on: str | None = None) -> str | None:
+    """`stale`'s reason when the item has moved on to another legal entity, or
+    None. A former name the item bears says so only when a register says
+    another registrant now bears that name: EDGAR lists "BlackRock, Inc." as
+    CIK 0002012383, the 2024 parent, while the item's ids are the old parent's
+    (BlackRock Finance, Inc., CIK 0001364742). A bare rename of the same
+    registrant is not a move: EDGAR renamed CIK 0000038777 "FRANKLIN TEMPLETON
+    INC" on 2026-08-14 (GLEIF's record RIFQSET379FOGTEFKS80 likewise, previous
+    legal name "FRANKLIN RESOURCES, INC."), and the item Q744683 — label
+    "Franklin Templeton Investments", alias "Franklin Resources", that LEI and
+    that CIK — was refused as stale, with Wellington's (WELLINGTON MANAGEMENT
+    CO LLP → GROUP LLP), Mesa Air Group's (→ REPUBLIC AIRWAYS HOLDINGS INC.,
+    the same CIK 0000810332) and Grupo Televisa's (S A → S.A.B.) once the
+    registers ran before the knowledge bases (2026-11-06 rebuild, findings
+    item 66). Asked of EDGAR by each ended name the item bears
+    (`sec_edgar.search_company`), the registrant found counts only when its
+    name IS that name (`mapper.name_key`; EDGAR's similarity pass would hand
+    'Franklin Resources' a Canadian subsidiary) and its CIK is not the
+    node's. A node without a CIK, or EDGAR switched off, keeps `stale`'s
+    verdict: no register can say the name stayed."""
+    why = stale(node, item_names, on)
+    if not why:
+        return None
+    if not node.get("sec_cik") or not _sec_enabled():
+        return why
+    from app import former_names
+    from app.scraper.mapper import name_key, normalize_cik, normalize_entity_name
+    from app.scraper.sec_edgar import search_company
+    gone = former_names.ended_keys(former_names.of_node(node), node.get("name"), on)
+    ended = [n for n in item_names if n and normalize_entity_name(n) in gone]
+    for item_name in dict.fromkeys(ended):
+        try:
+            found = search_company(item_name)
+        except Exception as exc:  # noqa: BLE001 — a lost request keeps the refusal, as before
+            log.warning("EDGAR unreadable for %r (is the name another registrant's?): %s", item_name, exc)
+            return why
+        cik = normalize_cik((found or {}).get("cik"))
+        if found and cik and cik != node["sec_cik"] and name_key(found.get("name") or "") == name_key(item_name):
+            return f"{why}; EDGAR lists {found['name']} (CIK {cik}) under that name"
+    log.info("%s — a rename of the same registrant (CIK %s): no other registrant bears %s",
+             why, node["sec_cik"], ", ".join(ended))
+    return None

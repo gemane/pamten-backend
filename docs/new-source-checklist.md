@@ -303,6 +303,16 @@ parser. Anything that does not map is either a new property (document it) or noi
       current name and its dated former names (`graph_writer._filer_as_registered`); a
       knowledge-base item naming a node only by an ended name is refused
       (`register_pointer.stale`). A dated record beats an undated alias of the same key.
+      But an ended name alone does not say the item has moved on — ask the register
+      whether ANOTHER registrant bears that name now (`register_pointer.moved_on`:
+      EDGAR's "BlackRock, Inc." is CIK 0002012383, not the old filer's). A plain rename
+      keeps the item: EDGAR renamed CIK 0000038777 FRANKLIN TEMPLETON INC on 2026-08-14,
+      GLEIF's record likewise, and the item (alias "Franklin Resources", that CIK, that
+      LEI) was refused as stale — with Wellington's, Mesa Air Group's (now REPUBLIC
+      AIRWAYS HOLDINGS INC., the same CIK) and Televisa's — once the registers ran
+      before the knowledge bases and the filer node existed first. Hold the registrant
+      found to the exact name (`mapper.name_key`): EDGAR's similarity pass hands
+      "Franklin Resources" a Canadian subsidiary (findings item 66, 2026-11-06 rebuild).
 - [ ] **`aliases` is a bag of other names, not the entity's own names.** It merges what
       every source calls the node — EDGAR's former names of the same CIK, but also
       Wikidata's aliases, which can name ANOTHER legal entity: the item for T. Rowe Price

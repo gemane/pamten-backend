@@ -912,6 +912,22 @@ no tag and keep the header's.
   the filer the CIK names is the organisation the item describes. The other two (Nestlé,
   Sirius XM) are one legal entity under two nodes the registers cannot join by their rules
   — the twin is theirs to settle (findings items 66 and 68), not the lookup's.
+- **The Wikidata writer, a renamed registrant**: an item that names its node only by an
+  ended name is refused only when a register says the item has moved on — EDGAR lists
+  another registrant under that name (`register_pointer.moved_on`, over `stale`'s name
+  check; the related-company gate and the suggestions report judge alike). BlackRock's
+  Q219635 states the pre-2024 parent's CIK and LEI and is labelled "BlackRock", which
+  EDGAR lists as CIK 0002012383, the new parent: refused (findings item 22). Franklin's
+  Q744683 states CIK 0000038777 and LEI RIFQSET379FOGTEFKS80, both renamed FRANKLIN
+  TEMPLETON INC in 2026 with "Franklin Resources" as the previous name, and the alias
+  "Franklin Resources" finds the same CIK on EDGAR: a rename of the same registrant, the
+  item stays. The same for Wellington (nobody bears "Wellington Management Company"),
+  Mesa Air Group (CIK 0000810332, now REPUBLIC AIRWAYS HOLDINGS INC.) and Grupo Televisa
+  (S A → S.A.B.) — all refused in the 2026-11-06 rebuild once the registers ran first
+  and the filer node existed when the item arrived (findings item 66). The registrant
+  EDGAR finds counts only under the exact name (`mapper.name_key`; the similarity pass
+  hands "Franklin Resources" a Canadian subsidiary); a node without a CIK, or with EDGAR
+  off, keeps `stale`'s refusal — no register can say the name stayed.
 - **The Wikidata writer, a node found by name**: when an item's QID, CIK and LEI find no
   node and its name finds one that holds a register id, none of them the item's, the item's
   ids are asked of their register FIRST, with that node as the candidate

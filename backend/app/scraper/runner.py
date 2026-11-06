@@ -257,10 +257,13 @@ def _upsert_entity(
     the item's is another legal entity than the item describes, and nothing
     is written onto it (`register_pointer.contradiction`; it is logged). Nor
     onto a node the item's ids name only under a name that had stopped
-    applying (`register_pointer.stale`): Q219635's CIK and LEI are those of
-    the old parent, "BlackRock Finance, Inc." since 2024-09-26, and the item
-    id with its aliases ("BlackRock, Inc.", "BLK") landed there, and won it
-    every "BlackRock" lookup (2026-10-29 rebuild). An
+    applying AND that another registrant bears now (`register_pointer.moved_on`
+    over `stale`): Q219635's CIK and LEI are those of the old parent,
+    "BlackRock Finance, Inc." since 2024-09-26, and the item id with its
+    aliases ("BlackRock, Inc.", "BLK") landed there, and won it every
+    "BlackRock" lookup (2026-10-29 rebuild); a renamed registrant nobody else's
+    name became keeps its item (Franklin Resources → Franklin Templeton, Inc.,
+    findings item 66). An
     item without ids, or one no register knows, creates a `wd:` node — the
     searched company only; a related one is skipped.
 
@@ -362,9 +365,12 @@ def _upsert_entity(
             held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names",
                                              "gleif_former_names")} if held else {}
             # a register id the item's contradict, or ids that name the node
-            # only under a name it no longer bears (`register_pointer.stale`)
+            # only under a name it no longer bears AND another registrant now
+            # bears (`register_pointer.moved_on`; a bare rename of the same
+            # registrant is not a move — Franklin Resources → Franklin
+            # Templeton, Inc., findings item 66)
             why = (register_pointer.contradiction(held, leis, ciks)
-                   or register_pointer.stale(held, [name, *(aliases or [])]))
+                   or register_pointer.moved_on(held, item_names))
             if why:
                 log.warning("Wikidata: %s (%s) is not the legal entity of %s — %s; nothing written",
                             name, wikidata_id, entity_id, why)
@@ -639,7 +645,7 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
     People are never routed here — Wikidata's coverage of people is a strength
     and person dedup handles them; only company nodes are gated."""
     from app.database import db
-    from app.scraper.register_pointer import contradiction, ordered_leis, stale
+    from app.scraper.register_pointer import contradiction, moved_on, ordered_leis
     # several stated LEIs in the pointer's order, as `_upsert_entity` asks
     # them (findings item 61)
     leis = ordered_leis(rel.get("leis") or [x for x in [rel.get("lei")] if x],
@@ -657,7 +663,7 @@ def _resolve_related_company(rel: dict) -> str | None | bool:
             held = {k: held.get(k) for k in ("lei_id", "sec_cik", "name", "other_names", "former_names",
                                              "gleif_former_names")} if held else {}
             why = (contradiction(held, leis, ciks)
-                   or stale(held, [rel.get("name"), rel.get("label"), *(rel.get("aliases") or [])]))
+                   or moved_on(held, [rel.get("name"), rel.get("label"), *(rel.get("aliases") or [])]))
             if why:
                 log.warning("Wikidata: related %s (%s) is not the legal entity of %s — %s; skipped",
                             rel.get("name") or rel.get("label"), rel.get("qid"), existing, why)

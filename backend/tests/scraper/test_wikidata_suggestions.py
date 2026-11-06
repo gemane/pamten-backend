@@ -339,15 +339,30 @@ class TestTheReport:
                      "sec_cik": "0001364742", "former_names": ["BlackRock Inc.|2024-09-26"]}
         items = {"Q219635": _item(label="BlackRock", aliases=["BlackRock, Inc."], ciks=["0001364742"])}
         edgar = {"0001364742": {"names": ["BlackRock Finance, Inc."], "country": "US", "status": None}}
-        report, _ = self._build([], items, US, lambda lei: None, edgar.get, [old_filer],
-                                {"P5531": {"0001364742": ["Q219635"]}})
-        assert report["counts"]["refused_pairs"] == 1
-        [row] = report["rows"]
-        assert (row["qid"], row["kind"], row["property"], row["link"]) == ("Q219635", "refused", "P5531", "refused")
-        assert row["note"] == "refused: the item's name (blackrock) is a former name of BlackRock Finance, Inc."
-        linked, _ = self._build([{**old_filer, "wikidata_id": "Q219635"}], items, US,
-                                lambda lei: None, edgar.get)
-        assert linked["counts"]["refused_pairs"] == 1
+        # the report judges as the writer does (`register_pointer.moved_on`, findings item 66):
+        # EDGAR lists "BlackRock, Inc." under the new parent's CIK — the name moved
+        with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0002012383", "name": "BlackRock, Inc."}):
+            report, _ = self._build([], items, US, lambda lei: None, edgar.get, [old_filer],
+                                    {"P5531": {"0001364742": ["Q219635"]}})
+            assert report["counts"]["refused_pairs"] == 1
+            [row] = report["rows"]
+            assert (row["qid"], row["kind"], row["property"], row["link"]) == ("Q219635", "refused", "P5531", "refused")
+            assert row["note"] == ("refused: the item's name (blackrock) is a former name of BlackRock Finance, Inc.; "
+                                   "EDGAR lists BlackRock, Inc. (CIK 0002012383) under that name")
+            linked, _ = self._build([{**old_filer, "wikidata_id": "Q219635"}], items, US,
+                                    lambda lei: None, edgar.get)
+            assert linked["counts"]["refused_pairs"] == 1
+        # a rename of the same registrant is no reason: Franklin Resources → FRANKLIN TEMPLETON INC
+        franklin = {"id": "sec:0000038777", "name": "FRANKLIN TEMPLETON INC", "lei_id": None,
+                    "sec_cik": "0000038777", "former_names": ["FRANKLIN RESOURCES INC|2026-08-14"]}
+        items = {"Q744683": _item(label="Franklin Templeton Investments", aliases=["Franklin Resources"], ciks=["0000038777"])}
+        with patch("app.scraper.register_pointer._sec_enabled", return_value=True), \
+             patch("app.scraper.sec_edgar.search_company", return_value={"cik": "0000038777", "name": "FRANKLIN TEMPLETON INC"}):
+            report, _ = self._build([], items, US, lambda lei: None,
+                                    {"0000038777": {"names": ["FRANKLIN TEMPLETON INC"], "country": "US", "status": None}}.get,
+                                    [franklin], {"P5531": {"0000038777": ["Q744683"]}})
+        assert report["counts"]["refused_pairs"] == 0
         assert [(r["kind"], r["link"]) for r in linked["rows"]] == [("refused", "refused")]
 
     def test_the_files(self, tmp_path):
