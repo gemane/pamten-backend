@@ -10,8 +10,24 @@ from app.scraper.scraper_registry import ScraperSpec, get, register, registered
 
 def test_builtin_scrapers_are_registered():
     names = [s.name for s in registered()]
-    assert names == ["wikidata", "sec_edgar", "open_corporates"]  # registration order
+    # registers first, aggregators next, knowledge bases last (findings item 60);
+    # Wikidata registers first and runs last
+    assert names == ["sec_edgar", "open_corporates", "wikidata"]
     assert get("sec_edgar") is not None and get("nope") is None
+
+
+def test_a_register_runs_before_a_knowledge_base_whatever_registered_first(monkeypatch, fake_sources):
+    # findings item 60: Shentel's item became a wd: node seconds before the SEC
+    # wrote the filer — the order is the catalogue's quality band, not registration
+    fake_sources("kb", "reg", "agg", "odd")
+    from app.scraper import scraper_registry
+    monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
+    scraper_registry.KNOWN_SOURCES["reg"]["quality"] = "statutory"
+    scraper_registry.KNOWN_SOURCES["agg"]["quality"] = "aggregated"
+    scraper_registry.KNOWN_SOURCES["odd"]["quality"] = "unheard-of"     # an unknown band: between
+    for name in ("kb", "reg", "odd", "agg"):
+        register(ScraperSpec(name, lambda q, d, c=None: {"status": "ok"}, lambda: True))
+    assert [s.name for s in registered()] == ["reg", "odd", "agg", "kb"]
 
 
 def test_register_replaces_by_name(monkeypatch, fake_sources):

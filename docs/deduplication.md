@@ -870,6 +870,15 @@ Measured over the 59 dev filers with an Exhibit 21: the report's place equals th
 for 50, fills an empty header for 5, corrects it for 1 (Alibaba), and 3 older filers carry
 no tag and keep the header's.
 
+- **The Wikidata writer, the searched company**: the item found for the company a query
+  names, stating no register id and finding no node of its own names, enriches the node the
+  query resolved to (`run_scrape` → `_upsert_entity(…, anchor=)`, `_anchored`) when it bears
+  one of that node's names — its name or a register's other name, legal form kept — and the
+  node carries no item yet. Shentel's Q23073960 is labelled "Shentel" and lists the legal
+  name "Shenandoah Telecommunications Company" among its aliases; the filer node
+  SHENANDOAH TELECOMMUNICATIONS CO/VA/ now takes the item instead of a `wd:` twin (findings
+  item 60). The registers run before the knowledge bases for the same reason
+  (`scraper_registry.registered`).
 - **The Wikidata writer**: an item found by its CIK that states an LEI the graph lacks asks
   GLEIF, with that node as the only candidate (`register_pointer.attach_stated_lei`; findings
   item 3, Baillie Gifford's 549300UYMK70HLNJU654). On JOIN the filer is re-keyed `lei:` and the
