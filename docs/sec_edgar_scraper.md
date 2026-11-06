@@ -1829,7 +1829,21 @@ Honesty rules, learned from the real filings:
 - **Subsidiaries come without hard ids** — resolved by name first (an existing
   GLEIF/PSC node wins and gets the edge), created with their registered country
   otherwise. Legal names + jurisdiction are far better dedup keys than
-  community labels; the scoped auto-dedup runs on the same scrape scope.
+  community labels; the scoped auto-dedup runs on the same scrape scope. A row
+  finds its node by the node's `name` and `name_normalized`, then — through the
+  full-text index — by a register's **other current name with the legal form
+  kept** (GLEIF's transliteration "APPLE KOREA LIMITED" of 애플코리아 유한회사,
+  "Tencent Holdings Limited" of 騰訊控股有限公司) or by the node's own name **in
+  another word order**, three or more words besides the form (EDGAR's "PRICE T
+  ROWE ASSOCIATES INC" for the row "T. Rowe Price Associates, Inc.";
+  `graph_writer._namesakes_by_other_name`, findings item 62). Never by a node's
+  `aliases`: a knowledge base's labels and other filers' spellings name brands
+  and relatives — "MESA AIRLINES INC" sits on Republic Airways Holdings' node,
+  and the Associates' name on the Group's as on the adviser's. A namesake
+  registered in another country stays a company of its own ("New York Times
+  Limited", GB, is not NEW YORK TIMES CO). Until 2026-11-06 only the two name
+  fields were read, and eight such rows on dev were uuid twins of the
+  register's node.
 - **One annual filing = one ingest** — the freshness gate keys on the exhibit
   URL (it embeds the accession), stamped only on a completed run; a newer
   filing opens the gate by itself, `--force` re-reads now.

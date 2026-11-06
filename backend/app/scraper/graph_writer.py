@@ -24,7 +24,7 @@ from app.scraper.owns_merge import SINCE_FIELDS, combine_since
 from app.scraper.edge_schema import OWNS_PROPS, edge_create_clause, owns_props
 from app.node_ids import key_on_learning, mint_node_id
 from app import addresses
-from app.scraper.mapper import (is_nominee_name, name_key, normalize_cik, normalize_entity_name,
+from app.scraper.mapper import (NAME_FORMS, is_nominee_name, name_key, normalize_cik, normalize_entity_name,
                                 parse_full_name)
 import logging
 
@@ -801,8 +801,10 @@ _NAME_CANDIDATES = 10
 def _candidates_by_name(session, name: str, name_norm: str, country: str | None) -> list[str]:
     """Every node a name alone can stand for, in `_resolve_by_name`'s order
     (exact name before name key; with a ``country``, registered there before
-    not known). A write that carries a CIK takes the first its register does
-    not contradict (`_not_this_filer`), not merely the first."""
+    not known), then the nodes that bear the name otherwise (`_namesakes_by_other_name`:
+    a register's other name, the own name in another word order). A write that
+    carries a CIK takes the first its register does not contradict
+    (`_not_this_filer`), not merely the first."""
     out: list[str] = []
     wheres = (" AND e.country = $country", " AND e.country IS NULL") if country else ("",)
     for field, value in (("name", name), ("name_normalized", name_norm)):
@@ -814,7 +816,59 @@ def _candidates_by_name(session, name: str, name_norm: str, country: str | None)
                     v=value, country=country):
                 if rec["id"] not in out:
                     out.append(rec["id"])
+    for entity_id in _namesakes_by_other_name(name, name_norm, country):
+        if entity_id not in out:
+            out.append(entity_id)
     return out
+
+
+#: how many full-text hits `_namesakes_by_other_name` reads: the index ranks a
+#: node holding every word first, and a common word ("holdings") fills the tail
+_OTHER_NAME_CANDIDATES = 30
+#: words of a name, its legal form aside, before it may match in another order:
+#: "Research Capital" is not "Capital Research" on two words
+_UNORDERED_MIN_WORDS = 3
+
+
+def _namesakes_by_other_name(name: str, name_norm: str, country: str | None) -> list[str]:
+    """The nodes that bear ``name`` otherwise than as their `name` (findings
+    item 62): a register's other current name, legal form kept — GLEIF's
+    transliteration "Tencent Holdings Limited" of 騰訊控股有限公司, "APPLE KOREA
+    LIMITED" of 애플코리아 유한회사 (`sec_ex21.legal_name_key`) — and the node's
+    own name with its words in another order, three or more words besides the
+    legal form — EDGAR's "PRICE T ROWE ASSOCIATES INC" for "T. Rowe Price
+    Associates, Inc." (`sec_ex21._unordered_key`, the rule of findings item
+    58). Found through the full-text index (whole words, any order), then
+    held to the key, under the country tiers of `_candidates_by_name`.
+
+    Not a node's aliases: a knowledge base's labels and other filers'
+    spellings name brands and relatives — "MESA AIRLINES INC" sits on
+    Republic Airways Holdings' node and "T. Rowe Price Associates, Inc." on
+    the Group's as on the adviser's. Until 2026-11-06 only `name` and
+    `name_normalized` were read, and an Exhibit 21 row of a company GLEIF
+    names in another script, or EDGAR surname first, minted a uuid twin
+    beside the register's node (7 + 1 on dev); the GLEIF→filer direction
+    (`register_pointer._join_filer`) read the other names all along."""
+    from app.db.arcadedb import run_sql
+    from app.scraper.sec_ex21 import _unordered_key, legal_name_key
+    if not name_norm:
+        return []
+    key = legal_name_key(name)
+    words = _unordered_key(name)
+    unordered = words if len([w for w in words if w not in NAME_FORMS]) >= _UNORDERED_MIN_WORDS else None
+    if not key and not unordered:
+        return []
+    same, unknown = [], []
+    for r in run_sql("SELECT id, name, other_names, country FROM Entity WHERE search_text CONTAINSTEXT :q "
+                     f"LIMIT {_OTHER_NAME_CANDIDATES}", {"q": name_norm}):
+        bears = (key and any(legal_name_key(o) == key for o in (r.get("other_names") or []))) \
+            or (unordered and r.get("name") and _unordered_key(r["name"]) == unordered)
+        if not bears:
+            continue
+        if country and r.get("country") and r["country"] != country:
+            continue                                  # a namesake registered elsewhere
+        (same if country and r.get("country") == country else unknown).append(r["id"])
+    return same + unknown
 
 
 #: two spellings of one name agree on this key (`mapper.name_key`; it lived
