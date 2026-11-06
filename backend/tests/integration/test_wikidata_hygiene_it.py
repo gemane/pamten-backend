@@ -132,3 +132,48 @@ def test_an_item_whose_ids_another_legal_entity_holds_writes_nothing(it_db):
     assert row.get("sec_cik") is None and row.get("wikidata_id") is None
     assert row["name"] == "BlackRock, Inc."
     assert it_db.run_sql("SELECT count(*) AS n FROM OWNS")[0]["n"] == 0
+
+
+def test_an_item_stating_both_ids_lands_on_the_legal_entity_not_the_filer(it_db):
+    """Nestlé, 2026-11-06 rebuild (findings item 66): with the registers running
+    first, the SEC part had written sec:0000792990 when the item arrived, and
+    the lookup — CIK before LEI — put Q160746 on the filer and left the GLEIF
+    node lei:KY37LUS27QQX7BB93L28 without it. The LEI is asked first."""
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:KY37LUS27QQX7BB93L28', name: 'Nestle S.A.', name_normalized: 'nestle', "
+        "search_text: 'Nestle S.A.', type: 'company', lei_id: 'KY37LUS27QQX7BB93L28', name_credibility: 92})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0000792990', name: 'NESTLE SA', name_normalized: 'nestle', "
+        "search_text: 'NESTLE SA', type: 'company', sec_cik: '0000792990', name_credibility: 98})")
+    data = {**_company_data([]), "name": "Nestlé", "lei": "KY37LUS27QQX7BB93L28", "leis": ["KY37LUS27QQX7BB93L28"],
+            "sec_cik": "0000792990", "sec_ciks": ["0000792990"]}
+    # the CIK on another node is EDGAR's to settle (`attach_stated_cik`), not this test's
+    with patch("app.scraper.register_pointer.attach_stated_cik", return_value=None):
+        _scrape(it_db, data)
+    by_id = {r["id"]: dict(r) for r in it_db.run_sql(
+        "SELECT id, wikidata_id, lei_id, sec_cik FROM Entity WHERE id IN ['lei:KY37LUS27QQX7BB93L28', 'sec:0000792990']")}
+    assert by_id["lei:KY37LUS27QQX7BB93L28"]["wikidata_id"] == "Q_PARENT"
+    assert by_id["sec:0000792990"].get("wikidata_id") is None
+    assert by_id["lei:KY37LUS27QQX7BB93L28"].get("sec_cik") is None            # no id from Wikidata's word
+
+
+def test_an_item_stating_several_leis_lands_on_the_parent_per_gleif(it_db):
+    """Barclays, 2026-11-06 rebuild (findings item 61): both LEI nodes exist, and
+    the lookup took the first LEI Wikidata lists — the Bank — before the pointer's
+    order (#554) could be asked. The parent per GLEIF comes first in the lookup too."""
+    bank, plc = "G5GSEF7VJP5I7OUK5573", "213800LBQA1Y9L22JB70"
+    for lei, name in ((bank, "BARCLAYS BANK PLC"), (plc, "BARCLAYS PLC")):
+        it_db.run_command(
+            f"CREATE (:Entity {{id: 'lei:{lei}', name: '{name}', name_normalized: '{name.lower()}', "
+            f"search_text: '{name}', type: 'company', lei_id: '{lei}', name_credibility: 92}})")
+    data = {**_company_data([]), "name": "Barclays", "aliases": ["Barclays PLC", "Barclays Bank"],
+            "lei": bank, "leis": [bank, plc]}
+    with patch("app.scraper.legal_identity.gleif_parents",
+               side_effect=lambda lei: [{"lei": plc, "names": ["BARCLAYS PLC"]}] if lei == bank else []), \
+         patch("app.scraper.register_pointer.fetch_gleif_record", return_value=None):
+        _scrape(it_db, data)
+    by_id = {r["id"]: dict(r) for r in it_db.run_sql(
+        f"SELECT id, wikidata_id, aliases FROM Entity WHERE id IN ['lei:{bank}', 'lei:{plc}']")}
+    assert by_id[f"lei:{plc}"]["wikidata_id"] == "Q_PARENT"
+    assert "Barclays PLC" in (by_id[f"lei:{plc}"].get("aliases") or [])
+    assert by_id[f"lei:{bank}"].get("wikidata_id") is None

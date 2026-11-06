@@ -1660,7 +1660,8 @@ class TestIdentifierBridge:
         ctx, session = _make_session_mock(single_returns=[
             None, {"id": "lei:213800LBQA1Y9L22JB70"}, {"lei_id": "213800LBQA1Y9L22JB70", "sec_cik": None},
             {"name": "Barclays PLC", "cred": 92, "aliases": None, "descr": None}])
-        with patch("app.scraper.runner.db.get_session", ctx):
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.ordered_leis", side_effect=lambda leis, names=None: list(leis)):
             eid = _upsert_entity("Barclays", None, None, None, "Q245343",
                                  lei=["G5GSEF7VJP5I7OUK5573", "213800LBQA1Y9L22JB70"])
         assert eid == "lei:213800LBQA1Y9L22JB70"
@@ -1702,6 +1703,89 @@ class TestRelatedCompanyGate:
         with patch("app.database.db.get_session", ctx):
             assert _resolve_related_company({"qid": "Q1", "lei": "AAAAAAAAAAAAAAAAAAAA"}) is None
             assert _resolve_related_company({"qid": "Q1"}) is False
+
+
+def _id_lookups(session) -> list[tuple[str, str]]:
+    """The (field, value) of every `resolve_entity_id` lookup the session ran, in order."""
+    import re
+    out = []
+    for c in session.run.call_args_list:
+        m = re.search(r"WHERE e\.(\w+) = \$v RETURN e\.id AS id LIMIT 1", c.args[0])
+        if m:
+            out.append((m.group(1), c.kwargs.get("v")))
+    return out
+
+
+class TestTheLookupAsksTheIdsAsThePointerDoes:
+    """The lookup that finds an item's node asks the stated ids as the pointer
+    writes them — the LEIs before the CIKs, several LEIs in `ordered_leis`'
+    order. Asked CIK-first, Nestlé's Q160746 took the filer the SEC part had
+    just written and left the GLEIF node without the item; asked in Wikidata's
+    order, Barclays' Q245343 took the Bank twice over, and #554's pointer order
+    was never reached (findings items 61 and 66, 2026-11-06 rebuild)."""
+
+    _NESTLE, _NESTLE_CIK = "KY37LUS27QQX7BB93L28", "0000792990"
+    _BANK, _PLC = "G5GSEF7VJP5I7OUK5573", "213800LBQA1Y9L22JB70"
+
+    def test_an_item_stating_both_ids_is_looked_up_by_its_lei_first(self):
+        # both nodes exist; the second `.single()` answers the FIRST id lookup
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": f"lei:{self._NESTLE}"}, {"lei_id": self._NESTLE, "sec_cik": None, "name": "Nestle S.A."},
+            {"name": "Nestle S.A.", "cred": 92, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.attach_stated_cik", return_value=None) as attach:
+            eid = _upsert_entity("Nestlé", None, None, None, "Q160746",
+                                 lei=self._NESTLE, sec_cik=self._NESTLE_CIK)
+        assert eid == f"lei:{self._NESTLE}"
+        assert _id_lookups(session) == [("wikidata_id", "Q160746"), ("lei_id", self._NESTLE)], \
+            "the CIK was asked before the LEI — the filer node wins over the legal entity's"
+        assert attach.call_args.args[1] == f"lei:{self._NESTLE}"       # the CIK goes to EDGAR, on that node
+
+    def test_the_cik_is_asked_when_no_stated_lei_finds_a_node(self):
+        ctx, session = _make_session_mock(single_returns=[
+            None, None, {"id": f"sec:{self._NESTLE_CIK}"},
+            {"lei_id": None, "sec_cik": self._NESTLE_CIK, "name": "NESTLE SA"},
+            {"name": "NESTLE SA", "cred": 98, "aliases": None, "descr": None},
+            {"lei": None, "wid": "Q160746", "cik": self._NESTLE_CIK}])        # the re-key check after the write
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.attach_stated_lei", return_value=None):
+            eid = _upsert_entity("Nestlé", None, None, None, "Q160746",
+                                 lei=self._NESTLE, sec_cik=self._NESTLE_CIK)
+        assert eid == f"sec:{self._NESTLE_CIK}"
+        assert [f for f, _ in _id_lookups(session)] == ["wikidata_id", "lei_id", "sec_cik"]
+
+    def test_several_stated_leis_are_looked_up_in_the_pointers_order(self):
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": f"lei:{self._PLC}"}, {"lei_id": self._PLC, "sec_cik": None, "name": "BARCLAYS PLC"},
+            {"name": "BARCLAYS PLC", "cred": 92, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.ordered_leis", return_value=[self._PLC, self._BANK]) as order:
+            eid = _upsert_entity("Barclays", None, None, None, "Q245343", aliases=["Barclays PLC", "Barclays Bank"],
+                                 lei=[self._BANK, self._PLC])
+        assert eid == f"lei:{self._PLC}"
+        assert _id_lookups(session)[1] == ("lei_id", self._PLC), "the stated order was asked, not the pointer's"
+        order.assert_called_once_with([self._BANK, self._PLC], ["Barclays", "Barclays PLC", "Barclays Bank"])
+
+    def test_a_single_stated_lei_asks_the_pointer_nothing(self):
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": f"lei:{self._PLC}"}, {"lei_id": self._PLC, "sec_cik": None, "name": "BARCLAYS PLC"},
+            {"name": "BARCLAYS PLC", "cred": 92, "aliases": None, "descr": None}])
+        with patch("app.scraper.runner.db.get_session", ctx), \
+             patch("app.scraper.legal_identity.gleif_parents") as parents:
+            _upsert_entity("Barclays PLC", None, None, None, "Q245343", lei=self._PLC)
+        parents.assert_not_called()
+
+    def test_a_related_company_is_looked_up_the_same_way(self):
+        from app.scraper.runner import _resolve_related_company
+        ctx, session = _make_session_mock(single_returns=[
+            None, {"id": f"lei:{self._PLC}"}, {"lei_id": self._PLC, "sec_cik": None, "name": "BARCLAYS PLC"}])
+        with patch("app.database.db.get_session", ctx), \
+             patch("app.scraper.register_pointer.ordered_leis", return_value=[self._PLC, self._BANK]) as order:
+            gate = _resolve_related_company({"qid": "Q245343", "name": "Barclays", "aliases": ["Barclays PLC"],
+                                             "leis": [self._BANK, self._PLC], "sec_ciks": ["0000312069"]})
+        assert gate == f"lei:{self._PLC}"
+        assert _id_lookups(session) == [("wikidata_id", "Q245343"), ("lei_id", self._PLC)]
+        order.assert_called_once_with([self._BANK, self._PLC], ["Barclays", "Barclays PLC"])
 
 
 class TestSecIndustry:

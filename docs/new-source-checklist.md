@@ -202,6 +202,13 @@ parser. Anything that does not map is either a new property (document it) or noi
       the register's own word, never by the list's order: an item for a group is its top
       legal entity — Barclays' two LEIs at equal rank put the item on the Bank, a
       subsidiary, until the parent per GLEIF came first (findings item 61, 2026-11-06).
+      And apply that order wherever the ids are asked — the lookup that finds the node
+      as much as the pointer that writes one. The pointer learnt the order and the item
+      still landed on the Bank in the next rebuild: both LEI nodes existed, and the lookup
+      found the first-listed one before any pointer ran. Likewise an LEI before a CIK —
+      GLEIF states the legal entity, a CIK names a filer: asked CIK-first after the
+      registers started running first, Nestlé's item took the filer node written a minute
+      earlier and left its GLEIF node bare (findings items 61 and 66, 2026-11-06 rebuild).
 - [ ] **A contradiction means "not this node" — say how the node was found before refusing.**
       A node the item's own ids found and whose register id disagrees is a refusal. A node
       found by the name alone is only one company of that name: J.P. Morgan Securities LLC
