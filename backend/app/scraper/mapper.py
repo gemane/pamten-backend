@@ -400,6 +400,31 @@ def normalize_address(text: str | None) -> str | None:
 _LEADING_THE = re.compile(r"^the\s+")
 
 
+#: Unicode's dashes (hyphen, non-breaking hyphen, figure dash, en and em dash,
+#: horizontal bar, minus): one spelling of a name uses "–", another "-"
+_DASHES = re.compile(r"[‐-―−]")
+#: the Latin accents: Unicode's combining diacritical marks (U+0300–U+036F)
+#: and their extensions — NOT a kana's voicing mark (U+3099, U+309A): "グ" is
+#: "ク" + a mark too, and dropping it would rename ソフトバンクグループ
+_LATIN_MARKS = re.compile(r"[̀-ͯ᪰-᫿᷀-᷿]")
+
+
+def fold_marks(text: str) -> str:
+    """``text`` with its Latin accents folded and its dashes made plain:
+    "Perú" is "Peru", "Yaborã" "Yabora", "International – EAI" "International
+    - EAI". The letters themselves stay — every script keeps its characters:
+    NFKD splits an accented letter into the letter and its mark (dropped),
+    widens a fullwidth Latin letter to the plain one ("ｅＦｒｏｎｔ株式会社"
+    keys as "efront株式会社") and splits a voiced kana or a Hangul syllable
+    too, which NFC puts back together. The stored key `normalize_entity_name`
+    never folded accents while `name_key` and `legal_name_key` did, so an
+    accented Exhibit 21 row ("MercadoPago Perú S.R.L.") minted a twin of the
+    GLEIF node whose record spells the name without them — 7 pairs on dev
+    (findings item 65, 2026-11-06)."""
+    plain = _LATIN_MARKS.sub("", unicodedata.normalize("NFKD", text))
+    return _DASHES.sub("-", unicodedata.normalize("NFC", plain))
+
+
 def normalize_entity_name(name: str) -> str:
     """
     Canonical form of a company name for cross-source deduplication.
@@ -411,7 +436,7 @@ def normalize_entity_name(name: str) -> str:
          "Domino's Pizza, Inc.", 'DOMINOS PIZZA INC' → 'dominos pizza'
          'The New York Times Company', 'NEW YORK TIMES CO' → 'new york times'
     """
-    name = fold_apostrophes(strip_edgar_tag(name)).lower()
+    name = fold_marks(fold_apostrophes(strip_edgar_tag(name)).lower())
     name = name.replace(".", "")
     # A run of spaced single letters is an abbreviation written with spaces:
     # GLEIF's "GRUPO TELEVISA S A B" is EDGAR's "Grupo Televisa, S.A.B.", and
