@@ -244,7 +244,12 @@ registered name. It is a flat JSON object keyed by an arbitrary integer index:
 Matching is done by normalising both the query and the `title` field: EDGAR's
 tag ("/NEW/") dropped, lowercase, punctuation and the legal forms at the END
 (Inc, Corp, LLC, Group, Holding, etc.) stripped, then compare. Exact matches win;
-prefix matches are the fallback. A form word elsewhere stays: dropped anywhere,
+prefix matches are the fallback; then a title with the **same words in another order**,
+held to three words or more (the writers' unordered rule, item 58) and without the
+similarity hold — EDGAR conforms a filer named after a person surname first, so the file's
+"PRICE T ROWE GROUP INC" is "T. Rowe Price Group, Inc.", which neither the exact nor the
+prefix match saw and the similarity (0.29) would have refused (findings item 59,
+2026-11-06). Two words swapped ("Energy Fuels" / "FUELS ENERGY") are not matched. A form word elsewhere stays: dropped anywhere,
 "NV Energy" keyed "energy" and took ENERGY FUELS INC as its prefix match
 (2026-10-30). A title tagged as an ADR programme ("MTN GROUP LTD/ADR") is skipped
 (`is_adr_listing`): that CIK is the depositary's receipt registration, with no
