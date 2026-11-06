@@ -419,3 +419,76 @@ class TestUnconfirmed:
     def test_a_node_without_register_ids_or_an_item_without_ids_is_not_judged(self):
         assert rp.unconfirmed({"lei_id": None, "sec_cik": None}, [self.LEI], [self.CIK]) is False
         assert rp.unconfirmed({"lei_id": None, "sec_cik": self.CIK}, [], []) is False
+
+
+class TestSeveralStatedLeis:
+    """findings item 61: an item stating several LEIs describes a group, and the
+    group's node is its top legal entity. Barclays' Q245343 states the Bank's
+    and the PLC's at equal rank; the Bank, listed first, took the item."""
+    BANK, PLC = "G5GSEF7VJP5I7OUK5573", "213800LBQA1Y9L22JB70"
+
+    def _ordered(self, leis, names=None, parents=None, record_names=None):
+        parents = parents or {}
+        record_names = record_names or {}
+        with patch("app.scraper.legal_identity.gleif_parents",
+                   side_effect=lambda lei: [{"lei": p} for p in parents.get(lei, [])]), \
+             patch.object(rp, "_record_legal_names", side_effect=lambda lei: record_names.get(lei, [])):
+            return rp.ordered_leis(leis, names)
+
+    def test_the_parent_of_another_stated_lei_comes_first(self):
+        got = self._ordered([self.BANK, self.PLC], ["Barclays"], parents={self.BANK: [self.PLC]})
+        assert got == [self.PLC, self.BANK]
+
+    def test_then_the_one_bearing_the_items_name_with_the_form_kept(self):
+        names = ["Barclays", "Barclays PLC", "Barclays Bank"]       # the label and the aliases
+        records = {self.BANK: ["BARCLAYS BANK PLC"], self.PLC: ["BARCLAYS PLC"]}
+        assert self._ordered([self.BANK, self.PLC], names, record_names=records) == [self.PLC, self.BANK]
+        # "Barclays Bank" is not BARCLAYS BANK PLC: the form is part of the name
+        assert self._ordered([self.BANK, self.PLC], ["Barclays Bank"], record_names=records) == [self.BANK, self.PLC]
+
+    def test_the_parent_rule_outranks_the_name(self):
+        records = {self.BANK: ["BARCLAYS BANK PLC"], self.PLC: ["BARCLAYS PLC"]}
+        got = self._ordered([self.PLC, self.BANK], ["Barclays Bank PLC"], parents={self.BANK: [self.PLC]},
+                            record_names=records)
+        assert got == [self.PLC, self.BANK]
+
+    def test_without_a_parent_or_a_name_the_stated_order_stands(self):
+        assert self._ordered([self.BANK, self.PLC], ["Barclays"]) == [self.BANK, self.PLC]
+        assert self._ordered([self.BANK, self.PLC, self.BANK]) == [self.BANK, self.PLC]      # stated twice: once
+
+    def test_a_single_lei_asks_gleif_nothing(self):
+        with patch("app.scraper.legal_identity.gleif_parents") as parents, \
+             patch.object(rp, "_record_legal_names") as rec:
+            assert rp.ordered_leis([self.BANK], ["Barclays"]) == [self.BANK]
+        assert not parents.called and not rec.called
+
+    def test_gleif_unreadable_falls_back_to_the_stated_order(self):
+        with patch("app.scraper.legal_identity.gleif_parents", side_effect=RuntimeError("down")), \
+             patch.object(rp, "fetch_gleif_record", side_effect=RuntimeError("down")):
+            assert rp.ordered_leis([self.BANK, self.PLC], ["Barclays PLC"]) == [self.BANK, self.PLC]
+
+    def test_the_pointer_asks_gleif_in_that_order(self):
+        with patch.object(rp, "_gleif_enabled", return_value=True), \
+             patch.object(rp, "_sec_enabled", return_value=True), \
+             patch.object(rp, "ordered_leis", return_value=[self.PLC, self.BANK]) as order, \
+             patch.object(rp, "write_from_gleif", side_effect=["lei:PLC", "lei:BANK"]) as gl:
+            assert rp.write_from_pointer([self.BANK, self.PLC], [], names=["Barclays"]) == "lei:PLC"
+        order.assert_called_once_with([self.BANK, self.PLC], ["Barclays"])
+        gl.assert_called_once_with(self.PLC)
+
+    def test_a_stated_lei_on_a_filer_is_attached_in_that_order(self):
+        node = {"lei_id": None, "sec_cik": "0000312069", "name": "BARCLAYS PLC"}
+        with patch.object(rp, "_gleif_enabled", return_value=True), \
+             patch("app.entity_resolution.resolve_entity_id", return_value=None), \
+             patch("app.database.db.get_session"), \
+             patch.object(rp, "ordered_leis", return_value=[self.PLC, self.BANK]) as order, \
+             patch.object(rp, "write_from_gleif", return_value="sec:0000312069") as gl:
+            assert rp.attach_stated_lei(node, "sec:0000312069", [self.BANK, self.PLC], ["Barclays"]) == "sec:0000312069"
+        order.assert_called_once_with([self.BANK, self.PLC], ["Barclays"])
+        gl.assert_called_once_with(self.PLC, candidates=["sec:0000312069"], by_name=False)
+
+    def test_the_records_names_are_read_from_the_golden_copy_shape(self):
+        with patch.object(rp, "fetch_gleif_record", return_value=rp.golden_copy_record(_api()["data"]["attributes"])):
+            assert rp._record_legal_names("549300LRIF3NWCU26A80") == ["BlackRock Finance, Inc."]
+        with patch.object(rp, "fetch_gleif_record", return_value=None):
+            assert rp._record_legal_names("X" * 20) == []

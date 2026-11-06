@@ -266,13 +266,70 @@ def write_from_edgar(cik: str, candidates: list[str] | None = None, lei: str | N
                                   candidates=candidates)
 
 
-def attach_stated_lei(node: dict, node_id: str, leis: list[str]) -> str | None:
+def _record_legal_names(lei: str) -> list[str]:
+    """The legal name and the other CURRENT names of GLEIF's record (its
+    transliterations and alternative-language legal names, as the bulk
+    importer reads them — never a previous legal name: BlackRock's old parent
+    still lists "BLACKROCK, INC.", the item's label, findings item 22), or []
+    when GLEIF does not know the LEI or cannot be asked (logged)."""
+    from app.scraper.gleif_lei_cdf import _other_names
+    try:
+        rec = fetch_gleif_record(lei)
+    except Exception as exc:  # noqa: BLE001 — a tie-break only; the stated order stands
+        log.warning("GLEIF record %s unreadable for the name tie-break: %s", lei, exc)
+        return []
+    if not rec:
+        return []
+    entity = rec.get("Entity") or {}
+    legal = (entity.get("LegalName") or {}).get("$")
+    current, _previous, _trading = _other_names(entity, legal or "")
+    return [n for n in [legal, *current] if n]
+
+
+def ordered_leis(leis: list[str], names: list[str] | None = None) -> list[str]:
+    """The LEIs a knowledge base's item states, in the order a register is
+    asked for them (findings item 61). An item describes an organisation,
+    and one that states several LEIs usually describes a group: Barclays'
+    Q245343 states the Bank's and the PLC's at equal rank, and the first
+    listed (the Bank, a subsidiary) took the item while BARCLAYS PLC, the
+    parent and the filer, got nothing. The group's node is its top legal
+    entity, so an LEI GLEIF names as the parent of another stated LEI comes
+    first (`legal_identity.gleif_parents`); among the rest, one whose record
+    bears the item's label or an alias with the legal form kept
+    (`sec_ex21.legal_name_key`: "Barclays PLC" is BARCLAYS PLC, "Barclays
+    Bank" is not BARCLAYS BANK PLC); then the stated order. A single LEI is
+    asked nothing."""
+    if len(leis) < 2:
+        return list(leis)
+    from app.scraper.legal_identity import gleif_parents
+    from app.scraper.sec_ex21 import legal_name_key
+    stated = list(dict.fromkeys(leis))
+    parents_of: dict[str, set[str]] = {}
+    for lei in stated:
+        try:
+            parents_of[lei] = {p.get("lei") for p in gleif_parents(lei) or [] if p.get("lei")}
+        except Exception as exc:  # noqa: BLE001 — the rule falls back to the names and the stated order
+            log.warning("GLEIF parents of %s unreadable: %s", lei, exc)
+            parents_of[lei] = set()
+    is_parent = {lei: sum(1 for other in stated if other != lei and lei in parents_of[other]) for lei in stated}
+    item_keys = {legal_name_key(n) for n in (names or []) if n} - {""}
+    named = {lei: (any(legal_name_key(n) in item_keys for n in _record_legal_names(lei)) if item_keys else False)
+             for lei in stated}
+    ordered = sorted(stated, key=lambda lei: (-is_parent[lei], -int(named[lei]), stated.index(lei)))
+    if ordered != stated:
+        log.info("several stated LEIs %s asked as %s (parent of another: %s; bears the item's name: %s)",
+                 stated, ordered, [x for x in stated if is_parent[x]], [x for x in stated if named[x]])
+    return ordered
+
+
+def attach_stated_lei(node: dict, node_id: str, leis: list[str], names: list[str] | None = None) -> str | None:
     """A knowledge base resolved to ``node`` (an EDGAR filer: CIK, no LEI) and
     states an LEI the graph does not hold: GLEIF is asked, and the node takes
     the LEI when the registers agree (`legal_identity`); otherwise GLEIF's node
     is written on its own. Until 2026-10-30 the LEI was dropped (#480): Baillie
-    Gifford & Co's record 549300UYMK70HLNJU654 was never fetched. Returns the
-    node the LEI landed on, or None."""
+    Gifford & Co's record 549300UYMK70HLNJU654 was never fetched. Several
+    stated LEIs are asked in `ordered_leis`' order (findings item 61). Returns
+    the node the LEI landed on, or None."""
     from app.database import db
     from app.entity_resolution import resolve_entity_id
     if node.get("lei_id") or not node.get("sec_cik") or not leis or not _gleif_enabled():
@@ -280,7 +337,7 @@ def attach_stated_lei(node: dict, node_id: str, leis: list[str]) -> str | None:
     with db.get_session() as session:
         if any(resolve_entity_id(session, lei_id=x) for x in leis):
             return None
-    for lei in leis:
+    for lei in ordered_leis(leis, names):
         if landed := write_from_gleif(lei, candidates=[node_id], by_name=False):
             return landed
     return None
@@ -345,15 +402,18 @@ def attach_stated_cik(node: dict, node_id: str, ciks: list[str]) -> str | None:
     return None
 
 
-def write_from_pointer(leis: list[str], ciks: list[str], candidates: list[str] | None = None) -> str | None:
+def write_from_pointer(leis: list[str], ciks: list[str], candidates: list[str] | None = None,
+                       names: list[str] | None = None) -> str | None:
     """The node a register writes for the first id it knows — an LEI before a
     CIK (GLEIF states the legal entity; a CIK names a filer) — or None when no
     register that is switched on knows any of them. ``candidates`` are nodes
     the register weighs as that legal entity on its own terms (the GLEIF join,
     the EDGAR filer match): the node a knowledge base's item found by name
-    (findings item 50)."""
+    (findings item 50). Several stated LEIs are asked in `ordered_leis`' order
+    — the parent of the others first, then the one bearing the item's
+    ``names`` (findings item 61)."""
     if leis and _gleif_enabled():
-        for lei in leis:
+        for lei in ordered_leis(leis, names):
             if node_id := (write_from_gleif(lei, candidates=candidates) if candidates else write_from_gleif(lei)):
                 return node_id
     if ciks and _sec_enabled():
