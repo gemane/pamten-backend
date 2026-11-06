@@ -367,7 +367,13 @@ register that is off, a filer the name search misses). Both dispatchers then run
 source once more when it answered `no_results` or `not_a_company` and the node the
 query names now holds an id it did not hold before (`runner.rerun_for_new_ids`).
 The result carries `"rerun": "new_ids"`, and the on-demand run log has a second row
-with that reason (findings item 27, Toast, Inc.). A
+with that reason (findings item 27, Toast, Inc.). The mirror for people: the SEC's
+seat-holders pass (the Form 4s and 8-K departures of everyone with an open seat at the
+company) reads the graph's persons, and the knowledge bases that write officers run after
+it — so both dispatchers run that pass once more at the end when the filer gained seat
+holders without a holding during the run (`runner.rerun_for_new_seats` →
+`run_sec_seat_holders`; the result carries `seats_rerun`, the on-demand run log a row with
+reason `new_seats`; findings item 67). A
 source that raises comes back as `{"status": "error", "detail": …}`; the run-all
 endpoint then finishes its `ScrapeRun` row as `failed`, naming the source.
 Both dispatchers also note the loss (`graph_writer.mark_source_lost`): nothing of

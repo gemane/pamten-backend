@@ -538,11 +538,17 @@ def _upsert_person(
         if rec:
             # Backfill detail for a person first seen from a source that lacked it
             # (e.g. created as a bare founder name, later enriched on re-scrape).
-            # Only fill blanks — never overwrite what's already there.
+            # Only fill blanks — never overwrite what's already there. The item
+            # id is one of them: a person the SEC wrote first from a Form 4
+            # (registers before knowledge bases, findings item 60) took
+            # Wikidata's aliases and never its QID — 22 of them in the
+            # 2026-11-06 rebuild, Sergey Brin and Sundar Pichai among them
+            # (findings item 67).
             session.run(
                 """
                 MATCH (p:Person {id: $id})
                 SET p.birth_date   = COALESCE(p.birth_date, $bdate),
+                    p.wikidata_id  = COALESCE(p.wikidata_id, $wid),
                     p.death_date   = COALESCE(p.death_date, $ddate),
                     p.birth_place  = COALESCE(p.birth_place, $bplace),
                     p.image_url    = COALESCE(p.image_url, $image),
@@ -559,8 +565,8 @@ def _upsert_person(
                     // had one (954, 2026-10-25); only the person scrape did.
                     p.last_scraped_at = $now
                 """,
-                id=rec["id"], bdate=birth_date, ddate=death_date, bplace=birth_place, now=_now_iso(),
-                image=image_url, wikipedia=wikipedia_url, desc=description or None,
+                id=rec["id"], wid=wikidata_id, bdate=birth_date, ddate=death_date, bplace=birth_place,
+                now=_now_iso(), image=image_url, wikipedia=wikipedia_url, desc=description or None,
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities or None, source_id=source_id,
             )
@@ -2370,8 +2376,7 @@ def _record_sec_industry(entity_id: str, cik: str | None, source_id: str) -> Non
 def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -> dict:
     """The write phase of `run_scrape_sec_edgar`: the filer, its holders, its
     insiders and officers, from the scraped `data`."""
-    from app.scraper.sec_edgar import (fetch_departures, fetch_filer_headquarters,
-                                       fetch_filer_website)
+    from app.scraper.sec_edgar import fetch_filer_headquarters, fetch_filer_website
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     scraped: list[dict] = []
 
@@ -2694,90 +2699,12 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             log.info("SEC EDGAR: wrote insider OWNS %r → %r (%s shares)", name, data["name"], shares)
 
-    # Person-centric insider ownership: for people already linked to this company
-    # (founders/execs/directors — e.g. from the Wikidata pass) who don't yet have
-    # an ownership edge, read THEIR own Form 4s. This reaches insiders the
-    # issuer-side scan misses, e.g. a founder-CEO whose filings are flooded out of
-    # the company's recent window (Larry Fink at BlackRock).
-    # Departures — the seats EDGAR never closes on its own. A departing
-    # insider files nothing; the company announces it in an 8-K, Item 5.02.
-    # Read for the people we list (this scan + already on the graph), never to
-    # mint anyone; see sec_edgar.fetch_departures.
-    known = dict(role_holders)
-    with db.get_session() as session:
-        for r in session.run(
-                """MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
-                   WHERE r.until IS NULL RETURN DISTINCT p.id AS id, p.full_name AS name""",
-                id=target_id):
-            if r.get("name"):
-                known.setdefault(r["name"], r["id"])
-    if data.get("cik") and known:
-        for dep in fetch_departures(data["cik"], list(known)):
-            closed = _close_role_sec(known[dep["name"]], target_id, dep["until"],
-                                     role=dep.get("role"), source_id=source_id,
-                                     source_url=dep.get("source_url"),
-                                     source_date=dep.get("source_date"),
-                                     filing_type="8-K",
-                                     read_from=READ_NARRATIVE)  # Item 5.02's sentences
-            if closed:
-                scraped.append({"type": "person", "name": dep["name"],
-                                "role": f"departed {dep.get('role') or ''}".strip()})
-                log.info("SEC EDGAR: 8-K Item 5.02 closed %d seat(s) of %r at %r (until %s)",
-                         closed, dep["name"], data["name"], dep["until"])
-
-    from app.scraper.sec_edgar import fetch_insider_holding
-    cik = data.get("cik")
-    # dated and per class; the bare total only for a scrape result that predates it
-    shares_out = data.get("shares_outstanding_detail") or data.get("shares_outstanding")
-    if cik:
-        # Each person once, only seats still held, in a fixed order: a person
-        # with two seats took two of the slots, and the cap cut a different
-        # set on every run (findings item 29).
-        with db.get_session() as session:
-            known = [
-                {"id": r.get("id"), "name": r.get("name"), "cik": r.get("cik")}
-                for r in session.run(
-                    """
-                    MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
-                    WHERE r.until IS NULL AND NOT (p)-[:OWNS]->(e)
-                    RETURN DISTINCT p.id AS id, p.full_name AS name, p.sec_cik AS cik
-                    ORDER BY id LIMIT $cap
-                    """,
-                    id=target_id, cap=MAX_INSIDER_LOOKUPS,
-                )
-            ]
-        for row in known:
-            pname, pid = row["name"], row["id"]
-            if not pname or not pid:
-                continue
-            holding = fetch_insider_holding(pname, cik, shares_out, person_cik=row.get("cik"))
-            if not holding:
-                continue
-            if holding.get("cik") and not row.get("cik"):
-                pid = _stamp_found_cik(pid, holding["cik"])
-            if stated_by_13dg(pid, target_id, source_id):
-                _note_form4_yields(scraped, pname, data["name"])
-                continue
-            stake = holding.get("stake_percent")
-            _upsert_owns_sec(
-                owner_id=pid, owned_id=target_id, source_id=source_id,
-                ownership_type=(derive_ownership_type(stake) if stake is not None else "minority"),
-                file_date=holding.get("source_date"),
-                stake_percent=stake,
-                shares=holding.get("shares_owned"), share_class=holding.get("share_class"),
-                shares_outstanding=holding.get("shares_outstanding"),
-                denominator_date=holding.get("denominator_date"),
-                filing_type="Form 4", read_from=READ_FIELD,
-                # a Form 3/4 states what is held AS OF the report, not since
-                # when: its date written as a start hid an insider's older
-                # holding before their latest trade
-                filing_dates_the_stake=False,
-                source_url=holding.get("source_url"),
-                owner_label="Person",
-            )
-            scraped.append({"type": "owns", "name": pname, "role": "insider owner"})
-            log.info("SEC EDGAR: person-centric insider OWNS %r → %r (%s shares)",
-                     pname, data["name"], holding.get("shares_owned"))
+    # The seats' own filings: departures and personal Form 4s for the people
+    # with a seat at the company — this scan's and the graph's.
+    asked = _seat_holders_pass(target_id, data.get("cik"), data["name"],
+                               # dated and per class; the bare total only for a scrape result that predates it
+                               data.get("shares_outstanding_detail") or data.get("shares_outstanding"),
+                               source_id, scraped, role_holders)
 
     log.info(
         "SEC EDGAR runner: finished %r — %d nodes written",
@@ -2803,7 +2730,150 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         "entity_id": target_id,
         "total":     len(scraped),
         "scraped":   scraped,
+        "seats_asked": asked,       # the seat holders whose own Form 4s this run looked up (item 67)
     }
+
+
+def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, shares_out,
+                       source_id: str, scraped: list[dict], role_holders: dict[str, str] | None = None) -> list[str]:
+    """What the seats at ``target_id`` say for themselves on EDGAR — the people
+    with an open HAS_ROLE to the company, this scan's (``role_holders``) and the
+    graph's (founders, executives, directors a knowledge base wrote). Returns
+    the ids of the persons whose own Form 4s were looked up (``seats_asked`` in
+    the SEC result), so a dispatcher can see which seats arrived after.
+
+    Person-centric insider ownership: for those who don't yet have an ownership
+    edge, read THEIR own Form 4s. This reaches insiders the issuer-side scan
+    misses, e.g. a founder-CEO whose filings are flooded out of the company's
+    recent window (Larry Fink at BlackRock). Departures — the seats EDGAR never
+    closes on its own: a departing insider files nothing; the company announces
+    it in an 8-K, Item 5.02, read for the people we list, never to mint anyone
+    (`sec_edgar.fetch_departures`).
+
+    Run by `_write_sec_edgar` at the end of a SEC scrape, and once more by
+    `run_scrape_all` when a source after the SEC's added seats (findings item
+    67): with the registers running before the knowledge bases (item 60) the
+    SEC part met no Wikidata officers yet, and 22 of them lost their Form 4
+    lookups, their CIKs and their item ids in the 2026-11-06 rebuild."""
+    from app.scraper.sec_edgar import fetch_departures, fetch_insider_holding
+    known = dict(role_holders or {})
+    with db.get_session() as session:
+        for r in session.run(
+                """MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+                   WHERE r.until IS NULL RETURN DISTINCT p.id AS id, p.full_name AS name""",
+                id=target_id):
+            if r.get("name"):
+                known.setdefault(r["name"], r["id"])
+    if cik and known:
+        for dep in fetch_departures(cik, list(known)):
+            closed = _close_role_sec(known[dep["name"]], target_id, dep["until"],
+                                     role=dep.get("role"), source_id=source_id,
+                                     source_url=dep.get("source_url"),
+                                     source_date=dep.get("source_date"),
+                                     filing_type="8-K",
+                                     read_from=READ_NARRATIVE)  # Item 5.02's sentences
+            if closed:
+                scraped.append({"type": "person", "name": dep["name"],
+                                "role": f"departed {dep.get('role') or ''}".strip()})
+                log.info("SEC EDGAR: 8-K Item 5.02 closed %d seat(s) of %r at %r (until %s)",
+                         closed, dep["name"], company_name, dep["until"])
+
+    asked: list[str] = []
+    if cik:
+        # Each person once, only seats still held, in a fixed order: a person
+        # with two seats took two of the slots, and the cap cut a different
+        # set on every run (findings item 29).
+        with db.get_session() as session:
+            known = [
+                {"id": r.get("id"), "name": r.get("name"), "cik": r.get("cik")}
+                for r in session.run(
+                    """
+                    MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+                    WHERE r.until IS NULL AND NOT (p)-[:OWNS]->(e)
+                    RETURN DISTINCT p.id AS id, p.full_name AS name, p.sec_cik AS cik
+                    ORDER BY id LIMIT $cap
+                    """,
+                    id=target_id, cap=MAX_INSIDER_LOOKUPS,
+                )
+            ]
+        for row in known:
+            pname, pid = row["name"], row["id"]
+            if not pname or not pid:
+                continue
+            asked.append(pid)
+            holding = fetch_insider_holding(pname, cik, shares_out, person_cik=row.get("cik"))
+            if not holding:
+                continue
+            if holding.get("cik") and not row.get("cik"):
+                pid = _stamp_found_cik(pid, holding["cik"])
+            if stated_by_13dg(pid, target_id, source_id):
+                _note_form4_yields(scraped, pname, company_name)
+                continue
+            stake = holding.get("stake_percent")
+            _upsert_owns_sec(
+                owner_id=pid, owned_id=target_id, source_id=source_id,
+                ownership_type=(derive_ownership_type(stake) if stake is not None else "minority"),
+                file_date=holding.get("source_date"),
+                stake_percent=stake,
+                shares=holding.get("shares_owned"), share_class=holding.get("share_class"),
+                shares_outstanding=holding.get("shares_outstanding"),
+                denominator_date=holding.get("denominator_date"),
+                filing_type="Form 4", read_from=READ_FIELD,
+                # a Form 3/4 states what is held AS OF the report, not since
+                # when: its date written as a start hid an insider's older
+                # holding before their latest trade
+                filing_dates_the_stake=False,
+                source_url=holding.get("source_url"),
+                owner_label="Person",
+            )
+            scraped.append({"type": "owns", "name": pname, "role": "insider owner"})
+            log.info("SEC EDGAR: person-centric insider OWNS %r → %r (%s shares)",
+                     pname, company_name, holding.get("shares_owned"))
+    return asked
+
+
+def seat_holders_without_holdings(entity_id: str | None) -> frozenset[str]:
+    """The people holding an open seat at ``entity_id`` with no OWNS edge to it
+    — the ones `_seat_holders_pass` looks up on EDGAR; empty for no node."""
+    if not entity_id:
+        return frozenset()
+    with db.get_session() as session:
+        return frozenset(r["id"] for r in session.run(
+            """MATCH (p:Person)-[r:HAS_ROLE]->(e:Entity {id: $id})
+               WHERE r.until IS NULL AND NOT (p)-[:OWNS]->(e) RETURN DISTINCT p.id AS id""",
+            id=entity_id) if r.get("id"))
+
+
+def rerun_for_new_seats(result) -> bool:
+    """Whether the SEC's seat-holders pass runs once more after the other
+    sources: its run wrote a filer with a CIK, and that filer now has seat
+    holders without a holding the run did not look up (``seats_asked``) —
+    officers a knowledge base wrote after it (findings item 67). The same
+    seats mean the same lookups again, so no second ask; a result without
+    ``seats_asked`` (an older shape) asks nothing."""
+    if not isinstance(result, dict) or result.get("status") not in ("ok", "partial"):
+        return False
+    if not (result.get("cik") and result.get("entity_id")) or not isinstance(result.get("seats_asked"), list):
+        return False
+    return bool(seat_holders_without_holdings(result["entity_id"]) - set(result["seats_asked"]))
+
+
+@_with_autodedup
+def run_sec_seat_holders(entity_id: str, cik: str, company_name: str) -> dict:
+    """The seat-holders pass on its own (`_seat_holders_pass`), for a filer the
+    SEC scrape already wrote: the issuer's share count comes from the cached
+    XBRL fetch, no filing is re-read. Returns what it wrote."""
+    from dataclasses import asdict
+
+    from app.scraper.sec_edgar import fetch_shares_outstanding_detail
+    source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
+    detail = fetch_shares_outstanding_detail(cik)
+    scraped: list[dict] = []
+    asked = _seat_holders_pass(entity_id, cik, company_name, asdict(detail) if detail else None, source_id, scraped)
+    log.info("SEC EDGAR: seat holders of %r looked up once more after the other sources — %d written",
+             company_name, len(scraped))
+    return {"status": "ok", "company": company_name, "entity_id": entity_id, "total": len(scraped),
+            "scraped": scraped, "seats_asked": asked}
 
 
 # ── Scraping a person ─────────────────────────────────────────────────────────
@@ -2939,6 +3009,18 @@ def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> di
     for spec in specs:
         if spec.enabled() and rerun_for_new_ids(spec, results.get(spec.name), ids_before, query, country):
             results[spec.name] = {**run_one(spec), "rerun": "new_ids"}
+    # and the SEC's seat-holders pass once more, for the officers a later source
+    # wrote: their Form 4s and 8-K departures by name (findings item 67). The
+    # registers run before the knowledge bases (item 60), so the SEC part met
+    # none of Wikidata's officers on its own run.
+    sec = results.get("sec_edgar")
+    if rerun_for_new_seats(sec):
+        try:
+            results["sec_edgar"] = {**sec, "seats_rerun": run_sec_seat_holders(
+                sec["entity_id"], sec["cik"], sec.get("company") or query)}
+        except Exception as exc:  # noqa: BLE001 - an extra pass; its loss is logged, not fatal
+            log.error("sec_edgar seat-holders rerun failed for %r: %s", query, exc)
+            results["sec_edgar"] = {**sec, "seats_rerun": {"status": "error", "detail": str(exc)}}
 
     return {"status": "ok", "query": query, "results": results}
 

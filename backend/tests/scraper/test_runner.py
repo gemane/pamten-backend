@@ -473,6 +473,61 @@ class TestRunScrapeAll:
         assert result["results"]["sec_edgar"]["status"]       == "ok"
         assert result["results"]["open_corporates"]["status"] == "ok"
 
+    def _sec_filer(self, asked=()):
+        return {**self._sec_result(), "cik": "0001652044", "entity_id": "sec:0001652044", "seats_asked": list(asked)}
+
+    def test_the_sec_seat_holders_pass_runs_once_more_for_seats_a_later_source_wrote(self):
+        """findings item 67: the registers run first, so the SEC part met none of
+        Wikidata's officers; their Form 4s and departures are asked at the end."""
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.scraper_registry.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q92764"})), \
+             patch("app.scraper.runner.run_scrape",                 return_value=self._wd_result()), \
+             patch("app.scraper.runner.run_scrape_sec_edgar",       return_value=self._sec_filer()), \
+             patch("app.scraper.runner.run_scrape_open_corporates", return_value=self._oc_result()), \
+             patch("app.scraper.runner.run_sec_seat_holders", return_value={"status": "ok", "total": 1}) as rerun:
+            result = run_scrape_all("Alphabet", depth=1)
+        rerun.assert_called_once_with("sec:0001652044", "0001652044", "Tesla")
+        assert result["results"]["sec_edgar"]["seats_rerun"] == {"status": "ok", "total": 1}
+        assert result["results"]["sec_edgar"]["status"] == "ok"
+
+    def test_seats_the_sec_run_looked_up_mean_no_second_pass(self):
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.scraper_registry.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q92764"})), \
+             patch("app.scraper.runner.run_scrape",                 return_value=self._wd_result()), \
+             patch("app.scraper.runner.run_scrape_sec_edgar",       return_value=self._sec_filer(["wd:Q92764"])), \
+             patch("app.scraper.runner.run_scrape_open_corporates", return_value=self._oc_result()), \
+             patch("app.scraper.runner.run_sec_seat_holders") as rerun:
+            result = run_scrape_all("Alphabet", depth=1)
+        rerun.assert_not_called()
+        assert "seats_rerun" not in result["results"]["sec_edgar"]
+
+
+class TestRerunForNewSeats:
+    """`rerun_for_new_seats`: a second seat-holders pass only for a filer the SEC
+    run wrote, when the filer has seat holders without a holding the run did
+    not look up (item 67)."""
+    SEC = {"status": "ok", "cik": "0001652044", "entity_id": "sec:0001652044", "seats_asked": ["wd:Q1"]}
+
+    def test_new_seats_after_a_filer_run(self):
+        from app.scraper.runner import rerun_for_new_seats
+        with patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q1", "wd:Q2"})):
+            assert rerun_for_new_seats(self.SEC) is True
+            assert rerun_for_new_seats({**self.SEC, "seats_asked": ["wd:Q1", "wd:Q2"]}) is False
+            assert rerun_for_new_seats({**self.SEC, "status": "partial", "seats_asked": []}) is True
+
+    def test_nothing_without_a_filer_a_cik_or_the_seats_asked(self):
+        from app.scraper.runner import rerun_for_new_seats
+        with patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q1", "wd:Q2"})) as seats:
+            assert rerun_for_new_seats({**self.SEC, "status": "no_results"}) is False
+            assert rerun_for_new_seats({**self.SEC, "cik": None}) is False
+            assert rerun_for_new_seats({**self.SEC, "entity_id": None}) is False
+            assert rerun_for_new_seats({k: v for k, v in self.SEC.items() if k != "seats_asked"}) is False   # an older shape
+            assert rerun_for_new_seats(None) is False
+            assert rerun_for_new_seats({"status": "disabled"}) is False
+        seats.assert_not_called()
+
 
 # ── Deduplication logic ────────────────────────────────────────────────────────
 
@@ -742,6 +797,18 @@ class TestUpsertPerson:
         backfill_cypher = session.run.call_args_list[1].args[0]
         assert "SET p.birth_date" in backfill_cypher
         assert "CREATE" not in backfill_cypher
+
+    def test_a_person_found_by_name_takes_the_item_id(self):
+        """findings item 67: the SEC wrote 'Sergey Brin' from a Form 4 before
+        Wikidata's officer arrived; the backfill filled his aliases and never
+        his QID (22 persons in the 2026-11-06 rebuild). Fill-only, like the rest."""
+        ctx, session = _make_session_mock(single_returns=[None, {"id": "sec:0001295032"}])
+        with patch("app.scraper.runner.db.get_session", ctx):
+            pid = _upsert_person("Sergey Brin", None, None, "Q92764", aliases=["Sergey Mikhailovich Brin"])
+        assert pid == "sec:0001295032"
+        backfill = session.run.call_args_list[2]
+        assert "p.wikidata_id  = COALESCE(p.wikidata_id, $wid)" in backfill.args[0]
+        assert backfill.kwargs["wid"] == "Q92764"
 
 
 class TestUpsertOwns:
@@ -1103,11 +1170,17 @@ class TestPersonCentricCik:
              patch("app.scraper.runner._upsert_owns_sec", side_effect=lambda **kw: owns.append(kw)), \
              patch("app.scraper.runner.set_scrape_target"), \
              patch("app.scraper.graph_writer.settings.SCRAPER_GEOCODE_ENABLED", False):
-            run_scrape_sec_edgar("Tesla")
+            self.result = run_scrape_sec_edgar("Tesla")
         return owns, asked, stamps
 
     HOLDING = {"shares_owned": 85000, "stake_percent": None, "cik": "0001242782",
                "source_url": "https://sec.gov/f4", "source_date": "2025-05-08"}
+
+    def test_the_result_names_the_seats_the_pass_looked_up(self):
+        # `seats_asked`: what a dispatcher compares the graph's seats against before
+        # asking the pass once more (findings item 67)
+        self._run({"id": "wd:Q58345040", "name": "Robyn Denholm", "cik": None}, self.HOLDING)
+        assert self.result["seats_asked"] == ["wd:Q58345040"]
 
     def test_a_person_without_a_cik_gains_the_one_found(self):
         owns, asked, stamps = self._run({"id": "wd:Q58345040", "name": "Robyn Denholm", "cik": None},
