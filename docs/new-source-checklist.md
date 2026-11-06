@@ -544,6 +544,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       the issuer's LEI, and one document can be filed under two CIKs. So validate the
       identifier's checksum, take a lone LEI only from a document the filer filed alone,
       and otherwise require the name to label the code. A miss is "unknown", never "different".
+      And ask the documents in EVERY path that joins the pair: the dedup bridge asked them
+      first, the Wikidata pointer's stated-CIK attach asked the registers only, and a GLEIF
+      record with a P.O. box EDGAR omits was "weak" there while the filer's N-PX stated the
+      LEI (Capital Ventures International, findings item 63, 2026-11-06).
 - [ ] **A place has a date: take the filer's newest statement of it, in its own context.** The
       annual report is a year's snapshot — Liberty Media became a Nevada company three months
       after its 10-K said Delaware, and the join with GLEIF (Nevada) was refused; its 10-Q

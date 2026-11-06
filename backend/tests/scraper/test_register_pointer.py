@@ -324,22 +324,30 @@ class TestAStatedCik:
     NODE = {"lei_id": "549300WSWTEW6DURBO45", "sec_cik": None, "name": "NV ENERGY, INC."}
     RECORD = [{"name": "NV ENERGY, INC.", "lei_id": "549300WSWTEW6DURBO45", "jurisdiction_code": "US-NV"}]
 
-    def _run(self, node=NODE, held=None, verdict=("join", "name+place"), landed="lei:549300WSWTEW6DURBO45"):
+    FILING = {"cik": "0000741508", "lei": "549300WSWTEW6DURBO45", "form": "N-PX", "file_date": "2024-08-30",
+              "source_url": "https://www.sec.gov/Archives/edgar/data/741508/000074150824000004/primary_doc.xml"}
+
+    def _run(self, node=NODE, held=None, verdict=("join", "name+place"), landed="lei:549300WSWTEW6DURBO45",
+             filing=None):
         with patch.object(rp, "_sec_enabled", return_value=True), \
              patch("app.entity_resolution.resolve_entity_id", return_value=held), \
              patch("app.database.db.get_session"), \
              patch("app.db.arcadedb.run_sql", return_value=self.RECORD), \
+             patch("app.db.arcadedb.run_command") as stamp, \
+             patch("app.scraper.sec_lei.confirm_filer_lei", return_value=filing) as filed, \
              patch("app.scraper.legal_identity.filer_facts", return_value=object()), \
              patch("app.scraper.legal_identity.same_legal_entity", return_value=verdict) as rule, \
              patch.object(rp, "write_from_edgar", return_value=landed) as write:
             got = rp.attach_stated_cik(node, "lei:549300WSWTEW6DURBO45", ["0000741508"])
+        rule.filed, rule.stamp = filed, stamp
         return got, rule, write
 
     def test_edgar_writes_onto_the_node_when_the_registers_agree(self):
         got, rule, write = self._run()
         assert got == "lei:549300WSWTEW6DURBO45"
         assert rule.call_args.args[0]["jurisdiction_code"] == "US-NV"
-        write.assert_called_once_with("0000741508", candidates=["lei:549300WSWTEW6DURBO45"])
+        write.assert_called_once_with("0000741508", candidates=["lei:549300WSWTEW6DURBO45"], lei=None)
+        rule.stamp.assert_not_called()                 # no filing to keep as the source
 
     def test_a_refusal_writes_nothing(self):
         got, _, write = self._run(verdict=("refuse", "legal name differs"))
@@ -348,6 +356,32 @@ class TestAStatedCik:
 
     def test_a_write_that_landed_elsewhere_is_no_attach(self):
         assert self._run(landed="sec:0000741508")[0] is None
+
+    def test_the_filers_own_filing_settles_what_the_registers_call_weak(self):
+        # findings item 63: GLEIF's record of Capital Ventures International names
+        # a P.O. box EDGAR's address omits ('weak record … no address to confirm
+        # it'), while the filer's N-PX states the LEI — the dedup bridge's evidence
+        got, rule, write = self._run(verdict=("refuse", "weak record (place only KY) and no address to confirm it"),
+                                     filing=self.FILING)
+        assert got == "lei:549300WSWTEW6DURBO45"
+        # the write carries the stated LEI: it lands by id, past the writer's own name-only check
+        write.assert_called_once_with("0000741508", candidates=["lei:549300WSWTEW6DURBO45"],
+                                      lei="549300WSWTEW6DURBO45")
+        rule.assert_not_called()                      # the filing is asked first
+        rule.filed.assert_called_once_with("0000741508", "549300WSWTEW6DURBO45", ["NV ENERGY, INC."])
+        params = rule.stamp.call_args.args[1]
+        assert params == {"id": "lei:549300WSWTEW6DURBO45", "url": self.FILING["source_url"]}
+        assert "COALESCE(e.lei_source, 'filing')" in rule.stamp.call_args.args[0]
+
+    def test_a_filing_that_states_the_lei_is_the_source_even_when_the_registers_agree(self):
+        got, rule, write = self._run(filing=self.FILING)
+        assert got == "lei:549300WSWTEW6DURBO45" and rule.stamp.called
+        rule.assert_not_called()
+
+    def test_a_write_that_landed_elsewhere_keeps_no_filing(self):
+        got, rule, _ = self._run(landed="sec:0000741508", filing=self.FILING)
+        assert got is None
+        rule.stamp.assert_not_called()
 
     @pytest.mark.parametrize("node, held", [
         ({**NODE, "sec_cik": "0000741508"}, None),    # it has one

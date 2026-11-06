@@ -869,11 +869,17 @@ no tag and keep the header's.
   GLEIF, with that node as the only candidate (`register_pointer.attach_stated_lei`; findings
   item 3, Baillie Gifford's 549300UYMK70HLNJU654). On JOIN the filer is re-keyed `lei:` and the
   writer carries on under that id (findings item 22). On REFUSE GLEIF's node is written on its own.
-  The mirror: an item found by its LEI that states a CIK the GLEIF node lacks asks EDGAR
-  (`register_pointer.attach_stated_cik`); on JOIN `write_from_edgar` writes the filer onto
-  that node (it is weighed before the name's candidates), on REFUSE nothing is written.
-  NV Energy's Q1961658 states CIK 0000741508, a filer EDGAR has not listed since 2014, so no
-  name search finds it (findings item 5, 2026-10-30).
+  The mirror: an item found by its LEI that states a CIK the GLEIF node lacks asks the filer's
+  own filings for the LEI first (`sec_lei.confirm_filer_lei`, as the bridge above does), then
+  EDGAR's facts against the record (`register_pointer.attach_stated_cik`); on a filing or a
+  JOIN `write_from_edgar` writes the filer onto that node (it is weighed before the name's
+  candidates) and the filing, when there is one, is kept as `lei_source_url` with
+  `lei_source` `filing`; on REFUSE nothing is written. NV Energy's Q1961658 states CIK
+  0000741508, a filer EDGAR has not listed since 2014, so no name search finds it (findings
+  item 5, 2026-10-30). Capital Ventures International's Q104626435 states both ids; GLEIF's
+  record names a P.O. box the filer's address omits, so the registers called it weak and
+  refused, while the filer's N-PX states the LEI — until 2026-11-06 the CIK stayed off the
+  node until the dedup bridge joined the pair hours later (findings item 63).
 - **The Wikidata writer, a node found by name**: when an item's QID, CIK and LEI find no
   node and its name finds one that holds a register id, none of them the item's, the item's
   ids are asked of their register FIRST, with that node as the candidate

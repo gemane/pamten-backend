@@ -231,13 +231,16 @@ def _join_filer(lei: str, props: dict, extra: list[str], by_name: bool = True) -
     return None
 
 
-def write_from_edgar(cik: str, candidates: list[str] | None = None) -> str | None:
+def write_from_edgar(cik: str, candidates: list[str] | None = None, lei: str | None = None) -> str | None:
     """The filer EDGAR states for this CIK, written as the SEC writer writes a
     filer it scrapes (EDGAR's name for the CIK, its former names with the day
     each ended, its country and business address); its id, or None when EDGAR
     has no such CIK. The former names are what lets `stale` see that an item
     pointing here describes the company the CIK used to be. ``candidates``
-    are node ids the writer weighs before the name's."""
+    are node ids the writer weighs before the name's; ``lei`` is an LEI the
+    filer's own filing states as its own (`sec_lei.confirm_filer_lei`), on
+    which the write lands by id — the name's candidates and the registers'
+    comparison are not asked (findings item 63)."""
     import httpx
 
     from app.scraper.graph_writer import _upsert_entity_by_name
@@ -256,7 +259,7 @@ def write_from_edgar(cik: str, candidates: list[str] | None = None) -> str | Non
     if not name:
         return None
     source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
-    return _upsert_entity_by_name(name=name, entity_type="company", cik=cik, source_id=source_id,
+    return _upsert_entity_by_name(name=name, entity_type="company", cik=cik, lei=lei, source_id=source_id,
                                   register_name=True, country=sec_country(sub),
                                   headquarters=sec_headquarters(sub), website=sec_website(sub),
                                   former_names=former_name_entries(sub) or None,
@@ -287,14 +290,27 @@ def attach_stated_cik(node: dict, node_id: str, ciks: list[str]) -> str | None:
     """The mirror of `attach_stated_lei`: a knowledge base resolved to ``node``
     (a GLEIF record: LEI, no CIK) and states a CIK the graph does not hold.
     The node takes the CIK, with EDGAR's facts written as for any filer, when
-    the registers agree (`legal_identity`); otherwise nothing is written.
-    Until 2026-10-30 the CIK only found nodes: NV Energy's item Q1961658
+    the filer's own filings state the node's LEI (`sec_lei.confirm_filer_lei`)
+    or, failing that, when the registers agree (`legal_identity`); otherwise
+    nothing is written. The filing is asked first, as the entity dedup's
+    bridge asks it (`maintenance._bridge_sec_lei`): an id a filer states about
+    itself outweighs a comparison of names and addresses — and the write then
+    carries the LEI, so it lands on the node by id, past the writer's own
+    name-only check (`graph_writer._not_this_filer`), which weighs the same
+    comparison and refused the same record. Until 2026-11-06
+    only the registers were asked, and a record they call weak lost the join
+    a filing had settled — Capital Ventures International's Q104626435 states
+    LEI PIRK3IP22W3DKV63YG19 and CIK 0001011712, GLEIF's record names a
+    P.O. box the filer's address omits, and the CIK stayed off the node until
+    the dedup joined the pair hours later by the filer's N-PX (findings item
+    63). Until 2026-10-30 the CIK only found nodes: NV Energy's item Q1961658
     states CIK 0000741508, a filer EDGAR has not listed since 2014, and no
     name search finds it (findings item 5). Returns the node, or None."""
     from app.database import db
-    from app.db.arcadedb import run_sql
+    from app.db.arcadedb import run_command, run_sql
     from app.entity_resolution import resolve_entity_id
     from app.scraper.legal_identity import IDENTITY_FIELDS, JOIN, filer_facts, same_legal_entity
+    from app.scraper.sec_lei import confirm_filer_lei
     if node.get("sec_cik") or not node.get("lei_id") or not ciks or not _sec_enabled():
         return None
     with db.get_session() as session:
@@ -304,16 +320,28 @@ def attach_stated_cik(node: dict, node_id: str, ciks: list[str]) -> str | None:
     if not rows:
         return None
     record = {k: rows[0].get(k) for k in IDENTITY_FIELDS}
+    names = [n for n in [record.get("name"), *(record.get("other_names") or [])] if n]
     for cik in ciks:
-        facts = filer_facts(cik)
-        if not facts:
+        hit = confirm_filer_lei(cik, node["lei_id"], names)
+        if not hit:
+            facts = filer_facts(cik)
+            if not facts:
+                continue
+            verdict, why = same_legal_entity(record, facts)
+            if verdict != JOIN:
+                log.info("the stated CIK %s is not %s: %s", cik, node_id, why)
+                continue
+        if write_from_edgar(cik, candidates=[node_id], lei=node["lei_id"] if hit else None) != node_id:
             continue
-        verdict, why = same_legal_entity(record, facts)
-        if verdict != JOIN:
-            log.info("the stated CIK %s is not %s: %s", cik, node_id, why)
-            continue
-        if write_from_edgar(cik, candidates=[node_id]) == node_id:
-            return node_id
+        if hit:
+            # the filing that tied the CIK to the LEI, kept as the SEC scrape and
+            # the dedup bridge keep theirs (`lei_source_url`, `lei_source`)
+            run_command("MATCH (e:Entity {id: $id}) SET e.lei_source_url = COALESCE(e.lei_source_url, $url), "
+                        "e.lei_source = COALESCE(e.lei_source, 'filing')",
+                        {"id": node_id, "url": hit["source_url"]})
+            log.info("the stated CIK %s is %s: its %s states the LEI (%s)", cik, node_id, hit.get("form"),
+                     hit["source_url"])
+        return node_id
     return None
 
 
