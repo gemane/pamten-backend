@@ -60,3 +60,28 @@ def test_the_replay_counts_its_calls():
     # the replay is not a manage.py command, so it switches the counter on itself
     replay = (KIT / "replay_scrapes.py").read_text()
     assert "source_calls.start()" in replay
+
+
+def _source_line():
+    # the replay imports the app on load; take the pure function out of its source
+    import ast
+    src = (KIT / "replay_scrapes.py").read_text()
+    fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "source_line")
+    ns: dict = {}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "replay_scrapes.py", "exec"), ns)
+    return ns["source_line"]
+
+
+def test_the_replay_line_shows_the_seat_holders_rerun():
+    # findings item 67: whether run-all asked the seats once more was not in the log
+    line = _source_line()({
+        "sec_edgar": {"status": "ok", "total": 85, "lost_requests": 1,
+                      "seats_rerun": {"status": "ok", "total": 2, "seats_asked": ["a", "b", "c"]}},
+        "wikidata": {"status": "ok", "total": 1},
+        "open_corporates": {"status": "disabled"},
+    })
+    assert line == {"sec_edgar": ("ok", 85, "lost 1", "seats +2/3"), "wikidata": ("ok", 1),
+                    "open_corporates": ("disabled", None)}
+    assert _source_line()({"sec_edgar": {"status": "ok", "total": 3,
+                                         "seats_rerun": {"status": "error", "detail": "x"}}}) == \
+        {"sec_edgar": ("ok", 3, "seats error")}

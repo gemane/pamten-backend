@@ -86,6 +86,9 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
 - Single requests lost to the network (findings item 45): `grep -c "request lost" <kit>/rebuild.log`,
   and the per-target `lost N` in the replay lines; a target whose count dropped next to a
   `lost N` is the network, not the code — say so in the verify.
+- The SEC seat holders asked once more after the knowledge bases (findings item 67): the run-all
+  line's `seats +N/M` (N holdings written for M seats looked up; `seats error` when that pass
+  failed) — no marker on a big filer means no seat was left to ask.
 - `schema-audit` and the dissolution dry run in step 8 should be clean.
 - Then `/finding verify` against the last rebuild's `after.json`; record the run (times,
   counts, lessons) in the memory `reference-rebuild-from-agent`.
