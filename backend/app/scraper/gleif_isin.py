@@ -111,7 +111,9 @@ def latest_file() -> dict:
 
 
 def fetch(directory: str = DEFAULT_DIR) -> MappingFile:
-    """The newest file on disk, downloaded unless the same file is there."""
+    """The newest file on disk, downloaded unless the same file is there. The
+    older files (and a broken download's ``.part``) go: the bridge runs daily
+    after the GLEIF delta, and each day's file is ~33 MB."""
     from app.scraper.gleif_incremental import _download
     meta = latest_file()
     os.makedirs(directory, exist_ok=True)
@@ -121,7 +123,19 @@ def fetch(directory: str = DEFAULT_DIR) -> MappingFile:
         tmp = path + ".part"
         _download(meta["url"], tmp)
         os.replace(tmp, path)
+    _prune(directory, keep=meta["file_name"])
     return MappingFile(path=path, day=meta["uploaded_at"][:10], name=meta["file_name"])
+
+
+def _prune(directory: str, keep: str) -> None:
+    """Remove every other GLEIF LEI-ISIN file in ``directory`` — only GLEIF's own
+    names (``isin-lei-YYYYMMDDTHHMMSS.zip`` and its ``.part``), never anything else."""
+    for name in os.listdir(directory):
+        if name != keep and _FILE_NAME.fullmatch(name):
+            os.remove(os.path.join(directory, name))
+
+
+_FILE_NAME = re.compile(r"isin-lei-\d{8}T\d{6}\.zip(\.part)?")
 
 
 def local_file(path: str) -> MappingFile:
@@ -305,12 +319,12 @@ def enabled() -> bool:
 
 
 def run(*, apply_writes: bool = False, path: str | None = None, allow_stale: bool = False,
-        directory: str = DEFAULT_DIR, today: date | None = None) -> dict:
+        directory: str | None = None, today: date | None = None) -> dict:
     """The bridge, end to end: the file, the plan, the writes (``apply_writes``)."""
     from app.scraper.run_log import record_run
     if not enabled():
         raise PermissionError("The securities bridge is off: the GLEIF source is disabled in the source catalogue.")
-    mapping = local_file(path) if path else fetch(directory)
+    mapping = local_file(path) if path else fetch(directory or DEFAULT_DIR)
     age = ((today or datetime.now(timezone.utc).date()) - date.fromisoformat(mapping.day)).days
     if age > MAX_AGE_DAYS and not allow_stale:
         raise ValueError(f"the LEI-ISIN file of {mapping.day} is {age} days old (max {MAX_AGE_DAYS}); "

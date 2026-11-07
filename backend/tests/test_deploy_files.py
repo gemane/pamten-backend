@@ -153,3 +153,15 @@ def test_the_daily_delta_closes_dissolutions_and_rederives_shortcuts():
     assert delta < close < body.index("run_manage mark-shortcuts")
     assert 'gleif-update)          cmd_gleif_update "$@"' in OPS
 
+
+
+def test_the_daily_delta_runs_the_securities_bridge_and_keeps_its_file():
+    # findings item 71: issuers a scrape gave a CUSIP join their LEI daily; the
+    # file lives in /data (the container's home is gone with it), the run is never
+    # fatal, and it comes before the dissolution pass and the shortcuts
+    body = OPS[OPS.index("cmd_gleif_update() {"):]
+    body = body[:body.index("\n}")]
+    bridge = body.index("run_manage gleif-isin-bridge --apply --dir /data/")
+    assert body.index("run_manage gleif-update") < bridge < body.index("run_manage heal-ends-at-dissolution")
+    assert "|| echo" in body[bridge:body.index("run_manage heal-ends-at-dissolution")]
+    assert "gleif-isin" not in SETUP        # no cron line of its own: it rides on the delta

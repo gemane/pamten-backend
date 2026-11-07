@@ -267,7 +267,8 @@ def cmd_gleif_isin_bridge(args):
     from app.scraper import gleif_isin
 
     def go():
-        return gleif_isin.run(apply_writes=args.apply, path=args.file, allow_stale=args.allow_stale)
+        return gleif_isin.run(apply_writes=args.apply, path=args.file, allow_stale=args.allow_stale,
+                              directory=args.dir)
     try:
         res = _run_guarded_import("gleif-isin-bridge", go) if args.apply else go()
     except PermissionError as exc:
@@ -1352,6 +1353,8 @@ def _build_parser():
     p_gi.add_argument('--file', help="A local isin-lei-YYYYMMDDTHHMMSS.zip instead of downloading GLEIF's newest")
     p_gi.add_argument('--allow-stale', dest='allow_stale', action='store_true',
                       help='Use a file older than three days')
+    p_gi.add_argument('--dir', help='Where GLEIF\'s file is kept (default ~/.cache/gleif-isin; '
+                      'the production container passes /data/gleif-isin, its home is gone with the container)')
     p_gi.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_gi.set_defaults(func=cmd_gleif_isin_bridge)
 

@@ -621,6 +621,10 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       first, the Wikidata pointer's stated-CIK attach asked the registers only, and a GLEIF
       record with a P.O. box EDGAR omits was "weak" there while the filer's N-PX stated the
       LEI (Capital Ventures International, findings item 63, 2026-11-06).
+      The third place was the SEC writer's own name match (`graph_writer._not_this_filer`): it asked the registers
+      only, refused the same record, minted a `sec:` twin and left the bridge to merge it twelve
+      seconds later — a merge and a re-key in every rebuild until it asked the filing first too
+      (findings item 64, 2026-11-06). Three deciders, one order: filing, then registers.
       And when neither register names the other's id, look for a THIRD party whose job is
       the link: an issuer's national numbering agency reports each security's issuer LEI
       (ANNA, published daily by GLEIF as the LEI-ISIN file), and EDGAR states the issuer's
@@ -628,11 +632,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       in 2024 and EDGAR caught up in 2026, so the registers' names disagreed on the reference
       day; its CUSIP's ISIN names the LEI. Hold such a link to ONE answer: a fund family's
       CUSIPs map to each fund's LEI, so a node whose securities name several issuers is an
-      umbrella and none of them (findings item 71, 2026-11-07). The third place was
-      the SEC writer's own name match (`graph_writer._not_this_filer`): it asked the registers
-      only, refused the same record, minted a `sec:` twin and left the bridge to merge it twelve
-      seconds later — a merge and a re-key in every rebuild until it asked the filing first too
-      (findings item 64, 2026-11-06). Three deciders, one order: filing, then registers.
+      umbrella and none of them (findings item 71, 2026-11-07).
+      Run such a bridge where its input exists: the CUSIPs arrive with the scrapes (13F,
+      13D/G covers), not with a bulk import, so the bridge runs after the daily GLEIF
+      delta and the rebuild's replay, never in `finish-import.sh` — there it would
+      download 33 MB to find nothing (findings item 71, 2026-11-07).
 - [ ] **A place has a date: take the filer's newest statement of it, in its own context.** The
       annual report is a year's snapshot — Liberty Media became a Nevada company three months
       after its 10-K said Delaware, and the join with GLEIF (Nevada) was refused; its 10-Q
