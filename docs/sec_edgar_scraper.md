@@ -1282,6 +1282,16 @@ anyone whose name came from Wikidata; the 50-document cap had hidden that, and t
 15-month window showed it (findings item 29: Denholm and Witmer lost their CIKs
 and holdings in the rebuild of 2026-10-31b).
 
+When another **person** already holds that CIK, the holding is theirs — the
+Form 4's own reporting owner — and the 13D/G check and the write go to that node,
+not to the seat holder that asked (`runner._holder_of_found_cik`); the two are
+left to the person dedup. A CIK a **company** holds is not this person's filing:
+nothing is written. Before 2026-11-07 the seat holder took the holding: the
+check asked the Wikidata twin, which held no 13G while the person's EDGAR node
+did, so Galperin, Gracias and Tsai each got a Form 4 edge beside their 13G, and
+the merge kept the Form 4 (findings item 73; the merge side is
+`owns_merge.statement_rank`).
+
 ### When a seat began — Form 3
 
 A Form 4 dates a **trade**; it says nothing about when the person took the seat,

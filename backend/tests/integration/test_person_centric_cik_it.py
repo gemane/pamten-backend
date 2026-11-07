@@ -103,6 +103,30 @@ def test_a_cik_another_person_holds_is_not_stamped(graph):
     people = graph.run_command("MATCH (p:Person) WHERE p.sec_cik = '0001242782' RETURN p.id AS id")
     assert [r["id"] for r in people] == ["sec:0001242782"]
     assert graph.run_command("MATCH (p:Person {id:'wd:Q58345040'}) RETURN p.sec_cik AS cik") == [{"cik": None}]
+    # the holding is the CIK holder's — the Form 4's own reporting owner — not the twin's
+    owners = graph.run_command("MATCH (p:Person)-[r:OWNS]->(e:Entity {id:'tsla'}) RETURN p.id AS id, r.filing_type AS ft")
+    assert owners == [{"id": "sec:0001242782", "ft": "Form 4"}]
+
+
+def test_a_13dg_on_the_cik_holder_keeps_the_form_4_out(graph):
+    """findings item 73: Galperin's 13G/A sat on his EDGAR node, the Form 4 found
+    for his Wikidata twin was written to the twin, and the merge kept it."""
+    from app.scraper import sec_writer
+    graph.run_command("CREATE (p:Person {id:'sec:0001242782', full_name:'DENHOLM ROBYN M', sec_cik:'0001242782'})")
+    sec_writer._upsert_owns_sec(owner_id="sec:0001242782", owned_id="tsla", source_id="sec",
+                                ownership_type="minority", file_date="2026-02-14", stake_percent=6.1,
+                                source_url="https://www.sec.gov/13g.xml", owner_label="Person",
+                                filing_type="13G/A", read_from="field")
+    _scrape(HOLDING)
+    owners = graph.run_command("MATCH (p:Person)-[r:OWNS]->(e:Entity {id:'tsla'}) RETURN p.id AS id, r.filing_type AS ft")
+    assert owners == [{"id": "sec:0001242782", "ft": "13G/A"}], "no Form 4 edge on the twin, none over the 13G"
+
+
+def test_a_company_cik_is_not_a_person_s_holding(graph):
+    graph.run_command("CREATE (e:Entity {id:'sec:0001242782', name:'DENHOLM HOLDINGS LLC', type:'company', "
+                      "sec_cik:'0001242782'})")
+    _scrape(HOLDING)
+    assert graph.run_command("MATCH (p:Person)-[r:OWNS]->(e:Entity {id:'tsla'}) RETURN p.id AS id") == []
 
 
 def test_a_second_run_asks_by_the_cik(graph):
