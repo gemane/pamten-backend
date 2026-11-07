@@ -913,7 +913,9 @@ Never fatal there (a GLEIF hiccup must not fail the delta), and before the disso
 `mark-shortcuts` (an attach writes GLEIF's record, a join merges two nodes). Not in
 `finish-import.sh` or `ops.sh import`: a bulk import stores no CUSIP, so the bridge would
 download the file to find nothing. Each run keeps only the newest file (~33 MB) and removes
-GLEIF's older ones. What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
+GLEIF's older ones. Its reach is the nodes with a CUSIP: every 13D/G cover read keeps the
+subject's since 2026-11-07 (docs/sec_edgar_scraper.md; before, 75 of dev's 1,117 13D/G subjects
+had one). What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
 13G filings such as NESTLE SA — GLEIF does map Nestlé's ADR CUSIPs to its LEI, but the owner's
 node holds none).
 Findings item 19 (rebuild 2026-10-30): eight pairs that had joined by name before #490 were

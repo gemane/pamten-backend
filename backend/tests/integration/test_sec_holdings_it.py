@@ -333,3 +333,22 @@ def test_a_scraped_company_s_own_holdings_and_a_voting_group_carry_the_date(it_d
     assert _edge_with_stake(it_db, 6.25).get("filing_type") == "13G/A"
     group_edge = next(e for e in _edges(it_db) if e.get("voting_power_pct") == 52.3)
     assert group_edge.get("event_date") == "2026-05-13"
+
+
+def test_a_holding_gives_its_subject_the_covers_cusip_and_never_overwrites_one(it_db):
+    # findings item 71: the cover's CUSIP is the securities bridge's input; before
+    # 2026-11-07 a filer's scrape dropped it, so only the issuer's own scrape kept one
+    first = [dict(HOLDINGS[0], subject_cusip="436440101")]
+    _run(it_db, holdings=first)
+    [row] = it_db.run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0000859737'")
+    assert row["cusip"] == "436440101"
+    # fill-if-missing: a later cover (another class) or a 13F-adopted value stays
+    _run(it_db, holdings=[dict(HOLDINGS[0], subject_cusip="037833100")])
+    [row] = it_db.run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0000859737'")
+    assert row["cusip"] == "436440101"
+
+
+def test_a_holding_without_a_cusip_writes_none(it_db):
+    _run(it_db, holdings=[HOLDINGS[0]])
+    [row] = it_db.run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0000859737'")
+    assert row.get("cusip") is None

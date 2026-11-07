@@ -2090,6 +2090,7 @@ def run_sec_holdings(cik: str, limit: int = 100, succeeds_cik: str | None = None
             headquarters=fetch_filer_headquarters(h["subject_cik"]) if h.get("subject_cik") else None,
             website=fetch_filer_website(h["subject_cik"]) if h.get("subject_cik") else None)
         _record_sec_industry(subject_id, h.get("subject_cik"), source_id)
+        _keep_cover_cusip(subject_id, h.get("subject_cusip"))
         _upsert_owns_sec(
             owner_id=filer_id, owned_id=subject_id, source_id=source_id,
             read_from=h.get("read_from"),  # XML `field` or old cover `form` (item 44)
@@ -2359,6 +2360,21 @@ def _scrape_sec_edgar(company_name: str, country: str | None) -> dict:
         return _write_sec_edgar(company_name, data, filer_country)
 
 
+def _keep_cover_cusip(entity_id: str | None, cusip: str | None) -> None:
+    """The issuer's CUSIP as a 13D/G cover states it, on the issuer's node —
+    fill-if-missing, so a hand-set or 13F-adopted value is never clobbered.
+    `sec-13f` then matches info-table rows exactly, and the securities bridge
+    (findings item 71) reads it as the issuer's US ISIN. Every path that reads
+    a cover keeps it: the issuer's own scrape, and a filer's scrape for each
+    company it holds (before 2026-11-07 only the first did, so 75 dev nodes
+    carried one)."""
+    if not entity_id or not cusip:
+        return
+    with db.get_session() as session:
+        session.run("MATCH (e:Entity {id: $id}) SET e.cusip = COALESCE(e.cusip, $c)",
+                    id=entity_id, c=cusip)
+
+
 def _record_sec_industry(entity_id: str, cik: str | None, source_id: str) -> None:
     """EDGAR's SIC code for a filer, as the SEC's statement of its industry
     (app.industry). The submissions document is the one the name, country
@@ -2408,12 +2424,8 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     # CUSIP from the first schedule that states one — fill-if-missing, so a
     # hand-set or 13F-adopted value is never clobbered. This is what lets
     # `sec-13f` match info-table rows exactly instead of by name.
-    cusip = next((f.get("issuer_cusip") for f in data.get("ownership_filings", [])
-                  if f.get("issuer_cusip")), None)
-    if cusip:
-        with db.get_session() as session:
-            session.run("MATCH (e:Entity {id: $id}) SET e.cusip = COALESCE(e.cusip, $c)",
-                        id=target_id, c=cusip)
+    _keep_cover_cusip(target_id, next((f.get("issuer_cusip") for f in data.get("ownership_filings", [])
+                                       if f.get("issuer_cusip")), None))
 
     for filing in data.get("ownership_filings", []):
         investor_name = filing.get("investor_name", "").strip()
@@ -2557,6 +2569,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             source_id=source_id,
         )
         scraped.append({"type": "entity", "name": subject_name, "role": "holding"})
+        _keep_cover_cusip(subject_id, holding.get("subject_cusip"))
         if subject_id:
             held_subjects.append(subject_id)
         _upsert_owns_sec(
