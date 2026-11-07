@@ -133,3 +133,25 @@ def test_a_second_run_asks_by_the_cik(graph):
     _scrape(HOLDING)
     graph.run_command("MATCH (p:Person {id:'sec:0001242782'})-[r:OWNS]->() DELETE r")
     assert _scrape(HOLDING) == [("Robyn Denholm", "0001242782")]
+
+
+def test_the_rerun_finds_a_filer_re_keyed_after_the_sec_run(it_db):
+    """findings item 67 b (rebuild 2026-11-07b): the SEC part wrote BofA as
+    sec:0000070858; its Wikidata part stated the LEI and `node_ids` renamed the
+    node lei:9DJT…, leaving a forwarding row; Wikidata's seat sits on the new
+    id. The rerun reads the seats under the id the filer has now."""
+    from app.merged_ids import rename_node_id
+    from app.scraper import runner
+    it_db.run_command("CREATE (e:Entity {id:'sec:0000070858', name:'BANK OF AMERICA CORP /DE/', type:'company', "
+                      "sec_cik:'0000070858', lei_id:'9DJT3UXIJIZJI4WXO774'})")
+    with runner.db.get_session() as session:
+        assert rename_node_id(session, "Entity", "sec:0000070858", "lei:9DJT3UXIJIZJI4WXO774")
+    it_db.run_command("CREATE (p:Person {id:'wd:Q109659430', full_name:'Frank Bramble', wikidata_id:'Q109659430'})")
+    it_db.run_command("MATCH (p:Person {id:'wd:Q109659430'}), (e:Entity {id:'lei:9DJT3UXIJIZJI4WXO774'}) "
+                      "CREATE (p)-[:HAS_ROLE {role:'Board Member', source_id:'wikidata'}]->(e)")
+    sec = {"status": "ok", "cik": "0000070858", "entity_id": "sec:0000070858",
+           "company": "BANK OF AMERICA CORP /DE/", "seats_asked": []}
+    assert runner.seat_holders_without_holdings("sec:0000070858") == frozenset()   # the old id: no node, no seat
+    assert runner.seat_rerun_target(sec) == "lei:9DJT3UXIJIZJI4WXO774"
+    assert runner.seat_rerun_target({**sec, "seats_asked": ["wd:Q109659430"]}) is None
+    assert runner._node_id_now("lei:9DJT3UXIJIZJI4WXO774") == "lei:9DJT3UXIJIZJI4WXO774"  # a live id stays

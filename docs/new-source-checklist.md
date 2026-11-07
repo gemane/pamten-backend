@@ -615,6 +615,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       (`runner.rerun_for_new_seats`; the run log says `new_seats`; findings item 67). A
       backfill that "only fills blanks" must fill the item id too — the person writer
       filled aliases and never `wikidata_id` for a person the SEC had written first.
+      And a step after the run that reads a source's `entity_id` reads it under the id
+      the node has NOW: a later source in the same run can re-key it (Wikidata states
+      the LEI, `node_ids` renames `sec:{CIK}` to `lei:{LEI}`, a `MergedId` row
+      forwards). The rerun read BofA's, NYT's, Wells Fargo's and Morgan Stanley's seats
+      under the old `sec:` id, found no node and asked nothing — five persons kept no
+      Form 4 holding in two rebuilds (2026-11-07b; findings item 67 b,
+      `runner.seat_rerun_target`).
 - [ ] **A name-only row meets a node by every name its register gives it — never by a
       label someone else gave it.** A register's other current names (GLEIF's transliterations,
       alternative-language legal names) are the entity's own, with the legal form kept; a

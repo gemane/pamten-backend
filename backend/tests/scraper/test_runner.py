@@ -524,6 +524,7 @@ class TestRunScrapeAll:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.scraper_registry.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q92764"})), \
+             patch("app.scraper.runner._node_id_now", side_effect=lambda eid: eid), \
              patch("app.scraper.runner.run_scrape",                 return_value=self._wd_result()), \
              patch("app.scraper.runner.run_scrape_sec_edgar",       return_value=self._sec_filer()), \
              patch("app.scraper.runner.run_scrape_open_corporates", return_value=self._oc_result()), \
@@ -537,6 +538,7 @@ class TestRunScrapeAll:
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.scraper_registry.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q92764"})), \
+             patch("app.scraper.runner._node_id_now", side_effect=lambda eid: eid), \
              patch("app.scraper.runner.run_scrape",                 return_value=self._wd_result()), \
              patch("app.scraper.runner.run_scrape_sec_edgar",       return_value=self._sec_filer(["wd:Q92764"])), \
              patch("app.scraper.runner.run_scrape_open_corporates", return_value=self._oc_result()), \
@@ -554,7 +556,8 @@ class TestRerunForNewSeats:
 
     def test_new_seats_after_a_filer_run(self):
         from app.scraper.runner import rerun_for_new_seats
-        with patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q1", "wd:Q2"})):
+        with patch("app.scraper.runner.seat_holders_without_holdings", return_value=frozenset({"wd:Q1", "wd:Q2"})), \
+             patch("app.scraper.runner._node_id_now", side_effect=lambda eid: eid):
             assert rerun_for_new_seats(self.SEC) is True
             assert rerun_for_new_seats({**self.SEC, "seats_asked": ["wd:Q1", "wd:Q2"]}) is False
             assert rerun_for_new_seats({**self.SEC, "status": "partial", "seats_asked": []}) is True
@@ -569,6 +572,15 @@ class TestRerunForNewSeats:
             assert rerun_for_new_seats(None) is False
             assert rerun_for_new_seats({"status": "disabled"}) is False
         seats.assert_not_called()
+
+    def test_the_seats_are_read_under_the_id_the_filer_has_now(self):
+        """findings item 67 b: a later source re-keyed sec:{CIK} to lei:{LEI}."""
+        from app.scraper.runner import seat_rerun_target
+        seats = {"lei:9DJT3UXIJIZJI4WXO774": frozenset({"wd:Q1", "wd:Q109659430"})}
+        with patch("app.scraper.runner.seat_holders_without_holdings", side_effect=lambda eid: seats.get(eid, frozenset())), \
+             patch("app.scraper.runner._node_id_now", return_value="lei:9DJT3UXIJIZJI4WXO774") as now:
+            assert seat_rerun_target({**self.SEC, "entity_id": "sec:0000070858"}) == "lei:9DJT3UXIJIZJI4WXO774"
+        now.assert_called_once_with("sec:0000070858")
 
 
 # ── Deduplication logic ────────────────────────────────────────────────────────

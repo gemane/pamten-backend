@@ -156,7 +156,7 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
     from app.scraper.scraper_registry import registered
     from app.scraper.run_log import mark_partial, record_run
 
-    from app.scraper.runner import (rerun_for_new_ids, rerun_for_new_seats, run_sec_seat_holders,
+    from app.scraper.runner import (rerun_for_new_ids, run_sec_seat_holders, seat_rerun_target,
                                     stored_hard_ids)
 
     names_run: list[str] = []
@@ -200,12 +200,13 @@ def _run_instant_sources(query: str, decision: ScrapeDecision, country: str | No
     # and the SEC's seat-holders pass once more, for the officers a later source
     # wrote (findings item 67) — a run-log row of its own, reason `new_seats`
     sec = results.get("sec_edgar")
-    if rerun_for_new_seats(sec):
+    filer_id = seat_rerun_target(sec)      # the id the filer has NOW (item 67 b)
+    if filer_id:
         try:
             with record_run("sec_edgar", query, reason="new_seats") as run:
-                res = run_sec_seat_holders(sec["entity_id"], sec["cik"], sec.get("company") or query)
+                res = run_sec_seat_holders(filer_id, sec["cik"], sec.get("company") or query)
                 run["total"] = res.get("total", 0) or 0
-                run["entity_id"] = sec["entity_id"]
+                run["entity_id"] = filer_id
             source_totals["sec_edgar"] = source_totals.get("sec_edgar", 0) + int(res.get("total") or 0)
         except Exception as exc:  # noqa: BLE001 - an extra pass; its loss is logged, not fatal
             log.error("on-demand sec_edgar seat-holders rerun failed for %r: %s", query, exc)

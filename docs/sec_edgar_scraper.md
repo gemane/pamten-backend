@@ -1262,7 +1262,12 @@ with reason `new_seats`). The registers run before the knowledge bases (findings
 60), so on the SEC's own run Wikidata's officers are not there yet: in the 2026-11-06
 rebuild 22 of them kept their CIK but lost their item id, five lost their Form 4
 holding and their CIK, and the big filers' run-all totals fell by exactly those persons
-(findings item 67). A person who already holds a CIK is asked
+(findings item 67). The rerun reads the filer's seats under the id the node has
+when it asks (`runner.seat_rerun_target`, `_node_id_now`): the SEC run writes a filer
+that GLEIF never loaded as `sec:{CIK}`, Wikidata then states its LEI and the node is
+renamed `lei:{LEI}` with a forwarding row — the old id answered "no seats", and BofA,
+NYT, Wells Fargo and Morgan Stanley never got the second pass (rebuild 2026-11-07b,
+findings item 67 b). A person who already holds a CIK is asked
 by it. Otherwise the name is searched in EDGAR's filer index, and that search
 matches from the start of EDGAR's own spelling, which is **surname first**
 ("DENHOLM ROBYN M"): "Robyn Denholm" finds nobody, "Denholm Robyn" finds her. So
