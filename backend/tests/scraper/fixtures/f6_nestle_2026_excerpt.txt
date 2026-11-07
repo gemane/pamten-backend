@@ -1,0 +1,19 @@
+<SEC-DOCUMENT>0001193805-26-000160.txt : 20260220
+CONFORMED SUBMISSION TYPE:	F-6 POS
+COMPANY CONFORMED NAME:			NESTLE SA
+<P>Full Entitlement Shares, by means of separate CUSIP numbering and legending (if necessary) and, if applicable, by issuing ADRs evidencing
+such ADSs with applicable notations thereon (&ldquo;Partial Entitlem</P>
+<TABLE><TR STYLE="vertical-align: top">
+    <TD STYLE="font-size: 10pt; width: 70%">Number _____________</TD>
+    <TD STYLE="width: 30%; font-size: 10pt">CUSIP NUMBER:&nbsp;&nbsp;_______</TD></TR>
+  <TR STYLE="vertical-align: top">
+    <TD STYLE="font-size: 10pt">&nbsp;</TD></TR></TABLE>
+<TABLE><TR STYLE="vertical-align: top">
+    <TD STYLE="border-right: Black 1pt solid; border-bottom: Black 1pt solid; border-left: Black 1pt solid">ADS CUSIP No.:</TD>
+    <TD STYLE="border-right: Black 1pt solid; border-bottom: Black 1pt solid">641069406.*</TD></TR>
+  <TR STYLE="vertical-align: top">
+    <TD STYLE="border-right: Black 1pt solid">ADS ISIN:</TD>
+    <TD STYLE="border-right: Black 1pt solid">US6410694060</TD></TR>
+</TABLE>
+<P STYLE="font: 10pt Times New Roman, Times, Serif; margin: 0pt 0; text-align: justify"><B><I>*ADS Symbol, ADS CUSIP No., and ADS ISIN
+are provided as a convenience only and without any liability for accuracy.</I></B></P>

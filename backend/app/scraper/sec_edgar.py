@@ -3126,6 +3126,10 @@ def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> 
     # that files no 13D/13G — almost all of them — and only fetches documents for
     # an actual institutional filer.
     holdings     = fetch_filer_holdings(cik, limit=holdings_limit) if (cik and holdings_limit) else []
+    # A foreign issuer's ADS CUSIP from its F-6 filings — the only CUSIP EDGAR
+    # gives a filer with no 13D/G cover about itself (findings item 72).
+    from app.scraper.sec_f6 import fetch_ads_cusips
+    ads          = fetch_ads_cusips(cik) if cik else {}
 
     # Turn each insider's Form-4 holding into a stake %, class against class,
     # when the issuer's counts are known and fresh (see SharesOutstanding).
@@ -3144,6 +3148,8 @@ def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> 
         "former_names":       former_names,
         "ownership_filings":  ownership,
         "holdings":           holdings,
+        "ads_cusips":         ads.get("cusips") or [],
+        "ads_cusip_url":      ads.get("source_url"),
         "executives":         executives,
         "shares_outstanding": shares_out,
         # dated and per class, for the insider lookups the runner adds later
