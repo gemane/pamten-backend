@@ -80,10 +80,30 @@ def run_all(name):
         per = [v for v in (res.get("results") or {}).values() if isinstance(v, dict)]
         run["total"] = sum((v or {}).get("total", 0) for v in per)
         run["entity_id"] = next((v["entity_id"] for v in per if v.get("entity_id")), None)
-    # a third element when a source lost single requests to the network (findings
-    # item 45): a count that dropped next to it is the network, not the code
-    return {k: (v.get("status"), v.get("total")) + ((f"lost {v['lost_requests']}",) if v.get("lost_requests") else ())
-            for k, v in (res.get("results") or {}).items() if isinstance(v, dict)}
+    return source_line(res.get("results") or {})
+
+
+def source_line(results: dict) -> dict:
+    """The replay line's per-source part: (status, total) plus markers —
+    `lost N` when a source lost single requests to the network (findings item
+    45: a count that dropped next to it is the network, not the code), and
+    `seats +N/M` when run-all asked the SEC's seat holders once more after the
+    knowledge bases (findings item 67: N holdings written for M seats looked
+    up, `seats error` when that pass failed). The replay logs at WARNING, so
+    without the marker a verify cannot tell whether the second pass ran."""
+    out = {}
+    for k, v in results.items():
+        if not isinstance(v, dict):
+            continue
+        row = (v.get("status"), v.get("total"))
+        if v.get("lost_requests"):
+            row += (f"lost {v['lost_requests']}",)
+        rerun = v.get("seats_rerun")
+        if isinstance(rerun, dict):
+            row += (f"seats +{rerun.get('total') or 0}/{len(rerun.get('seats_asked') or [])}"
+                    if rerun.get("status") == "ok" else "seats error",)
+        out[k] = row
+    return out
 
 
 def short(res):
