@@ -54,6 +54,12 @@ def take(q, cy) -> dict:
     snap["unilever"] = q("SELECT id, name, country, countries, lei_id, sec_cik FROM Entity WHERE name_normalized LIKE '%unilever%'")
     snap["runs_by_source"] = by("SELECT source AS s, count(*) AS n FROM ScrapeRun GROUP BY source", "s")
     snap["runs"] = q("SELECT source, target, status, started_at, total, reason FROM ScrapeRun ORDER BY started_at")
+    # calls to each outside source and the bucket since the database was created,
+    # i.e. this rebuild's from step 1 on ({source: {kind: n}}, app/source_calls.py)
+    calls: dict = {}
+    for r in q("SELECT source, kind, sum(count) AS n FROM SourceCall GROUP BY source, kind"):
+        calls.setdefault(r["source"], {})[r["kind"]] = int(r.get("n") or 0)
+    snap["source_calls"] = dict(sorted(calls.items()))
     # Per-node ids and names (2026-10-28): a count drop (Person −33) could not be
     # traced to WHO went missing; with these the diff names them.
     snap["entities"] = sorted(([r["id"], r.get("name"), r.get("source_id"), r.get("sec_cik"), r.get("lei_id"), r.get("wikidata_id")]

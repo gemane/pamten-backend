@@ -47,6 +47,9 @@ REPORT = {
                 "failures": [{"source": "sec-13f", "target": "SpaceX", "error": "500 from efts"}],
                 "sec_enrichments": {"sec-13f": [{"target": "SpaceX", "total": 292}]}},
     "imports": {"gleif-update": {"runs": 7, "ok": 7, "failed": 0, "skipped": 0, "records": 184}},
+    "source_calls": {"sources": {"sec-edgar": {"total": 1203, "ok": 1180, "429": 3, "5xx": 20},
+                                 "gleif": {"total": 41, "ok": 41}},
+                     "bucket": {"edgar": {"hit": 812, "miss": 391, "put": 380}}},
     "graph": {"totals": {"companies": 6773, "people": 385, "relationships": 7638, "roles": 440, "claims": 8198},
               "new_relationships": {"owns": 12}, "since": "2026-W37",
               "delta": {"companies": 5, "people": -1, "relationships": 300, "roles": 9, "claims": 12},
@@ -95,6 +98,20 @@ class TestRendering:
         assert "first asserted this week: owns 12" in t
         assert "groups with more than 500 direct subsidiaries (2):" in t
         assert "     1,162  TENET HEALTHCARE CORPORATION\n       735  DAVITA INC.\n" in t
+
+    def test_source_calls_per_source_and_the_bucket(self):
+        t = format_report_text(REPORT)
+        assert "SOURCE CALLS\n" in t
+        assert "  sec-edgar           1,203  ok 1,180, 429 3, 5xx 20\n" in t
+        assert "  gleif                  41  ok 41\n" in t
+        assert "  bucket edgar     hit 812, miss 391, put 380\n" in t
+        h = format_report_html(REPORT)
+        assert ">Source calls<" in h and "1,203" in h and ">812<" in h and ">bucket<" in h
+
+    def test_a_report_stored_before_the_counts_says_none(self):
+        r = {k: v for k, v in REPORT.items() if k != "source_calls"}
+        assert "SOURCE CALLS\n  none counted\n" in format_report_text(r)
+        assert "none counted" in format_report_html(r)
 
     def test_a_week_without_large_groups_has_no_such_section(self):
         r = {**REPORT, "graph": {**REPORT["graph"], "large_groups": []}}

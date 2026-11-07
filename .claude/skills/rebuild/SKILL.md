@@ -44,8 +44,9 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   2 bulk import under the import lock, 3 `finish-import.sh`, 4 GLEIF history, 5 accounts
   back, 6 replay, 7 finishing what the scrapes added (dedupe entities — with the scraper
   flags on, so its SEC/LEI bridge may read EDGAR as it does on the server; findings item 70 —
-  the securities bridge `gleif-isin-bridge --apply` (CUSIP → ISIN → LEI, item 71), persons, geocode, close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only
-  checks + `after.json`.
+  the securities bridge `gleif-isin-bridge --apply` (CUSIP → ISIN → LEI, item 71), persons, geocode, close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks, the calls to each source and the bucket since step 1
+  (`manage.py source-calls`, `SourceCall` rows — step 0's shell downloads are not counted) and
+  `after.json` (which keeps them, so the diff shows the change from the last rebuild).
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
   run-all retry (every source, not Wikidata alone — findings item 54) for the companies whose
   Wikidata part failed ("too busy", a read timeout), A3 one SEC retry for the companies whose

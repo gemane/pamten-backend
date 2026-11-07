@@ -31,6 +31,9 @@ for k, v in _TEST_ENV.items():
 # an env var beats the .env file, so this overrides any real SMTP config.
 os.environ["EMAIL_BACKEND"] = "console"
 os.environ["SMTP_HOST"] = ""
+# Never write the source call counts from the suite (app/source_calls.py): the
+# API's lifespan would start the flusher against whatever database is configured.
+os.environ["SOURCE_CALLS_ENABLED"] = "false"
 
 import pytest  # noqa: E402  (env vars above must be set before app imports)
 from contextlib import contextmanager  # noqa: E402

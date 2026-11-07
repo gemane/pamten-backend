@@ -43,3 +43,20 @@ def test_step_7_runs_the_securities_bridge_after_the_dedup_and_before_the_shortc
     assert "SCRAPER_" not in line          # GLEIF's catalogue switch is its only gate
     at = step7.index(line)
     assert step7.index("dedupe-entities") < at < step7.index("manage.py mark-shortcuts")
+
+
+def test_step_8_prints_the_source_calls_before_the_snapshot():
+    # the calls to each source and the bucket since step 1 created the database
+    # (app/source_calls.py); the snapshot keeps them for the next verify's diff
+    step8 = SCRIPT[SCRIPT.index('t "8 '):]
+    lines = [ln for ln in step8.splitlines() if not ln.lstrip().startswith("#")]
+    [calls] = [i for i, ln in enumerate(lines) if "manage.py source-calls" in ln]
+    [snap] = [i for i, ln in enumerate(lines) if "snapshot.py" in ln]
+    assert calls < snap
+    assert "--from 2000-01-01" in lines[calls], "every row of the fresh database"
+
+
+def test_the_replay_counts_its_calls():
+    # the replay is not a manage.py command, so it switches the counter on itself
+    replay = (KIT / "replay_scrapes.py").read_text()
+    assert "source_calls.start()" in replay
