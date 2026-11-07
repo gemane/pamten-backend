@@ -32,3 +32,14 @@ def test_the_other_finishing_steps_run_without_the_flags():
     for cmd in ("dedupe-persons", "geocode", "close-reported-by-parent", "mark-shortcuts", "mark-stale"):
         [line] = [ln for ln in step7.splitlines() if f"manage.py {cmd}" in ln]
         assert "SCRAPER_" not in line, line
+
+
+def test_step_7_runs_the_securities_bridge_after_the_dedup_and_before_the_shortcuts():
+    # findings item 71: the replay stores the CUSIPs (13F, 13D/G covers), so the
+    # bridge belongs after it; a join merges two nodes, so before mark-shortcuts
+    step7 = _step(7)
+    [line] = [ln for ln in step7.splitlines() if "manage.py gleif-isin-bridge" in ln]
+    assert "--apply" in line
+    assert "SCRAPER_" not in line          # GLEIF's catalogue switch is its only gate
+    at = step7.index(line)
+    assert step7.index("dedupe-entities") < at < step7.index("manage.py mark-shortcuts")

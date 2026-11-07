@@ -76,6 +76,33 @@ class TestTheFile:
                        "url": "https://mapping.gleif.org/api/v2/isin-lei/x/download"}
         assert call.call_args.args[0] == gi.MAPPING_API
 
+    def test_fetch_downloads_the_newest_and_drops_the_older_files(self, tmp_path):
+        # the bridge runs daily after the GLEIF delta: each day's ~33 MB file must
+        # not pile up; files that are not GLEIF's LEI-ISIN files are left alone
+        for name in ("isin-lei-20261105T081500.zip", "isin-lei-20261106T081508.zip.part", "notes.txt",
+                     "isin-lei.zip"):
+            (tmp_path / name).write_bytes(b"x")
+        meta = {"file_name": "isin-lei-20261107T081500.zip", "uploaded_at": "2026-11-07T08:15:00Z",
+                "url": "https://mapping.gleif.org/x"}
+
+        def download(url, dest):
+            open(dest, "wb").write(b"zip")
+        with patch.object(gi, "latest_file", return_value=meta), \
+             patch("app.scraper.gleif_incremental._download", side_effect=download) as dl:
+            got = gi.fetch(str(tmp_path))
+        assert dl.call_count == 1
+        assert got.day == "2026-11-07" and got.path == str(tmp_path / "isin-lei-20261107T081500.zip")
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["isin-lei-20261107T081500.zip", "isin-lei.zip", "notes.txt"]
+
+    def test_fetch_reuses_todays_file(self, tmp_path):
+        (tmp_path / "isin-lei-20261107T081500.zip").write_bytes(b"zip")
+        meta = {"file_name": "isin-lei-20261107T081500.zip", "uploaded_at": "2026-11-07T08:15:00Z",
+                "url": "https://mapping.gleif.org/x"}
+        with patch.object(gi, "latest_file", return_value=meta), \
+             patch("app.scraper.gleif_incremental._download") as dl:
+            gi.fetch(str(tmp_path))
+        assert dl.call_count == 0
+
 
 def _plan(mapping, nodes, holders, kept=frozenset()):
     """`plan` over fake nodes; ``holders``: LEI → the rows `SELECT … WHERE lei_id` answers."""

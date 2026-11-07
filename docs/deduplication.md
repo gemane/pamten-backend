@@ -905,8 +905,15 @@ HOLDINGS ↔ GLEIF's SIRIUS XM INC., the pair the registers' names could not set
 item 68), 18 attaches (Franklin Templeton, Shentel, Valvoline, Trade Desk, T. Rowe Price
 Group, …), 1 umbrella-like contradiction (iShares), 20 CUSIPs GLEIF does not map. A dry run
 by default; `--apply` takes the import lock; the GLEIF source (its catalogue switch, no environment flag)
-must be on; a file older than three days is refused. Not in any chain yet — a manual
-command first. What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
+must be on; a file older than three days is refused. Where it runs (since 2026-11-07, a manual
+command for its first day): after every daily GLEIF delta — `ops.sh gleif-update` (the file in
+`/data/gleif-isin`, the container's home is gone with the container) and dev's
+`~/scripts/cron-gleif-update.sh` — and in the rebuild kit's step 7 after the entity dedup.
+Never fatal there (a GLEIF hiccup must not fail the delta), and before the dissolution pass and
+`mark-shortcuts` (an attach writes GLEIF's record, a join merges two nodes). Not in
+`finish-import.sh` or `ops.sh import`: a bulk import stores no CUSIP, so the bridge would
+download the file to find nothing. Each run keeps only the newest file (~33 MB) and removes
+GLEIF's older ones. What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
 13G filings such as NESTLE SA — GLEIF does map Nestlé's ADR CUSIPs to its LEI, but the owner's
 node holds none).
 Findings item 19 (rebuild 2026-10-30): eight pairs that had joined by name before #490 were
