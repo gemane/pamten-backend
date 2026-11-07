@@ -25,10 +25,14 @@ def world(monkeypatch, fake_sources):
     monkeypatch.setattr(settings, "SCRAPER_ENABLED", True)
     monkeypatch.setattr(settings, "SCRAPER_AUTODEDUP_ENABLED", False)
     monkeypatch.setattr("app.scraper.scraper_registry._registry", {})
-    state = {"calls": [], "seats": set(), "wd_adds": {"wd:Q92764"}, "sec_status": "ok"}
+    state = {"calls": [], "seats": set(), "wd_adds": {"wd:Q92764"}, "sec_status": "ok",
+             "filer": "sec:0001652044", "renamed": {}}
     monkeypatch.setattr("app.scraper.runner._stored_entity", lambda q, c=None: None)
+    # the seats live on the node under the id it has now; the old id of a
+    # re-keyed node answers nothing, as the graph does (findings item 67 b)
     monkeypatch.setattr("app.scraper.runner.seat_holders_without_holdings",
-                        lambda eid: frozenset(state["seats"]) if eid else frozenset())
+                        lambda eid: frozenset(state["seats"]) if eid == state["filer"] else frozenset())
+    monkeypatch.setattr("app.scraper.runner._node_id_now", lambda eid: state["renamed"].get(eid, eid))
 
     def sec(q, d, c=None):
         state["calls"].append("sec_edgar")
@@ -38,6 +42,8 @@ def world(monkeypatch, fake_sources):
     def wd(q, d, c=None):
         state["calls"].append("wd")
         state["seats"] |= state["wd_adds"]
+        if state.get("rekey_to"):        # Wikidata states the LEI: sec:{CIK} becomes lei:{LEI}
+            state["renamed"]["sec:0001652044"] = state["filer"] = state["rekey_to"]
         return {"status": "ok", "total": 3}
 
     def seat_pass(entity_id, cik, company_name):
@@ -80,6 +86,16 @@ class TestRunScrapeAll:
         assert world["calls"] == ["sec_edgar", "wd", "seats"]
         assert out["results"]["sec_edgar"]["status"] == "partial"
 
+    def test_a_filer_a_later_source_re_keyed_gets_the_pass_on_its_new_id(self, world):
+        """rebuild 2026-11-07b: BofA's SEC part wrote sec:0000070858, its Wikidata
+        part stated the LEI and the node became lei:9DJT…; the old id held no seat
+        and the pass never ran (findings item 67 b)."""
+        world["rekey_to"] = "lei:5493006MHB84DD0ZWV18"
+        out = self._run()
+        assert world["calls"] == ["sec_edgar", "wd", "seats"]
+        assert world["pass_args"][0] == "lei:5493006MHB84DD0ZWV18"
+        assert out["results"]["sec_edgar"]["seats_rerun"]["total"] == 1
+
     def test_a_failed_pass_is_reported_not_raised(self, world, monkeypatch):
         def boom(entity_id, cik, company_name):
             raise RuntimeError("EDGAR down")
@@ -112,3 +128,20 @@ def test_the_on_demand_dispatcher_asks_nothing_for_seats_the_run_saw(world, monk
     monkeypatch.setattr("app.scraper.run_log.record_run", lambda *a, **k: contextlib.nullcontext({}))
     ondemand._run_instant_sources("Alphabet", ondemand.ScrapeDecision(True, "absent", 1))
     assert world["calls"] == ["sec_edgar", "wd"]
+
+
+def test_the_on_demand_dispatcher_follows_a_re_keyed_filer(world, monkeypatch):
+    rows = []
+
+    @contextlib.contextmanager
+    def fake_record_run(source, target, reason=None):
+        row = {}
+        rows.append((reason, row))
+        yield row
+
+    monkeypatch.setattr("app.scraper.run_log.record_run", fake_record_run)
+    world["rekey_to"] = "lei:5493006MHB84DD0ZWV18"
+    ondemand._run_instant_sources("Alphabet", ondemand.ScrapeDecision(True, "absent", 1))
+    assert world["calls"] == ["sec_edgar", "wd", "seats"]
+    assert world["pass_args"][0] == "lei:5493006MHB84DD0ZWV18"
+    assert rows[-1] == ("new_seats", {"total": 1, "entity_id": "lei:5493006MHB84DD0ZWV18"})

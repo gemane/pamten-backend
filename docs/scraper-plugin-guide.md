@@ -373,7 +373,9 @@ company) reads the graph's persons, and the knowledge bases that write officers 
 it — so both dispatchers run that pass once more at the end when the filer gained seat
 holders without a holding during the run (`runner.rerun_for_new_seats` →
 `run_sec_seat_holders`; the result carries `seats_rerun`, the on-demand run log a row with
-reason `new_seats`; findings item 67). A
+reason `new_seats`; findings item 67). It asks under the id the filer has at that
+moment — a later source may have re-keyed it `sec:` → `lei:` (`runner.seat_rerun_target`;
+item 67 b). A
 source that raises comes back as `{"status": "error", "detail": …}`; the run-all
 endpoint then finishes its `ScrapeRun` row as `failed`, naming the source.
 Both dispatchers also note the loss (`graph_writer.mark_source_lost`): nothing of

@@ -2917,18 +2917,40 @@ def seat_holders_without_holdings(entity_id: str | None) -> frozenset[str]:
             id=entity_id) if r.get("id"))
 
 
-def rerun_for_new_seats(result) -> bool:
-    """Whether the SEC's seat-holders pass runs once more after the other
-    sources: its run wrote a filer with a CIK, and that filer now has seat
-    holders without a holding the run did not look up (``seats_asked``) —
-    officers a knowledge base wrote after it (findings item 67). The same
-    seats mean the same lookups again, so no second ask; a result without
+def _node_id_now(entity_id: str) -> str:
+    """The id ``entity_id`` lives under now: itself while the node exists, else
+    the id its forwarding row names (`MergedId`). A run-all's SEC result keeps
+    the id its own run wrote; a later source in the same run-all can re-key that
+    node — Wikidata states the filer's LEI and `node_ids` renames `sec:{CIK}` to
+    `lei:{LEI}` (rebuild 2026-11-07b: BofA, NYT, Wells Fargo, Morgan Stanley) —
+    and the old id then reads as a node with no seats. Read uncached: the rename
+    happened seconds ago in this process."""
+    from app.merged_ids import resolve_current_id
+    with db.get_session() as session:
+        if session.run("MATCH (e:Entity {id: $id}) RETURN e.id AS id LIMIT 1", id=entity_id).single():
+            return entity_id
+        return resolve_current_id(session, entity_id) or entity_id
+
+
+def seat_rerun_target(result) -> str | None:
+    """The filer node the SEC's seat-holders pass runs on once more after the
+    other sources, or None: its run wrote a filer with a CIK, and that filer —
+    under the id it has NOW (`_node_id_now`, findings item 67 b) — has seat
+    holders without a holding the run did not look up (``seats_asked``):
+    officers a knowledge base wrote after it (findings item 67). The same seats
+    mean the same lookups again, so no second ask; a result without
     ``seats_asked`` (an older shape) asks nothing."""
     if not isinstance(result, dict) or result.get("status") not in ("ok", "partial"):
-        return False
+        return None
     if not (result.get("cik") and result.get("entity_id")) or not isinstance(result.get("seats_asked"), list):
-        return False
-    return bool(seat_holders_without_holdings(result["entity_id"]) - set(result["seats_asked"]))
+        return None
+    current = _node_id_now(result["entity_id"])
+    return current if seat_holders_without_holdings(current) - set(result["seats_asked"]) else None
+
+
+def rerun_for_new_seats(result) -> bool:
+    """Whether `seat_rerun_target` names a filer to ask once more."""
+    return seat_rerun_target(result) is not None
 
 
 @_with_autodedup
@@ -3087,10 +3109,11 @@ def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> di
     # registers run before the knowledge bases (item 60), so the SEC part met
     # none of Wikidata's officers on its own run.
     sec = results.get("sec_edgar")
-    if rerun_for_new_seats(sec):
+    filer_id = seat_rerun_target(sec)
+    if filer_id:
         try:
             results["sec_edgar"] = {**sec, "seats_rerun": run_sec_seat_holders(
-                sec["entity_id"], sec["cik"], sec.get("company") or query)}
+                filer_id, sec["cik"], sec.get("company") or query)}
         except Exception as exc:  # noqa: BLE001 - an extra pass; its loss is logged, not fatal
             log.error("sec_edgar seat-holders rerun failed for %r: %s", query, exc)
             results["sec_edgar"] = {**sec, "seats_rerun": {"status": "error", "detail": str(exc)}}
