@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # Default OFF so the code can ship before the privacy notice and the
     # app-store declarations have caught up; turning it on is a deliberate step.
     ANALYTICS_ENABLED:                bool = False
+    # Calls to each outside source and to the shared bucket, counted per UTC day
+    # in `SourceCall` (app/source_calls.py). Operational counts about sources, no
+    # user in them, so on by default; the test suite turns it off.
+    SOURCE_CALLS_ENABLED:             bool = True
     # /search resilience: when the FULL_TEXT index returns nothing, fall back to a
     # bounded substring scan on the name so a degraded/incomplete FULL_TEXT index
     # (e.g. after an interrupted bulk-load) can't silently hide companies that ARE

@@ -546,6 +546,12 @@ everyone who might be named in a search box — which is exactly how the record 
 processing and the published privacy notice put it. If the retention window here
 changes, those change with it.
 
+**Source calls** are counted apart from all this, and carry no user: `SourceCall`
+keeps per UTC day how often the backend asked each outside source (EDGAR, GLEIF,
+Wikidata, Wikimedia, Nominatim, Companies House, OpenCorporates) and how the shared
+bucket answered (hit, miss, put) — `manage.py source-calls`, the weekly digest's
+*Source calls* section, and the rebuild's step 8 (docs/operations.md).
+
 ---
 
 ## Federation
@@ -612,6 +618,7 @@ log), not as in-place edits that the next scrape would clobber.
 | `SCRAPER_WIKIDATA_DATA_MODE` | `claims_only` | The data mode a fresh database seeds the Wikidata source with, and the mode it runs in until its catalogue row says otherwise: `claims_only` records claims and enriches entities but never draws ownership structure, `full` draws edges like every other source. Survives a drop-and-rebuild, which the Scraper-tab toggle does not (see docs/deduplication.md, *Claims-only sources*) |
 | `SCRAPER_SEC_EDGAR_ENABLED` | `false` | SEC EDGAR source switch |
 | `REPORT_EMAIL` | *(empty)* | Recipient of the weekly activity digest (`manage.py weekly-report --email`); falls back to `ADMIN_EMAIL` |
+| `SOURCE_CALLS_ENABLED` | `true` | Count the calls to each outside source (EDGAR, GLEIF, Wikidata, …) and the shared bucket's hits/misses per UTC day in `SourceCall` — `manage.py source-calls`, the weekly digest, the rebuild's step 8. No user in it (docs/operations.md, *Source calls*) |
 | `ALERT_HEALTH_URL` | `manage.py alerts`: the `/health` URL to probe from outside (empty = skip) |
 | `ALERT_DISK_PATHS` / `ALERT_DISK_WARN_PCT` / `ALERT_DISK_CRIT_PCT` | mount points to watch (default `/`), warn at 85 %, critical at 95 % |
 | `ALERT_BACKUP_MARKER` / `ALERT_BACKUP_MAX_AGE_HOURS` / `ALERT_BACKUP_EXPECT_OFFSITE` | the marker `backup-database.sh` writes; alert when older than 26 h, missing, or not offsite |

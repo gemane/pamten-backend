@@ -197,7 +197,7 @@ def prune(days: int = RETENTION_DAYS, dry_run: bool = False) -> dict:
     cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days)
     cutoff = cutoff_dt.isoformat()
     out: dict[str, int] = {}
-    for vtype in ("SearchDemand", "UsageCounter", "EndpointStat"):
+    for vtype in ("SearchDemand", "UsageCounter", "EndpointStat", "SourceCall"):
         rows = run_sql(f"SELECT count(*) AS n FROM {vtype} WHERE last_seen < :cut",
                        {"cut": cutoff})
         n = int((rows[0].get("n") if rows else 0) or 0)

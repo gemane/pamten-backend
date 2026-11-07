@@ -187,7 +187,10 @@ searches (per-week counters — how many, top queries, how many found nothing),
 scrapes (runs by source, companies scraped for the **first time** vs
 **refreshed** — told apart by the run's recorded `reason` — records written, SEC
 enrichments, failures), imports (GLEIF/PSC runs), and graph totals with the
-change since the previous stored digest. `--email` sends it to `REPORT_EMAIL`
+change since the previous stored digest, and **source calls** — how often each
+outside source was asked (by answer: ok, 4xx, 429, 5xx, no response) and what the
+shared bucket did per prefix (hit = a source fetch saved, miss, put), from the
+`SourceCall` rows. `--email` sends it to `REPORT_EMAIL`
 (falling back to `ADMIN_EMAIL`) through the configured email backend. Every run
 stores the digest (`WeeklyReport`, one per week) so the next can measure growth.
 Aggregates only: it names companies, never who searched.
@@ -200,6 +203,18 @@ Manual-first. To get it every Monday at 06:00 UTC:
 
 The wrapper takes a lock and logs to `/home/administrator/data/weekly-report.log`.
 The same numbers are on the Scraper tab (admins) and at `GET /analytics/weekly`.
+
+### Source calls
+
+`python manage.py source-calls [--days 7 | --from YYYY-MM-DD] [--to YYYY-MM-DD]`
+prints the calls to each outside source and the bucket operations for those UTC
+days (`SourceCall`, see `docs/data-model.md`). Counted by the API and by every
+`manage.py` command, flushed each minute and at exit; a process killed hard loses
+at most its last minute. Not counted: downloads made by shell scripts (`curl` in
+the golden-copy refresh and the bulk-import steps) and the database itself. The
+rebuild prints it in step 8 (every row of the fresh database is the rebuild's) and
+keeps it in `after.json`, so `diff_snapshots.py` shows the change from the last
+rebuild. Off with `SOURCE_CALLS_ENABLED=false`.
 
 The Graph section also lists **groups with more than 500 direct subsidiaries**
 (`LARGE_GROUP_THRESHOLD`), largest first — the ones the profile's section cap

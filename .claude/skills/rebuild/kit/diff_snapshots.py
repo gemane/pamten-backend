@@ -130,9 +130,24 @@ def _print_edges(P: dict, N: dict) -> None:
     print("  13F sample churn by issuer:", sorted(churn_by_issuer.items(), key=str))
 
 
+def _print_source_calls(P: dict, N: dict) -> None:
+    """Calls per source and kind, previous vs new — not a finding by itself (a
+    warm or cold bucket moves it), but a source asked far more often than last
+    time is worth a look."""
+    a, b = P.get("source_calls") or {}, N.get("source_calls") or {}
+    if not a and not b:
+        return
+    print("\nsource calls (previous -> new):")
+    for src in sorted(set(a) | set(b)):
+        kinds = sorted(set(a.get(src, {})) | set(b.get(src, {})))
+        print(f"  {src:22} " + ", ".join(
+            f"{k} {a.get(src, {}).get(k, '-')} -> {b.get(src, {}).get(k, '-')}" for k in kinds))
+
+
 def main() -> None:
     P, N = load(sys.argv[1]), load(sys.argv[2])
-    _print_counts(P, N)
+    _print_counts({k: v for k, v in P.items() if k != "source_calls"}, N)
+    _print_source_calls(P, N)
     _print_nodes(P, N)
     for k in ("lei_and_cik", "wikidata_entities", "users"):
         a, b = set(map(str, P[k])), set(map(str, N[k]))

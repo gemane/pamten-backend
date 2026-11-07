@@ -7,7 +7,7 @@ from threading import Lock
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from app import analytics
+from app import analytics, source_calls
 from app.version import APP_VERSION
 from app.config import settings
 from app.db.arcadedb import close_client
@@ -74,6 +74,8 @@ async def lifespan(app: FastAPI):
     # Provision the env-configured admin (after the schema exists), so a fresh DB
     # has an admin without the first-registrant-becomes-admin race.
     auth_router.bootstrap_admin()
+    # count the calls to each outside source and the bucket (app/source_calls.py)
+    source_calls.start()
     flusher = (asyncio.create_task(_flush_endpoint_counts_forever())
                if settings.ANALYTICS_ENABLED else None)
     yield
@@ -83,6 +85,8 @@ async def lifespan(app: FastAPI):
         counts = _drain_endpoint_counts()
         if counts:
             analytics.flush_endpoint_stats(counts)
+    if settings.SOURCE_CALLS_ENABLED:
+        source_calls.flush()
     # Close pooled HTTP clients on shutdown.
     close_client()
     close_geocode_client()

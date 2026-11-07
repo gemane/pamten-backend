@@ -12,13 +12,15 @@ snapshots — never for the graph itself or anything a user wrote.
 Provider-agnostic: any S3 API (Hetzner, Scaleway, AWS…) via ``OBJECT_STORE_*``.
 Off when the bucket is unset; every call is best-effort at the read/write
 level (a store outage degrades to "fetch from the source", never to a failed
-scrape) — callers decide what a miss means.
+scrape) — callers decide what a miss means. Every operation is counted per
+prefix (``bucket:edgar`` hit/miss/put/delete/list/error, app/source_calls.py).
 """
 from __future__ import annotations
 
 import logging
 import threading
 
+from app import source_calls
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -72,12 +74,17 @@ def get(key: str) -> bytes | None:
     if not enabled():
         return None
     try:
-        return _get_client().get_object(Bucket=settings.OBJECT_STORE_BUCKET, Key=key)["Body"].read()
+        data = _get_client().get_object(Bucket=settings.OBJECT_STORE_BUCKET, Key=key)["Body"].read()
     except Exception as exc:  # noqa: BLE001 - NoSuchKey and outages both mean "not from here"
         if _is_missing(exc):
+            source_calls.count_bucket(key, "miss")
             return None
+        source_calls.count_bucket(key, "error")
         logger.warning("object store: get %s failed: %s", key, exc)
         return None
+    # a hit is a source fetch the bucket saved (app/source_calls.py)
+    source_calls.count_bucket(key, "hit")
+    return data
 
 
 def put(key: str, data: bytes, content_type: str = "application/octet-stream") -> bool:
@@ -87,8 +94,10 @@ def put(key: str, data: bytes, content_type: str = "application/octet-stream") -
     try:
         _get_client().put_object(Bucket=settings.OBJECT_STORE_BUCKET, Key=key,
                                  Body=data, ContentType=content_type)
+        source_calls.count_bucket(key, "put")
         return True
     except Exception as exc:  # noqa: BLE001
+        source_calls.count_bucket(key, "error")
         logger.warning("object store: put %s failed: %s", key, exc)
         return False
 
@@ -98,8 +107,10 @@ def delete(key: str) -> bool:
         return False
     try:
         _get_client().delete_object(Bucket=settings.OBJECT_STORE_BUCKET, Key=key)
+        source_calls.count_bucket(key, "delete")
         return True
     except Exception as exc:  # noqa: BLE001
+        source_calls.count_bucket(key, "error")
         logger.warning("object store: delete %s failed: %s", key, exc)
         return False
 
@@ -112,6 +123,7 @@ def summary(prefix: str) -> dict:
     try:
         paginator = _get_client().get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=settings.OBJECT_STORE_BUCKET, Prefix=prefix):
+            source_calls.count_bucket(prefix, "list")
             for obj in page.get("Contents", []):
                 out["objects"] += 1
                 out["bytes"] += obj.get("Size", 0)
