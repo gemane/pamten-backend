@@ -186,3 +186,28 @@ class TestDiffVotingGroups:
 @pytest.mark.parametrize("value, expected", [("13F", True), ("13F-HR", True), ("13G/A", False), (None, False)])
 def test_is_13f(value, expected):
     assert diff.is_13f(value) is expected
+
+
+class TestSourceCalls:
+    def test_the_snapshot_keeps_the_calls_per_source_and_kind(self):
+        def sql(q):
+            if "FROM SourceCall" in q:
+                return [{"source": "sec-edgar", "kind": "ok", "n": 9000},
+                        {"source": "bucket:edgar", "kind": "hit", "n": 4000},
+                        {"source": "sec-edgar", "kind": "429", "n": 2}]
+            return _fake_sql(q)
+        snap = snapshot.take(sql, _fake_cypher)
+        assert snap["source_calls"] == {"bucket:edgar": {"hit": 4000},
+                                        "sec-edgar": {"ok": 9000, "429": 2}}
+
+    def test_the_diff_prints_them_previous_against_new(self, capsys):
+        diff._print_source_calls({"source_calls": {"sec-edgar": {"ok": 9000}}},
+                                 {"source_calls": {"sec-edgar": {"ok": 8700, "429": 2},
+                                                   "gleif": {"ok": 40}}})
+        out = capsys.readouterr().out
+        assert "gleif                  ok - -> 40" in out
+        assert "sec-edgar              429 - -> 2, ok 9000 -> 8700" in out
+
+    def test_a_snapshot_from_before_the_counts_prints_nothing(self, capsys):
+        diff._print_source_calls({}, {})
+        assert capsys.readouterr().out == ""

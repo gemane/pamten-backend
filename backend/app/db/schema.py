@@ -108,6 +108,9 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("SearchWeek",   "week",         "NOTUNIQUE"),
     ("UsageWeek",    "key",          "UNIQUE"),
     ("UsageWeek",    "week",         "NOTUNIQUE"),
+    # calls to each outside source and the bucket, per UTC day (app/source_calls.py)
+    ("SourceCall",   "key",          "UNIQUE"),
+    ("SourceCall",   "day",          "NOTUNIQUE"),
     # One stored digest per week, so the next one can report the change.
     ("WeeklyReport", "week",         "UNIQUE"),
     # Address -> coordinate cache, so a shared registered-agent building is
@@ -281,6 +284,7 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     ("UsageCounter", "count",             "INTEGER"),
     ("UsageWeek",    "count",             "INTEGER"),
     ("EndpointStat", "count",             "INTEGER"),
+    ("SourceCall",   "count",             "INTEGER"),
     ("ImportState",  "edge_key_version",  "INTEGER"),
     ("RefreshToken", "expires_at",        "DOUBLE"),    # epoch seconds
     ("RefreshToken", "issued_at",         "DOUBLE"),
@@ -382,6 +386,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "UsageCounter": ("key", "first_seen", "last_seen"),
     "UsageWeek": ("key", "week", "event"),
     "EndpointStat": ("key", "last_seen"),
+    "SourceCall": ("key", "day", "source", "kind", "last_seen"),
     "ImportState": ("key", "scope", "last_publish_date", "last_run_at", "snapshot_date", "holder", "acquired_at"),
     "RefreshToken": ("id", "token_hash", "user_id", "family_id", "replaced_by"),
     "AppSetting": ("key", "value", "updated_at"),

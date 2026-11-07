@@ -43,6 +43,10 @@ logging.basicConfig(level=logging.WARNING)
 from app.industry import backfill as industry_backfill  # noqa: E402
 from app.scraper.runner import run_scrape_all, run_sec_ex21, run_sec_acquisitions, run_sec_13f  # noqa: E402
 from app.scraper.run_log import record_run  # noqa: E402
+from app import source_calls  # noqa: E402
+# count every call to an outside source and the bucket the replay makes, as
+# manage.py does for its commands (stored in SourceCall, flushed each minute)
+source_calls.start()
 
 TARGETS = [l.strip() for l in open("/home/administrator/scripts/scrape-targets.txt")
            if l.strip() and not l.startswith("#")]

@@ -434,6 +434,18 @@ def cmd_weekly_report(args):
         print(f"sent to {to}")
 
 
+def cmd_source_calls(args):
+    """Calls to each outside source and to the bucket, from the `SourceCall`
+    rows (app/source_calls.py), for the UTC days FROM <= day < TO."""
+    _apply_direct_db_url(args)
+    from datetime import date, timedelta
+    from app.source_calls import format_totals, totals
+    to = args.to or (date.today() + timedelta(days=1)).isoformat()
+    since = getattr(args, "from") or (date.fromisoformat(to) - timedelta(days=args.days)).isoformat()
+    print(f"source calls {since} to {to} (UTC days, end exclusive)")
+    print(format_totals(totals(since, to)), end="")
+
+
 def cmd_alerts(args):
     """What is wrong right now: failed/stale imports, a stale or missing backup,
     disk nearly full, /health down (on change). Prints the list; --email mails it
@@ -1418,6 +1430,15 @@ def _build_parser():
                       help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
     p_wr.set_defaults(func=cmd_weekly_report)
 
+    p_sc = subparsers.add_parser('source-calls',
+        help='Calls to each outside source and to the bucket, per kind (app/source_calls.py)')
+    p_sc.add_argument('--from', help='First UTC day, YYYY-MM-DD (default: TO minus --days)')
+    p_sc.add_argument('--to', help='Day after the last, YYYY-MM-DD (default: tomorrow)')
+    p_sc.add_argument('--days', type=int, default=7, help='Days back from TO when --from is not given')
+    p_sc.add_argument('--db-url', dest='db_url', default=None,
+                      help='Talk to ArcadeDB directly (bypasses the proxy timeout)')
+    p_sc.set_defaults(func=cmd_source_calls)
+
     p_al = subparsers.add_parser('alerts', help='What is wrong right now: failed/stale imports, stale backup, '
                                          'disk nearly full, /health down (see docs/operations.md)')
     p_al.add_argument('--only', help='Comma-separated subset of checks: imports,backup,disk,health')
@@ -1542,6 +1563,10 @@ def _build_parser():
 if __name__ == "__main__":
     args = _build_parser().parse_args()
     if hasattr(args, 'func'):
+        # count every call to an outside source and the bucket this command makes,
+        # flushed each minute and at exit (app/source_calls.py)
+        from app import source_calls
+        source_calls.start()
         args.func(args)
     else:
         _build_parser().print_help()

@@ -1,5 +1,6 @@
 """The weekly activity digest: what people asked for, what the scrapers did,
-what the imports brought, how the graph grew.
+what the imports brought, how often each outside source and the bucket were
+called (`SourceCall`, app/source_calls.py), how the graph grew.
 
 Read from stores that already exist, plus the per-week counters
 (`SearchWeek`, `UsageWeek`) and the run log's `reason`/`entity_id`, which were
@@ -201,6 +202,37 @@ def _new_relationships(week: str) -> dict:
     return out
 
 
+#: kinds that are a network call answered (or not) by the source itself
+NETWORK_KINDS = ("ok", "4xx", "429", "5xx", "error")
+#: kinds of a bucket operation (app/objectstore.py)
+BUCKET_KINDS = ("hit", "miss", "put", "delete", "list", "error")
+
+
+def _source_calls(week: str) -> dict:
+    """Calls to each outside source and to the bucket in the week
+    (app/source_calls.py): {"sources": {name: {kind: n, "total": n}},
+    "bucket": {prefix: {kind: n}}}. A bucket hit is a source fetch saved."""
+    from app.source_calls import BUCKET
+    start, end = week_bounds(week)
+    rows = _rows("SELECT source, kind, sum(count) AS n FROM SourceCall "
+                 "WHERE day >= :a AND day < :b GROUP BY source, kind",
+                 {"a": start.date().isoformat(), "b": end.date().isoformat()})
+    sources: dict[str, dict] = {}
+    bucket: dict[str, dict] = {}
+    for r in rows:
+        src, kind, n = r.get("source"), r.get("kind"), int(r.get("n") or 0)
+        if not src or not kind:
+            continue
+        if src.startswith(BUCKET + ":"):
+            bucket.setdefault(src.split(":", 1)[1], {})[kind] = n
+        else:
+            d = sources.setdefault(src, {"total": 0})
+            d[kind] = n
+            d["total"] += n
+    return {"sources": dict(sorted(sources.items(), key=lambda kv: -kv[1]["total"])),
+            "bucket": dict(sorted(bucket.items()))}
+
+
 def _previous_totals(week: str) -> dict | None:
     rows = _rows("SELECT week, json FROM WeeklyReport WHERE week < :w ORDER BY week DESC LIMIT 1",
                  {"w": week})
@@ -230,6 +262,7 @@ def weekly_report(week: str | None = None) -> dict:
         "searches": _searches(week),
         "scrapes": _scrapes(runs),
         "imports": _imports(runs),
+        "source_calls": _source_calls(week),
         "graph": {"totals": totals, "new_relationships": _new_relationships(week),
                   "since": prev["week"] if prev else None, "delta": delta,
                   "large_groups": _large_groups(),
@@ -292,6 +325,17 @@ def format_report_text(r: dict) -> str:
                          f"failed {d['failed']}), {d['records']:,} records")
     else:
         lines.append("  none")
+    lines += ["", "SOURCE CALLS"]
+    calls = r.get("source_calls") or {}
+    if calls.get("sources") or calls.get("bucket"):
+        for src, k in calls.get("sources", {}).items():
+            lines.append(f"  {src:16} {k['total']:>8,}  " +
+                         ", ".join(f"{kind} {k[kind]:,}" for kind in NETWORK_KINDS if k.get(kind)))
+        for prefix, k in calls.get("bucket", {}).items():
+            lines.append(f"  bucket {prefix:9} " +
+                         ", ".join(f"{kind} {k[kind]:,}" for kind in BUCKET_KINDS if k.get(kind)))
+    else:
+        lines.append("  none counted")
     d = g["delta"] or {}
     lines += ["", "GRAPH" + (f" (change since {g['since']})" if g["since"] else "")]
     for k in ("companies", "people", "relationships", "roles", "claims"):
@@ -434,6 +478,31 @@ def format_report_html(r: dict) -> str:
                            f"</span></li>" for src, v in im.items()) + "</ul>")
     else:
         out.append(f"<div style='font-size:13px;{muted}'>none</div>")
+    out.append("</div>")
+
+    # source calls: what we asked each source, and what the bucket answered
+    calls = r.get("source_calls") or {}
+    out.append(f"<div style='{card}'><h2 style='{h2}'>Source calls</h2>")
+    if calls.get("sources"):
+        rows = "".join(
+            f"<tr><td style='{td}'><b>{e(src)}</b></td><td style='{tdn}font-weight:600'>{k['total']:,}</td>"
+            + "".join(f"<td style='{tdn}'>{k.get(kind, 0) or '·'}</td>" for kind in NETWORK_KINDS[1:])
+            + "</tr>" for src, k in calls["sources"].items())
+        out.append("<table role='presentation' cellpadding='0' cellspacing='0' style='font-size:13px;width:100%'>"
+                   f"<tr><th style='{th}'>source</th><th style='{thn}'>calls</th>"
+                   + "".join(f"<th style='{thn}'>{kind}</th>" for kind in NETWORK_KINDS[1:])
+                   + f"</tr>{rows}</table>")
+    if calls.get("bucket"):
+        rows = "".join(
+            f"<tr><td style='{td}'><b>{e(prefix)}</b></td>"
+            + "".join(f"<td style='{tdn}'>{k.get(kind, 0) or '·'}</td>" for kind in BUCKET_KINDS)
+            + "</tr>" for prefix, k in calls["bucket"].items())
+        out.append("<table role='presentation' cellpadding='0' cellspacing='0' style='font-size:13px;width:100%;margin-top:14px'>"
+                   f"<tr><th style='{th}'>bucket</th>"
+                   + "".join(f"<th style='{thn}'>{kind}</th>" for kind in BUCKET_KINDS)
+                   + f"</tr>{rows}</table>")
+    if not calls.get("sources") and not calls.get("bucket"):
+        out.append(f"<div style='font-size:13px;{muted}'>none counted</div>")
     out.append("</div>")
 
     # graph
