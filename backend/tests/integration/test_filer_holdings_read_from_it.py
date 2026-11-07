@@ -77,6 +77,9 @@ def test_the_scrape_grades_an_old_cover_page_holding_form(it_db):
          patch("app.scraper.sec_lei.confirm_filer_lei", return_value=None):
         runner.run_scrape_sec_edgar("Altaba")
     assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]
+    # findings item 71: the cover's CUSIP (Alibaba's ADS, read from Altaba's real
+    # 2019 text cover) lands on the subject, the securities bridge's input
+    assert [r["cusip"] for r in run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0001577552'")] == ["01609W102"]
     claims = run_sql("SELECT read_from FROM Claim WHERE kind = 'owns' AND filing_type = '13G/A'")
     assert [c["read_from"] for c in claims] == ["form"]
 
@@ -94,3 +97,4 @@ def test_the_holdings_run_grades_an_old_cover_page_holding_form(it_db):
          patch.object(sec_edgar, "fetch_filer_sic", return_value=None):
         runner.run_sec_holdings("0001011006")
     assert _alibaba_edges() == [{"rf": "form", "ft": "13G/A", "pct": 11.0}]
+    assert [r["cusip"] for r in run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0001577552'")] == ["01609W102"]

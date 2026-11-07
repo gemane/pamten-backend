@@ -457,6 +457,14 @@ parser. Anything that does not map is either a new property (document it) or noi
 - [ ] **If the source's records are filings, stamp `filing_type`** ("13G/A", "13F", "RR",
       "PSC") — the source names the register, this names the *rulebook* the fact lives
       under, which is what a reader needs to judge it.
+- [ ] **A field one schema names, grep every schema's spelling of it — and keep it on every
+      path that reads the document.** The issuer's CUSIP is on every 13D/G cover; the
+      reader asked `issuerCusipNumber` and `issuerCusip` (13G), never 13D's `issuerCUSIP`
+      (Berkshire Hathaway's 13D/A of 2025), never the older text covers, and only the issuer's
+      own scrape kept it — a filer's scrape of the companies it holds dropped it. 75 of dev's
+      1,117 13D/G subjects carried one, and the securities bridge reads nothing else
+      (findings item 71, 2026-11-07). An identifier with a check digit is taken only when
+      the digit is right.
 - [ ] **Stamp `read_from` on every value the writer records** — how surely it
       was read, not how good the source is: `field` (a named field of XML/JSON),
       `table` (a cell under a header the filer wrote), `form` (a numbered item of a

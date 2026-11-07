@@ -906,7 +906,7 @@ item 68), 18 attaches (Franklin Templeton, Shentel, Valvoline, Trade Desk, T. Ro
 Group, …), 1 umbrella-like contradiction (iShares), 20 CUSIPs GLEIF does not map. A dry run
 by default; `--apply` takes the import lock; the GLEIF source (its catalogue switch, no environment flag)
 must be on; a file older than three days is refused. Not in any chain yet — a manual
-command first. What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
+command first. Its reach is the nodes with a CUSIP: every 13D/G cover read keeps the subject's since 2026-11-07 (docs/sec_edgar_scraper.md; before, 75 of dev's 1,117 13D/G subjects had one). What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
 13G filings such as NESTLE SA — GLEIF does map Nestlé's ADR CUSIPs to its LEI, but the owner's
 node holds none).
 Findings item 19 (rebuild 2026-10-30): eight pairs that had joined by name before #490 were

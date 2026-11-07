@@ -953,9 +953,20 @@ The rules the implementation lives by (`fetch_13f_holders` / `run_sec_13f`):
 
 - **CUSIP is the join key, harvested rather than licensed.** Info-table rows
   identify issuers only by CUSIP plus a free-text name typed by each filing
-  agent ("APPLE INC" / "Apple Inc"). The CUSIP comes from the 13D/G schedules
-  we already parse (`issuerCusipNumber`) and from the first name-verified 13F
-  rows, and is stamped on the entity fill-if-missing. One company legitimately
+  agent ("APPLE INC" / "Apple Inc"). The CUSIP comes from the 13D/G covers
+  we already read and from the first name-verified 13F rows, and is stamped on
+  the entity fill-if-missing (`runner._keep_cover_cusip`). Every cover read
+  keeps it (findings item 71, 2026-11-07): the issuer's own scrape and a
+  filer's scrape for each company it holds (`run_sec_holdings` and the company
+  scrape's holdings loop), XML schedules in all three spellings
+  (`issuerCusips/issuerCusipNumber`, 13G's `issuerCusip`, 13D's `issuerCUSIP` —
+  the last was never read, so no 13D gave its issuer a CUSIP) and older
+  text/HTML covers ("CUSIP No. 46435G508", "00507V109 (CUSIP Number)", spaced
+  "82968B 10 3"). Only nine characters with a right check digit count: a typo
+  would hand the securities bridge another issuer's ISIN. Before, only the
+  issuer's own XML schedules did — 75 of dev's 1,117 13D/G subjects carried
+  one. Guard (80 of BlackRock's 2024 .txt covers, whose file names are the
+  issuer's ISIN): 78 agree, the other two are what the cover itself states. One company legitimately
   has several CUSIPs (one per share class — SpaceX's filers report 84615Q103
   beside 69608A108), so a name-matching run must not lock onto the first CUSIP
   it sees, and CUSIP is **not** a dedup identifier.

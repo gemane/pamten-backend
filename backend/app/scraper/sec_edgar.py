@@ -1372,6 +1372,52 @@ def _parse_percent_from_text(text: str) -> float | None:
     return None
 
 
+#: Where a 13D/G cover states the issuer's CUSIP: "CUSIP No. 46435G508",
+#: "CUSIP Number: 084670702", "00507V109 (CUSIP Number)" (real covers of
+#: BlackRock, Berkshire Hathaway), sometimes spaced "82968B 10 3".
+_CUSIP_AFTER = re.compile(r"CUSIP\s*(?:No\.?|Number|#)\s*:?\s*([0-9A-Z][0-9A-Z \-]{5,16})", re.I)
+_CUSIP_BEFORE = re.compile(r"([0-9A-Z][0-9A-Z \-]{5,16}?)[\s\-_=]*\(\s*CUSIP\s+Number\s*\)", re.I)
+
+
+def _cover_cusip(raw: str | None) -> str | None:
+    """A CUSIP as a cover states it, or None: spaces and dashes go
+    ("82968B 10 3"), and only nine characters whose check digit is right are a
+    CUSIP. A wrong one would hand the securities bridge (findings item 71) an
+    ISIN of another issuer; a typo almost never survives the check digit."""
+    from app.scraper.gleif_isin import cusip_valid
+    c = re.sub(r"[\s\-]", "", raw or "").upper()
+    return c if cusip_valid(c) else None
+
+
+def _cusip_from_words(words: str, *, from_end: bool = False) -> str | None:
+    """The run of words next to the label that makes exactly nine characters,
+    if they are a valid CUSIP. After "CUSIP No." the capture runs on into the
+    next field ("084670702 1. Names"), so the words are read from the start;
+    before "(CUSIP Number)" it reaches back into the class title ("Common
+    Stock 82968B 10 3"), so they are read from the end."""
+    parts = [w for w in re.split(r"[\s\-]+", words.strip()) if w]
+    joined = ""
+    for word in (reversed(parts) if from_end else parts):
+        joined = word + joined if from_end else joined + word
+        if len(joined) >= 9:
+            return _cover_cusip(joined) if len(joined) == 9 else None
+    return None
+
+
+def _parse_cusip_from_text(text: str) -> str | None:
+    """The issuer's CUSIP from an older (text or HTML) 13D/G cover, the first
+    valid one in the document. Every cover states it — the securities bridge
+    reads it as the issuer's ISIN — and the XML schedules carry it as a field
+    (`_parse_13dg_xml`)."""
+    plain = _plain_text(text)
+    found = sorted([(m.start(), m.group(1), False) for m in _CUSIP_AFTER.finditer(plain)]
+                   + [(m.start(), m.group(1), True) for m in _CUSIP_BEFORE.finditer(plain)])
+    for _, words, from_end in found:
+        if (c := _cusip_from_words(words, from_end=from_end)):
+            return c
+    return None
+
+
 def _parse_issuer_from_text(text: str) -> str | None:
     """Extract the issuer's name from a SC 13D/13G cover page.
 
@@ -1814,6 +1860,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         # paths could not be told apart afterwards (both cite the index page),
         # and the text path is where every misread 13D/G came from.
         read_from     = None
+        cover_cusip   = None      # the issuer's CUSIP as the cover states it
 
         if inv.get("xml"):
             xml, person = inv["xml"], inv["person"]
@@ -1824,6 +1871,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                          xml.get("issuer_cik"), company_name)
                 continue
             reported      = person.get("percent")
+            cover_cusip   = xml.get("issuer_cusip")
             pct, voting   = _stake_from_person(xml, person)
             share_class   = xml.get("class_title")
             event_date    = xml.get("event_date")
@@ -1868,6 +1916,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 share_class   = _parse_class_title_from_text(text)
                 event_date    = _parse_event_date_from_text(text)
                 final         = _parse_final_report_from_text(text)
+                cover_cusip   = _parse_cusip_from_text(text)
                 aggregate     = _parse_aggregate_from_text(cover)
                 shares        = _shares_held(_parse_power_rows(cover), aggregate, in_group=bloc)
                 shares_total  = _shares_outstanding(text)
@@ -1931,7 +1980,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # The issuer's security id from the schedule cover — the key 13F
             # info tables match on, so a 13D/G scrape leaves the company ready
             # for an exact `sec-13f` run.
-            "issuer_cusip":     (inv["xml"].get("issuer_cusip") if inv.get("xml") else None),
+            "issuer_cusip":     cover_cusip,
             "filing_type":      _short_form(inv["form_type"]),
             # which reader the numbers came through (edge_schema.READ_GRADES)
             "read_from":        read_from,
@@ -3449,7 +3498,13 @@ def _parse_13dg_xml(raw: str) -> dict | None:
         # The security identifier 13F info tables key on — harvesting it from
         # the schedules we already read is how companies gain a CUSIP without a
         # licensed database. Both spellings occur in real filings.
-        "issuer_cusip": _xml_child(root, "issuerCusipNumber") or _xml_child(root, "issuerCusip"),
+        # Three spellings: 13G's `issuerCusip`, the list form `issuerCusips/
+        # issuerCusipNumber`, and Schedule 13D's `issuerCUSIP` (Berkshire
+        # Hathaway's 13D/A of 2025) — the last was never read, so no 13D
+        # cover gave its issuer a CUSIP. Only a valid one (check digit) counts.
+        "issuer_cusip": next((c for tag in ("issuerCusipNumber", "issuerCusip", "issuerCUSIP")
+                              for e in root.findall(f".//{{*}}{tag}")
+                              if (c := _cover_cusip(e.text))), None),
         "filer_cik":    _xml_child(root, "cik"),
         # WHICH security the percentages are percentages OF. A percent of class
         # is meaningless without it: Grupo Televisa's filers report 22.3% of
@@ -3539,6 +3594,9 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
     return {
         "subject_cik":  _cik_int(xml["issuer_cik"]).zfill(10),
         "subject_name": xml["issuer_name"],
+        # the subject's security as the cover states it — the securities
+        # bridge's input (findings item 71)
+        "subject_cusip": xml.get("issuer_cusip"),
         "percent":      percent,
         "accession":    accession,
         "event_date":   xml.get("event_date"),
@@ -3586,8 +3644,8 @@ def _parse_holding_filing_text(filer_cik: str, accession: str,
     subject_cik  = m.group(2).zfill(10)
     subject_name = html_lib.unescape(m.group(1).strip())
     row = {"subject_cik": subject_cik, "subject_name": subject_name, "percent": None,
-           "accession": accession, "event_date": None, "final_report": None,
-           "read_from": READ_FORM}
+           "subject_cusip": None, "accession": accession, "event_date": None,
+           "final_report": None, "read_from": READ_FORM}
     if subject_cik == _cik_int(filer_cik).zfill(10):
         return row                      # inbound: the caller skips it, unread
     doc_url = _primary_doc_url(html)
@@ -3609,7 +3667,8 @@ def _parse_holding_filing_text(filer_cik: str, accession: str,
         return None
     row.update(percent=_parse_percent_from_text(_cover_page_for(text, filer_name)),
                event_date=_parse_event_date_from_text(text),
-               final_report=_parse_final_report_from_text(text))
+               final_report=_parse_final_report_from_text(text),
+               subject_cusip=_parse_cusip_from_text(text))
     return row
 
 
@@ -4386,6 +4445,7 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
         holdings.append({
             "subject_cik":   sid,
             "subject_name":  parsed["subject_name"],
+            "subject_cusip": parsed.get("subject_cusip"),
             "stake_percent": parsed["percent"],
             "file_date":     filing["date"],
             "event_date":    parsed.get("event_date"),
