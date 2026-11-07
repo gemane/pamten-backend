@@ -837,6 +837,11 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       they leave, so a roles list only grows. Close seats only from an explicit statement
       (a "Former …" Form 4, an 8-K Item 5.02 naming a person we already list) — never from
       silence, and never by minting the person the statement names.
+- [ ] **A stated ending is history, also on a database built after it.** A writer that only
+      closes what it already holds makes the graph depend on WHEN it was built: Verra Mobility's
+      CFO filed "Former Chief Financial Officer" the day before a rebuild — the old database kept
+      him with a closed seat, the new one never showed him. Where the source states the seat and
+      its end (the person's own Form 3/4), write the seat closed (findings item 74, 2026-11-07).
 - [ ] **Classify people with `is_person_name`** and know it is a heuristic. Registers list
       corporate nominees as officers, and `is_nominee` marks holders of record who are not
       beneficial owners.

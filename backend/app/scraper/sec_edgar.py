@@ -2364,7 +2364,9 @@ def fetch_executives(cik: str) -> list:
 
     # The inline index holds the newest ~1,000 filings — for Microsoft, back to
     # 2020 — so a long-serving officer's Form 3 is on an older page.
-    if any(not e.get("since") and not e.get("former") for e in executives):
+    # a former insider too: its seat is written closed on a fresh read and
+    # dated like any other (findings item 74)
+    if any(not e.get("since") for e in executives):
         _date_from_older_pages(cik, submissions, by_person)
     _drop_issuer_event_dates(executives)
     log.info("SEC EDGAR: found %d executives from Form 3/4 for CIK=%s",
@@ -2395,7 +2397,8 @@ def _date_from_older_pages(cik: str, submissions: dict, by_person: dict) -> int:
     Hood's, CFO since 2013-05-08). Index pages are never cached, so this reads
     at most `MAX_OLDER_PAGES` of them and only while a listed person is still
     undated; the Form 3 documents are Archives files and cached forever. Same
-    rules as the inline pass: same seat only, never a "Former …" filing.
+    rules as the inline pass: same seat only, never a "Former …" filing as the
+    start — a former insider's seat is dated too (findings item 74).
     Returns how many people were dated. Electronic Form 3s begin mid-2003;
     earlier seats are not in EDGAR at all.
     """
@@ -2403,7 +2406,7 @@ def _date_from_older_pages(cik: str, submissions: dict, by_person: dict) -> int:
     issuer_cik_int = _cik_int(cik)
     read = dated = 0
     for f in files[:MAX_OLDER_PAGES]:
-        if not any(not e.get("since") and not e.get("former") for e in by_person.values()):
+        if not any(not e.get("since") for e in by_person.values()):
             break
         try:
             page = _get(f"{SUBMISSIONS_URL}/{f['name']}")
@@ -2434,7 +2437,7 @@ def _date_from_older_pages(cik: str, submissions: dict, by_person: dict) -> int:
             if result.get("issuer_cik") and _cik_int(result["issuer_cik"]) != issuer_cik_int:
                 continue
             known = by_person.get(result.get("person_cik") or result["name"])
-            if known is None or known.get("since") or known.get("former"):
+            if known is None or known.get("since"):
                 continue
             if canonical_role(result["role"]) != canonical_role(known["role"]):
                 continue

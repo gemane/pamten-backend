@@ -2786,6 +2786,19 @@ class TestRoleDatesFromForm3:
                                            self._xml("Hood Amy", form="4", title="CFO", cik="0000001")])})
         assert execs[0]["since"] == "2013-05-08" and pages == ["13-page.json"]
 
+    def test_a_former_insider_s_seat_is_dated_too(self):
+        # findings item 74: the seat is written closed on a fresh read, so its
+        # start is read like any other — Verra Mobility's CFO, "Former Chief
+        # Financial Officer" on 2026-11-06, Form 3 as CFO on an older page
+        execs, pages = self._run_paged(
+            ["4", "4"], [self._xml("Conti Craig", form="4", officer="0", director="0",
+                                   other="Former Chief Financial Officer", period="2026-11-05", cik="0000003"),
+                         self._xml("Conti Craig", form="4", title="Chief Financial Officer", cik="0000003")],
+            {"19-page.json": (["3"], [self._xml("Conti Craig", form="3", period="2019-04-01",
+                                                title="Chief Financial Officer", cik="0000003")])})
+        assert execs[0]["former"] is True and execs[0]["until"] == "2026-11-05"
+        assert execs[0]["since"] == "2019-04-01" and pages == ["19-page.json"]
+
     def test_older_pages_are_not_read_when_everyone_is_dated(self):
         execs, pages = self._run_paged(
             ["3"], [self._xml("Hood Amy", form="3", period="2013-05-08", title="CFO")],

@@ -69,4 +69,6 @@ class TestEveryRunnerCallSitePassesIt:
         assert all("filing_type=" in args for args in calls), [a[:60] for a in calls if "filing_type=" not in a]
         assert any('filing_type="Form D"' in a for a in calls)
         assert any('filing_type="8-K"' in a for a in calls)
-        assert sum('form_label(exec_rec.get("document_type"))' in a for a in calls) == 2
+        # the Form 3/4 seat, the "Former …" close, and the "Former …" seat written
+        # closed on a fresh read (findings item 74)
+        assert sum('form_label(exec_rec.get("document_type"))' in a for a in calls) == 3
