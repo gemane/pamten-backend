@@ -2160,6 +2160,28 @@ def _stamp_found_cik(person_id: str, cik: str) -> str:
         return _stamp_person_cik(session, person_id, cik)
 
 
+def _holder_of_found_cik(person_id: str, cik: str) -> str | None:
+    """Whose holding a Form 4 is, found by a seat holder's name and filed under
+    ``cik``: the person already keyed by that CIK when there is one — the
+    Form 4's own reporting owner — else the seat holder, stamped with it
+    (`_stamp_found_cik`). None when a company holds the CIK: a name that
+    matched a company's filing is not this person's.
+
+    Before, a CIK another person held left the seat holder unstamped AND took
+    the holding: the 13D/G check asked the Wikidata twin, which held none,
+    while the 13G sat on the EDGAR node — Galperin, Gracias and Tsai each got a
+    Form 4 edge beside their 13G, and the person merge kept the Form 4
+    (findings item 73, rebuild 2026-11-07). On the holder, the check sees the
+    13D/G; the twin is left to the person dedup, which joins the two by the
+    seat and the CIK as before."""
+    held = _vertex_holding_cik(cik)
+    if held == "Entity":
+        return None
+    if held == "Person":
+        return _find_person("", sec_cik=normalize_cik(cik)) or person_id
+    return _stamp_found_cik(person_id, cik)
+
+
 def _is_individual(name: str, stated: bool | None, cik: str | None) -> bool:
     """Is a 13D/G reporting person a human being? Item 8's code when it says
     (``stated``), else the vertex that already holds the CIK, else the shape
@@ -2839,7 +2861,9 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
             if not holding:
                 continue
             if holding.get("cik") and not row.get("cik"):
-                pid = _stamp_found_cik(pid, holding["cik"])
+                pid = _holder_of_found_cik(pid, holding["cik"])
+                if pid is None:          # a company's CIK: not this person's filing
+                    continue
             if stated_by_13dg(pid, target_id, source_id):
                 _note_form4_yields(scraped, pname, company_name)
                 continue
