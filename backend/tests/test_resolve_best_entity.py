@@ -131,3 +131,36 @@ def test_the_node_that_bears_the_name_beats_the_node_that_has_it_as_an_alias():
         assert _resolve("T. Rowe Price Associates, Inc.", rows)["id"] == ASSOCIATES["id"]
         # the alias still finds the Group when no node bears the name itself
         assert _resolve("T. Rowe Price Group, Inc.", rows)["id"] == GROUP["id"]
+
+
+# findings item 75 (2026-11-07): Q775031 states no LEI, so Wikidata made its
+# own node; with only its name equal to the query it beat GLEIF's Grupo Bimbo
+# S.A.B. (45 holdings) — and the subsidiary in between rose when the twin was
+# moved instead of the register's node (the guard's catch).
+TWIN = {"id": "wd:Q775031", "name": "Grupo Bimbo", "name_normalized": "grupo bimbo", "wikidata_id": "Q775031"}
+UK = {"id": "lei:984500FEES8936E86D53", "name": "GRUPO BIMBO UK LIMITED", "name_normalized": "grupo bimbo uk",
+      "lei_id": "984500FEES8936E86D53", "legal_form_code": "H0PO"}
+SAB = {"id": "lei:5493000RIXURZEBFEV60", "name": "GRUPO BIMBO S A B DE C V",
+       "name_normalized": "grupo bimbo sab de cv", "lei_id": "5493000RIXURZEBFEV60", "legal_form_code": "L9JC"}
+
+
+def test_the_register_s_node_of_the_name_comes_before_a_wikidata_only_twin():
+    assert _resolve("Grupo Bimbo", [TWIN, UK, SAB])["id"] == SAB["id"]
+    assert [n["id"] for n in search._register_before_twin([TWIN, UK, SAB])] == [SAB["id"], TWIN["id"], UK["id"]]
+
+
+def test_the_name_is_compared_without_the_register_s_legal_form():
+    assert search._base_name_key(SAB) == search._base_name_key(TWIN) == "grupobimbo"
+    assert search._base_name_key(UK) != "grupobimbo"
+
+
+def test_a_twin_without_a_register_namesake_stays_where_it_ranks():
+    dangote = {"id": "wd:Q3013553", "name": "Dangote Group", "name_normalized": "dangote group"}
+    industries = {"id": "lei:0292007042B6O5C1G755", "name": "DANGOTE INDUSTRIES LIMITED",
+                  "name_normalized": "dangote industries", "lei_id": "0292007042B6O5C1G755"}
+    assert _resolve("Dangote Group", [dangote, industries])["id"] == dangote["id"]
+
+
+def test_a_wikidata_node_with_a_register_id_is_no_twin():
+    keyed = {**TWIN, "id": "wd:Q775031", "lei_id": "5493000RIXURZEBFEV60"}
+    assert search._register_before_twin([keyed, UK, SAB])[0] is keyed

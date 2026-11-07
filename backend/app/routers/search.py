@@ -143,6 +143,58 @@ def _rank(node: dict, q: str, tokens: list[str] | None = None, idx: int = 0,
     return (exact_norm, -matches, tier, notable, -credibility, name_len, idx)
 
 
+#: the ids a register gives a node — one of them makes it a register's node
+_REGISTER_IDS = ("lei_id", "sec_cik", "companies_house_id", "register_id")
+
+
+def _pointerless(node: dict) -> bool:
+    """A node only a knowledge base made: a Wikidata item that names no LEI or
+    CIK (item 60's open case) becomes a `wd:` node with no register id."""
+    return str(node.get("id") or "").startswith("wd:") and not any(node.get(k) for k in _REGISTER_IDS)
+
+
+def _base_name_key(node: dict) -> str:
+    """The node's name without the legal form its register's code states
+    (GLEIF's ELF abbreviations: "GRUPO BIMBO S A B DE C V" with L9JC →
+    "grupobimbo"), as `sec_ex21.legal_name_key` compares names; the plain key
+    when the code gives no abbreviation the name ends in."""
+    from app.scraper.gleif_reference import legal_form_abbreviations
+    from app.scraper.sec_ex21 import legal_name_key
+    name = node.get("name") or ""
+    key = legal_name_key(name)
+    compact = re.sub(r"[^a-z0-9]", "", name.casefold())
+    for abbr in legal_form_abbreviations(node.get("legal_form_code")):
+        tail = re.sub(r"[^a-z0-9]", "", abbr.casefold())
+        if tail and compact.endswith(tail) and len(compact) > len(tail):
+            return compact[:-len(tail)]
+    return key
+
+
+def _register_before_twin(nodes: list[dict]) -> list[dict]:
+    """A register's node of the same name takes a Wikidata-only node's place,
+    the twin right below it
+    (the user's choice, findings item 75, 2026-11-07): "Grupo Bimbo" opened
+    wd:Q775031 — an item that states no LEI, so it made its own node with no
+    holdings — above GLEIF's GRUPO BIMBO S A B DE C V with 45, because only
+    the twin's name equalled the query once normalised. Nothing is merged or
+    dropped; the order is all. The names are compared without the register's
+    legal form (`_base_name_key`), not by country: Wikidata writes none."""
+    out = list(nodes)
+    for twin in [n for n in nodes if _pointerless(n)]:
+        key = _base_name_key(twin)
+        if not key:
+            continue
+        at = out.index(twin)
+        reg = next((i for i, n in enumerate(out) if i > at and not _pointerless(n)
+                    and any(n.get(k) for k in _REGISTER_IDS) and _base_name_key(n) == key), None)
+        if reg is not None:
+            # the register's node takes the twin's place, the twin right below
+            # it — moving the twin down instead let whatever ranked between
+            # them rise: GRUPO BIMBO UK LIMITED, a subsidiary (guard, 2026-11-07)
+            out.insert(at, out.pop(reg))
+    return out
+
+
 def _entity_candidate_rows(q_lower: str, nn: str | None, country: str | None) -> list[dict]:
     """The Entity candidate set for a query, in candidate order (exact-name, then
     notable/wikidata-tagged, then FULL_TEXT relevance) — cleaned rows, not yet ranked or
@@ -211,7 +263,7 @@ def resolve_best_entity(q: str, country: str | None = None, on: str | None = Non
     if not rows:
         return None
     ranked = sorted(enumerate(rows), key=lambda ir: _rank(ir[1], q_lower, tokens, ir[0], nn, on))
-    best = ranked[0][1]
+    best = _register_before_twin([r for _, r in ranked])[0]
     # A best guess is not an answer. The candidates come from a full-text
     # query that can match on one shared word, and the on-demand scrape acts on
     # whatever comes back: "Voting group · 8 parties" resolved to Alibaba
@@ -350,6 +402,9 @@ def search(
     # to float short unrelated names like "BLG GROUP" to the top.
     results = [{**r, "_i": i} for i, r in enumerate(results)]
     results.sort(key=lambda r: _rank(r["node"], q_lower, tokens, r["_i"], nn))
+    order = _register_before_twin([r["node"] for r in results])
+    pos = {id(n): i for i, n in enumerate(order)}
+    results.sort(key=lambda r: pos[id(r["node"])])
     # De-dupe by node id (CONTAINSTEXT can return a row per index bucket), keeping
     # the highest-ranked instance, and cap at 20.
     out: list[dict] = []
