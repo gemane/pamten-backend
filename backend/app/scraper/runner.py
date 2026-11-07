@@ -2689,20 +2689,35 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             continue
 
         if exec_rec.get("former"):
-            # The insider's newest filing says "Former …": close the seat,
-            # for a person we already list — never mint someone to close.
+            # The insider's newest filing says "Former …": close the seat. When
+            # there is none to close — a database built after the departure —
+            # write it closed: the person's own filing states the seat and its
+            # end, their Form 3 its start (findings item 74, the user's option
+            # (a) of 2026-11-07). Before, the rule was "never mint someone to
+            # close", and Verra Mobility's CFO Craig Conti, whose "Former Chief
+            # Financial Officer" Form 4 came a day before the rebuild, was in
+            # the old database with a closed seat and absent from the new one.
+            if not exec_rec.get("until"):
+                continue
             person_id = _find_person(name, sec_cik=exec_rec.get("person_cik"))
-            if person_id and exec_rec.get("until"):
-                closed = _close_role_sec(person_id, target_id, exec_rec["until"], role=role,
-                                         source_id=source_id,
-                                         source_url=exec_rec.get("source_url"),
-                                         source_date=exec_rec.get("source_date"),
-                                         filing_type=form_label(exec_rec.get("document_type")),
-                                         read_from=READ_FIELD)
-                if closed:
-                    scraped.append({"type": "person", "name": name, "role": f"former {role}"})
-                    log.info("SEC EDGAR: closed HAS_ROLE %r → %r (%s, until %s)",
-                             name, data["name"], role, exec_rec["until"])
+            closed = _close_role_sec(person_id, target_id, exec_rec["until"], role=role,
+                                     source_id=source_id,
+                                     source_url=exec_rec.get("source_url"),
+                                     source_date=exec_rec.get("source_date"),
+                                     filing_type=form_label(exec_rec.get("document_type")),
+                                     read_from=READ_FIELD) if person_id else 0
+            if not closed:
+                person_id = person_id or _upsert_person_by_name(name, source_id=source_id,
+                                                                sec_cik=exec_rec.get("person_cik"))
+                _upsert_role_sec(person_id, target_id, role, source_id,
+                                 source_url=exec_rec.get("source_url"),
+                                 source_date=exec_rec.get("source_date"),
+                                 since=exec_rec.get("since"), until=exec_rec["until"],
+                                 filing_type=form_label(exec_rec.get("document_type")),
+                                 read_from=READ_FIELD)
+            scraped.append({"type": "person", "name": name, "role": f"former {role}"})
+            log.info("SEC EDGAR: %s HAS_ROLE %r → %r (%s, until %s)", "closed" if closed else "wrote closed",
+                     name, data["name"], role, exec_rec["until"])
             continue
 
         person_id = _upsert_person_by_name(name, source_id=source_id,

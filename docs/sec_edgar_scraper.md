@@ -1331,7 +1331,15 @@ statements of a departure exist on EDGAR, and both now close the seat
 
 * **A Form 4 whose relationship is "Other: Former Chief Financial Officer".** The
   insider's newest filing says the seat ended; `periodOfReport` dates it. Rare,
-  but structured and exact.
+  but structured and exact. Where there is no seat to close — a database built
+  after the departure — the seat is written CLOSED: the person's own filing
+  states the position and its end, their Form 3 (inline or on an older page)
+  its start. Until 2026-11-07 a departure only closed a seat already on the
+  graph ("never mint someone to close"), and Verra Mobility's CFO Craig Conti,
+  whose "Former Chief Financial Officer" Form 4 came a day before that night's
+  rebuild, was in the database before with a closed seat and absent from the
+  new one (findings item 74, the user's option (a)). An 8-K stays narrative:
+  it still closes only seats it finds.
 * **Form 8-K, Item 5.02** ("Departure of Directors or Certain Officers …"), which a
   company must file within four business days. The submissions index carries an
   `items` field per filing, so the 8-Ks that carry Item 5.02 are known **without
@@ -1503,7 +1511,9 @@ Add about 10 s for each request sec.gov leaves hanging (about 1 in 30; see
   their `since` only when their Form 3 was for that same seat.
 - **Departures are closed only where EDGAR states them.** A "Former …" Form 4
   or an 8-K Item 5.02 naming the person; a director who simply stops filing is
-  not closed, because silence is not a statement.
+  not closed, because silence is not a statement. A former insider whose
+  "Former …" filing has left the 15-month window is not read at all: a fresh
+  database keeps a departed officer only while that filing is in the window.
 
 ---
 

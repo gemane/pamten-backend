@@ -291,20 +291,62 @@ class TestRunScrapeSecEdgar:
         assert "Jane Doe" not in minted and roles == [], "a departure mints no one and opens no seat"
         assert any(r["role"] == "former CFO" for r in result["scraped"])
 
-    def test_a_former_filing_for_an_unknown_person_writes_nothing(self):
+    def test_a_former_filing_for_an_unknown_person_writes_the_closed_seat(self):
+        # findings item 74 (the user's option (a), 2026-11-07): a database built
+        # after the departure gets the seat the person's own filings state,
+        # closed — Verra Mobility's CFO was absent from the 11-07 rebuild
         data = {**self.SEC_DATA,
-                "executives": [{"name": "Jane Doe", "role": "CFO", "former": True,
-                                "until": "2026-03-31"}]}
-        closed = []
+                "executives": [{"name": "Jane Doe", "role": "CFO", "former": True, "person_cik": "0002",
+                                "until": "2026-03-31", "since": "2019-05-01",
+                                "source_url": "https://www.sec.gov/f4", "source_date": "2026-04-02"}]}
+        closed, minted, roles = [], [], []
         with patch("app.scraper.runner.get_source_enabled", return_value=True), \
              patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
              patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
              patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
              patch("app.scraper.runner._find_person", return_value=None), \
+             patch("app.scraper.runner._upsert_person_by_name",
+                   side_effect=lambda name, **kw: minted.append((name, kw.get("sec_cik"))) or "p-jane"), \
+             patch("app.scraper.runner._upsert_role_sec",
+                   side_effect=lambda *a, **kw: roles.append((a, kw))), \
              patch("app.scraper.runner._close_role_sec",
                    side_effect=lambda *a, **kw: closed.append(a) or 1):
+            result = run_scrape_sec_edgar("Tesla")
+        assert closed == [] and minted == [("Jane Doe", "0002")]
+        (args, kw), = roles
+        assert args[:3] == ("p-jane", args[1], "CFO") and kw["since"] == "2019-05-01" and kw["until"] == "2026-03-31"
+        assert any(r["role"] == "former CFO" for r in result["scraped"])
+
+    def test_a_listed_person_without_an_open_seat_gets_it_closed_too(self):
+        data = {**self.SEC_DATA,
+                "executives": [{"name": "Jane Doe", "role": "CFO", "former": True, "person_cik": "0002",
+                                "until": "2026-03-31"}]}
+        minted, roles = [], []
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.runner._find_person", return_value="p-jane"), \
+             patch("app.scraper.runner._upsert_person_by_name",
+                   side_effect=lambda name, **kw: minted.append(name) or "p-x"), \
+             patch("app.scraper.runner._upsert_role_sec",
+                   side_effect=lambda *a, **kw: roles.append((a, kw))), \
+             patch("app.scraper.runner._close_role_sec", return_value=0):
             run_scrape_sec_edgar("Tesla")
-        assert closed == []
+        assert minted == [] and roles[0][0][0] == "p-jane" and roles[0][1]["until"] == "2026-03-31"
+
+    def test_a_former_filing_without_a_date_writes_nothing(self):
+        data = {**self.SEC_DATA,
+                "executives": [{"name": "Jane Doe", "role": "CFO", "former": True, "until": None}]}
+        roles = []
+        with patch("app.scraper.runner.get_source_enabled", return_value=True), \
+             patch("app.scraper.runner.db.get_session", _make_session_mock()[0]), \
+             patch("app.scraper.sec_edgar.scrape_company", return_value=data), \
+             patch("app.scraper.sec_edgar.fetch_departures", return_value=[]), \
+             patch("app.scraper.runner._find_person", return_value=None), \
+             patch("app.scraper.runner._upsert_role_sec", side_effect=lambda *a, **kw: roles.append(a)):
+            run_scrape_sec_edgar("Tesla")
+        assert roles == []
 
     def test_8k_departures_are_looked_up_for_the_listed_people_and_close_their_seats(self):
         asked, closed = [], []
