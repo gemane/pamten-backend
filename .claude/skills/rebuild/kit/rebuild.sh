@@ -56,6 +56,11 @@ t "7 finishing what the scrapes added"
 # (findings item 70, 2026-11-06).
 SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true SCRAPER_BODS_GLEIF_ENABLED=true \
   python3 manage.py dedupe-entities --limit 100000 || echo "  ! dedupe failed"
+# the securities bridge (findings item 71): an EDGAR issuer's CUSIP -> its US ISIN ->
+# GLEIF's daily LEI-ISIN file -> its LEI. The CUSIPs arrive with the replay's 13F and
+# 13D/G reads, so it runs here and not in finish-import (a bulk import stores none).
+# GLEIF's catalogue switch is its only gate; it downloads ~33 MB once a day.
+python3 manage.py gleif-isin-bridge --apply || echo "  ! securities bridge failed"
 # the persons two scopes wrote twice — a Wikidata part retried hours after the SEC
 # part wrote the same insiders under EDGAR's spelling (findings item 55)
 python3 manage.py dedupe-persons || echo "  ! dedupe-persons failed"

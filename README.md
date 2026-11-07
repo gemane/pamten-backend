@@ -340,7 +340,8 @@ a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
 **The securities bridge** (`manage.py gleif-isin-bridge [--apply]`, findings item 71) joins an
 EDGAR issuer to its LEI through GLEIF's daily LEI-ISIN file (CC0, from ANNA's numbering
 agencies): the issuer's CUSIP becomes its US ISIN, the file names the ISIN's issuer LEI. A dry
-run by default, behind the GLEIF source switch; manual only for now — see
+run by default, behind the GLEIF source switch. `--apply` runs after every daily GLEIF delta
+(`ops.sh gleif-update`, `~/scripts/cron-gleif-update.sh`) and in the rebuild's step 7 — see
 docs/deduplication.md.
 
 The delta rides **on top of** the full load, so `gleif-update` refuses to run until a

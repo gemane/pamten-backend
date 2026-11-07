@@ -197,6 +197,12 @@ cmd_import() {
 cmd_gleif_update() {
   watch_job gleif-update
   run_manage gleif-update "$@"
+  # the securities bridge (findings item 71): issuers whose CUSIP a scrape stored
+  # since yesterday join their LEI through GLEIF's LEI-ISIN file. Before the
+  # dissolution pass and the shortcuts (an attach writes GLEIF's record, a join
+  # merges two nodes). Never fatal: a GLEIF mapping hiccup must not fail the delta.
+  run_manage gleif-isin-bridge --apply --dir /data/gleif-isin \
+    || echo "  ! securities bridge failed — the delta itself was fine"
   run_manage heal-ends-at-dissolution --apply
   run_manage mark-shortcuts
 }
