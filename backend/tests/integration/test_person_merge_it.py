@@ -171,3 +171,28 @@ def test_a_person_merge_keeps_voting_group_membership(it_db):
         "RETURN r.source_id AS sid, r.last_scraped_at AS seen")
     assert len(rows) == 1
     assert rows[0]["sid"] == "sec" and rows[0]["seen"] == "2026-08-28T00:00Z"
+
+
+def test_a_merge_keeps_the_13dg_over_a_newer_form_4(it_db):
+    """Findings item 73 (rebuild 2026-11-07): Galperin's 13G/A sat on his sec:
+    node, a Form 4 found for his Wikidata node landed there, and the merge
+    folded the two edges by date — the Form 4 (0.0001 %) took MercadoLibre."""
+    from app.routers.persons import merge_person_records
+    it_db.run_command("CREATE (:Person {id:'wd:Q5996574', full_name:'Marcos Galperin', wikidata_id:'Q5996574'})")
+    it_db.run_command("CREATE (:Person {id:'sec:0001409288', full_name:'Galperin Marcos', sec_cik:'0001409288'})")
+    it_db.run_command("CREATE (:Entity {id:'meli', name:'MERCADOLIBRE INC', type:'company'})")
+    it_db.run_command(
+        "MATCH (p:Person {id:'sec:0001409288'}), (e:Entity {id:'meli'}) CREATE (p)-[:OWNS {stake_percent: 1.7, "
+        "filing_type:'13G/A', source_id:'sec-edgar', credibility_score:98, source_date:'2012-12-12', "
+        "read_from:'form', ownership_type:'minority'}]->(e)")
+    it_db.run_command(
+        "MATCH (p:Person {id:'wd:Q5996574'}), (e:Entity {id:'meli'}) CREATE (p)-[:OWNS {stake_percent: 0.0001, "
+        "filing_type:'Form 4', source_id:'sec-edgar', credibility_score:98, source_date:'2024-08-19', "
+        "read_from:'field', ownership_type:'minority'}]->(e)")
+
+    for keep, dup in (("wd:Q5996574", "sec:0001409288"),):   # the dev order: keep the wd: node
+        kept = merge_person_records(keep, dup)
+    edges = it_db.run_command(
+        "MATCH (p:Person {id:$id})-[r:OWNS]->(:Entity {id:'meli'}) RETURN r.filing_type AS f, r.stake_percent AS s",
+        {"id": kept})
+    assert edges == [{"f": "13G/A", "s": 1.7}]

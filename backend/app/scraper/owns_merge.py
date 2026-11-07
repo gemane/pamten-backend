@@ -20,6 +20,9 @@ module is the rule for how two assertions share that edge:
   edge back and forth. Every source's own answer is kept in its Claim
   regardless.
 
+  Between two statements of equal credibility, a holder's open 13D/G (beneficial)
+  ranks above a Form 3/4 (of record) — ``statement_rank``, findings item 73.
+
   ONE source is a different matter: its newer statement replaces its older one
   (``supersedes``: same source, equal rank, a later ``source_date`` — then a
   later ``last_scraped_at``). The live writers do this by nature (a source
@@ -52,6 +55,8 @@ module is the rule for how two assertions share that edge:
   one has none, and is never replaced by an inferred one.
 """
 from __future__ import annotations
+
+import re
 
 from app.scraper.edge_schema import STALE_CLEAR, read_rank
 
@@ -117,9 +122,37 @@ def started_by_clause(rel: str, p: str = "$") -> str:
 OFFICIAL_TIER_MIN_CREDIBILITY = 90
 
 
+#: A person's insider report (Form 3, Form 4 and their amendments): what is
+#: REGISTERED to them, beside a 13D/G's BENEFICIAL statement of the same holding.
+_RECORD_ONLY_FORM = re.compile(r"^(FORM\s*)?[34](/A)?$")
+_BENEFICIAL_FORM = re.compile(r"^(SCHEDULE\s+|SC\s+)?13[DG]\b")
+
+
+def statement_rank(values: dict) -> int:
+    """Of record versus beneficial, between two statements of equal credibility
+    (`sec_writer.stated_by_13dg` is the writer's side of the same rule): a
+    Form 3/4 counts what is registered to the insider, a 13D/G what they
+    beneficially own, with the filer's disclaimers applied — where the holder
+    has filed a 13D/G that has not ended, it is the stake. 0 for a Form 3/4 and
+    for a 13D/G that reported an exit (`until`: it no longer speaks for the
+    pair, so the later statement decides, as before); 1 for everything else.
+
+    Without it the later date decided between two SEC statements of the same
+    pair (`supersedes`): the person merge folded Marcos Galperin's 13G/A
+    (1.7 %, 2012) under his Form 4 (0.0001 %, 2024) on MercadoLibre, likewise
+    Gracias → SpaceX and Tsai → Alibaba (findings item 73, rebuild 2026-11-07)."""
+    ft = str(values.get("filing_type") or "").strip().upper()
+    if _RECORD_ONLY_FORM.match(ft):
+        return 0
+    if _BENEFICIAL_FORM.match(ft) and values.get("until"):
+        return 0
+    return 1
+
+
 def answer_rank(values: dict) -> tuple:
     """Which source's answer the shared edge carries: the official tier, then a
-    stated stake, then credibility, then how reliably the values were read
+    stated stake, then credibility, then beneficial over of-record
+    (`statement_rank`), then how reliably the values were read
     (`read_from`). The reading grade sits BELOW credibility on purpose: it
     orders what equally credible sources say (a 13G read from its XML over one
     read off a text cover page, an Exhibit 21 table over a paragraph) and
@@ -131,6 +164,7 @@ def answer_rank(values: dict) -> tuple:
     return (credibility >= OFFICIAL_TIER_MIN_CREDIBILITY,
             values.get("stake_percent") is not None,
             credibility,
+            statement_rank(values),
             read_rank(values.get("read_from")))
 
 

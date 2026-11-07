@@ -81,7 +81,7 @@ class TestWhereTheGradeSits:
         assert outranks(_claim(98, 5.0, READ_PROSE), _claim(98, None, READ_FIELD))
 
     def test_the_order_in_full(self):
-        assert answer_rank(_claim(98, 5.0, READ_TABLE)) == (True, True, 98, read_rank(READ_TABLE))
+        assert answer_rank(_claim(98, 5.0, READ_TABLE)) == (True, True, 98, 1, read_rank(READ_TABLE))
 
     def test_best_claim_prefers_the_surer_reading_over_the_newer_date(self):
         old_xml = _claim(98, 5.0, READ_FIELD, date="2025-01-01", source="a")
@@ -158,3 +158,11 @@ class TestWhatTheOtherTextReadersStamp:
                 "<tr><td>Beta GmbH</td><td>Alpha Ltd.</td><td>Germany</td></tr></table>")
         beta = parse_exhibit(html, "Atlas Corp.")[1]
         assert (beta["parent"], beta["parent_basis"], beta["read_from"]) == ("Alpha Ltd.", "column", "table")
+
+
+def test_best_claim_keeps_the_open_13dg_over_a_newer_form_4():
+    # findings item 73: of record versus beneficial, the claim side
+    g13 = {**_claim(98, 1.7, "form", date="2012-12-12", source="sec-edgar"), "filing_type": "13G/A"}
+    f4 = {**_claim(98, 0.0001, READ_FIELD, date="2024-08-19", source="sec-edgar"), "filing_type": "Form 4"}
+    assert best_claim([f4, g13])["filing_type"] == "13G/A"
+    assert best_claim([f4, {**g13, "until": "2023-02-14"}])["filing_type"] == "Form 4"
