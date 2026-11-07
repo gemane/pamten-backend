@@ -30,6 +30,7 @@ _RUNLOG_LABELS = {
     "gleif-update": "GLEIF daily delta",
     "ch-psc-update": "UK PSC refresh",
     "deduplicate-entities": "Entity dedup",
+    "gleif-isin": "GLEIF LEI-ISIN securities bridge",
 }
 
 

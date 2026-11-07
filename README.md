@@ -337,6 +337,12 @@ provenance, never as a credibility change. Writes are idempotent (re-applying a 
 `--bulk-load` and no whole-DB dedup. `~/scripts/cron-gleif-update.sh` (flock + log →
 a `gleif-update` ScrapeRun) is the one crontab line for a daily run.
 
+**The securities bridge** (`manage.py gleif-isin-bridge [--apply]`, findings item 71) joins an
+EDGAR issuer to its LEI through GLEIF's daily LEI-ISIN file (CC0, from ANNA's numbering
+agencies): the issuer's CUSIP becomes its US ISIN, the file names the ISIN's issuer LEI. A dry
+run by default, behind the GLEIF source switch; manual only for now — see
+docs/deduplication.md.
+
 The delta rides **on top of** the full load, so `gleif-update` refuses to run until a
 full load has baselined the graph (the full LEI-CDF import stamps a marker;
 `wipe-source --source GLEIF` or dropping the database clears it, forcing a fresh full

@@ -620,7 +620,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       And ask the documents in EVERY path that joins the pair: the dedup bridge asked them
       first, the Wikidata pointer's stated-CIK attach asked the registers only, and a GLEIF
       record with a P.O. box EDGAR omits was "weak" there while the filer's N-PX stated the
-      LEI (Capital Ventures International, findings item 63, 2026-11-06). The third place was
+      LEI (Capital Ventures International, findings item 63, 2026-11-06).
+      And when neither register names the other's id, look for a THIRD party whose job is
+      the link: an issuer's national numbering agency reports each security's issuer LEI
+      (ANNA, published daily by GLEIF as the LEI-ISIN file), and EDGAR states the issuer's
+      CUSIP — a US ISIN is the CUSIP plus a check digit. Sirius XM's GLEIF record was renamed
+      in 2024 and EDGAR caught up in 2026, so the registers' names disagreed on the reference
+      day; its CUSIP's ISIN names the LEI. Hold such a link to ONE answer: a fund family's
+      CUSIPs map to each fund's LEI, so a node whose securities name several issuers is an
+      umbrella and none of them (findings item 71, 2026-11-07). The third place was
       the SEC writer's own name match (`graph_writer._not_this_filer`): it asked the registers
       only, refused the same record, minted a `sec:` twin and left the bridge to merge it twelve
       seconds later — a merge and a re-key in every rebuild until it asked the filing first too

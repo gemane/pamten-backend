@@ -875,6 +875,40 @@ It runs wherever such a pair meets, so the order no longer decides:
 - **This bridge**, when no filing confirms the LEI; its candidates include LEI-only nodes one
   of whose other names keys as the filer's (`_partners_by_other_name`, through the full-text
   index).
+
+### The securities bridge — CUSIP → ISIN → LEI
+
+When neither register names the other's id and the names or addresses disagree on the
+reference day, a security can still settle the pair (`app.scraper.gleif_isin`, `manage.py
+gleif-isin-bridge`; findings item 71, 2026-11-07). EDGAR states CUSIPs (the 13F runner keeps an
+issuer's on its node as `cusips`); a US ISIN is "US" + the CUSIP + a check digit (computed,
+never looked up — an invalid CUSIP gives none); the issuer's national numbering agency reports
+each ISIN's issuer LEI to ANNA, and GLEIF certifies and publishes the pairs daily as the
+LEI-ISIN file (CC0, ~9.4 M rows, two columns, no dates — a snapshot of current pairs; the
+bridge asks the current issuer of a security). Per node with CUSIPs and no LEI:
+
+- every mapped CUSIP names **one** LEI and a node holds it → the node takes the LEI with
+  `lei_source` `isin:<ISIN>@<file day>` and `lei_source_url` the GLEIF mapping page, and the
+  two fold as any shared-LEI pair does (`maintenance._apply_entity_merge`: the most credible
+  name survives, the survivor is re-keyed `lei:`, a `MergedId` row forwards the old id);
+- one LEI no node holds → GLEIF writes its record first (`register_pointer.write_from_gleif`,
+  no name join — the ISIN decides), then the same fold;
+- **several LEIs → an umbrella**, never written: a fund family's CUSIPs map to each fund's own
+  LEI (iShares, Inc. on dev), so the node is none of them;
+- the LEI's node carries another CIK, or two nodes hold the LEI → reported, not written;
+- a keep-separate mark → never joined; the marks are read again at the write, and the fold
+  itself skips a marked pair.
+
+A node that already holds an LEI is checked only: the same LEI is confirmed, another one
+reported. Dev on 2026-11-07 (75 nodes with a CUSIP): 35 confirmed, 1 join (Sirius XM
+HOLDINGS ↔ GLEIF's SIRIUS XM INC., the pair the registers' names could not settle, findings
+item 68), 18 attaches (Franklin Templeton, Shentel, Valvoline, Trade Desk, T. Rowe Price
+Group, …), 1 umbrella-like contradiction (iShares), 20 CUSIPs GLEIF does not map. A dry run
+by default; `--apply` takes the import lock; the GLEIF source (its catalogue switch, no environment flag)
+must be on; a file older than three days is refused. Not in any chain yet — a manual
+command first. What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
+13G filings such as NESTLE SA — GLEIF does map Nestlé's ADR CUSIPs to its LEI, but the owner's
+node holds none).
 Findings item 19 (rebuild 2026-10-30): eight pairs that had joined by name before #490 were
 refused. Six join since (AB InBev by the form code; HubSpot and Alibaba by the report's
 place; MercadoLibre, Embraer and Televisa by the report's place, and their newest lists would
