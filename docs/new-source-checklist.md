@@ -103,7 +103,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       (`sec_writer.stated_by_13dg`: a 13D/G statement is the whole stake, the Form 4
       speaks only for insiders who file none, an exited 13D/G no longer speaks), never
       by the order of the loops — "last writer wins" made him a 28 % controlling holder
-      and flipped the figure on every run.
+      and flipped the figure on every run. And put the same rule where two edges of the pair
+      MEET — a merge's fold, a detach's fallback claim — not only where one is written:
+      a Form 4 written onto a person's Wikidata twin passed the write-site check (the
+      13G sat on the twin's EDGAR node), and the merge's "same source, later date wins"
+      kept it (Galperin → MercadoLibre 0.0001 % over 1.7 %, findings item 73, 2026-11-07).
 - [ ] **Store the count beside the percentage, and say whose denominator it is.** A stake
       is `shares / shares_outstanding`, and only the count belongs to the holder; the total
       moves with every issue and buy-back. Bevco's last 13D/A (2020) said 5.9 % of AB InBev;

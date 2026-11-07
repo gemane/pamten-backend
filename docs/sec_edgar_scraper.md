@@ -1128,6 +1128,16 @@ reported an exit (`until`) no longer speaks for the pair, and the Form 4 writes
 again. The run notes each yielded holding (`insider owner (13D/G states the
 holding)`), writes nothing for it.
 
+The rule also holds where two edges of the pair MEET rather than where one is
+written: a person merge folding the duplicate's edge onto the survivor's, and a
+detach falling back to another claim (`owns_merge.statement_rank`, a step of
+`answer_rank` below credibility: a Form 3/4 ranks under an open 13D/G of the same
+source). Before, the later date decided there, and the rebuild of 2026-11-07
+showed it: a Form 4 found for a person's Wikidata node landed beside the 13G/A on
+their EDGAR node, and the merge kept the Form 4 — Marcos Galperin → MercadoLibre
+0.0001 % (13G/A 1.7 %), Antonio Gracias → SpaceX, Joseph Tsai → Alibaba (findings
+item 73).
+
 ### Fetching Form 3/4 filings
 
 The company's submissions JSON lists all its recent filings:

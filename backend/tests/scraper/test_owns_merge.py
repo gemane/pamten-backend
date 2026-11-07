@@ -4,7 +4,7 @@ Pure: no database. The writers that apply it are pinned against a real ArcadeDB
 in tests/integration/test_one_owns_edge_per_pair_it.py.
 """
 from app.scraper.owns_merge import (
-    ANSWER_FIELDS, answer_rank, combine_since, fold, outranks, said_at, supersedes,
+    ANSWER_FIELDS, answer_rank, combine_since, fold, outranks, said_at, statement_rank, supersedes,
 )
 
 SEC_EX21 = {"source_id": "sec", "credibility_score": 98, "stake_percent": None,
@@ -181,3 +181,39 @@ def test_a_refuted_start_never_wins_a_merge():
     # and the floor travels to a survivor that lacks it
     out = fold([other, survivor], other)
     assert out["since_not_before"] == "2026-07-01" and out["since"] == "2026-08-01"
+
+
+class TestBeneficialOverRecord:
+    """A holder's open 13D/G is the stake; a Form 3/4 counts only what is
+    registered to them (findings item 73). Galperin → MercadoLibre on dev:
+    13G/A 1.7 % of 2012 and a Form 4 of 2024 on two person nodes the merge
+    folded — the later date took the edge."""
+    G13 = {"source_id": "sec", "credibility_score": 98, "stake_percent": 1.7,
+           "filing_type": "13G/A", "source_date": "2012-12-12", "read_from": "form"}
+    F4 = {"source_id": "sec", "credibility_score": 98, "stake_percent": 0.0001,
+          "filing_type": "Form 4", "source_date": "2024-08-19", "read_from": "field"}
+
+    def test_an_open_13dg_outranks_a_newer_form_4(self):
+        assert outranks(self.G13, self.F4) and not outranks(self.F4, self.G13)
+        assert not supersedes(self.F4, self.G13)
+
+    def test_the_fold_keeps_the_13dg_whichever_edge_survives(self):
+        assert fold([self.F4, self.G13], self.F4)["filing_type"] == "13G/A"
+        assert fold([self.G13, self.F4], self.G13).get("filing_type") is None, "the survivor keeps it"
+
+    def test_an_exited_13dg_no_longer_speaks(self):
+        ended = dict(self.G13, until="2023-02-14")
+        assert not outranks(ended, self.F4)
+        assert outranks(self.F4, ended) or supersedes(self.F4, ended), "the rule before item 73 decides"
+        same_grade = dict(ended, read_from="field")
+        assert supersedes(self.F4, same_grade), "equal rank: the later statement"
+
+    def test_a_stated_stake_and_credibility_still_come_first(self):
+        assert outranks(dict(self.F4, credibility_score=99), self.G13)
+        assert outranks(self.F4, dict(self.G13, stake_percent=None))
+
+    def test_spellings(self):
+        for ft in ("Form 4", "Form 3", "4", "FORM 4/A", "3/A"):
+            assert statement_rank({"filing_type": ft}) == 0, ft
+        for ft in ("13G/A", "SC 13D", "SCHEDULE 13G/A", "13D", "EX-21", "RR", "13F", None):
+            assert statement_rank({"filing_type": ft}) == 1, ft
