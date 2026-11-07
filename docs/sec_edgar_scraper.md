@@ -2071,6 +2071,46 @@ First Republic Bank (67.9 bn), SmartStop → Argus — and are written without a
 start. Request budget: one submissions call plus two to three cacheable
 documents per filing.
 
+## Form F-6 — a foreign issuer's ADS CUSIP (`sec_f6.py`)
+
+A foreign company whose shares trade in the US as American Depositary Shares
+files no 13D/G cover about itself and often no 10-K, so no SEC read gave its
+node a CUSIP — and the securities bridge (docs/deduplication.md, "The
+securities bridge") reads nothing else. Its ADR depositary registers the
+programme on **Form F-6** (and F-6EF, F-6 POS, F-6/A), filed under the
+**foreign issuer's CIK**, and the form of receipt in the deposit agreement
+states the ADS CUSIP: Nestlé's F-6 POS of 2026-02-20 "ADS CUSIP No.:
+641069406", its F-6EF of 2009 "CUSIP NO: 641069406", its F-6/A of 2004 the old
+Rule 144A ADS "641069 50 5". GLEIF's LEI-ISIN file maps US6410694060 and
+US6410695059 to Nestlé's LEI.
+
+What the issuer's own SEC scrape does (findings item 72, 2026-11-07):
+
+- the F-6 family filings from the submissions document, newest first, at most
+  eight; a filer without one costs nothing more;
+- per filing the **full submission text** (`<accession>.txt`, one request: the
+  CUSIP sits in an exhibit, a different one per filing, never in the primary
+  document);
+- after the word "CUSIP" and its label ("No.", "NO", "Number(s)", "#"), a
+  nine-character code — grouped 6-2-1, bracketed, broken over a line — taken
+  only when its **check digit** holds. The receipt is a template in most
+  filings: "CUSIP NUMBER: _______" is a blank to fill in, "a CUSIP number that
+  is different from any CUSIP number…" is prose; neither yields a code;
+- it stops at the first filing that states one (the programme in force); a
+  request lost to the network stops the reading and marks the run `partial`
+  (section "F-6 ADS CUSIP"), so an older filing never stands in for a newer;
+- the runner adds the code(s) to the node's `cusips` and fills `cusip` when
+  empty (`runner._keep_ads_cusips`) — beside a 13F table's or a 13D/G cover's
+  code, never instead.
+
+Measured on dev's 142 scraped filers with a CIK: three state one — NESTLE SA
+(641069406; the bridge joins it with GLEIF's Nestle S.A.), Alibaba (01609W102,
+confirming the LEI it holds), Unilever PLC (904767704, an ADS GLEIF does not
+map). Wesfarmers' six F-6 filings leave the CUSIP blank (an unsponsored
+programme): nothing is written, never a guess. The 13F reader gains too: it
+searches info tables by every code in `cusips`, and 13F managers report an
+ADR by its ADS CUSIP.
+
 ## Form D — private-company boards (`sec_formd.py`)
 
 Every Reg D raise is notified on Form D, filed by the ISSUER as structured

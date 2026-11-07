@@ -464,7 +464,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       own scrape kept it — a filer's scrape of the companies it holds dropped it. 75 of dev's
       1,117 13D/G subjects carried one, and the securities bridge reads nothing else
       (findings item 71, 2026-11-07). An identifier with a check digit is taken only when
-      the digit is right.
+      the digit is right. And look for the identifier in the filings ABOUT the company that
+      someone else files: a foreign issuer files no 13D/G cover about itself, but its ADR
+      depositary's Form F-6 states the ADS CUSIP — in an exhibit, under the issuer's CIK,
+      beside a blank "CUSIP NUMBER: ____" template in the same document (Nestlé, findings
+      item 72, 2026-11-07). Read the full submission text, take only a check-digit-valid code
+      after the label, and read newest first: the newest statement is the programme in force.
 - [ ] **Stamp `read_from` on every value the writer records** — how surely it
       was read, not how good the source is: `field` (a named field of XML/JSON),
       `table` (a cell under a header the filer wrote), `form` (a numbered item of a

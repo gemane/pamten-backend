@@ -915,9 +915,14 @@ Never fatal there (a GLEIF hiccup must not fail the delta), and before the disso
 download the file to find nothing. Each run keeps only the newest file (~33 MB) and removes
 GLEIF's older ones. Its reach is the nodes with a CUSIP: every 13D/G cover read keeps the
 subject's since 2026-11-07 (docs/sec_edgar_scraper.md; before, 75 of dev's 1,117 13D/G subjects
-had one). What it cannot reach: a filer whose node carries no CUSIP (a foreign owner of
-13G filings such as NESTLE SA — GLEIF does map Nestlé's ADR CUSIPs to its LEI, but the owner's
-node holds none).
+had one). A foreign issuer files no 13D/G about itself, so its node got no CUSIP that way —
+NESTLE SA stayed beside GLEIF's Nestle S.A. although GLEIF maps Nestlé's ADS ISIN to that
+LEI. Since findings item 72 (2026-11-07) the issuer's own SEC scrape reads the ADS CUSIP its
+depositary states in the Form F-6 filings (`app.scraper.sec_f6`, docs/sec_edgar_scraper.md):
+on dev's 142 scraped filers with a CIK, three state one — Nestlé (641069406 → a join), Alibaba
+(confirms its LEI), Unilever (GLEIF does not map that ADS). What it still cannot reach: a
+filer whose node carries no CUSIP — an unsponsored programme whose F-6 leaves it blank
+(Wesfarmers), a company with no ADR at all (Bertelsmann).
 Findings item 19 (rebuild 2026-10-30): eight pairs that had joined by name before #490 were
 refused. Six join since (AB InBev by the form code; HubSpot and Alibaba by the report's
 place; MercadoLibre, Embraer and Televisa by the report's place, and their newest lists would

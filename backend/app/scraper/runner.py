@@ -2375,6 +2375,26 @@ def _keep_cover_cusip(entity_id: str | None, cusip: str | None) -> None:
                     id=entity_id, c=cusip)
 
 
+def _keep_ads_cusips(entity_id: str | None, cusips: list[str] | None) -> None:
+    """A foreign issuer's ADS CUSIP(s) from its F-6 filings (`sec_f6`, findings
+    item 72), added to the node's `cusips` — the list `sec-13f` searches 13F
+    tables with and the securities bridge derives US ISINs from — and filling
+    `cusip` when it is empty, as a 13F scrape does. Added, never replacing:
+    a 13D/G cover's or a 13F table's code stays."""
+    if not entity_id or not cusips:
+        return
+    with db.get_session() as session:
+        row = session.run("MATCH (e:Entity {id: $id}) RETURN e.cusips AS cs", id=entity_id).single()
+        if row is None:
+            return
+        known = list(row.get("cs") or [])
+        merged = list(dict.fromkeys([*known, *cusips]))
+        if merged == known:
+            return
+        session.run("MATCH (e:Entity {id: $id}) SET e.cusips = $cs, e.cusip = COALESCE(e.cusip, $c)",
+                    id=entity_id, cs=merged, c=cusips[0])
+
+
 def _record_sec_industry(entity_id: str, cik: str | None, source_id: str) -> None:
     """EDGAR's SIC code for a filer, as the SEC's statement of its industry
     (app.industry). The submissions document is the one the name, country
@@ -2426,6 +2446,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     # `sec-13f` match info-table rows exactly instead of by name.
     _keep_cover_cusip(target_id, next((f.get("issuer_cusip") for f in data.get("ownership_filings", [])
                                        if f.get("issuer_cusip")), None))
+    _keep_ads_cusips(target_id, data.get("ads_cusips"))
 
     for filing in data.get("ownership_filings", []):
         investor_name = filing.get("investor_name", "").strip()
