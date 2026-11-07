@@ -219,6 +219,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       the edge" was right only while the knowledge base wrote its nodes itself; once the
       registers wrote them first, MUFG's filer took Morgan Stanley's owner edge and kept
       neither the item nor the LEI it states (`_resolve_related_company`, findings item 66).
+- [ ] **A knowledge base's node without a pointer must not outrank the register's node of the
+      same name.** Wikidata's Grupo Bimbo (Q775031) states no LEI, so it made its own `wd:` node
+      with no holdings, and only its name equalled the query: "Grupo Bimbo" opened it instead of
+      GLEIF's GRUPO BIMBO S A B DE C V with 45 subsidiaries. Compare names without the register's
+      own legal form (its ELF code's abbreviations), and move the register's node up, not the twin
+      down — moving the twin let a subsidiary in between rise (findings item 75, 2026-11-07).
 - [ ] **A contradiction means "not this node" — say how the node was found before refusing.**
       A node the item's own ids found and whose register id disagrees is a refusal. A node
       found by the name alone is only one company of that name: J.P. Morgan Securities LLC
