@@ -849,6 +849,24 @@ evidence or the reason:
 4. **Veto**: never a record GLEIF lists as a direct or ultimate child of a record that passes
    1 and 2 against the filer, while that link is in force on `D` or today — Domino's Pizza
    LLC, consolidated by the Inc. since 1999-10-27.
+5. **Veto: a dead entity files nothing** (findings item 84, 2026-11-08). A registration GLEIF
+   RETIRED or MERGED says the entity ceased, by `D` at the latest. A filer whose newest filing
+   (`Filer.last_filed`, from EDGAR's submissions) is dated after `D` was alive after it, so it
+   is not that entity — whatever the names and the building say. ONEOK, Inc. (Oklahoma, 1997)
+   merged into a subsidiary in a holding-company reorganisation on 2026-09-10; a new Oklahoma
+   corporation was renamed ONEOK, Inc. and became the **successor issuer** under Rule
+   12g-3(a), keeping CIK 0001039684 (8-K12B of 2026-09-10). GLEIF retired the old LEI
+   `2T3D6M0JSY48PSZI1Q41` (event DISSOLUTION 2026-08-13, last update 2026-09-29) and issued
+   `2549009766CUB8C5QG76` on 2026-10-05 with no successor link; Wikidata's item still states
+   the old one. The pointer joined the successor's CIK to the dead record on
+   "name+place+address@2026-09-29", and the live company read as inactive with 205 open edges
+   that the dissolution rule would close once a date arrived. Now the record is written on its
+   own (inactive, the predecessor) and the filer keeps its `sec:` node. The veto needs the
+   record's last update: without one `D` is today and nothing is after it. A LAPSED record is
+   unmaintained, not ceased — NYT's joins as before. Viacom Inc.'s retired record (last update
+   2023-08-04) still joins CIK 0001339947, whose last filing is the Form 15 of 2019-12-16:
+   that filer ended with the entity. The gap that stays: nothing yet finds the successor's new
+   LEI — it arrives when a filing or the item states it.
 
 It runs wherever such a pair meets, so the order no longer decides:
 

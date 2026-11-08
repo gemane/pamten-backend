@@ -16,6 +16,8 @@ NYT_LEI, INC_LEI, LLC_LEI, TENCENT_LEI = ("529900J1WEMMIW7BOH57", "25490005ZWM1I
 NV_LEI, NV_CIK = "549300WSWTEW6DURBO45", "0000741508"
 ABI_LEI, ABI_CIK = "5493008H3828EMEXB082", "0001668717"
 SB_LEI, SB_CIK = "5493003BZYYYCDIO0R13", "0001065521"
+#: ONEOK's legacy LEI (retired 2026, the entity merged away) and the successor issuer's CIK (item 84)
+OKE_LEI, OKE_CIK = "2T3D6M0JSY48PSZI1Q41", "0001039684"
 FILERS = {"0000071691": Filer("0000071691", "NEW YORK TIMES CO", home="US-NY",
                               street="620 EIGHTH AVENUE", city="NEW YORK"),
           "0001286681": Filer("0001286681", "DOMINOS PIZZA INC", home="US-DE"),
@@ -24,19 +26,23 @@ FILERS = {"0000071691": Filer("0000071691", "NEW YORK TIMES CO", home="US-NY",
           "0001385849": Filer("0001385849", "ENERGY FUELS INC", home="US-DE"),
           ABI_CIK: Filer(ABI_CIK, "Anheuser-Busch InBev SA/NV", home="BE"),
           # EDGAR states no incorporation for SoftBank, and it files no annual report
-          SB_CIK: Filer(SB_CIK, "SOFTBANK GROUP CORP.", home=None)}
+          SB_CIK: Filer(SB_CIK, "SOFTBANK GROUP CORP.", home=None),
+          # the successor issuer's newest filing, after GLEIF's last update of the legacy record
+          OKE_CIK: Filer(OKE_CIK, "ONEOK INC /NEW/", home="US-OK", street="100 WEST FIFTH STREET", city="TULSA",
+                         last_filed="2026-10-28")}
 ADDRESSES = {"0000071691": ("620 EIGHTH AVENUE", "NEW YORK", None),
              NV_CIK: ("6226 WEST SAHARA AVENUE", "LAS VEGAS", "today's address: no filing within a year"),
-             SB_CIK: ("1-7-1 KAIGAN MINATO-KU", "TOKYO", None)}
+             SB_CIK: ("1-7-1 KAIGAN MINATO-KU", "TOKYO", None),
+             OKE_CIK: ("100 WEST FIFTH STREET", "TULSA", None)}
 
 
 def _record(lei, name, jurisdiction, street, city, status="ISSUED", level="FULLY_CORROBORATED",
-            updated="2026-04-07T00:00:00Z", other=(), form=None, hq=None):
+            updated="2026-04-07T00:00:00Z", other=(), form=None, hq=None, entity_status="ACTIVE"):
     addr = {"addressLines": [street], "city": city, "country": jurisdiction[:2], "postalCode": "1"}
     head = {**addr, **hq} if hq else addr
     return golden_copy_record({
         "lei": lei,
-        "entity": {"legalName": {"name": name}, "jurisdiction": jurisdiction, "status": "ACTIVE",
+        "entity": {"legalName": {"name": name}, "jurisdiction": jurisdiction, "status": entity_status,
                    "legalForm": {"id": form},
                    "legalAddress": addr, "headquartersAddress": head,
                    "otherNames": [{"name": n, "type": "TRANSLITERATED"} for n in other]},
@@ -59,6 +65,8 @@ RECORDS = {
                     "Tokyo", hq={"addressLines": ["海岸一丁目７番１号"], "city": "東京都 港区",
                                  "postalCode": "105-7537"}),
 }
+RECORDS[OKE_LEI] = _record(OKE_LEI, "ONEOK, INC.", "US-OK", "100 West 5th Street", "Tulsa", status="RETIRED",
+                           updated="2026-09-29T11:33:22Z", entity_status="INACTIVE")
 LLC_PARENT = [{"lei": INC_LEI, "names": ["Domino's Pizza, Inc."], "place": "US-DE", "status": "ACTIVE",
                "periods": [{"type": "RELATIONSHIP_PERIOD", "startDate": "1999-10-27T00:00:00Z"}]}]
 
@@ -234,3 +242,24 @@ def test_ab_inbev_joins_on_the_form_its_gleif_code_names(it_db, sec_first):
     [row] = _nodes(it_db, "lei_id = :l OR sec_cik = :c", {"l": ABI_LEI, "c": ABI_CIK})
     assert row["lei_id"] == ABI_LEI and row["sec_cik"] == ABI_CIK
     assert row["lei_source"] == "name(form R85P)+place"
+
+
+def test_a_successor_issuer_is_not_the_record_of_the_entity_it_replaced(it_db):
+    # ONEOK (findings item 84): the filer exists; Wikidata's item still states the
+    # legacy LEI, whose entity GLEIF retired before the filer's newest filing. The
+    # record is written on its own, inactive; the filer keeps its id, its CIK and
+    # no LEI — and so every edge the SEC scrape writes onto it stays open.
+    from app.scraper.register_pointer import attach_stated_lei
+    sec_id = _sec("ONEOK INC /NEW/", OKE_CIK)
+    assert sec_id == f"sec:{OKE_CIK}"
+    held = {"lei_id": None, "sec_cik": OKE_CIK, "name": "ONEOK INC /NEW/"}
+    landed = attach_stated_lei(held, sec_id, [OKE_LEI], ["ONEOK", "ONEOK Inc."])
+    assert landed == f"lei:{OKE_LEI}"
+    rows = {r["id"]: r for r in _nodes(it_db, "lei_id = :l OR sec_cik = :c", {"l": OKE_LEI, "c": OKE_CIK})}
+    assert set(rows) == {sec_id, f"lei:{OKE_LEI}"}
+    assert rows[sec_id]["lei_id"] is None and rows[sec_id]["lei_source"] is None
+    assert rows[f"lei:{OKE_LEI}"]["sec_cik"] is None
+    assert it_db.run_sql("SELECT active FROM Entity WHERE id = :id", {"id": f"lei:{OKE_LEI}"})[0]["active"] is False
+    assert it_db.run_sql("SELECT count(*) AS n FROM MergedId WHERE old_id = :o", {"o": sec_id})[0]["n"] == 0
+    # the SEC writer meeting the retired record by name refuses it the same way
+    assert _sec("ONEOK, INC.", OKE_CIK) == sec_id

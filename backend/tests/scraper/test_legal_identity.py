@@ -420,3 +420,75 @@ class TestACorporatePscAndItsGleifRecord:
         assert psc_same_legal_entity(self.GLEIF, {**psc, "name": "Berkshire Hathaway LLC"}, parent=True)[0] == REFUSE
         assert psc_same_legal_entity({**self.GLEIF, "incorporated_on": "2021-07-01"},
                                      {**psc, "notified_on": "2019-03-04"}, parent=True)[0] == REFUSE
+
+
+class TestACeasedEntityFilesNothing:
+    """Findings item 84: ONEOK, Inc. (Oklahoma, 1997) merged into a subsidiary
+    on 2026-09-10 and a new Oklahoma corporation became the successor issuer,
+    keeping CIK 0001039684. GLEIF retired the old LEI 2T3D6M0JSY48PSZI1Q41
+    (last update 2026-09-29, event DISSOLUTION) and issued 2549009766CUB8C5QG76
+    with no link between them. The facts are GLEIF's API and EDGAR's
+    submissions on 2026-11-08."""
+    LEGACY = {"name": "ONEOK, INC.", "lei_id": "2T3D6M0JSY48PSZI1Q41", "country": "US",
+              "jurisdiction_code": "US-OK", "hq_street": "100 West 5th Street", "hq_city": "Tulsa",
+              "gleif_registration_status": "RETIRED", "validation_sources": "FULLY_CORROBORATED",
+              "gleif_last_update": "2026-09-29"}
+    #: the successor issuer: its 10-Q of 2026-10-28 is dated after the record's last update
+    SUCCESSOR = Filer("0001039684", "ONEOK INC /NEW/", home="US-OK", street="100 WEST FIFTH STREET",
+                      city="TULSA", last_filed="2026-10-28")
+    TODAY = "2026-11-08"
+    VIACOM = {"name": "Viacom Inc.", "lei_id": "X0ST5BPF0CZG9FE5OV61", "country": "US",
+              "jurisdiction_code": "US-DE", "hq_street": "1515 Broadway", "hq_city": "New York",
+              "gleif_registration_status": "RETIRED", "validation_sources": "FULLY_CORROBORATED",
+              "gleif_last_update": "2023-08-04"}
+    #: Viacom Inc. merged into CBS in December 2019; the CIK's last filing is its Form 15
+    VIACOM_FILER = Filer("0001339947", "Viacom Inc.", home="US-DE", street="1515 BROADWAY", city="NEW YORK",
+                         last_filed="2019-12-16")
+
+    def test_the_successor_issuer_is_not_the_retired_record(self):
+        ev = fake(address=("100 WEST FIFTH STREET", "TULSA", None))       # the names and the building match
+        verdict, why = same_legal_entity(self.LEGACY, self.SUCCESSOR, today=self.TODAY, evidence=ev)
+        assert verdict == REFUSE
+        assert why == "GLEIF's entity ceased by 2026-09-29 (registration RETIRED); the filer filed on 2026-10-28"
+        assert ev.asked == []                                              # refused before the address is asked
+
+    def test_a_filer_that_ended_with_the_entity_still_joins(self):
+        ev = fake(address=("1515 BROADWAY", "NEW YORK", None))
+        assert same_legal_entity(self.VIACOM, self.VIACOM_FILER, today=self.TODAY, evidence=ev) == (
+            JOIN, "name+place+address@2023-08-04")
+
+    def test_a_filing_on_the_records_last_day_is_not_after_it(self):
+        filer = Filer("0001339947", "Viacom Inc.", home="US-DE", last_filed="2023-08-04")
+        ev = fake(address=("1515 BROADWAY", "NEW YORK", None))
+        assert same_legal_entity(self.VIACOM, filer, today=self.TODAY, evidence=ev)[0] == JOIN
+
+    def test_without_the_filers_newest_filing_day_the_veto_is_silent(self):
+        filer = Filer("0001039684", "ONEOK INC /NEW/", home="US-OK")
+        ev = fake(address=("100 WEST FIFTH STREET", "TULSA", None))
+        assert same_legal_entity(self.LEGACY, filer, today=self.TODAY, evidence=ev)[0] == JOIN
+
+    def test_a_lapsed_record_is_unmaintained_not_ceased(self):
+        # NYT files on; its LAPSED record joins as before (item 4)
+        filer = Filer("0000071691", "NEW YORK TIMES CO", home="US-NY", last_filed="2026-10-30")
+        ev = fake(address=("620 EIGHTH AVENUE", "NEW YORK", None))
+        assert same_legal_entity(NYT_GLEIF, filer, today=TODAY, evidence=ev) == (
+            JOIN, "name+country+address@2021-07-16")
+
+    def test_a_record_without_a_last_update_day_cannot_veto(self):
+        legacy = {**self.LEGACY, "gleif_last_update": None}                # D is today; nothing is after today
+        ev = fake(address=("100 WEST FIFTH STREET", "TULSA", None))
+        assert same_legal_entity(legacy, self.SUCCESSOR, today=self.TODAY, evidence=ev)[0] == JOIN
+
+    def test_filer_facts_carry_the_newest_filing_day(self):
+        from app.scraper import legal_identity
+        sub = {"name": "ONEOK INC /NEW/", "stateOfIncorporation": "OK",
+               "addresses": {"business": {"street1": "100 WEST FIFTH STREET", "city": "TULSA"}},
+               "filings": {"recent": {"form": ["10-Q", "8-K", "4"], "accessionNumber": ["a", "b", "c"],
+                                      "filingDate": ["2026-10-28", "2026-10-27", "2026-11-03"],
+                                      "reportDate": ["2026-09-30", "", ""], "primaryDocument": ["", "", ""],
+                                      "items": ["", "", ""]}}}
+        with patch("app.scraper.sec_edgar._submissions", return_value=sub), \
+             patch("app.scraper.sec_edgar.sec_headquarters", return_value={"street": "100 WEST FIFTH STREET", "city": "TULSA"}), \
+             patch("app.scraper.sec_edgar.incorporation_place", return_value="US-OK"):
+            facts = legal_identity.filer_facts("0001039684x")        # a key no other test cached
+        assert facts.last_filed == "2026-11-03"                            # the maximum, not the first row
