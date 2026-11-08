@@ -43,6 +43,20 @@ one name key and one street — so `same_legal_entity` asks four things:
    record that passes 1 and 2 against the filer, while that link was in force
    on ``D`` or is today. Domino's Pizza LLC, a child of the Inc. since
    1999-10-27.
+5. **Veto: a dead entity files nothing** (findings item 84). A record whose
+   registration GLEIF RETIRED or MERGED says the entity ceased — by ``D``,
+   its last update. A filer whose newest filing is dated after ``D`` is
+   alive after it, so it is not that entity, whatever the names and the
+   building say: ONEOK, Inc. (Oklahoma, 1997) merged into a subsidiary in a
+   holding-company reorganisation on 2026-09-10 and a new Oklahoma
+   corporation became the successor issuer under Rule 12g-3(a), keeping
+   CIK 0001039684; GLEIF retired the old LEI (last update 2026-09-29) and
+   issued a new one with no link between them, and Wikidata still pointed
+   at the old. The successor's 10-Q of 2026-10-28 joined it to the dead
+   record on its name and address, and the live company read as inactive
+   with 205 open edges at the mercy of the dissolution rule. Viacom Inc.'s
+   retired record still joins its filer, whose last filing is the Form 15
+   of 2019-12-16: that filer ended with the entity.
 
 The verdict is (JOIN, evidence) or (REFUSE, reason). The rule runs where a pair
 can meet: the GLEIF pointer writer before it mints a node
@@ -68,6 +82,10 @@ JOIN, REFUSE = "join", "refuse"
 
 #: A registration GLEIF no longer maintains: its data is a snapshot of its last update.
 _UNMAINTAINED = frozenset({"LAPSED", "RETIRED"})
+#: A registration GLEIF closed because the entity ceased to exist or merged into
+#: another (GLEIF's own meaning of the two statuses): by the record's last update
+#: the entity was gone, so a filer that filed after it is not that entity.
+_CEASED = frozenset({"RETIRED", "MERGED"})
 _SELF_REPORTED = "ENTITY_SUPPLIED_ONLY"
 #: How far from D a filing header may lie and still say where the filer was then.
 _HEADER_WINDOW = timedelta(days=365)
@@ -83,6 +101,7 @@ class Filer:
     home: str | None = None                  # incorporation_place: "US-DE", "KY"
     street: str | None = None                # today's business address
     city: str | None = None
+    last_filed: str | None = None            # the day of the filer's newest filing (item 84)
 
 
 @dataclass
@@ -360,6 +379,14 @@ def same_legal_entity(node: dict, filer: Filer, *, today: str | None = None,
     same_place, place_words = _place_verdict(place, filer.home)
     if same_place is False:
         return REFUSE, place_words
+    # 5. veto: a dead entity files nothing (findings item 84). GLEIF says the
+    # entity ceased (RETIRED / MERGED) by D, its last update; a filing dated
+    # after D was made by someone alive then — the successor issuer that kept
+    # the CIK, not the entity of this record. A filing ON D is not after it;
+    # a record without a last update has D = today, which nothing is after.
+    status = (node.get("gleif_registration_status") or "").upper()
+    if status in _CEASED and filer.last_filed and filer.last_filed > day:
+        return REFUSE, f"GLEIF's entity ceased by {day} (registration {status}); the filer filed on {filer.last_filed}"
     # 4. veto: a child of a record that is the filer
     lei = node.get("lei_id")
     if lei:
@@ -449,8 +476,12 @@ def filer_facts(cik: str) -> Filer | None:
         return None
     # today's office: the annual report's, else the company record's
     office = sec_headquarters(sub) or {}
+    # the newest filing's day: EDGAR's "recent" list is newest first, but the
+    # maximum is taken, not the first row
+    dates = [d for d in ((sub.get("filings") or {}).get("recent") or {}).get("filingDate") or [] if d]
     return Filer(cik=cik, name=name, former_names=tuple(former_name_entries(sub) or ()),
-                 home=incorporation_place(sub), street=office.get("street"), city=office.get("city"))
+                 home=incorporation_place(sub), street=office.get("street"), city=office.get("city"),
+                 last_filed=max(dates)[:10] if dates else None)
 
 
 _HEADER_BLOCK = re.compile(r"<(ISSUER|FILER|SUBJECT-COMPANY|FILED-BY)>(.*?)</\1>", re.S)

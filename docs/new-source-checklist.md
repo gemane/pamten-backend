@@ -676,6 +676,20 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       13D/G covers), not with a bulk import, so the bridge runs after the daily GLEIF
       delta and the rebuild's replay, never in `finish-import.sh` — there it would
       download 33 MB to find nothing (findings item 71, 2026-11-07).
+- [ ] **A register's record of an entity that ceased is not the registrant that files today.**
+      A company can be replaced by a new legal entity that keeps its public ids: a US
+      holding-company reorganisation makes a new corporation the *successor issuer* under
+      Rule 12g-3(a), and it keeps the CIK while the old corporation is dissolved; GLEIF
+      retires the old LEI and issues a new one, and states no link between them; the
+      knowledge base keeps pointing at the old (ONEOK, 2026-09-10, findings item 84). A join
+      that compares names and addresses at the record's last day finds them equal, because
+      they ARE equal — the successor has the same name, the same building and the same
+      register. What differs is time: the record says the entity ceased by day `D`, and the
+      filer filed after `D`; a dead entity files nothing. Make the register's own end status
+      (GLEIF RETIRED / MERGED, EntityStatus INACTIVE) a veto against any filer with a later
+      filing, and keep joining a filer whose last filing lies before the end — that filer
+      ended with the entity (Viacom Inc., Form 15 of 2019). Test the pair that must still
+      join beside the one that must not.
 - [ ] **A place has a date: take the filer's newest statement of it, in its own context.** The
       annual report is a year's snapshot — Liberty Media became a Nevada company three months
       after its 10-K said Delaware, and the join with GLEIF (Nevada) was refused; its 10-Q
