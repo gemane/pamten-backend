@@ -246,6 +246,90 @@ def _entity_candidate_rows(q_lower: str, nn: str | None, country: str | None) ->
     return rows
 
 
+#: the edges that make one company a group's subsidiary: GLEIF's consolidation
+#: parent (RR), a filer's own list of subsidiaries (Exhibit 21 / 20-F 8.1), or
+#: a stated majority — never a 13F/13G/Form 4 stake
+_SUBSIDIARY_FILINGS = frozenset({"RR", "EX-21", "EX-8.1"})
+_CONTROL_TYPES = frozenset({"full", "majority"})
+
+
+def _owned_among(ids: list[str]) -> dict[str, set[str]]:
+    """For candidate ids, which of them hold which others as a subsidiary
+    (`_SUBSIDIARY_FILINGS`, `_CONTROL_TYPES`; open edges only): owned id → owner ids."""
+    if len(ids) < 2:
+        return {}
+    owned: dict[str, set[str]] = {}
+    with db.get_session() as session:
+        for r in session.run(
+                "MATCH (a:Entity)-[r:OWNS]->(b:Entity) WHERE a.id IN $ids AND b.id IN $ids "
+                "AND r.until IS NULL RETURN a.id AS a, b.id AS b, r.source_id AS src, "
+                "r.filing_type AS ft, r.ownership_type AS ot", ids=ids):
+            a, b = r.get("a"), r.get("b")
+            if not a or not b or a == b:
+                continue
+            if (r.get("src") == "gleif" or r.get("ft") in _SUBSIDIARY_FILINGS
+                    or r.get("ot") in _CONTROL_TYPES):
+                owned.setdefault(b, set()).add(a)
+    return owned
+
+
+def _owner_words(node: dict, tokens: list[str]) -> list[str]:
+    """The query's words without the owner's own legal form ("Investor AB" for
+    Investor Aktiebolag, whose code's abbreviation is AB): a legal form is no
+    word of the name, and GLEIF's names spell it out."""
+    from app.scraper.gleif_reference import legal_form_abbreviations
+    forms = {re.sub(r"[^a-z0-9]", "", a.casefold()) for a in legal_form_abbreviations(node.get("legal_form_code"))}
+    return [t for t in tokens if re.sub(r"[^a-z0-9]", "", _fold(t)) not in forms]
+
+
+def _same_base_name(a: dict, b: dict) -> bool:
+    """The two names are one name but for the legal form, accents folded
+    ("AMERICA MOVIL SAB DE CV/" and "América Móvil B.V.")."""
+    ka = _base_name_key({**a, "name": _fold(a.get("name") or "")})
+    return bool(ka) and ka == _base_name_key({**b, "name": _fold(b.get("name") or "")})
+
+
+def _parent_before_subsidiary(nodes: list[dict], q: str, tokens: list[str], nn: str | None,
+                              on: str | None = None) -> list[dict]:
+    """A group that matches the query takes the place of its own subsidiary
+    ranked above it, the subsidiary right below (the user's choice, findings
+    item 76, 2026-11-08): "America Movil" opened América Móvil B.V. (exact once
+    normalised, and it carried the item id the run-all's Wikidata part gave the
+    node the resolver chose) above AMERICA MOVIL SAB DE CV, "Investor AB" a
+    holding subsidiary of Investor Aktiebolag, "Gazprom" Gazprom Neft above
+    PJSC Gazprom, whose names are Cyrillic but for an English one with the
+    legal form in front. The name tiers cannot tell a group from its member;
+    the graph can (`_owned_among`).
+
+    Moves only an owner that is itself a credible match (`_credible_match`, on
+    the query's words without its own legal form), so a shareholder never jumps
+    a search; and never above a subsidiary that bears the query's name when the
+    owner does not bear that same name too, legal form aside: "Heineken
+    International" is Heineken International B.V., "T. Rowe Price Associates,
+    Inc." the adviser (item 54), "Google" Google LLC (guard, 2026-11-08).
+    Nothing is dropped, the order is all, as in `_register_before_twin`."""
+    ids = list(dict.fromkeys(n.get("id") for n in nodes if n.get("id")))
+    owned = _owned_among(ids)
+    if not owned:
+        return list(nodes)
+
+    def exact(n: dict) -> bool:
+        return _rank(n, q, tokens, 0, nn, on)[0] == 0
+
+    out = list(nodes)
+    for sub in list(nodes):
+        owners = owned.get(sub.get("id"))
+        if not owners:
+            continue
+        at = out.index(sub)
+        up = next((i for i, n in enumerate(out) if i > at and n.get("id") in owners
+                   and _credible_match(n, _owner_words(n, tokens), nn)
+                   and (not exact(sub) or exact(n) or _same_base_name(n, sub))), None)
+        if up is not None:
+            out.insert(at, out.pop(up))
+    return out
+
+
 def resolve_best_entity(q: str, country: str | None = None, on: str | None = None) -> dict | None:
     """The single best-matching (non-suppressed) Entity for a query, using the same
     candidate set + `_rank` as `/search` — the shared 'which DB node does this query
@@ -263,14 +347,16 @@ def resolve_best_entity(q: str, country: str | None = None, on: str | None = Non
     if not rows:
         return None
     ranked = sorted(enumerate(rows), key=lambda ir: _rank(ir[1], q_lower, tokens, ir[0], nn, on))
-    best = _register_before_twin([r for _, r in ranked])[0]
+    best = _parent_before_subsidiary(_register_before_twin([r for _, r in ranked]), q_lower, tokens, nn, on)[0]
     # A best guess is not an answer. The candidates come from a full-text
     # query that can match on one shared word, and the on-demand scrape acts on
     # whatever comes back: "Voting group · 8 parties" resolved to Alibaba
     # (every candidate only shared "group"), whose graph the client then drew
     # around the group (2026-10-26). Taken only when it IS the query — the
     # same normalised name, or every word of the query in one of its names.
-    return best if _credible_match(best, tokens, nn) else None
+    # The query's legal form is no word of the name when it is the node's own
+    # ("Investor AB" is Investor Aktiebolag: GLEIF spells AB out; item 76).
+    return best if _credible_match(best, _owner_words(best, tokens), nn) else None
 
 
 def _credible_match(node: dict, tokens: list[str], nn: str | None) -> bool:
@@ -402,7 +488,7 @@ def search(
     # to float short unrelated names like "BLG GROUP" to the top.
     results = [{**r, "_i": i} for i, r in enumerate(results)]
     results.sort(key=lambda r: _rank(r["node"], q_lower, tokens, r["_i"], nn))
-    order = _register_before_twin([r["node"] for r in results])
+    order = _parent_before_subsidiary(_register_before_twin([r["node"] for r in results]), q_lower, tokens, nn)
     pos = {id(n): i for i, n in enumerate(order)}
     results.sort(key=lambda r: pos[id(r["node"])])
     # De-dupe by node id (CONTAINSTEXT can return a row per index bucket), keeping
