@@ -61,3 +61,37 @@ def test_a_co_registrant_without_a_branch_writes_nothing_and_dims_what_it_was_gi
             result = runner.run_sec_ex21("Entergy Texas")
     assert result["status"] == "ok" and result["total"] == 0 and result["stale"] == 1
     assert it_db.run_command("MATCH (e:Entity {id:'etx'}) RETURN e.sec_ex21_ingested AS u")[0]["u"] == newer["url"]
+
+
+def test_a_partnership_with_its_own_list_reads_it_not_the_reits(it_db):
+    # findings item 78: Kilroy's 10-K carries the REIT's list (21.1) and the
+    # partnership's own (21.2); read from the partnership's CIK the first used
+    # to win. Real exhibits, only the network mocked.
+    from pathlib import Path
+    fx = Path(__file__).parent.parent / "scraper" / "fixtures"
+    acc = "0001628280-26-007051"
+    it_db.run_command(
+        "CREATE (:Entity {id: 'krlp', name: 'Kilroy Realty, L.P.', name_normalized: 'kilroy realty lp', "
+        "search_text: 'Kilroy Realty, L.P.', type: 'company', sec_cik: '0001493976'})")
+    base = "https://www.sec.gov/Archives/edgar/data/1493976/000162828026007051/"
+    cands = [{"url": base + f, "form": "10-K", "filing_date": "2026-02-10", "accession": acc, "period": None}
+             for f in ("kilroy_ex21_1.htm", "kilroy_ex21_2.htm")]
+    # an earlier read wrote something only the REIT's list carries
+    older = {"subsidiaries": [{"name": "Kilroy Realty Corporation Only Sub, LLC", "jurisdiction": "Delaware"}],
+             "form": "10-K", "filing_date": "2025-02-10", "url": base.replace("26007051", "25007051") + "ex21.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=older):
+        runner.run_sec_ex21("Kilroy Realty, L.P.")
+    with patch("app.scraper.sec_ex21.annual_filings", return_value=[("10-K", acc, "2026-02-10", "2025-12-31")]), \
+         patch("app.scraper.sec_ex21.exhibit_candidates", return_value=cands), \
+         patch("app.scraper.sec_ex21.co_registrants",
+               return_value=[("1025996", "KILROY REALTY CORP"), ("1493976", "Kilroy Realty, L.P.")]), \
+         patch("app.scraper.sec_ex21._get_text", side_effect=lambda u: (fx / u.rsplit("/", 1)[1]).read_text()):
+        result = runner.run_sec_ex21("Kilroy Realty, L.P.")
+    assert result["status"] == "ok" and result["total"] == 77 and "group_of" not in result
+    rows = it_db.run_command(
+        "MATCH (:Entity {id:'krlp'})-[r:OWNS]->(b:Entity) WHERE r.until IS NULL "
+        "RETURN b.name AS name, r.stale AS stale, r.source_url AS url")
+    current = {r["name"] for r in rows if not r["stale"]}
+    assert len(current) == 77 and "Kilroy Realty, L.P." not in current
+    assert all(r["url"].endswith("kilroy_ex21_2.htm") for r in rows if not r["stale"])
+    assert {r["name"] for r in rows if r["stale"]} == {"Kilroy Realty Corporation Only Sub, LLC"}

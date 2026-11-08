@@ -1831,6 +1831,31 @@ from readers removed again the same day, so 11 remain):
   (OneMain Finance in OneMain Holdings' list), the list is read as before.
   `sec-ex21-history` reads each older filing the same way. Not done for a list
   read from a 20-F's main document or an earlier filing.
+- **One list per registrant — the heading says whose** (findings item 78,
+  2026-11-08). A combined 10-K can carry a list for each registrant: Exelon
+  eight (Exhibits 21.1–21.8, "SUBSIDIARIES - COMMONWEALTH EDISON COMPANY" …), a
+  REIT and its operating partnership two ("Subsidiaries of VICI Properties Inc."
+  / "… L.P."). Measured over all 6,360 10-Ks of 2026 (Q1–Q3): 43 carry several
+  lists — 20 filings reached from their 43 registrants — and every one is a list
+  per registrant; none splits one company's list over 21.1 and 21.2. The reader
+  took the first that parsed, the parent's, so a partnership read nothing of
+  its own (Kilroy L.P. 0 instead of 77, VICI L.P. 0 / 99, Host L.P. 0 / 322,
+  Digital Realty L.P. 0 / 642), and SL Green's partnership, filing its own 10-K
+  with both lists, read the REIT's. `own_list_first` now reads each candidate's
+  heading (its SGML description and the text before its first row) and puts the
+  list that names the filer — any of its names, or its name in the filing's
+  header — first; it is the filer's own and is not re-read as another's
+  (Brixmor's "BRIXMOR OPERATING PARTNERSHIP LP AND SUBSIDIARIES" lists the
+  partnership itself). A list naming another registrant is that one's and
+  dropped, unless the filer is a row of it — the group's list, whose branch
+  under the filer is read as above. Names count whole, legal form included
+  ("Kilroy Realty Corporation" is not "Kilroy Realty, L.P."), "&" as "and",
+  dotted letters as one word; a name without a legal form never counts. All four
+  readers (latest list, registration statement, earlier filing, history) do it.
+  Guard, old vs new over the 69 dev filers with a list and the 43: 10 change —
+  seven partnerships gain their own list, SL Green's OP reads its own, Brixmor's
+  OP its own 499 (not the REIT's 504), Blackstone's fund no longer takes its
+  (TE) twin's. The Vornado case above (one list "of both") is unchanged.
 - **Not read: Unilever.** Its 8.1 is the full UK Companies Act s.409 list,
   subsidiaries mixed with associates and joint ventures in multi-column flowing
   text, over a thousand entries; it points to the significant subsidiaries in its

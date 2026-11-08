@@ -1326,6 +1326,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       partnerships, accepted knowingly. The sentence above Vornado's table
       ("subsidiaries of both the Trust and the L.P.") is the signal a later rule
       could read.
+- [ ] **A filing can carry one document per registrant — each says whose it is.**
+      Exelon's 10-K has eight subsidiary lists, Kilroy's two ("Subsidiaries of
+      Kilroy Realty Corporation" / "… Kilroy Realty, L.P."): taking the first that
+      parsed gave every co-registrant the parent's (findings item 78; 43 of 6,360
+      10-Ks of 2026). Read each document's own heading before taking one, match the
+      name whole with its legal form, and let a document that names the subject
+      count as its own even when it also lists the subject as a row.
 - [ ] **A document can list its own subject.** A subsidiary list may open
       with the filer itself (NYT's root line) or carry it among the rows
       (Occidental). Tell it apart by every name the subject goes by, not only

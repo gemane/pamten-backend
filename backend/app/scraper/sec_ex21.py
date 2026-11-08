@@ -1409,6 +1409,105 @@ def _same_name(a: str, b: str) -> bool:
     return _form_key(_ALIAS.sub("", a)) == _form_key(_ALIAS.sub("", b))
 
 
+def _words(text: str) -> list[str]:
+    """A text's words in one spelling for a name match: legal forms one way
+    (`_form_plain`), "&" as "and", dotted letters joined — "L.P." is "LP"."""
+    words = re.findall(r"[a-z0-9]+", _form_plain(text.replace("&", " and ")))
+    out: list[str] = []
+    run: list[str] = []
+    for w in words + [""]:
+        if len(w) == 1 and w.isalpha():
+            run.append(w)
+            continue
+        if run:
+            out.append("".join(run))
+            run = []
+        if w:
+            out.append(w)
+    return out
+
+
+def _says(words: list[str], name: str) -> bool:
+    """Whether ``words`` carry ``name`` whole — its words in a row, legal form
+    included, so "Kilroy Realty Corporation" never reads as "Kilroy Realty,
+    L.P.". A name without a legal form is too loose to tell a registrant
+    from its partnership and never counts."""
+    if not _LEGAL_NAME.search(strip_edgar_tag(_own_name(name)).strip()):
+        return False
+    want = _words(_own_name(name))
+    n = len(want)
+    return bool(n) and any(words[i:i + n] == want for i in range(len(words) - n + 1))
+
+
+def _heading(html: str, form: str | None) -> list[str] | None:
+    """The words a subsidiary list opens with, up to its first row — its
+    SGML description and title ("SUBSIDIARIES - COMMONWEALTH EDISON COMPANY",
+    "Exhibit 21.2 Subsidiaries of VICI Properties L.P."). None for a
+    document that is no list."""
+    full = parse_exhibit(html, None, form)
+    if not full:
+        return None
+    text = re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", html)))
+    first = text.find(full[0]["name"])
+    return _words(text[:first if 0 <= first < 1500 else 600])
+
+
+def _lists_one_of(meta: dict, names: list[str]) -> bool:
+    """Whether the candidate's list carries the filer as one of its rows."""
+    return any(_same_name(e["name"], n) for e in parse_exhibit(meta["html"], None, meta.get("form"))
+               for n in names)
+
+
+def own_list_first(candidates: list[dict], cik: str,
+                   registrant: str | list[str] | None = None) -> list[dict]:
+    """A filing's candidate lists, the filer's OWN first (findings item 78).
+
+    A 10-K several registrants file together can carry one list per
+    registrant — Exelon's eight (Exhibits 21.1–21.8, "SUBSIDIARIES -
+    COMMONWEALTH EDISON COMPANY" …), a REIT's and its operating
+    partnership's ("Subsidiaries of VICI Properties Inc." / "… L.P.") — and
+    the first that parsed was everybody's: the partnership read the REIT's
+    list and kept, of it, what the list draws under its own row (mostly
+    nothing); SL Green's partnership, filing its own 10-K with both lists,
+    read the REIT's whole list as its own. Measured 2026-11-08 over the 6,360
+    10-Ks of 2026: 43 carry several lists, every one a list per registrant,
+    named in its heading. So: a list whose heading names the filer (any of
+    its names, or its name in the filing's header) comes first; one whose
+    heading names another registrant of the filing is that one's and is
+    dropped — unless the filer is a row of it (the group's list, whose branch
+    under the filer `registrants_part` reads); the rest keep their order. A
+    list its heading names as the filer's is marked ``own`` and is not
+    re-read as another's by `registrants_part`, though the filer is a row of
+    it: "BRIXMOR OPERATING PARTNERSHIP LP AND SUBSIDIARIES" opens with the
+    partnership itself. Each candidate is fetched once here
+    (``meta["html"]``) and not again by the caller — one candidate too, as
+    its heading decides whether it is the filer's own."""
+    if not candidates:
+        return candidates
+    me = str(int(cik))
+    accession = candidates[0].get("accession")
+    filers = co_registrants(cik, accession) if accession else []
+    mine = _filer_names(registrant) + [n for c, n in filers if c == me]
+    others = [n for c, n in filers if c != me and not any(_same_name(n, m) for m in mine)]
+    own, rest = [], []
+    for meta in candidates:
+        if "html" not in meta:
+            meta["html"] = _get_text(meta["url"])
+        words = _heading(meta["html"], meta.get("form"))
+        if words is None:
+            rest.append(meta)
+        elif any(_says(words, n) for n in mine):
+            meta["own"] = True          # its heading says so: never read as another's (Brixmor's OP)
+            own.append(meta)
+        elif any(_says(words, n) for n in others) and not _lists_one_of(meta, mine):
+            # another registrant's own list — the group's, where the filer is a
+            # row, stays: `registrants_part` reads the filer's branch of it
+            log.info("candidate %s is another registrant's list — skipped", meta["url"])
+        else:
+            rest.append(meta)
+    return own + rest
+
+
 def registrants_part(html: str, form: str | None, subs: list[dict], filers: list[tuple[str, str]],
                      cik: str, registrant: str | list[str] | None = None) -> tuple[list[dict], str | None]:
     """(the part of a combined filing's list that is ``cik``'s own, whose
@@ -1459,12 +1558,12 @@ def fetch_subsidiaries(cik: str, registrant: str | list[str] | None = None,
     filings = annual_filings(cik)
     if not filings:
         return list_from_registration(cik, registrant, home)
-    for meta in exhibit_candidates(cik, *filings[0]):
-        html = _get_text(meta["url"])
+    for meta in own_list_first(exhibit_candidates(cik, *filings[0]), cik, registrant):
+        html = meta.get("html") or _get_text(meta["url"])
         subs = parse_exhibit(html, registrant, meta["form"], home)
         if subs:
-            subs, group_of = registrants_part(html, meta["form"], subs,
-                                              co_registrants(cik, meta["accession"]), cik, registrant)
+            subs, group_of = (subs, None) if meta.get("own") else registrants_part(
+                html, meta["form"], subs, co_registrants(cik, meta["accession"]), cik, registrant)
             return {"subsidiaries": subs, "form": meta["form"], "filing_date": meta["filing_date"],
                     "url": meta["url"], **({"group_of": group_of} if group_of else {})}
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
@@ -1487,12 +1586,12 @@ def list_from_registration(cik: str, registrant: str | list[str] | None = None,
     the list describes the group as it was registered, and the first annual
     filing's list replaces it (its exhibit URL opens the runner's gate)."""
     for form, accession, filed, _period in registration_filings(cik)[:REGISTRATION_MAX_FILINGS]:
-        for meta in exhibit_candidates(cik, form, accession, filed):
-            html = _get_text(meta["url"])
+        for meta in own_list_first(exhibit_candidates(cik, form, accession, filed), cik, registrant):
+            html = meta.get("html") or _get_text(meta["url"])
             subs = parse_exhibit(html, registrant, form, home)
             if subs:
-                subs, group_of = registrants_part(html, form, subs,
-                                                  co_registrants(cik, accession), cik, registrant)
+                subs, group_of = (subs, None) if meta.get("own") else registrants_part(
+                    html, form, subs, co_registrants(cik, accession), cik, registrant)
                 return {"subsidiaries": subs, "form": form, "filing_date": meta["filing_date"],
                         "url": meta["url"], "exhibit": "21", "registration": True,
                         **({"group_of": group_of} if group_of else {})}
@@ -1757,8 +1856,9 @@ def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | 
     ref = earlier_filing_reference(entry, text)
     exhibit_21 = (ref["exhibit"] or "").startswith("21")
     for form, accession, filed in resolve_reference(cik, ref)[:4]:
-        for meta in exhibit_candidates(cik, "10-K" if exhibit_21 else "20-F", accession, filed):
-            subs = parse_exhibit(_get_text(meta["url"]), registrant, form, home)
+        for meta in own_list_first(exhibit_candidates(cik, "10-K" if exhibit_21 else "20-F", accession, filed),
+                                   cik, registrant):
+            subs = parse_exhibit(meta.get("html") or _get_text(meta["url"]), registrant, form, home)
             if subs:
                 return {"subsidiaries": subs, "form": form, "filing_date": _iso_date(filed),
                         "url": meta["url"], "exhibit": "21" if exhibit_21 else "8.1",
@@ -1769,11 +1869,11 @@ def list_from_earlier_filing(cik: str, entry: str, text: str, registrant: str | 
 def _parse_first(candidates: list[dict], cik: str | None = None) -> tuple[list[dict], dict] | None:
     """The first candidate exhibit that parses to subsidiaries, with its meta
     — of a combined filing, ``cik``'s own part (``registrants_part``)."""
-    for meta in candidates:
-        html = _get_text(meta["url"])
+    for meta in (own_list_first(candidates, cik) if cik else candidates):
+        html = meta.get("html") or _get_text(meta["url"])
         subs = parse_exhibit(html, form=meta["form"])
         if subs:
-            if cik:
+            if cik and not meta.get("own"):
                 subs, _ = registrants_part(html, meta["form"], subs, co_registrants(cik, meta["accession"]), cik)
             return subs, meta
         log.info("candidate %s parsed to zero subsidiaries — trying the next", meta["url"])
