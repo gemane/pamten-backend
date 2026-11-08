@@ -145,8 +145,10 @@ class TestListInTheMainDocument:
             assert fetch_subsidiaries("1668717", ABI) == {"subsidiaries": [1]}
         main.assert_called_once_with("1668717", self.FILING, ABI, None)
 
-    def test_no_annual_filing_is_none_without_fetching_anything_else(self):
+    def test_no_annual_filing_and_no_registration_is_none_without_fetching_anything_else(self):
+        # SoftBank: 13F/13G filings only, no S-1/F-1 either (findings item 77)
         with patch("app.scraper.sec_ex21.annual_filings", return_value=[]), \
+             patch("app.scraper.sec_ex21._all_filings", return_value=[("13F-HR", "a", "2026-08-14", "", "")]), \
              patch("app.scraper.sec_ex21.exhibit_candidates", side_effect=AssertionError("fetched")):
             assert fetch_subsidiaries("1065521", "SoftBank Group Corp.") is None
 
@@ -333,3 +335,89 @@ def test_a_date_of_incorporation_column_is_not_the_jurisdiction():
     assert all(jurisdiction_country(s["jurisdiction"]) for s in subs)
     assert {"name": "Rezolve Taiwan Inc.", "jurisdiction": "Taiwan"}.items() <= \
         next(s for s in subs if s["name"] == "Rezolve Taiwan Inc.").items()
+
+
+# SpaceX (CIK 1181412): S-1 2026-05-20 with Exhibit 21.1, two S-1/As without it,
+# the IPO on 2026-06-12, then only 10-Qs — no 10-K yet (findings item 77).
+SPACEX = "Space Exploration Technologies Corp."
+SPACEX_FILINGS = [  # (form, accession, filed, report date, file number) as _all_filings gives them
+    ("10-Q", "0001628280-26-066880", "2026-10-22", "2026-09-30", "001-42800"),
+    ("424B4", "0001628280-26-042639", "2026-06-12", "", "333-290001"),
+    ("S-1/A", "0001628280-26-040364", "2026-06-03", "", "333-290001"),
+    ("S-1/A", "0001628280-26-039276", "2026-06-01", "", "333-290001"),
+    ("S-8", "0001628280-26-043000", "2026-06-13", "", "333-290100"),
+    ("S-1", "0001628280-26-036936", "2026-05-20", "", "333-290001"),
+]
+S1_BASE = "https://www.sec.gov/Archives/edgar/data/1181412/000162828026036936/"
+
+
+def _spacex_candidates(cik, form, accession, filed, period=""):
+    if accession != "0001628280-26-036936":
+        return []                   # the amendments re-file no Exhibit 21.1
+    # the filename pattern takes both: exhibit21-sx1 is Exhibit 2.1, the merger agreement
+    return [{"url": S1_BASE + n, "form": form, "filing_date": filed, "accession": accession, "period": None}
+            for n in ("exhibit21-sx1.htm", "exhibit211-sx1.htm")]
+
+
+def _spacex_documents(url):
+    name = "spacex_s1_ex21_merger_head.htm" if url.endswith("exhibit21-sx1.htm") else "spacex_s1_ex211.htm"
+    return (FX / name).read_text()
+
+
+class TestTheRegistrationList:
+    def _fetch(self, filings=SPACEX_FILINGS):
+        with patch("app.scraper.sec_ex21.annual_filings", return_value=[]), \
+             patch("app.scraper.sec_ex21._all_filings", return_value=filings), \
+             patch("app.scraper.sec_ex21.exhibit_candidates", side_effect=_spacex_candidates) as cands, \
+             patch("app.scraper.sec_ex21.co_registrants", return_value=[]), \
+             patch("app.scraper.sec_ex21._get_text", side_effect=_spacex_documents):
+            return fetch_subsidiaries("1181412", SPACEX, "US-TX"), cands
+
+    def test_no_annual_filing_reads_the_s1s_exhibit_21_1(self):
+        got, _ = self._fetch()
+        assert [s["name"] for s in got["subsidiaries"]] == [
+            "X Corp.", "X.AI LLC", "CTC Property LLC", "SpaceX Services Inc."]
+        assert got["form"] == "S-1" and got["filing_date"] == "2026-05-20"
+        assert got["url"] == S1_BASE + "exhibit211-sx1.htm"       # not Exhibit 2.1, the merger agreement
+        assert got["exhibit"] == "21" and got["registration"] is True
+
+    def test_newest_registration_filing_first_and_only_s1_f1(self):
+        _, cands = self._fetch()
+        assert [c.args[2] for c in cands.call_args_list] == [
+            "0001628280-26-040364", "0001628280-26-039276", "0001628280-26-036936"]
+
+    def test_registration_filings_are_the_s1_and_f1_family_newest_first(self):
+        with patch("app.scraper.sec_ex21._all_filings", return_value=SPACEX_FILINGS + [
+                ("F-1/A", "a5", "2026-07-01", "", ""), ("S-4", "a6", "2026-08-01", "", ""),
+                ("S-1MEF", "a7", "2026-06-12", "", ""), ("10-12B", "a8", "2026-04-01", "", ""),
+                ("10-Q", "a9", "2026-09-01", "", "")]):
+            got = ex.registration_filings("1")
+        assert [(f, d) for f, _a, d, _p in got] == [          # a spin-off's Form 10 too
+            ("F-1/A", "2026-07-01"), ("S-1/A", "2026-06-03"), ("S-1/A", "2026-06-01"), ("S-1", "2026-05-20"),
+            ("10-12B", "2026-04-01")]
+
+    def test_only_the_newest_few_registration_filings_are_opened(self):
+        many = [("S-1/A", f"0000000001-26-{i:06d}", f"2026-0{1 + i // 28}-{1 + i % 28:02d}", "", "")
+                for i in range(20)]
+        _, cands = self._fetch(many)
+        assert cands.call_count == ex.REGISTRATION_MAX_FILINGS
+
+    def test_nothing_without_a_registration_list(self):
+        got, _ = self._fetch([f for f in SPACEX_FILINGS if f[0] != "S-1"])
+        assert got is None
+
+    def test_an_f1s_exhibit_8_tax_opinion_is_no_list(self):
+        opinion = (FX / "embraer_ex8.htm").read_text()       # a real list, but declared EX-8.1 in an F-1
+        with patch("app.scraper.sec_ex21._all_filings", return_value=[("F-1", "a1", "2026-03-01", "", "")]), \
+             patch("app.scraper.sec_ex21.exhibit_candidates",
+                   return_value=[{"url": "u/ex8-1.htm", "form": "F-1", "filing_date": "2026-03-01"}]), \
+             patch("app.scraper.sec_ex21._get_text", return_value=opinion):
+            assert ex.list_from_registration("1", "Embraer S.A.") is None
+
+    def test_an_annual_filing_wins_and_the_registration_is_never_read(self):
+        with patch("app.scraper.sec_ex21.annual_filings",
+                   return_value=[("10-K", "0000000001-27-000001", "2027-02-25", "2026-12-31")]), \
+             patch("app.scraper.sec_ex21.exhibit_candidates", return_value=[]), \
+             patch("app.scraper.sec_ex21.list_from_main_document", return_value=None), \
+             patch("app.scraper.sec_ex21.list_from_registration", side_effect=AssertionError("read")):
+            assert fetch_subsidiaries("1181412", SPACEX) is None

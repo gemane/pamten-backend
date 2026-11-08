@@ -1774,6 +1774,35 @@ from readers removed again the same day, so 11 remain):
   the old index lookup missed (a stake in a split "100 | %" cell, a place).
 - **`no_annual_filing`** instead of `no_exhibit` when the company files no 10-K or
   20-F at all (SoftBank, Vanguard, FMR: 13F/13G filers).
+- **No annual filing yet — the IPO's registration statement** (findings item 77,
+  2026-11-08). The S-1 (F-1 for a foreign private issuer, Form 10 for a spin-off) carries the same Item
+  601(b)(21) list as Exhibit 21(.1), and the first 10-K comes up to a year after
+  the listing: SpaceX filed its S-1 on 2026-05-20, listed on 2026-06-12 and in
+  November had filed only 10-Qs, so every rebuild logged `no_annual_filing` and the
+  group showed no subsidiaries (its four significant ones: X Corp., X.AI LLC, CTC
+  Property LLC, SpaceX Services Inc.). With no 10-K or 20-F at all,
+  `list_from_registration` opens the newest S-1, S-1/A, F-1 or F-1/A filings
+  — or, for a spin-off registered without an offering, Form 10 (10-12B / 10-12G)
+  (`REGISTRATION_MAX_FILINGS` = 6 — an amendment usually re-files only what changed;
+  SpaceX's two S-1/As carry no Exhibit 21.1) and takes the first candidate that
+  parses. The declared type decides as everywhere: SpaceX's `exhibit21-sx1.htm` is
+  Exhibit 2.1, the xAI merger agreement, and `exhibit211-sx1.htm` the list; an F-1's
+  Exhibit 8 is counsel's tax opinion and never read. The edges are `EX-21`, dated as
+  of the registration filing (`source_date`, no `since`), the run note says "list of
+  the S-1 of …, no annual filing yet". The first annual filing replaces it: its
+  exhibit URL opens the gate, and `mark_ex21_stale` dims what it no longer lists. A
+  company that has filed a 10-K or 20-F is never read from a registration statement.
+  Not done: `sec-ex21-history` reads annual filings only, so a later 10-K's
+  "listed since" lower bound does not reach back to the S-1. Measured 2026-11-08 through this code
+  over every S-1/F-1 filer of 2024–2026 (2,659 CIKs from `form.idx`): 1,777 have an
+  annual filing and are not touched; of the 882 without, **301 lists** are read
+  (2,412 rows, 13 places unmapped; 44 lists of one row, SOLERA's 307 the longest),
+  576 have none, 5 were lost to the network. A sample of 80 of the 576: 69 filed no
+  subsidiary exhibit at all (SPACs, shells), 6 only other exhibits, 5 one the reader
+  leaves for any form — one company per line with its place in words, "None.", a list
+  of the filer alone. 51 of the 301 registrations were later withdrawn (`RW`); they
+  are read all the same — the list was the company's as of the filing, and the
+  edge's date says so.
 - **One filing, several registrants** (2026-10-08). AEP files one 10-K for itself
   and seven subsidiaries, Duke Energy for eight, Eversource for four: one Exhibit
   21, the group's, reached from every co-registrant's CIK — read as AEP Texas's or

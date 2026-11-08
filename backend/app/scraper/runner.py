@@ -1226,6 +1226,10 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
       country otherwise. Legal names + jurisdiction make them better dedup
       keys than Wikidata's labels ever were.
 
+    A company with no 10-K or 20-F yet — listed within the last year — is read
+    from its IPO's S-1 / F-1 Exhibit 21.1 (findings item 77); its first annual
+    filing replaces that list and dims what it no longer names.
+
     Freshness gates on the filing itself: one annual filing = one ingest,
     re-run refetches only the (cheap) metadata until a NEWER filing appears.
     `force` re-reads regardless."""
@@ -1419,6 +1423,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                  f"{stale} no longer listed (dimmed)" if stale else "",
                  (f"list of {data['filing_date']}, re-affirmed by the 20-F of {data['confirmed_on']}"
                   if data.get("confirmed_by") else ""),
+                 # no 10-K / 20-F yet: the IPO's registration statement (findings item 77)
+                 (f"list of the {data['form']} of {data['filing_date']}, no annual filing yet"
+                  if data.get("registration") else ""),
                  # A filing several registrants file together: the list is
                  # the group's, and only the filer's branch of it was written
                  (f"the filing's list is {data['group_of']}'s; {written} in this filer's branch"
@@ -1432,6 +1439,7 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 "detached": detached, "co_owner_edges": co_owner_edges,
                 "stale": stale, "scraped": scraped,
                 **({"group_of": data["group_of"]} if data.get("group_of") else {}),
+                **({"registration": True} if data.get("registration") else {}),
                 **({"source_url": data["url"], "confirmed_by": data["confirmed_by"],
                     "confirmed_on": data["confirmed_on"]} if data.get("confirmed_by") else {})}
 
