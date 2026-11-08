@@ -1214,7 +1214,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       Exhibit 2.1, the description of securities, is named
       `exhibit21descriptionofsecu.htm` and matched the Exhibit 21 filename pattern
       for 28 of 86 filers. When a source states what a file is, read that first and
-      keep the filename as the fallback.
+      keep the filename as the fallback. **And find the file by what it is, too**: the
+      reader still FOUND its candidates by filename, and 281 of 3,638 10-Ks with an
+      Exhibit 21 (7.7 %) named it `ex_864720.htm` or `…x10kxexh21.htm` — read as "no
+      exhibit" (findings item 81). The filing index page declares every document's
+      type; discovery reads that, and the names decide only when it cannot be read.
+      Count the misses by the source's own label (documents declared EX-21 that no
+      pattern finds), not by the files the patterns happen to find.
 - [ ] **A suffix or abbreviation rule needs a word boundary, and a test with the
       values that merely END in it.** The US-suffix pattern (`US`/`USA` at the end of
       a jurisdiction) had none, so "Mauritius", "Cyprus" and "Belarus" mapped to the

@@ -24,6 +24,14 @@ def _index(*names):
 
 
 class TestExhibitFilenames:
+    """The fallback when the filing index page cannot be read: then the
+    folder listing's names decide (findings item 81)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_index_page(self):
+        with patch("app.scraper.sec_ex21.filing_documents", return_value=None):
+            yield
+
     @pytest.mark.parametrize("form,names,want", [
         ("10-K", ["meli-20251231.htm", "meli-20251231xexx2101.htm", "meli-20251231xexx3101.htm"],
          ["meli-20251231xexx2101.htm"]),

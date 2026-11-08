@@ -671,3 +671,40 @@ def test_a_company_without_a_10k_yet_is_read_from_its_s1_until_the_first_10k(it_
     got = {r["name"]: (r["stale"], r["asof"]) for r in rows}
     assert got["X Corp."] == (False, "2027-02-25")
     assert got["CTC Property LLC"] == (True, "2026-05-20")
+
+
+def test_a_list_no_filename_pattern_finds_is_read_by_its_declared_type(it_db):
+    # AMD (findings item 81): the 10-K's list is `exh_21-10kfy25.htm`, which no
+    # filename pattern finds; the filing index page declares it EX-21
+    from pathlib import Path
+    fx = Path(__file__).parent.parent / "scraper" / "fixtures"
+    base = "https://www.sec.gov/Archives/edgar/data/2488/000000248826000018/"
+    it_db.run_command(
+        "CREATE (:Entity {id: 'amd', name: 'ADVANCED MICRO DEVICES INC', "
+        "name_normalized: 'advanced micro devices', search_text: 'AMD', "
+        "type: 'company', sec_cik: '0000002488'})")
+    subs = {"filings": {"recent": {"form": ["10-K"], "accessionNumber": ["0000002488-26-000018"],
+                                   "filingDate": ["2026-02-04"], "reportDate": ["2025-12-27"]}}}
+
+    def text(url):
+        if url == base + "0000002488-26-000018-index.htm":
+            return (fx / "amd_10k_2026_index.htm").read_text()
+        if url == base + "exh_21-10kfy25.htm":
+            return (fx / "amd_exh21_10kfy25.htm").read_text()
+        raise AssertionError(f"unexpected request {url}")
+
+    with patch("app.scraper.sec_ex21._get", return_value=subs), \
+         patch("app.scraper.sec_ex21.co_registrants", return_value=[]), \
+         patch("app.scraper.sec_ex21._get_text", side_effect=text):
+        result = runner.run_sec_ex21("AMD")
+    rows = it_db.run_command(
+        "MATCH (:Entity {id:'amd'})-[r:OWNS]->(b:Entity) "
+        "RETURN b.name AS name, r.filing_type AS ft, r.source_url AS url, r.source_date AS asof")
+    got = {r["name"]: dict(r) for r in rows}
+    # 91 rows parsed; 'Advanced Micro Devices GmbH' lands on AMD itself by its
+    # name without the legal form — findings item 83, not this path
+    assert result["status"] == "ok" and result["total"] == 90 and len(got) == 90
+    assert "Advanced Micro Devices GmbH" not in got
+    assert got["Xilinx Development Corporation"] == {
+        "name": "Xilinx Development Corporation", "ft": "EX-21",
+        "url": base + "exh_21-10kfy25.htm", "asof": "2026-02-04"}
