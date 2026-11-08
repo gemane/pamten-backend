@@ -41,6 +41,18 @@ log = logging.getLogger(__name__)
 # 10-K first (domestic, Ex-21), then 20-F (foreign private issuers, Ex-8.1 —
 # same content, different exhibit number in the rulebook).
 _ANNUAL_FORMS = ("10-K", "20-F")
+# The registration statement of an IPO carries the same Item 601(b)(21) list as
+# Exhibit 21(.1) — S-1 for a US filer, F-1 for a foreign private issuer (whose
+# Exhibit 8 there is counsel's tax opinion, `_subsidiary_document`), Form 10
+# (10-12B / 10-12G) for a spin-off, which is registered without an offering. The first
+# 10-K comes up to a year after the IPO: SpaceX filed its S-1 on 2026-05-20,
+# listed on 2026-06-12 and in November 2026 had filed only 10-Qs, so the list
+# read `no_annual_filing` (findings item 77). Read only while no annual filing
+# exists; the first 10-K / 20-F replaces it.
+_REGISTRATION_FORMS = ("S-1", "S-1/A", "F-1", "F-1/A", "10-12B", "10-12B/A", "10-12G", "10-12G/A")
+#: Registration filings opened, newest first: an amendment usually re-files
+#: only the exhibits that changed (SpaceX's two S-1/As carry no Exhibit 21.1).
+REGISTRATION_MAX_FILINGS = 6
 
 
 #: How far back the subsidiary history reads: one annual filing per year, two
@@ -1446,7 +1458,7 @@ def fetch_subsidiaries(cik: str, registrant: str | list[str] | None = None,
     {"subsidiaries": [...], "form", "filing_date", "url"} or None."""
     filings = annual_filings(cik)
     if not filings:
-        return None
+        return list_from_registration(cik, registrant, home)
     for meta in exhibit_candidates(cik, *filings[0]):
         html = _get_text(meta["url"])
         subs = parse_exhibit(html, registrant, meta["form"], home)
@@ -1458,6 +1470,34 @@ def fetch_subsidiaries(cik: str, registrant: str | list[str] | None = None,
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
                  meta["url"])
     return list_from_main_document(cik, filings[0], registrant, home)
+
+
+def registration_filings(cik: str) -> list[tuple[str, str, str, str]]:
+    """(form, accession, filing date, "") of the S-1 / F-1 / Form 10
+    registration statements and their amendments, newest first."""
+    out = [(f, a, d, "") for f, a, d, _r, _n in _all_filings(cik) if f in _REGISTRATION_FORMS]
+    out.sort(key=lambda r: r[2], reverse=True)
+    return out
+
+
+def list_from_registration(cik: str, registrant: str | list[str] | None = None,
+                           home: str | None = None) -> dict | None:
+    """The subsidiary list of the newest S-1 / F-1 / Form 10 that carries one, for a
+    company with no 10-K or 20-F yet (findings item 77). Dated by that filing:
+    the list describes the group as it was registered, and the first annual
+    filing's list replaces it (its exhibit URL opens the runner's gate)."""
+    for form, accession, filed, _period in registration_filings(cik)[:REGISTRATION_MAX_FILINGS]:
+        for meta in exhibit_candidates(cik, form, accession, filed):
+            html = _get_text(meta["url"])
+            subs = parse_exhibit(html, registrant, form, home)
+            if subs:
+                subs, group_of = registrants_part(html, form, subs,
+                                                  co_registrants(cik, accession), cik, registrant)
+                return {"subsidiaries": subs, "form": form, "filing_date": meta["filing_date"],
+                        "url": meta["url"], "exhibit": "21", "registration": True,
+                        **({"group_of": group_of} if group_of else {})}
+            log.info("candidate %s parsed to zero subsidiaries — trying the next", meta["url"])
+    return None
 
 
 # The 8.1 entry of a 20-F's exhibit index, up to the next exhibit number:

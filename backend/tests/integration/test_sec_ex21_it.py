@@ -615,3 +615,59 @@ def test_lead_in_headings_draw_the_tree_and_an_unlisted_one_keeps_the_stake(it_d
     assert edges[(ids["IBG LLC"], "IB Exchange Corp.")][:2] == ("direct", "ex21_heading")
     assert edges[(ids["IB Exchange Corp."], "Interactive Brokers Canada Inc.")][:2] == ("direct", "ex21_heading")
     assert ("apple", "Interactive Brokers Canada Inc.") not in edges
+
+
+def test_a_company_without_a_10k_yet_is_read_from_its_s1_until_the_first_10k(it_db):
+    # SpaceX (findings item 77): S-1 of 2026-05-20, listed 2026-06-12, only
+    # 10-Qs since — the list is the S-1's Exhibit 21.1, as of the S-1
+    from pathlib import Path
+    fx = Path(__file__).parent.parent / "scraper" / "fixtures"
+    base = "https://www.sec.gov/Archives/edgar/data/1181412/000162828026036936/"
+    it_db.run_command(
+        "CREATE (:Entity {id: 'spacex', name: 'SPACE EXPLORATION TECHNOLOGIES CORP', "
+        "name_normalized: 'space exploration technologies', search_text: 'SpaceX', "
+        "type: 'company', sec_cik: '0001181412'})")
+    s1 = [{"url": base + n, "form": "S-1", "filing_date": "2026-05-20",
+           "accession": "0001628280-26-036936", "period": None}
+          for n in ("exhibit21-sx1.htm", "exhibit211-sx1.htm")]
+
+    def doc(url):
+        return (fx / ("spacex_s1_ex21_merger_head.htm" if url.endswith("exhibit21-sx1.htm")
+                      else "spacex_s1_ex211.htm")).read_text()
+
+    with patch("app.scraper.sec_ex21.annual_filings", return_value=[]), \
+         patch("app.scraper.sec_ex21._all_filings",
+               return_value=[("10-Q", "0001628280-26-066880", "2026-10-22", "2026-09-30", ""),
+                             ("S-1", "0001628280-26-036936", "2026-05-20", "", "333-290001")]), \
+         patch("app.scraper.sec_ex21.exhibit_candidates", return_value=s1), \
+         patch("app.scraper.sec_ex21.co_registrants", return_value=[]), \
+         patch("app.scraper.sec_ex21._get_text", side_effect=doc):
+        result = runner.run_sec_ex21("SpaceX")
+    assert result["status"] == "ok" and result["total"] == 4 and result["registration"] is True
+    rows = it_db.run_command(
+        "MATCH (:Entity {id:'spacex'})-[r:OWNS]->(b:Entity) "
+        "RETURN b.name AS name, b.jurisdiction_code AS jc, r.filing_type AS ft, r.since AS since, "
+        "r.source_date AS asof, r.source_url AS url")
+    got = {r["name"]: dict(r) for r in rows}
+    assert set(got) == {"X Corp.", "X.AI LLC", "CTC Property LLC", "SpaceX Services Inc."}
+    assert got["CTC Property LLC"] == {"name": "CTC Property LLC", "jc": "US-WY", "ft": "EX-21",
+                                       "since": None, "asof": "2026-05-20",
+                                       "url": base + "exhibit211-sx1.htm"}
+    claims = it_db.run_command(
+        "MATCH (c:Claim) WHERE c.from_id = 'spacex' AND c.kind = 'owns' RETURN c.filing_type AS ft")
+    assert [c["ft"] for c in claims] == ["EX-21"] * 4
+    note = it_db.run_command("MATCH (r:ScrapeRun {source: 'sec-ex21'}) RETURN r.error AS note")
+    assert "list of the S-1 of 2026-05-20, no annual filing yet" in (note[0]["note"] or "")
+
+    # The first 10-K names only X Corp.: its list replaces the S-1's, the rest is dimmed
+    tenk = {"subsidiaries": [{"name": "X Corp.", "jurisdiction": "Nevada"}],
+            "form": "10-K", "filing_date": "2027-02-25",
+            "url": "https://www.sec.gov/Archives/edgar/data/1181412/000162828027000001/ex21.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=tenk):
+        assert runner.run_sec_ex21("SpaceX")["status"] == "ok"
+    rows = it_db.run_command(
+        "MATCH (:Entity {id:'spacex'})-[r:OWNS]->(b:Entity) "
+        "RETURN b.name AS name, r.stale AS stale, r.source_date AS asof")
+    got = {r["name"]: (r["stale"], r["asof"]) for r in rows}
+    assert got["X Corp."] == (False, "2027-02-25")
+    assert got["CTC Property LLC"] == (True, "2026-05-20")

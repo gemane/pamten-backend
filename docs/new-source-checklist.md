@@ -1202,6 +1202,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       a list without a table, a list inside the 20-F's notes) and none of them was
       an error. Open each empty result once and check the source really is empty;
       give a different reason its own status (`no_annual_filing`).
+- [ ] **A periodic document has a first one, and something before it.** A reader of
+      the annual list said `no_annual_filing` for a company that had gone public five
+      months earlier: SpaceX's subsidiary list was in its S-1 (Exhibit 21.1), the same
+      rulebook item a 10-K carries, and its first 10-K was months away (findings item
+      77). When a source's regular document does not exist yet, ask what the source
+      filed instead — the registration statement, the incorporation filing — read it
+      only until the first regular one exists, and date it by its own filing.
 - [ ] **Ask a document what it is before guessing from its name.** Every EDGAR
       document opens with the type its filer declared (`<TYPE>EX-2.1`); a 20-F's
       Exhibit 2.1, the description of securities, is named
