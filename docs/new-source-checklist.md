@@ -225,6 +225,15 @@ parser. Anything that does not map is either a new property (document it) or noi
       GLEIF's GRUPO BIMBO S A B DE C V with 45 subsidiaries. Compare names without the register's
       own legal form (its ELF code's abbreviations), and move the register's node up, not the twin
       down — moving the twin let a subsidiary in between rise (findings item 75, 2026-11-07).
+- [ ] **A name match cannot tell a group from its member; the graph can.** "America Movil"
+      opened América Móvil B.V. (its legal form stripped, the name equalled the query) above
+      AMERICA MOVIL SAB DE CV, which owns it; "Gazprom" opened Gazprom Neft above PJSC Gazprom,
+      whose register names are Cyrillic but for one with the legal form in front; "Investor AB"
+      a holding subsidiary, because GLEIF spells "Aktiebolag" out. A candidate that owns another
+      candidate as a subsidiary (RR, Exhibit 21, a majority — never a stake) and matches the
+      query goes first — but a subsidiary that bears the query's own name keeps its place, or
+      "Heineken International" and "T. Rowe Price Associates" open the group they belong to
+      (guard of all 214 targets, 2026-11-08; findings item 76).
 - [ ] **A contradiction means "not this node" — say how the node was found before refusing.**
       A node the item's own ids found and whose register id disagrees is a refusal. A node
       found by the name alone is only one company of that name: J.P. Morgan Securities LLC

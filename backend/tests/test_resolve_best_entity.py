@@ -164,3 +164,74 @@ def test_a_twin_without_a_register_namesake_stays_where_it_ranks():
 def test_a_wikidata_node_with_a_register_id_is_no_twin():
     keyed = {**TWIN, "id": "wd:Q775031", "lei_id": "5493000RIXURZEBFEV60"}
     assert search._register_before_twin([keyed, UK, SAB])[0] is keyed
+
+
+# ── A group before its own subsidiary (findings item 76, the user's option (a)) ──
+
+def _resolve_owned(q, rows, owned):
+    with patch.object(search, "_owned_among", return_value=owned):
+        return _resolve(q, rows)
+
+
+AMX_BV = {"id": "lei:724500AVF7ZU7L61BL70", "name": "América Móvil B.V.", "name_normalized": "america movil",
+          "lei_id": "724500AVF7ZU7L61BL70", "legal_form_code": "54M6", "wikidata_id": "Q482267"}
+AMX = {"id": "lei:5493000FNR3UCEAONM59", "name": "AMERICA MOVIL SAB DE CV/", "name_normalized": "america movil sab de cv",
+       "lei_id": "5493000FNR3UCEAONM59", "legal_form_code": "L9JC"}
+INV_SUB = {"id": "lei:549300B5GZM3PCWQ7398", "name": "Investor Investments Holding Aktiebolag",
+           "name_normalized": "investor investments holding aktiebolag", "lei_id": "549300B5GZM3PCWQ7398",
+           "legal_form_code": "XJHM", "aliases": ["Investor Investments Holding AB"]}
+INV = {"id": "lei:549300VEBQPHRZBKUX38", "name": "Investor Aktiebolag", "name_normalized": "investor aktiebolag",
+       "lei_id": "549300VEBQPHRZBKUX38", "legal_form_code": "XJHM", "wikidata_id": "Q1671804"}
+NEFT = {"id": "lei:253400KXA9P2AN72P004", "name": 'Публичное акционерное общество "Газпром нефть"',
+        "name_normalized": 'публичное акционерное общество "газпром нефть"', "lei_id": "253400KXA9P2AN72P004",
+        "wikidata_id": "Q1461799", "aliases": ["Gazprom Neft"]}
+GAZ = {"id": "lei:213800FD9J2IHTA7YX78", "name": 'ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО "ГАЗПРОМ"',
+       "name_normalized": 'публичное акционерное общество "газпром"', "lei_id": "213800FD9J2IHTA7YX78",
+       "other_names": ['PUBLIC JOINT STOCK COMPANY "GAZPROM"']}
+
+
+def test_a_group_takes_its_namesake_subsidiary_s_place():
+    """the B.V. is exact once normalised; the S.A.B. is the same name but for
+    the legal form, and owns it"""
+    assert _resolve_owned("America Movil", [AMX_BV, AMX], {AMX_BV["id"]: {AMX["id"]}})["id"] == AMX["id"]
+    assert _resolve_owned("America Movil", [AMX_BV, AMX], {})["id"] == AMX_BV["id"]       # unowned: as ranked
+
+
+def test_the_query_s_legal_form_is_no_word_when_it_is_the_owner_s_own():
+    assert search._owner_words(INV, ["investor", "ab"]) == ["investor"]
+    assert search._owner_words(AMX, ["investor", "ab"]) == ["investor", "ab"]
+    assert _resolve_owned("Investor AB", [INV_SUB, INV], {INV_SUB["id"]: {INV["id"]}})["id"] == INV["id"]
+
+
+def test_a_group_known_by_a_register_name_takes_its_subsidiary_s_place():
+    assert _resolve_owned("Gazprom", [NEFT, GAZ], {NEFT["id"]: {GAZ["id"]}})["id"] == GAZ["id"]
+
+
+def test_a_subsidiary_that_bears_the_query_s_name_keeps_its_place():
+    """guard 2026-11-08: "Heineken International" is the B.V., "Google" Google LLC"""
+    bv = {"id": "lei:7245009IC6EL3JEKMA24", "name": "Heineken International B.V.",
+          "name_normalized": "heineken international", "lei_id": "7245009IC6EL3JEKMA24", "legal_form_code": "54M6"}
+    nv = {"id": "lei:724500K5PTPSST86UQ23", "name": "Heineken N.V.", "name_normalized": "heineken",
+          "lei_id": "724500K5PTPSST86UQ23", "wikidata_id": "Q854383",
+          "search_text": "heineken n.v. heineken international brewer"}
+    assert _resolve_owned("Heineken International", [bv, nv], {bv["id"]: {nv["id"]}})["id"] == bv["id"]
+    google = {"id": "lei:7ZW8QJWVPR4P1J1KQY45", "name": "Google LLC", "name_normalized": "google",
+              "lei_id": "7ZW8QJWVPR4P1J1KQY45"}
+    alphabet = {"id": "lei:5493006MHB84DD0ZWV18", "name": "Alphabet Inc.", "name_normalized": "alphabet",
+                "lei_id": "5493006MHB84DD0ZWV18", "aliases": ["Google"], "wikidata_id": "Q20800404"}
+    assert _resolve_owned("Google", [google, alphabet], {google["id"]: {alphabet["id"]}})["id"] == google["id"]
+
+
+def test_an_owner_that_does_not_match_never_moves():
+    """a shareholder is no group of the name: Vanguard over Tesla never"""
+    tesla = {"id": "t", "name": "Tesla, Inc.", "name_normalized": "tesla"}
+    other = {"id": "o", "name": "Tesla Energy Operations", "name_normalized": "tesla energy operations"}
+    vanguard = {"id": "v", "name": "Vanguard Group", "name_normalized": "vanguard group"}
+    with patch.object(search, "_owned_among", return_value={other["id"]: {vanguard["id"]}, tesla["id"]: {vanguard["id"]}}):
+        order = search._parent_before_subsidiary([other, tesla, vanguard], "tesla", ["tesla"], "tesla")
+    assert [n["id"] for n in order] == ["o", "t", "v"]
+
+
+def test_the_same_base_name_folds_accents_and_the_legal_form():
+    assert search._same_base_name(AMX, AMX_BV)
+    assert not search._same_base_name(INV, INV_SUB)
