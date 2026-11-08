@@ -19,8 +19,10 @@ LEI-CDF JSON quirks (verified against a real golden copy):
 
 Format spec: https://www.gleif.org/en/lei-data/access-and-use-lei-data/level-1-data-lei-cdf-3-1-format
 """
+import json
 import logging
 import os
+import re
 import zipfile
 from collections.abc import Iterator, Iterable
 from typing import IO
@@ -74,11 +76,53 @@ def _iter_lei_records(stream: IO[bytes]) -> Iterator[dict]:
     yield from ijson.items(stream, "records.item")
 
 
+_SUCCESSOR_RE = re.compile(rb'"SuccessorLEI"\s*:\s*\{\s*"\$"\s*:\s*"([0-9A-Z]{20})"')
+
+
+def _iter_succession_records(raw: IO[bytes], targets: set[str], chunk_size: int = 8 << 20) -> Iterator[dict]:
+    """The records that declare a successor AND touch ``targets`` — as the
+    record's own LEI (a company of ours that was replaced) or as a successor
+    (a company of ours that replaced another). The whole stream is read: a
+    predecessor can sit anywhere in the file, so unlike the entity importer's
+    scan this one cannot stop early — but it parses only the hits. A byte
+    scan finds the record starts (`gleif_lei_cdf._LEI_RECORD_RE`); a record
+    without the bytes "SuccessorLEI" is skipped unparsed (3.4 M of 3.5 M)."""
+    from app.scraper.gleif_lei_cdf import _LEI_RECORD_RE, _extract_json_object
+    want = {t.encode() for t in targets}
+    buf = b""
+    while True:
+        chunk = raw.read(chunk_size)
+        if chunk:
+            buf += chunk
+        starts = list(_LEI_RECORD_RE.finditer(buf))
+        consumed = 0
+        for i, m in enumerate(starts):
+            end = starts[i + 1].start() if i + 1 < len(starts) else None
+            if end is None and chunk:
+                break                                   # the last record may run past buf
+            body = buf[m.start():end]
+            if b'"SuccessorLEI"' in body and (
+                    m.group(1) in want or any(x.group(1) in want for x in _SUCCESSOR_RE.finditer(body))):
+                obj = _extract_json_object(buf, m.start())
+                if obj is None:
+                    break
+                try:
+                    yield json.loads(obj)
+                except ValueError:
+                    pass
+            consumed = end if end is not None else len(buf)
+        buf = buf[consumed:]
+        if not chunk:
+            break
+
+
 def import_lei_cdf_succession(
     filepath: str,
     source_id: str,
     credibility_score: int,
     limit: int | None = None,
+    only_leis: set[str] | None = None,
+    emit_leis_path: str | None = None,
 ) -> dict:
     """
     Import GLEIF LEI-CDF succession into ``SUCCEEDED_BY`` edges.
@@ -88,8 +132,20 @@ def import_lei_cdf_succession(
         source_id:         Owlgraph GLEIF Source node id.
         credibility_score: Source credibility (0–100), stamped on each edge.
         limit:             Max records to scan (None = all).
+        only_leis:         The curated subset (the test import's seeds and their
+                           family): only the successions that touch one of them
+                           are written — the full file states 53,027 and
+                           `_write` mints both endpoints, so a full pass into a
+                           curated database would add ~100k bare nodes
+                           (findings item 85b). Until 2026-11-08 no chain ran
+                           this importer at all and a rebuilt database held no
+                           SUCCEEDED_BY edge.
+        emit_leis_path:    With ``only_leis``: write the endpoints the subset did
+                           not already hold (one per line) here, so a follow-up
+                           ``gleif-lei-cdf --only-file`` names them fully — the
+                           predecessor a succession adds is a bare node otherwise.
 
-    Returns dict: {records, pairs, nodes, errors}.
+    Returns dict: {records, pairs, nodes, errors[, emitted]}.
     """
     if filepath.lower().endswith(".zip"):
         zf = zipfile.ZipFile(filepath)
@@ -111,7 +167,9 @@ def import_lei_cdf_succession(
     try:
         bar = _ProgressBar("LEI-CDF")
         stream = _ProgressStream(raw, total_bytes, bar)
-        for rec in _iter_lei_records(stream):
+        record_iter = _iter_succession_records(stream, only_leis) if only_leis is not None \
+            else _iter_lei_records(stream)
+        for rec in record_iter:
             if limit and records >= limit:
                 break
             records += 1
@@ -129,11 +187,19 @@ def import_lei_cdf_succession(
         bar.finish(f"{records:,} records, {len(pairs):,} succession links")
 
         nodes = _write(pairs, name_map, source_id, credibility_score)
+        emitted = None
+        if emit_leis_path is not None and only_leis is not None:
+            new_ends = sorted({x for pair in pairs for x in pair} - set(only_leis))
+            with open(emit_leis_path, "w", encoding="utf-8") as fh:
+                fh.write("".join(f"{x}\n" for x in new_ends))
+            emitted = len(new_ends)
     finally:
         name_map.close()
         raw.close()
 
     result = {"records": records, "pairs": len(pairs), "nodes": nodes, "errors": errors}
+    if emitted is not None:
+        result["emitted"] = emitted
     log.info("LEI-CDF succession import done: %s", result)
     return result
 

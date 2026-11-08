@@ -1488,6 +1488,17 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `get_source_enabled` at its canonical home (`app.scraper.scraper_registry`), not at
       an importer's alias — a test patching the wrong module reaches the real database.
 
+- [ ] **A step that exists only as a command is not a step.** The GLEIF succession
+      importer (`gleif-succession`, the "Succeeded by" panel and timeline rows) was built,
+      documented and tested in 2026 — and no import chain, no rebuild and no cron ever ran
+      it, so every rebuilt database held 0 of GLEIF's 53,027 succession links, and the
+      panel section stayed empty for everyone (findings item 85b, 2026-11-08). It could not
+      have been added to the curated chain as it was: it had no subset option, and a full
+      pass would have minted ~100k bare nodes. When a reader ships, name the chain step that
+      runs it in the same change (the test chain, the full chain, the rebuild kit and the
+      docs must list the same steps), give it the subset option the test import needs, and
+      let the rebuild's snapshot count its edge type — a zero there is the alarm.
+
 ## 8. Tests
 
 - [ ] **Unit tests mock the network** — fixtures captured from real payloads, not invented

@@ -566,7 +566,19 @@ descendants (the RR file is small, so it loads the edges and walks the tree in m
 — and writes the family's LEIs to `<path>`. Feed that to a second `gleif-lei-cdf
 --only-file <path>` to name the subsidiaries/parents (RR edges alone leave them as
 nameless LEI stubs). `lei-cdf-import-test.sh` chains exactly this: seeds → family edges
-→ name the family → rebuild search.
+→ name the family → **succession → name its endpoints** → rebuild search.
+
+`gleif-succession --only-file <seeds + family> --emit-leis <path>` (findings item 85b,
+2026-11-08) writes only the `SUCCEEDED_BY` links that touch the curated companies — as
+the predecessor (one of ours was merged away) or as the successor (one of ours replaced
+another) — scanning the golden copy's bytes and parsing only the records that name a
+successor and touch the list. The full file states 53,027 successions and the importer
+mints both endpoints of each, so a full pass into a curated database would add ~100k
+bare nodes; and until 2026-11-08 no chain ran the importer at all, so a rebuilt database
+showed "Succeeded by" for nobody. The endpoints the subset lacked go to `<path>`, and a
+second `gleif-lei-cdf --only-file <path>` names them fully (the chain skips that pass when
+the file is empty: an empty `--only-file` would mean "everything"). On the 2026-11-08 dev
+graph: 86 links, 84 of them predecessors of companies the graph holds.
 
 **After a non-bulk / `--only` import, run `python manage.py rebuild-search`.** The
 FULL_TEXT index isn't maintained incrementally, so freshly imported companies have

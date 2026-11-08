@@ -546,7 +546,7 @@ client is unchanged: the group opens through the entity routes and reads
 GLEIF data comes from the **GLEIF golden copy** (current, daily), keyed `lei:{LEI}`:
 `manage.py gleif-lei-cdf` imports the **entities** (name, country, legal address,
 legal-form type) from LEI-CDF; `gleif-rr` imports the **relationships** (direct/
-ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF;
+ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF (in the curated import only those touching its companies, `--only-file`);
 `gleif-repex` imports the **reasons a company gives for reporting no parent**.
 This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
 at 2025‑03.

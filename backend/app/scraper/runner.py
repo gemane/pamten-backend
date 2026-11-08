@@ -3520,12 +3520,16 @@ def run_import_basic_company_data(local_file: str, limit: int | None = None,
     return {"status": "ok", "source": "Companies House Register", **counts}
 
 
-def run_import_gleif_succession(local_file: str, limit: int | None = None) -> dict:
+def run_import_gleif_succession(local_file: str, limit: int | None = None,
+                                only_leis: set[str] | None = None,
+                                emit_leis_path: str | None = None) -> dict:
     """
     Import GLEIF LEI-CDF succession (MERGED/DUPLICATE/RETIRED → SuccessorLEI) into
     SUCCEEDED_BY edges. Reuses the GLEIF source + flags. `local_file` is a
     pre-downloaded LEI-CDF golden-copy .json/.zip (multi-GB — a local batch job,
     not a URL fetch, so no download path here). Checks SCRAPER_ENABLED.
+    `only_leis` restricts to the successions touching the curated subset and
+    `emit_leis_path` writes the endpoints it adds, for a naming pass (item 85b).
     """
     if not settings.SCRAPER_ENABLED:
         raise PermissionError(
@@ -3541,6 +3545,8 @@ def run_import_gleif_succession(local_file: str, limit: int | None = None) -> di
         source_id=source_id,
         credibility_score=BODS_GLEIF_CREDIBILITY,
         limit=limit,
+        only_leis=only_leis,
+        emit_leis_path=emit_leis_path,
     )
     return {"status": "ok", "source": GLEIF_SOURCE_NAME, **counts}
 

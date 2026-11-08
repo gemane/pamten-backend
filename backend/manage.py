@@ -48,7 +48,9 @@ def cmd_gleif_succession(args):
     settings.SCRAPER_ENABLED = True
     from app.scraper.runner import run_import_gleif_succession
     result = _run_guarded_import("gleif-succession",
-        lambda: run_import_gleif_succession(local_file=args.file, limit=args.limit))
+        lambda: run_import_gleif_succession(local_file=args.file, limit=args.limit,
+                                            only_leis=_only_ids(args),
+                                            emit_leis_path=getattr(args, "emit_leis", None)))
     if result is not None:
         print(result)
 
@@ -1245,6 +1247,8 @@ def _build_parser():
                                    help='Import GLEIF LEI-CDF succession (MERGED/DUPLICATE → SuccessorLEI) as SUCCEEDED_BY edges')
     p_succ.add_argument('--file', required=True, help='Path to a local LEI-CDF golden-copy .json/.zip')
     p_succ.add_argument('--limit', type=int, help='Max records to scan')
+    p_succ.add_argument('--only-file', help='File of LEIs (one per line, # comments): only the successions touching them — the curated subset')
+    p_succ.add_argument('--emit-leis', help='With --only-file: write the endpoints the subset lacked here (feed to gleif-lei-cdf --only-file to name them)')
     p_succ.set_defaults(func=cmd_gleif_succession)
 
     # gleif-rr command

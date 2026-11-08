@@ -73,3 +73,80 @@ class TestPairsFromRecord:
 
     def test_no_lei(self):
         assert _pairs_from_record({"Entity": {"SuccessorEntity": [{"SuccessorLEI": {"$": "X"}}]}}) == []
+
+
+class TestTheSubsetScan:
+    """Findings item 85(b): the curated import reads only the successions that
+    touch its companies — the record's own LEI, or a successor it names — from
+    the golden copy's bytes, parsing only the hits. The file is pretty-printed
+    like GLEIF's; `_LEI_RECORD_RE` finds each record start."""
+    A, B, C, T2, D, E, F, G = ("AAAAAAAAAAAAAAAAAAA1", "BBBBBBBBBBBBBBBBBBB2", "CCCCCCCCCCCCCCCCCCC3",
+                               "TTTTTTTTTTTTTTTTTTT4", "DDDDDDDDDDDDDDDDDDD5", "EEEEEEEEEEEEEEEEEEE6",
+                               "FFFFFFFFFFFFFFFFFFF7", "GGGGGGGGGGGGGGGGGGG8")
+
+    @staticmethod
+    def _record(lei, name, successors=(), status="ISSUED", by_name=None):
+        succ = [{"SuccessorLEI": {"$": s}} for s in successors]
+        if by_name:
+            succ.append({"SuccessorEntityName": {"$": by_name}})
+        rec = {"LEI": {"$": lei}, "Entity": {"LegalName": {"$": name}},
+               "Registration": {"RegistrationStatus": {"$": status}}}
+        if succ:
+            rec["Entity"]["SuccessorEntity"] = succ
+        return rec
+
+    def _file(self, hit_last=False):
+        import io
+        import json
+        recs = [self._record(self.A, "A (ours, merged into B)", [self.B], "MERGED"),
+                self._record(self.C, "C (merged into ours, T2)", [self.T2], "RETIRED"),
+                self._record(self.D, "D (merged into E, neither ours)", [self.E], "MERGED"),
+                self._record(self.F, "F (ours, alive)"),
+                self._record(self.G, "G (successor by name only)", by_name="Somebody Else"),
+                self._record(self.T2, "T2 (ours)"), self._record(self.B, "B"), self._record(self.E, "E")]
+        if hit_last:
+            recs.append(recs.pop(1))                                  # C closes the file
+        return io.BytesIO(json.dumps({"records": recs}, indent=2).encode())
+
+    def _scan(self, targets, hit_last=False, **kw):
+        from app.scraper.gleif_succession import _iter_succession_records
+        return [r["LEI"]["$"] for r in _iter_succession_records(self._file(hit_last), targets, **kw)]
+
+    def test_a_hit_that_closes_the_file_is_found(self):
+        # the last record has no successor record after it to bound it: it is read at EOF
+        assert self._scan({self.T2}, hit_last=True) == [self.C]
+        assert self._scan({self.T2}, hit_last=True, chunk_size=64) == [self.C]
+
+    def test_records_touching_the_subset_as_predecessor_or_successor(self):
+        assert self._scan({self.A, self.T2, self.F}) == [self.A, self.C]
+
+    def test_a_tiny_chunk_size_splits_records_and_finds_the_same(self):
+        for size in (7, 64, 300):
+            assert self._scan({self.A, self.T2, self.F}, chunk_size=size) == [self.A, self.C], size
+
+    def test_nothing_of_ours_means_nothing(self):
+        assert self._scan({self.B}) == [self.A]                     # B is only a successor: A's record
+        assert self._scan({"ZZZZZZZZZZZZZZZZZZZ9"}) == []
+
+    def test_the_import_writes_the_hits_and_emits_the_new_endpoints(self, tmp_path):
+        from unittest.mock import patch
+        from app.scraper import gleif_succession as gs
+        path = tmp_path / "lei2.json"
+        path.write_bytes(self._file().getvalue())
+        out = tmp_path / "new.txt"
+        written = []
+        with patch.object(gs, "_write", side_effect=lambda pairs, *a: written.extend(pairs) or 2):
+            result = gs.import_lei_cdf_succession(str(path), "gleif", 92, only_leis={self.A, self.T2, self.F},
+                                                  emit_leis_path=str(out))
+        assert written == [(self.A, self.B), (self.C, self.T2)]
+        assert result == {"records": 2, "pairs": 2, "nodes": 2, "errors": 0, "emitted": 2}
+        assert out.read_text().split() == sorted([self.B, self.C])   # the ends the subset lacked, not T2 or A
+
+    def test_without_a_subset_every_record_is_read_and_nothing_emitted(self, tmp_path):
+        from unittest.mock import patch
+        from app.scraper import gleif_succession as gs
+        path = tmp_path / "lei2.json"
+        path.write_bytes(self._file().getvalue())
+        with patch.object(gs, "_write", return_value=6):
+            result = gs.import_lei_cdf_succession(str(path), "gleif", 92)
+        assert result == {"records": 8, "pairs": 3, "nodes": 6, "errors": 0}
