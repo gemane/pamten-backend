@@ -4,6 +4,8 @@ the exhibit finder. The fixture is Apple's REAL Ex-21.1 from the 10-K filed
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from app.scraper.sec_ex21 import (annual_filings, exhibit_candidates,
                                   jurisdiction_country, jurisdiction_subdivision,
                                   parse_exhibit)
@@ -141,6 +143,15 @@ class TestJurisdictionSubdivision:
 
 
 class TestAnnualExhibitCandidates:
+    """The folder listing's file names decide only when the filing index page
+    cannot be read (findings item 81: the page's declared types come first —
+    tests/scraper/test_sec_ex21_declared.py); these tests are that fallback."""
+
+    @pytest.fixture(autouse=True)
+    def _no_index_page(self):
+        with patch("app.scraper.sec_ex21.filing_documents", return_value=None):
+            yield
+
     def _subs(self, forms):
         return {"filings": {"recent": {
             "form": [f for f, _, _ in forms],

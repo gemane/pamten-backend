@@ -1549,10 +1549,32 @@ filers that came back "no exhibit" now read, 0 lost, 4,228 → 4,879 subsidiarie
 three of the 14 — Matthews, Sirius XM, Shenandoah, lists without places — came
 from readers removed again the same day, so 11 remain):
 
-- **Filenames as filing agents write them**: `ex21`, `ex-21.1`, Workiva's
-  `meli-20251231xexx2101` (exx = exhibit, 2101 = 21.01), and on a 20-F `ex8_1`,
-  `dex81`, `xex8d1` or Embraer's bare `xex8` (an `8` running on into another digit,
-  `ex85`, is not 8.1). The content still decides between candidates.
+- **The filing index says which document is the list** (findings item 81,
+  2026-11-08). Each filing's index page `{accession}-index.htm` declares every
+  document's type; the candidates are the documents declared **EX-21.x** — and
+  **EX-8/EX-8.1 in a 20-F**, tried first there — in the filer's order
+  (`filing_documents`, `exhibit_candidates`). A document declared anything else is
+  no candidate, whatever its name: Unilever's `a171-subsidiaryguarantor.htm` is an
+  EX-17.1 guarantor list (the name rule offered it and missed the EX-8.1
+  `a081-groupcompaniesappro.htm`), AB InBev's `dex215.htm` is exhibit 2.15. Until
+  then the folder listing (`index.json`, names only) and filename patterns decided,
+  and 281 of the 3,638 10-Ks of 2026 Q1–Q3 that carry an EX-21 (7.7 %) named it so
+  that no pattern found it: one filing agent numbers every exhibit
+  `ex_864720.htm` (206), Workiva writes `len-20251130x10kxexh21.htm` (53, Exelon's
+  eight lists among them), VIAVI `…ex2x211xsubsidia.htm`, AMD `exh_21-10kfy25.htm`,
+  APA `…apalistingofs.htm` — each read `no_exhibit`. Through the new code on every
+  10-K and 20-F of 2026 Q1–Q3 (7,400): 215 10-Ks and 19 20-Fs gain a list (10,159
+  rows), none loses one or switches to another document. Dev targets that gained
+  their list: Lennar (1,175), VIAVI (44), Better Home & Finance (33); Unilever's
+  EX-8.1 is now the candidate but reads no rows (a layout, findings item 82). The index page is
+  an Archives file and cached like the documents, so the request it costs replaces
+  the folder listing's. A list declared under another number (Yatra's "EX-10.8") is
+  still not read.
+- **Filenames as filing agents write them** — the fallback when the index page
+  cannot be read: `ex21`, `ex-21.1`, Workiva's `meli-20251231xexx2101` (exx =
+  exhibit, 2101 = 21.01), and on a 20-F `ex8_1`, `dex81`, `xex8d1` or Embraer's bare
+  `xex8` (an `8` running on into another digit, `ex85`, is not 8.1). The content
+  still decides between candidates.
 - **One subsidiary per paragraph, no table** (Alibaba's Exhibit 8.1, "… Co., Ltd.
   (PRC)"): read as "Name (Jurisdiction)", the last bracket being the place, under
   the content gate a headerless table meets.

@@ -46,8 +46,10 @@ logger = logging.getLogger(__name__)
 S3_PREFIX = "edgar/"
 
 # cik / 18-digit accession folder / a file with an extension. The folder
-# listing (URL ending in "/") and "-index.htm" pages are excluded on purpose —
-# harmless in practice, but they are not the filing itself.
+# listing (URL ending in "/") is excluded; a filing's own index page inside its
+# folder (`…/000000248826000018/0000002488-26-000018-index.htm`) is cached like
+# any file of the filing — Exhibit 21 discovery reads it for the declared document
+# types (findings item 81). A filer-level index page (no accession folder) is not.
 _ARCHIVE_FILE = re.compile(
     r"^https://www\.sec\.gov/Archives/edgar/data/(\d+)/(\d{18})/([^/?#]+\.[A-Za-z0-9]+)$")
 

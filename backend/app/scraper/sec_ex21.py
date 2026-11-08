@@ -108,17 +108,68 @@ def annual_filings(cik: str, include_older: bool = False) -> list[tuple[str, str
     return out
 
 
+def filing_documents(cik: str, accession: str) -> list[tuple[str, str]] | None:
+    """(file name, declared type) of every document of ONE filing, in the
+    filer's order, from the filing's index page ``{accession}-index.htm`` —
+    the page that says what each document IS ("EX-21.1", "EX-8.1", "EX-17").
+    None when the page cannot be read or shows no document table.
+
+    The folder's ``index.json`` lists file names only, and a name says nothing
+    reliable: 281 of the 3,638 10-Ks of 2026 Q1–Q3 that carry an EX-21 named
+    it so that no pattern finds it (findings item 81) — one filing agent
+    numbers every exhibit ``ex_864720.htm``, Workiva writes
+    ``len-20251130x10kxexh21.htm``, VIAVI ``…ex2x211xsubsidia.htm``, AMD
+    ``exh_21-10kfy25.htm``. Like every Archives file the page is cached."""
+    acc = accession.replace("-", "")
+    url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}/{accession}-index.htm"
+    try:
+        page = _get_text(url)
+    except Exception as exc:  # noqa: BLE001 - the folder listing is the fallback
+        log.warning("filing index %s unavailable, reading the folder listing: %s", url, exc)
+        return None
+    out: list[tuple[str, str]] = []
+    for row in _INDEX_ROW.findall(page):
+        cells = _INDEX_CELL.findall(row)
+        if len(cells) < 4:
+            continue
+        # iXBRL documents link through the viewer: "/ix?doc=/Archives/…/x.htm"
+        href = re.search(r'href="([^"]+)"', cells[2])
+        kind = _html.unescape(re.sub(r"<[^>]+>", "", cells[3])).strip().upper()
+        if href and kind:
+            out.append((href.group(1).rsplit("/", 1)[-1], kind))
+    return out or None
+
+
+_INDEX_ROW = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S | re.I)
+_INDEX_CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.S | re.I)
+
+
 def exhibit_candidates(cik: str, form: str, accession: str, filed: str,
                        period: str = "") -> list[dict]:
-    """Candidate subsidiary-exhibit files of ONE annual filing.
+    """Candidate subsidiary-exhibit files of ONE filing (annual or registration).
 
-    A list, not one file: exhibit numbering is ambiguous by filename alone —
-    AB InBev's `dex215.htm` is exhibit 2.15 (securities descriptions), not
-    21.5, and only parsing tells them apart. For a 20-F the ex-8 patterns
-    are tried first (that is where its subsidiary list lives), for a 10-K
-    the ex-21 ones."""
+    The filing index declares each document's type, and that decides
+    (findings item 81): the documents declared a subsidiary list come first,
+    in the filer's order — EX-21.x, and EX-8/EX-8.1 in a 20-F, where its list
+    lives (``_subsidiary_document``). A document declared anything else is no
+    candidate, whatever its name: Unilever's ``a171-subsidiaryguarantor.htm``
+    is an EX-17 guarantor list, AB InBev's ``dex215.htm`` exhibit 2.15.
+
+    Only when the index page cannot be read do the file names of the folder
+    listing decide, as before: a list, not one file, because numbering is
+    ambiguous by name alone and only parsing tells the files apart; for a
+    20-F the ex-8 patterns first, for a 10-K the ex-21 ones."""
     acc = accession.replace("-", "")
     base = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc}"
+    meta = {"form": form, "filing_date": _iso_date(filed), "accession": accession,
+            "period": _iso_date(period) if period else None}
+    documents = filing_documents(cik, accession)
+    if documents is not None:
+        declared = [(name, kind) for name, kind in documents
+                    if name.lower().endswith((".htm", ".html")) and _subsidiary_document(kind, form)]
+        if form.upper() in ("20-F", "20-F/A"):
+            declared.sort(key=lambda d: not d[1].startswith("EX-8"))     # stable: filer's order kept
+        return [{"url": f"{base}/{name}", "declared": kind, **meta} for name, kind in declared]
     index = _get(f"{base}/index.json")
     names = [it.get("name") or "" for it in (index.get("directory") or {}).get("item") or []]
     patterns = _EX8_NAMES + _EX21_NAMES if form == "20-F" else _EX21_NAMES + _EX8_NAMES
@@ -129,9 +180,7 @@ def exhibit_candidates(cik: str, form: str, accession: str, filed: str,
                 continue
             if pat.search(name):
                 seen.add(name)
-                out.append({"url": f"{base}/{name}", "form": form,
-                            "filing_date": _iso_date(filed), "accession": accession,
-                            "period": _iso_date(period) if period else None})
+                out.append({"url": f"{base}/{name}", **meta})
     return out
 
 
