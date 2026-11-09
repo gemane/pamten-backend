@@ -29,20 +29,41 @@ def test_step_7_runs_the_entity_dedup_with_the_scraper_flags_on():
 
 def test_the_other_finishing_steps_run_without_the_flags():
     step7 = _step(7)
-    for cmd in ("dedupe-persons", "geocode", "close-reported-by-parent", "mark-shortcuts", "mark-stale"):
+    for cmd in ("gleif-succession", "gleif-lei-cdf", "heal-ends-at-dissolution", "dedupe-persons", "geocode",
+                "close-reported-by-parent", "mark-shortcuts", "mark-stale"):
         [line] = [ln for ln in step7.splitlines() if f"manage.py {cmd}" in ln]
         assert "SCRAPER_" not in line, line
 
 
-def test_step_7_runs_the_securities_bridge_after_the_dedup_and_before_the_shortcuts():
+def test_step_7_runs_the_securities_bridge_before_the_dedup_and_the_shortcuts():
     # findings item 71: the replay stores the CUSIPs (13F, 13D/G covers), so the
-    # bridge belongs after it; a join merges two nodes, so before mark-shortcuts
+    # bridge belongs after it; a join merges two nodes, so before mark-shortcuts —
+    # and before the dedup, which folds what the bridge attached (item 89 moved it)
     step7 = _step(7)
     [line] = [ln for ln in step7.splitlines() if "manage.py gleif-isin-bridge" in ln]
     assert "--apply" in line
     assert "SCRAPER_" not in line          # GLEIF's catalogue switch is its only gate
     at = step7.index(line)
-    assert step7.index("dedupe-entities") < at < step7.index("manage.py mark-shortcuts")
+    assert at < step7.index("dedupe-entities") < step7.index("manage.py mark-shortcuts")
+
+
+def test_step_7_reads_the_successions_of_every_lei_after_the_bridge_and_before_the_dedup():
+    # findings item 89: the chain read them for the import's LEIs; the replay and the
+    # bridge add lei: nodes, so the pass runs again here — the list and the endpoints
+    # in the kit folder, the endpoints named, the dedup folding what it added, the
+    # dissolution heal after it for the ends written since finish-import's own
+    step7 = _step(7)
+    order = [step7.index(s) for s in ("manage.py gleif-isin-bridge", 'lei_ids.py" "$R/leis_after_replay.txt"',
+                                      "manage.py gleif-succession", "manage.py gleif-lei-cdf", "dedupe-entities",
+                                      "manage.py heal-ends-at-dissolution --apply", "manage.py dedupe-persons")]
+    assert order == sorted(order), order
+    # the two invocations continue over a second line; read them as one
+    joined = step7.replace("\\\n", " ")
+    [succ] = [ln for ln in joined.splitlines() if "manage.py gleif-succession" in ln]
+    assert '--only-file "$R/leis_after_replay.txt"' in succ and '--emit-leis "$R/succession_leis.txt"' in succ
+    [names] = [ln for ln in joined.splitlines() if "manage.py gleif-lei-cdf" in ln]
+    assert '--only-file "$R/succession_leis.txt"' in names
+    assert "/tmp/" not in step7                       # the kit folder, not RAM (the chain's mktemp lesson)
 
 
 def test_step_8_prints_the_source_calls_before_the_snapshot():
