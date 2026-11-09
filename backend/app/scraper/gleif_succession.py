@@ -62,11 +62,31 @@ def _successor_leis(rec: dict) -> list[str]:
     return out
 
 
+#: Registration statuses whose SuccessorLEI is not a succession (findings item
+#: 88): DUPLICATE — a second registration of the SAME entity pointing at its
+#: live record (6,518 of the 35,346 records naming a successor in the 2026-11-08
+#: golden copy; Stanbic IBTC Bank, Ecobank Nigeria, the Volkswagen AG and
+#: Naspers duplicates on dev) — and ANNULLED, a registration found erroneous
+#: pointing at the right one (93). GLEIF's own meaning: "this LEI is not a
+#: legal entity's record, that one is", not "this entity ceased and that one
+#: followed". Read as successions they minted the duplicate as a predecessor
+#: node, the register_id merge folded it into the live one, and a self-loop
+#: claim stayed behind (3 on dev after the 2026-11-08b rebuild). The same set
+#: `legal_identity.GLEIF_NOT_THE_ENTITY` names for joins, less the statuses
+#: of an entity that did end (RETIRED, MERGED).
+NOT_A_SUCCESSION = frozenset({"DUPLICATE", "ANNULLED"})
+
+
+def _registration_status(rec: dict) -> str | None:
+    return _v((rec.get("Registration") or {}).get("RegistrationStatus"))
+
+
 def _pairs_from_record(rec: dict) -> list[tuple[str, str]]:
     """(predecessor_lei, successor_lei) pairs declared by one LEI record.
-    Empty when the record has no LEI or no successor; self-references dropped."""
+    Empty when the record has no LEI or no successor, when its registration
+    is a DUPLICATE or ANNULLED one (`NOT_A_SUCCESSION`); self-references dropped."""
     lei = _v(rec.get("LEI"))
-    if not lei:
+    if not lei or (_registration_status(rec) or "").upper() in NOT_A_SUCCESSION:
         return []
     return [(lei, slei) for slei in _successor_leis(rec) if slei != lei]
 
@@ -145,7 +165,8 @@ def import_lei_cdf_succession(
                            ``gleif-lei-cdf --only-file`` names them fully — the
                            predecessor a succession adds is a bare node otherwise.
 
-    Returns dict: {records, pairs, nodes, errors[, emitted]}.
+    Returns dict: {records, pairs, nodes, errors, not_a_succession[, emitted]} —
+    ``not_a_succession`` the DUPLICATE / ANNULLED registrations skipped (item 88).
     """
     if filepath.lower().endswith(".zip"):
         zf = zipfile.ZipFile(filepath)
@@ -164,6 +185,7 @@ def import_lei_cdf_succession(
     pairs: list[tuple[str, str]] = []  # (predecessor_lei, successor_lei)
     records = 0
     errors = 0
+    not_a_succession = 0           # DUPLICATE / ANNULLED registrations naming their live record (item 88)
     try:
         bar = _ProgressBar("LEI-CDF")
         stream = _ProgressStream(raw, total_bytes, bar)
@@ -179,6 +201,9 @@ def import_lei_cdf_succession(
                     continue
                 if name := _legal_name(rec):
                     name_map[lei] = name
+                if (_registration_status(rec) or "").upper() in NOT_A_SUCCESSION and _successor_leis(rec):
+                    not_a_succession += 1
+                    continue
                 pairs.extend(_pairs_from_record(rec))
             except Exception as exc:  # noqa: BLE001 - one bad record mustn't abort
                 errors += 1
@@ -197,7 +222,8 @@ def import_lei_cdf_succession(
         name_map.close()
         raw.close()
 
-    result = {"records": records, "pairs": len(pairs), "nodes": nodes, "errors": errors}
+    result = {"records": records, "pairs": len(pairs), "nodes": nodes, "errors": errors,
+              "not_a_succession": not_a_succession}
     if emitted is not None:
         result["emitted"] = emitted
     log.info("LEI-CDF succession import done: %s", result)

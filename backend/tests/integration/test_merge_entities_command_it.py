@@ -19,13 +19,16 @@ def _seed(it_db):
     it_db.run_command("MATCH (a:Entity {id:'lei:tv'}), (b:Entity {id:'sub'}) CREATE (a)-[:OWNS {source_id:'gleif', stake_percent: 100, until:null}]->(b)")
     it_db.run_command("MATCH (p:Person {id:'p'}), (e:Entity {id:'sec:tv'}) CREATE (p)-[:HAS_ROLE {role:'Officer', source_id:'sec-edgar'}]->(e)")
     it_db.run_sql("INSERT INTO Claim SET claim_key = 'c1', kind = 'owns', from_id = 'lei:tv', to_id = 'sub', source_id = 'gleif'")
+    # a succession claim BETWEEN the two nodes about to merge (a DUPLICATE GLEIF
+    # registration read as the predecessor of its live record, findings item 88)
+    it_db.run_sql("INSERT INTO Claim SET claim_key = 'c2', kind = 'succession', from_id = 'lei:tv', to_id = 'sec:tv', source_id = 'gleif'")
 
 
 def test_dry_run_reports_and_apply_folds_the_loser_into_the_survivor(it_db):
     from app.scraper.maintenance import merge_entities_by_id
     _seed(it_db)
     res = merge_entities_by_id("sec:tv", "lei:tv")
-    assert res["applied"] is False and res["edges"] == 1 and res["claims"] == 1
+    assert res["applied"] is False and res["edges"] == 1 and res["claims"] == 2
     assert "lei_id" in res["carried"] and "legal_form" in res["carried"] and "name" not in res["carried"]
     assert it_db.run_sql("SELECT count(*) AS n FROM Entity")[0]["n"] == 3        # a dry run changes nothing
 
@@ -40,7 +43,10 @@ def test_dry_run_reports_and_apply_folds_the_loser_into_the_survivor(it_db):
     assert "GRUPO TELEVISA S A B" in (keep["aliases"] or [])
     assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE id = 'lei:tv' OR id = 'sec:tv'")[0]["n"] == 0
     assert it_db.run_sql("SELECT @out.id AS o FROM OWNS")[0]["o"] == now                      # the edge moved
-    assert it_db.run_sql("SELECT from_id FROM Claim")[0]["from_id"] == now                    # the claim re-keyed
+    assert it_db.run_sql("SELECT from_id FROM Claim WHERE kind = 'owns'")[0]["from_id"] == now   # the claim re-keyed
+    # the succession claim's two ends became one node: a self-loop, dropped (item 88)
+    assert it_db.run_sql("SELECT count(*) AS n FROM Claim WHERE kind = 'succession'")[0]["n"] == 0
+    assert it_db.run_sql("SELECT count(*) AS n FROM Claim WHERE from_id = to_id")[0]["n"] == 0
     fwd = {r["old_id"]: r["new_id"] for r in it_db.run_sql("SELECT old_id, new_id FROM MergedId")}
     assert fwd == {"lei:tv": now, "sec:tv": now}                                             # one hop each
     assert it_db.run_sql("SELECT kind, dup_id FROM MergeLog")[0]["dup_id"] == "lei:tv"
