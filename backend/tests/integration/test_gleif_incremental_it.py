@@ -23,7 +23,7 @@ def _w(v):
     return {"$": v}
 
 
-def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None):
+def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None, ended=None, updated=None):
     rec = {
         "LEI": _w(lei),
         "Entity": {
@@ -35,7 +35,44 @@ def _entity(lei, name, status="ACTIVE", reg="ISSUED", successor=None):
     }
     if successor:
         rec["Entity"]["SuccessorEntity"] = [{"SuccessorLEI": _w(successor)}]
+    if ended:                                   # a COMPLETED DISSOLUTION on that day (item 85a)
+        rec["Entity"]["LegalEntityEvents"] = {"LegalEntityEvent": [
+            {"@event_status": "COMPLETED", "LegalEntityEventType": _w("DISSOLUTION"),
+             "LegalEntityEventEffectiveDate": _w(f"{ended}T00:00:00+01:00")}]}
+    if updated:
+        rec["Registration"]["LastUpdateDate"] = _w(updated)
     return rec
+
+
+def test_a_delta_dates_an_end_but_not_on_a_company_that_still_files(it_db, tmp_path):
+    """Findings item 85(a): the nightly delta writes the end GLEIF dates in the
+    record's events; on a node that is an EDGAR filer's too, only when the
+    filer did not file after the record's last update (items 84/85a — ONEOK's
+    legacy record on a long-lived database)."""
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.scraper.gleif_incremental import import_lei_cdf_delta
+    from app.scraper.legal_identity import Filer
+    oke, fendi = "2T3D6M0JSY48PSZI1Q41", "5299001K9O0QHEOJ5035"
+    it_db.run_command("CREATE (:Entity {id:$id, name:'ONEOK, INC.', name_normalized:'oneok', lei_id:$lei, "
+                      "sec_cik:'0001039684', active:true})", {"id": f"lei:{oke}", "lei": oke})
+    it_db.run_command("CREATE (:Entity {id:$id, name:'FENDI S.A.', name_normalized:'fendi', lei_id:$lei, active:true})",
+                      {"id": f"lei:{fendi}", "lei": fendi})
+    delta = _zip(tmp_path, "ends.json.zip", "records", [
+        _entity(oke, "ONEOK, INC.", status="INACTIVE", reg="RETIRED", ended="2026-08-13", updated="2026-09-29T11:33:22Z"),
+        _entity(fendi, "FENDI S.A.", status="INACTIVE", reg="RETIRED", ended="2020-10-27", updated="2022-03-29T00:00:00Z"),
+    ])
+    with patch.object(settings, "SCRAPER_ENABLED", True), patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
+         patch("app.scraper.legal_identity.filer_facts",
+               return_value=Filer("0001039684", "ONEOK INC /NEW/", last_filed="2026-10-28")) as edgar:
+        counts = import_lei_cdf_delta(delta, "gleif-src", 92)
+    assert counts["updated"] == 2 and counts["marked_inactive"] == 1 and counts["ends_held"] == 1
+    assert edgar.call_count == 1                                   # asked for the filer's node only
+    rows = {r["id"]: r for r in it_db.run_sql("SELECT id, dissolved_on, active FROM Entity WHERE id IN :ids",
+                                              {"ids": [f"lei:{oke}", f"lei:{fendi}"]})}
+    assert rows[f"lei:{oke}"]["dissolved_on"] is None and rows[f"lei:{oke}"]["active"] is True
+    assert rows[f"lei:{fendi}"]["dissolved_on"] == "2020-10-27" and rows[f"lei:{fendi}"]["active"] is False
 
 
 def _rel(child, parent, status="ACTIVE", end_date=None,

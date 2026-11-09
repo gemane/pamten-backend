@@ -37,7 +37,7 @@ ADDRESSES = {"0000071691": ("620 EIGHTH AVENUE", "NEW YORK", None),
 
 
 def _record(lei, name, jurisdiction, street, city, status="ISSUED", level="FULLY_CORROBORATED",
-            updated="2026-04-07T00:00:00Z", other=(), form=None, hq=None, entity_status="ACTIVE"):
+            updated="2026-04-07T00:00:00Z", other=(), form=None, hq=None, entity_status="ACTIVE", events=()):
     addr = {"addressLines": [street], "city": city, "country": jurisdiction[:2], "postalCode": "1"}
     head = {**addr, **hq} if hq else addr
     return golden_copy_record({
@@ -45,7 +45,10 @@ def _record(lei, name, jurisdiction, street, city, status="ISSUED", level="FULLY
         "entity": {"legalName": {"name": name}, "jurisdiction": jurisdiction, "status": entity_status,
                    "legalForm": {"id": form},
                    "legalAddress": addr, "headquartersAddress": head,
-                   "otherNames": [{"name": n, "type": "TRANSLITERATED"} for n in other]},
+                   "otherNames": [{"name": n, "type": "TRANSLITERATED"} for n in other],
+                   "eventGroups": [{"groupType": "STANDALONE", "events": [
+                       {"type": kind, "status": "COMPLETED", "effectiveDate": f"{day}T05:00:00Z"}]}
+                       for kind, day in events]},
         "registration": {"status": status, "corroborationLevel": level, "lastUpdateDate": updated,
                          "initialRegistrationDate": "2019-01-02T12:46:26Z"}})
 
@@ -66,7 +69,8 @@ RECORDS = {
                                  "postalCode": "105-7537"}),
 }
 RECORDS[OKE_LEI] = _record(OKE_LEI, "ONEOK, INC.", "US-OK", "100 West 5th Street", "Tulsa", status="RETIRED",
-                           updated="2026-09-29T11:33:22Z", entity_status="INACTIVE")
+                           updated="2026-09-29T11:33:22Z", entity_status="INACTIVE",
+                           events=(("DISSOLUTION", "2026-08-13"),))
 LLC_PARENT = [{"lei": INC_LEI, "names": ["Domino's Pizza, Inc."], "place": "US-DE", "status": "ACTIVE",
                "periods": [{"type": "RELATIONSHIP_PERIOD", "startDate": "1999-10-27T00:00:00Z"}]}]
 
@@ -259,7 +263,22 @@ def test_a_successor_issuer_is_not_the_record_of_the_entity_it_replaced(it_db):
     assert set(rows) == {sec_id, f"lei:{OKE_LEI}"}
     assert rows[sec_id]["lei_id"] is None and rows[sec_id]["lei_source"] is None
     assert rows[f"lei:{OKE_LEI}"]["sec_cik"] is None
-    assert it_db.run_sql("SELECT active FROM Entity WHERE id = :id", {"id": f"lei:{OKE_LEI}"})[0]["active"] is False
+    [legacy] = it_db.run_sql("SELECT active, dissolved_on FROM Entity WHERE id = :id", {"id": f"lei:{OKE_LEI}"})
+    assert legacy["active"] is False
+    assert legacy["dissolved_on"] == "2026-08-13"        # the day GLEIF's event states (item 85a), on the record's own node
     assert it_db.run_sql("SELECT count(*) AS n FROM MergedId WHERE old_id = :o", {"o": sec_id})[0]["n"] == 0
     # the SEC writer meeting the retired record by name refuses it the same way
     assert _sec("ONEOK, INC.", OKE_CIK) == sec_id
+
+
+def test_a_record_joined_while_alive_does_not_end_the_filer_that_files_on(it_db):
+    # Items 84 → 85(a), the long-lived database: the legacy record was joined to the
+    # filer before GLEIF retired it. Read again by the pointer, its end is held —
+    # the successor issuer filed on 2026-10-28, after the record's last update.
+    it_db.run_command("CREATE (:Entity {id:$id, name:'ONEOK, INC.', name_normalized:'oneok', lei_id:$lei, "
+                      "sec_cik:$cik, active:true})", {"id": f"lei:{OKE_LEI}", "lei": OKE_LEI, "cik": OKE_CIK})
+    assert _gleif(OKE_LEI) == f"lei:{OKE_LEI}"
+    [row] = it_db.run_sql("SELECT active, dissolved_on, gleif_registration_status AS reg FROM Entity WHERE id = :id",
+                          {"id": f"lei:{OKE_LEI}"})
+    assert row["active"] is True and row["dissolved_on"] is None
+    assert row["reg"] == "RETIRED"                        # what GLEIF says of its record is still recorded

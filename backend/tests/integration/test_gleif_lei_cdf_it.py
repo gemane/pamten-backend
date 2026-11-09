@@ -91,6 +91,89 @@ def test_the_full_load_stamps_the_registers_own_status(it_db, tmp_path):
     assert rows["lei:GONELEI0000000000012"]["reg"] == "RETIRED"
 
 
+def _event(kind, day, status="COMPLETED"):
+    return {"@group_type": "STANDALONE", "@event_status": status,
+            "LegalEntityEventType": _w(kind), "LegalEntityEventEffectiveDate": _w(f"{day}T00:00:00+01:00")}
+
+
+def _ended(lei, name, status, *events, updated="2026-09-29T11:33:22Z"):
+    return {"LEI": _w(lei),
+            "Entity": {"LegalName": _w(name), "LegalJurisdiction": _w("US"), "EntityStatus": _w(status),
+                       "LegalEntityEvents": {"LegalEntityEvent": list(events)}},
+            "Registration": {"RegistrationStatus": _w("RETIRED" if status == "INACTIVE" else "ISSUED"),
+                             "LastUpdateDate": _w(updated)}}
+
+
+def _load(tmp_path, name, records):
+    from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
+    zpath = tmp_path / f"{name}.json.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("lei2.json", json.dumps({"records": records}))
+    return import_lei_cdf_entities(str(zpath), "gleif", 92)
+
+
+def test_the_end_gleif_dates_in_its_events_closes_what_the_company_held(it_db, tmp_path):
+    """Findings item 85(a): the day in the record's COMPLETED end event lands as
+    `dissolved_on`, the chain's heal closes the company's open holdings on it;
+    the surviving party of the same merger, ACTIVE with the same event, keeps
+    its day and its holdings."""
+    from app.dissolution import heal_ends_at_dissolution
+    gone, survivor, sub = "529900NBET57WDRXAR22", "529900G1S6D7T5ZIX198", "SUBLEI00000000000099"
+    for lei in (gone, survivor, sub):
+        it_db.run_command("CREATE (:Entity {id:$id, name:$id, name_normalized:$id})", {"id": f"lei:{lei}"})
+    for owner in (gone, survivor):
+        it_db.run_command("MATCH (a:Entity {id:$a}), (b:Entity {id:$b}) "
+                          "CREATE (a)-[:OWNS {since:'2010-01-01', until:null, source_id:'gleif'}]->(b)",
+                          {"a": f"lei:{owner}", "b": f"lei:{sub}"})
+    counts = _load(tmp_path, "ends", [
+        _ended(gone, "Random House LLC", "INACTIVE", _event("MERGERS_AND_ACQUISITIONS", "2014-10-12")),
+        _ended(survivor, "Penguin Random House LLC", "ACTIVE", _event("MERGERS_AND_ACQUISITIONS", "2014-10-12")),
+    ])
+    assert counts["entities"] == 2 and counts["inactive"] == 1 and counts["ends_held"] == 0
+    rows = {r["id"]: r for r in it_db.run_sql(
+        "SELECT id, dissolved_on, active FROM Entity WHERE id IN :ids", {"ids": [f"lei:{gone}", f"lei:{survivor}"]})}
+    assert rows[f"lei:{gone}"]["dissolved_on"] == "2014-10-12" and rows[f"lei:{gone}"]["active"] is False
+    assert rows[f"lei:{survivor}"]["dissolved_on"] is None and rows[f"lei:{survivor}"]["active"] is True
+    healed = heal_ends_at_dissolution(apply=True)
+    assert healed["closed"] == 1 and healed["companies"] == 1
+    ends = {r["a"]: (r["until"], r["why"]) for r in it_db.run_sql(
+        "SELECT @out.id AS a, until, until_reason AS why FROM OWNS WHERE @in.id = :b", {"b": f"lei:{sub}"})}
+    assert ends[f"lei:{gone}"] == ("2014-10-12", "dissolution")
+    assert ends[f"lei:{survivor}"] == (None, None)
+
+
+def test_the_end_of_a_record_on_a_filers_node_waits_for_edgar(it_db, tmp_path):
+    """Items 84 → 85(a): the legacy ONEOK record was joined to the filer while
+    it lived; the successor issuer keeps filing under the CIK, so the full
+    load holds the end GLEIF now states (no `dissolved_on`, `active` true) —
+    while the record of an entity whose filer stopped filing gets its end."""
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.scraper.legal_identity import Filer
+    oke, viacom = "2T3D6M0JSY48PSZI1Q41", "X0ST5BPF0CZG9FE5OV61"
+    it_db.run_command("CREATE (:Entity {id:$id, name:'ONEOK, INC.', name_normalized:'oneok', "
+                      "lei_id:$lei, sec_cik:'0001039684', active:true})", {"id": f"lei:{oke}", "lei": oke})
+    it_db.run_command("CREATE (:Entity {id:$id, name:'Viacom Inc.', name_normalized:'viacom', "
+                      "lei_id:$lei, sec_cik:'0001339947', active:true})", {"id": f"lei:{viacom}", "lei": viacom})
+    filers = {"0001039684": Filer("0001039684", "ONEOK INC /NEW/", last_filed="2026-10-28"),
+              "0001339947": Filer("0001339947", "Viacom Inc.", last_filed="2019-12-16")}
+    with patch.object(settings, "SCRAPER_ENABLED", True), patch.object(settings, "SCRAPER_SEC_EDGAR_ENABLED", True), \
+         patch("app.scraper.legal_identity.filer_facts", side_effect=filers.get):
+        counts = _load(tmp_path, "filers", [
+            _ended(oke, "ONEOK, INC.", "INACTIVE", _event("DISSOLUTION", "2026-08-13")),
+            _ended(viacom, "Viacom Inc.", "INACTIVE", _event("MERGERS_AND_ACQUISITIONS", "2019-12-04"),
+                   updated="2023-08-04T00:00:00Z"),
+        ])
+    assert counts["ends_held"] == 1 and counts["inactive"] == 1
+    rows = {r["id"]: r for r in it_db.run_sql(
+        "SELECT id, dissolved_on, active, gleif_registration_status AS reg FROM Entity WHERE id IN :ids",
+        {"ids": [f"lei:{oke}", f"lei:{viacom}"]})}
+    assert rows[f"lei:{oke}"]["dissolved_on"] is None and rows[f"lei:{oke}"]["active"] is True
+    assert rows[f"lei:{oke}"]["reg"] == "RETIRED"                  # the register's word on the RECORD stays
+    assert rows[f"lei:{viacom}"]["dissolved_on"] == "2019-12-04" and rows[f"lei:{viacom}"]["active"] is False
+
+
 def test_previous_and_trading_names_land_apart_and_a_reimport_replaces_them(it_db, tmp_path):
     """Findings item 16a: GLEIF's previous legal names are dated former names,
     its trading names searchable non-legal names; a re-import of a record that

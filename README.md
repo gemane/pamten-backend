@@ -323,7 +323,11 @@ publish — ~14k entities, ~2k relationships and ~3k reporting exceptions) and a
 them in seconds/minutes.
 It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` edge
 **closed** (`until` set to the relationship's end date), and a dissolved LEI is
-**marked** (`active=false`), never deleted (GLEIF never deletes; merges flow through
+**marked** (`active=false`) and **dated** (`dissolved_on` from the record's COMPLETED
+dissolution / merger / absorption / breakup event, the full load and the pointer alike —
+`heal-ends-at-dissolution` then closes what it held; held back on a node that is an EDGAR
+filer's while the filer files on, see *GLEIF sourcing* in
+[`docs/data-model.md`](docs/data-model.md)), never deleted (GLEIF never deletes; merges flow through
 `SUCCEEDED_BY`). A relationship record GLEIF no longer maintains (registration
 status **LAPSED** — a fifth of all records, a quarter of the ownership edges) is
 drawn **stale**: dimmed, dated by the record's last update, never closed; the full

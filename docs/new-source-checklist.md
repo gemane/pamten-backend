@@ -407,9 +407,22 @@ parser. Anything that does not map is either a new property (document it) or noi
       said whether the company exists, which is a different fact from "not ceased".
 - [ ] **Dates carry their real precision.** UK PSC publishes month and year only; storing
       a fabricated day makes two different people look like the same one.
-- [ ] **An entity's end is a fact the source may state — read it.** Wikidata's P576,
-      GLEIF's `EntityExpirationDate`, Companies House's `CompanyStatus`/`DissolutionDate`
+- [ ] **An entity's end is a fact the source may state — read it, where the source puts it.**
+      Wikidata's P576, GLEIF's `EntityExpirationDate`, Companies House's `CompanyStatus`/`DissolutionDate`
       all existed for years before anything read them (2026-10-25), so a dissolved
+      company read as live. And the field a schema offers is not always the one the source
+      fills: GLEIF's `EntityExpirationDate` is empty in every one of its 258,385 ended records,
+      the end lives in `LegalEntityEvents` (DISSOLUTION, MERGERS_AND_ACQUISITIONS, ABSORPTION,
+      BREAKUP with an effective date) — measure the field on the whole golden copy before
+      trusting the schema (findings item 85a, 2026-11-09: a year of reading an empty field).
+      Two traps in the events: the survivor of a merger carries the same COMPLETED event as the
+      company that ceased (3,922 ACTIVE records), so an end event dates an end only on an
+      INACTIVE record; and a company can be acquired and live on, so the latest end event is
+      the end. A state (LIQUIDATION, BANKRUPTCY) is not an end. Then the sibling path of item 84:
+      the end a register states about a record that sits on another register's live filer
+      (a delta retiring an LEI joined to a CIK) must pass the same veto as the join
+      (`legal_identity.filed_after`), else the dissolution rule closes a living company's edges.
+      The rest of this item: a dissolved
       company read as live, kept open holdings and seats, and time travel hid it before
       its incorporation but never after its end. Write the date to `dissolved_on` (the
       source's precision, fill-only), `active = false` beside it, a register's own

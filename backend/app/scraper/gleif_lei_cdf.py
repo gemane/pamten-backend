@@ -262,15 +262,50 @@ def _incorporated_on(entity: dict) -> str | None:
     return None
 
 
+#: The legal-entity events that END an entity: it was dissolved, merged into
+#: another, absorbed, or broken up. LIQUIDATION, BANKRUPTCY, INSOLVENCY and
+#: VOLUNTARY_ARRANGEMENT are states of a company that still exists (item 85d).
+END_EVENT_TYPES = frozenset({"DISSOLUTION", "MERGERS_AND_ACQUISITIONS", "ABSORPTION", "BREAKUP"})
+
+
+def _completed_event_days(entity: dict, kinds: frozenset[str] | set[str]) -> list[str]:
+    """The effective days of the record's COMPLETED ``LegalEntityEvents`` of
+    the given types, as the golden copy states them — the local day:
+    BlackRock's "2024-10-01T00:00:00+02:00", which the API gives as
+    2024-09-30T22:00Z (`register_pointer._api_day` maps it back). An event
+    without a status counts as completed; one IN_PROGRESS or
+    WITHDRAWN_CANCELLED did not happen (yet)."""
+    raw = (entity.get("LegalEntityEvents") or {}).get("LegalEntityEvent") or []
+    if isinstance(raw, dict):
+        raw = [raw]
+    days = [(_v(ev.get("LegalEntityEventEffectiveDate")) or "")[:10] for ev in raw
+            if isinstance(ev, dict) and _v(ev.get("LegalEntityEventType")) in kinds
+            and (ev.get("@event_status") or "COMPLETED") == "COMPLETED"]
+    return [d for d in days if re.match(r"^\d{4}-\d{2}-\d{2}$", d)]
+
+
 def _dissolved_on(entity: dict) -> str | None:
-    """`EntityExpirationDate` (YYYY-MM-DD): the day the entity ceased, when
-    the record states one — it rarely does (none in the first 120k records
-    of the 2026-10-06 golden copy; INACTIVE alone sets `active = false`).
-    `app.dissolution` closes what the company still holds."""
+    """The day the entity ceased (`dissolved_on`, app.dissolution closes what
+    it still holds): `EntityExpirationDate` when the record states one — it
+    never does (0 of the 258,385 INACTIVE records of the 2026-11-08 golden
+    copy) — else the latest COMPLETED end event of the record (`END_EVENT_TYPES`:
+    241,040 of those records date their end that way), and ONLY while the
+    register's own word is INACTIVE. The surviving party of a merger carries
+    the same COMPLETED MERGERS_AND_ACQUISITIONS event as the one that ceased
+    (Penguin Random House LLC and Random House LLC, 2014-10-12; 3,922 ACTIVE
+    records hold one), and 953 ACTIVE records carry a completed DISSOLUTION
+    their status contradicts: for an ACTIVE entity an end event is not its end.
+    The latest event, because an entity can be acquired and live on until a
+    later merger ends it (Robert Bosch Finance Nederland B.V.: 2016, then
+    2025). Until 2026-11-09 only the empty field was read, and dev's 37 ended
+    GLEIF entities had no date (findings item 85a)."""
     d = _v(entity.get("EntityExpirationDate"))
     if d and len(d) >= 10 and d[4] == "-" and d[7] == "-":
         return d[:10]
-    return None
+    if _v(entity.get("EntityStatus")) != "INACTIVE":
+        return None
+    days = _completed_event_days(entity, END_EVENT_TYPES)
+    return max(days) if days else None
 
 
 PREVIOUS_LEGAL_NAME = "PREVIOUS_LEGAL_NAME"
@@ -322,13 +357,7 @@ def _name_change_day(entity: dict) -> str | None:
     (``LegalEntityEvents``), as the golden copy states it — its local day:
     BlackRock's "2024-10-01T00:00:00+02:00", which the API gives as
     2024-09-30T22:00Z (`register_pointer._api_day` maps it back)."""
-    raw = (entity.get("LegalEntityEvents") or {}).get("LegalEntityEvent") or []
-    if isinstance(raw, dict):
-        raw = [raw]
-    days = [(_v(ev.get("LegalEntityEventEffectiveDate")) or "")[:10] for ev in raw
-            if isinstance(ev, dict) and _v(ev.get("LegalEntityEventType")) == "CHANGE_LEGAL_NAME"
-            and (ev.get("@event_status") or "COMPLETED") == "COMPLETED"]
-    days = [d for d in days if re.match(r"^\d{4}-\d{2}-\d{2}$", d)]
+    days = _completed_event_days(entity, {"CHANGE_LEGAL_NAME"})
     return max(days) if days else None
 
 
@@ -428,6 +457,8 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     dissolved = _dissolved_on(entity)
     if dissolved:
         props["dissolved_on"] = dissolved      # only when stated: a re-import never blanks it
+    # (a record on an EDGAR filer's node: `hold_end_of_live_filer` decides at the
+    # write whether this end and `active` may land there — findings item 85a)
     # Both places in parts, for a structured geocode (app.addresses): the real
     # operating location with its readable address, and the legal address's
     # parts (its country is the entity's `country`). Only what GLEIF states,
@@ -507,6 +538,61 @@ def _iter_records_for_leis(raw: IO[bytes], targets: set[str], chunk_size: int = 
         buf = buf[consumed:]                   # retain the (possibly partial) tail
 
 
+def joined_filers() -> dict[str, str]:
+    """{node id: CIK} of the GLEIF nodes that are EDGAR filers too — a record
+    `legal_identity` joined to a filer. Read once per import, for
+    `hold_end_of_live_filer`."""
+    from app.db.arcadedb import run_sql
+    return {r["id"]: r["sec_cik"] for r in run_sql(
+        "SELECT id, sec_cik FROM Entity WHERE sec_cik IS NOT NULL AND id LIKE 'lei:%'") or []}
+
+
+def hold_end_of_live_filer(node_id: str, props: dict, filers: dict[str, str] | None = None) -> str | None:
+    """A dead entity files nothing — the sibling of `legal_identity`'s veto
+    (findings items 84 and 85a). The join refuses a ceased GLEIF record to a
+    filer that filed after it; but a record joined while it was alive sits on
+    the filer's node, and when GLEIF later retires it — ONEOK, Inc. merged
+    into a subsidiary on 2026-09-10, a new corporation kept CIK 0001039684,
+    GLEIF dissolved the old LEI as of 2026-08-13 — the delta would stamp
+    `dissolved_on` and `active = false` on a company that still files, and
+    the dissolution rule would close its ~205 open edges. So before an end
+    (`dissolved_on`, or `active` false) is written onto a node that carries a
+    CIK, EDGAR says when the filer last filed: after the record's last update
+    (`filed_after`), the end is held — `dissolved_on` dropped, `active` kept
+    true — and logged; when EDGAR cannot be asked (SEC scraping off, EDGAR
+    down) the end is held too and `active` left as it stands, since a company
+    read as ceased is the costlier error. Viacom Inc.'s Form 15 of 2019-12-16
+    lies before its record's last update (2023-08-04): its end is written.
+    ``props`` is changed in place; returns why the end was held, or None.
+    ``filers`` is `joined_filers()`; without it the one node is read."""
+    if props.get("active", True) is not False and not props.get("dissolved_on"):
+        return None
+    if filers is None:
+        from app.db.arcadedb import run_sql
+        rows = run_sql("SELECT sec_cik FROM Entity WHERE id = :id", {"id": node_id})
+        cik = (rows[0].get("sec_cik") if rows else None)
+    else:
+        cik = filers.get(node_id)
+    if not cik:
+        return None
+    from app.scraper.legal_identity import _today, filed_after, filer_facts
+    from app.scraper.maintenance import _sec_lei_check_enabled
+    day = props.get("gleif_last_update") or _today()
+    facts = filer_facts(cik) if _sec_lei_check_enabled() else None
+    if facts is None:
+        why = f"EDGAR could not say whether the filer (CIK {cik}) still files"
+        props.pop("dissolved_on", None)
+        props.pop("active", None)          # neither ceased nor alive: what stands, stands
+    elif filed_after(facts, day):
+        why = f"the filer (CIK {cik}) filed on {facts.last_filed}, after the record's last update {day}"
+        props.pop("dissolved_on", None)
+        props["active"] = True
+    else:
+        return None
+    log.warning("GLEIF says %s ceased; the end is held: %s", node_id, why)
+    return why
+
+
 def import_lei_cdf_entities(
     filepath: str,
     source_id: str,
@@ -539,7 +625,10 @@ def import_lei_cdf_entities(
         raw = open(filepath, "rb")  # noqa: WPS515
 
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
-    counts = {"records": 0, "entities": 0, "skipped": 0, "inactive": 0}
+    counts = {"records": 0, "entities": 0, "skipped": 0, "inactive": 0, "ends_held": 0}
+    # before the indexes go: the GLEIF nodes that are EDGAR filers too, whose
+    # end this load may not write while they keep filing (findings item 85a)
+    filers = joined_filers()
     if bulk_load:
         _drop_secondary_indexes()
     batch = _BatchWriter()
@@ -562,9 +651,11 @@ def import_lei_cdf_entities(
             if jur and props.get("country") != jur:
                 counts["skipped"] += 1
                 continue
+            if hold_end_of_live_filer(node_id, props, filers):
+                counts["ends_held"] += 1
             batch.entity(node_id, props)
             counts["entities"] += 1
-            if not props["active"]:
+            if props.get("active") is False:
                 counts["inactive"] += 1
         batch.flush()
         msg = (f"{counts['records']:,} records, {counts['entities']:,} entities "

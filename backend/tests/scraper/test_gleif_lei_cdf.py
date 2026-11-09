@@ -192,6 +192,185 @@ class TestEntityProps:
         assert _dissolved_on({"EntityExpirationDate": _w("2021-06-30")}) == "2021-06-30"
         assert _dissolved_on({"EntityExpirationDate": _w("30/06/2021")}) is None
 
+
+def _event(kind, day, status="COMPLETED"):
+    """A LegalEntityEvent as the golden copy states it — a local-time instant."""
+    return {"@group_type": "STANDALONE", "@event_status": status,
+            "LegalEntityEventType": _w(kind), "LegalEntityEventEffectiveDate": _w(f"{day}T00:00:00+01:00")}
+
+
+def _ended(lei, name, status, *events):
+    rec = _rec(lei, name)
+    rec["Entity"]["EntityStatus"] = _w(status)
+    rec["Entity"]["LegalEntityEvents"] = {"LegalEntityEvent": list(events)}
+    rec["Registration"] = {"RegistrationStatus": _w("RETIRED" if status == "INACTIVE" else "ISSUED"),
+                           "LastUpdateDate": _w("2026-09-29T11:33:22Z")}
+    return rec
+
+
+class TestTheEndFromTheRecordsEvents:
+    """Findings item 85(a): GLEIF dates an entity's end in its legal-entity
+    events, never in `EntityExpirationDate` (0 of 258,385 INACTIVE records of
+    the 2026-11-08 golden copy); the cases are dev's records."""
+
+    def test_fendi_was_dissolved(self):
+        # 5299001K9O0QHEOJ5035: INACTIVE, RETIRED, one COMPLETED DISSOLUTION
+        _, props = _entity_props(_ended("5299001K9O0QHEOJ5035", "FENDI S.A.", "INACTIVE",
+                                        _event("DISSOLUTION", "2020-10-27")), "gleif", 92)
+        assert props["dissolved_on"] == "2020-10-27" and props["active"] is False
+
+    def test_samsung_c_and_t_merged_away(self):
+        _, props = _entity_props(_ended("549300PGVX1QSTAONM08", "SAMSUNG C&T CORPORATION", "INACTIVE",
+                                        _event("MERGERS_AND_ACQUISITIONS", "2015-09-01")), "gleif", 92)
+        assert props["dissolved_on"] == "2015-09-01"
+
+    def test_absorption_and_breakup_end_an_entity_too(self):
+        for kind in ("ABSORPTION", "BREAKUP"):
+            _, props = _entity_props(_ended("L1", "Gone", "INACTIVE", _event(kind, "2024-03-30")), "gleif", 92)
+            assert props["dissolved_on"] == "2024-03-30", kind
+
+    def test_the_surviving_party_of_a_merger_carries_the_event_and_is_not_ended(self):
+        # Penguin Random House LLC (529900G1S6D7T5ZIX198) holds the COMPLETED
+        # MERGERS_AND_ACQUISITIONS event of 2014-10-12 that ended Random House
+        # LLC; it is ACTIVE — 3,922 ACTIVE records carry such an event
+        _, props = _entity_props(_ended("529900G1S6D7T5ZIX198", "Penguin Random House LLC", "ACTIVE",
+                                        _event("MERGERS_AND_ACQUISITIONS", "2014-10-12")), "gleif", 92)
+        assert "dissolved_on" not in props and props["active"] is True
+        # 953 ACTIVE records carry a COMPLETED DISSOLUTION their status contradicts
+        _, props = _entity_props(_ended("L2", "Here", "ACTIVE", _event("DISSOLUTION", "2020-01-01")), "gleif", 92)
+        assert "dissolved_on" not in props
+
+    def test_the_latest_end_event_is_the_end(self):
+        # Robert Bosch Finance Nederland B.V.: acquired in 2016, lived on, merged away in 2025
+        _, props = _entity_props(_ended("5299000L6YMVZ5EOS446", "Robert Bosch Finance Nederland B.V.", "INACTIVE",
+                                        _event("MERGERS_AND_ACQUISITIONS", "2016-12-06"),
+                                        _event("MERGERS_AND_ACQUISITIONS", "2025-06-06")), "gleif", 92)
+        assert props["dissolved_on"] == "2025-06-06"
+
+    def test_an_event_in_progress_or_withdrawn_has_not_happened(self):
+        for status in ("IN_PROGRESS", "WITHDRAWN_CANCELLED"):
+            _, props = _entity_props(_ended("L3", "Going", "INACTIVE",
+                                            _event("DISSOLUTION", "2026-12-01", status)), "gleif", 92)
+            assert "dissolved_on" not in props and props["active"] is False, status
+
+    def test_a_state_is_not_an_end(self):
+        # 17,297 INACTIVE records hold only LIQUIDATION / BANKRUPTCY / INSOLVENCY
+        # events: a company in liquidation still exists (item 85d) — no day
+        for kind in ("LIQUIDATION", "BANKRUPTCY", "INSOLVENCY", "VOLUNTARY_ARRANGEMENT"):
+            _, props = _entity_props(_ended("L4", "Winding", "INACTIVE", _event(kind, "2024-01-01")), "gleif", 92)
+            assert "dissolved_on" not in props, kind
+
+    def test_a_stated_expiration_date_wins_and_an_undated_event_is_no_end(self):
+        rec = _ended("L5", "Gone", "INACTIVE", _event("DISSOLUTION", "2020-10-27"))
+        rec["Entity"]["EntityExpirationDate"] = _w("2020-10-30")
+        assert _entity_props(rec, "gleif", 92)[1]["dissolved_on"] == "2020-10-30"
+        rec = _ended("L6", "Gone", "INACTIVE", {"@event_status": "COMPLETED", "LegalEntityEventType": _w("DISSOLUTION")})
+        assert "dissolved_on" not in _entity_props(rec, "gleif", 92)[1]
+
+    def test_the_name_change_reader_still_reads_only_renames(self):
+        from app.scraper.gleif_lei_cdf import _name_change_day
+        rec = _ended("L7", "Renamed", "ACTIVE", _event("CHANGE_LEGAL_NAME", "2024-10-01"),
+                     _event("MERGERS_AND_ACQUISITIONS", "2025-01-01"))
+        assert _name_change_day(rec["Entity"]) == "2024-10-01"
+
+
+class TestTheEndOnAFilersNode:
+    """`hold_end_of_live_filer` (findings items 84 → 85a): an end GLEIF states
+    about a record that sits on an EDGAR filer's node is written only when the
+    filer did not file after the record's last update."""
+    OKE = "lei:2T3D6M0JSY48PSZI1Q41"
+
+    @staticmethod
+    def _props(**over):
+        return {"name": "ONEOK, INC.", "active": False, "dissolved_on": "2026-08-13",
+                "gleif_last_update": "2026-09-29", **over}
+
+    @staticmethod
+    def _edgar(monkeypatch, last_filed, enabled=True):
+        from app.scraper import legal_identity, maintenance
+        from app.scraper.legal_identity import Filer
+        asked = []
+
+        def facts(cik):
+            asked.append(cik)
+            return None if last_filed == "unavailable" else Filer(cik, "ONEOK INC /NEW/", last_filed=last_filed)
+        monkeypatch.setattr(legal_identity, "filer_facts", facts)
+        monkeypatch.setattr(maintenance, "_sec_lei_check_enabled", lambda: enabled)
+        return asked
+
+    def test_a_bare_gleif_node_takes_its_end_without_asking_edgar(self, monkeypatch):
+        from app.scraper.gleif_lei_cdf import hold_end_of_live_filer
+        asked = self._edgar(monkeypatch, "2026-10-28")
+        props = self._props()
+        assert hold_end_of_live_filer(self.OKE, props, {}) is None
+        assert props["dissolved_on"] == "2026-08-13" and props["active"] is False and asked == []
+
+    def test_a_living_record_asks_nothing(self, monkeypatch):
+        from app.scraper.gleif_lei_cdf import hold_end_of_live_filer
+        asked = self._edgar(monkeypatch, "2026-10-28")
+        props = {"name": "Here", "active": True}
+        assert hold_end_of_live_filer(self.OKE, props, {self.OKE: "0001039684"}) is None
+        assert asked == [] and props == {"name": "Here", "active": True}
+
+    def test_the_successor_issuer_keeps_filing_so_the_end_is_held(self, monkeypatch):
+        from app.scraper.gleif_lei_cdf import hold_end_of_live_filer
+        asked = self._edgar(monkeypatch, "2026-10-28")           # the 10-Q after GLEIF's last update
+        props = self._props()
+        why = hold_end_of_live_filer(self.OKE, props, {self.OKE: "0001039684"})
+        assert why == "the filer (CIK 0001039684) filed on 2026-10-28, after the record's last update 2026-09-29"
+        assert "dissolved_on" not in props and props["active"] is True and asked == ["0001039684"]
+
+    def test_a_filer_that_ended_with_the_entity_gets_its_end(self, monkeypatch):
+        # Viacom Inc.: the Form 15 of 2019-12-16 lies after the merger (2019-12-04)
+        # but before the record's last update (2023-08-04) — the end is written
+        from app.scraper.gleif_lei_cdf import hold_end_of_live_filer
+        self._edgar(monkeypatch, "2019-12-16")
+        props = self._props(dissolved_on="2019-12-04", gleif_last_update="2023-08-04")
+        assert hold_end_of_live_filer("lei:X0ST5BPF0CZG9FE5OV61", props, {"lei:X0ST5BPF0CZG9FE5OV61": "0001339947"}) is None
+        assert props["dissolved_on"] == "2019-12-04" and props["active"] is False
+
+    def test_when_edgar_cannot_say_the_end_is_held_and_active_left_as_it_stands(self, monkeypatch):
+        from app.scraper.gleif_lei_cdf import hold_end_of_live_filer
+        self._edgar(monkeypatch, "unavailable")
+        props = self._props()
+        assert hold_end_of_live_filer(self.OKE, props, {self.OKE: "0001039684"}).startswith("EDGAR could not say")
+        assert "dissolved_on" not in props and "active" not in props
+
+    def test_with_sec_scraping_off_edgar_is_not_asked_and_the_end_is_held(self, monkeypatch):
+        from app.scraper.gleif_lei_cdf import hold_end_of_live_filer
+        asked = self._edgar(monkeypatch, "2019-12-16", enabled=False)
+        props = self._props()
+        assert hold_end_of_live_filer(self.OKE, props, {self.OKE: "0001039684"}).startswith("EDGAR could not say")
+        assert asked == [] and "dissolved_on" not in props
+
+    def test_without_the_filer_set_the_one_node_is_read(self, monkeypatch):
+        from app.db import arcadedb
+        from app.scraper.gleif_lei_cdf import hold_end_of_live_filer
+        self._edgar(monkeypatch, "2026-10-28")
+        monkeypatch.setattr(arcadedb, "run_sql", lambda q, p=None: [{"sec_cik": "0001039684"}])
+        props = self._props()
+        assert hold_end_of_live_filer(self.OKE, props) is not None and "dissolved_on" not in props
+        monkeypatch.setattr(arcadedb, "run_sql", lambda q, p=None: [{"sec_cik": None}])
+        props = self._props()
+        assert hold_end_of_live_filer(self.OKE, props) is None and props["dissolved_on"] == "2026-08-13"
+
+    def test_the_full_load_counts_the_ends_it_held(self, tmp_path, monkeypatch):
+        from app.scraper import bulk_import, gleif_lei_cdf
+        written = {}
+        monkeypatch.setattr(bulk_import._BatchWriter, "entity", lambda self, nid, props: written.update({nid: props}))
+        monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+        monkeypatch.setattr(gleif_lei_cdf, "joined_filers", lambda: {self.OKE: "0001039684"})
+        self._edgar(monkeypatch, "2026-10-28")
+        records = [_ended("2T3D6M0JSY48PSZI1Q41", "ONEOK, INC.", "INACTIVE", _event("DISSOLUTION", "2026-08-13")),
+                   _ended("5299001K9O0QHEOJ5035", "FENDI S.A.", "INACTIVE", _event("DISSOLUTION", "2020-10-27"))]
+        z = tmp_path / "ends.json.zip"
+        with zipfile.ZipFile(z, "w") as zf:
+            zf.writestr("lei2.json", json.dumps({"records": records}))
+        counts = import_lei_cdf_entities(str(z), "gleif", 92)
+        assert counts["entities"] == 2 and counts["inactive"] == 1 and counts["ends_held"] == 1
+        assert "dissolved_on" not in written[self.OKE] and written[self.OKE]["active"] is True
+        assert written["lei:5299001K9O0QHEOJ5035"]["dissolved_on"] == "2020-10-27"
+
     def test_the_registers_own_word_on_the_record(self):
         """`active` + `gleif_registration_status` on the FULL load, not only the
         delta (the sibling path): 254,659 of 3,453,452 records were INACTIVE and
@@ -337,11 +516,12 @@ class TestOnlyLeis:
     """--only / --only-file curated test subset: import just the listed LEIs."""
 
     def test_imports_only_listed_leis(self, tmp_path, monkeypatch):
-        from app.scraper import bulk_import
+        from app.scraper import bulk_import, gleif_lei_cdf
         written = []
         monkeypatch.setattr(bulk_import._BatchWriter, "entity",
                             lambda self, nid, props: written.append(nid))
         monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+        monkeypatch.setattr(gleif_lei_cdf, "joined_filers", lambda: {})     # no database here
 
         z = _lei_zip(tmp_path, [LEI_A, LEI_B, LEI_C])
         counts = import_lei_cdf_entities(z, "src", 92, only_leis={LEI_B})
@@ -350,11 +530,12 @@ class TestOnlyLeis:
         assert counts["entities"] == 1
 
     def test_no_filter_imports_everything(self, tmp_path, monkeypatch):
-        from app.scraper import bulk_import
+        from app.scraper import bulk_import, gleif_lei_cdf
         written = []
         monkeypatch.setattr(bulk_import._BatchWriter, "entity",
                             lambda self, nid, props: written.append(nid))
         monkeypatch.setattr(bulk_import._BatchWriter, "flush", lambda self: None)
+        monkeypatch.setattr(gleif_lei_cdf, "joined_filers", lambda: {})
 
         z = _lei_zip(tmp_path, [LEI_A, LEI_B])
         counts = import_lei_cdf_entities(z, "src", 92)

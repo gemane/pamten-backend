@@ -359,6 +359,19 @@ def _place_ok(place: str | None, other: str | None) -> bool:
     return "-" not in place or "-" not in other or place == other
 
 
+def filed_after(filer: Filer, day: str | None) -> bool:
+    """A dead entity files nothing (findings item 84): the filer's newest filing
+    is dated after ``day`` — the day a GLEIF record was last true — so whoever
+    filed it was alive then and is not the entity of that record. A filing ON
+    the day is not after it; no day (a record never updated) means today, which
+    nothing is after. One rule for the join (`same_legal_entity`) and for the
+    end GLEIF states on a filer's node (`gleif_lei_cdf.hold_end_of_live_filer`,
+    findings item 85a): ONEOK's successor issuer kept filing after GLEIF
+    dissolved the old corporation, Viacom Inc.'s Form 15 came before its
+    record's last update."""
+    return bool(filer.last_filed and day and filer.last_filed > day)
+
+
 def same_legal_entity(node: dict, filer: Filer, *, today: str | None = None,
                       evidence: Evidence | None = None) -> tuple[str, str]:
     """(JOIN, evidence) when the GLEIF record on ``node`` and the EDGAR filer
@@ -385,7 +398,7 @@ def same_legal_entity(node: dict, filer: Filer, *, today: str | None = None,
     # the CIK, not the entity of this record. A filing ON D is not after it;
     # a record without a last update has D = today, which nothing is after.
     status = (node.get("gleif_registration_status") or "").upper()
-    if status in _CEASED and filer.last_filed and filer.last_filed > day:
+    if status in _CEASED and filed_after(filer, day):
         return REFUSE, f"GLEIF's entity ceased by {day} (registration {status}); the filer filed on {filer.last_filed}"
     # 4. veto: a child of a record that is the filer
     lei = node.get("lei_id")

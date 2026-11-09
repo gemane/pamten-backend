@@ -5,7 +5,7 @@ import pytest
 
 from unittest.mock import patch
 
-from app.scraper.legal_identity import (JOIN, REFUSE, Evidence, Filer, _in_force, filer_held_at,
+from app.scraper.legal_identity import (JOIN, REFUSE, Evidence, Filer, _in_force, filed_after, filer_held_at,
                                         header_address, names_at, reference_day, same_legal_entity)
 
 TODAY = "2026-10-30"
@@ -478,6 +478,14 @@ class TestACeasedEntityFilesNothing:
         legacy = {**self.LEGACY, "gleif_last_update": None}                # D is today; nothing is after today
         ev = fake(address=("100 WEST FIFTH STREET", "TULSA", None))
         assert same_legal_entity(legacy, self.SUCCESSOR, today=self.TODAY, evidence=ev)[0] == JOIN
+
+    def test_the_rule_itself_one_for_the_join_and_for_the_end_on_a_filers_node(self):
+        # `gleif_lei_cdf.hold_end_of_live_filer` (item 85a) asks the same question
+        assert filed_after(self.SUCCESSOR, "2026-09-29") is True
+        assert filed_after(self.VIACOM_FILER, "2023-08-04") is False
+        assert filed_after(Filer("c", "n", last_filed="2023-08-04"), "2023-08-04") is False   # on the day: not after
+        assert filed_after(Filer("c", "n"), "2023-08-04") is False                            # no filing known
+        assert filed_after(self.SUCCESSOR, None) is False                                    # no day: today
 
     def test_filer_facts_carry_the_newest_filing_day(self):
         from app.scraper import legal_identity

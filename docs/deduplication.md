@@ -865,7 +865,12 @@ evidence or the reason:
    record's last update: without one `D` is today and nothing is after it. A LAPSED record is
    unmaintained, not ceased — NYT's joins as before. Viacom Inc.'s retired record (last update
    2023-08-04) still joins CIK 0001339947, whose last filing is the Form 15 of 2019-12-16:
-   that filer ended with the entity. The gap that stays: nothing yet finds the successor's new
+   that filer ended with the entity. The same rule (`legal_identity.filed_after`) guards the
+   other path (item 85a): a record joined while it lived sits on the filer's node, and when GLEIF
+   later retires it — a delta, a re-read by the pointer, a full reload — the end it now dates
+   (`dissolved_on`, `active=false`) is held back from a filer that filed after the record's last
+   update (`gleif_lei_cdf.hold_end_of_live_filer`), so the dissolution rule never closes the
+   edges of a company that files on. The gap that stays: nothing yet finds the successor's new
    LEI — it arrives when a filing or the item states it.
 
 It runs wherever such a pair meets, so the order no longer decides:
