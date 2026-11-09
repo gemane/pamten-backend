@@ -42,9 +42,16 @@ Copy this skill's `kit/` to a fresh `~/.cache/rebuild-<YYYY-MM-DD>/` (a letter s
 second run that day), `chmod 700` it. The scripts find their folder themselves.
 - `rebuild.sh` — 0 golden copies, 1 drop/create/schema (refuses without `accounts.json`),
   2 bulk import under the import lock (the test chain: GLEIF seeds → family → names → succession → names of its endpoints; UK PSC), 3 `finish-import.sh`, 4 GLEIF history, 5 accounts
-  back, 6 replay, 7 finishing what the scrapes added (dedupe entities — with the scraper
-  flags on, so its SEC/LEI bridge may read EDGAR as it does on the server; findings item 70 —
-  the securities bridge `gleif-isin-bridge --apply` (CUSIP → ISIN → LEI, item 71), persons, geocode, close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks, the calls to each source and the bucket since step 1
+  back, 6 replay, 7 finishing what the scrapes added (the securities bridge
+  `gleif-isin-bridge --apply` (CUSIP → ISIN → LEI, item 71) first, since it re-keys sec: nodes to
+  lei:; then the successions of every LEI the graph holds now — `lei_ids.py` writes
+  `leis_after_replay.txt` into the kit folder, `gleif-succession --only-file` it with
+  `--emit-leis succession_leis.txt`, `gleif-lei-cdf --only-file` names the endpoints; item 89:
+  the chain read them for the import's ~2,000 LEIs, the replay adds ~600 more — then dedupe
+  entities — with the scraper flags on, so its SEC/LEI bridge may read EDGAR as it does on the
+  server; findings item 70 — folding what the bridge and the succession step added, the
+  dissolution heal for the ends written after finish-import's own (item 85a), persons, geocode,
+  close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks, the calls to each source and the bucket since step 1
   (`manage.py source-calls`, `SourceCall` rows — step 0's shell downloads are not counted) and
   `after.json` (which keeps them, so the diff shows the change from the last rebuild).
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
@@ -55,15 +62,19 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   say so in the verify.
 - `snapshot.py` — counts per type/source/filing/reason, entities and persons by id, the
   13D voting groups with their members, every OWNS edge with its source, `until` and
-  filing type, the run log. `diff_snapshots.py <previous after.json> <new after.json>` —
+  filing type, every SUCCEEDED_BY edge (item 89: the 11-08b verify had the count alone), the run log. `diff_snapshots.py <previous after.json> <new after.json>` —
   the verify's diff: counts, hard-id nodes gone and new, uuid nodes by name, voting groups
   by issuer + roster (their uuid is re-minted by every rebuild, findings item 56), OWNS
   edges by a stable key; a 13F edge that came or went WITH its filer node is listed apart
-  as the relevance sample's churn (findings item 51). `save_accounts.py` / `restore_accounts.py` — `User` and
+  as the relevance sample's churn (findings item 51); the succession links gone and new by name, a
+  self-loop called out (item 88). `save_accounts.py` / `restore_accounts.py` — `User` and
   `RefreshToken` rows by key, so nobody has to log in again (file 0600, never in memory).
 
 A step a merged change added to `finish-import.sh` usually also belongs in step 7, because
-the replay writes after the import's finish (#517 added close-reported-by-parent to both).
+the replay writes after the import's finish (#517 added close-reported-by-parent to both;
+item 89 the succession pass and the dissolution heal). The chain's own subset files are
+`mktemp` files in /tmp — RAM, gone after the run; what the verify may need is written into the
+kit folder (the scripts repo's chain still uses /tmp: changing it is the user's word).
 
 ### 3. Before (read-only)
 From the main checkout's `backend/`, with `. ~/scripts/lib.sh; owlgraph_env`:

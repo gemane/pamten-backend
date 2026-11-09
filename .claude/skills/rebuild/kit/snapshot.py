@@ -85,6 +85,11 @@ def take(q, cy) -> dict:
                                                 "RETURN g.id AS id, g.name AS name, g.name_normalized AS nn, "
                                                 "collect(coalesce(m.name, m.full_name)) AS members")),
                                    key=lambda x: x[0])
+    # Every SUCCEEDED_BY edge (findings item 89): the 11-08b verify had only the
+    # count (43 of an expected 86) and had to read dev for the list.
+    snap["succeeded_by"] = sorted(([r["a"], r["b"], r.get("s")] for r in cy(
+        "MATCH (a)-[r:SUCCEEDED_BY]->(b) RETURN a.id AS a, b.id AS b, r.source_id AS s")),
+        key=lambda x: [str(v) for v in x])
     snap["users"] = [r["email"] for r in q("SELECT email FROM User")]
     return snap
 

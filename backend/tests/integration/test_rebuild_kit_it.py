@@ -46,3 +46,27 @@ def test_the_snapshot_reads_every_owns_edge_with_its_filing_type(it_db):
              "owns_edges": [e for e in snap["owns_edges"] if e[0] != DIXON]}
     c = diff.classify(snap, later)
     assert sum(c["churn_gone"].values()) == 1 and not c["gone"]
+
+
+def test_the_snapshot_lists_every_succession_and_the_lei_list_names_every_lei_node(it_db, capsys):
+    """Findings item 89: the SUCCEEDED_BY edges go into the snapshot as a list
+    (the 11-08b verify had a count alone), the diff tells one gone and one new
+    by name, and `lei_ids` writes the LEIs of every lei: node for the kit's
+    step-7 succession pass."""
+    old, new = "lei:529900NBET57WDRXAR22", "lei:529900G1S6D7T5ZIX198"
+    it_db.run_command(f"CREATE (e:Entity {{id:'{old}', name:'Random House LLC', type:'company', "
+                      "name_normalized:'random house', lei_id:'529900NBET57WDRXAR22', active:false})")
+    it_db.run_command(f"CREATE (e:Entity {{id:'{new}', name:'Penguin Random House LLC', type:'company', "
+                      "name_normalized:'penguin random house', lei_id:'529900G1S6D7T5ZIX198'})")
+    it_db.run_command(f"CREATE (e:Entity {{id:'{DIXON}', name:'DIXON FNANCIAL SERVICES, INC.', type:'company', "
+                      "name_normalized:'dixon fnancial services', sec_cik:'0001909993'})")
+    it_db.run_command(f"MATCH (a:Entity {{id:'{old}'}}), (b:Entity {{id:'{new}'}}) "
+                      "CREATE (a)-[:SUCCEEDED_BY {source_id:'gleif'}]->(b)")
+    snapshot, diff, lei_ids = _load("snapshot"), _load("diff_snapshots"), _load("lei_ids")
+    snap = snapshot.take(run_sql, run_query)
+    assert snap["succeeded_by"] == [[old, new, "gleif"]]
+    assert lei_ids.ids(run_sql) == ["529900G1S6D7T5ZIX198", "529900NBET57WDRXAR22"]   # the sec: node is not an LEI
+    diff._print_succession(snap, {**snap, "succeeded_by": []})
+    out = capsys.readouterr().out
+    assert "succession (SUCCEEDED_BY): 1 -> 0; gone 1, new 0" in out
+    assert f"- ('{old}', '{new}') (Random House LLC -> Penguin Random House LLC) 1" in out
