@@ -1295,6 +1295,17 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                     "total": 0, "filing_date": data["filing_date"],
                     "detail": "This annual filing is already ingested; a newer "
                               "one opens the gate by itself. --force re-reads."}
+        if data.get("none_stated"):
+            # The filer's own word (findings item 82a): the exhibit says "None."
+            # — a fact about the company, not a list the reader missed. The gate
+            # closes on this filing as on a list, so the next run is `fresh`.
+            with db.get_session() as session:
+                session.run("MATCH (e:Entity {id: $id}) SET e.sec_ex21_ingested = $u",
+                            id=company_id, u=data["url"])
+            run["status"], run["note"] = "skipped", "no subsidiaries stated"
+            return {"status": "no_subsidiaries", "company": company, "entity_id": company_id,
+                    "total": 0, "filing_date": data["filing_date"], "url": data["url"],
+                    "detail": "The latest annual filing states the company has no (significant) subsidiaries."}
 
         written, skipped_unmapped, co_owner_edges = 0, 0, 0
         nested = unresolved_parents = detached = 0

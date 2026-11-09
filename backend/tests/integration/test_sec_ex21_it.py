@@ -555,6 +555,26 @@ def test_one_name_key_in_three_countries_is_three_nodes(it_db):
     assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'chubb company services'")[0]["n"] == 1
 
 
+def test_the_filers_statement_of_no_subsidiaries_is_a_status_and_closes_the_gate(it_db):
+    """Findings item 82(a): ESS Tech's Exhibit 21.1 reads "None." — the run reports
+    `no_subsidiaries` (not `no_exhibit`), stamps the filing as ingested, and the
+    next run is `fresh`; nothing is written."""
+    it_db.run_command(
+        "CREATE (:Entity {id: 'ess', name: 'ESS Tech, Inc.', name_normalized: 'ess tech', country: 'US', "
+        "search_text: 'ESS Tech, Inc.', type: 'company', sec_cik: '0001819438'})")
+    data = {"subsidiaries": [], "none_stated": True, "form": "10-K", "filing_date": "2026-03-02",
+            "url": "https://www.sec.gov/Archives/edgar/data/1819438/000181943826000012/exhibit211-listofsubsidiar.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        first = runner.run_sec_ex21("ESS Tech")
+        again = runner.run_sec_ex21("ESS Tech")
+    assert first["status"] == "no_subsidiaries" and first["total"] == 0 and first["url"] == data["url"]
+    assert again["status"] == "fresh"
+    assert it_db.run_sql("SELECT sec_ex21_ingested AS u FROM Entity WHERE id = 'ess'")[0]["u"] == data["url"]
+    assert it_db.run_command("MATCH (:Entity {id: 'ess'})-[r:OWNS]->() RETURN count(r) AS n")[0]["n"] == 0
+    runs = it_db.run_sql("SELECT status, error AS note FROM ScrapeRun WHERE source = 'sec-ex21' ORDER BY started_at")
+    assert [(r["status"], r["note"]) for r in runs][0] == ("skipped", "no subsidiaries stated")   # the run log's note column
+
+
 def test_a_row_stating_another_legal_form_is_not_the_listed_namesake(it_db):
     """Findings item 87: VIAVI's "Flex Co., Ltd." (China) met FLEX LTD. — the
     Singapore electronics group, an EDGAR filer whose node had no country yet —

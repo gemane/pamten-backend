@@ -1677,6 +1677,8 @@ from readers removed again the same day, so 11 remain):
       parent as its subsidiaries), and a parent stated in words ("a subsidiary of
       Idaho Power Company") not at all, so the rows came out flat. None of these
       filers had a list before the layout readers; the dev graph read none of them;
+    - (names without a place in a DECLARED exhibit, and the place a lead sentence gives
+      them, are read again since 2026-11-09 — findings item 82, see the statuses below)
     - names without a place, the place only in a heading ("Subsidiary (PRC):",
       Recon) or one sentence ("All … are incorporated in Chile", Banco de Chile) —
       a list like Karooooo's yields only the names that state their place;
@@ -1808,6 +1810,37 @@ from readers removed again the same day, so 11 remain):
   the old index lookup missed (a stake in a split "100 | %" cell, a place).
 - **`no_annual_filing`** instead of `no_exhibit` when the company files no 10-K or
   20-F at all (SoftBank, Vanguard, FMR: 13F/13G filers).
+- **`no_subsidiaries`** when the declared exhibit SAYS there is nothing to list — ESS
+  Tech's and Ethos' Exhibit 21.1 read "None." (findings item 82a, 2026-11-09): the
+  filer's statement, not a list the reader missed; the gate closes on that filing as on
+  a list, so the next run is `fresh`. A list that merely omits some subsidiaries
+  ("certain subsidiaries … omitted", Ameriprise) is a list.
+- **Read again since 2026-11-09 (findings item 82, the user's call), in a document the
+  filing index declares EX-21 / EX-8.1 only:** **names alone, one per block** — Sirius
+  XM's 18, Shenandoah's 17 — with the place a lead sentence gives them all ("… are
+  organized in the Commonwealth of Virginia"), or by **a place heading over a group of
+  names** (HCA's "ALABAMA" over 60 names, Movado's "Australia:"), none otherwise; the
+  names must be most of the document's text blocks, and a block is a name only when
+  every word is capitalised (or a small word a name may hold), it is not a heading, a
+  caption ("Company", "Incorporation/Organization", "As of December 31, 2025"), an
+  address, a date, the filer, or a name with its place set off after it
+  (`_names_only_list`, `_looks_like_a_name`). A list whose names END with their place —
+  DANA's "Ashwoods Innovations Limited United Kingdom", Kroger's "84.51 LLC [Ohio]" —
+  gives every name its place when most of them carry one (`_glued_place`); the trade
+  names under Kroger's "Also Doing Business As:" belong to the row above and are
+  dropped; a row number ("1. Green Acquisition, Inc.") is not part of the name. And **a
+  grid drawn without a `<table>`** — Ameriprise's "Subsidiary Name Incorp State" header
+  block, then "Ameriprise Certificate Company DE" per block; BNY Mellon's "… – State of
+  Incorporation: New York" behind its label (`_labelled_place_list`); a legal form is
+  never read as the place ("… GmbH & Co. KG" is a German partnership, not Kyrgyzstan).
+  The reasons the names-only reader was removed on 2026-10-08 are met since: the
+  declared type (item 81) keeps a combined filing's sibling list from reading as the
+  filer's own, and the own-row rule drops the filer's names. The population guard of
+  2026-11-09 re-parsed the 4,384 cached exhibits: 88 that read zero rows now read a
+  list (5,600 rows), 50 state "None", none that read a list before reads differently.
+  Still not read: one subsidiary per line with its place in words ("Bluebottle Limited,
+  a Hong Kong company"), a place set off after the name ("Sportradar AG, Switzerland"),
+  Unilever's Companies Act s.409 list (item 82d).
 - **No annual filing yet — the IPO's registration statement** (findings item 77,
   2026-11-08). The S-1 (F-1 for a foreign private issuer, Form 10 for a spin-off) carries the same Item
   601(b)(21) list as Exhibit 21(.1), and the first 10-K comes up to a year after
