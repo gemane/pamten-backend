@@ -41,7 +41,7 @@ not the user's word.
 Copy this skill's `kit/` to a fresh `~/.cache/rebuild-<YYYY-MM-DD>/` (a letter suffix for a
 second run that day), `chmod 700` it. The scripts find their folder themselves.
 - `rebuild.sh` — 0 golden copies, 1 drop/create/schema (refuses without `accounts.json`),
-  2 bulk import under the import lock, 3 `finish-import.sh`, 4 GLEIF history, 5 accounts
+  2 bulk import under the import lock (the test chain: GLEIF seeds → family → names → succession → names of its endpoints; UK PSC), 3 `finish-import.sh`, 4 GLEIF history, 5 accounts
   back, 6 replay, 7 finishing what the scrapes added (dedupe entities — with the scraper
   flags on, so its SEC/LEI bridge may read EDGAR as it does on the server; findings item 70 —
   the securities bridge `gleif-isin-bridge --apply` (CUSIP → ISIN → LEI, item 71), persons, geocode, close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks, the calls to each source and the bucket since step 1
