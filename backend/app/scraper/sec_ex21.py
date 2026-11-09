@@ -1930,31 +1930,60 @@ def _parse_first(candidates: list[dict], cik: str | None = None) -> tuple[list[d
 
 
 def fetch_subsidiary_history(cik: str, max_filings: int = HISTORY_MAX_FILINGS) -> list[dict]:
-    """The subsidiary lists of the company's annual filings, newest first.
+    """The subsidiary lists of the company's annual filings, newest first, then
+    the registration statement's (S-1 / F-1 / Form 10) filed before the oldest
+    of them — the list the company registered with, older than its first
+    annual report (findings item 79).
 
     [{"as_of", "filing_date", "form", "url", "names": {normalised names}}] —
     ``as_of`` is the fiscal year-end the list describes (the filing date when
-    EDGAR gives no report date); ``names`` is
-    None for a filing whose exhibit could not be read (an old plain-text one, a
-    missing exhibit). ``earliest_listing`` treats that as a gap, so a year we
-    cannot read never extends a subsidiary's history."""
+    EDGAR gives no report date, and for a registration statement, which
+    describes the group as registered); ``names`` is None for a filing whose
+    exhibit could not be read (an old plain-text one, a missing exhibit).
+    ``earliest_listing`` treats that as a gap, so a year we cannot read never
+    extends a subsidiary's history.
+
+    The registration statements come after the annual lists in the walk, so a
+    subsidiary the first 10-K names and the S-1 named too is dated by the S-1
+    (Tesla's S-1 of 2010-06, its first 10-K's year-end 2010-12 — on dev 24 of
+    the 59 Exhibit 21 filers registered after 2001 with such a list). Until
+    2026-11-09 the walk stopped at the first annual filing, and the registration
+    list served only a company with no annual filing yet (item 77). Only those
+    filed BEFORE the oldest annual filing read: a later S-1 (a follow-on
+    offering) is not older than the annual lists and would re-order the run.
+    Newest first, as the annual ones, at most ``REGISTRATION_MAX_FILINGS`` opened
+    (an amendment often re-files only the exhibits that changed: Tesla's five
+    S-1/As of June 2010 carry no list, the S-1/A of 2010-05-27 does). A
+    registration filing without a readable list is therefore NOT a gap — the
+    list it stands on is the earlier filing's — and is left out, where an
+    annual filing whose exhibit cannot be read is a year that says nothing and
+    ends the run."""
     from app.scraper.mapper import normalize_entity_name
     out: list[dict] = []
-    for form, accession, filed, period in annual_filings(cik, include_older=True)[:max_filings]:
-        as_of = _iso_date(period) if period else _iso_date(filed)
+
+    def read(form: str, accession: str, filed: str, period: str, as_of: str, gap_if_unreadable: bool) -> None:
         try:
             got = _parse_first(exhibit_candidates(cik, form, accession, filed, period), cik)
         except Exception as exc:  # noqa: BLE001 - one bad year is a gap, not a failure
-            log.warning("annual filing %s: exhibit unreadable: %s", accession, exc)
+            log.warning("filing %s: exhibit unreadable: %s", accession, exc)
             got = None
         if got:
             subs, meta = got
             names = {normalize_entity_name(sub["name"]) or sub["name"].lower() for sub in subs}
             out.append({"as_of": as_of, "filing_date": meta["filing_date"], "form": form,
                         "url": meta["url"], "names": names})
-        else:
+        elif gap_if_unreadable:
             out.append({"as_of": as_of, "filing_date": _iso_date(filed), "form": form,
                         "url": None, "names": None})
+
+    annual = annual_filings(cik, include_older=True)[:max_filings]
+    for form, accession, filed, period in annual:
+        read(form, accession, filed, period, _iso_date(period) if period else _iso_date(filed), True)
+    oldest_annual = min((filed for _f, _a, filed, _p in annual), default=None)
+    if oldest_annual:
+        older = [r for r in registration_filings(cik) if r[2] < oldest_annual]
+        for form, accession, filed, _period in older[:REGISTRATION_MAX_FILINGS]:
+            read(form, accession, filed, "", _iso_date(filed), False)
     return out
 
 

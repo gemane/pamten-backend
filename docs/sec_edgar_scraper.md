@@ -1814,8 +1814,9 @@ from readers removed again the same day, so 11 remain):
   the S-1 of …, no annual filing yet". The first annual filing replaces it: its
   exhibit URL opens the gate, and `mark_ex21_stale` dims what it no longer lists. A
   company that has filed a 10-K or 20-F is never read from a registration statement.
-  Not done: `sec-ex21-history` reads annual filings only, so a later 10-K's
-  "listed since" lower bound does not reach back to the S-1. Measured 2026-11-08 through this code
+  Since 2026-11-09 `sec-ex21-history` walks the registration statement too, after the
+  annual lists (findings item 79), so a later 10-K's "listed since" lower bound does
+  reach back to the S-1 — see *Dating subsidiaries*. Measured 2026-11-08 through this code
   over every S-1/F-1 filer of 2024–2026 (2,659 CIKs from `form.idx`): 1,777 have an
   annual filing and are not touched; of the 882 without, **301 lists** are read
   (2,412 rows, 13 places unmapped; 44 lists of one row, SOLERA's 307 the longest),
@@ -2038,6 +2039,15 @@ back from the newest.
 - **The run stops at the first gap** — a year the name is missing, or an exhibit
   that cannot be read (early plain-text ones). Filers may omit insignificant
   subsidiaries, so a gap proves nothing; stopping there keeps the bound true.
+- **The walk reaches the registration statement** (findings item 79, 2026-11-09): after
+  the annual lists, the S-1 / F-1 / Form 10 filed BEFORE the oldest annual filing read —
+  newest first, at most `REGISTRATION_MAX_FILINGS` — each `as_of` its filing date (the
+  list describes the group as registered). Tesla's S-1 of 2010-06 is older than its
+  first 10-K's year-end; on dev 24 of the 59 Exhibit 21 filers registered after 2001
+  with such a list (Domino's 2004, the 2021 IPOs, News Corp's Form 10 of 2013), so
+  their subsidiaries' lower bounds reach up to a year further back. A registration
+  statement filed after an annual report (a follow-on offering) is not walked; a
+  1990s plain-text S-1 is a gap, like an unreadable 10-K.
 - **"First listed 2025" where the history can say so:** when the list for the
   year before was read, does not name the company, and no older list does
   either, `since_basis = "newly_listed"` instead. The readers show it as "first
