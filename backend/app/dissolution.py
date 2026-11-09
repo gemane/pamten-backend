@@ -14,7 +14,10 @@ incorporation but never after its end.
 **Nothing of a dissolved company stays open** — the mirror of "a seat ends
 no later than its holder's death" (app.roles): on the dissolution date its
 open holdings (what it owns), the holdings in it (its shares cease to exist)
-and its seats close with `until_reason = dissolution`, except a founder's
+and its seats close with `until_reason = dissolution` — `merged` or `split`
+when the source said how it ended (`Entity.end_kind`, GLEIF's end event type,
+findings item 85c: a company merged into its successor is told apart from one
+wound up) —, except a founder's
 seat (a founder is not a seat that ends) and except an edge the source dates
 after the dissolution (its error, left open and reported). The source's
 claim is NOT touched — it stated no end, and the claim is what the source
@@ -32,6 +35,12 @@ from app.roles import WIKIDATA_ITEM, is_founder_role
 log = logging.getLogger(__name__)
 
 DISSOLUTION = "dissolution"     # OWNS / HAS_ROLE until_reason: the company ceased to exist
+MERGED = "merged"               # … because it merged into another (its successor, SUCCEEDED_BY)
+SPLIT = "split"                 # … because it was broken up into others
+#: `Entity.end_kind` (how the source says the company ended — GLEIF's end
+#: event type, findings item 85c) → the reason its edges end with. A company
+#: whose end has no stated kind (Wikidata's P576, Companies House) was dissolved.
+END_REASON = {"merged": MERGED, "split": SPLIT}
 
 #: (edge type, the side the dissolved company is on): its holdings, the
 #: holdings in it, its seats — everything open that it is a party to
@@ -40,17 +49,19 @@ _OPEN_EDGES = (("OWNS", "@out"), ("OWNS", "@in"), ("HAS_ROLE", "@in"))
 
 def end_at_dissolution(entity_id: str, source_url: str | None = None) -> dict:
     """Close every open edge of a dissolved company on its `dissolved_on`
-    (see the module docstring). Nothing to do for a company without one.
-    Best-effort, as the death rule is: a scrape that succeeded must not be
-    reported as failed because this rule could not be applied; the heal
-    catches up."""
+    (see the module docstring) — with `until_reason` `merged` / `split` when
+    the company's `end_kind` says so, `dissolution` otherwise. Nothing to do
+    for a company without an end. Best-effort, as the death rule is: a scrape
+    that succeeded must not be reported as failed because this rule could not
+    be applied; the heal catches up."""
     from app.db.arcadedb import run_sql
     out = {"closed": 0, "founders_kept": 0, "after_dissolution": 0}
     try:
-        rows = run_sql("SELECT dissolved_on, wikidata_id FROM Entity WHERE id = :id", {"id": entity_id})
+        rows = run_sql("SELECT dissolved_on, end_kind, wikidata_id FROM Entity WHERE id = :id", {"id": entity_id})
         day = (rows or [{}])[0].get("dissolved_on") if rows else None
         if not day:
             return out
+        why = END_REASON.get(rows[0].get("end_kind") or "", DISSOLUTION)
         cite = source_url or (WIKIDATA_ITEM.format(qid=rows[0]["wikidata_id"]) if rows[0].get("wikidata_id") else None)
         for edge, side in _OPEN_EDGES:
             open_edges = run_sql(
@@ -64,7 +75,7 @@ def end_at_dissolution(entity_id: str, source_url: str | None = None) -> dict:
                     out["after_dissolution"] += 1
                     continue
                 sets = "until = :d, until_reason = :why"
-                params = {"d": day, "why": DISSOLUTION}
+                params = {"d": day, "why": why}
                 if cite:
                     sets += ", until_source_url = :u"
                     params["u"] = cite

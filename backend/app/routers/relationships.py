@@ -800,7 +800,7 @@ def _history_pass(session, label: str, entity_id: str, limit: int) -> tuple[list
     # a company rarely has more than a handful.
     rec = session.run(
         f"MATCH (e:{label} {{id: $id}}) RETURN e.name AS name, e.former_names AS former_names, "
-        "e.gleif_former_names AS gleif_former_names, e.dissolved_on AS dissolved_on",
+        "e.gleif_former_names AS gleif_former_names, e.dissolved_on AS dissolved_on, e.end_kind AS end_kind",
         id=entity_id,
     ).single()
     if rec:
@@ -808,10 +808,20 @@ def _history_pass(session, label: str, entity_id: str, limit: int) -> tuple[list
                       for ev in rename_events(rec.get("name"), of_node(
                           {p: rec.get(p) for p in ("former_names", "gleif_former_names")})))
         # The company's own end (app.dissolution): the last event of its
-        # timeline, dated as the source states it
+        # timeline, dated as the source states it. How it ended is the
+        # event's kind (`end_kind`, findings item 85c): `merged` / `split`
+        # name the successors GLEIF links (SUCCEEDED_BY) — "Merged into X" —
+        # and a company whose end has no stated kind was `dissolved`.
         if rec.get("dissolved_on"):
-            events.append({"kind": "dissolved", "since": str(rec["dissolved_on"]), "until": None,
-                           "active": False, "party": None})
+            kind = rec.get("end_kind") if rec.get("end_kind") in ("merged", "split") else "dissolved"
+            end = {"kind": kind, "since": str(rec["dissolved_on"]), "until": None, "active": False, "party": None}
+            if kind != "dissolved":
+                end["successors"] = [
+                    {"id": s.get("id"), "name": s.get("name"), "type": s.get("type")}
+                    for s in (dict(r["s"]) for r in session.run(
+                        f"MATCH (e:{label} {{id: $id}})-[:SUCCEEDED_BY]->(s:Entity) RETURN s ORDER BY s.name",
+                        id=entity_id))]
+            events.append(end)
     return events, truncated, rec is not None
 
 

@@ -595,7 +595,7 @@ REPORTED_BY_PARENT = "reported_by_parent"
 #: spells closed by a rule rather than by a filing: a re-read of a filing from
 #: inside one updates it instead of drawing a new open edge beside it, and the
 #: rule closes it again after the scrape (app.dissolution, the parent rule)
-_RULE_CLOSED = ("dissolution", REPORTED_BY_PARENT)
+_RULE_CLOSED = ("dissolution", "merged", "split", REPORTED_BY_PARENT)
 
 
 def _statement_day(edge: dict) -> str:

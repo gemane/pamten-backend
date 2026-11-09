@@ -266,22 +266,50 @@ def _incorporated_on(entity: dict) -> str | None:
 #: another, absorbed, or broken up. LIQUIDATION, BANKRUPTCY, INSOLVENCY and
 #: VOLUNTARY_ARRANGEMENT are states of a company that still exists (item 85d).
 END_EVENT_TYPES = frozenset({"DISSOLUTION", "MERGERS_AND_ACQUISITIONS", "ABSORPTION", "BREAKUP"})
+#: How the entity ended (`Entity.end_kind`, app.dissolution): the readers word
+#: a merger ("Merged into X") apart from a winding-up (findings item 85c)
+END_KIND_MERGED, END_KIND_SPLIT, END_KIND_DISSOLVED = "merged", "split", "dissolved"
 
 
-def _completed_event_days(entity: dict, kinds: frozenset[str] | set[str]) -> list[str]:
-    """The effective days of the record's COMPLETED ``LegalEntityEvents`` of
-    the given types, as the golden copy states them — the local day:
-    BlackRock's "2024-10-01T00:00:00+02:00", which the API gives as
-    2024-09-30T22:00Z (`register_pointer._api_day` maps it back). An event
-    without a status counts as completed; one IN_PROGRESS or
-    WITHDRAWN_CANCELLED did not happen (yet)."""
+def _completed_events(entity: dict, kinds: frozenset[str] | set[str]) -> list[tuple[str, str]]:
+    """(day, type) of the record's COMPLETED ``LegalEntityEvents`` of the
+    given types, as the golden copy states them — the local day: BlackRock's
+    "2024-10-01T00:00:00+02:00", which the API gives as 2024-09-30T22:00Z
+    (`register_pointer._api_day` maps it back). An event without a status
+    counts as completed; one IN_PROGRESS or WITHDRAWN_CANCELLED did not happen
+    (yet). An undated event is left out."""
     raw = (entity.get("LegalEntityEvents") or {}).get("LegalEntityEvent") or []
     if isinstance(raw, dict):
         raw = [raw]
-    days = [(_v(ev.get("LegalEntityEventEffectiveDate")) or "")[:10] for ev in raw
-            if isinstance(ev, dict) and _v(ev.get("LegalEntityEventType")) in kinds
-            and (ev.get("@event_status") or "COMPLETED") == "COMPLETED"]
-    return [d for d in days if re.match(r"^\d{4}-\d{2}-\d{2}$", d)]
+    out = [((_v(ev.get("LegalEntityEventEffectiveDate")) or "")[:10], _v(ev.get("LegalEntityEventType")) or "")
+           for ev in raw if isinstance(ev, dict) and _v(ev.get("LegalEntityEventType")) in kinds
+           and (ev.get("@event_status") or "COMPLETED") == "COMPLETED"]
+    return [(d, t) for d, t in out if re.match(r"^\d{4}-\d{2}-\d{2}$", d)]
+
+
+def _completed_event_days(entity: dict, kinds: frozenset[str] | set[str]) -> list[str]:
+    return [d for d, _t in _completed_events(entity, kinds)]
+
+
+def _end_of(entity: dict) -> tuple[str | None, str | None]:
+    """(day, kind) of the entity's end — `_dissolved_on` for the day; the kind
+    is how it ended (item 85c): `merged` when a COMPLETED MERGERS_AND_ACQUISITIONS
+    or ABSORPTION event is among the record's end events — the DISSOLUTION
+    that follows a merger (619 records carry both) is the absorbed shell's
+    strike-off, the story is the merger and the successor GLEIF names —,
+    `split` for a BREAKUP, else `dissolved`. None when the record states no
+    end event (a date from `EntityExpirationDate` alone says nothing of how)."""
+    d = _v(entity.get("EntityExpirationDate"))
+    stated = d[:10] if d and len(d) >= 10 and d[4] == "-" and d[7] == "-" else None
+    if _v(entity.get("EntityStatus")) != "INACTIVE":
+        return stated, None
+    events = _completed_events(entity, END_EVENT_TYPES)
+    if not events:
+        return stated, None
+    types = {t for _d, t in events}
+    kind = (END_KIND_MERGED if types & {"MERGERS_AND_ACQUISITIONS", "ABSORPTION"}
+            else END_KIND_SPLIT if "BREAKUP" in types else END_KIND_DISSOLVED)
+    return stated or max(d for d, _t in events), kind
 
 
 def _dissolved_on(entity: dict) -> str | None:
@@ -299,13 +327,7 @@ def _dissolved_on(entity: dict) -> str | None:
     later merger ends it (Robert Bosch Finance Nederland B.V.: 2016, then
     2025). Until 2026-11-09 only the empty field was read, and dev's 37 ended
     GLEIF entities had no date (findings item 85a)."""
-    d = _v(entity.get("EntityExpirationDate"))
-    if d and len(d) >= 10 and d[4] == "-" and d[7] == "-":
-        return d[:10]
-    if _v(entity.get("EntityStatus")) != "INACTIVE":
-        return None
-    days = _completed_event_days(entity, END_EVENT_TYPES)
-    return max(days) if days else None
+    return _end_of(entity)[0]
 
 
 PREVIOUS_LEGAL_NAME = "PREVIOUS_LEGAL_NAME"
@@ -454,9 +476,11 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
     last_update = _last_update(rec)
     if last_update:
         props["gleif_last_update"] = last_update
-    dissolved = _dissolved_on(entity)
+    dissolved, how = _end_of(entity)
     if dissolved:
         props["dissolved_on"] = dissolved      # only when stated: a re-import never blanks it
+        if how:
+            props["end_kind"] = how            # merged / split / dissolved (item 85c)
     # (a record on an EDGAR filer's node: `hold_end_of_live_filer` decides at the
     # write whether this end and `active` may land there — findings item 85a)
     # Both places in parts, for a structured geocode (app.addresses): the real
@@ -582,10 +606,12 @@ def hold_end_of_live_filer(node_id: str, props: dict, filers: dict[str, str] | N
     if facts is None:
         why = f"EDGAR could not say whether the filer (CIK {cik}) still files"
         props.pop("dissolved_on", None)
+        props.pop("end_kind", None)
         props.pop("active", None)          # neither ceased nor alive: what stands, stands
     elif filed_after(facts, day):
         why = f"the filer (CIK {cik}) filed on {facts.last_filed}, after the record's last update {day}"
         props.pop("dissolved_on", None)
+        props.pop("end_kind", None)
         props["active"] = True
     else:
         return None
