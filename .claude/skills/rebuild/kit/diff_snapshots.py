@@ -130,6 +130,27 @@ def _print_edges(P: dict, N: dict) -> None:
     print("  13F sample churn by issuer:", sorted(churn_by_issuer.items(), key=str))
 
 
+def _print_succession(P: dict, N: dict) -> None:
+    """SUCCEEDED_BY edges gone and new, by (predecessor, successor) with their
+    names (findings item 89). A snapshot from before the list prints a note:
+    its count alone cannot say which links moved."""
+    if "succeeded_by" not in P or "succeeded_by" not in N:
+        print("\n== succession: no edge list in one snapshot (before item 89) — counts only")
+        return
+    a = collections.Counter((r[0], r[1]) for r in P["succeeded_by"])
+    b = collections.Counter((r[0], r[1]) for r in N["succeeded_by"])
+    # by name, not by `names()`: a succession end is a hard id, which that helper keeps as it is
+    m = {r[0]: r[1] for r in N["entities"]}; mp = {r[0]: r[1] for r in P["entities"]}
+    print(f"\n== succession (SUCCEEDED_BY): {sum(a.values())} -> {sum(b.values())}; gone {sum((a - b).values())}, new {sum((b - a).values())}")
+    for k, n in sorted((a - b).items(), key=str):
+        print("  -", k, f"({mp.get(k[0], '?')} -> {mp.get(k[1], '?')})", n)
+    for k, n in sorted((b - a).items(), key=str):
+        print("  +", k, f"({m.get(k[0], '?')} -> {m.get(k[1], '?')})", n)
+    loops = [k for k in b if k[0] == k[1]]
+    if loops:
+        print("  self-loops (a merge folded both ends, item 88):", loops)
+
+
 def _print_source_calls(P: dict, N: dict) -> None:
     """Calls per source and kind, previous vs new — not a finding by itself (a
     warm or cold bucket moves it), but a source asked far more often than last
@@ -153,6 +174,7 @@ def main() -> None:
         a, b = set(map(str, P[k])), set(map(str, N[k]))
         print(f"\n{k}: -{sorted(a - b)} +{sorted(b - a)}")
     _print_edges(P, N)
+    _print_succession(P, N)
 
 
 if __name__ == "__main__":

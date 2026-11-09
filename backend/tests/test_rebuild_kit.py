@@ -41,6 +41,8 @@ def _fake_sql(sql):
 
 
 GROUP = "33333333-3333-3333-3333-333333333333"
+OLD, NEW = "lei:529900NBET57WDRXAR22", "lei:529900G1S6D7T5ZIX198"     # Random House LLC -> Penguin Random House LLC
+lei_ids = _load("lei_ids")
 
 
 def _fake_cypher(cy):
@@ -48,6 +50,8 @@ def _fake_cypher(cy):
         return [{"a": DIXON, "b": BRK, "s": "sec-edgar", "u": None, "f": "13F"},
                 {"a": BLK, "b": BRK, "s": "sec-edgar", "u": "2026-03-13", "f": "13G/A"},
                 {"a": GROUP, "b": BRK, "s": "sec-edgar", "u": None, "f": "13D"}]
+    if "[r:SUCCEEDED_BY]" in cy:
+        return [{"a": OLD, "b": NEW, "s": "gleif"}]
     if "VotingGroup" in cy:
         # collect() gives the members in storage order, with a None for a party
         # whose node has neither name nor full_name
@@ -186,6 +190,37 @@ class TestDiffVotingGroups:
 @pytest.mark.parametrize("value, expected", [("13F", True), ("13F-HR", True), ("13G/A", False), (None, False)])
 def test_is_13f(value, expected):
     assert diff.is_13f(value) is expected
+
+
+class TestSuccession:
+    """Findings item 89: the SUCCEEDED_BY edges as a list in the snapshot, a
+    diff section by name, and the LEI list step 7 feeds the succession pass."""
+
+    def test_the_snapshot_dumps_every_succession_edge(self):
+        snap = snapshot.take(_fake_sql, _fake_cypher)
+        assert snap["succeeded_by"] == [[OLD, NEW, "gleif"]]
+
+    def test_the_diff_names_the_links_gone_and_new(self, capsys):
+        names_ = [[OLD, "Random House LLC", "gleif", None, "529900NBET57WDRXAR22", None],
+                  [NEW, "Penguin Random House LLC", "gleif", None, "529900G1S6D7T5ZIX198", None]]
+        before = {"entities": names_, "persons": [], "succeeded_by": []}
+        after = {"entities": names_, "persons": [], "succeeded_by": [[OLD, NEW, "gleif"], [NEW, NEW, "gleif"]]}
+        diff._print_succession(before, after)
+        out = capsys.readouterr().out
+        assert "succession (SUCCEEDED_BY): 0 -> 2; gone 0, new 2" in out
+        assert f"+ ('{OLD}', '{NEW}') (Random House LLC -> Penguin Random House LLC) 1" in out
+        assert "self-loops (a merge folded both ends, item 88)" in out        # the item-88 shape is called out
+
+    def test_a_snapshot_from_before_the_list_prints_a_note_and_no_error(self, capsys):
+        diff._print_succession({"entities": [], "persons": []}, {"entities": [], "persons": [], "succeeded_by": []})
+        assert "no edge list in one snapshot (before item 89)" in capsys.readouterr().out
+
+    def test_the_lei_list_is_every_lei_node_bare_and_sorted(self):
+        def q(sql):
+            assert "lei:%" in sql
+            return [{"id": NEW}, {"id": OLD}, {"id": "lei:short"}]
+        assert lei_ids.ids(q) == ["529900G1S6D7T5ZIX198", "529900NBET57WDRXAR22"]
+        assert lei_ids.ids(lambda sql: None) == []
 
 
 class TestSourceCalls:
