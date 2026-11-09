@@ -176,6 +176,31 @@ def test_the_end_of_a_record_on_a_filers_node_waits_for_edgar(it_db, tmp_path):
     assert rows[f"lei:{viacom}"]["dissolved_on"] == "2019-12-04" and rows[f"lei:{viacom}"]["active"] is False
 
 
+def test_the_registers_proceedings_land_as_dated_states_and_a_reimport_replaces_them(it_db, tmp_path):
+    """Findings item 85(d): a liquidation in progress is a `gleif_events` entry
+    and a timeline row ("in liquidation since …"), the company stays alive and
+    undated; GLEIF's next word replaces the list."""
+    from app.routers.relationships import ownership_history_of
+    lei = "2138003BFF7ZPQZA6B02"
+    counts = _load(tmp_path, "states", [
+        _ended(lei, "DIAMOND TRANSMISSION CORPORATION LIMITED", "ACTIVE",
+               {**_event("LIQUIDATION", "2025-04-28", "IN_PROGRESS"), "LegalEntityEventRecordedDate": _w("2025-04-28T09:00:00Z")})])
+    assert counts["entities"] == 1 and counts["inactive"] == 0
+    [row] = it_db.run_sql("SELECT gleif_events, dissolved_on, active FROM Entity WHERE id = :id", {"id": f"lei:{lei}"})
+    assert list(row["gleif_events"]) == ["LIQUIDATION|IN_PROGRESS|2025-04-28|2025-04-28"]
+    assert row["dissolved_on"] is None and row["active"] is True
+    events, _ = ownership_history_of(f"lei:{lei}")
+    assert [e for e in events if e["kind"] == "legal_event"] == [
+        {"kind": "legal_event", "event": "liquidation", "status": "in_progress", "since": "2025-04-28",
+         "dated_by": "effective", "until": None, "active": True, "party": None}]
+    # the register's next word: the liquidation was called off — the list is replaced, not appended to
+    _load(tmp_path, "states2", [
+        _ended(lei, "DIAMOND TRANSMISSION CORPORATION LIMITED", "ACTIVE",
+               _event("LIQUIDATION", "2025-04-28", "WITHDRAWN_CANCELLED"))])
+    [row] = it_db.run_sql("SELECT gleif_events FROM Entity WHERE id = :id", {"id": f"lei:{lei}"})
+    assert list(row["gleif_events"]) == ["LIQUIDATION|WITHDRAWN_CANCELLED|2025-04-28|"]
+
+
 def test_previous_and_trading_names_land_apart_and_a_reimport_replaces_them(it_db, tmp_path):
     """Findings item 16a: GLEIF's previous legal names are dated former names,
     its trading names searchable non-legal names; a re-import of a record that

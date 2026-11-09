@@ -418,7 +418,11 @@ parser. Anything that does not map is either a new property (document it) or noi
       Two traps in the events: the survivor of a merger carries the same COMPLETED event as the
       company that ceased (3,922 ACTIVE records), so an end event dates an end only on an
       INACTIVE record; and a company can be acquired and live on, so the latest end event is
-      the end. A state (LIQUIDATION, BANKRUPTCY) is not an end. Then the sibling path of item 84:
+      the end. A state (LIQUIDATION, BANKRUPTCY) is not an end — but it is a dated fact worth
+      keeping on its own (`gleif_events`, item 85d): without it a company in liquidation reads like
+      any other, and 17,297 ended GLEIF records that hold only such events say nothing at all.
+      Keep the register's recorded day beside the event's own: a tenth of the proceedings in
+      progress have no effective day. Then the sibling path of item 84:
       the end a register states about a record that sits on another register's live filer
       (a delta retiring an LEI joined to a CIK) must pass the same veto as the join
       (`legal_identity.filed_after`), else the dissolution rule closes a living company's edges.

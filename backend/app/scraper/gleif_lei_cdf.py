@@ -25,7 +25,7 @@ import re
 import zipfile
 from typing import IO
 
-from app import addresses
+from app import addresses, legal_events
 from app.scraper.bulk_import import (
     _BatchWriter, _drop_secondary_indexes, _legal_form_type, _ProgressBar,
     _ProgressStream, _rebuild_indexes,
@@ -481,6 +481,10 @@ def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[st
         props["dissolved_on"] = dissolved      # only when stated: a re-import never blanks it
         if how:
             props["end_kind"] = how            # merged / split / dissolved (item 85c)
+    # the register's dated states of a living company — liquidation, bankruptcy,
+    # insolvency, arrangement (app.legal_events, item 85d); always written, so
+    # the list is what GLEIF states today
+    props["gleif_events"] = legal_events.from_record(entity)
     # (a record on an EDGAR filer's node: `hold_end_of_live_filer` decides at the
     # write whether this end and `active` may land there — findings item 85a)
     # Both places in parts, for a structured geocode (app.addresses): the real

@@ -226,6 +226,7 @@ _TYPED_PROPERTIES: list[tuple[str, str, str]] = [
     ("Entity", "other_names",          "LIST"),   # GLEIF's other current names, folded into search_text
     ("Entity", "gleif_former_names",   "LIST"),   # GLEIF's previous legal names, app.former_names entries
     ("Entity", "gleif_trading_names",  "LIST"),   # GLEIF's trading names: searchable, never a legal name
+    ("Entity", "gleif_events",         "LIST"),   # GLEIF's liquidation / bankruptcy / insolvency / arrangement events, app.legal_events entries
     ("Entity", "uk_sic_codes",         "LIST"),
     ("Entity", "cusips",               "LIST"),   # one issuer, several 13F CUSIPs
     ("Entity", "former_register_ids",  "LIST"),   # register pairs it used to carry

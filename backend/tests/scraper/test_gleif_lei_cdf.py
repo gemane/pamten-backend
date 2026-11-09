@@ -310,6 +310,26 @@ class TestHowTheEntityEnded:
         assert "end_kind" not in props and "dissolved_on" not in props
 
 
+class TestTheStatesOfALivingCompany:
+    """Findings item 85(d): LIQUIDATION / BANKRUPTCY / INSOLVENCY /
+    VOLUNTARY_ARRANGEMENT events land as `gleif_events` entries
+    (app.legal_events) — states of a company that exists, beside the end."""
+
+    def test_diamond_transmission_in_liquidation_and_a_record_without_events(self):
+        rec = _ended("2138003BFF7ZPQZA6B02", "DIAMOND TRANSMISSION CORPORATION LIMITED", "ACTIVE",
+                     {**_event("LIQUIDATION", "2025-04-28", "IN_PROGRESS"), "LegalEntityEventRecordedDate": _w("2025-04-28T09:00:00Z")})
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["gleif_events"] == ["LIQUIDATION|IN_PROGRESS|2025-04-28|2025-04-28"]
+        assert "dissolved_on" not in props and props["active"] is True        # a state, not an end
+        assert _entity_props(_rec("L1", "Plain Co"), "gleif", 92)[1]["gleif_events"] == []   # always written
+
+    def test_an_ended_company_keeps_its_proceedings_beside_its_end(self):
+        rec = _ended("L2", "Wound Up Ltd", "INACTIVE", _event("LIQUIDATION", "2019-01-01"), _event("DISSOLUTION", "2020-06-30"))
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["dissolved_on"] == "2020-06-30" and props["end_kind"] == "dissolved"
+        assert props["gleif_events"] == ["LIQUIDATION|COMPLETED|2019-01-01|"]
+
+
 class TestTheEndOnAFilersNode:
     """`hold_end_of_live_filer` (findings items 84 → 85a): an end GLEIF states
     about a record that sits on an EDGAR filer's node is written only when the
