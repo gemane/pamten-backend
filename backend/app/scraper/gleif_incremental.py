@@ -39,7 +39,7 @@ from app.db.arcadedb import run_command, run_sql
 from app.claims import KIND_OWNS, record_claim
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
 from app.scraper.gleif_lei_cdf import (  # noqa: F401 — the status readers are re-exported
-    _entity_props, _entity_status, _registration_status)
+    _entity_props, _entity_status, _registration_status, hold_end_of_live_filer, joined_filers)
 from app.scraper.gleif_rr import (
     _CONSOLIDATION, NOT_A_STATEMENT, UNMAINTAINED_STATUSES, _node_lei, _record_date,
     _relationship_dates, _rr_status, _stake, _validation)
@@ -494,9 +494,12 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
     without it a curated subset does not get refreshed — it gets buried.
     """
     raw, total = _open_json(filepath)
-    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "succession": 0,
+    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "ends_held": 0, "succession": 0,
               "not_here": 0, "errors": 0}
     known = existing_lei_ids() if only_existing else None
+    # the GLEIF nodes that are EDGAR filers too: an end a delta states about one
+    # of them is held back while the filer keeps filing (findings item 85a)
+    filers = joined_filers()
     batch = _BatchWriter()
     succession: list[tuple[str, str]] = []
     bar = _ProgressBar("LEI-CDF delta")
@@ -512,9 +515,11 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
                     continue          # a company this database does not carry
                 if built:
                     node_id, props = built
+                    if hold_end_of_live_filer(node_id, props, filers):
+                        counts["ends_held"] += 1
                     # `active` + `gleif_registration_status` come with the props
                     # now (gleif_lei_cdf._entity_props stamps them on both paths)
-                    if not props["active"]:
+                    if props.get("active") is False:
                         counts["marked_inactive"] += 1
                     # A registration MOVE is history, not a correction: keep the
                     # outgoing pair so a source that knew the company under its

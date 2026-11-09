@@ -152,7 +152,7 @@ def write_from_gleif(lei: str, candidates: list[str] | None = None, by_name: boo
     ``by_name=False`` weighs only them."""
     from app.merged_ids import canonical_id
     from app.scraper.bulk_import import _BatchWriter
-    from app.scraper.gleif_lei_cdf import _entity_props
+    from app.scraper.gleif_lei_cdf import _entity_props, hold_end_of_live_filer
     from app.scraper.runner import BODS_GLEIF_CREDIBILITY, GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, _ensure_source
 
     survivor = canonical_id(f"lei:{lei}")
@@ -169,6 +169,9 @@ def write_from_gleif(lei: str, candidates: list[str] | None = None, by_name: boo
     node_id, props = built
     if joined := _join_filer(lei, props, candidates or [], by_name):
         return joined
+    # the node may be a filer's already (joined on an earlier read): an end
+    # GLEIF now states is not written over a company that still files (item 85a)
+    hold_end_of_live_filer(node_id, props)
     batch = _BatchWriter()
     batch.entity(node_id, props)
     batch.flush()
