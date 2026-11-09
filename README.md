@@ -324,7 +324,9 @@ them in seconds/minutes.
 It is *retirement-aware* — a relationship that goes non-ACTIVE has its `OWNS` edge
 **closed** (`until` set to the relationship's end date), and a dissolved LEI is
 **marked** (`active=false`) and **dated** (`dissolved_on` from the record's COMPLETED
-dissolution / merger / absorption / breakup event, the full load and the pointer alike —
+dissolution / merger / absorption / breakup event, with how it ended in `end_kind` —
+`merged` / `split` / `dissolved`, the word its ended holdings and seats and the timeline use —
+the full load and the pointer alike —
 `heal-ends-at-dissolution` then closes what it held; held back on a node that is an EDGAR
 filer's while the filer files on, see *GLEIF sourcing* in
 [`docs/data-model.md`](docs/data-model.md)), never deleted (GLEIF never deletes; merges flow through

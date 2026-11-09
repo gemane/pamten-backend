@@ -422,7 +422,10 @@ parser. Anything that does not map is either a new property (document it) or noi
       the end a register states about a record that sits on another register's live filer
       (a delta retiring an LEI joined to a CIK) must pass the same veto as the join
       (`legal_identity.filed_after`), else the dissolution rule closes a living company's edges.
-      The rest of this item: a dissolved
+      And an end has a KIND the reader should keep: GLEIF's event type says whether the company
+      was wound up or merged into its successor (`end_kind`, item 85c) — "Merged into X" and
+      "Dissolved" are different facts to a reader, and `until_reason` on what ended with it
+      follows (`merged` / `split` / `dissolution`). The rest of this item: a dissolved
       company read as live, kept open holdings and seats, and time travel hid it before
       its incorporation but never after its end. Write the date to `dissolved_on` (the
       source's precision, fill-only), `active = false` beside it, a register's own

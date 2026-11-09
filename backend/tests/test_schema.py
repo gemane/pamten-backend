@@ -392,7 +392,8 @@ class TestConstraints:
         assert rules[("Entity", "country", "REGEXP")] == "^[A-Z]{2}$"
         assert rules[("OWNS", "stake_percent", "MIN")] == "0" and rules[("OWNS", "stake_percent", "MAX")] == "100"
         assert rules[("OWNS", "stale", "DEFAULT")] == "false"
-        assert rules[("HAS_ROLE", "until_reason", "REGEXP")] == "^(death|dissolution)$"
+        assert rules[("HAS_ROLE", "until_reason", "REGEXP")] == "^(death|dissolution|merged|split)$"
+        assert rules[("Entity", "end_kind", "REGEXP")] == "^(dissolved|merged|split)$"
         # a 13D filing group is its own vertex type (2026-10-26): out of the
         # entity vocabulary, its own `type` pinned to the one node kind
         assert "voting_group" not in rules[("Entity", "type", "REGEXP")]

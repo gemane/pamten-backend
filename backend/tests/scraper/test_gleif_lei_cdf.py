@@ -274,6 +274,42 @@ class TestTheEndFromTheRecordsEvents:
         assert _name_change_day(rec["Entity"]) == "2024-10-01"
 
 
+class TestHowTheEntityEnded:
+    """Findings item 85(c): the end event's type says HOW — `end_kind`
+    `merged` (MERGERS_AND_ACQUISITIONS, ABSORPTION), `split` (BREAKUP),
+    `dissolved` (DISSOLUTION) — so the readers tell a merger from a winding-up."""
+
+    def test_fendi_dissolved_samsung_merged(self):
+        _, props = _entity_props(_ended("5299001K9O0QHEOJ5035", "FENDI S.A.", "INACTIVE",
+                                        _event("DISSOLUTION", "2020-10-27")), "gleif", 92)
+        assert props["end_kind"] == "dissolved"
+        _, props = _entity_props(_ended("549300PGVX1QSTAONM08", "SAMSUNG C&T CORPORATION", "INACTIVE",
+                                        _event("MERGERS_AND_ACQUISITIONS", "2015-09-01")), "gleif", 92)
+        assert props["end_kind"] == "merged"
+
+    def test_absorbed_is_merged_and_a_breakup_is_split(self):
+        _, props = _entity_props(_ended("L1", "Gone", "INACTIVE", _event("ABSORPTION", "2024-03-30")), "gleif", 92)
+        assert props["end_kind"] == "merged"
+        _, props = _entity_props(_ended("L2", "Gone", "INACTIVE", _event("BREAKUP", "2024-03-30")), "gleif", 92)
+        assert props["end_kind"] == "split"
+
+    def test_the_dissolution_after_a_merger_is_the_shells_strike_off_the_story_is_the_merger(self):
+        # 619 records carry both: the day is the latest event, the kind the merger
+        _, props = _entity_props(_ended("L3", "Gone", "INACTIVE", _event("MERGERS_AND_ACQUISITIONS", "2015-09-01"),
+                                        _event("DISSOLUTION", "2015-09-02")), "gleif", 92)
+        assert props["dissolved_on"] == "2015-09-02" and props["end_kind"] == "merged"
+
+    def test_a_date_without_an_event_says_nothing_of_how(self):
+        rec = _rec("L4", "Gone Ltd")
+        rec["Entity"]["EntityStatus"] = _w("INACTIVE")
+        rec["Entity"]["EntityExpirationDate"] = _w("2021-06-30")
+        _, props = _entity_props(rec, "gleif", 92)
+        assert props["dissolved_on"] == "2021-06-30" and "end_kind" not in props
+        # a living company has no end and no kind, whatever events it carries
+        _, props = _entity_props(_ended("L5", "Here", "ACTIVE", _event("MERGERS_AND_ACQUISITIONS", "2014-10-12")), "gleif", 92)
+        assert "end_kind" not in props and "dissolved_on" not in props
+
+
 class TestTheEndOnAFilersNode:
     """`hold_end_of_live_filer` (findings items 84 → 85a): an end GLEIF states
     about a record that sits on an EDGAR filer's node is written only when the
@@ -282,7 +318,7 @@ class TestTheEndOnAFilersNode:
 
     @staticmethod
     def _props(**over):
-        return {"name": "ONEOK, INC.", "active": False, "dissolved_on": "2026-08-13",
+        return {"name": "ONEOK, INC.", "active": False, "dissolved_on": "2026-08-13", "end_kind": "dissolved",
                 "gleif_last_update": "2026-09-29", **over}
 
     @staticmethod
@@ -319,6 +355,7 @@ class TestTheEndOnAFilersNode:
         why = hold_end_of_live_filer(self.OKE, props, {self.OKE: "0001039684"})
         assert why == "the filer (CIK 0001039684) filed on 2026-10-28, after the record's last update 2026-09-29"
         assert "dissolved_on" not in props and props["active"] is True and asked == ["0001039684"]
+        assert "end_kind" not in props                                     # the held end takes its kind with it
 
     def test_a_filer_that_ended_with_the_entity_gets_its_end(self, monkeypatch):
         # Viacom Inc.: the Form 15 of 2019-12-16 lies after the merger (2019-12-04)

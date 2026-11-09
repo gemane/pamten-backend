@@ -101,6 +101,39 @@ def test_the_timeline_ends_with_the_dissolution(it_db):
     assert not [e for e in events if e["kind"] == "dissolved"]
 
 
+def test_a_merged_company_ends_as_merged_and_its_timeline_names_the_successor(it_db):
+    """Findings item 85(c): Samsung C&T merged into the new Samsung C&T on
+    2015-09-01 — its edges end `merged`, not `dissolution`, and the timeline's
+    end event is `merged` with the successor GLEIF links."""
+    from app.dissolution import end_at_dissolution
+    from app.routers.relationships import ownership_history_of
+    it_db.run_command("CREATE (:Entity {id:'old', name:'Old Samsung C&T', name_normalized:'old samsung c&t', "
+                      "dissolved_on:'2015-09-01', end_kind:'merged', active:false})")
+    it_db.run_command("CREATE (:Entity {id:'new', name:'SAMSUNG C&T CORPORATION', name_normalized:'samsung c&t', type:'company'})")
+    it_db.run_command("CREATE (:Entity {id:'sub2', name:'Held', name_normalized:'held'})")
+    it_db.run_command("CREATE (:Person {id:'boss', full_name:'Bo Ss'})")
+    it_db.run_command("MATCH (a:Entity {id:'old'}), (b:Entity {id:'new'}) CREATE (a)-[:SUCCEEDED_BY {source_id:'gleif'}]->(b)")
+    it_db.run_command("MATCH (a:Entity {id:'old'}), (b:Entity {id:'sub2'}) "
+                      "CREATE (a)-[:OWNS {since:'2010-01-01', until:null, source_id:'gleif'}]->(b)")
+    it_db.run_command("MATCH (p:Person {id:'boss'}), (e:Entity {id:'old'}) "
+                      "CREATE (p)-[:HAS_ROLE {role:'CEO', since:'2012-01-01', source_id:'wikidata'}]->(e)")
+    assert end_at_dissolution("old")["closed"] == 2
+    e = _edges(it_db, "old")
+    assert e[("old", "sub2", None)]["until"] == "2015-09-01" and e[("old", "sub2", None)]["until_reason"] == "merged"
+    assert e[("boss", "old", "CEO")]["until_reason"] == "merged"           # the schema accepts the new seat-end reason
+    events, _ = ownership_history_of("old")
+    end = [ev for ev in events if ev["kind"] in ("merged", "dissolved", "split")]
+    assert end == [{"kind": "merged", "since": "2015-09-01", "until": None, "active": False, "party": None,
+                    "successors": [{"id": "new", "name": "SAMSUNG C&T CORPORATION", "type": "company"}]}]
+    # a company whose end has no stated kind is told as dissolved, as before
+    _seed(it_db)
+    events, _ = ownership_history_of("x")
+    assert [ev["kind"] for ev in events if ev["kind"] in ("merged", "dissolved", "split")] == ["dissolved"]
+    with pytest.raises(Exception) as exc:
+        it_db.run_command("CREATE (:Entity {id:'bad2', name:'Bad', dissolved_on:'2020-01-01', end_kind:'vanished'})")
+    assert "does not match" in str(exc.value)
+
+
 def test_the_server_accepts_the_seat_end_reason(it_db):
     it_db.run_command("CREATE (:Person {id:'q', full_name:'Q'})")
     it_db.run_command("CREATE (:Entity {id:'e', name:'E', name_normalized:'e'})")

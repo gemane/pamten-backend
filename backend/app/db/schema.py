@@ -322,7 +322,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
         "website", "logo_url", "search_text", "source_id", "source_url",
         "validation_sources", "gleif_registration_status", "lei_registration_date",
         "gleif_last_update",
-        "incorporated_on", "dissolved_on", "company_status",
+        "incorporated_on", "dissolved_on", "end_kind", "company_status",
         "created_at", "last_scraped_at", "sec_13f_scraped_at", "scrape_incomplete_at",
         "sec_ex21_ingested", "sec_acquisitions_ingested", "sec_formd_ingested",
         "no_direct_parent_reason", "no_ultimate_parent_reason",
@@ -454,7 +454,7 @@ def undeclared_properties(sample: int = 5000) -> dict[str, dict[str, dict]]:
 #: Properties that carry a rule below but no type declaration elsewhere (a
 #: rule needs a declared property; these are strings).
 _RULED_STRINGS: list[tuple[str, str]] = [
-    ("Entity", "hq_country"), ("VotingGroup", "type"),
+    ("Entity", "hq_country"), ("Entity", "end_kind"), ("VotingGroup", "type"),
     ("OWNS", "ownership_type"), ("OWNS", "read_from"),
     ("Claim", "kind"), ("Claim", "read_from"), ("Claim", "until_read_from"),
     ("HAS_ROLE", "read_from"), ("HAS_ROLE", "until_reason"),
@@ -559,9 +559,12 @@ def constraints() -> list[tuple[str, str, str, str]]:
         ("Claim", "read_from", "REGEXP", grades),
         ("HAS_ROLE", "read_from", "REGEXP", grades),
         ("Claim", "until_read_from", "REGEXP", grades),
-        # the two reasons a seat ends that no source stated: the holder died
-        # (app.roles.DEATH), the company ceased (app.dissolution.DISSOLUTION)
-        ("HAS_ROLE", "until_reason", "REGEXP", _vocab(("death", "dissolution"))),
+        # the reasons a seat ends that no source stated: the holder died
+        # (app.roles.DEATH), the company ceased (app.dissolution: dissolved,
+        # merged into another, split up — item 85c)
+        ("HAS_ROLE", "until_reason", "REGEXP", _vocab(("death", "dissolution", "merged", "split"))),
+        # how a company ended, when the source says (gleif_lei_cdf, item 85c)
+        ("Entity", "end_kind", "REGEXP", _vocab(("dissolved", "merged", "split"))),
     ]
     # A flag that means "not asserted" is false, never null: since ArcadeDB
     # 26.10.1 a null compares as false in `<>` and drops out of every filter,

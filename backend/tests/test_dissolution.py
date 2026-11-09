@@ -60,6 +60,19 @@ class TestEndAtDissolution:
         dissolution.end_at_dissolution("x")
         assert db.updates[0][0] == "UPDATE #30:3 SET until = :d, until_reason = :why"
 
+    def test_a_merged_company_ends_its_edges_as_merged_a_split_one_as_split(self, monkeypatch):
+        # findings item 85c: Samsung C&T (merged 2015-09-01) is not a winding-up
+        db = _patch(monkeypatch, {**GONE, "end_kind": "merged"}, {("OWNS", "@in"): EDGES[("OWNS", "@in")]})
+        dissolution.end_at_dissolution("x")
+        assert db.updates[0][1]["why"] == "merged"
+        db = _patch(monkeypatch, {**GONE, "end_kind": "split"}, {("OWNS", "@in"): EDGES[("OWNS", "@in")]})
+        dissolution.end_at_dissolution("x")
+        assert db.updates[0][1]["why"] == "split"
+        # a kind nothing stated, or one the vocabulary does not know, is a dissolution
+        db = _patch(monkeypatch, {**GONE, "end_kind": "dissolved"}, {("OWNS", "@in"): EDGES[("OWNS", "@in")]})
+        dissolution.end_at_dissolution("x")
+        assert db.updates[0][1]["why"] == "dissolution"
+
     def test_a_living_company_is_left_alone(self, monkeypatch):
         db = _patch(monkeypatch, {**GONE, "dissolved_on": None}, EDGES)
         assert dissolution.end_at_dissolution("x") == {"closed": 0, "founders_kept": 0, "after_dissolution": 0}

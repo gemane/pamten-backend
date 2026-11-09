@@ -131,14 +131,16 @@ def test_the_end_gleif_dates_in_its_events_closes_what_the_company_held(it_db, t
     ])
     assert counts["entities"] == 2 and counts["inactive"] == 1 and counts["ends_held"] == 0
     rows = {r["id"]: r for r in it_db.run_sql(
-        "SELECT id, dissolved_on, active FROM Entity WHERE id IN :ids", {"ids": [f"lei:{gone}", f"lei:{survivor}"]})}
+        "SELECT id, dissolved_on, end_kind, active FROM Entity WHERE id IN :ids", {"ids": [f"lei:{gone}", f"lei:{survivor}"]})}
     assert rows[f"lei:{gone}"]["dissolved_on"] == "2014-10-12" and rows[f"lei:{gone}"]["active"] is False
+    assert rows[f"lei:{gone}"]["end_kind"] == "merged"                     # how it ended (item 85c)
     assert rows[f"lei:{survivor}"]["dissolved_on"] is None and rows[f"lei:{survivor}"]["active"] is True
+    assert rows[f"lei:{survivor}"]["end_kind"] is None
     healed = heal_ends_at_dissolution(apply=True)
     assert healed["closed"] == 1 and healed["companies"] == 1
     ends = {r["a"]: (r["until"], r["why"]) for r in it_db.run_sql(
         "SELECT @out.id AS a, until, until_reason AS why FROM OWNS WHERE @in.id = :b", {"b": f"lei:{sub}"})}
-    assert ends[f"lei:{gone}"] == ("2014-10-12", "dissolution")
+    assert ends[f"lei:{gone}"] == ("2014-10-12", "merged")               # merged into the survivor, not wound up
     assert ends[f"lei:{survivor}"] == (None, None)
 
 
