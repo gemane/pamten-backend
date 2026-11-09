@@ -27,6 +27,12 @@ def _lei_cdf_zip(tmp_path):
         {"LEI": wrap("XCORPLEI000000000002"),
          "Entity": {"LegalName": wrap("X Corp.")},
          "Registration": {"RegistrationStatus": wrap("ISSUED")}},
+        # a DUPLICATE registration of X Corp. pointing at its live record: not a
+        # succession (findings item 88) — no edge, no node minted
+        {"LEI": wrap("XCORPDUPLEI000000006"),
+         "Entity": {"LegalName": wrap("X Corp."),
+                    "SuccessorEntity": [{"SuccessorLEI": wrap("XCORPLEI000000000002")}]},
+         "Registration": {"RegistrationStatus": wrap("DUPLICATE")}},
         {"LEI": wrap("ACTIVELEI00000000003"),
          "Entity": {"LegalName": wrap("Acme AG")},
          "Registration": {"RegistrationStatus": wrap("ISSUED")}},
@@ -53,8 +59,9 @@ def test_imports_succession_edge_and_names(it_db, tmp_path):
     it_db.run_command("CREATE (:Source {id: 'gleif-src', name: 'GLEIF', type: 'register'})")
 
     result = import_lei_cdf_succession(_lei_cdf_zip(tmp_path), "gleif-src", 92)
-    assert result["records"] == 5
-    assert result["pairs"] == 2
+    assert result["records"] == 6
+    assert result["pairs"] == 2 and result["not_a_succession"] == 1
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE id = 'lei:XCORPDUPLEI000000006'")[0]["n"] == 0
     assert result["nodes"] == 4          # both pairs' endpoints (not the active one)
 
     # Nodes were created keyed by LEI, with names from the golden copy.
@@ -100,7 +107,8 @@ def test_the_curated_import_writes_only_the_successions_touching_it(it_db, tmp_p
     out = tmp_path / "new-endpoints.txt"
     result = import_lei_cdf_succession(_lei_cdf_zip(tmp_path), "gleif-src", 92,
                                        only_leis={"XCORPLEI000000000002"}, emit_leis_path=str(out))
-    assert result == {"records": 1, "pairs": 1, "nodes": 2, "errors": 0, "emitted": 1}
+    # the duplicate registration touches X Corp. too (as the successor) and is skipped, counted
+    assert result == {"records": 2, "pairs": 1, "nodes": 2, "errors": 0, "not_a_succession": 1, "emitted": 1}
     assert out.read_text().split() == ["TWITTERLEI0000000001"]
     assert [e["name"] for e in get_full_profile("lei:XCORPLEI000000000002")["replaces"]] == ["Twitter, Inc."]
     ids = {r["id"] for r in it_db.run_sql("SELECT id FROM Entity WHERE id LIKE 'lei:%'")}

@@ -41,6 +41,8 @@ KIND_OWNS = "owns"
 KIND_ROLE = "role"
 KIND_SUCCESSION = "succession"
 
+log = logging.getLogger(__name__)
+
 #: `filing_type` values of an owns claim read from an acquirer's XBRL
 #: business-combination facts (app/scraper/sec_acquisitions.py).
 ACQUISITION_FILING_TYPES = frozenset({"10-K XBRL", "10-Q XBRL"})
@@ -414,8 +416,13 @@ def key_for(claim: dict, *, from_id: str | None = None, to_id: str | None = None
 
 def rekey_claim(claim: dict, *, from_id: str | None = None, to_id: str | None = None) -> str:
     """Give a stored claim the key its content calls for, optionally with a new
-    endpoint. Returns "unchanged", "moved" or "folded".
+    endpoint. Returns "unchanged", "moved", "folded" or "dropped".
 
+    * **dropped** — the new endpoint makes the claim a self-loop (from = to):
+      a statement about nothing, deleted. A DUPLICATE GLEIF registration read
+      as the predecessor of its own live record (findings item 88) became
+      `succession` KEEP → KEEP once the register_id merge folded the pair — 3
+      such rows on dev after the 2026-11-08b rebuild, with no edge behind them.
     * **moved** — re-keyed in place: every field stays, `first_seen_at` too.
     * **folded** — a claim with that key already exists: they are the same
       assertion (same kind, pair, source, role), so one row remains. The one
@@ -427,6 +434,9 @@ def rekey_claim(claim: dict, *, from_id: str | None = None, to_id: str | None = 
 
     old_key = claim["claim_key"]
     f, t = from_id or claim["from_id"], to_id or claim["to_id"]
+    if f and f == t:
+        run_sql("DELETE FROM Claim WHERE claim_key = :old", {"old": old_key})
+        return "dropped"
     new_key = key_for(claim, from_id=f, to_id=t)
     if new_key == old_key and (f, t) == (claim["from_id"], claim["to_id"]):
         return "unchanged"
@@ -468,11 +478,15 @@ def migrate_claims(dead_id: str, keep_id: str) -> int:
     from app.db.arcadedb import run_sql
     from app.stake_history import migrate as migrate_stake_history
 
-    moved = 0
+    moved = dropped = 0
     for end in ("from_id", "to_id"):
         for r in run_sql(f"SELECT FROM Claim WHERE {end} = :d", {"d": dead_id}):
-            rekey_claim(r, **{end: keep_id})
-            moved += 1
+            if rekey_claim(r, **{end: keep_id}) == "dropped":
+                dropped += 1                      # a self-loop the merge made (item 88)
+            else:
+                moved += 1
+    if dropped:
+        log.info("merge %s -> %s: %d claim(s) became self-loops and were dropped", dead_id, keep_id, dropped)
     # The stake rows behind those claims follow them (they carry the ids, not
     # the key, so a plain re-point is enough), and so do the industry
     # statements (re-keyed: their key hashes the entity id).

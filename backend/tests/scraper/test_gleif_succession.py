@@ -54,11 +54,21 @@ class TestPairsFromRecord:
                "Entity": {"SuccessorEntity": [{"SuccessorLEI": {"$": "SUCC456"}}]}}
         assert _pairs_from_record(rec) == [("PRED123", "SUCC456")]
 
-    def test_duplicate_status_also_yields_pair(self):
-        rec = {"LEI": {"$": "DUP1"},
-               "Registration": {"RegistrationStatus": {"$": "DUPLICATE"}},
-               "Entity": {"SuccessorEntity": [{"SuccessorLEI": {"$": "KEEP1"}}]}}
-        assert _pairs_from_record(rec) == [("DUP1", "KEEP1")]
+    def test_a_duplicate_or_annulled_registration_is_not_a_succession(self):
+        # findings item 88: a DUPLICATE registration points at the live record of
+        # the SAME entity (6,518 of 35,346 successor records on 2026-11-08), an
+        # ANNULLED one at the right record (93) — the register_id merge folds the
+        # pair; read as a succession they left a self-loop claim behind
+        for status in ("DUPLICATE", "ANNULLED", "duplicate"):
+            rec = {"LEI": {"$": "DUP1"},
+                   "Registration": {"RegistrationStatus": {"$": status}},
+                   "Entity": {"SuccessorEntity": [{"SuccessorLEI": {"$": "KEEP1"}}]}}
+            assert _pairs_from_record(rec) == [], status
+        # RETIRED — the entity ended and another followed — is one
+        rec = {"LEI": {"$": "PRED1"},
+               "Registration": {"RegistrationStatus": {"$": "RETIRED"}},
+               "Entity": {"SuccessorEntity": [{"SuccessorLEI": {"$": "SUCC1"}}]}}
+        assert _pairs_from_record(rec) == [("PRED1", "SUCC1")]
 
     def test_active_record_yields_nothing(self):
         rec = {"LEI": {"$": "ACTIVE"},
@@ -139,7 +149,7 @@ class TestTheSubsetScan:
             result = gs.import_lei_cdf_succession(str(path), "gleif", 92, only_leis={self.A, self.T2, self.F},
                                                   emit_leis_path=str(out))
         assert written == [(self.A, self.B), (self.C, self.T2)]
-        assert result == {"records": 2, "pairs": 2, "nodes": 2, "errors": 0, "emitted": 2}
+        assert result == {"records": 2, "pairs": 2, "nodes": 2, "errors": 0, "not_a_succession": 0, "emitted": 2}
         assert out.read_text().split() == sorted([self.B, self.C])   # the ends the subset lacked, not T2 or A
 
     def test_without_a_subset_every_record_is_read_and_nothing_emitted(self, tmp_path):
@@ -149,4 +159,4 @@ class TestTheSubsetScan:
         path.write_bytes(self._file().getvalue())
         with patch.object(gs, "_write", return_value=6):
             result = gs.import_lei_cdf_succession(str(path), "gleif", 92)
-        assert result == {"records": 8, "pairs": 3, "nodes": 6, "errors": 0}
+        assert result == {"records": 8, "pairs": 3, "nodes": 6, "errors": 0, "not_a_succession": 0}

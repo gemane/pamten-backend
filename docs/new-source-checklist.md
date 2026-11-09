@@ -1518,6 +1518,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       runs it in the same change (the test chain, the full chain, the rebuild kit and the
       docs must list the same steps), give it the subset option the test import needs, and
       let the rebuild's snapshot count its edge type — a zero there is the alarm.
+- [ ] **A register's status vocabulary says what a link means — read it before drawing the
+      link.** GLEIF puts a `SuccessorLEI` on a RETIRED record (the entity ended, another
+      followed) and on a DUPLICATE or ANNULLED one (this registration is not the entity's
+      record, that one is): 6,518 + 93 of 35,346 such records on 2026-11-08. Read alike, the
+      duplicates became predecessor nodes of their own live record, the register_id merge
+      folded them, and self-loop claims stayed behind (findings item 88). The same statuses
+      `legal_identity` already treats as "not the entity" for joins; one vocabulary, every
+      reader. And a merge that makes a claim's two ends one node drops the claim.
 
 ## 8. Tests
 
