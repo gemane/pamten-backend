@@ -27,6 +27,7 @@ from app import addresses
 from app.scraper.mapper import (NAME_FORMS, is_nominee_name, name_key, normalize_cik, normalize_entity_name,
                                 parse_full_name)
 import logging
+import re
 
 from app.config import settings
 
@@ -812,14 +813,63 @@ def _candidates_by_name(session, name: str, name_norm: str, country: str | None)
             continue
         for where in wheres:
             for rec in session.run(
-                    f"MATCH (e:Entity) WHERE e.{field} = $v{where} RETURN e.id AS id LIMIT {_NAME_CANDIDATES}",
+                    f"MATCH (e:Entity) WHERE e.{field} = $v{where} "
+                    "RETURN e.id AS id, e.name AS name, e.other_names AS other_names, e.former_names AS former_names, "
+                    "e.gleif_former_names AS gleif_former_names, e.sec_cik AS sec_cik, e.lei_id AS lei_id, "
+                    f"e.register_id AS register_id, e.companies_house_id AS companies_house_id LIMIT {_NAME_CANDIDATES}",
                     v=value, country=country):
-                if rec["id"] not in out:
-                    out.append(rec["id"])
+                if rec["id"] in out:
+                    continue
+                node = {k: rec.get(k) for k in ("id", "name", "other_names", "former_names", "gleif_former_names",
+                                                "sec_cik", "lei_id", "register_id", "companies_house_id")}
+                if _form_disagrees(name, node):
+                    log.info("%r matched %s (%r) by its stem, but states another legal form — not that node (item 87)",
+                             name, rec["id"], rec.get("name"))
+                    continue
+                out.append(rec["id"])
     for entity_id in _namesakes_by_other_name(name, name_norm, country):
         if entity_id not in out:
             out.append(entity_id)
     return out
+
+
+def _has_legal_form(name: str) -> bool:
+    """Whether a name states a legal form: its form-keeping key differs from
+    its form-stripped one ("Flex Co., Ltd." does, "Apple Operations Europe"
+    does not)."""
+    from app.scraper.sec_ex21 import legal_name_key
+    stripped = re.sub(r"[^a-z0-9]", "", normalize_entity_name(name) or "")
+    return bool(name) and legal_name_key(name) != stripped
+
+
+def _form_disagrees(row_name: str, node: dict) -> bool:
+    """A register-identified company is not a name-only row that states
+    another legal form (findings item 87). The name key the by-name match
+    uses drops the legal form, so VIAVI's subsidiary "Flex Co., Ltd." (China)
+    met FLEX LTD. — the Singapore electronics group, an EDGAR filer, whose
+    node had no country yet and learned "China" from the row. A register id
+    is the company, a name is not; and the form is part of the legal name
+    (`sec_ex21.legal_name_key`, the rule of items 58 and 62): when the row
+    states a form and every name the node bears states one, and none agrees,
+    the row is another company — a node of its own, as a namesake registered
+    abroad gets one. Rows without a form ("Apple Operations Europe") keep
+    finding "APPLE OPERATIONS EUROPE LIMITED"; a node that carries no hard id
+    is matched as before (two filers' spellings of one subsidiary must still
+    meet on its stem). A name the node BORE counts too: Berkshire's list
+    names "Nederlandse Reassurantie Groep N.V.", GLEIF's record became
+    "… B.V." on 2025-12-29 — a legal-form change of one entity, kept in the
+    node's former names."""
+    from app.scraper.sec_ex21 import legal_name_key
+    if not any(node.get(k) for k in ("sec_cik", "lei_id", "register_id", "companies_house_id")):
+        return False
+    if not _has_legal_form(row_name):
+        return False
+    names = [n for n in [node.get("name"), *(node.get("other_names") or [])] if n]
+    names += [n for n, _until in map(former.parse, former.of_node(node)) if n]
+    if not names or not all(_has_legal_form(n) for n in names):
+        return False
+    key = legal_name_key(row_name)
+    return all(legal_name_key(n) != key for n in names)
 
 
 #: how many full-text hits `_namesakes_by_other_name` reads: the index ranks a

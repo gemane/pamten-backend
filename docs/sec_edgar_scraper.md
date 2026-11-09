@@ -1777,7 +1777,19 @@ from readers removed again the same day, so 11 remain):
       Limited" (Cayman) and "Chubb Services Corporation" (Illinois) had become
       one node with three parents at 100 %, likewise "Rain and Hail Insurance
       Service, Inc." (Iowa) and ", Ltd." (Canada). A row without a jurisdiction
-      still folds onto the namesake. Across the 1,062 filings ten
+      still folds onto the namesake. **A register-identified node is not a row
+      that states another legal form** (findings item 87, 2026-11-09): the name
+      key drops the form, so VIAVI's "Flex Co., Ltd." (China) met FLEX LTD. —
+      the Singapore electronics group, an EDGAR filer whose node had no country
+      yet — on the stem "flex", took it as the subsidiary and taught it "China";
+      AMD's "Advanced Micro Devices GmbH" landed on AMD itself the same way
+      (item 83). When the row states a form and every name the node bears
+      states one, and none agrees (`sec_ex21.legal_name_key`), a node that
+      carries a CIK, LEI or register id is not that row: the row gets its own
+      node (`graph_writer._form_disagrees`). Rows without a form ("Apple
+      Operations Europe") still find the register node of their name, and a
+      node without a hard id is matched on its stem as before, so two filers'
+      spellings of one subsidiary still meet. Across the 1,062 filings ten
       lists do this. Some are two companies (Perfect Corp.'s Japanese, US and
       French "Perfect Corp.", which as one entry had resolved onto the filer
       itself and vanished); some read like one company's branch or foreign

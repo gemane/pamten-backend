@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.scraper.graph_writer import _filer_as_registered, _name_key, _not_this_filer
+from app.scraper.graph_writer import (_filer_as_registered, _form_disagrees, _has_legal_form, _name_key,
+                                      _not_this_filer)
 
 
 @pytest.mark.parametrize("a,b", [
@@ -304,3 +305,50 @@ def test_dotted_letters_are_one_word_and_a_lone_letter_stays():
     assert _name_key("Toys R Us") == ("toys", "r", "us")
     # known gap, not widened: EDGAR writes "JPMORGAN" as one word
     assert _name_key("J.P. Morgan Chase & Co.") == ("jp", "morgan", "chase")
+
+
+class TestAStatedFormOnARegisterNode:
+    """Findings item 87: VIAVI's subsidiary "Flex Co., Ltd." (China) met FLEX
+    LTD. — the Singapore electronics group, an EDGAR filer — on the stem
+    "flex" and taught it "China". A register-identified node is not a
+    name-only row that states another legal form."""
+    FLEX = {"id": "sec:0000866374", "name": "FLEX LTD.", "other_names": [], "sec_cik": "0000866374"}
+    APPLE_IE = {"id": "lei:549300EN330M4ZVN5681", "name": "APPLE OPERATIONS EUROPE LIMITED", "other_names": [],
+                "lei_id": "549300EN330M4ZVN5681"}
+
+    @pytest.mark.parametrize("name,has", [
+        ("Flex Co., Ltd.", True), ("FLEX LTD.", True), ("Google LLC", True), ("Alphabet Inc.", True),
+        ("Apple Operations Europe", False), ("Alphabet", False), ("Johnson & Johnson", False), ("", False)])
+    def test_whether_a_name_states_a_legal_form(self, name, has):
+        assert _has_legal_form(name) is has
+
+    def test_flex_co_ltd_is_not_flex_ltd(self):
+        assert _form_disagrees("Flex Co., Ltd.", self.FLEX) is True
+
+    def test_the_same_form_agrees_however_spelled(self):
+        assert _form_disagrees("Flex Limited", self.FLEX) is False
+        assert _form_disagrees("Google LLC", {**self.APPLE_IE, "name": "Google LLC"}) is False
+
+    def test_a_row_without_a_form_keeps_matching_a_register_node(self):
+        # "Apple Operations Europe" finds "APPLE OPERATIONS EUROPE LIMITED" as before
+        assert _form_disagrees("Apple Operations Europe", self.APPLE_IE) is False
+
+    def test_a_node_whose_names_state_no_form_cannot_disagree(self):
+        assert _form_disagrees("Flex Co., Ltd.", {**self.FLEX, "name": "Flex"}) is False
+        # one of its other names without a form: no verdict either
+        assert _form_disagrees("Flex Co., Ltd.", {**self.FLEX, "other_names": ["Flex"]}) is False
+
+    def test_an_other_name_of_the_node_with_the_rows_form_agrees(self):
+        assert _form_disagrees("Flex Co., Ltd.", {**self.FLEX, "other_names": ["Flex Co., Ltd."]}) is False
+
+    def test_a_name_the_node_bore_agrees_too(self):
+        # Berkshire's "Nederlandse Reassurantie Groep N.V." is GLEIF's "… B.V." since
+        # 2025-12-29 — one entity whose legal form changed, the old name a former name
+        nrg = {"id": "lei:213800YLQNPYFWEOWG50", "name": "NEDERLANDSE REASSURANTIE GROEP B.V.", "other_names": [],
+               "gleif_former_names": ["NEDERLANDSE REASSURANTIE GROEP N.V.|2025-12-29"], "lei_id": "213800YLQNPYFWEOWG50"}
+        assert _form_disagrees("Nederlandse Reassurantie Groep N.V.", nrg) is False
+        assert _form_disagrees("Nederlandse Reassurantie Groep GmbH", nrg) is True
+
+    def test_a_node_without_a_hard_id_is_matched_on_its_stem_as_before(self):
+        # two filers' spellings of one subsidiary must still meet
+        assert _form_disagrees("Flex Co., Ltd.", {"id": "u1", "name": "Flex Ltd.", "other_names": []}) is False

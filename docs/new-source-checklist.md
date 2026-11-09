@@ -710,6 +710,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       filing, and keep joining a filer whose last filing lies before the end — that filer
       ended with the entity (Viacom Inc., Form 15 of 2019). Test the pair that must still
       join beside the one that must not.
+- [ ] **A name-only row does not override a register-identified company's legal form.** The
+      matching key strips legal forms so that two spellings of one subsidiary meet — and so
+      "Flex Co., Ltd." (VIAVI's Chinese subsidiary) met FLEX LTD., the Singapore group with
+      its own CIK, and "Advanced Micro Devices GmbH" landed on AMD itself (findings items 87
+      and 83, 2026-11-09). A node that carries a hard id is a known company: when the row
+      states a form and the node's names all state one, and none agrees, the row is another
+      company and gets its own node. Keep the lenient match for rows without a form and for
+      nodes without a hard id; measure the change over every filer's list before merging
+      (the guard: old rule vs new over all Exhibit 21 rows, read-only).
 - [ ] **A place has a date: take the filer's newest statement of it, in its own context.** The
       annual report is a year's snapshot — Liberty Media became a Nevada company three months
       after its 10-K said Delaware, and the join with GLEIF (Nevada) was refused; its 10-Q

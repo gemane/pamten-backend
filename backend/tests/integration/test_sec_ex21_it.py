@@ -555,6 +555,45 @@ def test_one_name_key_in_three_countries_is_three_nodes(it_db):
     assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'chubb company services'")[0]["n"] == 1
 
 
+def test_a_row_stating_another_legal_form_is_not_the_listed_namesake(it_db):
+    """Findings item 87: VIAVI's "Flex Co., Ltd." (China) met FLEX LTD. — the
+    Singapore electronics group, an EDGAR filer whose node had no country yet —
+    on the stem "flex", and taught it "China". A register-identified node is
+    not a row that states another legal form: the row gets its own node, the
+    listed company keeps its blank; a row without a form still finds the
+    register node of its name ("Apple Operations Europe"), and one with the
+    same form too ("Google LLC")."""
+    it_db.run_command(
+        "CREATE (:Entity {id: 'viavi', name: 'VIAVI Solutions Inc.', name_normalized: 'viavi solutions', country: 'US', "
+        "search_text: 'VIAVI Solutions Inc.', type: 'company', sec_cik: '0000912093'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0000866374', name: 'FLEX LTD.', name_normalized: 'flex', "
+        "search_text: 'FLEX LTD.', type: 'company', sec_cik: '0000866374', source_id: 'sec-edgar'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:549300EN330M4ZVN5681', name: 'APPLE OPERATIONS EUROPE LIMITED', "
+        "name_normalized: 'apple operations europe', country: 'IE', search_text: 'APPLE OPERATIONS EUROPE LIMITED', "
+        "type: 'company', lei_id: '549300EN330M4ZVN5681'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:7ZW8QJWVPR4P1J1KQY45', name: 'Google LLC', name_normalized: 'google', country: 'US', "
+        "search_text: 'Google LLC', type: 'company', lei_id: '7ZW8QJWVPR4P1J1KQY45'})")
+    data = {"subsidiaries": [{"name": "Flex Co., Ltd.", "jurisdiction": "China"},
+                             {"name": "Apple Operations Europe", "jurisdiction": "Ireland"},
+                             {"name": "Google LLC", "jurisdiction": "Delaware"}],
+            "form": "10-K", "filing_date": "2026-08-13",
+            "url": "https://www.sec.gov/Archives/edgar/data/912093/000162828026056765/viavq4fy26ex2x211xsubsidia.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        result = runner.run_sec_ex21("VIAVI Solutions")
+    assert result["status"] == "ok"
+    rows = {r["id"]: r for r in it_db.run_command(
+        "MATCH (:Entity {id: 'viavi'})-[:OWNS]->(b:Entity) RETURN b.id AS id, b.name AS name, b.country AS country")}
+    assert "sec:0000866374" not in rows                                   # not the listed company
+    [flex] = [r for r in rows.values() if r["name"] == "Flex Co., Ltd."]
+    assert flex["country"] == "CN" and not flex["id"].startswith(("sec:", "lei:"))   # its own node, in China
+    assert it_db.run_sql("SELECT country FROM Entity WHERE id = 'sec:0000866374'")[0]["country"] is None  # learned nothing
+    assert "lei:549300EN330M4ZVN5681" in rows and "lei:7ZW8QJWVPR4P1J1KQY45" in rows   # the register nodes, as before
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'apple operations europe'")[0]["n"] == 1
+
+
 def test_a_row_without_a_jurisdiction_still_folds_onto_the_namesake(it_db):
     it_db.run_command(
         "CREATE (:Entity {id: 'chubb', name: 'Chubb Limited', name_normalized: 'chubb', country: 'CH', "
@@ -701,10 +740,15 @@ def test_a_list_no_filename_pattern_finds_is_read_by_its_declared_type(it_db):
         "MATCH (:Entity {id:'amd'})-[r:OWNS]->(b:Entity) "
         "RETURN b.name AS name, r.filing_type AS ft, r.source_url AS url, r.source_date AS asof")
     got = {r["name"]: dict(r) for r in rows}
-    # 91 rows parsed; 'Advanced Micro Devices GmbH' lands on AMD itself by its
-    # name without the legal form — findings item 83, not this path
-    assert result["status"] == "ok" and result["total"] == 90 and len(got) == 90
-    assert "Advanced Micro Devices GmbH" not in got
+    # 91 rows parsed, 91 written. Until item 87 'Advanced Micro Devices GmbH'
+    # landed on AMD itself by its name without the legal form (findings item
+    # 83, 90 edges); a register-identified node is not a row that states
+    # another legal form, so the German subsidiary is a node of its own
+    assert result["status"] == "ok" and result["total"] == 91 and len(got) == 91
+    assert "Advanced Micro Devices GmbH" in got
+    gmbh = it_db.run_sql("SELECT id, country FROM Entity WHERE name = 'Advanced Micro Devices GmbH'")
+    assert len(gmbh) == 1 and gmbh[0]["id"] != "amd" and gmbh[0]["country"] == "DE"
+    assert it_db.run_sql("SELECT country FROM Entity WHERE id = 'amd'")[0]["country"] is None   # AMD learned nothing
     assert got["Xilinx Development Corporation"] == {
         "name": "Xilinx Development Corporation", "ft": "EX-21",
         "url": base + "exh_21-10kfy25.htm", "asof": "2026-02-04"}
