@@ -17,6 +17,12 @@ Usage:
 - `/finding-auto` — start, or continue after an answer. The run picks up where the
   findings list (`project_rebuild_findings_list.md`) says it stopped.
 
+The first thing a run does is read the clock (`date`, stated in Vienna time) and write the
+start into the state line: "finding-auto run <date> START hh:mm Vienna". A run that resumes
+after a question writes "RESUMED hh:mm" the same way. The end time goes in when the run
+stops (see *The final report*). The clock, never a guess: the rebuild record once carried
+a start time written from memory that was 90 minutes off (2026-11-08b).
+
 ## What the user's word covers
 
 For every open item, in the order below:
@@ -32,8 +38,10 @@ For every open item, in the order below:
 4. **Merge** (finding step 4) once CI is green: squash, delete the branch, pull develop,
    watch develop's run **for the merge commit's sha** (`gh run list --json databaseId,headSha`
    and select the sha — the newest row can still be the previous run), update the item
-   ("MERGED <date> (BE #N <sha>; verify at the next rebuild)") and the state line (develop
-   sha, how far main is behind).
+   ("MERGED <date> hh:mm (BE #N <sha>, <M> min from the item's start; verify at the next
+   rebuild)") and the state line (develop sha, how far main is behind). The item's start is
+   the clock reading when its analysis began; write it into the item then, so the minutes
+   survive a compaction.
 5. **Next item**, until the stop rule below says a rebuild is the better next step.
 
 Never: fast-forward main, start a rebuild, write to dev, edit Wikidata, trigger a deploy.
@@ -106,7 +114,9 @@ that appears goes first, always.
 
 ## Budget and pace
 
-One item is roughly an hour of work and one PR. Keep going across context compactions:
+One item is roughly an hour of work and one PR — the per-item minutes recorded at each
+merge are the measure, and a run whose items take far longer is worth a line in the final
+report. Keep going across context compactions:
 the findings list is the state, and every step writes it before moving on, so a run that
 loses its context continues from the list. Say in one line what you are doing when you
 move from one item to the next. Do not parallelise items: they share dev reads, the IT
@@ -147,14 +157,19 @@ container (3.9 GB RAM, never chain the unit suite and an IT run) and develop.
 
 As in `finding`, plus: every choice this skill makes is written as "CHOSEN by
 /finding-auto" with the one-line reason; every question as "WAITING ON USER"; the state
-line gets "finding-auto run <date>: items done …, stopped because <rule>". A new finding
+line gets "finding-auto run <date> hh:mm→hh:mm Vienna (<N> min): items done …, stopped
+because <rule>" — the START written when the run began, the end and the minutes when it
+stops; a run with a RESUMED time lists both spans. A new finding
 met on the way goes on the list at once with its evidence, "not analysed", and is worked
 in its turn if the rules allow, never fixed inside the current change.
 
 ## The final report
 
-When the run stops — on the stop rule or on a question — report in one message:
-- the items merged in this run, each with its PR and the one-line verify expectation;
+When the run stops — on the stop rule or on a question — read the clock again, write the
+end time and the minutes into the state line, and report in one message:
+- the run's start and end time (Vienna) and its length in minutes, first;
+- the items merged in this run, each with its PR, its minutes and the one-line verify
+  expectation;
 - the items waiting on the user, each with its question;
 - the items left open and why they wait for the rebuild;
 - develop's sha, how far main is behind, and the recommendation (`/rebuild`, then
