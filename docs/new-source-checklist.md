@@ -1517,6 +1517,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `get_source_enabled` at its canonical home (`app.scraper.scraper_registry`), not at
       an importer's alias — a test patching the wrong module reaches the real database.
 
+- [ ] **A filing one reader learned to open belongs to every reader that walks the same
+      filings.** The IPO's registration statement was taught to the latest-list reader for a
+      company with no annual report yet (item 77) — and the history reader, which dates
+      every subsidiary by the oldest list in its run, kept walking annual reports only, so
+      the lower bound stopped a year short of the S-1 for 24 of dev's 59 Exhibit 21 filers
+      (findings item 79, 2026-11-09). When a reader gains a filing type, list the other
+      readers of that document (latest list, registration statement, earlier filing,
+      history) and give each the same reach, or say why not.
 - [ ] **A step that exists only as a command is not a step.** The GLEIF succession
       importer (`gleif-succession`, the "Succeeded by" panel and timeline rows) was built,
       documented and tested in 2026 — and no import chain, no rebuild and no cron ever ran

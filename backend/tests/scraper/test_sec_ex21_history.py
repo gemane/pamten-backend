@@ -131,3 +131,67 @@ class TestFetchHistory:
              patch.object(sec_ex21, "exhibit_candidates", return_value=[]) as cand:
             h = sec_ex21.fetch_subsidiary_history("1", max_filings=3)
         assert len(h) == 3 and cand.call_count == 3
+
+
+class TestTheHistoryReachesTheRegistrationStatement:
+    """Findings item 79: the walk continues from the oldest annual list into
+    the S-1 / F-1 / Form 10 filed before it — Tesla's S-1 of 2010-06 is older
+    than its first 10-K's year-end — dated by the filing date, newest first,
+    at most REGISTRATION_MAX_FILINGS; a registration statement filed AFTER an
+    annual report (a follow-on offering) is not walked."""
+    ANNUAL = [("10-K", "a-2012", "2012-02-27", "2011-12-31"), ("10-K", "a-2011", "2011-03-03", "2010-12-31")]
+    REGS = [("S-1/A", "r-3", "2010-06-28", ""), ("S-1", "r-1", "2010-01-29", ""),
+            ("S-1", "follow-on", "2011-06-01", "")]                       # after the first 10-K: a follow-on
+
+    @staticmethod
+    def _parse(candidates, cik=None):
+        meta = candidates[0]
+        names = {"a-2012": ["Tesla Motors Netherlands B.V.", "SolarCity Corp"], "a-2011": ["Tesla Motors Netherlands B.V."],
+                 "r-3": ["Tesla Motors Netherlands B.V."], "r-1": None}.get(meta["accession"], ["Tesla Motors Netherlands B.V."])
+        if names is None:
+            return None
+        return [{"name": n} for n in names], {"filing_date": meta["filed"], "url": f"https://sec.gov/{meta['accession']}.htm"}
+
+    def _history(self, regs=None, annual=None):
+        with patch.object(sec_ex21, "annual_filings", return_value=self.ANNUAL if annual is None else annual), \
+             patch.object(sec_ex21, "registration_filings", return_value=self.REGS if regs is None else regs), \
+             patch.object(sec_ex21, "exhibit_candidates",
+                          side_effect=lambda cik, form, acc, filed, period=None: [{"accession": acc, "filed": filed, "form": form, "url": "u"}]), \
+             patch.object(sec_ex21, "_parse_first", side_effect=self._parse):
+            return sec_ex21.fetch_subsidiary_history("0001318605")
+
+    def test_the_registration_lists_follow_the_annual_ones_dated_by_their_filing_day(self):
+        h = self._history()
+        assert [(e["form"], e["as_of"]) for e in h] == [
+            ("10-K", "2011-12-31"), ("10-K", "2010-12-31"), ("S-1/A", "2010-06-28")]
+        assert h[2]["names"] == {"tesla motors netherlands"} and h[2]["url"] == "https://sec.gov/r-3.htm"
+        # the bound reaches the S-1/A; SolarCity, listed only in 2012, stays at that year-end
+        assert earliest_listing(h, "Tesla Motors Netherlands B.V.")["as_of"] == "2010-06-28"
+        assert earliest_listing(h, "SolarCity Corp")["as_of"] == "2011-12-31"
+
+    def test_an_amendment_without_a_list_is_left_out_not_a_gap(self):
+        # Tesla's five S-1/As of June 2010 re-file no Exhibit 21; the S-1/A of 2010-05-27
+        # does. Walked newest first, a "gap" for each amendment would end the run
+        # before the list — the guard of 2026-11-09 moved 0 bounds that way.
+        regs = [("S-1/A", "r-1", "2010-06-28", ""), ("S-1/A", "r-1", "2010-06-15", ""), ("S-1/A", "r-3", "2010-05-27", "")]
+        h = self._history(regs=regs)
+        assert [(e["form"], e["as_of"]) for e in h] == [("10-K", "2011-12-31"), ("10-K", "2010-12-31"), ("S-1/A", "2010-05-27")]
+        assert earliest_listing(h, "Tesla Motors Netherlands B.V.")["as_of"] == "2010-05-27"
+        # an annual filing whose exhibit cannot be read is still a gap
+        annual = self.ANNUAL + [("10-K", "r-1", "2010-03-01", "2009-12-31")]
+        h = self._history(annual=annual, regs=[])
+        assert h[2]["names"] is None and earliest_listing(h, "Tesla Motors Netherlands B.V.")["as_of"] == "2010-12-31"
+
+    def test_a_registration_statement_filed_after_an_annual_report_is_not_walked(self):
+        assert "follow-on" not in [e["url"] or "" for e in self._history()] and all(
+            e["form"] == "10-K" or e["as_of"] < "2011-03-03" for e in self._history())
+
+    def test_without_an_annual_filing_nothing_is_read_here(self):
+        # a company with no 10-K yet is `run_sec_ex21`'s registration path (item 77), not the history's
+        assert self._history(annual=[]) == []
+
+    def test_the_registration_walk_is_capped(self):
+        regs = [("S-1/A", f"x-{i}", f"2010-0{9 - i}-01", "") for i in range(1, 9)]       # eight readable, newest first
+        with patch.object(sec_ex21, "REGISTRATION_MAX_FILINGS", 2):
+            h = self._history(regs=regs)
+        assert [e["form"] for e in h].count("S-1/A") == 2
