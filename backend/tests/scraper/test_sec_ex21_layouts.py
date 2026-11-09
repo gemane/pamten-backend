@@ -239,18 +239,16 @@ class TestNotRead:
                 "Beijing 100004, China</p><p>This opinion is given to Samfine Limited</p>")
         assert parse_exhibit(_doc(body, "EX-21.1")) == []
 
-    def test_a_list_of_names_without_places(self):
+    def test_a_list_of_names_without_places_in_an_undeclared_document(self):
+        # read again since 2026-11-09 (item 82c) — but only where the filing index
+        # declares the document a subsidiary list; an undeclared one stays unread
         names = "".join(f"<p>{n}</p>" for n in ("Alpha Holdings Limited", "Beta Pte. Ltd.", "Gamma GmbH"))
-        assert parse_exhibit(_doc(names)) == []
+        assert parse_exhibit(_doc(names, kind=None)) == []
 
-    def test_a_place_given_by_a_heading_or_a_sentence(self):
-        # Recon: "Subsidiary (PRC):"; Banco de Chile, Shenandoah: "… are organized in …"
+    def test_a_place_given_by_a_heading(self):
+        # Recon: "Subsidiary (PRC):" — a heading's place is still not read, and two names are no list
         heading = "<p>Subsidiary (PRC):</p><p>Alpha Technology Co., Ltd.</p><p>Beta Energy Co., Ltd.</p>"
-        sentence = ("<p>All subsidiaries listed below are incorporated in Chile.</p>"
-                    "<p>Alpha Asesorias Limitada</p><p>Beta Corredores S.A.</p><p>Gamma Leasing S.A.</p>")
         assert parse_exhibit(_doc(heading)) == []
-        assert parse_exhibit(_doc(sentence)) == []
-        assert parse_exhibit(_doc(sentence, "EX-21"), form="10-K") == []
 
     def test_a_table_without_a_place_column(self):
         # Banco Santander Chile, Enel Chile
@@ -517,3 +515,158 @@ class TestOneNameTwoPlaces:
         page = ("<table><tr><td>Name</td><td>Jurisdiction</td></tr>"
                 "<tr><td>Alpha Ltd.</td><td>Bermuda</td></tr></table>")
         assert len(parse_exhibit(page + page.replace("Bermuda", "BERMUDA"))) == 1
+
+
+class TestReadAgain:
+    """Findings item 82 (the user's call, 2026-11-09): in a document the filing
+    index declares a subsidiary list, names alone are read again — with the
+    place a lead sentence gives them all, none otherwise — a two-column grid
+    drawn with blocks is read, and "None." is the filer's statement."""
+
+    def test_names_alone_in_a_declared_list(self):
+        # Sirius XM Holdings' Exhibit 21.1: a heading, then 18 names, no places
+        body = "<div>Exhibit 21.1</div><div>SIRIUS XM HOLDINGS INC. SUBSIDIARIES</div>" + "".join(
+            f"<div>{n}</div>" for n in ("Sirius XM Inc.", "Sirius XM Radio LLC.", "Automatic Labs Inc.",
+                                        "Pandora Media, LLC", "Audios Ventures Inc. (dba Simplecast)",
+                                        "Sirius XM Ireland Limited"))
+        subs = parse_exhibit(_doc(body, "EX-21.1"), "SIRIUS XM HOLDINGS INC.", "10-K")
+        assert [s["name"] for s in subs] == ["Sirius XM Inc.", "Sirius XM Radio LLC.", "Automatic Labs Inc.",
+                                             "Pandora Media, LLC", "Audios Ventures Inc. (dba Simplecast)",
+                                             "Sirius XM Ireland Limited"]
+        assert all(s["jurisdiction"] == "" and s["read_from"] == "layout" for s in subs)
+        assert parse_exhibit(_doc(body, kind=None), "SIRIUS XM HOLDINGS INC.", "10-K") == []   # undeclared: unread
+
+    def test_the_lead_sentence_gives_every_name_its_place(self):
+        # Shenandoah: "… are organized in the Commonwealth of Virginia."
+        body = ("<p>EXHIBIT 21</p><p>LIST OF SUBSIDIARIES</p><p>SHENANDOAH TELECOMMUNICATIONS COMPANY AND SUBSIDIARIES</p>"
+                "<p>The following are all significant subsidiaries of Shenandoah Telecommunications Company, and are "
+                "organized in the Commonwealth of Virginia.</p><p>Shenandoah Cable Television LLC</p>"
+                "<p>Shentel Management Company</p><p>Shenandoah Mobile LLC</p><p>The Chillicothe Telephone Company</p>")
+        subs = parse_exhibit(_doc(body, "EX-21"), "SHENANDOAH TELECOMMUNICATIONS CO/VA/", "10-K")
+        assert {s["name"]: s["jurisdiction"] for s in subs} == {
+            "Shenandoah Cable Television LLC": "Virginia", "Shentel Management Company": "Virginia",
+            "Shenandoah Mobile LLC": "Virginia", "The Chillicothe Telephone Company": "Virginia"}
+        sentence = ("<p>All subsidiaries listed below are incorporated in Chile.</p>"
+                    "<p>Alpha Asesorias Limitada</p><p>Beta Corredores S.A.</p><p>Gamma Leasing S.A.</p>")
+        assert [s["jurisdiction"] for s in parse_exhibit(_doc(sentence, "EX-21"), form="10-K")] == ["Chile"] * 3
+
+    def test_prose_and_a_place_set_off_after_the_name_are_still_not_names(self):
+        from app.scraper.sec_ex21 import _looks_like_a_name
+        for s in ("We act as PRC counsel to Samfine Creation Holdings Group Limited, a company incorporated in the Cayman Islands",
+                  "Bluebottle Limited, a Hong Kong company", "Sportradar AG, Switzerland", "1.XPACSponsor LLC - Cayman",
+                  "This opinion is given to Samfine Limited", "LIST OF SUBSIDIARIES", "Subsidiaries of Alpha Inc.",
+                  "ALPHA INC. SUBSIDIARIES", "Exhibit 21.1", "Cartrack Inc. (USA)"):
+            assert not _looks_like_a_name(s, "Alpha Inc."), s
+        for s in ("Shentel Management Company", "Pandora Media, LLC", "Bank of America, N.A.", "GeWiS Slovakia s.r.o.",
+                  "Audios Ventures Inc. (dba Simplecast)", "XM 1500 Eckington LLC", "The Chillicothe Telephone Company"):
+            assert _looks_like_a_name(s, "Alpha Inc."), s
+        assert not _looks_like_a_name("Alpha Inc.", "Alpha Inc.")           # the filer's own row
+
+    def test_a_few_names_in_a_narrative_are_no_list(self):
+        # most of a document's text blocks must be names: three company names scattered
+        # through a cover letter or an opinion do not make it a subsidiary list
+        prose = ["We refer to the registration statement filed by the Company with the Commission.",
+                 "The undersigned hereby consents to the use of its name in the prospectus.",
+                 "This consent is given as of the date written below and may be relied upon.",
+                 "Capitalised terms used herein have the meanings given in the agreement."]
+        body = "".join(f"<p>{x}</p>" for x in prose[:2] + ["Alpha Holdings Limited"] + prose[2:] + ["Beta Pte. Ltd.", "Gamma GmbH"])
+        assert parse_exhibit(_doc(body, "EX-21.1"), form="10-K") == []
+
+    def test_place_headings_group_the_names_under_them(self):
+        # HCA's 2,522 names under state headings, Movado's under "Australia:" — the heading is
+        # the place of every name below it, not a name (the population guard of 2026-11-09)
+        body = ("<p>Exhibit 21</p><p>ALABAMA</p><p>CareOne Home Health Services, Inc.</p><p>Four Rivers Medical Center PHO, Inc.</p>"
+                "<p>Australia:</p><p>MGDL Distribution Pty Ltd</p><p>Movado Group Australia Pty Ltd</p>")
+        subs = parse_exhibit(_doc(body, "EX-21"), form="10-K")
+        assert {s["name"]: s["jurisdiction"] for s in subs} == {
+            "CareOne Home Health Services, Inc.": "ALABAMA", "Four Rivers Medical Center PHO, Inc.": "ALABAMA",
+            "MGDL Distribution Pty Ltd": "Australia", "Movado Group Australia Pty Ltd": "Australia"}
+
+    def test_a_place_glued_to_the_end_of_every_name_is_read_off_it(self):
+        # DANA: "Ashwoods Innovations Limited United Kingdom"; Kroger: "84.51 LLC [Ohio]"
+        body = "".join(f"<p>{x}</p>" for x in ("Ashwoods Innovations Limited United Kingdom", "Dana Anand Private Limited India",
+                                                "Dana APAC Pte Ltd Singapore", "Dana Holding Corp", "Banco de Chile"))
+        subs = parse_exhibit(_doc(body, "EX-21"), form="10-K")
+        # "Banco de Chile": a place after a small word is part of the name, not glued to it
+        assert {s["name"]: s["jurisdiction"] for s in subs} == {
+            "Ashwoods Innovations Limited": "United Kingdom", "Dana Anand Private Limited": "India",
+            "Dana APAC Pte Ltd": "Singapore", "Dana Holding Corp": "", "Banco de Chile": ""}
+        # Kroger: the trade names under "Also Doing Business As:" belong to the row above, not to the list
+        kroger = "".join(f"<p>{x}</p>" for x in ("84.51 LLC [Ohio]", "84.51 HQ Building Company, LLC [Ohio]",
+                                                  "Alpha Beta Company [California]", "Also Doing Business As:", "Food 4 Less",
+                                                  "Ralphs", "Baker’s", "Dillon Companies, LLC [Kansas]"))
+        assert {s["name"]: s["jurisdiction"] for s in parse_exhibit(_doc(kroger, "EX-21"), form="10-K")} == {
+            "84.51 LLC": "Ohio", "84.51 HQ Building Company, LLC": "Ohio", "Alpha Beta Company": "California",
+            "Dillon Companies, LLC": "Kansas"}
+        # a list where only one name happens to end in a country word is left whole
+        whole = "".join(f"<p>{x}</p>" for x in ("Expensify Canada Inc.", "Apple Hospitality Canada", "Expensify Netherlands B.V.", "Expensify Ltd"))
+        assert [s["name"] for s in parse_exhibit(_doc(whole, "EX-21"), form="10-K")] == [
+            "Expensify Canada Inc.", "Apple Hospitality Canada", "Expensify Netherlands B.V.", "Expensify Ltd"]
+
+    def test_numbers_captions_dates_and_addresses_are_not_names(self):
+        from app.scraper.sec_ex21 import _looks_like_a_name
+        for s in ("Company", "Incorporation/Organization", "Incorporated State:", "AS OF DECEMBER 31, 2025",
+                  "(as of December 31, 2025)", "Life Insurance Segment", "19515 North Creek Parkway", "ALABAMA", "Puerto Rico",
+                  "KATO ACQUISITION SUB, INC. — Delaware", "Suite 310", "Bothell, Washington 98011", "Business Name: Foundations",
+                  "Company Name Jurisdiction", "The Republic Of The Marshall Islands", "Strattec de Mexico S.A. de C.V. Mexico 100%"):
+            assert not _looks_like_a_name(s, None), s
+        body = "".join(f"<p>{x}</p>" for x in ("1. Green Acquisition, Inc.", "2. Triboro Acquisition, Inc.", "3. Jamaica Acquisition, Inc."))
+        assert [s["name"] for s in parse_exhibit(_doc(body, "EX-21"), form="10-K")] == [
+            "Green Acquisition, Inc.", "Triboro Acquisition, Inc.", "Jamaica Acquisition, Inc."]
+
+    def test_a_legal_form_is_never_a_place_in_a_grid(self):
+        # Kennametal's "Ruebig Real Estate GmbH & Co. KG": KG is the form, not Kyrgyzstan; Humana's
+        # "WEST VIRGINIA" is a place heading, not a row "WEST" in Virginia
+        from app.scraper.sec_ex21 import _place_token
+        assert not _place_token("KG") and not _place_token("International Inc.") and _place_token("Delaware") and _place_token("DE")
+        body = ("<p>Name of Subsidiary State of Incorporation</p><p>Ruebig Real Estate GmbH &amp; Co. KG</p>"
+                "<p>Kennametal Widia GmbH Germany</p><p>WEST VIRGINIA</p><p>Kennametal Inc. Pennsylvania</p><p>Widia LLC Delaware</p>")
+        subs = parse_exhibit(_doc(body, "EX-21"), form="10-K")
+        assert {s["name"]: s["jurisdiction"] for s in subs} == {
+            "Ruebig Real Estate GmbH & Co. KG": "", "Kennametal Widia GmbH": "Germany", "Kennametal Inc.": "Pennsylvania", "Widia LLC": "Delaware"}
+
+    def test_a_tax_opinion_declared_a_list_is_still_no_list(self):
+        body = ("<p>We act as PRC counsel to Samfine Creation Holdings Group Limited, a company incorporated "
+                "in the Cayman Islands</p><p>12-14th Floor, China World Office 2, No. 1 Jianguomenwai Avenue, "
+                "Beijing 100004, China</p><p>This opinion is given to Samfine Limited</p>")
+        assert parse_exhibit(_doc(body, "EX-21.1")) == []
+
+    def test_a_grid_drawn_with_blocks(self):
+        # Ameriprise's Exhibit 21: a header block "Subsidiary Name Incorp State", then one
+        # block per row with the place as its last word(s)
+        body = ("<div>Exhibit 21</div><div>The table below is a list of certain direct and indirect subsidiaries of the "
+                "Parent as of December 31, 2025, and the state or jurisdiction in which the subsidiaries are organized.</div>"
+                "<div>Subsidiary Name Incorp State</div><div>Ameriprise Certificate Company DE</div>"
+                "<div>Ameriprise Bank, FSB Federal</div><div>AMPF Holding, LLC MI</div>"
+                "<div>Columbia Threadneedle Investments UK International Limited United Kingdom</div>")
+        subs = parse_exhibit(_doc(body, "EX-21"), "AMERIPRISE FINANCIAL INC", "10-K")
+        assert {s["name"]: s["jurisdiction"] for s in subs} == {
+            "Ameriprise Certificate Company": "DE", "Ameriprise Bank, FSB": "Federal", "AMPF Holding, LLC": "MI",
+            "Columbia Threadneedle Investments UK International Limited": "United Kingdom"}
+        # without the header block the last word of a name is not a place
+        assert parse_exhibit(_doc(body.replace("<div>Subsidiary Name Incorp State</div>", ""), "EX-21"),
+                             "AMERIPRISE FINANCIAL INC", "10-K") == []
+
+    def test_a_place_behind_its_label_after_a_dash(self):
+        # BNY Mellon: "•BNY Capital Markets Holdings, Inc. – State of Incorporation: New York"
+        body = ("<p>Exhibit 21.1</p><p>THE BANK OF NEW YORK MELLON CORPORATION</p><p>PRIMARY SUBSIDIARIES</p><p>DEC. 31, 2025</p>"
+                "<p>•BNY Capital Markets Holdings, Inc. – State of Incorporation: New York</p>"
+                "<p>•BNY International Financing Corporation – Incorporation: United States</p>"
+                "<p>•BNY Mellon Capital Markets, LLC – State of Organization: Delaware</p>"
+                "<p>•BNY Mellon Fund Management (Luxembourg) S.A. – Incorporation: Luxembourg</p>")
+        subs = parse_exhibit(_doc(body, "EX-21.1"), "Bank of New York Mellon Corp", "10-K")
+        assert {s["name"]: s["jurisdiction"] for s in subs} == {
+            "BNY Capital Markets Holdings, Inc.": "New York", "BNY International Financing Corporation": "United States",
+            "BNY Mellon Capital Markets, LLC": "Delaware", "BNY Mellon Fund Management (Luxembourg) S.A.": "Luxembourg"}
+
+    def test_the_filers_statement_that_there_is_nothing_to_list(self):
+        from app.scraper.sec_ex21 import states_no_subsidiaries
+        ess = _doc("<p>Exhibit 21.1</p><p>LIST OF SUBSIDIARIES</p><p>None. Pursuant to Item 601(b)(21)(ii) of Regulation S-K, "
+                   "the names of ESS Tech, Inc.’s subsidiary is omitted because it does not constitute a “significant "
+                   "subsidiary” as defined in Regulation S-X.</p>", "EX-21.1")
+        ethos = _doc("<p>Exhibit 21.1</p><p>List of Subsidiaries of Registrant</p><p>None.</p>", "EX-21.1")
+        assert parse_exhibit(ess, "ESS Tech, Inc.", "10-K") == [] and states_no_subsidiaries(ess)
+        assert parse_exhibit(ethos, "Ethos Technologies Inc.", "10-K") == [] and states_no_subsidiaries(ethos)
+        # a list that merely omits some subsidiaries is a list, not a statement of none
+        assert not states_no_subsidiaries(_doc(TABLE + "<p>Certain subsidiaries are omitted as not significant.</p>", "EX-21"))
+        assert not states_no_subsidiaries(_doc("<p>We act as counsel to Alpha Ltd.</p>", "EX-21.1"))

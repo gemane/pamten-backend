@@ -1517,6 +1517,18 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       `get_source_enabled` at its canonical home (`app.scraper.scraper_registry`), not at
       an importer's alias — a test patching the wrong module reaches the real database.
 
+- [ ] **"None." is a fact; a layout that was unreadable yesterday may be readable once its
+      guards exist.** Two of dev's seven zero-row Exhibit 21s said "None." — the filer's
+      statement, reported as a missing exhibit for a month; and names-only lists were
+      removed in October because combined filings fooled them, then read again in November
+      once the filing index's declared type and the own-row rule stood (findings item 82,
+      2026-11-09). When a reader reports "nothing found", ask whether the document says so
+      itself (a status of its own), and when a layout is dropped, write down which guard
+      would let it back in. And a loosened reader is judged on the whole population, not
+      its test cases: the first names-only reader passed its six documents and then read
+      HCA's state headings, Kroger's d/b/a trade names, a date caption and a street
+      address as subsidiaries across the 4,384 cached exhibits — five passes of the
+      population guard shaped the guards that the fixtures never asked for.
 - [ ] **A filing one reader learned to open belongs to every reader that walks the same
       filings.** The IPO's registration statement was taught to the latest-list reader for a
       company with no annual report yet (item 77) — and the history reader, which dates

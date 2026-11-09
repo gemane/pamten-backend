@@ -892,6 +892,246 @@ def _paragraph_list(sequence: list, registrant: str | None) -> list[dict]:
         out.append(entry)
     return out if len(out) >= 3 and len(out) >= shaped / 2 else []
 
+
+# ── layouts read again since 2026-11-09 (findings item 82, the user's call) ──
+# The names-only list was removed 2026-10-08 because it read combined 10-Ks'
+# sibling lists as the filer's own; since then the filing index's declared type
+# (item 81) says what a document IS and the own-row rule drops the filer's own
+# names, so a list of names alone in a declared EX-21 / EX-8.1 is read again —
+# with the place a lead sentence gives every name ("… are organized in the
+# Commonwealth of Virginia", Shenandoah), none otherwise (Sirius XM's 18 names).
+#: the sentence that gives every name below one place
+_LEAD_PLACE = re.compile(
+    r"\b(?:organi[sz]ed|incorporated|formed|existing|registered)\s+(?:in|under\s+the\s+laws\s+of)\s+"
+    r"(?:the\s+)?(?:Commonwealth\s+of\s+|State\s+of\s+|Republic\s+of\s+)?"
+    r"(?P<place>[A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*){0,3})")
+#: lowercase words a company name may carry; any other lowercase word is prose
+_NAME_SMALL_WORDS = frozenset((
+    "of and de del della di da do dos das la le les du des der den und van von y e en für &amp; & dba d/b/a f/k/a "
+    "na n.a. s.r.l. s.a. s.p.a. s.r.o. a.s. d.o.o. b.v. n.v. gmbh mbh co. kg ag ab oy as a/s aps sa sas srl spa llc "
+    "lp llp plc ltd inc pty pte bhd sdn ltda limited company corp corporation incorporated"
+).split())
+#: "name, Place" / "name - Place": the place set off after the name — a layout
+#: left unread on purpose (one reader for it guessed at headings), not a name
+_PLACE_TAIL = re.compile(r"^(?P<name>.+?)\s*(?:,|\s[-–—]\s)\s*(?P<place>[A-Z][\w .'’-]{1,30})$")
+#: a header or caption block of a list, never a name
+_CAPTION_WORDS = re.compile(r"^(?:company|companies|name|names|entity|entities|subsidiary|subsidiaries|jurisdiction|state|"
+                            r"country|incorporation(?:/organi[sz]ation)?|organi[sz]ation|(?:state|place|jurisdiction)\s+of\s+"
+                            r"(?:incorporation|organi[sz]ation|formation)|incorporated\s+state|business\s+name)\s*:?$", re.I)
+_DATE_CAPTION = re.compile(r"^\(?\s*(?:as\s+of|at|dated?)\s+(?:[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})\)?\.?$", re.I)
+_STREET = re.compile(r"^\d{1,6}\s+\S.*\b(?:street|st\.|avenue|ave\.?|road|rd\.|drive|dr\.|parkway|boulevard|blvd\.?|suite|floor|lane|way|plaza)\b", re.I)
+#: a numbered row: "1. Green Acquisition, Inc.", "1.XPACSponsor LLC"
+_ROW_NUMBER = re.compile(r"^\d{1,3}[.)]\s*(?=[A-Za-z(])")      # not "84.51 LLC", a name that starts with a number
+#: "Also Doing Business As:" — the trade names under it belong to the row above, they are no subsidiaries
+_DBA = re.compile(r"^(?:also\s+)?(?:doing\s+business\s+as|d/?b/?a)\b", re.I)
+
+
+def _looks_like_a_name(block: str, registrant: str | None) -> bool:
+    """A text block that is a company name and nothing more: short, every
+    word capitalised (or a small word a name may hold), no sentence, not a
+    heading, not the filer, not a name with its place set off after it."""
+    s = block.strip().rstrip(";:")
+    if not 2 <= len(s) <= 110 or not re.search(r"[A-Za-z]", s):
+        return False
+    words = s.split()
+    if len(words) > 10 or _NOISE.match(s) or _PARENT_HEADING.match(s) or re.match(r"^ex-?\d", s, re.I):
+        return False
+    if re.fullmatch(r"[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}", s) or not re.search(r"[A-Za-z]{2}", s) \
+            or re.search(r"\b(?:incorporat|organi[sz]|jurisdiction|formed|domicil)\w*\s*:", s, re.I):
+        return False                      # a date ("DEC. 31, 2025"), a number, a labelled place
+    if _CAPTION_WORDS.match(s) or _DATE_CAPTION.match(s) or block.strip().endswith(":") or _STREET.match(s) \
+            or re.search(r"\b(?:segment|division)$", s, re.I) or s.endswith("%") \
+            or re.search(r"\b(?:business\s+)?name\s*:|\bstate\s*:", s, re.I) \
+            or re.match(r"^(?:suite|floor|p\.?o\.? box)\s+\w", s, re.I) or re.search(r",\s*[A-Z][a-z]+\s+\d{5}(?:-\d{4})?$", s) \
+            or (len(words) <= 4 and all(_CAPTION_WORDS.match(w) for w in words)):
+        return False                      # a caption, an address, a label, a stake tail, "Company Name Jurisdiction"
+    if len(words) <= 7 and jurisdiction_country(s.rstrip(":.")) is not None:
+        return False                      # a place heading ("ALABAMA", "The Republic of the Marshall Islands") groups the names under it
+    if re.search(r"\bsubsidiar(?:y|ies)\b", s, re.I):
+        return False
+    if s.endswith(".") and re.sub(r"[^a-z]", "", words[-1].lower()) not in _FORM_TAILS:
+        return False                      # a sentence ends with a period; "Inc.", "N.A.", "S.A." do too
+    for w in words:
+        core = w.strip("(),;:\"“”'’")
+        if not core:
+            continue
+        if core[0].islower() and core.lower() not in _NAME_SMALL_WORDS:
+            return False
+    if _same_company(s, registrant):
+        return False
+    m = _PAREN_JURISDICTION.match(s)
+    if m and jurisdiction_country(m.group("jur")) is not None:
+        return False                      # the paragraph list's shape, with a place
+    m = _PLACE_TAIL.match(s)
+    if m and jurisdiction_country(m.group("place")) is not None \
+            and re.sub(r"[^a-z]", "", m.group("place").lower()) not in _FORM_TAILS:
+        return False                      # "Sportradar AG, Switzerland": the place after the name — not "…, N.A."
+    last = words[-1].strip("(),;:")
+    if re.fullmatch(r"[A-Z]{2}", last) and last not in _FORM_TAILS_UPPER and jurisdiction_country(last) \
+            and any(w != w.upper() for w in words[:-1]):
+        return False                      # "Ameriprise Certificate Company DE": a state code glued to the name
+    return True
+
+
+#: legal-form abbreviations a name may end with — never a place
+_FORM_TAILS = frozenset(("na sa ag se nv bv ab as kg lp pc lc llc ltd inc co corp plc gmbh sarl srl spa sas sasu sl slu "
+                         "oy oyj aps asa hf ehf sro doo kft zrt nyrt spzoo ood eood ad ead eurl snc bvba cvba cv vof ltda "
+                         "sapi scv uab sia ou ltd pte pty bhd sdn kk gk yk ag sa sagl scpa scarl").split())
+_FORM_TAILS_UPPER = frozenset(x.upper() for x in _FORM_TAILS if len(x) == 2)
+
+
+def _names_only_list(sequence: list, registrant: str | None) -> list[dict]:
+    """Subsidiary names alone, one per block, in a document declared EX-21 /
+    EX-8.1 — Sirius XM's 18, Shenandoah's 19 — with the place a lead sentence
+    before the first name gives them all (``_LEAD_PLACE``), else none. At
+    least three names, and from the first name on the document must be the
+    list and little else — at most one block in ten that is not a name (a
+    footer, a page number): a tax opinion or a cover letter declared EX-21 by
+    mistake has sentences between its company names (findings item 82c)."""
+    blocks = [str(item).strip() for kind, item in sequence if kind == "text" and str(item).strip()]
+    names: list[tuple[str, str]] = []            # (block, the place that governs it)
+    lead_place, first, headings, trade_names = None, None, 0, 0
+    place, dba = None, False
+    for i, b in enumerate(blocks):
+        b = _ROW_NUMBER.sub("", b)
+        if _DBA.match(b):
+            dba, headings = True, headings + 1       # Kroger: "Also Doing Business As:" then "Food 4 Less", "Ralphs"
+        elif _looks_like_a_name(b, registrant):
+            if first is None:
+                first = i
+            if dba and not _glued_place(b):
+                trade_names += 1                     # a trade name of the row above, until the next row with its place
+                continue
+            dba = False
+            names.append((b, place or lead_place or ""))
+        elif len(b.split()) <= 7 and jurisdiction_country(b.rstrip(":.")) is not None and not _CAPTION_WORDS.match(b):
+            # a place heading groups the names under it (HCA's "ALABAMA", Movado's "Australia:")
+            place, dba = b.rstrip(":."), False
+            headings += 1
+        elif first is None and (m := _LEAD_PLACE.search(b)) \
+                and jurisdiction_country(lp := m.group("place").rstrip(".,;:")) is not None:
+            lead_place = lp
+        else:
+            dba = False
+    if len(names) < 3 or first is None \
+            or (len(blocks) - first) - len(names) - headings - trade_names > 1 + len(names) // 10:
+        return []
+    # "Ashwoods Innovations Limited United Kingdom", "84.51 LLC [Ohio]": a list whose names
+    # end with their place reads the place off every name that has one (most do, or none)
+    tails = [_glued_place(n) for n, _p in names]
+    glued = sum(1 for t in tails if t) >= 0.6 * len(names)
+    out = []
+    for (n, p), tail in zip(names, tails):
+        if glued and tail:
+            n, p = tail
+        name, stake = _clean_name(n.rstrip(" -–—"))
+        if not name:
+            continue
+        entry = {"name": name, "jurisdiction": p}
+        if stake is not None:
+            entry["stake_percent"] = stake
+        out.append(entry)
+    return out if len(out) >= 3 else []
+
+
+def _glued_place(block: str) -> tuple[str, str] | None:
+    """("Reddit Canada Limited", "Canada") for a name with its place glued to
+    its end — the last one to three words, or "[Ohio]" in brackets — when what
+    is left still reads as a name of two words or more; None otherwise."""
+    m = re.match(r"^(?P<name>.+?)\s*\[(?P<place>[^\]]{2,40})\]\s*$", block)
+    if m and jurisdiction_country(m.group("place")) is not None:
+        return m.group("name").strip(), m.group("place").strip()
+    words = block.split()
+    for k in (3, 2, 1):
+        if len(words) > k + 1:
+            tail = " ".join(words[-k:])
+            if tail.rstrip(".,").lower() not in _FORM_TAILS and jurisdiction_country(tail) is not None \
+                    and (words[-k - 1][0].isupper() or re.sub(r"[^a-z]", "", words[-k - 1].lower()) in _FORM_TAILS):
+                return " ".join(words[:-k]), tail
+    return None
+
+
+#: "•BNY Capital Markets Holdings, Inc. – State of Incorporation: New York":
+#: a name, a dash, the place behind its label
+_LABELLED_PLACE = re.compile(
+    r"^[\s•·\-–]*(?P<name>.+?)\s+[–-]\s+(?:(?:state|country|place|jurisdiction)\s+of\s+)?"
+    r"(?:incorporation|organi[sz]ation|formation|domicile)\s*:\s*(?P<place>.+?)\s*$", re.I)
+
+
+def _place_token(tail: str) -> bool:
+    """A place as a grid writes it: a jurisdiction that maps to a country, a
+    two-letter US state code, "Federal" (a federal savings bank)."""
+    tail = tail.strip()
+    if not tail or re.sub(r"[^a-z]", "", tail.split()[-1].lower()) in _FORM_TAILS:
+        return False                      # "KG", "Inc." end a name, never a place
+    return jurisdiction_country(tail) is not None or bool(re.fullmatch(r"[A-Z]{2}", tail)) or tail.lower() == "federal"
+
+
+def _labelled_place_list(sequence: list, registrant: str | None) -> list[dict]:
+    """One subsidiary per block with its place beside the name, drawn without
+    a <table> (findings item 82b). Two shapes: under a header block that names
+    both columns ("Subsidiary Name Incorp State", Ameriprise) the place is the
+    block's last word or words — "Ameriprise Certificate Company DE",
+    "Ameriprise Bank, FSB Federal"; or the place follows its label after a
+    dash ("… – State of Incorporation: New York", BNY Mellon's 23 rows),
+    header or not. At least three rows."""
+    blocks = [str(item).strip() for kind, item in sequence if kind == "text" and str(item).strip()]
+    out: list[dict] = []
+    header_seen = False
+    for b in blocks:
+        if len(b) <= 60 and len(b.split()) <= 7 and not b.endswith(".") and not _LEAD_PLACE.search(b) \
+                and _H_NAME.search(b) and _H_JURISDICTION.search(b) and not _not_jurisdiction(b):
+            header_seen = True                            # "Subsidiary Name Incorp State" — a caption, not a sentence
+            continue
+        name = place = None
+        if m := _LABELLED_PLACE.match(b):
+            if _place_token(m.group("place")):
+                name, place = m.group("name"), m.group("place").strip()
+        elif header_seen and not _place_token(b):          # a whole block that is a place is a heading, not a row
+            words = b.split()
+            if g := _glued_place(b):                      # "84.51 LLC [Ohio]"
+                name, place = g
+                words = []
+            for k in (3, 2, 1):
+                if len(words) > k and _place_token(" ".join(words[-k:])) and (
+                        words[-k - 1][0].isupper() or re.sub(r"[^a-z]", "", words[-k - 1].lower()) in _FORM_TAILS):
+                    name, place = " ".join(words[:-k]), " ".join(words[-k:])
+                    break
+        if name is None and header_seen and _looks_like_a_name(b, registrant):
+            name, place = b, ""                          # a row of the grid whose place is no place ("… GmbH & Co. KG")
+        if name:
+            name = _ROW_NUMBER.sub("", name).rstrip(" -–—")
+        if not name or not _looks_like_a_name(name, registrant):
+            continue
+        cleaned, stake = _clean_name(name)
+        if not cleaned:
+            continue
+        entry = {"name": cleaned, "jurisdiction": place}
+        if stake is not None:
+            entry["stake_percent"] = stake
+        out.append(entry)
+    return out if len(out) >= 3 else []
+
+
+#: "None." / "has no subsidiaries" / "… omitted … not a significant subsidiary":
+#: the filer's statement that the list is empty, not a list the parser missed
+_NO_SUBSIDIARIES = re.compile(
+    r"^\s*(?:none|not applicable|n/?a)\b|"
+    r"\b(?:has|have|had)\s+no\s+(?:significant\s+)?subsidiar|\bno\s+subsidiaries\b", re.I)
+
+
+def states_no_subsidiaries(html: str) -> bool:
+    """Whether a declared EX-21 / EX-8.1 that lists nothing SAYS so: ESS Tech
+    and Ethos write "None." under the heading, with or without Regulation S-K's
+    omission clause (findings item 82a). Only for a document that parses to
+    no subsidiaries; a list that merely omits some ("certain subsidiaries …
+    omitted", Ameriprise) is still a list."""
+    parser = _TableTextParser()
+    parser.feed(html)
+    parser.close()
+    blocks = [str(item).strip() for kind, item in parser.sequence if kind == "text" and str(item).strip()]
+    return any(_NO_SUBSIDIARIES.search(b) for b in blocks)
+
 # ── what the filer declared the document to be ───────────────────────────────
 # Every EDGAR document opens with its SGML header, "<TYPE>EX-2.1". A 20-F's
 # Exhibit 2.1 is the description of securities, and Workiva names it
@@ -1022,12 +1262,15 @@ def parse_exhibit(html: str, registrant: str | list[str] | None = None,
     A document the filer declared something else ("<TYPE>EX-2.1") is no list,
     nor an EX-8 outside a 20-F (``form``) — see ``_subsidiary_document``.
     When the table reader finds nothing, the other layouts are tried in turn
-    (``_grouped_list``, ``_paragraph_list``, the country rows only in a
-    document declared EX-8 or EX-21). Every entry they read names its place.
-    Not read: a list of names alone, and one subsidiary per line with its
-    place in words ("Bluebottle Limited, a Hong Kong company") — that reader
-    was removed 2026-10-08: it read combined filings' sibling lists as the
-    filer's own and parents stated in words not at all."""
+    (``_grouped_list``, ``_paragraph_list``; in a document declared EX-8 or
+    EX-21 also the country rows, a grid drawn without a table
+    (``_labelled_place_list``) and names alone (``_names_only_list``, with the
+    place a lead sentence gives them — findings item 82, read again since
+    2026-11-09 under the declared type that keeps a combined filing's sibling
+    list out). Not read: one subsidiary per line with its place in words
+    ("Bluebottle Limited, a Hong Kong company") or set off after the name
+    ("Sportradar AG, Switzerland") — those readers were removed 2026-10-08:
+    they read parents stated in words not at all."""
     names = _filer_names(registrant)
     registrant = names[0] if names else None
     kind = declared_type(html)
@@ -1170,7 +1413,10 @@ def parse_exhibit(html: str, registrant: str | list[str] | None = None,
         seq = parser.sequence
         readers = [(_grouped_list, READ_LAYOUT), (_paragraph_list, READ_PROSE)]
         if declared:
-            readers.append((_country_rows_list, READ_LAYOUT))
+            # only in a document the filing index declares a subsidiary list
+            # (item 81): the block grid and the names-only list (item 82)
+            readers += [(_country_rows_list, READ_LAYOUT), (_labelled_place_list, READ_LAYOUT),
+                        (_names_only_list, READ_LAYOUT)]
         for reader, grade in readers:
             found = reader(seq, registrant)
             if not found:
@@ -1607,6 +1853,7 @@ def fetch_subsidiaries(cik: str, registrant: str | list[str] | None = None,
     filings = annual_filings(cik)
     if not filings:
         return list_from_registration(cik, registrant, home)
+    empty: list[tuple[dict, str]] = []            # the declared lists that parsed to nothing
     for meta in own_list_first(exhibit_candidates(cik, *filings[0]), cik, registrant):
         html = meta.get("html") or _get_text(meta["url"])
         subs = parse_exhibit(html, registrant, meta["form"], home)
@@ -1617,7 +1864,18 @@ def fetch_subsidiaries(cik: str, registrant: str | list[str] | None = None,
                     "url": meta["url"], **({"group_of": group_of} if group_of else {})}
         log.info("candidate %s parsed to zero subsidiaries — trying the next",
                  meta["url"])
-    return list_from_main_document(cik, filings[0], registrant, home)
+        if (kind := declared_type(html)) and _subsidiary_document(kind, meta["form"]):
+            empty.append((meta, html))
+    if found := list_from_main_document(cik, filings[0], registrant, home):
+        return found
+    # The filer's own word that there is nothing to list (findings item 82a):
+    # ESS Tech's and Ethos' Exhibit 21.1 read "None." — a statement, not a
+    # missing exhibit, and the gate closes on it like on a list.
+    for meta, html in empty:
+        if states_no_subsidiaries(html):
+            return {"subsidiaries": [], "none_stated": True, "form": meta["form"],
+                    "filing_date": meta["filing_date"], "url": meta["url"]}
+    return None
 
 
 def registration_filings(cik: str) -> list[tuple[str, str, str, str]]:
