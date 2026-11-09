@@ -98,7 +98,8 @@ def golden_copy_record(attributes: dict) -> dict:
             "EntityExpirationDate": _wrap(_api_day((entity.get("expiration") or {}).get("date"))),
             "LegalEntityEvents": {"LegalEntityEvent": [
                 {"@event_status": ev.get("status"), "LegalEntityEventType": _wrap(ev.get("type")),
-                 "LegalEntityEventEffectiveDate": _wrap(_api_day(ev.get("effectiveDate")))}
+                 "LegalEntityEventEffectiveDate": _wrap(_api_day(ev.get("effectiveDate"))),
+                 "LegalEntityEventRecordedDate": _wrap(_api_day(ev.get("recordedDate")))}
                 for group in entity.get("eventGroups") or [] for ev in group.get("events") or []]},
         },
         "Registration": {

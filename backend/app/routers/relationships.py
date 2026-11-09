@@ -16,6 +16,7 @@ from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 from app.claims import ACQUISITION_FILING_TYPES, KIND_OWNS, record_claim
 from app.former_names import of_node, rename_events
+from app import legal_events
 from app.routers.search import _NOT_A_SHORTCUT
 from app.scraper.owns_merge import started_by_clause
 
@@ -800,13 +801,18 @@ def _history_pass(session, label: str, entity_id: str, limit: int) -> tuple[list
     # a company rarely has more than a handful.
     rec = session.run(
         f"MATCH (e:{label} {{id: $id}}) RETURN e.name AS name, e.former_names AS former_names, "
-        "e.gleif_former_names AS gleif_former_names, e.dissolved_on AS dissolved_on, e.end_kind AS end_kind",
+        "e.gleif_former_names AS gleif_former_names, e.dissolved_on AS dissolved_on, e.end_kind AS end_kind, "
+        "e.gleif_events AS gleif_events",
         id=entity_id,
     ).single()
     if rec:
         events.extend({**ev, "party": None}
                       for ev in rename_events(rec.get("name"), of_node(
                           {p: rec.get(p) for p in ("former_names", "gleif_former_names")})))
+        # The company's own proceedings (app.legal_events, item 85d): a
+        # liquidation, bankruptcy, insolvency or arrangement the register
+        # recorded — dated states of a company that exists, not its end
+        events.extend({**ev, "party": None} for ev in legal_events.timeline_events(rec.get("gleif_events")))
         # The company's own end (app.dissolution): the last event of its
         # timeline, dated as the source states it. How it ended is the
         # event's kind (`end_kind`, findings item 85c): `merged` / `split`

@@ -57,6 +57,17 @@ class TestTheGoldenCopyShape:
         _, props = _entity_props(rp.golden_copy_record(attrs), "gleif", 92)
         assert props["gleif_former_names"] == ["BLACKROCK, INC.|2024-09-30"]
 
+    def test_the_apis_proceedings_carry_their_recorded_day_as_the_bulk_path_does(self):
+        # item 85d: the API's `recordedDate` is the golden copy's LegalEntityEventRecordedDate —
+        # what dates a proceeding whose effective day the register left empty
+        from app.scraper.gleif_lei_cdf import _entity_props
+        attrs = _api()["data"]["attributes"]
+        attrs = {**attrs, "entity": {**attrs["entity"], "eventGroups": [
+            {"groupType": "STANDALONE", "events": [
+                {"type": "INSOLVENCY", "status": "IN_PROGRESS", "effectiveDate": None, "recordedDate": "2026-10-12T08:00:00Z"}]}]}}
+        _, props = _entity_props(rp.golden_copy_record(attrs), "gleif", 92)
+        assert props["gleif_events"] == ["INSOLVENCY|IN_PROGRESS||2026-10-12"]
+
     @pytest.mark.parametrize("stamp,day", [
         ("2006-02-12T23:00:00Z", "2006-02-13"),       # midnight in Vienna
         ("2014-02-20T01:35:00Z", "2014-02-20"),
