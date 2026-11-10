@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/schedule13g" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <headerData>
+    <submissionType>SCHEDULE 13G/A</submissionType>
+    <filerInfo>
+      <filer>
+        <filerCredentials>
+          <cik>0001067983</cik>
+          <ccc>XXXXXXXX</ccc>
+        </filerCredentials>
+      </filer>
+      <liveTestFlag>LIVE</liveTestFlag>
+
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <coverPageHeader>
+      <amendmentNo>2</amendmentNo>
+      <securitiesClassTitle>Common Stock, par value $0.01 per share</securitiesClassTitle>
+      <eventDateRequiresFilingThisStatement>09/30/2025</eventDateRequiresFilingThisStatement>
+      <issuerInfo>
+        <issuerCik>0000908937</issuerCik>
+        <issuerName>SIRIUS XM HOLDINGS INC.</issuerName>
+        <issuerCusip>829933100</issuerCusip>
+        <issuerPrincipalExecutiveOfficeAddress>
+          <street1 xmlns="http://www.sec.gov/edgar/common">1221 Avenue of the Americas</street1>
+          <street2 xmlns="http://www.sec.gov/edgar/common">35th Floor</street2>
+          <city xmlns="http://www.sec.gov/edgar/common">New York</city>
+          <stateOrCountry xmlns="http://www.sec.gov/edgar/common">NY</stateOrCountry>
+          <zipCode xmlns="http://www.sec.gov/edgar/common">10020</zipCode>
+        </issuerPrincipalExecutiveOfficeAddress>
+      </issuerInfo>
+      <designateRulesPursuantThisScheduleFiled>
+        <designateRulePursuantThisScheduleFiled>Rule 13d-1(b)</designateRulePursuantThisScheduleFiled>
+      </designateRulesPursuantThisScheduleFiled>
+    </coverPageHeader>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>Warren E. Buffett</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>X1</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>124807117</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>124807117</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>124807117</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>37.1</classPercent>
+      <typeOfReportingPerson>IN</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>Berkshire Hathaway Inc.</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>DE</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>124807117</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>124807117</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>124807117</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>37.1</classPercent>
+      <typeOfReportingPerson>HC</typeOfReportingPerson>
+      <typeOfReportingPerson>CO</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>National Indemnity Company</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>NE</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>107497736</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>107497736</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>107497736</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>31.9</classPercent>
+      <typeOfReportingPerson>IC</typeOfReportingPerson>
+      <typeOfReportingPerson>CO</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>National Fire &amp; Marine Insurance Company</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>NE</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>1326491</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>1326491</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>1326491</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>0.4</classPercent>
+      <typeOfReportingPerson>IC</typeOfReportingPerson>
+      <typeOfReportingPerson>CO</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>GEICO Corporation</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>DE</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>101150646</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>101150646</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>101150646</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>30.0</classPercent>
+      <typeOfReportingPerson>HC</typeOfReportingPerson>
+      <typeOfReportingPerson>CO</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>Government Employees Insurance Company</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>NE</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>101150646</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>101150646</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>101150646</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>30.0</classPercent>
+      <typeOfReportingPerson>IC</typeOfReportingPerson>
+      <typeOfReportingPerson>CO</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+      <reportingPersonName>Berkshire Hathaway Consolidated Pension Plan Master Trust</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>NE</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>10556408</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>10556408</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>10556408</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>3.1</classPercent>
+      <typeOfReportingPerson>EP</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+      <reportingPersonName>BNSF Master Retirement Trust</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>TX</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>3308255</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>3308255</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>3308255</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>1.0</classPercent>
+      <typeOfReportingPerson>EP</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+      <reportingPersonName>Scott Fetzer Collective Investment Trust</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>OH</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>167500</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>167500</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>167500</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>0.05</classPercent>
+      <typeOfReportingPerson>EP</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+      <reportingPersonName>Precision Castparts Corp. Master Fund</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>OR</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>0.00</soleVotingPower>
+        <sharedVotingPower>1952727</sharedVotingPower>
+        <soleDispositivePower>0.00</soleDispositivePower>
+        <sharedDispositivePower>1952727</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>1952727</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>0.6</classPercent>
+      <typeOfReportingPerson>EP</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <coverPageHeaderReportingPersonDetails>
+
+
+      <reportingPersonName>R. Ted Weschler</reportingPersonName>
+      <memberGroup>a</memberGroup>
+      <citizenshipOrOrganization>X1</citizenshipOrOrganization>
+      <reportingPersonBeneficiallyOwnedNumberOfShares>
+        <soleVotingPower>788622</soleVotingPower>
+        <sharedVotingPower>0.00</sharedVotingPower>
+        <soleDispositivePower>788622</soleDispositivePower>
+        <sharedDispositivePower>22747</sharedDispositivePower>
+      </reportingPersonBeneficiallyOwnedNumberOfShares>
+      <reportingPersonBeneficiallyOwnedAggregateNumberOfShares>811369</reportingPersonBeneficiallyOwnedAggregateNumberOfShares>
+      <aggregateAmountExcludesCertainSharesFlag>N</aggregateAmountExcludesCertainSharesFlag>
+      <classPercent>0.24</classPercent>
+      <typeOfReportingPerson>IN</typeOfReportingPerson>
+    </coverPageHeaderReportingPersonDetails>
+    <items>
+      <item1>
+        <issuerName>SIRIUS XM HOLDINGS INC.</issuerName>
+        <issuerPrincipalExecutiveOfficeAddress>1221 Avenue of the Americas, 35th Floor, New York, NY 10020</issuerPrincipalExecutiveOfficeAddress>
+      </item1>
+      <item2>
+        <filingPersonName>Warren E. Buffett
+Berkshire Hathaway Inc.
+National Idemnity Company
+GEICO Corporation
+Government Employees Insurance Company
+National Fire &amp; Marine Insurance Company
+Berkshire Hathaway Consolidated Pension Plan Master Trust
+BNSF Master Retirement Trust
+Precision Castparts Corp. Master Trust
+Scott Fetzer Collective Investment Trust
+R. Ted Weschler.</filingPersonName>
+        <principalBusinessOfficeOrResidenceAddress>Warren E. Buffett
+3555 Farnam Street
+Omaha, NE 68131
+
+Berkshire Hathaway Inc.
+3555 Farnam Street
+Omaha, NE, 68131
+
+National Indemnity Company
+1314 Douglas Street
+Omaha, NE 68102
+
+GEICO Corporation
+One GEICO Plaza
+Washington, DC 20076
+
+Government Employees Insurance Company
+One GEICO Plaza
+Washington, DC 20076
+
+National Fires &amp; Marine Insurance Company
+1314 Douglas Street
+Omaha, NE 68102
+
+Berkshire Hathaway Consolidated Pension Plan Master Trust
+c/o Berkshire Hathaway Inc.
+3555 Farnam Street
+Omaha, NE 68131
+
+BNSF Master Retirement Trust
+c/o BNSF Railway Company
+2650 Lou Menk Drive
+Fort Worth, TX 76131
+
+Precision Castparts Corp. Master Trust
+c/o Precision Castparts Corp.
+5885 Meadows Road
+Lake Oswego, OR 97035
+
+Scott Fetzer Collective Investment Trust
+c/o Marmon Holdings, Inc.
+181 West Madison Street
+Chicago, IL 60602
+
+R. Ted Weschler
+404 East Main Street
+Charlotesville, VA 22902</principalBusinessOfficeOrResidenceAddress>
+        <citizenship>Warren E. Buffet (United States); Berkshire Hathaway Inc. (Delaware); National Indemnity Company (Nebraska); GEICO Corporation (Delaware); Government Employees Insurance Company (Nebraska); National Fire &amp; Marine 	Insurance Company (Nebraska); Berkshire Hathaway Consolidated Pension Plan Master Trust (Nebraska); BNSF Master Retirement Trust (Texas); Precision Castpasrts Corp. Master Trust (Oregon); Scott Fetzer Collective Investment Trust (Delaware); R. Ted Weschler (United States).</citizenship>
+      </item2>
+      <item3>
+        <notApplicableFlag>N</notApplicableFlag>
+        <typeOfPersonFiling>IC</typeOfPersonFiling>
+        <typeOfPersonFiling>EP</typeOfPersonFiling>
+        <typeOfPersonFiling>HC</typeOfPersonFiling>
+      </item3>
+      <item4>
+        <amountBeneficiallyOwned>See the Cover Pages for each of the Reporting Persons.</amountBeneficiallyOwned>
+        <classPercent>See the Cover Pages for each of the Reporting Persons.</classPercent>
+        <numberOfSharesPersonHas>
+          <solePowerOrDirectToVote>See the Cover Pages for each of the Reporting Persons.</solePowerOrDirectToVote>
+          <sharedPowerOrDirectToVote>See the Cover Pages for each of the Reporting Persons.</sharedPowerOrDirectToVote>
+          <solePowerOrDirectToDispose>See the Cover Pages for each of the Reporting Persons.</solePowerOrDirectToDispose>
+          <sharedPowerOrDirectToDispose>See the Cover Pages for each of the Reporting Persons.</sharedPowerOrDirectToDispose>
+        </numberOfSharesPersonHas>
+      </item4>
+      <item5>
+        <notApplicableFlag>Y</notApplicableFlag>
+      </item5>
+      <item6>
+        <notApplicableFlag>N</notApplicableFlag>
+        <ownershipMoreThan5PercentOnBehalfOfAnotherPerson>Not Applicable.</ownershipMoreThan5PercentOnBehalfOfAnotherPerson>
+      </item6>
+      <item7>
+        <notApplicableFlag>N</notApplicableFlag>
+        <subsidiaryIdentificationAndClassification>Not Applicable.</subsidiaryIdentificationAndClassification>
+      </item7>
+      <item8>
+        <notApplicableFlag>N</notApplicableFlag>
+        <identificationAndClassificationOfGroupMembers>See Exhibit A.</identificationAndClassificationOfGroupMembers>
+      </item8>
+      <item9>
+        <notApplicableFlag>N</notApplicableFlag>
+        <groupDissolutionNotice>Not Applicable.</groupDissolutionNotice>
+      </item9>
+      <item10>
+        <notApplicableFlag>N</notApplicableFlag>
+        <certifications>By signing below I certify that, to the best of my knowledge and belief, the securities referred to above were acquired and are held in the ordinary course of business and were not acquired and are not held for the purpose of or with the effect of changing or influencing the control of the issuer of the securities and were not acquired and are not held in connection with or as a participant in any transaction having that purpose or effect, other than activities solely in connection with a nomination under ?? 240.14a-11. </certifications>
+      </item10>
+    </items>
+    <signatureInformation>
+      <reportingPersonName>Warren E. Buffett</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>Berkshire Hathaway Inc.</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Chairman of the Board</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>National Indemnity Company</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>National Fire &amp; Marine Insurance Company</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>GEICO Corporation</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>Government Employees Insurance Company</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>Berkshire Hathaway Consolidated Pension Plan Master Trust</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>BNSF Master Retirement Trust</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>Scott Fetzer Collective Investment Trust</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>Precision Castparts Corp. Master Fund</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ Warren E. Buffett</signature>
+        <title>Warren E. Buffett, Attorney-in-Fact</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+    <signatureInformation>
+      <reportingPersonName>R. Ted Weschler</reportingPersonName>
+      <signatureDetails>
+        <signature>/s/ R. Ted Weschler</signature>
+        <title>R. Ted Weschler</title>
+        <date>11/14/2025</date>
+      </signatureDetails>
+    </signatureInformation>
+  </formData>
+
+</edgarSubmission>

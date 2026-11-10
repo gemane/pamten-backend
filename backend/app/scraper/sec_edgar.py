@@ -1549,6 +1549,41 @@ def _cover_page_count(text: str) -> int:
     return len(_REPORTING_PERSON_ROW.findall(_plain_text(text)))
 
 
+def _cover_page_names(text: str) -> list[str]:
+    """The reporting persons a 13D/G document names, one per cover page.
+
+    The text path's counterpart of the XML's person blocks: the name is what
+    follows the "Name of Reporting Person" row up to the S.S./I.R.S. line,
+    "(see instructions)" or row 2 — the same cut `_cover_page_for` makes.
+    """
+    plain = _plain_text(text)
+    names = []
+    for m in _REPORTING_PERSON_ROW.finditer(plain):
+        name = _COVER_NAME_END.split(plain[m.end():m.start() + 200], maxsplit=1)[0]
+        name = name.strip(" \t:.-()")
+        if name:
+            names.append(name)
+    return names
+
+
+def _co_filer_names(names: list[str], filer: str) -> list[str]:
+    """The reporting persons of a statement other than its filer.
+
+    Never the filer's own name: another CIK under that name is another legal
+    entity — BlackRock's old parent (CIK 0001364742, 'BlackRock Inc.' on its
+    2024 13G/As) and the new BlackRock, Inc. (0002012383), whose newer 13Gs on
+    the same 33 dev issuers would otherwise have swallowed the old parent's.
+    That pair is `close_reported_by_parent`'s, which closes the old holding
+    instead of dropping it (findings item 34).
+    """
+    return [n for n in names if not _same_filer_name(n, filer)]
+
+
+def _named_in(name: str | None, stated: list[str]) -> bool:
+    """Is `name` one of the reporting persons of a statement already taken?"""
+    return bool(name) and any(_same_filer_name(n, name) for n in stated)
+
+
 def _cover_page_for(text: str, filer_name: str | None) -> str:
     """The cover page belonging to `filer_name` in a joint 13D/G, as plain text.
 
@@ -1786,6 +1821,23 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
     # subsidiaries that now file separately. Newest zero wins (feed order).
     closed_since: dict[str, str] = {}
 
+    # One statement, newest wins (findings item 93). A passive schedule names
+    # every reporting person of the SAME shares — Berkshire's 13G/As on Sirius
+    # XM list Warren E. Buffett, Berkshire, National Indemnity, GEICO … each
+    # with the whole 124.8 M shares — and EDGAR files it under whichever of
+    # them the agent picked: the Feb-2025 amendment under Buffett's CIK, the
+    # Nov-2025 one under Berkshire's. Deduplicating by the filer's CIK alone
+    # read the older one as a second holder (Buffett 34.6 % beside Berkshire
+    # 37.1 %, 72 % of the company). The persons carry no CIK on a 13G, so the
+    # match is by name. Only non-bloc filings feed it: in a 13D group every
+    # member reports shares of its own, and an older amendment under another
+    # member's CIK is that member's stake, not a repetition.
+    stated_by: list[str] = []
+    # The same for an exit: the reporting persons of a newer passive schedule
+    # that reported nothing, with its date, so an older holding filed under
+    # another member's CIK is closed by it rather than left live.
+    group_closed: list[tuple[list[str], str]] = []
+
     # Every name this CIK has filed under: renames keep the CIK, and covers
     # from before a rename carry the old name. Fetched at most once, and only
     # when a filing actually needs verifying.
@@ -1827,6 +1879,11 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
 
         if not investor_cik or investor_cik in seen_investor_ciks:
             continue
+        if _named_in(investor_name, stated_by):
+            log.info("SEC EDGAR: %r's %s filing repeats a newer statement it is a "
+                     "reporting person of — skipped (findings item 93)",
+                     investor_name, raw["file_date"])
+            continue
 
         if known_names is None:
             known_names = [company_name] + former_names.names(fetch_former_names(company_cik))
@@ -1861,6 +1918,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         # and the text path is where every misread 13D/G came from.
         read_from     = None
         cover_cusip   = None      # the issuer's CUSIP as the cover states it
+        names: list[str] = []     # every reporting person of this statement
+        passive       = False     # co-filers who report the same shares (no bloc)
 
         if inv.get("xml"):
             xml, person = inv["xml"], inv["person"]
@@ -1883,6 +1942,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # alone or in a bloc decides what the shared rows are (see _shares_held)
             alone         = not _co_filers_form_a_bloc(xml.get("schedule") or "13D",
                                                        len(xml.get("persons") or []))
+            names         = [o["name"] for o in xml.get("persons") or [] if o.get("name")]
+            passive       = alone
             shares        = _shares_held(rows, person.get("aggregate"), in_group=not alone)
             shares_total  = (_shares_outstanding(xml.get("comment_text") or "")
                              or _derive_total(person.get("aggregate"), person.get("percent")))
@@ -1911,6 +1972,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 pct           = _parse_percent_from_text(cover)
                 reported      = pct
                 bloc          = _co_filers_form_a_bloc(inv["form_type"], _cover_page_count(text))
+                names         = _cover_page_names(text) or [inv["investor_name"]]
+                passive       = not bloc
                 pct, voting    = _own_stake_and_voting(cover, pct, document=text, in_group=bloc)
                 is_individual = _parse_reporter_type_from_text(cover)
                 share_class   = _parse_class_title_from_text(text)
@@ -1960,6 +2023,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # day the position actually ended (the cover's date of event when
             # it states one), not a later repetition of the exit.
             closed_since[inv["investor_cik"]] = event_date or inv["file_date"]
+            if passive:
+                group_closed.append((_co_filer_names(names, inv["investor_name"]),
+                                     event_date or inv["file_date"]))
             log.info("SEC EDGAR: %r reported no position on %s — closing, not writing 0%%",
                      inv["investor_name"], inv["file_date"])
             continue
@@ -1967,6 +2033,14 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         since, since_basis = _stake_start(inv["form_type"], event_date, inv["file_date"])
 
         seen_investor_ciks.add(inv["investor_cik"])
+        if passive:
+            stated_by.extend(_co_filer_names(names, inv["investor_name"]))
+        # A newer exit of the same statement filed under another member's CIK
+        # closes this one; the oldest such exit is the last one recorded.
+        until = closed_since.get(inv["investor_cik"])
+        if until is None:
+            until = next((d for n, d in reversed(group_closed)
+                          if _named_in(inv["investor_name"], n)), None)
         log.info(
             "SEC EDGAR: investor %r (CIK=%s) stake=%s is_individual=%s",
             inv["investor_name"], inv["investor_cik"], pct, is_individual,
@@ -2008,7 +2082,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             "is_individual":    is_individual,   # None = unknown (use name heuristic)
             # Set when a NEWER filing by this investor reported nothing: the
             # position is history, and the writer closes the edge with it.
-            "until":            closed_since.get(inv["investor_cik"]),
+            "until":            until,
             # The filer's last report — Item 5 ticked, "5 percent or less": the
             # holding stays, dimmed from this day, never closed (findings item 35)
             "final_report":     _final_since(final, event_date, inv["file_date"]),
