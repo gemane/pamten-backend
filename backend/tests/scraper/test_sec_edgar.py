@@ -3391,9 +3391,9 @@ class TestAnUnreadCoverIsNotAnExit:
         parsed = {"a-2": {"subject_cik": "0000000222", "subject_name": "Example", "percent": None,
                           "accession": "a-2", "event_date": "2026-03-31", "read_from": "field"},
                   "a-1": {"subject_cik": "0000000222", "subject_name": "Example", "percent": 6.0,
-                          "accession": "a-1", "event_date": "2025-03-31", "read_from": "field"}}
+                          "stake": 6.0, "voting": None, "accession": "a-1", "event_date": "2025-03-31", "read_from": "field"}}
         with patch.object(sec_edgar, "_iter_filing_pages", return_value=iter([filings])), \
-             patch.object(sec_edgar, "_parse_holding_filing", side_effect=lambda c, a: parsed[a]):
+             patch.object(sec_edgar, "_parse_holding_filing", side_effect=lambda c, a, n=None: parsed[a]):
             rows = sec_edgar.fetch_filer_holdings("0000000777")
         assert len(rows) == 1 and rows[0]["stake_percent"] == 6.0 and rows[0]["until"] is None
         assert (rows[0]["since"], rows[0]["since_basis"]) == ("2025-03-31", None)

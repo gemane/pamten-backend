@@ -394,6 +394,27 @@ filing restates stay open and are dimmed by the `not_restated` stale pass like
 any other 13D/G edge. Both kinds of request are answers, so the SEC cache serves
 them on every later run.
 
+**The filer side's own block, and its bloc** (findings item 98). A joint filing
+has one reporting-person block per party, and the filer side read the FIRST
+block's row 13 as the filer's stake: Tencent's 13G/A on a holding listed its
+subsidiary first (50.6 % instead of Tencent's 55.5 %), and BRC's May-2026 13D/A
+on AB InBev starts with the Stichting. Now `_filer_person` picks the filer's own
+block — by CIK on a 13D, by name on a 13G (whose blocks carry none), the first
+only when neither matches. Then the issuer side's split (above) is applied —
+but only to a filer that **votes more shares than it can dispose of**, alone or
+jointly (`_votes_others_shares`): the excess is other parties' shares under a
+voting agreement. BRC votes 1,031,302,286 AB InBev shares and disposes of
+769,317,631 → no own stake, 52.3 % voting; Altria → 8.1 % own, 51.9 % voting.
+Written as stakes they summed AB InBev to 110 %. A parent filing with its own
+subsidiaries ticks "member of a group" too (Berkshire's nine reporting persons
+on DaVita), but disposes of every share it votes: row 13 is its stake, held
+through those subsidiaries, and stays one. On dev, 77 of the 83 filer-side
+holdings the unconditional split would have changed were such families (Bank
+of America, General Atlantic's funds, SoftBank on Sprint); the rule changes 6.
+The issuer side writes only the bloc for those families — a voting group, its
+members without a stake — while the filer side, which writes one edge from the
+filer and no co-filer beside it, keeps the parent's percent.
+
 **There are two schemas, one per schedule**, and they spell the same facts differently:
 
 | | Schedule 13D | Schedule 13G |
