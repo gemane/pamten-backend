@@ -1732,6 +1732,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       such (`direct_or_indirect`), and the ownership summary adds it only when no
       direct owner states a stake.
 
+- [ ] **An identifier can name a predecessor.** A security, a ticker or a CIK outlives the
+      company it was issued to: Sirius XM's old CUSIP maps (GLEIF's LEI-ISIN file) to the old
+      Sirius, now SIRIUS XM INC. — the subsidiary the filer's own Exhibit 21 lists. The bridge
+      joined parent and subsidiary, and the merge turned the filer's edge into a self-loop
+      (findings item 94). Before a join on any shared id, check that neither node owns the
+      other; a company does not own itself.
+
 ## 9. Documentation
 
 - [ ] `KNOWN_SOURCES` entry: **id** (the Source node's stable id — part of the data, the same on every instance), type, label, url, description, kind, credibility, quality.
