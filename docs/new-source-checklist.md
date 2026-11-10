@@ -315,6 +315,15 @@ parser. Anything that does not map is either a new property (document it) or noi
       issuer is still filed on). Measure the rule over the whole population before
       writing it: the first draft closed eBay-like acquirers and kept SoftBank because
       it keyed on "a 13D shortly before" (findings item 99).
+- [ ] **A list that names every holder above a threshold is evidence of who is not one —
+      match generously, and through the statement's own group.** A proxy's 5 % table
+      ends a 13D/G whose holder it no longer lists, but it names a group by its
+      controlling person ("Warren E. Buffett and affiliated entities" for Berkshire's
+      13G on Occidental): look for the holder under every reporting person its
+      statement names, and its parents. A role is not a group — Malone chairs Qurate,
+      and his own row would have kept Qurate's old Liberty 13D on Sirius XM open. A
+      wrong match keeps a statement open; a missed one ends a true holding (findings
+      item 99).
 - [ ] **Read the form's own "last report" box, not a threshold on the number.** A 13G
       below 5 % ticks Item 5 and stops filing: a statement that ends the reporting,
       not the holding. Only a 0 % was read as an end, so 578 dev holdings under 5 %

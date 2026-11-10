@@ -408,6 +408,21 @@ def cmd_close_ended_classes(args):
     print(f"Closed {res['closed']} 13D/G holdings whose class ended "
           f"({res['read']} of {res['companies']} companies read, {res['failed']} failed)")
 
+def cmd_close_absent_from_table(args):
+    """End every 13D/G holding the issuer's own ownership table no longer names (findings item 99)."""
+    _apply_direct_db_url(args)
+    from app.config import settings
+    if not (settings.SCRAPER_ENABLED and settings.SCRAPER_SEC_EDGAR_ENABLED):
+        print("close-absent-from-table reads EDGAR: set SCRAPER_ENABLED=true and "
+              "SCRAPER_SEC_EDGAR_ENABLED=true to run it")
+        sys.exit(1)
+    from app.scraper.sec_writer import close_absent_from_tables
+    res = close_absent_from_tables(limit=args.limit)
+    for line in res["lines"]:
+        print(f"  {line}")
+    print(f"Closed {res['closed']} 13D/G holdings their issuer's table no longer names "
+          f"({res['tables']} tables of {res['read']} companies read, {res['failed']} failed)")
+
 def cmd_close_reported_by_parent(args):
     """End every subsidiary 13D/G holding its parent's newer statement replaces
     (findings item 34) — the whole graph, for a rebuild where a parent link
@@ -1431,6 +1446,17 @@ def _build_parser():
     p_cec.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_cec.set_defaults(func=cmd_close_ended_classes)
+
+    # close-absent-from-table command (findings item 99)
+    p_cat = subparsers.add_parser(
+        'close-absent-from-table',
+        help="End every Schedule 13D/G holding of 5 %% or more that the issuer's newest ownership "
+             "table (DEF 14A / 10-K/A, at most 18 months old) no longer names "
+             "(until_reason not_in_issuer_table). Reads EDGAR: needs the scraper flags on")
+    p_cat.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
+    p_cat.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_cat.set_defaults(func=cmd_close_absent_from_table)
 
     # mark-stale command
     p_ms = subparsers.add_parser('mark-stale',

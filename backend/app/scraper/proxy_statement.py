@@ -326,6 +326,101 @@ def read_ownership_tables(html: str) -> dict:
             "basis": bases, "owners": owners}
 
 
+# ── Every holder the table names (findings item 99) ─────────────────────────
+#
+# The voting-power reader above keeps a table only when it states voting power.
+# Whether a Schedule 13D/G holder is still a 5 % holder needs every name the
+# issuer's table lists, whatever its columns: the 5 % holders section and the
+# directors and officers. A name with a trailing footnote number ("BlackRock,
+# Inc. 3" on DaVita's 2026 proxy) is cut at it.
+
+_TRAILING_NOTE = re.compile(r"[\s,]+\d{1,2}(\s*,\s*\d{1,2})*$|\s*\(\s*\d{1,2}\s*\)")
+#: proxies that name a group by its controlling person add these words
+_GROUP_WORDS = re.compile(r"\s+(and|&)\s+(certain\s+)?(affiliated|related)\s+(entities|parties|persons)\b.*$"
+                          r"|\s+c/o\s+.*$", re.IGNORECASE)
+
+
+def holder_name(text: str) -> str:
+    """A table's owner cell → the holder's name: footnotes, an appended
+    address, "and affiliated entities" and "c/o …" cut ("Warren E. Buffett and
+    affiliated entities" → "Warren E. Buffett"; "John C. Malone c/o Liberty
+    Media Corporation" → "John C. Malone")."""
+    name = _clean_name(text)
+    name = _GROUP_WORDS.sub("", name)
+    return _TRAILING_NOTE.sub("", name).strip(" ,")  # "(5 )", " 3", " 2, 4"
+
+
+def _holder_rows(table) -> list[dict] | None:
+    """One ownership table → [{"name", "percents": [float…]}], every percent
+    column read under its header; None when it is no ownership table (no name
+    column, no percent column, no ownership words in the header)."""
+    grid = _grid(table)
+    first = _first_data_row(grid)
+    if first is None:
+        return None
+    header = [c for row in grid[:first] for c in row]
+    names = [c for c in header if _NAME_HEADER.search(c[2])]
+    percents = [c for c in header if _PERCENT.search(c[2])]
+    if not names or not percents or not _OWNED.search(" ".join(c[2] for c in header)):
+        return None
+    name_col = names[0]
+    rows: list[dict] = []
+    current: dict | None = None
+    for row in grid[first:]:
+        if not row:
+            continue
+        name_cell = next((c for c in row if _overlaps(c, name_col) and not _VALUE.match(c[2])), None)
+        has_data = any(c[0] >= name_col[1] and _VALUE.match(c[2]) for c in row)
+        if name_cell is not None:
+            name = holder_name(name_cell[2])
+            if not name or _NOT_AN_OWNER.search(name) or not has_data:
+                current = None
+                continue
+            current = {"name": name, "percents": []}
+            rows.append(current)
+        if current is not None:
+            for col in percents:
+                cells = [c[2] for c in row if c[0] >= name_col[1] and _overlaps(c, col)]
+                pct = _parse_pct(" ".join(cells))[0] if cells else None
+                if pct is not None:
+                    current["percents"].append(pct)
+    return rows
+
+
+def read_holder_rows(html: str) -> list[dict]:
+    """Every holder the proxy's ownership tables name: [{"name", "percents"}],
+    in table order, a name listed twice kept once (its percents merged)."""
+    soup = BeautifulSoup(html, "lxml")
+    out: dict[str, dict] = {}
+    for table in soup.find_all("table"):
+        for r in _holder_rows(table) or []:
+            row = out.setdefault(r["name"], {"name": r["name"], "percents": []})
+            row["percents"] += r["percents"]
+    return list(out.values())
+
+
+#: the forms that carry the ownership table: the proxy, and a 10-K/A whose
+#: Part III stands in for it (Skydance, 2026)
+TABLE_FORMS = ("DEF 14A", "10-K/A")
+#: a table older than this says nothing about today's holders
+TABLE_MAX_AGE_DAYS = 550
+
+
+def latest_table_filing(submissions: dict, today: date | None = None) -> dict | None:
+    """The newest DEF 14A (or 10-K/A) on a submissions document filed within
+    TABLE_MAX_AGE_DAYS: {"form", "date", "url"} or None."""
+    from datetime import timedelta
+    cik = str(submissions.get("cik") or "").lstrip("0")
+    recent = (submissions.get("filings") or {}).get("recent") or {}
+    oldest = ((today or date.today()) - timedelta(days=TABLE_MAX_AGE_DAYS)).isoformat()
+    for form, acc, doc, filed in zip(recent.get("form") or [], recent.get("accessionNumber") or [],
+                                     recent.get("primaryDocument") or [], recent.get("filingDate") or []):
+        if form in TABLE_FORMS and doc and filed >= oldest and cik:
+            return {"form": form, "date": filed,
+                    "url": f"{ARCHIVES_URL}/{cik}/{acc.replace('-', '')}/{doc}"}
+    return None
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def fetch_proxy_ownership(company_name: str, cik: str | None = None) -> dict:
