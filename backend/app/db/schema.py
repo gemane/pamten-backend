@@ -330,7 +330,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     ),
     "Person": (
         "id", "full_name", "first_name", "last_name", "birth_date", "death_date", "birth_place",
-        "description", "wikipedia_url", "image_url", "source_id", "wikidata_id", "sec_cik",
+        "birth_country", "description", "wikipedia_url", "image_url", "source_id", "wikidata_id", "sec_cik",
         "search_text", "created_at", "last_scraped_at",
     ),
     "Source": ("id", "name", "url", "type", "kind", "description", "registry_key", "data_mode", "key_id"),
