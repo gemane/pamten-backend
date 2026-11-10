@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<notificationOfRemoval>
+
+    <schemaVersion>X0203</schemaVersion>
+
+    <exchange>
+        <cik>0000876661</cik>
+        <entityName>NEW YORK STOCK EXCHANGE LLC</entityName>
+    </exchange>
+
+    <issuer>
+        <cik>709283</cik>
+        <entityName>QUANTUM CORP /DE/</entityName>
+        <fileNumber>001-13449</fileNumber>
+        <address>
+            <street1>224 Airport Parkway</street1>
+            <street2>Suite 550</street2>
+            <city>San Jose</city>
+            <stateOrCountryCode>CA</stateOrCountryCode>
+            <stateOrCountry>CALIFORNIA</stateOrCountry>
+            <zipCode>95110</zipCode>
+        </address>
+        <telephoneNumber>(408) 944-4000</telephoneNumber>
+    </issuer>
+
+    <descriptionClassSecurity>Common Stock</descriptionClassSecurity>
+
+    <ruleProvision>17 CFR 240.12d2-2(b)</ruleProvision>
+
+    <signatureData>
+        <signatureName>Victoria Paper</signatureName>
+        <signatureTitle>Senior Analyst</signatureTitle>
+        <signatureDate>2019-01-30</signatureDate>
+    </signatureData>
+</notificationOfRemoval>

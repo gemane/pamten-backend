@@ -304,6 +304,17 @@ parser. Anything that does not map is either a new property (document it) or noi
       fixed to the old cadence dimmed 126 dev holdings filed since 2024 whose silence
       meant "no material change" (findings item 33). Date the rule and test both sides
       of the change.
+- [ ] **When statements stop, look for the end where the thing stated about ended.** A
+      holder's silence proves nothing — after a takeover nobody files again because the
+      shares are gone (SoftBank's 83.8 % of Sprint stood live six years after the merger),
+      yet the acquirer's own last word stays true (Roche's 100 % of Foundation
+      Medicine). The end is a document of the issuer's: Form 25-NSE under Rule
+      12d2-2(a), a Form 15 with at most two holders of record — read the class it
+      names (notes, preferred stock, warrants or a SPAC's units are not the common
+      stock) and the guards around it (a successor issuer took the class over; the
+      issuer is still filed on). Measure the rule over the whole population before
+      writing it: the first draft closed eBay-like acquirers and kept SoftBank because
+      it keyed on "a 13D shortly before" (findings item 99).
 - [ ] **Read the form's own "last report" box, not a threshold on the number.** A 13G
       below 5 % ticks Item 5 and stops filing: a statement that ends the reporting,
       not the holding. Only a 0 % was read as an end, so 578 dev holdings under 5 %

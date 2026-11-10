@@ -17,7 +17,7 @@ from app.roles import canonical_role, combined_start, end_seats_at_death
 from app.claims import KIND_OWNS, KIND_ROLE, claims_for, close_role_claim, record_claim
 from app.database import db
 from app.db.anchors import label_or_entity
-from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, STALE_CLEAR, STALE_CLEAR_CYPHER, edge_create_clause, owns_props
+from app.scraper.edge_schema import OWNS_PROPS, READ_FIELD, STALE_CLEAR, STALE_CLEAR_CYPHER, STALE_CLEAR_SQL, edge_create_clause, owns_props
 from app.scraper.graph_writer import _now_iso, _record_edge_parties, _relabel_if_more_credible, _same_seat
 from app.scraper.mapper import coherent_ownership_type, normalize_entity_name
 from app.scraper.owns_merge import ANSWER_FIELDS, SINCE_FIELDS, combine_since, outranks
@@ -592,10 +592,17 @@ def _mark_final_report(owner_id: str, owned_id: str, source_id: str, owner_label
 #: why a holding's spell ended because its parent's statement took over
 #: (`close_reported_by_parent`)
 REPORTED_BY_PARENT = "reported_by_parent"
+#: why a holding's spell ended because the shares it is about ceased to exist
+#: (`close_at_class_end`, findings item 99)
+CLASS_ENDED = "class_ended"
+#: a statement of at least this much is the acquirer's own: one holder of the
+#: whole class is what a takeover leaves, and its holding goes on
+WHOLE_CLASS_PCT = 99.5
 #: spells closed by a rule rather than by a filing: a re-read of a filing from
 #: inside one updates it instead of drawing a new open edge beside it, and the
-#: rule closes it again after the scrape (app.dissolution, the parent rule)
-_RULE_CLOSED = ("dissolution", "merged", "split", REPORTED_BY_PARENT)
+#: rule closes it again after the scrape (app.dissolution, the parent rule,
+#: the class end)
+_RULE_CLOSED = ("dissolution", "merged", "split", REPORTED_BY_PARENT, CLASS_ENDED)
 
 
 def _statement_day(edge: dict) -> str:
@@ -682,6 +689,77 @@ def close_reported_by_parent(owned_id: str | None = None, parent_id: str | None 
                    WHERE r.until IS NULL AND r.until_reason = $why
                    SET r.until_reason = null""", x=x, why=REPORTED_BY_PARENT)
     return closed
+
+
+def close_at_class_end(owned_id: str, ends: list[dict]) -> int:
+    """End the 13D/G holdings of `owned_id` whose shares ceased to exist
+    (findings item 99): every open SEC statement filed before a class end of
+    `sec_class_end.class_ends` closes on that day, `until_reason` CLASS_ENDED,
+    `until_source_url` the Form 25 / 15, no stale mark — SoftBank's 83.8 % of
+    Sprint on 2020-04-01, LinkedIn's holders on 2016-12-08.
+
+    Kept: a statement filed after the end (a holding of the successor class,
+    or a later class of the same issuer), and one stating at least
+    WHOLE_CLASS_PCT — the acquirer's (Roche's 100 % of Foundation Medicine).
+    An acquirer's EARLIER, partial statement does end (eBay's 28.1 % of
+    PayPal, 2002): the figure it stated ended with the class, and the whole
+    holding is the acquirer's Exhibit 21's or GLEIF's to state. A 13F is
+    another rulebook and is not touched. The claim stays: the filer did say
+    it. Returns how many holdings it closed. Dates compared in Python."""
+    from app.db.arcadedb import run_sql
+    from app.scraper.maintenance import restatement_family
+    if not ends:
+        return 0
+    ends = sorted(ends, key=lambda e: e["date"])
+    closed = 0
+    for e in run_sql("SELECT @rid AS rid, filing_type, source_date, since, stake_percent FROM OWNS "
+                     "WHERE until IS NULL AND source_id = 'sec-edgar' AND @in.id = :id",
+                     {"id": owned_id}) or []:
+        if not restatement_family(e.get("filing_type")):
+            continue
+        if isinstance(e.get("stake_percent"), (int, float)) and e["stake_percent"] >= WHOLE_CLASS_PCT:
+            continue
+        day = _statement_day(e) or str(e.get("since") or "")[:10]
+        end = next((x for x in ends if day and x["date"] > day), None)
+        if end is None:
+            continue
+        run_sql(f"UPDATE {e['rid']} SET until = :d, until_reason = :why, until_source_url = :u, "
+                + STALE_CLEAR_SQL,
+                {"d": end["date"], "why": CLASS_ENDED, "u": end["url"]})
+        log.info("SEC: a 13D/G holding of %s ends %s — its class ended (%s)", owned_id, end["date"], end["form"])
+        closed += 1
+    return closed
+
+
+def close_ended_classes(limit: int | None = None) -> dict:
+    """`close_at_class_end` for every company with an SEC CIK that open
+    13D/G holdings point at — the whole graph, for a rebuild or a server
+    where holder-side scrapes (BlackRock's, SoftBank's own filings) wrote into
+    companies nobody scrapes. One submissions request per company plus one per
+    Form 15 / 25 it lists. Returns {companies, read, failed, closed, lines}."""
+    from app.db.arcadedb import run_sql
+    from app.scraper.sec_class_end import class_ends
+    rows = run_sql("SELECT @in.id AS id, @in.sec_cik AS cik, @in.name AS name, filing_type FROM OWNS "
+                   "WHERE until IS NULL AND source_id = 'sec-edgar' AND @in.sec_cik IS NOT NULL") or []
+    from app.scraper.maintenance import restatement_family
+    issuers = sorted({(r["id"], r["cik"], r.get("name")) for r in rows if restatement_family(r.get("filing_type"))})
+    if limit:
+        issuers = issuers[:limit]
+    out: dict = {"companies": len(issuers), "read": 0, "failed": 0, "closed": 0, "lines": []}
+    for eid, cik, name in issuers:
+        try:
+            ends = class_ends(cik)
+        except Exception as exc:  # noqa: BLE001 — one company's list lost is not the run's
+            out["failed"] += 1
+            log.warning("SEC: class ends of %s (CIK %s) not read: %s", name, cik, exc)
+            continue
+        out["read"] += 1
+        n = close_at_class_end(eid, ends)
+        if n:
+            out["closed"] += n
+            out["lines"].append(f"{name}: {n} closed on {ends[0]['date']} ({ends[0]['form']}, {ends[0]['class']})"
+                                if len(ends) == 1 else f"{name}: {n} closed ({len(ends)} class ends)")
+    return out
 
 
 def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,

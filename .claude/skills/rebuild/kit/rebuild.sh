@@ -91,6 +91,10 @@ python3 manage.py heal-ends-at-dissolution --apply 2>&1 | grep -v "^WARNING\|^IN
 python3 manage.py dedupe-persons || echo "  ! dedupe-persons failed"
 python3 manage.py geocode || echo "  ! geocode failed"
 python3 manage.py close-reported-by-parent || echo "  ! close-reported-by-parent failed"
+# the 13D/G holdings whose shares ceased to exist — a merger's 25-NSE, a takeover's
+# Form 15 (findings item 99); reads EDGAR, so the flags go on its own line (item 70)
+SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
+  python3 manage.py close-ended-classes || echo "  ! close-ended-classes failed"
 python3 manage.py mark-shortcuts || echo "  ! mark-shortcuts failed"
 python3 manage.py mark-stale || echo "  ! mark-stale failed"
 
