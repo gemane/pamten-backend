@@ -919,13 +919,19 @@ bridge asks the current issuer of a security). Per node with CUSIPs and no LEI:
 - **several LEIs → an umbrella**, never written: a fund family's CUSIPs map to each fund's own
   LEI (iShares, Inc. on dev), so the node is none of them;
 - the LEI's node carries another CIK, or two nodes hold the LEI → reported, not written;
+- **the LEI's node and the filer own one another** — an OWNS edge, live or ended, either way
+  (`maintenance.one_owns_the_other`) → a parent and its subsidiary: reported, never joined,
+  and asked again at the write. A predecessor's retired security names the predecessor:
+  Sirius XM's CUSIP 829933100 maps to GLEIF's SIRIUS XM INC. (the old Sirius, previously
+  "Sirius XM Holdings Inc.", registration lapsed), which the filer's own 2026 Exhibit 21 lists
+  as its subsidiary; joined, the merge turned that edge into a self-loop (findings item 94).
+  The SEC↔LEI and PSC↔GLEIF bridges ask the same before they compare a pair;
 - a keep-separate mark → never joined; the marks are read again at the write, and the fold
   itself skips a marked pair.
 
 A node that already holds an LEI is checked only: the same LEI is confirmed, another one
 reported. Dev on 2026-11-07 (75 nodes with a CUSIP): 35 confirmed, 1 join (Sirius XM
-HOLDINGS ↔ GLEIF's SIRIUS XM INC., the pair the registers' names could not settle, findings
-item 68), 18 attaches (Franklin Templeton, Shentel, Valvoline, Trade Desk, T. Rowe Price
+HOLDINGS ↔ GLEIF's SIRIUS XM INC. — undone by item 94: two entities, see above), 18 attaches (Franklin Templeton, Shentel, Valvoline, Trade Desk, T. Rowe Price
 Group, …), 1 umbrella-like contradiction (iShares), 20 CUSIPs GLEIF does not map. A dry run
 by default; `--apply` takes the import lock; the GLEIF source (its catalogue switch, no environment flag)
 must be on; a file older than three days is refused. Where it runs (since 2026-11-07, a manual

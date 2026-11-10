@@ -104,13 +104,16 @@ class TestTheFile:
         assert dl.call_count == 0
 
 
-def _plan(mapping, nodes, holders, kept=frozenset()):
-    """`plan` over fake nodes; ``holders``: LEI → the rows `SELECT … WHERE lei_id` answers."""
+def _plan(mapping, nodes, holders, kept=frozenset(), owners=()):
+    """`plan` over fake nodes; ``holders``: LEI → the rows `SELECT … WHERE lei_id` answers;
+    ``owners``: the pairs an OWNS edge joins."""
     def sql(q, params=None):
         assert "lei_id = :l" in q
         return holders.get(params["l"], [])
     with patch.object(gi, "_nodes_with_cusips", return_value=nodes), \
-         patch("app.db.arcadedb.run_sql", side_effect=sql):
+         patch("app.db.arcadedb.run_sql", side_effect=sql), \
+         patch("app.scraper.maintenance.one_owns_the_other",
+               side_effect=lambda a, b: frozenset((a, b)) in {frozenset(o) for o in owners}):
         return gi.plan(mapping, kept_separate=set(kept))
 
 
@@ -123,6 +126,14 @@ class TestThePlan:
         [j] = p.joins
         assert (j["id"], j["lei"], j["isin"], j["lei_node"]) == ("sec:0000908937", SIRIUS_LEI, SIRIUS_ISIN, f"lei:{SIRIUS_LEI}")
         assert p.attaches == [] and p.counts()["joins"] == 1
+
+    def test_a_filer_and_its_subsidiary_are_a_contradiction(self, mapping):
+        # findings item 94: Sirius XM's own Exhibit 21 lists 'Sirius XM Inc.' —
+        # the GLEIF node its old CUSIP maps to — as its subsidiary
+        p = _plan(mapping, [self.SIRIUS], {SIRIUS_LEI: [{"id": f"lei:{SIRIUS_LEI}", "name": "SIRIUS XM INC.", "sec_cik": None}]},
+                  owners=[("sec:0000908937", f"lei:{SIRIUS_LEI}")])
+        assert p.joins == []
+        assert [c["why"] for c in p.contradictions] == [f"lei:{SIRIUS_LEI} and the node own one another"]
 
     def test_an_lei_no_node_holds_is_an_attach(self, mapping):
         p = _plan(mapping, [self.SIRIUS], {})

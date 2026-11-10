@@ -1497,6 +1497,21 @@ def _sec_lei_check_enabled() -> bool:
     return bool(settings.SCRAPER_ENABLED and settings.SCRAPER_SEC_EDGAR_ENABLED)
 
 
+def one_owns_the_other(a_id: str, b_id: str) -> bool:
+    """Does an OWNS edge — live or ended — run between the two nodes, either
+    way? Then they are two legal entities, whatever a shared name or security
+    suggests: a company does not own itself. Sirius XM's 2026 Exhibit 21 lists
+    'Sirius XM Inc.' — GLEIF's node of the old Sirius, renamed — as the filer's
+    subsidiary; the securities bridge joined the two by the old company's
+    retired ISIN, and the merge turned the filer's edge into a self-loop
+    (findings item 94). Every bridge asks this before a join."""
+    for x, y in ((a_id, b_id), (b_id, a_id)):
+        if run_query("MATCH (a:Entity {id: $a})-[r:OWNS]->(b:Entity {id: $b}) RETURN 1 AS one LIMIT 1",
+                     {"a": x, "b": y}):
+            return True
+    return False
+
+
 def _bridge_sec_lei(members: list[dict], kept_separate: set, apply: bool = True) -> list[dict]:
     """Same-name members that share no hard id because one holds only an LEI
     and the other only a CIK: where the filer's own filings state the LEI
@@ -1519,6 +1534,9 @@ def _bridge_sec_lei(members: list[dict], kept_separate: set, apply: bool = True)
             if asked >= _SEC_LEI_PAIRS_PER_GROUP:
                 return joined
             if frozenset((filer["id"], node["id"])) in kept_separate:
+                continue
+            if one_owns_the_other(filer["id"], node["id"]):
+                log.info("SEC/LEI bridge: %s and %s own one another — two entities", filer["id"], node["id"])
                 continue
             asked += 1
             hit = confirm_filer_lei(filer["sec_cik"], node["lei_id"],
@@ -1591,6 +1609,9 @@ def _bridge_psc_gleif(members: list[dict], kept_separate: set, apply: bool = Tru
         agree: list[tuple[dict, str, str]] = []
         for g in gleifs:
             if frozenset((p["id"], g["id"])) in kept_separate:
+                continue
+            if one_owns_the_other(p["id"], g["id"]):
+                log.info("PSC/GLEIF bridge: %s and %s own one another — two entities", p["id"], g["id"])
                 continue
             node = run_sql(f"SELECT {', '.join((*IDENTITY_FIELDS, *GLEIF_PSC_FIELDS))} FROM Entity WHERE id = :id",
                            {"id": g["id"]})

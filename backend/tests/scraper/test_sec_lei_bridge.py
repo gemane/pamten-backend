@@ -22,7 +22,8 @@ def members():
 @pytest.fixture(autouse=True)
 def _no_edgar():
     # the registers' own word (legal_identity) asks EDGAR: never from a unit test
-    with patch("app.scraper.legal_identity.filer_facts", return_value=None):
+    with patch("app.scraper.legal_identity.filer_facts", return_value=None), \
+         patch("app.scraper.maintenance.one_owns_the_other", return_value=False):
         yield
 
 
@@ -268,3 +269,25 @@ class TestTheCorporatePscBridge:
     def test_a_parent_of_another_name_vetoes_nothing(self):
         # an intermediate holding is GLEIF's parent: it is no member of this name
         assert self._run([self.gleif("A")], parents=("ZZZ",))[0] == ["A"]
+
+
+class TestOwnersAreTwoEntities:
+    """Findings item 94: a pair one of which owns the other is never joined."""
+
+    def test_a_filer_owning_the_lei_node_is_never_asked(self):
+        from app.scraper.maintenance import _bridge_sec_lei
+        with patch("app.scraper.maintenance.one_owns_the_other", return_value=True), \
+             patch("app.scraper.sec_lei.confirm_filer_lei") as confirm:
+            assert _bridge_sec_lei(members(), set()) == []
+        confirm.assert_not_called()
+
+    def test_a_psc_owning_the_gleif_node_is_never_compared(self):
+        from app.scraper.maintenance import _bridge_psc_gleif
+        pair = [{"id": "chpsc:abc", "name": "SIRIUS XM HOLDINGS INC.", "lei_id": None},
+                {"id": "lei:54930055RWDMVXAGZK98", "name": "SIRIUS XM INC.", "lei_id": "54930055RWDMVXAGZK98"}]
+        with patch("app.scraper.maintenance.one_owns_the_other", return_value=True), \
+             patch("app.scraper.maintenance.run_sql", return_value=[{"name": "SIRIUS XM HOLDINGS INC."}]), \
+             patch("app.scraper.maintenance.run_query", return_value=[]), \
+             patch("app.scraper.legal_identity.psc_same_legal_entity") as rule:
+            assert _bridge_psc_gleif(pair, set()) == []
+        rule.assert_not_called()

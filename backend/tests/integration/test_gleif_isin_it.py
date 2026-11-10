@@ -164,3 +164,44 @@ def test_a_second_run_changes_nothing(it_db, mapping):
     assert p.joins == [] and p.attaches == [] and len(p.confirmed) == 1
     gi.apply(p)
     assert _nodes() == before
+
+
+def _ex21_edge(it_db, owner, owned):
+    it_db.run_command(
+        f"MATCH (a:Entity {{id: '{owner}'}}), (b:Entity {{id: '{owned}'}}) "
+        "CREATE (a)-[:OWNS {source_id: 'sec-edgar', filing_type: 'EX-21', until: null}]->(b)")
+
+
+def test_a_filer_and_its_subsidiary_are_never_joined(it_db, mapping):
+    # findings item 94: Sirius XM's 2026 Exhibit 21 lists 'Sirius XM Inc.' — the
+    # GLEIF node its old CUSIP maps to — as its subsidiary. Joined, the merge
+    # turned the filer's edge into a self-loop.
+    _filer(it_db)
+    _gleif_node(it_db)
+    _ex21_edge(it_db, f"sec:{CIK}", f"lei:{LEI}")
+    p = gi.plan(mapping)
+    assert p.joins == [] and [c["id"] for c in p.contradictions] == [f"sec:{CIK}"]
+    assert gi.apply(p) == {"joined": [], "attached": [], "skipped": []}
+    assert [n["id"] for n in _nodes()] == [f"lei:{LEI}", f"sec:{CIK}"]
+
+
+def test_an_edge_written_after_the_plan_stops_the_join(it_db, mapping):
+    _filer(it_db)
+    _gleif_node(it_db)
+    p = gi.plan(mapping)
+    assert len(p.joins) == 1
+    _ex21_edge(it_db, f"lei:{LEI}", f"sec:{CIK}")         # either way round
+    done = gi.apply(p)
+    assert done["joined"] == [] and done["skipped"][0]["why"] == f"lei:{LEI} and the node own one another"
+    assert {n["id"]: n["lei_id"] for n in _nodes()} == {f"lei:{LEI}": LEI, f"sec:{CIK}": None}
+
+
+def test_an_ended_holding_proves_two_entities_too(it_db):
+    from app.scraper.maintenance import one_owns_the_other
+    _filer(it_db)
+    _gleif_node(it_db)
+    assert not one_owns_the_other(f"sec:{CIK}", f"lei:{LEI}")
+    it_db.run_command(
+        f"MATCH (a:Entity {{id: 'sec:{CIK}'}}), (b:Entity {{id: 'lei:{LEI}'}}) "
+        "CREATE (a)-[:OWNS {source_id: 'sec-edgar', until: '2020-01-01'}]->(b)")
+    assert one_owns_the_other(f"lei:{LEI}", f"sec:{CIK}")

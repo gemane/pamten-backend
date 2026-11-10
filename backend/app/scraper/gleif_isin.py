@@ -4,10 +4,11 @@ LEI-ISIN mapping → the issuer's LEI (findings item 71, 2026-11-07).
 No register names the other's id: EDGAR states no LEI for most filers, GLEIF
 states no CIK, and the registers' comparison of names and addresses
 (`legal_identity`) cannot settle a pair whose names differ on the reference day
-— Sirius XM's GLEIF record was renamed in 2024, EDGAR recorded it in 2026. A
-security settles it. EDGAR states CUSIPs (13F tables; the 13F runner keeps an
-issuer's on its node as ``cusips``), a US ISIN is "US" + the CUSIP + a check
-digit, and the issuer's national numbering agency reports each ISIN's issuer
+— a rename recorded by one register and not yet by the other. A security
+settles it — with one caution: a predecessor's retired security names the
+predecessor, which can now be the filer's subsidiary (Sirius XM, below).
+EDGAR states CUSIPs (13F tables; the 13F runner keeps an issuer's on its node
+as ``cusips``), a US ISIN is "US" + the CUSIP + a check digit, and the issuer's national numbering agency reports each ISIN's issuer
 LEI to ANNA, which GLEIF certifies and publishes daily as the LEI-ISIN file
 (CC0; https://www.gleif.org/en/lei-data/lei-mapping/download-isin-to-lei-relationship-files).
 
@@ -23,6 +24,10 @@ no LEI:
 - several LEIs → an umbrella, never written: a fund family's CUSIPs map to each
   fund's own LEI (iShares, Inc. on dev), so the node is none of them;
 - the LEI's node carries another CIK → a contradiction, reported;
+- the LEI's node and the filer own one another (an OWNS edge between them) →
+  a parent and its subsidiary, a contradiction, reported: Sirius XM's CUSIP
+  829933100 is the OLD Sirius's, which GLEIF holds as SIRIUS XM INC. and the
+  filer's own Exhibit 21 lists as its subsidiary (findings item 94);
 - a keep-separate mark (NOT_DUPLICATE) → never asked.
 
 A node that already holds an LEI is only checked: the same LEI is confirmed, a
@@ -201,7 +206,7 @@ def _isins_of(node: dict) -> list[str]:
 def plan(mapping: MappingFile, kept_separate: set | None = None) -> Plan:
     """What the bridge would do with every node that carries a CUSIP."""
     from app.db.arcadedb import run_sql
-    from app.scraper.maintenance import _not_duplicate_pairs
+    from app.scraper.maintenance import _not_duplicate_pairs, one_owns_the_other
     kept_separate = _not_duplicate_pairs() if kept_separate is None else kept_separate
     nodes = _nodes_with_cusips()
     isins = {i for n in nodes for i in _isins_of(n)}
@@ -235,6 +240,10 @@ def plan(mapping: MappingFile, kept_separate: set | None = None) -> Plan:
                 out.contradictions.append({**row, "why": f"{h['id']} holds LEI {lei} and CIK {h['sec_cik']}"})
             elif frozenset((n["id"], h["id"])) in kept_separate:
                 out.kept_apart.append({**row, "lei_node": h["id"]})
+            elif one_owns_the_other(n["id"], h["id"]):
+                # a parent and its subsidiary: the security is a predecessor's
+                # (Sirius XM, findings item 94) — reported, never joined
+                out.contradictions.append({**row, "why": f"{h['id']} and the node own one another"})
             else:
                 out.joins.append({**row, "lei_node": h["id"], "lei_node_name": h.get("name")})
         else:
@@ -283,7 +292,7 @@ def _merge_lei_group(lei: str, kept_separate: set) -> list[dict]:
 
 def apply(p: Plan, kept_separate: set | None = None) -> dict:
     """Write the plan's joins and attaches; the rest is reported only."""
-    from app.scraper.maintenance import _not_duplicate_pairs
+    from app.scraper.maintenance import _not_duplicate_pairs, one_owns_the_other
     from app.scraper.register_pointer import write_from_gleif
     kept_separate = _not_duplicate_pairs() if kept_separate is None else kept_separate
     done = {"joined": [], "attached": [], "skipped": []}
@@ -291,6 +300,9 @@ def apply(p: Plan, kept_separate: set | None = None) -> dict:
         # the marks are read again: a human may have kept the pair apart since the plan
         if frozenset((row["id"], row["lei_node"])) in kept_separate:
             done["skipped"].append({**row, "why": f"kept apart from {row['lei_node']}"})
+            continue
+        if one_owns_the_other(row["id"], row["lei_node"]):        # an edge written since the plan
+            done["skipped"].append({**row, "why": f"{row['lei_node']} and the node own one another"})
             continue
         if not _stamp(row["id"], row["lei"], _evidence(row, p.file)):
             done["skipped"].append({**row, "why": "the node took an LEI meanwhile"})
