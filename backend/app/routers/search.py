@@ -672,7 +672,27 @@ def _ownership_summary(owners: list[dict]) -> dict:
     unknown % means we can't tell what's left) and the disclosed total is under
     100%. `exceeds_100` flags aggregation conflicts (overlapping sources/dates)
     rather than silently capping. Percentages, not sourced — computed on read.
+
+    An `indirect` holding (GLEIF's "ultimate parent", an exhibit's "indirectly
+    owned") is held THROUGH somebody else's shares. Beside an owner of the
+    company's own shares with a stated stake it is those shares again, so its
+    percentage is not added: Heineken N.V.'s 100 % of Distribuidora La Florida
+    beside 3-101-949828 S.A.'s direct 100 % made 200 % (findings item 101).
+    The owner is still listed, and the remainder is then nobody's to call free
+    float — the group may hold it through another company. Where no direct
+    owner states a stake, the indirect one is the best figure there is and
+    counts (Occidental Chemical: OxyChem's parent unstated, Occidental 100 %).
+    Edges proven redundant (`shortcut`) never reach this list.
     """
+    def _indirect(o):
+        return o["relationship"].get("direct_or_indirect") == "indirect"
+
+    def _stated(o):
+        return isinstance(o["relationship"].get("stake_percent"), (int, float))
+    looked_through = 0
+    if any(_stated(o) and not _indirect(o) for o in owners):
+        looked_through = sum(1 for o in owners if _indirect(o) and _stated(o))
+        owners = [o for o in owners if not (_indirect(o) and _stated(o))]
     known = [o["relationship"].get("stake_percent") for o in owners
              if isinstance(o["relationship"].get("stake_percent"), (int, float))]
     unknown_owners = sum(
@@ -709,7 +729,7 @@ def _ownership_summary(owners: list[dict]) -> dict:
         disclosed = None
     exceeds = disclosed is not None and disclosed > 100.0 + _OVER_100_TOL
     free_float = None
-    if disclosed is not None and unknown_owners == 0 and not exceeds:
+    if disclosed is not None and unknown_owners == 0 and not looked_through and not exceeds:
         residual = round(100.0 - disclosed, 4)
         if residual >= _FREE_FLOAT_MIN:
             free_float = residual

@@ -59,3 +59,20 @@ def test_no_free_float_when_an_owner_stake_unknown(it_db):
     own = get_full_profile("co")["ownership"]
     assert own["unknown_owners"] == 1
     assert own["free_float_pct"] is None
+
+
+def test_an_indirect_owner_beside_a_direct_one_is_not_summed(it_db):
+    # findings item 101: Heineken N.V.'s ultimate-parent edge beside the
+    # direct parent's — the mode flows from the real edge into the summary
+    from app.routers.search import get_full_profile
+    _entity(it_db, "co", "Distribuidora La Florida")
+    _entity(it_db, "direct", "3-101-949828 S.A.")
+    _entity(it_db, "ultimate", "Heineken N.V.")
+    for owner, mode in (("direct", "direct"), ("ultimate", "indirect")):
+        it_db.run_command(
+            f"MATCH (a:Entity {{id: '{owner}'}}), (b:Entity {{id: 'co'}}) "
+            f"CREATE (a)-[:OWNS {{stake_percent: 100.0, direct_or_indirect: '{mode}', until: null}}]->(b)")
+    profile = get_full_profile("co")
+    assert len(profile["owners"]) == 2                  # both listed
+    assert profile["ownership"]["disclosed_pct"] == 100.0
+    assert profile["ownership"]["exceeds_100"] is False

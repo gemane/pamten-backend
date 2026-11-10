@@ -272,6 +272,16 @@ class TestOver100:
     def test_what_the_panel_does_not_flag_is_not_listed(self, rows):
         assert snapshot.over_100(rows) == []
 
+    def test_an_indirect_owner_beside_a_direct_one_is_not_summed(self):
+        # findings item 101: Heineken N.V. (indirect) beside 3-101-949828 S.A. (direct)
+        rows = [{**_o("heineken", "florida", 100.0, f="RR"), "d": "indirect"},
+                {**_o("costa", "florida", 100.0, f="RR"), "d": "direct"}]
+        assert snapshot.over_100(rows) == []
+        # and a company that is over 100 % lists only what was added
+        rows += [{**_o("z", "florida", 30.0), "d": None}]
+        assert [[o[0] for o in r[3]] for r in snapshot.over_100(rows)] == [["costa", "z"]]
+        assert snapshot.over_100(rows)[0][2] == 130.0
+
     def test_one_owner_counts_once_with_its_highest_stake(self):
         rows = [_o("x", "c", 60), _o("x", "c", 30), _o("y", "c", 45)]
         assert [r[2] for r in snapshot.over_100(rows)] == [105.0]
@@ -285,6 +295,7 @@ class TestOver100:
         snap = snapshot.take(_fake_sql, cy)
         q = next(x for x in seen if "[o:OWNS]" in x)
         assert "o.until IS NULL" in q and "COALESCE(o.shortcut, false) <> true" in q
+        assert "o.direct_or_indirect AS d" in q        # the summary needs the mode (item 101)
         assert snap["over_100"] == [] and snap["cycles"] == []
 
 
