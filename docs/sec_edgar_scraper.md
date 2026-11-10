@@ -929,6 +929,82 @@ again. The 16 dev companies only the old filer reports on (Apple, Microsoft,
 Alphabet …, all January–February 2024; BlackRock has filed nothing on them since)
 keep its statement: it is the group's latest word, under the CIK's current name.
 
+### When the shares ceased to exist — a merger's 25-NSE, a takeover's Form 15
+
+A 13D/G statement is the holder's word until a newer one replaces it — and after a
+takeover nobody files again: the shares are gone and the duty to file ended with the
+registration. Silence proves nothing either way (Roche's 100 % of Foundation Medicine,
+2018, is still true), so the graph kept every such statement live: SoftBank's 83.8 %
+of Sprint (13D/A 2020-02-21) after Sprint merged into T-Mobile on 2020-04-01,
+LinkedIn's holders after Microsoft's 2016 takeover, NV Energy's after Berkshire
+Hathaway Energy's (findings item 99, 2026-11-10).
+
+The end is on the **issuer's** own EDGAR list (`app/scraper/sec_class_end.py`):
+
+- a **Form 25-NSE under Rule 12d2-2(a)** — the exchange removed the class because it
+  was redeemed, retired or exchanged into other securities (Sprint: "Common Stock",
+  12d2-2(a)(3), 2020-04-01). A removal under 12d2-2(b) — the listing rules — is no
+  end: the stock trades on over the counter. The class and the rule are read from
+  the form's `primary_doc.xml` (`descriptionClassSecurity`, `ruleProvision`).
+- a **Form 15 for an equity class with at most two holders of record** — the acquirer
+  and the depository are all that is left (Foundation Medicine 2018 "Two", Dreyer's
+  2006 "-0-", Sprint 2020 "one"). "Fewer than 300" (Texaco 2001) is a company going
+  dark — the shares still exist — and is no end.
+
+The form must name the voting equity: common or ordinary shares, ADSs, LP units. A
+form for notes, preferred stock, warrants, plan interests or a SPAC's units (a share
+and a warrant, split into their parts) says nothing about the common stock — Sprint's
+2013 Form 15 covered one note issue, WesBanco's of 2025 a preferred series.
+
+Two guards keep a class end that is no end of the holdings:
+
+- **a successor issuer** — an 8-K12B / 8-K12G3 within 30 days: a successor took the
+  class over. ONEOK's 2026 holding-company reorganisation converted every share 1:1
+  (the holders keep their stakes); Sirius XM's 2024 merger with Liberty ran through
+  one too. The forms cannot tell those apart, so neither ends here — the issuer's own
+  proxy table can (findings item 86).
+- **still a 13D/G subject** — a new 13D or 13G on the issuer filed after the end, or an
+  amendment more than 60 days after it and after the next February 20 (the annual
+  13G/A — the holders' exits — is due by February 14): its shares are still held. A multi-class issuer that retired
+  one class (Constellation Brands' Class B, 2022; Liberty Media's Braves tracking
+  stock, 2023).
+
+A fund trust — it files N-CEN / N-CSR / N-PORT — is skipped: a 25-NSE retires one of
+its hundreds of series (iShares Trust, 2026), and a statement does not say which. A
+Form 25 the issuer files itself is a voluntary withdrawal (an exchange switch) and is
+not read.
+
+`sec_writer.close_at_class_end` then closes every open SEC 13D/G statement on the
+issuer filed **before** the end, on the end's day, `until_reason = class_ended`,
+`until_source_url` the form's index page, no stale mark. Kept: a statement filed after
+the end, and one stating at least 99.5 % — one holder of the whole class is what a
+takeover leaves, so that statement is the acquirer's (Roche, Nestlé on Dreyer's, LVMH
+on Belmond). An acquirer's **earlier, partial** statement does end — eBay's 28.1 % of
+PayPal (13D 2002-07), Matthews' 61.5 % of Schawk (2014): the figure it stated ended
+with the class, and the whole holding is the acquirer's Exhibit 21's or GLEIF's to
+state. Keeping "a 13D filed shortly before" instead was measured and rejected: it kept
+SoftBank on Sprint, Lennar on Doma, Occidental on Lyondell — holders that were not the
+buyer. A 13F is another rulebook and is not touched; the claim stays (the filer did
+say it).
+
+It runs in the company scrape for the company itself (`_write_sec_edgar`, from its own
+list: one submissions request plus one per Form 15 / 25) and over the whole graph with
+`manage.py close-ended-classes` — every company with a CIK that open 13D/G holdings
+point at, since a filer's own scrape (BlackRock's, SoftBank's) writes into companies
+nobody scrapes. The command reads EDGAR, so it needs the scraper flags; the rebuild's
+step 7 runs it with them on. A re-read of an old filing updates the closed spell
+(`_RULE_CLOSED`), and the rule closes it again.
+
+Guard on dev (read-only, 2026-11-10, every write intercepted): of the open 13D/G
+holdings on 1,083 issuers, **161 on 125 issuers end** — Sprint (SoftBank), LinkedIn
+(12 holders), NV Energy (14), PayPal (eBay), Schawk (Matthews) … Three drafts were
+measured before this one: keying the acquirer on "a 13D within a year" (rejected,
+above); a 60-day grace alone, which kept Akero, Eventbrite and Lumos — taken over,
+their holders' annual 13G/A exits filed in February; and the grace without the
+fund-trust and new-statement checks, which closed holders of iShares Trust when one
+ETF series was retired. Sirius XM's old statements are not among the ends (its 2024
+Form 15 sits beside its successor registration) — that is item 86's case.
+
 ### One statement filed under two reporting persons' CIKs — newest wins
 
 A joint 13G names every reporting person of the **same** shares, and EDGAR files it

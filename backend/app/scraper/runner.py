@@ -2676,6 +2676,17 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         close_reported_by_parent(owned_id=owned)
     close_reported_by_parent(parent_id=target_id)
 
+    # The holdings in this company whose shares ceased to exist — a merger's
+    # 25-NSE, a takeover's Form 15 (findings item 99). Its own list only: the
+    # companies it reports are the whole-graph pass's (`close-ended-classes`).
+    if data.get("cik"):
+        try:
+            from app.scraper.sec_class_end import class_ends
+            from app.scraper.sec_writer import close_at_class_end
+            close_at_class_end(target_id, class_ends(data["cik"]))
+        except Exception as exc:  # noqa: BLE001 — the scrape stands without it
+            log.warning("SEC EDGAR: class ends of %r not read: %s", data["name"], exc)
+
     # Executives → Person nodes + HAS_ROLE edges
     role_holders: dict[str, str] = {}      # name → person id, for the departures below
     for exec_rec in data.get("executives", []):

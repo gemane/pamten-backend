@@ -51,8 +51,10 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   entities — with the scraper flags on, so its SEC/LEI bridge may read EDGAR as it does on the
   server; findings item 70 — folding what the bridge and the succession step added, the
   dissolution heal for the ends written after finish-import's own (item 85a), persons, geocode,
-  close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks (with the snapshot's
-  over-100 % and cycle lists, item 97), the calls to each source and the bucket since step 1
+  close-reported-by-parent, close-ended-classes (the 13D/G holdings whose shares ceased — a
+  merger's 25-NSE, a takeover's Form 15; reads EDGAR with the flags on, item 99), mark-shortcuts,
+  mark-stale), 8 read-only checks (with the snapshot's over-100 % and cycle lists, item 97), the
+  calls to each source and the bucket since step 1
   (`manage.py source-calls`, `SourceCall` rows — step 0's shell downloads are not counted) and
   `after.json` (which keeps them, so the diff shows the change from the last rebuild).
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
