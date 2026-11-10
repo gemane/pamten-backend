@@ -2677,15 +2677,20 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     close_reported_by_parent(parent_id=target_id)
 
     # The holdings in this company whose shares ceased to exist — a merger's
-    # 25-NSE, a takeover's Form 15 (findings item 99). Its own list only: the
-    # companies it reports are the whole-graph pass's (`close-ended-classes`).
+    # 25-NSE, a takeover's Form 15 — and those its own ownership table no
+    # longer names (findings item 99). Its own list only: the companies it
+    # reports are the whole-graph passes' (`close-ended-classes`,
+    # `close-absent-from-table`).
     if data.get("cik"):
         try:
             from app.scraper.sec_class_end import class_ends
-            from app.scraper.sec_writer import close_at_class_end
-            close_at_class_end(target_id, class_ends(data["cik"]))
+            from app.scraper.sec_edgar import _submissions
+            from app.scraper.sec_writer import close_at_class_end, read_table_and_close
+            subs = _submissions(data["cik"])
+            close_at_class_end(target_id, class_ends(data["cik"], subs))
+            read_table_and_close(target_id, data["cik"], subs)
         except Exception as exc:  # noqa: BLE001 — the scrape stands without it
-            log.warning("SEC EDGAR: class ends of %r not read: %s", data["name"], exc)
+            log.warning("SEC EDGAR: class ends / ownership table of %r not read: %s", data["name"], exc)
 
     # Executives → Person nodes + HAS_ROLE edges
     role_holders: dict[str, str] = {}      # name → person id, for the departures below

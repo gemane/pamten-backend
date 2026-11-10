@@ -2018,7 +2018,8 @@ class TestSecIndustry:
 
 class TestClassEndInTheScrape:
     """Findings item 99: the company scrape ends the 13D/G holdings in the
-    target whose shares ceased — from the target's own EDGAR list."""
+    target whose shares ceased, and those its own ownership table no longer
+    names — from the target's own EDGAR list."""
 
     def _scrape(self, data):
         from app.scraper import runner
@@ -2030,27 +2031,34 @@ class TestClassEndInTheScrape:
              patch.object(runner, "_upsert_entity_by_name", return_value="sprint-id"), \
              patch.object(runner, "_record_sec_industry"), \
              patch("app.scraper.sec_writer.close_reported_by_parent"), \
+             patch("app.scraper.sec_edgar._submissions", return_value={"subs": 1}) as subs, \
              patch("app.scraper.sec_class_end.class_ends", return_value=ends) as read, \
              patch("app.scraper.sec_writer.close_at_class_end", return_value=1) as close, \
+             patch("app.scraper.sec_writer.read_table_and_close", return_value={}) as table, \
              patch.object(runner, "db") as fake_db:
             fake_db.get_session.return_value.__enter__.return_value.run.return_value = []
             try:
                 runner._write_sec_edgar("Sprint", data, "US")
             except Exception:  # noqa: BLE001 - later phases need more fakes; the rule runs before them
                 pass
+        self.subs, self.table = subs, table
         return read, close, ends
 
     def test_the_targets_class_ends_are_read_and_applied(self):
         read, close, ends = self._scrape({"name": "SPRINT Corp", "cik": "0000101830",
                                           "ownership_filings": [], "executives": []})
-        read.assert_called_once_with("0000101830")
+        # one submissions read serves both rules
+        self.subs.assert_called_once_with("0000101830")
+        read.assert_called_once_with("0000101830", {"subs": 1})
         close.assert_called_once_with("sprint-id", ends)
+        self.table.assert_called_once_with("sprint-id", "0000101830", {"subs": 1})
 
     def test_no_cik_no_read(self):
         read, close, _ = self._scrape({"name": "SPRINT Corp", "cik": None,
                                        "ownership_filings": [], "executives": []})
         read.assert_not_called()
         close.assert_not_called()
+        self.table.assert_not_called()
 
 
 # ── One CIK, one vertex type (findings item 21) ──────────────────────────────

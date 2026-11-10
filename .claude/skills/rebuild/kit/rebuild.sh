@@ -95,6 +95,9 @@ python3 manage.py close-reported-by-parent || echo "  ! close-reported-by-parent
 # Form 15 (findings item 99); reads EDGAR, so the flags go on its own line (item 70)
 SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
   python3 manage.py close-ended-classes || echo "  ! close-ended-classes failed"
+# … and those the issuer's own ownership table (proxy) no longer names (item 99)
+SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
+  python3 manage.py close-absent-from-table || echo "  ! close-absent-from-table failed"
 python3 manage.py mark-shortcuts || echo "  ! mark-shortcuts failed"
 python3 manage.py mark-stale || echo "  ! mark-stale failed"
 

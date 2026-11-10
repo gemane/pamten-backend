@@ -601,8 +601,11 @@ WHOLE_CLASS_PCT = 99.5
 #: spells closed by a rule rather than by a filing: a re-read of a filing from
 #: inside one updates it instead of drawing a new open edge beside it, and the
 #: rule closes it again after the scrape (app.dissolution, the parent rule,
-#: the class end)
-_RULE_CLOSED = ("dissolution", "merged", "split", REPORTED_BY_PARENT, CLASS_ENDED)
+#: the class end, the issuer's table)
+#: why a holding's spell ended because the issuer's own ownership table no
+#: longer names the holder (`close_absent_from_table`, findings item 99)
+NOT_IN_TABLE = "not_in_issuer_table"
+_RULE_CLOSED = ("dissolution", "merged", "split", REPORTED_BY_PARENT, CLASS_ENDED, NOT_IN_TABLE)
 
 
 def _statement_day(edge: dict) -> str:
@@ -731,6 +734,35 @@ def close_at_class_end(owned_id: str, ends: list[dict]) -> int:
     return closed
 
 
+def close_absent_from_tables(limit: int | None = None) -> dict:
+    """`read_table_and_close` for every company with an SEC CIK that open
+    13D/G holdings point at — the whole graph (see `close_ended_classes` for
+    why). Returns {companies, tables, read, failed, closed, lines}."""
+    from app.db.arcadedb import run_sql
+    from app.scraper.maintenance import restatement_family
+    rows = run_sql("SELECT @in.id AS id, @in.sec_cik AS cik, @in.name AS name, filing_type FROM OWNS "
+                   "WHERE until IS NULL AND source_id = 'sec-edgar' AND @in.sec_cik IS NOT NULL") or []
+    issuers = sorted({(r["id"], r["cik"], r.get("name")) for r in rows if restatement_family(r.get("filing_type"))})
+    if limit:
+        issuers = issuers[:limit]
+    out: dict = {"companies": len(issuers), "tables": 0, "read": 0, "failed": 0, "closed": 0, "lines": []}
+    for eid, cik, name in issuers:
+        try:
+            res = read_table_and_close(eid, cik)
+        except Exception as exc:  # noqa: BLE001 — one company's filing lost is not the run's
+            out["failed"] += 1
+            log.warning("SEC: ownership table of %s (CIK %s) not read: %s", name, cik, exc)
+            continue
+        out["read"] += 1
+        if res["filing"]:
+            out["tables"] += 1
+        if res["closed"]:
+            out["closed"] += res["closed"]
+            out["lines"].append(f"{name}: {res['closed']} closed — not in its {res['filing']['form']} "
+                                f"of {res['filing']['date']} ({res['rows']} holders listed)")
+    return out
+
+
 def close_ended_classes(limit: int | None = None) -> dict:
     """`close_at_class_end` for every company with an SEC CIK that open
     13D/G holdings point at — the whole graph, for a rebuild or a server
@@ -760,6 +792,163 @@ def close_ended_classes(limit: int | None = None) -> dict:
             out["lines"].append(f"{name}: {n} closed on {ends[0]['date']} ({ends[0]['form']}, {ends[0]['class']})"
                                 if len(ends) == 1 else f"{name}: {n} closed ({len(ends)} class ends)")
     return out
+
+
+#: words that say nothing about WHICH holder a name is
+_NAME_STOP = frozenset({"the", "and", "of", "inc", "llc", "lp", "llp", "ltd", "plc", "corp", "co", "company",
+                        "corporation", "group", "holdings", "holding", "trust", "fund", "funds", "capital",
+                        "management", "investors", "investment", "investments", "partners", "advisors",
+                        "advisers", "associates", "global", "international", "sa", "nv", "ag", "se",
+                        "na", "us", "usa", "ii", "iii", "iv", "jr", "sr", "entities", "affiliated"})
+#: how long before the table's filing a statement must have been filed to be
+#: judged by it — the table speaks as of its record date, weeks earlier
+TABLE_LEAD_DAYS = 60
+
+
+def _name_tokens(name: str | None) -> frozenset:
+    """A name's distinctive words."""
+    from app.scraper.mapper import normalize_entity_name
+    return frozenset(t for t in normalize_entity_name(name or "").split()
+                     if len(t) > 1 and t not in _NAME_STOP)
+
+
+def named_in_table(aliases: list[str], table_names: list[str]) -> bool:
+    """True when any of a holder's names shares a distinctive word with a name
+    the issuer's table lists ("Warren E. Buffett" ~ "BUFFETT WARREN E"; "The
+    Vanguard Group" ~ "VANGUARD GROUP INC"; Lennar's Miller family group —
+    MP Alpha, the Miller Charitable Fund — ~ "Stuart Miller"). Generous on
+    purpose: a wrong match only keeps a statement open, a missed one would end
+    a true holding."""
+    held = frozenset().union(*map(_name_tokens, table_names)) if table_names else frozenset()
+    return any(_name_tokens(alias) & held for alias in aliases)
+
+
+def _role_holders(owned_id: str) -> list[str]:
+    """The names of the people holding a role at the issuer."""
+    from app.db.arcadedb import run_query
+    return [r["n"] for r in run_query("MATCH (p:Person)-[:HAS_ROLE]->(e:Entity {id: $id}) RETURN DISTINCT p.full_name AS n",
+                                      {"id": owned_id}) or [] if r.get("n")]
+
+
+def _holder_aliases(owner_id: str, owner_label: str | None = "Entity") -> list[str]:
+    """A holder's own names — name, aliases, former names — and those of its
+    controlling parents (BlackRock, Inc. for BlackRock Finance)."""
+    from app.db.arcadedb import run_query
+    names: list[str] = []
+    for r in run_query(
+            f"""MATCH (o:{label_or_entity(owner_label)} {{id: $id}})
+               OPTIONAL MATCH (g)-[k:OWNS]->(o) WHERE k.until IS NULL AND k.ownership_type = 'controlling'
+               RETURN coalesce(o.name, o.full_name) AS n, o.aliases AS al, o.former_names AS fn,
+                      collect(DISTINCT coalesce(g.name, g.full_name)) AS parents""", {"id": owner_id}) or []:
+        names.append(r.get("n"))
+        for extra in (r.get("al"), r.get("fn"), r.get("parents")):
+            for x in extra or []:
+                names.append(x.get("name") if isinstance(x, dict) else x)
+    return [n for n in dict.fromkeys(names) if n]
+
+
+def statement_persons(source_url: str | None) -> list[str]:
+    """The reporting persons a 13D/G statement names on its cover pages — the
+    group a proxy table lists by its controlling person (Berkshire's 13G/A on
+    Occidental names Warren E. Buffett; the table lists "Warren E. Buffett and
+    affiliated entities"). From the filing's `primary_doc.xml` (since December
+    2024), else its full text (`sec_edgar._cover_page_names`, findings item 93).
+    [] when the filing cannot be read — the caller keeps the holding then."""
+    from app.scraper import sec_edgar
+    if not source_url or not source_url.endswith("-index.htm"):
+        return []
+    folder, index = source_url.rsplit("/", 1)
+    try:
+        xml = sec_edgar._parse_13dg_xml(sec_edgar._get_text(f"{folder}/primary_doc.xml"))
+    except Exception:  # noqa: BLE001 — no XML before December 2024
+        xml = None
+    if xml:
+        return [p["name"] for p in xml.get("persons") or [] if p.get("name")]
+    try:
+        return sec_edgar._cover_page_names(sec_edgar._get_text(f"{folder}/{index.replace('-index.htm', '.txt')}"))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SEC: reporting persons of %s not read: %s", source_url, exc)
+        return []
+
+
+def close_absent_from_table(owned_id: str, filing: dict, rows: list[dict]) -> int:
+    """End the 13D/G holdings of `owned_id` its own ownership table no longer
+    names (findings item 99): every open SEC statement of 5 % or more (or no
+    stated percent) filed at least TABLE_LEAD_DAYS before the table's filing,
+    whose holder the table lists under none of its names (`_holder_aliases`),
+    closes on the filing's date — `until_reason` NOT_IN_TABLE, `until_source_url`
+    the filing, no stale mark. The table lists every holder of more than 5 %:
+    one it leaves out is no longer one — Sirius XM's 2026 proxy names Berkshire
+    (37.1 %), John C. Malone and Vanguard, not Apollo (16.2 %, 2003), Loral or
+    the 2009/2012 Liberty statements. The end is an upper bound: the holder
+    may have dropped below 5 % long before.
+
+    Only when the table lists a 5 % holder who holds no role at the issuer:
+    a filing whose 5 % section the reader did not find, or a table of the
+    company's own directors and officers only (Berkshire's), is no evidence. A holder is looked for under its own names, its controlling
+    parents' and — read only for a holding about to close — every reporting
+    person its statement names; a statement that cannot be read is kept, and
+    so is an insider's (a holder named like a person with a role at the
+    issuer: the officers' rows can sit in a table the reader missed).
+    Kept too: a statement filed later, one stating under 5 % (the table
+    cannot contradict it), a 13F. The claim stays. Returns how many closed."""
+    from datetime import date as _date, timedelta
+    from app.db.arcadedb import run_sql
+    from app.scraper.maintenance import restatement_family
+    big = [r["name"] for r in rows if any(p >= 5 for p in r.get("percents") or [])]
+    insiders = _role_holders(owned_id)
+    if not big or all(named_in_table([n], insiders) for n in big):
+        # no 5 % holder, or only the issuer's own directors and officers —
+        # Berkshire's proxy lists Buffett and its board, not the funds that
+        # hold its Class B stock: no list of 5 % holders, no evidence
+        return 0
+    table_day = str(filing["date"])[:10]
+    cutoff = (_date.fromisoformat(table_day) - timedelta(days=TABLE_LEAD_DAYS)).isoformat()
+    names = [r["name"] for r in rows]
+    closed = 0
+    for e in run_sql("SELECT @rid AS rid, @out.id AS owner, @out.@type AS olabel, filing_type, source_date, "
+                     "since, stake_percent, source_url FROM OWNS WHERE until IS NULL AND source_id = 'sec-edgar' AND @in.id = :id",
+                     {"id": owned_id}) or []:
+        if not restatement_family(e.get("filing_type")):
+            continue
+        pct = e.get("stake_percent")
+        if isinstance(pct, (int, float)) and pct < 5:
+            continue
+        day = _statement_day(e) or str(e.get("since") or "")[:10]
+        if not day or day >= cutoff:
+            continue
+        aliases = _holder_aliases(e["owner"], e.get("olabel"))
+        # an insider is never judged: the directors' and officers' rows sit in
+        # a table of their own that the reader can miss — Dick's 2026 proxy
+        # read as its four funds, and Edward W. Stack (chairman, 19.69 %)
+        # would have closed
+        if named_in_table(aliases, names) or named_in_table(aliases, insiders):
+            continue
+        # the group the statement reports — read only for a holding that
+        # would close, one request each
+        persons = statement_persons(e.get("source_url"))
+        if not persons or named_in_table(persons, names) or named_in_table(persons, insiders):
+            continue
+        run_sql(f"UPDATE {e['rid']} SET until = :d, until_reason = :why, until_source_url = :u, "
+                + STALE_CLEAR_SQL, {"d": table_day, "why": NOT_IN_TABLE, "u": filing["url"]})
+        log.info("SEC: %s's 13D/G holding of %s ends %s — not in the issuer's table", e["owner"], owned_id, table_day)
+        closed += 1
+    return closed
+
+
+def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = None) -> dict:
+    """The issuer's newest ownership table (DEF 14A / 10-K/A within
+    `proxy_statement.TABLE_MAX_AGE_DAYS`) read and applied: {"filing", "rows",
+    "closed"}; no table filing → {"filing": None, "closed": 0}. Two requests
+    (the submissions, unless given, and the filing)."""
+    from app.scraper import sec_edgar
+    from app.scraper.proxy_statement import latest_table_filing, read_holder_rows
+    subs = submissions if submissions is not None else sec_edgar._submissions(cik)
+    filing = latest_table_filing(subs)
+    if not filing:
+        return {"filing": None, "rows": 0, "closed": 0}
+    rows = read_holder_rows(sec_edgar._get_text(filing["url"]))
+    return {"filing": filing, "rows": len(rows), "closed": close_absent_from_table(owned_id, filing, rows)}
 
 
 def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,

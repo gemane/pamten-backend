@@ -1005,6 +1005,76 @@ fund-trust and new-statement checks, which closed holders of iShares Trust when 
 ETF series was retired. Sirius XM's old statements are not among the ends (its 2024
 Form 15 sits beside its successor registration) — that is item 86's case.
 
+### When the issuer's own table no longer names the holder
+
+A class that ceased is one end; the other is the issuer saying who its 5 % holders
+are. Every proxy statement (DEF 14A — or a 10-K/A whose Part III stands in for it)
+carries the "Security Ownership of Certain Beneficial Owners and Management" table,
+which lists every holder of more than 5 %. Sirius XM's 2026 proxy names Berkshire
+Hathaway (37.1 %), John C. Malone (6.6 %) and Vanguard (5.4 %) — and the graph still
+summed Apollo's 16.16 % (13D/A 2003), CNA's 5.6 % (13G 2001), Loral's, Blackstone's and
+the two Liberty statements of 2009/2012 filed under CIKs since renamed Old QVC Group and
+Starz Acquisition: 213.6 % in all (findings item 99). Sirius XM's own 2024 Form 15 sits
+beside its successor registration, so the class-end rule above rightly leaves it alone;
+the table is the evidence.
+
+`sec_writer.close_absent_from_table` closes every open SEC 13D/G statement on the
+issuer that
+
+- states 5 % or more, or no percent (one stating less the table cannot contradict);
+- was filed at least 60 days before the table's filing (the table speaks as of its
+  record date, weeks earlier — a statement filed since is not judged by it);
+- names a holder the table lists under none of its names.
+
+on the table filing's date, `until_reason = not_in_issuer_table`, `until_source_url`
+the filing. The date is an upper bound: the holder may have dropped below 5 % long
+before; the timeline says so. Only when the table lists a 5 % holder who holds no role
+at the issuer: a filing whose 5 % section the reader did not find is no evidence, and
+neither is a table of the company's own directors and officers — Berkshire's proxy
+lists Buffett and its board, not the funds that hold its Class B stock (BlackRock's
+13G/A of 8 % would have closed).
+
+The names are where it can go wrong — a missed match would end a true holding, a wrong
+one only keeps a statement open, so the matching is generous: one distinctive word
+shared with any name in the table ("BUFFETT WARREN E" ~ "Warren E. Buffett";
+"VANGUARD GROUP INC" ~ "The Vanguard Group"; Bank of America's one-cell "Warren E.
+Buffett/Berkshire Hathaway Inc."; Lennar's Miller family group — MP Alpha, the Miller
+Charitable Fund — ~ "Stuart Miller", 70.2 % of the votes), after cutting a cell's
+footnote marks ("BlackRock, Inc. 3"), "and affiliated entities" and "c/o …". Words
+that name no one in particular (Inc, Group, Capital, Management, Partners, Trust …)
+do not count. A holder
+is looked for under its own names (name, aliases, former names), its controlling
+parents' (National Indemnity under Berkshire) and — read only for a statement about to
+close, one request each — every **reporting person its statement's cover pages name**:
+a proxy lists a group by its controlling person ("Warren E. Buffett and affiliated
+entities" for Berkshire's 13G/A on Occidental). Rejected on the way: the people holding
+a role at the holder — John C. Malone chairs Qurate (Old QVC Group), and his own 6.6 %
+row would have kept the 2009 Liberty statement open. A statement that cannot be read is
+kept.
+
+The reader (`proxy_statement.read_holder_rows`) takes every table with a name column, a
+percent column and ownership words in its header — the 5 % section and the directors
+and officers — not only the voting-power column `proxy_write` reads. The filing is the
+newest DEF 14A or 10-K/A within 18 months (`latest_table_filing`). It runs in the
+company scrape for the company itself (with the class end, from the same submissions
+read) and over the whole graph with `manage.py close-absent-from-table` (scraper flags;
+rebuild step 7).
+
+Measured over the scrape list (2026-11-10): 64 US filers have a recent proxy, the
+reader finds the table in 56 (858 rows; it misses BlackRock's, the New York Times',
+Delek's, Karman's, Toast's, Trade Desk's, Verra's and Altria's). Guard on dev (read-only,
+every write intercepted, 1,083 issuers, 665 tables read): **45 holdings on 32 issuers
+end** — Sirius XM's Old QVC Group (40.15 %), Starz Acquisition (49.5 %) and CNA; Icahn's
+groups on Occidental (2022) and Herc; Valor on Tesla (2011); Macquarie/Delaware and Lone
+Pine on VeriSign (2014); Berkshire's 5.8 % of Apple (2024, since sold below 5 %); ACE on
+Assured Guaranty (2010) … Each draft was checked holding by holding: role-based aliases
+kept Qurate's Liberty 13D through Malone; a two-word match closed Berkshire on Bank of
+America ("Warren E. Buffett/Berkshire Hathaway Inc.") and the Miller family's group on
+Lennar; a directors-only table (Berkshire's own) closed BlackRock's 8 %; a missed
+officers' table closed Edward W. Stack on Dick's — all fixed above. Apollo's and
+Blackstone's 2003–2008 statements on Sirius XM stay open where their old text filing
+could not be read.
+
 ### One statement filed under two reporting persons' CIKs — newest wins
 
 A joint 13G names every reporting person of the **same** shares, and EDGAR files it
