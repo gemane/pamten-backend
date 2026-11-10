@@ -2165,7 +2165,15 @@ Honesty rules, learned from the real filings:
   never in the wider graph, and a co-holder's edge is typed by its share (the
   0.0000003% nominal second shareholder Mexican law requires is `minority`,
   not `controlling` like a listed subsidiary). The run result counts
-  `co_owner_edges`.
+  `co_owner_edges`. Only a **bare** first share is the listed parent's: when
+  the first share names its own holder ("46.3425521% (Vigilant Insurance
+  Company) … 17.0140717% (Chubb INA International Holdings Ltd.)"), the parent
+  gets the share the cell names for IT — under a nested parent as under the
+  filer — or none. Chubb Seguros Colombia had summed to 129 % (the parent got
+  Vigilant's 46.34 % and lost its own 17.01 %) and Chile to 199 % (the parent
+  got its Chilean branch's 98.97 % beside the branch) (findings item 100). A
+  co-holder named like the row's own tree parent but for "Holding"/"Holdings"
+  is that parent (Chubb's Indonesian row).
 - **One list, many printed pages.** Chubb's exhibit is eleven tables with a
   header row on the first only; the ownership column was lost on the other ten.
   A header-less table now inherits the previous table's columns when its rows

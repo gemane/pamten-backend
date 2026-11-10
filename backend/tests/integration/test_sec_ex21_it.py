@@ -252,6 +252,50 @@ def test_co_holders_get_their_own_edges_and_the_filer_its_own_share(it_db):
     assert read()[1][("AFIA Finance Corporation", "Chubb Seguros México S.A.")] == "minority"
 
 
+# Under a nested parent, a cell whose first share names its own holder
+# (findings item 100): Chubb's Colombia row "46.3425521% (Vigilant …) … 17.0140717%
+# (Chubb INA International Holdings Ltd.)" gave the tree parent Vigilant's share
+# AND left out its own (Colombia 129 %); Chile's parent got its Chilean branch's
+# 98.97 % beside the branch (199 %).
+CIIH = "Chubb INA International Holdings Ltd."
+NESTED = {
+    "subsidiaries": [
+        {"name": CIIH, "jurisdiction": "Bermuda", "stake_percent": 100.0},
+        {"name": "Vigilant Insurance Company", "jurisdiction": "USA (New York)", "stake_percent": 100.0},
+        {"name": CIIH + ", Agencia en Chile", "jurisdiction": "Chile", "stake_percent": 100.0},
+        {"name": "Chubb Seguros Colombia S.A.", "jurisdiction": "Colombia", "parent": CIIH, "parent_basis": "indent",
+         "co_owners": [{"name": "Vigilant Insurance Company", "stake_percent": 46.3425521},
+                       {"name": CIIH, "stake_percent": 17.0140717}]},
+        {"name": "Chubb Seguros Chile S.A.", "jurisdiction": "Chile", "parent": CIIH, "parent_basis": "indent",
+         "co_owners": [{"name": CIIH + ", Agencia en Chile", "stake_percent": 98.974628}]},
+        # the filer writes "Holding" here, its parent row "Holdings"
+        {"name": "PT Chubb Life Insurance Indonesia", "jurisdiction": "Indonesia", "parent": CIIH,
+         "parent_basis": "indent",
+         "co_owners": [{"name": "Chubb INA International Holding Ltd.", "stake_percent": 59.35}]},
+    ],
+    "form": "10-K", "filing_date": "2026-02-26",
+    "url": "https://www.sec.gov/Archives/edgar/data/896159/000089615926000005/cb-12312025xex211.htm",
+}
+
+
+def test_a_nested_parent_named_among_the_co_holders_gets_its_named_share(it_db):
+    it_db.run_command(
+        "CREATE (:Entity {id: 'chubb', name: 'CHUBB LIMITED', name_normalized: 'chubb', "
+        "search_text: 'CHUBB LIMITED', type: 'company', sec_cik: '0000896159'})")
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=NESTED):
+        assert runner.run_sec_ex21("Chubb")["status"] == "ok"
+    rows = it_db.run_command("MATCH (a:Entity)-[r:OWNS]->(b:Entity) RETURN a.name AS owner, "
+                             "b.name AS owned, r.stake_percent AS stake")
+    edges = {(r["owner"], r["owned"]): r.get("stake") for r in rows}
+    assert edges[(CIIH, "Chubb Seguros Colombia S.A.")] == 17.0140717
+    assert edges[("Vigilant Insurance Company", "Chubb Seguros Colombia S.A.")] == 46.3425521
+    # the branch holds Chile; the tree parent is drawn, with no share of its own stated
+    assert edges[(CIIH + ", Agencia en Chile", "Chubb Seguros Chile S.A.")] == 98.974628
+    assert edges[(CIIH, "Chubb Seguros Chile S.A.")] is None
+    assert edges[(CIIH, "PT Chubb Life Insurance Indonesia")] == 59.35
+    assert not any(o == "Chubb INA International Holding Ltd." for o, _ in edges)
+
+
 # ── The tree the filer draws ──────────────────────────────────────────────────
 
 def _tree_data(**over):

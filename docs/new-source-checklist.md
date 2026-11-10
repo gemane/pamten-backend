@@ -1715,6 +1715,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       own subsidiaries, whose row 13 IS their stake. Apply the rule, then replay
       it on everything the sibling reads and look at what changes.
 
+- [ ] **A percent belongs to the holder written beside it — check the FIRST one too.**
+      Chubb's Exhibit 21 cells list shares as "share (holder)"; a bare first
+      share is the listed parent's. The reader took the first share as the
+      parent's even when it named another holder, and kept it when the parent
+      was named with a share of its own further on: Chubb Seguros Colombia 129 %,
+      Chile 199 % (findings item 100). Test a multi-holder cell with the first
+      share named, and with the parent among the named.
+
 ## 9. Documentation
 
 - [ ] `KNOWN_SOURCES` entry: **id** (the Source node's stable id — part of the data, the same on every instance), type, label, url, description, kind, credibility, quality.

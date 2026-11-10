@@ -479,3 +479,19 @@ class TestFlatListsStayFlat:
         assert len(subs) == 19 and not any(s.get("parent") or s.get("parent_basis") for s in subs)
         subs = _load("texasroadhouse_ex21.htm", "Texas Roadhouse, Inc.")
         assert len(subs) == 60 and not any(s.get("parent") or s.get("parent_basis") for s in subs)
+
+
+@pytest.mark.parametrize("cell, stake, holders", [
+    # the first share names its own holder: no share for the listed parent (item 100)
+    ("98.974628% (Chubb INA International Holdings Ltd., Agencia en Chile) 1.002135% "
+     "(AFIA Finance Corporation, Agencia en Chile)", None, 2),
+    ("46.3425521% (Vigilant Insurance Company) 17.0140717% (Chubb INA International Holdings Ltd.)", None, 2),
+    # the first share is bare: the listed parent's
+    ("83.17% 16.82% (DHC Corporation) 0.01% (Chubb Brazil Holdings Ltd.)", 83.17, 2),
+    ("99.9999309%0.0000691% (Chubb Tempest Life Reinsurance Ltd.)", 99.9999309, 1),
+    ("100%", 100.0, 0),
+])
+def test_ownership_cell_first_share(cell, stake, holders):
+    from app.scraper.sec_ex21 import _ownership_cell
+    got, co = _ownership_cell(cell)
+    assert got == stake and len(co) == holders
