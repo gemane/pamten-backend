@@ -804,6 +804,17 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                                          edge_params)
     migrated = 0
 
+    def _between(other: str | None, kind: str) -> bool:
+        # An edge between the two nodes being merged would become keep → keep:
+        # Sirius XM's filer owned the GLEIF node it was joined into, and the
+        # merge drew the company owning itself (findings item 94). One company
+        # does not own itself, so the edge is dropped — and said.
+        if other != keep_id:
+            return False
+        log.warning("merge %s → %s: dropped a %s edge between the two (it would own itself)",
+                    dead_id, keep_id, kind)
+        return True
+
     # 1. Outgoing OWNS. Labelled endpoints so the id lookups are index-backed —
     # a label-less match full-scans every node (~14s each on 3M), which hung a
     # merge once.
@@ -812,6 +823,8 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             RETURN t.id AS tid, {edge_return_clause('r', OWNS_PROPS)}""",
         {"id": dead_id},
     ):
+        if _between(e["tid"], "OWNS"):
+            continue
         migrated += _carry_edge("OWNS", OWNS_PROPS, "(a:Entity {id: $k})", "(t:Entity {id: $tid})",
                                 {"k": keep_id, "tid": e["tid"]}, e)
 
@@ -823,6 +836,8 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                    {edge_return_clause('r', OWNS_PROPS)}""",
         {"id": dead_id},
     ):
+        if _between(e["sid"], "OWNS"):
+            continue
         slabels = e.get("slabels") or []
         # the owner may be a Person, a VotingGroup (a 13D bloc over the merged
         # company) or an Entity — its label came back with the row
@@ -846,6 +861,8 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
             RETURN t.id AS tid, {edge_return_clause('r', RELATED_TO_PROPS)}""",
         {"id": dead_id},
     ):
+        if _between(e["tid"], "RELATED_TO"):
+            continue
         if run_query(
             "MATCH (a:Entity {id: $k})-[r:RELATED_TO]->(t:Entity {id: $tid}) "
             "WHERE r.relation = $rel RETURN r LIMIT 1",
@@ -865,6 +882,8 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
                    {edge_return_clause('r', RELATED_TO_PROPS)}""",
         {"id": dead_id},
     ):
+        if _between(e["sid"], "RELATED_TO"):
+            continue
         slabels = e.get("slabels") or []
         slabel = label_or_entity(slabels[0] if slabels else None)
         if run_query(

@@ -522,6 +522,13 @@ vanished from the group it belongs to. Membership is `MEMBER_OF` since 2026-10-2
 `VotingGroup` — the bloc over a merged company — follows the survivor like any
 owner's, its label read off the edge.
 
+**An edge between the two nodes is dropped, never carried.** Recreated on the
+survivor it would read keep → keep, a company owning itself: Sirius XM's filer
+owned GLEIF's SIRIUS XM INC. (its Exhibit 21), the securities bridge joined the two,
+and the merge drew the only self-loop on dev (findings item 94; the bridge no longer
+joins such a pair, see "The securities bridge"). OWNS and RELATED_TO, both
+directions; each drop is logged.
+
 **An OWNS edge is recreated, not moved**, so its property list decides what
 survives — and hand-written lists here fell behind **four separate times**, the
 worst block naming 6 of 25 properties while running on every auto-dedup. The

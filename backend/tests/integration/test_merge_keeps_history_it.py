@@ -41,6 +41,27 @@ def two_companies(it_db):
 
 
 class TestEntityMerge:
+    def test_an_edge_between_the_two_never_becomes_a_self_loop(self, two_companies):
+        # findings item 94: the filer owned the GLEIF node it was then joined
+        # into (Sirius XM), and the merge drew the company owning itself
+        from app.scraper.maintenance import _migrate_entity_edges
+        db = two_companies
+        db.run_command("MATCH (a:Entity {id:'dead'}),(t:Entity {id:'keep'}) "
+                       "CREATE (a)-[:OWNS {source_id:'sec-edgar', filing_type:'EX-21'}]->(t)")
+        db.run_command("MATCH (a:Entity {id:'keep'}),(t:Entity {id:'dead'}) "
+                       "CREATE (a)-[:OWNS {source_id:'gleif', stake_percent:100}]->(t)")
+        db.run_command("MATCH (a:Entity {id:'dead'}),(t:Entity {id:'keep'}) "
+                       "CREATE (a)-[:RELATED_TO {relation:'group_member'}]->(t)")
+        db.run_command("MATCH (a:Entity {id:'keep'}),(t:Entity {id:'dead'}) "
+                       "CREATE (a)-[:RELATED_TO {relation:'affiliate'}]->(t)")
+        db.run_command("MATCH (a:Entity {id:'dead'}),(t:Entity {id:'target'}) "
+                       "CREATE (a)-[:OWNS {source_id:'gleif', stake_percent:51}]->(t)")
+        assert _migrate_entity_edges("dead", "keep") == 1          # only the edge to 'target'
+        assert _owns(db, "keep", "keep") == []
+        assert db.run_command("MATCH (a:Entity {id:'keep'})-[r:RELATED_TO]->(b:Entity {id:'keep'}) "
+                              "RETURN count(r) AS n")[0]["n"] == 0
+        assert [e.get("stake_percent") for e in _owns(db, "keep", "target")] == [51]
+
     def test_an_ended_period_survives_beside_a_current_one(self, two_companies):
         from app.scraper.maintenance import _migrate_entity_edges
         db = two_companies
