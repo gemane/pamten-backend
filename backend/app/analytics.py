@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 USAGE_EVENTS = frozenset({
     "export.png", "export.csv", "export.ods", "share.link",
     "map.basis.jurisdiction", "map.basis.hq", "map.drill",
-    "panel.timeline", "graph.expand", "graph.filter.stake",
+    "panel.timeline", "graph.expand", "graph.filter.stake", "graph.address",
     "scrape.requested",
 })
 

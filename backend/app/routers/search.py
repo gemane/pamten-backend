@@ -14,7 +14,7 @@ from app.scraper.mapper import legal_form_of, normalize_entity_name, states_lega
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 from app.merged_ids import resolve_current_id
-from app import former_names, industry
+from app import former_names, industry, registered_address
 
 logger = logging.getLogger(__name__)
 
@@ -1237,6 +1237,11 @@ def get_full_profile(
             "dual_listed": [dict(d) for d in record["dual_listed"] if d],
             "succeeded_by": _succession_rows(record["succeeded_by"], hidden),
             "replaces": _succession_rows(record["replaces"], hidden),
+            # The others registered at its registered office — the letterbox
+            # network (app.registered_address); None without an address.
+            # Present-day only: an address carries no dates to travel by.
+            "registered_address": (registered_address.co_registered(
+                session, dict(record["e"]), hidden, limit) if label == "Entity" else None),
         }
 
 
@@ -1344,6 +1349,24 @@ def _dedupe_holdings(rows: list) -> list:
         if cur is None or (rel.get("stake_percent") or -1) > (cur["relationship"].get("stake_percent") or -1):
             best[key] = {"entity": entity, "relationship": rel}
     return sorted(best.values(), key=lambda e: (e["entity"].get("name") or "").lower())
+
+
+@router.get("/address")
+def companies_at_address(
+    key: Annotated[str, Query(min_length=1, max_length=500,
+                              description="The registered office: its matching key as the profile's "
+                                          "`registered_address.key` gives it, or the readable address.")],
+    limit: Annotated[int, Query(ge=1, le=registered_address.PAGE_MAX)] = PROFILE_SECTION_LIMIT,
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+):
+    """Every company registered at one address, by name, paged — the
+    address node of the letterbox view. 404 when none is registered there."""
+    with db.get_session() as session:
+        found = registered_address.companies_at(session, key, load_suppressed_nodes(session),
+                                                limit, offset)
+    if not found:
+        raise HTTPException(status_code=404, detail="No company is registered at this address")
+    return found
 
 
 @router.get("/person/{person_id:path}/full-profile")
