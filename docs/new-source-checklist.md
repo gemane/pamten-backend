@@ -1746,4 +1746,4 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
 - [ ] [`api-reference.md`](api-reference.md) if it adds or changes an endpoint.
 - [ ] A deep-dive under `docs/` if the source needed real research to understand — see
       [`sec_edgar_scraper.md`](sec_edgar_scraper.md) for the shape.
-- [ ] The README's source list, so the catalogue and the code agree.
+- [ ] The source list in [`sources.md`](sources.md) (and the README's documentation table when a topic is new), so the catalogue and the code agree.

@@ -149,9 +149,10 @@ container (3.9 GB RAM, never chain the unit suite and an IT run) and develop.
   from `.bak` copies and `git status --short` is checked afterwards. A mutant that survives
   is either pinned by a new test (item 58's possessive) or named in the report as not a
   guard.
-- **Docs in the same PR**: the deep-dive in `docs/` where the behaviour is described, the
-  README where it describes it, a lesson in `docs/new-source-checklist.md` written as the
-  rule plus the case that taught it, the rebuild skill for kit changes.
+- **Docs in the same PR**: the deep-dive in `docs/` where the behaviour is described, a
+  lesson in `docs/new-source-checklist.md` written as the rule plus the case that taught
+  it, the rebuild skill for kit changes. Never a description in the README — it is an
+  overview with a documentation table (user, 2026-11-10).
 - **One PR per topic**, title "<what>: <why> (findings item N)", body with Finding / Cause /
   Change (and what stays) / Guard / Checks / Next rebuild / Docs, the session's
   attribution trailer. A fix plus a scrape-target change is two commits in two repos.

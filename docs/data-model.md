@@ -157,7 +157,7 @@ validated against this set at the API boundary. `free_float` is
 `free_float_pct`, because nobody holds the free float.
 
 Vertex/edge types and lookup indexes are created idempotently on startup and via
-`python manage.py init-schema` (see the README's *Deployment → Schema & indexes*).
+`python manage.py init-schema` (see *Schema & indexes* in [`operations.md`](operations.md#schema--indexes)).
 
 ## Claims: per-source provenance
 

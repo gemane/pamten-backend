@@ -84,8 +84,9 @@ step 3 report, not in a separate stop:
   change) — check it against the real source first;
 - the tests: unit, an integration test against real ArcadeDB for any query or write path,
   and the mutants that must die;
-- the docs: the deep-dive in `docs/`, README where it describes the behaviour, and a lesson
-  in `docs/new-source-checklist.md`.
+- the docs: the deep-dive in `docs/` where the behaviour is described, and a lesson in
+  `docs/new-source-checklist.md`. The README stays an overview — no descriptions there; it
+  gets a line in its documentation table only for a new topic (user, 2026-11-10).
 
 **Split by topic.** A solution that touches different topics — two independent defects, a
 code change plus a scrape-target change, a fix plus an unrelated cleanup it revealed — is

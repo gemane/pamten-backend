@@ -311,3 +311,160 @@ ENSURE_USER_PASSWORD=… python3 manage.py ensure-user \
   as `wipe-source`.
 - The rebuild step reads the credentials from `~/.config/owlgraph/scrape.env`, and
   skips (loudly, non-fatally) when that file is absent.
+
+## Scrape run log
+
+Every scrape (`/scraper/run`, `/run-all`, `/sec-edgar/run`,
+`/open-corporates/run`) records a `ScrapeRun` row: a `running` entry on start,
+updated to `ok` (with node count) or `failed` (with the error) on finish. `GET
+/scraper/runs` lists them newest-first, so the UI and other sessions can see
+what's scraping now and which runs failed — across the panel *and* the bundled
+`scrape_companies.sh` script. Every run that is about one company records the
+company it resolved (`entity_id`) beside the typed target, so the weekly digest
+can name it; a bulk run (a GLEIF delta, a PSC snapshot) has none. What a run
+does not know is **absent**, never an empty string: no `error` on a clean run,
+no `entity_id` on a run that resolved no company, `finished_at` only once it
+has finished (until 2026-10-25 the row was created with `''` in all three).
+A `run-all` row is `failed` when **any** source errored, with the error naming
+each one (`sec_edgar: …`) and the total of the sources that did write; until
+2026-10-28 it read `ok` whatever a source raised, so a Toast SEC failure
+showed nowhere.
+
+A row is **`partial`** when a scrape wrote what arrived but lost a whole
+section to the network: the SEC scrape's 13D/G owners, insiders or holdings
+when the one request each rests on failed for a reason other than a 404. Its
+`error` names the sections (`lost to the network: 13D/G owners`), and the
+company gets `scrape_incomplete_at`, so the next on-demand request scrapes it
+again once the cooldown has passed instead of after the 30-day TTL. Until
+2026-11-02 such a run read `ok`: the 11-01 rebuild lost 19 of Gitlab's owners to
+one read timeout and nothing said so (findings item 41).
+A source that raised inside a run-all or an on-demand scrape — Wikidata's label
+search timed out — wrote nothing, and the company the other sources resolved gets
+`scrape_incomplete_at` the same way (`graph_writer.mark_source_lost`), so every
+source runs again after the cooldown; until 2026-11-05 it was fresh for 30 days
+on what the others wrote, and for T. Rowe Price that was another legal entity
+(findings item 54).
+
+A lost **single** request (one Form 4, one filing index) leaves an SEC run
+`ok` — the scrape goes on without that filing — but the log says
+`SEC EDGAR: request lost (…) on <url>` and the row's `error` reads
+`N request(s) lost to the network`, so a rebuild can tell a gap the network
+made from one the code made (findings item 45).
+
+The endpoint is **public**: what the platform ingests, against which company and
+when, is the kind of thing an ownership-transparency project should be open
+about, and the frontend shows the feed to every visitor. The `error` field is the
+exception: it holds raw exception text, which can include internal URLs, database
+errors, or a credential embedded in a failing request URL, so it is stripped for
+anyone who isn't a `contributor` or `admin`. Everyone still sees that a run
+failed — just not the stack's opinion about why.
+
+The log is **bounded**: capped at 500 records, with the oldest pruned on every
+write, so it can never grow the database unbounded. A `running` row older than 30
+minutes is flagged `stale` (an interrupted run). Surfaced in the web app's
+**Scraper tab → Recent activity** panel, which polls while a run is in progress.
+
+## Usage measurement
+
+Counting what the product is asked for, so the roadmap follows demand rather than
+guesswork: which companies people search for, which searches find nothing (the
+best possible list of registers to add next), which features get used, and how
+the endpoints are behaving. Off by default — `ANALYTICS_ENABLED`.
+
+The design constraint is that it must not become surveillance, and one detail
+forced the whole shape: `SearchBar` calls `/search` every 300 ms while typing, so
+counting requests would record `mi`, `mic`, `micr` — useless as demand data and
+*more* intrusive than what we wanted, since partial typing exposes hesitation and
+correction. So the **client reports once, when a search settles** (a result was
+taken, nothing was found, or nothing was chosen), and the server keeps **totals,
+never events**.
+
+Three keyed counter types, in the database alongside `ImportState` and `GeoCache`:
+
+| type | key | counts |
+|---|---|---|
+| `SearchDemand` | normalised query + ISO-2 country | searches, zero-result searches, searches where a result was taken |
+| `UsageCounter` | an allow-listed event name (`export.ods`, `map.basis.hq`, `result.rank.3`) | occurrences |
+| `EndpointStat` | `METHOD route_template status_class` + latency bucket | requests |
+
+**No row can be tied to a person.** No user id, no account link, no session id, no
+stored IP address (a salted hash lives in memory for rate limiting and is never
+written), no device identifier, no user agent, and no per-event timestamp — only
+first- and last-seen on an aggregate. There is no event log, so no individual's
+activity can be reconstructed even by us. `EndpointStat` keys on the **route
+template**, never the raw path, so `/entities/{id}` does not mint a row per
+company.
+
+`POST /v1/analytics/event` is public and anonymous, rate-limited like `/flags`,
+and strictly allow-listed: an unknown event name is rejected, `query` is capped at
+120 characters and `rank` at 0–49. An open-ended key column on a public endpoint
+is unbounded row growth and a junk-injection vector. Reading it back —
+`GET /v1/analytics/searches` and `/usage` — is admin-only and paged.
+
+**The one honest caveat:** the `SearchDemand` key is free text, and somebody will
+search for a person's name. That name is stored, unlinked to whoever searched for
+it, readable only by an admin, and deleted once the query has been idle for twelve
+months (`prune-analytics`, daily at 05:15 via `~/scripts/cron-prune-analytics.sh`).
+The store is anonymous with respect to the *searcher*, not with respect to
+everyone who might be named in a search box — which is exactly how the record of
+processing and the published privacy notice put it. If the retention window here
+changes, those change with it.
+
+**Source calls** are counted apart from all this, and carry no user: `SourceCall`
+keeps per UTC day how often the backend asked each outside source (EDGAR, GLEIF,
+Wikidata, Wikimedia, Nominatim, Companies House, OpenCorporates) and how the shared
+bucket answered (hit, miss, put) — `manage.py source-calls`, the weekly digest's
+*Source calls* section, and the rebuild's step 8 (docs/operations.md).
+
+## Deployment on Render
+
+Deployed on Render as a web service. Any push to **`develop`** triggers an automatic redeploy — Render tracks the integration branch, so what runs there is the dev environment (pointed at the dev database). `main` is the verified branch and currently deploys nowhere; production is planned on a separate, non-Render host. Required environment variables must be set in the Render dashboard: `ARCADEDB_URL`, `ARCADEDB_USERNAME`, `ARCADEDB_PASSWORD`, `SECRET_KEY`, `CORS_ORIGINS`. Set `ADMIN_EMAIL` + `ADMIN_PASSWORD` too so the admin is provisioned automatically on boot (see [Authentication](authentication.md)).
+
+**Domains.** The dev environment is reached at `dev.owlgraph.org` (frontend) and `api-dev.owlgraph.org` (API), both CNAMEd to the Render services. Keeping the two on one registrable domain is deliberate: they are **same-site**, which is what allows an `httpOnly; SameSite=Lax` auth cookie to pass between them. The `*.onrender.com` pair cannot do that — `onrender.com` is on the Public Suffix List, so each subdomain is a separate site and a cookie between them would be third-party, blocked by Safari and Chrome. Any future production pair should keep the same shape (`owlgraph.org` / `api.owlgraph.org`).
+
+> **Env var changes apply on a *deploy*, not a restart.** Editing env vars in the dashboard triggers a deploy that applies them. But an env var set via the Render **API** does not auto-deploy, and a plain **"Restart Service"** restarts with the *already-deployed* config — so a value changed via the API only takes effect after a real deploy (**Manual Deploy → "Clear build cache & deploy"**, or a new push to `develop`).
+
+## Schema & indexes
+
+**Every property a writer sets is declared** (`app/db/schema.py`; since 2026-10-25 the strings too, `_STRING_PROPERTIES` — ArcadeDB accepts an undeclared property, so the catalog is a ledger that `manage.py schema-audit` checks the data against, and a typo'd property name shows up by name). Every number, flag and list has a **declared type** (`_TYPED_PROPERTIES`: `stake_percent` and `shares` DOUBLE (a Form 4 reports fractional shares), `founded` INTEGER, `is_nominee` BOOLEAN, `aliases` LIST, …), so ArcadeDB coerces every write and refuses one it cannot convert; dates stay strings because the writers keep a source's precision (`2019-00-00`). The bootstrap below declares them in scripts of 60 statements (520 on a fresh database: 0.4 s batched, 5.5 s one request each — which is what made the integration suite slow), drops and redeclares one the server holds with another type (ArcadeDB has no `ALTER PROPERTY … TYPE`), and declares the **rules** beyond type (mandatory ids, claim keys and a claim's source, the `type` / `ownership_type` / `read_from` / claim `kind` vocabularies from the code's enums, ISO-2 countries, the shape of every date and timestamp, 0–100 percentages, `stale` defaulting to false — see docs/data-model.md *Rules the database enforces*); a rule is refused while a stored row breaks it. A declaration holds for new writes only: a fresh import is typed throughout, a loaded database keeps the type its rows were stored with.
+
+Lookup indexes (on `id`, `name`, `name_normalized`, `wikidata_id`, `sec_cik`, and a unique `User.email`) are created automatically on startup — the app runs an idempotent, best-effort bootstrap that is a no-op once they exist. To (re)create them explicitly, e.g. against a fresh database:
+
+```bash
+python3 manage.py init-schema
+```
+
+## CLI (`manage.py`)
+
+| Command | Description |
+|---|---|
+| `init-schema` | Create vertex/edge types and lookup indexes (idempotent) |
+| `list-mixed-generations` | Persons whose own names carry both "Sr." and "Jr." (or II and III) — a relative folded in by a merge before the duplicate scan learned to tell them apart (2026-10-25). Report only; split by hand (see docs/deduplication.md) |
+| `heal-ends-at-dissolution` | Close every open holding and seat of a dissolved company on its `dissolved_on` (`until_reason = dissolution`, cited by the company's Wikidata item) — the rule the Wikidata writer applies since 2026-10-25, for a database written before it or loaded in bulk (the GLEIF and Companies House importers set the date without closing anything). Founders stay open; an edge the source dates after the dissolution is reported, not closed. Every import chain runs it with `--apply` after the dedup (`finish-import.sh`, `ops.sh import`), and so does the daily GLEIF update before it re-marks the shortcuts (`cron-gleif-update.sh`, `ops.sh gleif-update`). A scrape needs no step: its scope applies the rule to every company it touched or wrote an edge onto. Dry run unless `--apply` |
+| `wikidata-suggestions` | What GLEIF and EDGAR would correct on Wikidata's LEI (P1278) and CIK (P5531) statements: a CSV of findings (`missing` / `differs` / `unknown` / `several`, with the register's name and record page; `link = refused` for an item the scraper refuses for a node, found by the node's register ids) and a QuickStatements batch of the confident additions, for a person to review and submit. Reads the graph, Wikidata and the registers; writes to none of them. `--out DIR`, `--limit N` |
+| `schema-audit` | Name every property the stored rows carry that the schema does not declare — a typo'd writer, a field nobody put into the ledger, a leftover of a rename. Samples `--sample` rows per type (default 5000); exit 1 on drift. ArcadeDB accepts an undeclared property, so this is how the catalog stays the model (2026-10-25) |
+| `merge-entities` | Fold one entity into another by hand: `--keep ID --dead ID`. For a pair the automatic dedup cannot see — no shared hard id — that a human has judged to be one company (the two Televisas, 2026-10-25). The survivor's values win, its gaps fill from the loser, edges and claims move, a forwarding address and a merge-log row are written; refused when the pair carries a keep-separate mark. Dry run unless `--apply` |
+| `dedupe-persons` | Merge the persons two sources wrote as two nodes — same name, a shared company or birth date, high confidence only; the rest is reported for review. The net under the post-scrape dedup, which sees only what one scrape touched; the rebuild runs it after the replay. `--dry-run` reports, `--scraped-only` seeds from the persons with a SEC CIK or Wikidata item instead of scanning everyone (bounded on a graph with millions of register persons) |
+| `seed` | Seed the built-in company list |
+| `wipe-source` | Delete **one source's** data — its edges + the nodes only it created (nodes another source still references are kept); keeps user accounts, schema, and other sources. Finishes with `REBUILD INDEX *` to clear the stale index entries the batched deletes leave behind (else a later re-import can 500). There is **no** whole-DB wipe — drop the database for a fresh start. Requires `--source <name>` plus `ALLOW_DESTRUCTIVE_WIPE=true` **and** `--confirm-database <name>` matching the connected DB; add `--db-url http://localhost:2480` so the reindex isn't cut off by a proxy timeout, e.g. `ALLOW_DESTRUCTIVE_WIPE=true python manage.py wipe-source --source "UK PSC" --confirm-database owlgraph --db-url http://localhost:2480` |
+| `geocode` | Backfill coordinates via Nominatim for **both** of a company's places: its headquarters (`hq_address` → `hq_lat/hq_lng`) and its registered office (`address` → `reg_lat/reg_lng`); the two passes are built from the address registry (`app/addresses.py`). They differ exactly where it is interesting — BARCLAYS CAPITAL (CAYMAN) is registered at its agent's door on Grand Cayman and run from London — and the map's Registered/Headquarters switch draws one or the other. `--target hq\|registered` runs a single pass; each is resumable on its own missing coordinate. |
+| `backfill-industry` | Give every company a sector its sources already know: SEC filers' SIC code from EDGAR, UK companies' SIC codes from the stored register snapshot — `IndustryCode` statements plus the `nace_code` the panel's sector tree is drawn from. Fill-only; `--limit` caps the EDGAR fetches. Also `POST /scraper/backfill-industry`, which the scrape scripts run after their passes. |
+| `gen-federation-key` | Generate an Ed25519 signing keypair for [federation](federation.md) |
+| `gleif-lei-cdf` / `gleif-rr` / `gleif-succession` | Import GLEIF golden-copy files (entities / direct+ultimate parents / mergers — a DUPLICATE or ANNULLED registration naming its live record is not one, item 88; each takes `--only-file` for the curated subset, and the test chain runs all three) — see *GLEIF sourcing* in [`docs/data-model.md`](data-model.md) |
+| `ch-psc-update` | Refresh UK PSC **incrementally**, by diffing today's Companies House snapshot against the digest of the last one applied — the source publishes no deltas. Closes ceased and withdrawn holdings, reopens corrected ones, and is a no-op when nothing moved. Guarded by a churn limit that refuses before writing; `--dry-run` reports the diff. Run by hand, not scheduled |
+| `gleif-repex` | Import GLEIF **reporting exceptions** (`repex` = GLEIF's abbreviation). Every LEI holder must name its parent *or file a reason why not*, so "no parent recorded" and "a parent exists and was withheld" are different facts — `NATURAL_PERSONS`, `NON_PUBLIC`, `NO_LEI`, … Take the code meanings from GLEIF's XSD rather than their names: `NO_LEI` means the parent *refuses* an LEI, not that it lacks one. See *Why a company reports no parent* in [`docs/data-model.md`](data-model.md). Only ever updates entities already held; never creates one |
+| `gleif-update` | Apply a GLEIF **delta** on top of the full load — the retirement-aware daily refresh (new/changed entities, merges, closed relationships). `--interval auto` (default) is gap-aware: it picks the smallest delta window covering any missed runs since the last one (fails loudly past ~30 days → full-reload). Override with `--interval LastDay\|LastWeek\|LastMonth` or pass `--lei-file`/`--rr-file`/`--repex-file`. Idempotent; runs against the live-indexed DB (no `--bulk-load`). Daily via `~/scripts/cron-gleif-update.sh` |
+| `ch-psc` | Import a Companies House PSC snapshot (current UK beneficial ownership). Add `--bulk-load` on a full import to drop secondary indexes for the load and rebuild after (much faster; collapse duplicate edges afterwards with `POST /scraper/deduplicate-edges`). Company names come from a companion `ch-company-data` import |
+| `ch-company-data` | Enrich UK companies with names/addresses (the registered office, as a string and in parts for the geocoder — never as a headquarters)/former-names/SIC codes/`company_status` (as the register words it, with `active`; the snapshot lists live companies only) from a Companies House BasicCompanyData snapshot (the full register). Enrichment only — updates companies already in the graph, whether keyed `gb-coh:{number}` (from `ch-psc`) or holding the number under a GLEIF id, never creates isolated nodes |
+| `backfill-search` | Populate the FULL_TEXT `search_text` column powering `/search`. Run once after a bulk import (the importers set it inline, but this covers pre-existing rows). |
+| `rebuild-search` | REBUILD the FULL_TEXT `search_text` indexes so `/search` (`CONTAINSTEXT`) finds every row — needed after a non-bulk / `--only` import (the FULL_TEXT index isn't maintained incrementally). `--hard` first DROPs + re-CREATEs the indexes: use it to recover a **stuck/corrupted** index that a plain REBUILD reports "ok" on but never repopulates (e.g. after a bulk-load's REBUILD was cut off mid-flight by the nginx 60s proxy timeout). Run `--hard` against `--db-url http://localhost:2480` so it isn't cut off by that same proxy again. |
+| `set-password` | Set one account's password directly: `python manage.py set-password someone@example.com`. Prompts twice with hidden input (`--password` exists for scripting but puts the secret in shell history and `ps`). Applies the same policy as the API. The operator escape hatch for when neither in-app route works — the reset flow needs email, `/auth/change-password` needs the current password, and `ADMIN_PASSWORD` only ever seeds a *missing* account. |
+| `sec-ex21` | One issuer's statutory subsidiary list from its latest 10-K Exhibit 21 (20-F Exhibit 8.1; a company listed within the year, with no annual filing yet, from its S-1/F-1/Form 10 Exhibit 21.1): `python manage.py sec-ex21 "Apple" [--force]`. The list is the document the filing index declares EX-21 (EX-8.1 in a 20-F), whatever its file name. Significant subsidiaries only — the rulebook's cut, not ours; `sec-ex21-history` then dates them by their oldest listing. Needs the CIK (run the SEC EDGAR scrape first). |
+| `sec-acquisitions` | One filer's acquisitions from its own 10-K / 10-Q **XBRL** facts: `python manage.py sec-acquisitions "Alphabet" [--force] [--max-filings N]`. Acquirer → acquired company with the **closing date as a stated start** and the price paid, read from fields — the one SEC family that dates an ownership edge, and it names companies the Exhibit 21 omits (Alphabet lists three subsidiaries; Wiz and Intersect are here). Announced-only deals are counted, never written. A pair the Exhibit 21 already draws keeps the list's answer and gains the date and price; a pair a register draws through a chain is flagged a shortcut. Needs the CIK. See [`docs/sec_edgar_scraper.md`](sec_edgar_scraper.md). |
+| `close-reported-by-parent` | End a subsidiary's Schedule 13D/G holding once its parent (an open controlling edge: Exhibit 21, GLEIF) reports the same company in a newer 13D/G (`until_reason = reported_by_parent`). Runs after every SEC scrape on its own; this is the whole-graph pass for a rebuild. See *A parent's newer statement* in [`docs/sec_edgar_scraper.md`](sec_edgar_scraper.md) |
+| `close-ended-classes` | End every Schedule 13D/G holding whose shares ceased to exist — a merger's Form 25-NSE under Rule 12d2-2(a), a takeover's Form 15 with at most two holders of record — unless a successor issuer took the class over or the issuer is still a 13D/G subject (`until_reason = class_ended`; a statement of ≥ 99.5 % is the acquirer's and stays). Reads EDGAR: needs `SCRAPER_ENABLED` + `SCRAPER_SEC_EDGAR_ENABLED`. Runs in every company scrape for the company itself; this is the whole-graph pass for a rebuild. `--limit N` for a trial. See *When the shares ceased to exist* in [`docs/sec_edgar_scraper.md`](sec_edgar_scraper.md) |
+| `close-absent-from-table` | End every Schedule 13D/G holding of 5 % or more whose holder the issuer's newest ownership table (DEF 14A or 10-K/A Part III, at most 18 months old) no longer names — under its own names, its controlling parents' or any reporting person its statement names — on the table's filing date (`until_reason = not_in_issuer_table`, an upper bound). Statements filed within 60 days of the table are not judged. Reads EDGAR: needs the scraper flags. Runs in every company scrape for the company itself; this is the whole-graph pass for a rebuild. See *When the issuer's own table no longer names the holder* in [`docs/sec_edgar_scraper.md`](sec_edgar_scraper.md) |
+| `mark-stale` | Mark community-tier OWNS edges unconfirmed for `--days` (180) as **stale** — dimmed in the UI, never deleted or closed. Register-tier edges and register-vouched pairs are exempt; the pass clears as well as sets. A second pass dims a Schedule 13D/G holding whose last statement is older than its restatement window (a 13G filed before 2024: 15 months; a 13D, and a 13G filed since 2024 — amended only on a material change under the 2024 rules: 5 years; `not_restated`) and clears it when a newer filing refreshed the edge. See *Source tiers* in [`docs/data-model.md`](data-model.md) |
+| `prune-analytics` | Delete usage counters untouched inside the retention window (`--days`, default 365; `--dry-run` first). **Scheduled** — `~/scripts/cron-prune-analytics.sh` runs it daily at 05:15, because the privacy notice tells people those rows are deleted after twelve months and that is only true if something deletes them. Shortening `--days` means changing the published notice too. |
+| `backup-database` | Take a consistent **online** backup — ArcadeDB's own `BACKUP DATABASE`, not a disk snapshot (pages and the WAL can be captured out of step). The **server** picks the path, so this only reports the filename; `~/scripts/backup-database.sh` wraps it with verification, rotation and an offsite copy. See [`docs/operations.md`](operations.md) for the restore procedure. |
+| `sec-holdings` | Ingest the >5% stakes one SEC filer discloses in others: `python manage.py sec-holdings 0002100119 [--limit N] [--succeeds OLD_CIK]`. The mirror of a normal scrape, which reads filings *about* a company — an asset manager has none of those. Keyed on CIK because the live filer often isn't the one you'd search by name. `--succeeds` records a handover between filer entities as a `SUCCEEDED_BY` edge. |
