@@ -277,3 +277,65 @@ class TestThePersonsOwnItem:
         asked = self._searched(wikidata, monkeypatch)
         wikidata.run_scrape_person("Larry Page")
         assert asked == ["Larry Page"]
+
+
+class TestBirthCountry:
+    """The birthplace's country is written with the place and only beside it."""
+
+    def _person(self, wid):
+        from app.database import db
+        with db.get_session() as s:
+            return s.run("MATCH (p:Person {wikidata_id:$w}) RETURN p.birth_place AS bp, "
+                         "p.birth_country AS bc", w=wid).single()
+
+    def test_a_new_person_gets_the_country_of_the_place(self, it_db):
+        from app.scraper.runner import _upsert_person
+        _upsert_person("Carlos Brito", None, None, "Q900001",
+                       birth_place="Rio de Janeiro", birth_country="BR")
+        p = self._person("Q900001")
+        assert (p["bp"], p["bc"]) == ("Rio de Janeiro", "BR")
+
+    def test_a_known_place_gains_its_country_on_the_next_read(self, it_db):
+        from app.scraper.runner import _upsert_person
+        _upsert_person("Carlos Brito", None, None, "Q900002", birth_place="Rio de Janeiro")
+        _upsert_person("Carlos Brito", None, None, "Q900002",
+                       birth_place="Rio de Janeiro", birth_country="BR")
+        assert self._person("Q900002")["bc"] == "BR"
+
+    def test_another_sources_place_takes_no_country_it_was_not_stated_with(self, it_db):
+        from app.scraper.runner import _upsert_person
+        _upsert_person("Carlos Brito", None, None, "Q900003", birth_place="Lages")
+        _upsert_person("Carlos Brito", None, None, "Q900003",
+                       birth_place="Rio de Janeiro", birth_country="BR")
+        p = self._person("Q900003")
+        assert (p["bp"], p["bc"]) == ("Lages", None)
+
+    def test_no_place_no_country(self, it_db):
+        from app.scraper.runner import _upsert_person
+        _upsert_person("Carlos Brito", None, None, "Q900004", birth_country="BR")
+        assert self._person("Q900004")["bc"] is None
+
+
+@pytest.mark.parametrize("keep_props, dup_props, expected", [
+    ("birth_place:'Lages'", "birth_place:'Lages', birth_country:'BR'", ("Lages", "BR")),
+    ("birth_place:'Lages'", "birth_place:'Porto', birth_country:'PT'", ("Lages", None)),
+    ("first_name:'C'", "birth_place:'Porto', birth_country:'PT'", ("Porto", "PT")),
+])
+def test_a_merge_keeps_the_country_with_its_place(it_db, keep_props, dup_props, expected):
+    from app.database import db
+    from app.routers.persons import merge_person_records
+    it_db.run_command(f"CREATE (:Person {{id:'bk', full_name:'Carlos Brito', created_at:'2025-01-01T00:00:00+00:00', {keep_props}}})")
+    it_db.run_command(f"CREATE (:Person {{id:'bd', full_name:'Carlos Brito', created_at:'2025-01-02T00:00:00+00:00', {dup_props}}})")
+    merge_person_records(keep="bk", dup="bd")
+    with db.get_session() as s:
+        p = s.run("MATCH (p:Person {id:'bk'}) RETURN p.birth_place AS bp, p.birth_country AS bc").single()
+    assert (p["bp"], p["bc"]) == expected
+
+
+def test_a_known_person_without_a_place_gets_no_country(it_db):
+    from app.database import db
+    from app.scraper.runner import _upsert_person
+    _upsert_person("Carlos Brito", None, None, "Q900005")
+    _upsert_person("Carlos Brito", None, None, "Q900005", birth_country="BR")
+    with db.get_session() as s:
+        assert s.run("MATCH (p:Person {wikidata_id:'Q900005'}) RETURN p.birth_country AS bc").single()["bc"] is None

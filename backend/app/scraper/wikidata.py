@@ -725,6 +725,19 @@ def fetch_person_companies(qid: str, limit: int = 60) -> list[dict]:
         })
     return out
 
+def _one_birth_country(codes: str | None, place: str | None) -> str | None:
+    """The birthplace's country code — only when there is exactly one, and
+    only beside a place name to qualify.
+
+    A place in a disputed or shared territory states several countries
+    (Jerusalem: IL and PS); picking one would take a side, so none is said.
+    A person with two birthplaces (two P19 values) whose countries differ is
+    the same: unknown. No place name, nothing to qualify.
+    """
+    found = sorted({c.strip().upper() for c in (codes or "").split("|") if c.strip()})
+    return found[0] if place and len(found) == 1 else None
+
+
 def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     """
     Fetch per-person detail — date of birth (P569) / death (P570), place of birth
@@ -745,6 +758,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
     query = f"""
     SELECT ?person ?birth ?death
            (SAMPLE(?bpLabel) AS ?birthPlace)
+           (GROUP_CONCAT(DISTINCT ?bpCountry; separator="|") AS ?birthCountries)
            (SAMPLE(?img) AS ?image)
            (SAMPLE(?article) AS ?wikipedia)
            (GROUP_CONCAT(DISTINCT ?natCode;  separator="|") AS ?nats)
@@ -755,6 +769,11 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
       OPTIONAL {{ ?person wdt:P569 ?birth }}
       OPTIONAL {{ ?person wdt:P570 ?death }}
       OPTIONAL {{ ?person wdt:P19 ?bp . ?bp rdfs:label ?bpLabel . FILTER(LANG(?bpLabel) = "en") }}
+      # The birthplace's country (P17, best rank = today's) as its ISO code, so
+      # the panel can say "Rio de Janeiro, Brazil". Not for a place that IS a
+      # country (it has a P297 of its own): "Germany, Germany" says nothing.
+      OPTIONAL {{ ?person wdt:P19 ?bpc . ?bpc wdt:P17 ?bpcc . ?bpcc wdt:P297 ?bpCountry .
+                  FILTER NOT EXISTS {{ ?bpc wdt:P297 ?own }} }}
       OPTIONAL {{ ?person wdt:P18 ?img }}
       OPTIONAL {{ ?article schema:about ?person ; schema:isPartOf <https://en.wikipedia.org/> }}
       OPTIONAL {{ ?person wdt:P27 ?nat . ?nat wdt:P297 ?natCode }}
@@ -781,6 +800,7 @@ def _fetch_person_details(qids: set[str]) -> dict[str, dict]:
             "birth_date":    (_v(row, "birth") or "")[:10] or None,
             "death_date":    (_v(row, "death") or "")[:10] or None,
             "birth_place":   _v(row, "birthPlace") or None,
+            "birth_country": _one_birth_country(_v(row, "birthCountries"), _v(row, "birthPlace")),
             "image_url":     commons_thumb_url(_v(row, "image")),
             "wikipedia_url": normalize_url(_v(row, "wikipedia")),
             "nationalities": nats,

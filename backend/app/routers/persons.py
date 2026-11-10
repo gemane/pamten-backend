@@ -134,10 +134,23 @@ def find_duplicate_persons(_: dict = Depends(require_contributor)):
     return {"count": len(groups), "groups": groups}
 
 
+def _merged_birth_country(keep: dict, dup: dict) -> str | None:
+    """The kept person's birth country after a merge: it travels with the place.
+
+    Not a field-by-field COALESCE — a kept birthplace without a country must
+    not take the country of the duplicate's OTHER birthplace.
+    """
+    place = keep.get("birth_place") or dup.get("birth_place")
+    for node in (keep, dup):
+        if node.get("birth_place") == place and node.get("birth_country"):
+            return node["birth_country"]
+    return None
+
+
 _PERSON_RETURN = (
     "RETURN p.id AS id, p.full_name AS full_name, p.wikidata_id AS wikidata_id, "
     "p.sec_cik AS sec_cik, "
-    "p.birth_date AS birth_date, p.birth_place AS birth_place, "
+    "p.birth_date AS birth_date, p.birth_place AS birth_place, p.birth_country AS birth_country, "
     "p.first_name AS first_name, p.last_name AS last_name, p.aliases AS aliases"
 )
 
@@ -146,6 +159,7 @@ def _person_row(r) -> dict:
     return {"id": r.get("id"), "full_name": r.get("full_name"), "wikidata_id": r.get("wikidata_id"),
             "sec_cik": r.get("sec_cik"),
             "birth_date": r.get("birth_date"), "birth_place": r.get("birth_place"),
+            "birth_country": r.get("birth_country"),
             "first_name": r.get("first_name"), "last_name": r.get("last_name"),
             "aliases": r.get("aliases") or []}
 
@@ -749,8 +763,10 @@ def merge_person_records(keep: str, dup: str) -> str:
                 keep.description   = CASE WHEN COALESCE(keep.description, '') = '' THEN $description ELSE keep.description END,
                 keep.aliases       = $alias,
                 keep.nationalities = CASE WHEN size(COALESCE(keep.nationalities, [])) > 0 THEN keep.nationalities ELSE $nationalities END,
+                keep.birth_country = $birth_country,
                 keep.created_at    = $created_at
         """, keep=keep,
+             birth_country=_merged_birth_country(keep_node, dup_node),
              created_at=_earliest_birth(keep, dup),
              description=dup_node.get("description") or None,   # absent, never ''
              alias=alias_union,

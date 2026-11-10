@@ -492,6 +492,7 @@ class TestFetchPersonDetails:
             "birth":      {"value": "1971-06-28T00:00:00Z"},
             "death":      {"value": ""},
             "birthPlace": {"value": "Pretoria"},
+            "birthCountries": {"value": "ZA"},
             "image":      {"value": "http://commons.wikimedia.org/wiki/Special:FilePath/Elon%20Musk%202015.jpg"},
             "wikipedia":  {"value": "https://en.wikipedia.org/wiki/Elon_Musk"},
             "nats":       {"value": "US|CA|ZA"},
@@ -504,6 +505,7 @@ class TestFetchPersonDetails:
         assert d["birth_date"] == "1971-06-28"       # timestamp truncated to date
         assert d["death_date"] is None                # empty string → None
         assert d["birth_place"] == "Pretoria"
+        assert d["birth_country"] == "ZA"             # the place's country, P19 → P17 → P297
         # the portrait as the direct Commons thumbnail the logo uses, so the
         # media endpoint resolves both the same way
         assert d["image_url"] == commons_thumb_url("Elon Musk 2015.jpg")
@@ -526,7 +528,8 @@ class TestFetchPersonDetails:
         with patch("httpx.get", return_value=self._resp(rows)), patch("time.sleep"):
             out = _fetch_person_details({"Q1"})
         assert out["Q1"] == {
-            "birth_date": None, "death_date": None, "birth_place": None, "image_url": None,
+            "birth_date": None, "death_date": None, "birth_place": None, "birth_country": None,
+            "image_url": None,
             "wikipedia_url": None,
             "nationalities": [], "aliases": [], "is_human": None,   # no P31 → unknown
         }
@@ -537,9 +540,24 @@ class TestFetchPersonDetails:
             _fetch_person_details({"Q42"})
         query = mock_get.call_args.kwargs["params"]["query"]
         assert "wdt:P19" in query and "birthPlace" in query
+        assert "wdt:P17" in query and "birthCountries" in query     # the place's country
+        assert "FILTER NOT EXISTS" in query                        # …not for a place that is one
         assert "wdt:P31" in query and "instances" in query
         assert "wdt:P18" in query and "?image" in query     # the portrait
         assert "schema:about" in query and "https://en.wikipedia.org/" in query   # the article
+
+    @pytest.mark.parametrize("codes, place, expected", [
+        ("US", "East Lansing", "US"),
+        ("us", "East Lansing", "US"),                 # case-folded
+        ("IL|PS", "Jerusalem", None),                 # disputed: two countries, none said
+        ("IL|IL", "Jerusalem", "IL"),                 # the same code twice is one
+        ("US", None, None),                           # nothing to qualify
+        (None, "Pretoria", None),
+        ("", "Pretoria", None),
+    ])
+    def test_one_birth_country(self, codes, place, expected):
+        from app.scraper.wikidata import _one_birth_country
+        assert _one_birth_country(codes, place) == expected
 
     def test_embeds_all_qids_as_values(self):
         with patch("httpx.get", return_value=self._resp([])) as mock_get, \

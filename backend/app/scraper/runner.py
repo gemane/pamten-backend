@@ -507,6 +507,7 @@ def _upsert_person(
     death_date: str | None = None,
     birth_place: str | None = None,
     aliases: list[str] | None = None,
+    birth_country: str | None = None,
     nationalities: list[str] | None = None,
     source_id: str | None = None,
     image_url: str | None = None,
@@ -550,6 +551,13 @@ def _upsert_person(
                 SET p.birth_date   = COALESCE(p.birth_date, $bdate),
                     p.wikidata_id  = COALESCE(p.wikidata_id, $wid),
                     p.death_date   = COALESCE(p.death_date, $ddate),
+                    // The country belongs to the place it qualifies: filled
+                    // only beside the same place (a place another source
+                    // wrote first keeps no country it was not stated with).
+                    // Before birth_place, so the comparison sees the old value.
+                    p.birth_country = CASE WHEN p.birth_place IS NULL OR p.birth_place = $bplace
+                                           THEN COALESCE(p.birth_country, $bcountry)
+                                           ELSE p.birth_country END,
                     p.birth_place  = COALESCE(p.birth_place, $bplace),
                     p.image_url    = COALESCE(p.image_url, $image),
                     p.wikipedia_url = COALESCE(p.wikipedia_url, $wikipedia),
@@ -566,6 +574,7 @@ def _upsert_person(
                     p.last_scraped_at = $now
                 """,
                 id=rec["id"], wid=wikidata_id, bdate=birth_date, ddate=death_date, bplace=birth_place,
+                bcountry=birth_country if birth_place else None,
                 now=_now_iso(), image=image_url, wikipedia=wikipedia_url, desc=description or None,
                 search_text=_person_search_text(full_name, aliases),
                 aliases=aliases, nats=nationalities or None, source_id=source_id,
@@ -582,6 +591,7 @@ def _upsert_person(
                 full_name: $full,
                 description: $desc, wikidata_id: $wid,
                 birth_date: $bdate, death_date: $ddate, birth_place: $bplace,
+                birth_country: $bcountry,
                 image_url: $image, wikipedia_url: $wikipedia,
                 aliases: $aliases, nationalities: $nats,
                 source_id: $source_id, search_text: $search_text,
@@ -598,6 +608,7 @@ def _upsert_person(
             bdate=birth_date,
             ddate=death_date,
             bplace=birth_place,
+            bcountry=birth_country if birth_place else None,
             image=image_url,
             wikipedia=wikipedia_url,
             aliases=aliases,
@@ -841,7 +852,7 @@ def _scrape_node(
             wikidata_id=ceo["qid"],
             birth_date=ceo.get("birth_date"),
             death_date=ceo.get("death_date"),
-            birth_place=ceo.get("birth_place"),
+            birth_place=ceo.get("birth_place"), birth_country=ceo.get("birth_country"),
             image_url=ceo.get("image_url"),
             wikipedia_url=ceo.get("wikipedia_url"),
             aliases=ceo.get("aliases"),
@@ -862,7 +873,7 @@ def _scrape_node(
                                    description=None, wikidata_id=off["qid"],
                                    birth_date=off.get("birth_date"),
                                    death_date=off.get("death_date"),
-                                   birth_place=off.get("birth_place"),
+                                   birth_place=off.get("birth_place"), birth_country=off.get("birth_country"),
                                    image_url=off.get("image_url"),
                                    wikipedia_url=off.get("wikipedia_url"),
                                    aliases=off.get("aliases"),
@@ -883,7 +894,7 @@ def _scrape_node(
                                       description=None, wikidata_id=owner["qid"],
                                       birth_date=owner.get("birth_date"),
                                       death_date=owner.get("death_date"),
-                                      birth_place=owner.get("birth_place"),
+                                      birth_place=owner.get("birth_place"), birth_country=owner.get("birth_country"),
                                       image_url=owner.get("image_url"),
                                       wikipedia_url=owner.get("wikipedia_url"),
                                       aliases=owner.get("aliases"),
@@ -3049,7 +3060,7 @@ def run_scrape_person(query: str, country: str | None = None) -> dict:
         full_name=detail.get("full_name") or chosen.get("label") or query,
         nationality=None, description=detail.get("description"), wikidata_id=qid,
         birth_date=detail.get("birth_date"), death_date=detail.get("death_date"),
-        birth_place=detail.get("birth_place"), image_url=detail.get("image_url"),
+        birth_place=detail.get("birth_place"), birth_country=detail.get("birth_country"), image_url=detail.get("image_url"),
         wikipedia_url=detail.get("wikipedia_url"), aliases=detail.get("aliases"),
         nationalities=detail.get("nationalities"), source_id=source_id,
     )
