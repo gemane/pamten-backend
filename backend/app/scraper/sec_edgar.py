@@ -3652,7 +3652,53 @@ def _final_since(final, event_date: str | None, file_date: str | None) -> str | 
     return final if isinstance(final, str) else (event_date or file_date)
 
 
-def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
+def _votes_others_shares(rows: dict) -> bool:
+    """Does this reporting person vote more shares than it can dispose of —
+    alone or jointly? The excess is other parties' shares under a voting
+    agreement: a bloc (findings item 98).
+
+    BRC votes 1,031,302,286 AB InBev shares and disposes (jointly) of
+    769,317,631; Altria votes 1,020,598,157 and disposes of 159,121,937. A
+    parent filing with its own subsidiaries — Berkshire on DaVita, Bank of
+    America with its preferred-funding arm, General Atlantic's 30 funds,
+    SoftBank on Sprint — disposes of every share it votes: its row 13 IS its
+    stake, held through those subsidiaries. 77 of the 83 filer-side holdings
+    the issuer-side split would have changed on dev were such families."""
+    shared_vote = rows.get("shared_voting") or 0
+    disposable = (rows.get("sole_dispositive") or 0) + (rows.get("shared_dispositive") or 0)
+    return shared_vote > disposable
+
+
+def _filer_person(xml: dict, filer_cik: str, filer_name: str | None) -> dict | None:
+    """The reporting person block that is the FILER's own (findings item 98).
+
+    A joint schedule carries one block per reporting person, and the first is
+    whoever the filer listed first: BRC's 13D/A on AB InBev (May 2026) starts
+    with the Stichting, so its row 13 — the bloc's 52.3 % — was written as BRC's
+    stake. A 13D block states its CIK; a 13G block only a name. Falls back to
+    the first block when neither matches (what was read before)."""
+    persons = xml.get("persons") or []
+    if not persons:
+        return None
+    own = _cik_int(filer_cik).zfill(10)
+    for p in persons:
+        if p.get("cik") and _cik_int(p["cik"]).zfill(10) == own:
+            return p
+    if len(persons) == 1:
+        return persons[0]
+    if filer_name is None:
+        # only a joint 13G gets here (no CIK per block); the submissions
+        # document the scan already read — cached, no request
+        filer_name = fetch_filer_name(filer_cik) or ""
+    if filer_name:
+        for p in persons:
+            if p.get("name") and _same_filer_name(p["name"], filer_name):
+                return p
+    return persons[0]
+
+
+def _parse_holding_filing(filer_cik: str, accession: str,
+                          filer_name: str | None = None) -> dict | None:
     """Subject company + stake from one 13D/13G, or None if it isn't parseable.
 
     Returns `percent` as a float — **0.0 is meaningful**, not missing: an
@@ -3669,10 +3715,19 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
     if not xml or not xml.get("issuer_cik") or not xml.get("issuer_name"):
         return None
 
-    # Read the percent off the first reporting person rather than the document,
-    # because the same tag reappears under `items` with a different value —
-    # Wellington's Nasdaq 13G/A carries 5.4 on the cover and 5.36 below it.
-    percent = (xml["persons"][0].get("percent")) if xml.get("persons") else None
+    # Read the percent off the filer's own reporting person rather than the
+    # document, because the same tag reappears under `items` with a different
+    # value — Wellington's Nasdaq 13G/A carries 5.4 on the cover and 5.36 below.
+    person = _filer_person(xml, filer_cik, filer_name)
+    percent = person.get("percent") if person else None
+    # Row 13 is the bloc's figure for a party to a voting agreement: split it
+    # into the filer's own stake and the bloc's voting power as the issuer side
+    # does (`_stake_from_person`), or BRC's and Altria's 52.3 % and 51.9 % land
+    # as their stakes and AB InBev sums to 110 % (findings item 98). Only then:
+    # a parent with its subsidiaries keeps row 13 (`_votes_others_shares`).
+    stake, voting = percent, None
+    if person and percent and _votes_others_shares(person):
+        stake, voting = _stake_from_person(xml, person)
 
     return {
         "subject_cik":  _cik_int(xml["issuer_cik"]).zfill(10),
@@ -3680,7 +3735,9 @@ def _parse_holding_filing(filer_cik: str, accession: str) -> dict | None:
         # the subject's security as the cover states it — the securities
         # bridge's input (findings item 71)
         "subject_cusip": xml.get("issuer_cusip"),
-        "percent":      percent,
+        "percent":      percent,          # row 13 as stated: None unread, 0 an exit
+        "stake":        stake,            # the filer's own holding
+        "voting":       voting,           # the bloc it votes within, None alone
         "accession":    accession,
         "event_date":   xml.get("event_date"),
         "final_report": xml.get("final_report"),
@@ -3695,7 +3752,8 @@ _SUBJECT_ROW = re.compile(r'class="companyName">\s*([^<(]+?)\s*\(Subject\).*?CIK
 
 
 def _parse_holding_filing_text(filer_cik: str, accession: str,
-                               filer_name: str | None) -> dict | None:
+                               filer_name: str | None,
+                               form_type: str | None = None) -> dict | None:
     """Subject company + stake from a pre-2025 "SC 13D"/"SC 13G", or None.
 
     Those filings have no `primary_doc.xml` (findings item 44): asking for it
@@ -3727,7 +3785,7 @@ def _parse_holding_filing_text(filer_cik: str, accession: str,
     subject_cik  = m.group(2).zfill(10)
     subject_name = html_lib.unescape(m.group(1).strip())
     row = {"subject_cik": subject_cik, "subject_name": subject_name, "percent": None,
-           "subject_cusip": None, "accession": accession, "event_date": None,
+           "stake": None, "voting": None, "subject_cusip": None, "accession": accession, "event_date": None,
            "final_report": None, "read_from": READ_FORM}
     if subject_cik == _cik_int(filer_cik).zfill(10):
         return row                      # inbound: the caller skips it, unread
@@ -3748,7 +3806,15 @@ def _parse_holding_filing_text(filer_cik: str, accession: str,
         log.info("SEC EDGAR: dropping holding %s — its cover names %r, the index %r",
                  accession, issuer, subject_name)
         return None
-    row.update(percent=_parse_percent_from_text(_cover_page_for(text, filer_name)),
+    cover = _cover_page_for(text, filer_name)
+    percent = _parse_percent_from_text(cover)
+    # own stake and bloc, as the issuer side splits an old cover — only for a
+    # party to a voting agreement (item 98, see `_votes_others_shares`)
+    stake, voting = percent, None
+    if percent and _votes_others_shares(_parse_power_rows(cover)):
+        bloc = _co_filers_form_a_bloc(form_type or "13D", _cover_page_count(text))
+        stake, voting = _own_stake_and_voting(cover, percent, document=text, in_group=bloc)
+    row.update(percent=percent, stake=stake, voting=voting,
                event_date=_parse_event_date_from_text(text),
                final_report=_parse_final_report_from_text(text),
                subject_cusip=_parse_cusip_from_text(text))
@@ -4488,11 +4554,12 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
         # Each filing in the format it has: a "SCHEDULE 13G" (since Dec 2024)
         # is XML, an "SC 13G" is a text/HTML cover (findings item 44).
         if _is_structured(filing["form"]):
-            parsed = _parse_holding_filing(cik, filing["accession"])
+            parsed = _parse_holding_filing(cik, filing["accession"], filer_name)
         else:
             if filer_name is None:
                 filer_name = fetch_filer_name(cik) or ""
-            parsed = _parse_holding_filing_text(cik, filing["accession"], filer_name)
+            parsed = _parse_holding_filing_text(cik, filing["accession"], filer_name,
+                                                filing["form"])
         fetched += 1
         if not parsed:
             continue
@@ -4529,7 +4596,10 @@ def fetch_filer_holdings(cik: str, limit: int = HOLDINGS_DEFAULT_LIMIT,
             "subject_cik":   sid,
             "subject_name":  parsed["subject_name"],
             "subject_cusip": parsed.get("subject_cusip"),
-            "stake_percent": parsed["percent"],
+            # the filer's own holding; a group member's bloc goes to voting
+            # (findings item 98: BRC's 52.3 % of AB InBev was written as its stake)
+            "stake_percent": parsed.get("stake"),
+            "voting_power_pct": parsed.get("voting"),
             "file_date":     filing["date"],
             "event_date":    parsed.get("event_date"),
             "since":         _stake_start(filing["form"], parsed.get("event_date"), filing["date"])[0],

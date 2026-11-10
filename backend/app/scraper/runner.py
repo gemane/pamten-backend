@@ -2653,6 +2653,9 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             ownership_type=holding.get("ownership_type", "minority"),
             file_date=holding.get("file_date"),
             stake_percent=holding.get("stake_percent"),
+            # the bloc a group member votes within (item 98) — run_sec_holdings,
+            # the other writer of these rows, always passed it
+            voting_power_pct=holding.get("voting_power_pct"),
             source_url=holding.get("source_url"),
             event_date=holding.get("event_date"),
             since_date=holding.get("since"), since_basis=holding.get("since_basis"),

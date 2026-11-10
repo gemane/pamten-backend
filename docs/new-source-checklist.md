@@ -1705,6 +1705,16 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       and keeps them in the snapshot; `diff_snapshots.py` shows them gone, new and
       changed against the previous rebuild (findings item 97).
 
+- [ ] **A rule written for one direction of a source applies to its sibling.** The
+      13D/G issuer side split a group member's row 13 into its own stake and the
+      bloc's voting power in 2026-10; the filer side, which reads the same filings
+      from the other end, kept the first reporting person's row 13 as the filer's
+      stake — and BRC's and Altria's blocs summed AB InBev to 110 % (findings
+      item 98). Copying the rule as-is would have been wrong the other way: on
+      the filer side 77 of 83 multi-person 13Ds were parents filing with their
+      own subsidiaries, whose row 13 IS their stake. Apply the rule, then replay
+      it on everything the sibling reads and look at what changes.
+
 ## 9. Documentation
 
 - [ ] `KNOWN_SOURCES` entry: **id** (the Source node's stable id — part of the data, the same on every instance), type, label, url, description, kind, credibility, quality.

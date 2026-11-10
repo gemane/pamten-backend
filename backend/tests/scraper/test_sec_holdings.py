@@ -609,3 +609,144 @@ class TestAffiliatedManagers:
 
     def test_an_unparseable_cover_page_yields_nothing(self):
         assert self._run([("13F-NT", "a-1", "2026-05-08")], xml="<not-xml") == []
+
+
+# ── A group member's own stake, not the bloc (findings item 98) ─────────────
+#
+# The filer side read the FIRST reporting person's row 13 as the filer's stake.
+# BRC's 13D/A on AB InBev (May 2026, nine reporting persons) starts with the
+# Stichting, and every block states the bloc's 52.3 % — written as BRC's stake
+# beside Altria's 51.9 %, AB InBev summed to 110 %. The issuer side split both
+# long ago (`_stake_from_person`); the filer side now does the same.
+
+BRC, ALTRIA, ABI = "0001301486", "0000764180", "0001668717"
+
+
+def _xml_for(name):
+    def _get_text(url):
+        return _fixture(name)
+    return _get_text
+
+
+@pytest.mark.parametrize("rows, bloc", [
+    ({"shared_voting": 1031302286, "sole_dispositive": 0, "shared_dispositive": 769317631}, True),   # BRC
+    ({"shared_voting": 1020598157, "sole_dispositive": 159121937, "shared_dispositive": 0}, True),   # Altria
+    ({"shared_voting": 35892479, "sole_dispositive": 0, "shared_dispositive": 35892479}, False),      # Berkshire/DaVita
+    ({"sole_voting": 636056024, "shared_voting": 1398022815, "sole_dispositive": 636056024,
+      "shared_dispositive": 1398022815}, False),                                                     # Microsoft/Telewest
+    ({"shared_voting": 1325544, "shared_dispositive": 1607013}, False),     # votes fewer than it holds
+    ({"sole_voting": 100, "sole_dispositive": 100}, False),
+    ({}, False),
+])
+def test_votes_others_shares(rows, bloc):
+    from app.scraper.sec_edgar import _votes_others_shares
+    assert _votes_others_shares(rows) is bloc
+
+
+class TestFilerSideBloc:
+    def test_a_group_members_row_13_is_the_blocs_voting_power_not_its_stake(self):
+        with patch("app.scraper.sec_edgar._get_text", side_effect=_xml_for("13da_brc_abinbev_2026.xml")):
+            row = _parse_holding_filing(BRC, "0001193125-26-226626")
+        assert row["subject_cik"] == ABI
+        assert (row["percent"], row["stake"], row["voting"]) == (52.3, None, 52.3)
+
+    def test_a_13d_block_is_found_by_the_filers_cik_without_a_name_lookup(self):
+        # the Stichting's block first with another figure: BRC's own is read
+        doc = _fixture("13da_brc_abinbev_2026.xml").replace(
+            "<percentOfClass>52.3</percentOfClass>", "<percentOfClass>52.4</percentOfClass>", 1)
+        with patch("app.scraper.sec_edgar._get_text", return_value=doc), \
+             patch("app.scraper.sec_edgar.fetch_filer_name") as name:
+            row = _parse_holding_filing(BRC, "0001193125-26-226626")
+        assert row["percent"] == 52.3
+        name.assert_not_called()
+
+    def test_a_single_block_costs_no_name_lookup(self):
+        with patch("app.scraper.sec_edgar._get_text",
+                   return_value=XML.format(cik="0001555280", name="Zoetis Inc", pct="7.49")), \
+             patch("app.scraper.sec_edgar.fetch_filer_name") as name:
+            assert _parse_holding_filing("0002100119", "a-1")["stake"] == 7.49
+        name.assert_not_called()
+
+    def test_a_parent_filing_with_its_subsidiaries_keeps_row_13(self):
+        # Berkshire's 13D/A on DaVita: nine reporting persons, "member of a
+        # group" ticked, and Berkshire disposes of every share it votes — its
+        # 45 % held through its subsidiaries, not a bloc. Here: BRC's block
+        # given the same shape (dispositive = voting).
+        doc = _fixture("13da_brc_abinbev_2026.xml").replace(
+            "<sharedDispositivePower>769317631", "<sharedDispositivePower>1031302286")
+        with patch("app.scraper.sec_edgar._get_text", return_value=doc):
+            row = _parse_holding_filing(BRC, "0001193125-26-226626")
+        assert (row["stake"], row["voting"]) == (52.3, None)
+
+    def test_a_lone_party_to_a_voting_agreement_keeps_its_own_shares(self):
+        # Altria files alone: disposes of 159,121,937 shares, votes 1,020,598,157
+        with patch("app.scraper.sec_edgar._get_text", side_effect=_xml_for("13d_altria_abinbev.xml")):
+            row = _parse_holding_filing(ALTRIA, "0000950170-25-016305")
+        assert row["percent"] == 51.9 and row["voting"] == 51.9
+        assert row["stake"] == pytest.approx(8.1, abs=0.05)
+
+    def test_the_filers_own_block_is_read_not_the_first(self):
+        # Berkshire's joint 13G/A on Sirius XM: Buffett is listed first; a 13G
+        # block has no CIK, so the filer's name picks its own block
+        with patch("app.scraper.sec_edgar._get_text",
+                   side_effect=_xml_for("13ga_berkshire_siriusxm_2025.xml")), \
+             patch("app.scraper.sec_edgar.fetch_filer_name", return_value="NATIONAL INDEMNITY CO"):
+            row = _parse_holding_filing("0000070866", "a-1")
+        assert (row["percent"], row["stake"], row["voting"]) == (31.9, 31.9, None)
+
+    def test_a_filer_named_in_no_block_falls_back_to_the_first(self):
+        with patch("app.scraper.sec_edgar._get_text",
+                   side_effect=_xml_for("13ga_berkshire_siriusxm_2025.xml")), \
+             patch("app.scraper.sec_edgar.fetch_filer_name", return_value="SOMEBODY ELSE LLC"):
+            assert _parse_holding_filing("0000000001", "a-1")["percent"] == 37.1
+
+    def test_the_scan_writes_the_bloc_as_voting_power(self):
+        subs = _subs([("SCHEDULE 13D/A", "0001193125-26-226626", "2026-05-15")])
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_xml_for("13da_brc_abinbev_2026.xml")):
+            rows = fetch_filer_holdings(BRC)
+        assert len(rows) == 1
+        assert (rows[0]["stake_percent"], rows[0]["voting_power_pct"], rows[0]["until"]) == (None, 52.3, None)
+
+    def test_a_lone_filers_stake_is_unchanged(self):
+        subs = _subs([("SCHEDULE 13G", "a-1", "2026-04-30")])
+        with patch("app.scraper.sec_edgar._get", return_value=subs), \
+             patch("app.scraper.sec_edgar._get_text",
+                   return_value=XML.format(cik="0000105770", name="West Pharmaceutical", pct="7.48")):
+            rows = fetch_filer_holdings("0002100119")
+        assert (rows[0]["stake_percent"], rows[0]["voting_power_pct"]) == (7.48, None)
+
+
+class TestFilerSideBlocOldCover:
+    # BRC's 2016 13D/A on Ambev (SC 13D/A, text), four cover pages. BRC votes
+    # and disposes of the same 11,283,145,506 shares — a family holding (Ambev
+    # through AB InBev, which BRC's bloc controls), so row 13's 71.9 % stays
+    # its stake. Fixtures: the real index page and the cover pages as plain
+    # text (up to Item 1).
+    ACC = "0001193125-16-545192"
+    FIRST_DISP = "10 Shared Dispositive Power: 11,283,145,506"
+
+    def _rows(self, form, cover=None):
+        from app.scraper import sec_edgar
+        pages = {self.ACC.replace("-", "") + "/" + self.ACC + "-index.htm": _fixture("13da_old_brc_ambev_index.htm"),
+                 "d168543dsc13da.htm": cover or _fixture("13da_old_brc_ambev.txt")}
+
+        def _get_text(url, params=None):
+            return next(body for key, body in pages.items() if url.endswith(key))
+        with patch("app.scraper.sec_edgar._get", return_value=_subs([(form, self.ACC, "2016-04-13")])), \
+             patch("app.scraper.sec_edgar._get_text", side_effect=_get_text), \
+             patch.object(sec_edgar, "fetch_filer_name", return_value="BRC S.a.R.L."), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            return fetch_filer_holdings(BRC)
+
+    def test_a_family_holding_keeps_row_13_as_its_stake(self):
+        rows = self._rows("SC 13D/A")
+        assert [(r["subject_name"], r["stake_percent"], r["voting_power_pct"]) for r in rows] == \
+            [("AMBEV S.A.", 71.9, None)]
+
+    def test_an_old_cover_voting_others_shares_gives_the_bloc_as_voting_power(self):
+        # the same cover, BRC's own page disposing of fewer shares than it votes
+        cover = _fixture("13da_old_brc_ambev.txt").replace(
+            self.FIRST_DISP, "10 Shared Dispositive Power: 5,000,000,000", 1)
+        rows = self._rows("SC 13D/A", cover)
+        assert [(r["stake_percent"], r["voting_power_pct"]) for r in rows] == [(None, 71.9)]

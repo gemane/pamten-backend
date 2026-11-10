@@ -352,3 +352,28 @@ def test_a_holding_without_a_cusip_writes_none(it_db):
     _run(it_db, holdings=[HOLDINGS[0]])
     [row] = it_db.run_sql("SELECT cusip FROM Entity WHERE sec_cik = '0000859737'")
     assert row.get("cusip") is None
+
+
+# A group member's filing read from the filer side (findings item 98): the
+# bloc's 52.3 % is voting power, never the member's stake — through both
+# writers of filer-side holdings.
+BLOC_HOLDING = {"subject_cik": "0001668717", "subject_name": "Anheuser-Busch InBev SA/NV",
+                "stake_percent": None, "voting_power_pct": 52.3, "file_date": "2026-05-15",
+                "event_date": "2026-05-13", "form_type": "SCHEDULE 13D/A", "filing_type": "13D/A",
+                "until": None, "source_url": "https://sec.gov/x/brc"}
+
+
+def _bloc_edge(it_db):
+    return next(e for e in _edges(it_db) if e.get("source_url") == "https://sec.gov/x/brc")
+
+
+def test_the_holdings_run_writes_a_members_bloc_as_voting_power(it_db):
+    _run(it_db, holdings=[BLOC_HOLDING], cik="0001301486", name="BRC S.a.R.L.")
+    edge = _bloc_edge(it_db)
+    assert edge.get("stake_percent") is None and edge.get("voting_power_pct") == 52.3
+
+
+def test_a_scraped_companys_own_holding_writes_a_members_bloc_as_voting_power(it_db):
+    _write_issuer_side(it_db, [], holdings=[BLOC_HOLDING])
+    edge = _bloc_edge(it_db)
+    assert edge.get("stake_percent") is None and edge.get("voting_power_pct") == 52.3
