@@ -17,6 +17,11 @@ Usage:
 - `/finding-auto` — start, or continue after an answer. The run picks up where the
   findings list (`project_rebuild_findings_list.md`) says it stopped.
 
+**Scope, unless the user names something else:** the findings only, until a rebuild is the
+better next step (the stop rule below). A planned build that sits on the list but is not a
+correction — a new source the user decided to add (item 86, the proxy ownership table), a
+feature — is not part of the run; it waits for the user's own word (user, 2026-11-10).
+
 The first thing a run does is read the clock (`date`, stated in Vienna time) and write the
 start into the state line: "finding-auto run <date> START hh:mm Vienna". A run that resumes
 after a question writes "RESUMED hh:mm" the same way. The end time goes in when the run
