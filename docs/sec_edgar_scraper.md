@@ -929,6 +929,58 @@ again. The 16 dev companies only the old filer reports on (Apple, Microsoft,
 Alphabet …, all January–February 2024; BlackRock has filed nothing on them since)
 keep its statement: it is the group's latest word, under the CIK's current name.
 
+### One statement filed under two reporting persons' CIKs — newest wins
+
+A joint 13G names every reporting person of the **same** shares, and EDGAR files it
+under whichever of them the agent picked. Berkshire Hathaway's 13G/As on Sirius XM
+list the same eleven persons each time — Warren E. Buffett, Berkshire, National
+Indemnity, GEICO, the pension trusts, Ted Weschler — Buffett and Berkshire each with
+the whole block; the Feb-2025 amendment (as of 2024-12-31, 117,468,573 shares, 34.6 %)
+went in under Buffett's CIK 0000315090, the Nov-2025 one (as of 2025-09-30,
+124,807,117, 37.1 %) under Berkshire's 0001067983. `fetch_ownership_filings` keeps one
+filing per holder and knew a holder only by the filer's CIK, so the older amendment
+read as a second holder: Berkshire 37.1 % **and** a Person Buffett 34.6 % of the same
+shares, 72 % of Sirius XM between them (findings item 93, 2026-11-10).
+`close_reported_by_parent` above does not catch it — it needs a controlling edge from
+one filer to the other, and Buffett holds Berkshire by a stake no SEC filing we read
+states.
+
+The feed runs newest first, so the rule is: every filing taken adds the names of its
+**co-filers** — its reporting persons other than the filer itself (the XML's person
+blocks; on the text path the name on each cover page, `_cover_page_names`;
+`_co_filer_names`); an older filing whose chosen filer is among those names
+(`_named_in`, the word-order-blind `_same_filer_name` — EDGAR writes 'BUFFETT WARREN
+E') repeats that statement and is skipped — and so is every still older filing of
+that filer, by the same names. A newer **exit** of the statement closes the older holding under
+the other CIK on the exit's date instead (`group_closed`, as `closed_since` does for
+one CIK). The match is by name because a 13G's person blocks carry no CIK.
+
+Never the filer's own name: another CIK under that name is another legal entity. The
+first guard run counted the newer filer too and dropped BlackRock's old parent (CIK
+0001364742, 'Blackrock Inc.' on its 2024 13G/As) on 33 of dev's 91 issuer-side
+issuers, because the new BlackRock, Inc. (0002012383) had filed a newer 13G under the
+same name — the pair `close_reported_by_parent` closes rather than drops — and two
+Liberty Media 13Ds on Sirius XM the same way.
+
+Only passive filings feed it — a 13G, or a 13D with one reporting person
+(`_co_filers_form_a_bloc` false). In a 13D group every member reports shares of its
+own, so an older amendment under another member's CIK is that member's stake, not a
+repetition. The holder is whoever filed the newest statement: on Sirius XM Berkshire,
+on a company where Buffett's CIK filed last, the Person Buffett (`sec:0000315090`)
+— the filing's own choice of filer, as it was before. Limits: a co-filer with shares
+of its own on the same 13G (Weschler's 811,369, sole power) loses an older separate
+filing of its own; that is a sub-5 % position here. Two parties that file separate
+13Gs without naming each other are not joined by this rule.
+
+Guard (2026-11-10, old vs new reader over the 91 issuers dev reads issuer-side, EDGAR
+cached): 3 issuers change. Sirius XM loses Buffett's 2025 and 2024 filings (Berkshire's
+37.1 % stays). VeriSign loses four 7.08 % statements of 2014 — Delaware Management
+Holdings, Delaware Management Business Trust, Macquarie Bank, Macquarie Investment
+Management — all co-filers of Macquarie Group's newer 13G (0.81 %), whose word they
+were; the slots they held go to three older holders further down the feed. Tesla loses
+Citadel Securities LLC (2020, a co-filer of Citadel Securities GP's newer 13G) and
+Capital Ventures International (2016, named on a newer filing likewise).
+
 ## Quarterly Holdings — Form 13F
 
 **For time travel** a 13F row is an as-of statement, so its quarter is never a

@@ -316,6 +316,17 @@ parser. Anything that does not map is either a new property (document it) or noi
       13G stood beside the old parent's on 32 companies — read as one stake twice
       (findings item 34, 2026-11-01). Tie the two through a stated control link
       (Exhibit 21, GLEIF), never a name, and keep a subsidiary's own later filing.
+- [ ] **A joint statement is one statement, whichever co-filer's id it is filed under.**
+      Deduplicate a holder by the co-filers the newer document names, not only by the
+      id the source filed it under — never by the newer filer's own name, which under
+      another id is another entity (BlackRock's old and new parent, 33 issuers in the
+      guard): Berkshire's 13G/As on Sirius XM name the same
+      eleven reporting persons, EDGAR filed one under Buffett's CIK and the next under
+      Berkshire's, and the older one read as a second holder of the same shares
+      (Berkshire 37.1 % and Buffett 34.6 %, findings item 93, 2026-11-10). Here the
+      name IS the source's statement (the newer document lists the older filer) and
+      the 13G's person blocks carry no id; only passive co-filers count — a 13D
+      group's members each report shares of their own.
 - [ ] **A name has a time span — compare against the names in force on the day.**
       Store a register's former names with the day each ended (`app.former_names`) and
       let every lookup and every name check read them: an alias or a filing's spelling
