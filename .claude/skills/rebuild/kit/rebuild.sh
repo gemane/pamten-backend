@@ -100,6 +100,7 @@ python3 manage.py heal-ends-at-dissolution 2>&1 | grep -v "^WARNING\|^INFO" | ta
 # calls to each outside source and the bucket since step 1 created the database
 # (step 0's golden copies are shell downloads, not counted)
 python3 manage.py source-calls --from 2000-01-01 2>&1 | grep -v "^WARNING\|^INFO"
+# the snapshot also prints the companies over 100 % and the ownership cycles (item 97)
 python3 "$R/snapshot.py" "$R/after.json" 2>&1 | grep -v "^WARNING\|^INFO"
 echo
 echo "✅ REBUILD DONE in $(( ($(date +%s) - START) / 60 )) min ($(date +%H:%M:%S))"

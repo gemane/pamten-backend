@@ -1666,6 +1666,25 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       backend change — the frontend's fallbacks hid a field the old process did not
       serve, and the reviewer saw "still showing the name".
 
+- [ ] **After the first import, run the two whole-graph checks — and after every rebuild.**
+      (1) *No company's disclosed stakes add up over 100 %* (as the panel sums them:
+      live, drawn edges, one row per owner, the app's `_ownership_summary`); (2) *no
+      ownership cycle* (a self-loop, or companies that own each other round a ring). A
+      new source's reader writes stakes that look right one by one and are wrong
+      together. Both checks were missing until 2026-11-10; their first run found 6
+      companies over 100 % and 3 cycles, nearly each a different reader's defect:
+      one 13G joint statement read once per co-filer (Sirius XM 213 %, items 93/99), a
+      13D filer's own bloc written as a stake in itself (AB InBev 110 %, item 98), an
+      Exhibit 21 row's percent read as every parent's (Chubb Seguros Chile 199 %, item
+      100), an indirect GLEIF relationship added beside the direct one (item 101), an
+      Exhibit 21 that names the filer under itself (self-loop, item 94), and a 13D of
+      a holder that became the issuer's subsidiary (Texaco ↔ Chevron). Not every hit
+      is a defect — banks hold each other's shares through 13F and 13G (Berkshire ↔
+      BofA ↔ Wells Fargo …), a real cycle — but every one is looked at and named.
+      How: the rebuild kit's `snapshot.py <out.json>` (read-only) prints both lists
+      and keeps them in the snapshot; `diff_snapshots.py` shows them gone, new and
+      changed against the previous rebuild (findings item 97).
+
 ## 9. Documentation
 
 - [ ] `KNOWN_SOURCES` entry: **id** (the Source node's stable id — part of the data, the same on every instance), type, label, url, description, kind, credibility, quality.

@@ -165,6 +165,38 @@ def _print_source_calls(P: dict, N: dict) -> None:
             f"{k} {a.get(src, {}).get(k, '-')} -> {b.get(src, {}).get(k, '-')}" for k in kinds))
 
 
+def _print_checks(P: dict, N: dict) -> None:
+    """The two whole-graph checks (findings item 97), previous against new: the
+    companies over 100 % and the ownership cycles, keyed as edge ends are (a
+    hard id as it is, a uuid by its name — Chubb Seguros Chile is a uuid, re-
+    minted by every rebuild). Every new one is a finding or a known case the
+    verify names; one gone is a fix to confirm."""
+    if "over_100" not in N:
+        return
+    had = "over_100" in P
+    mp, mn = names(P) if had else {}, names(N)
+    a = {mp.get(r[0], r[0]): r for r in P.get("over_100") or []}
+    b = {mn.get(r[0], r[0]): r for r in N["over_100"]}
+    print(f"\n== over 100 %: {len(a) if had else '-'} -> {len(b)}; "
+          f"gone {len(set(a) - set(b))}, new {len(set(b) - set(a))}"
+          + ("" if had else " (no check in the previous snapshot, before item 97)"))
+    for k in sorted(set(a) - set(b), key=str):
+        print(f"  - {a[k][2]:7.2f}  {a[k][1]}" + ("" if k == a[k][1] else f"  {k}"))
+    for k in sorted(set(b) - set(a), key=str):
+        print(f"  + {b[k][2]:7.2f}  {b[k][1]}" + ("" if k == b[k][1] else f"  {k}"))
+    for k in sorted(set(a) & set(b), key=str):
+        if a[k][2] != b[k][2]:
+            print(f"  ~ {a[k][2]:7.2f} -> {b[k][2]:7.2f}  {b[k][1]}  {k}")
+    ca = {tuple(sorted(str(mp.get(i, i)) for i in c)) for c in P.get("cycles") or []}
+    cb = {tuple(sorted(str(mn.get(i, i)) for i in c)) for c in N.get("cycles") or []}
+    print(f"\n== ownership cycles: {len(ca) if had else '-'} -> {len(cb)}; gone {len(ca - cb)}, new {len(cb - ca)}")
+    label = {r[0]: r[1] for snap in (P, N) for r in snap.get("entities", []) + snap.get("persons", [])}
+    say = lambda k: f"{label[k]} ({k})" if k in label else k      # a hard id with its name; a uuid key is the name
+    for sign, cs in (("-", ca - cb), ("+", cb - ca)):
+        for c in sorted(cs):
+            print(f"  {sign} " + (" <-> ".join(map(say, c)) if len(c) > 1 else f"self-loop {say(c[0])}"))
+
+
 def main() -> None:
     P, N = load(sys.argv[1]), load(sys.argv[2])
     _print_counts({k: v for k, v in P.items() if k != "source_calls"}, N)
@@ -175,6 +207,7 @@ def main() -> None:
         print(f"\n{k}: -{sorted(a - b)} +{sorted(b - a)}")
     _print_edges(P, N)
     _print_succession(P, N)
+    _print_checks(P, N)
 
 
 if __name__ == "__main__":
