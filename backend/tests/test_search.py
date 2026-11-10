@@ -2,6 +2,8 @@
 Unit tests for the search router's pure helpers (no DB needed). The endpoint
 itself is exercised end-to-end in tests/integration/test_person_profile_it.py.
 """
+import pytest
+
 from app.routers.search import (
     _dedupe_positions, _dedupe_holdings, _clean, _ownership_summary, _class_key,
 )
@@ -39,6 +41,43 @@ class TestOwnershipSummary:
     def test_no_owners_or_no_known_stakes(self):
         assert _ownership_summary([])["disclosed_pct"] is None
         assert _ownership_summary([_owner(None)])["free_float_pct"] is None
+
+
+def _held(stake, mode):
+    return {"owner": {"id": "x"},
+            "relationship": {"stake_percent": stake, "direct_or_indirect": mode}}
+
+
+class TestIndirectHoldings:
+    """Findings item 101: an `indirect` holding is held through somebody
+    else's shares — beside a direct owner's stated stake it is not added."""
+
+    def test_an_ultimate_parent_beside_the_direct_one_is_not_summed(self):
+        # Distribuidora La Florida: 3-101-949828 S.A. direct 100 %, Heineken N.V. indirect 100 %
+        s = _ownership_summary([_held(100.0, "direct"), _held(100.0, "indirect")])
+        assert (s["disclosed_pct"], s["exceeds_100"]) == (100.0, False)
+
+    def test_the_remainder_beside_a_looked_through_owner_is_no_free_float(self):
+        # the group may hold the other 25 % through another company
+        s = _ownership_summary([_held(75.0, "direct"), _held(100.0, "indirect")])
+        assert (s["disclosed_pct"], s["free_float_pct"]) == (75.0, None)
+
+    def test_an_owner_without_a_mode_counts_as_holding_the_shares(self):
+        # a 13D/G edge carries no mode: its stake is a direct owner's for this rule
+        s = _ownership_summary([_held(60.0, None), _held(100.0, "indirect")])
+        assert s["disclosed_pct"] == 60.0
+
+    @pytest.mark.parametrize("owners, disclosed", [
+        ([_held(100.0, "indirect")], 100.0),                         # alone: the best figure there is
+        ([_held(None, "direct"), _held(100.0, "indirect")], 100.0),  # OxyChem: the direct stake unstated
+        ([_held(30.0, "indirect"), _held(40.0, "indirect")], 70.0),  # only indirect owners: summed as before
+    ])
+    def test_an_indirect_stake_counts_when_no_direct_one_is_stated(self, owners, disclosed):
+        assert _ownership_summary(owners)["disclosed_pct"] == disclosed
+
+    def test_a_stake_less_indirect_owner_still_counts_as_unknown(self):
+        s = _ownership_summary([_held(75.0, "direct"), _held(None, "indirect")])
+        assert (s["unknown_owners"], s["free_float_pct"]) == (1, None)
 
 
 class TestClean:

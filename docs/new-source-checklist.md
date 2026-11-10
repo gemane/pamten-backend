@@ -1723,6 +1723,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       Chile 199 % (findings item 100). Test a multi-holder cell with the first
       share named, and with the parent among the named.
 
+- [ ] **A look-through holding is not a second holding.** A source that states
+      both "X is the direct parent of Y" and "Z is the ultimate parent of Y" gives
+      two owners of the same shares. `mark-shortcuts` hides the second only where
+      it can prove the chain; where the chain is missing (Heineken N.V. → Distribuidora
+      La Florida, the link through 3-101-949828 S.A. itself only `indirect`) both
+      were drawn and summed — 200 % (findings item 101). Mark an indirect edge as
+      such (`direct_or_indirect`), and the ownership summary adds it only when no
+      direct owner states a stake.
+
 ## 9. Documentation
 
 - [ ] `KNOWN_SOURCES` entry: **id** (the Source node's stable id — part of the data, the same on every instance), type, label, url, description, kind, credibility, quality.

@@ -96,7 +96,8 @@ def take(q, cy) -> dict:
     # 93/94/98–101). Both read the live, drawn edges the panel reads.
     live = cy("MATCH (a)-[o:OWNS]->(b) WHERE o.until IS NULL AND COALESCE(o.shortcut, false) <> true "
               "RETURN a.id AS a, b.id AS b, coalesce(a.name, a.full_name) AS an, b.name AS bn, "
-              "o.stake_percent AS p, o.share_class AS c, o.filing_type AS f, o.stale AS st")
+              "o.stake_percent AS p, o.share_class AS c, o.filing_type AS f, o.stale AS st, "
+              "o.direct_or_indirect AS d")
     snap["over_100"] = over_100(live)
     snap["cycles"] = cycles(live)
     snap["users"] = [r["email"] for r in q("SELECT email FROM User")]
@@ -119,11 +120,19 @@ def over_100(rows: list) -> list:
     out = []
     for issuer, owners in by.items():
         summary = _ownership_summary([{"owner": {"id": o["a"]},
-                                       "relationship": {"stake_percent": o.get("p"), "share_class": o.get("c")}}
+                                       "relationship": {"stake_percent": o.get("p"), "share_class": o.get("c"),
+                                                        # an indirect holding beside a direct
+                                                        # owner is not added (item 101)
+                                                        "direct_or_indirect": o.get("d")}}
                                       for o in owners.values()])
         if summary.get("exceeds_100"):
+            # the rows the summary added: an indirect stake beside a direct
+            # owner's stated one is not (item 101)
+            stated = any(isinstance(x.get("p"), (int, float)) and x.get("d") != "indirect"
+                         for x in owners.values())
+            added = [o for o in owners.values() if not (stated and o.get("d") == "indirect")]
             rows_ = sorted(([o["a"], o.get("an"), o["p"], o.get("f"), bool(o.get("st"))]
-                            for o in owners.values() if isinstance(o.get("p"), (int, float))),
+                            for o in added if isinstance(o.get("p"), (int, float))),
                            key=lambda x: (-x[2], x[0]))
             name = next(iter(owners.values())).get("bn")
             out.append([issuer, name, round(sum(x[2] for x in rows_), 2), rows_])
