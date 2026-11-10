@@ -771,8 +771,14 @@ def _ownership_cell(cell: str) -> tuple[float | None, list[dict]]:
         return None, []
     co = [{"name": n.strip(), "stake_percent": float(p)} for p, n in _CO_OWNER.findall(cell)]
     if co:
+        # The first percent is the listed parent's only when it names no holder
+        # of its own: "83.17% 16.82% (DHC Corporation)". Chubb's Colombia row
+        # starts "46.3425521% (Vigilant Insurance Company) … 17.0140717% (Chubb
+        # INA International Holdings Ltd.)" — Vigilant's share, which the parent
+        # got as well, beside its own (Colombia 129 %, Chile 199 %; item 100).
         first = _FIRST_PERCENT.match(cell)
-        return (float(first.group(1)) if first else None), co
+        named = first and _CO_OWNER.match(cell.lstrip())
+        return (float(first.group(1)) if first and not named else None), co
     if m := _BARE_PERCENT.match(cell):
         value = float(m.group(1))
         return (value if value <= 100 else None), []

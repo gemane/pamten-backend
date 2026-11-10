@@ -1197,6 +1197,16 @@ def _write_affiliates(filer_id: str, affiliates: list[dict], source_id: str) -> 
     return written
 
 
+def _names_the_parent(co_holder: str, parent: str | None) -> bool:
+    """A co-holder named like the row's own tree parent, give or take the plural
+    of "Holding(s)": Chubb's Indonesian row names "Chubb INA International
+    Holding Ltd." — its parent row reads "… Holdings Ltd." (findings item 100).
+    Only against the parent the tree already gives the row."""
+    def plain(x):
+        return re.sub(r"\bholdings\b", "holding", x or "", flags=re.I)
+    return bool(parent) and _same_filer(plain(co_holder), plain(parent))
+
+
 def _same_filer(a: str | None, b: str | None) -> bool:
     """The filer under another spelling ("Chubb Limited" vs "CHUBB LIMITED",
     "Inter & Co, Inc." vs "Inter&Co, Inc"): legal forms and punctuation dropped."""
@@ -1402,14 +1412,19 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 co_id = ids.get(co["name"].casefold())
                 if co_id is None and _same_filer(co["name"], entity.get("name")):
                     co_id = company_id
+                if co_id is None and holder != company_id and _names_the_parent(co["name"], sub.get("parent")):
+                    co_id = holder
                 if not co_id or co_id == sub_id:
                     continue
                 if co_id == holder:
-                    if holder == company_id:
-                        # "87.99% 12.01% (Chubb Limited)" in a FLAT list: the
-                        # first share is an unlisted holder's; the filer's own
-                        # line carries the share the cell gives the filer
-                        stake = co["stake_percent"]
+                    # The holder named among the co-holders: its named share is
+                    # its stake. "87.99% 12.01% (Chubb Limited)" in a FLAT list —
+                    # the first share is an unlisted holder's, the filer's own
+                    # line carries 12.01 %; and under a nested parent alike:
+                    # Chubb Seguros Colombia sits under Chubb INA International
+                    # Holdings, whose share the cell states as 17.0140717 %
+                    # (findings item 100: it kept the first, Vigilant's 46.34 %).
+                    stake = co["stake_percent"]
                     continue
                 # A co-holder is whatever its share makes it — the 0.0000003%
                 # nominal second shareholder Mexican law requires is a
