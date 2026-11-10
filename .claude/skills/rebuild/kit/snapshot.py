@@ -90,8 +90,86 @@ def take(q, cy) -> dict:
     snap["succeeded_by"] = sorted(([r["a"], r["b"], r.get("s")] for r in cy(
         "MATCH (a)-[r:SUCCEEDED_BY]->(b) RETURN a.id AS a, b.id AS b, r.source_id AS s")),
         key=lambda x: [str(v) for v in x])
+    # The two whole-graph checks (findings item 97): companies whose disclosed
+    # stakes add up over 100 % and ownership cycles. Neither was looked at
+    # after a rebuild; a one-off check on 2026-11-10 found 6 and 3 (items
+    # 93/94/98–101). Both read the live, drawn edges the panel reads.
+    live = cy("MATCH (a)-[o:OWNS]->(b) WHERE o.until IS NULL AND COALESCE(o.shortcut, false) <> true "
+              "RETURN a.id AS a, b.id AS b, coalesce(a.name, a.full_name) AS an, b.name AS bn, "
+              "o.stake_percent AS p, o.share_class AS c, o.filing_type AS f, o.stale AS st")
+    snap["over_100"] = over_100(live)
+    snap["cycles"] = cycles(live)
     snap["users"] = [r["email"] for r in q("SELECT email FROM User")]
     return snap
+
+
+def over_100(rows: list) -> list:
+    """[issuer id, name, disclosed %, [[owner id, name, %, filing type, stale]…]]
+    for every company the panel flags `exceeds_100`: the app's own summary over
+    the owners the profile lists — self-loops dropped, one row per owner (its
+    highest stake). Pins and suppressions are not applied (a manual layer)."""
+    from app.routers.search import _ownership_summary
+    by: dict = {}
+    for r in rows:
+        if r["a"] == r["b"]:
+            continue
+        cur = by.setdefault(r["b"], {}).get(r["a"])
+        if cur is None or (r.get("p") or -1) > (cur.get("p") or -1):
+            by[r["b"]][r["a"]] = r
+    out = []
+    for issuer, owners in by.items():
+        summary = _ownership_summary([{"owner": {"id": o["a"]},
+                                       "relationship": {"stake_percent": o.get("p"), "share_class": o.get("c")}}
+                                      for o in owners.values()])
+        if summary.get("exceeds_100"):
+            rows_ = sorted(([o["a"], o.get("an"), o["p"], o.get("f"), bool(o.get("st"))]
+                            for o in owners.values() if isinstance(o.get("p"), (int, float))),
+                           key=lambda x: (-x[2], x[0]))
+            name = next(iter(owners.values())).get("bn")
+            out.append([issuer, name, round(sum(x[2] for x in rows_), 2), rows_])
+    return sorted(out, key=lambda x: x[0])
+
+
+def cycles(rows: list) -> list:
+    """Every ownership cycle as its sorted member ids: the strongly connected
+    components of more than one node, and each self-loop on its own. Tarjan,
+    iterative (the live graph is ~12k edges; recursion would hit the limit)."""
+    succ: dict = {}
+    loops = set()
+    for r in rows:
+        if r["a"] == r["b"]:
+            loops.add(r["a"])
+        succ.setdefault(r["a"], set()).add(r["b"])
+        succ.setdefault(r["b"], set())
+    index, low, on, stack, comps, n = {}, {}, set(), [], [], 0
+    for root in sorted(succ):
+        if root in index:
+            continue
+        work = [(root, iter(sorted(succ[root])))]
+        index[root] = low[root] = n; n += 1; stack.append(root); on.add(root)
+        while work:
+            v, it = work[-1]
+            w = next(it, None)
+            if w is not None:
+                if w not in index:
+                    index[w] = low[w] = n; n += 1; stack.append(w); on.add(w)
+                    work.append((w, iter(sorted(succ[w]))))
+                elif w in on:
+                    low[v] = min(low[v], index[w])
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[v])
+            if low[v] == index[v]:
+                comp = []
+                while True:
+                    x = stack.pop(); on.discard(x); comp.append(x)
+                    if x == v:
+                        break
+                if len(comp) > 1:
+                    comps.append(sorted(comp))
+    comps += [[x] for x in loops]
+    return sorted(comps)
 
 
 def main() -> None:
@@ -103,6 +181,17 @@ def main() -> None:
     json.dump(snap, open(out, "w"), indent=1, default=str)
     print("snapshot:", out, "| entities", snap["counts"].get("Entity"), "| persons", snap["counts"].get("Person"),
           "| OWNS", snap["counts"].get("OWNS"), "| claims", snap["counts"].get("Claim"), "| runs", len(snap["runs"]))
+    # step 8 prints both checks in full: each one is a finding or a known case
+    print(f"over 100 %: {len(snap['over_100'])}")
+    for issuer, name, total, owners in snap["over_100"]:
+        print(f"  {total:7.2f}  {name}  {issuer}")
+        for oid, oname, pct, ft, stale in owners[:6]:
+            print(f"           {pct:8.3f} {ft or '-':<6} {'stale' if stale else '':<5} {oname} ({oid})")
+    print(f"ownership cycles: {len(snap['cycles'])}")
+    names = {e[0]: e[1] for e in snap["entities"]}
+    for comp in snap["cycles"]:
+        print("  " + (" <-> ".join(f"{names.get(i, '?')} ({i})" for i in comp) if len(comp) > 1
+                      else f"self-loop {names.get(comp[0], '?')} ({comp[0]})"))
 
 
 if __name__ == "__main__":

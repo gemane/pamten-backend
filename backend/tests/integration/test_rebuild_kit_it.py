@@ -70,3 +70,31 @@ def test_the_snapshot_lists_every_succession_and_the_lei_list_names_every_lei_no
     out = capsys.readouterr().out
     assert "succession (SUCCEEDED_BY): 1 -> 0; gone 1, new 0" in out
     assert f"- ('{old}', '{new}') (Random House LLC -> Penguin Random House LLC) 1" in out
+
+
+def test_the_two_checks_read_live_drawn_edges(it_db):
+    """Findings item 97: over 100 % and the cycles from the Cypher the snapshot
+    runs — an ended edge and a shortcut edge count in neither."""
+    for i, name in (("lei:S", "SIRIUS XM"), ("sec:A", "LIBERTY A"), ("sec:B", "LIBERTY B"),
+                    ("sec:T", "Texaco Inc"), ("sec:C", "CHEVRON CORP"), ("sec:X", "OLD HOLDER")):
+        it_db.run_command(f"CREATE (e:Entity {{id:'{i}', name:'{name}', type:'company', name_normalized:'{name.lower()}'}})")
+    def edge(a, b, extra):
+        it_db.run_command(f"MATCH (a:Entity {{id:'{a}'}}), (b:Entity {{id:'{b}'}}) "
+                          f"CREATE (a)-[:OWNS {{source_id:'sec-edgar', filing_type:'13D/A', {extra}}}]->(b)")
+    edge("sec:A", "lei:S", "stake_percent:49.5, stale:true")
+    edge("sec:B", "lei:S", "stake_percent:40.15")
+    edge("sec:X", "lei:S", "stake_percent:30.0, until:'2020-01-01'")      # ended: not summed
+    edge("lei:S", "lei:S", "stake_percent:100.0")                         # self-loop: a cycle, not summed
+    edge("sec:T", "sec:C", "stake_percent:16.5")
+    edge("sec:C", "sec:T", "stake_percent:100.0")
+    edge("sec:A", "sec:B", "stake_percent:20.0, shortcut:true")           # a shortcut: neither
+    edge("sec:B", "sec:A", "stake_percent:20.0")
+    snapshot = _load("snapshot")
+    snap = snapshot.take(run_sql, run_query)
+    assert snap["over_100"] == []                                         # 49.5 + 40.15: the ended 30 % is left out
+    assert snap["cycles"] == [["lei:S"], ["sec:C", "sec:T"]]              # A<->B only through the shortcut
+    edge("sec:X", "lei:S", "stake_percent:30.0")
+    snap = snapshot.take(run_sql, run_query)
+    assert snap["over_100"] == [["lei:S", "SIRIUS XM", 119.65, [["sec:A", "LIBERTY A", 49.5, "13D/A", True],
+                                                               ["sec:B", "LIBERTY B", 40.15, "13D/A", False],
+                                                               ["sec:X", "OLD HOLDER", 30.0, "13D/A", False]]]]

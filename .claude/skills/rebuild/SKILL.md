@@ -51,7 +51,8 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   entities — with the scraper flags on, so its SEC/LEI bridge may read EDGAR as it does on the
   server; findings item 70 — folding what the bridge and the succession step added, the
   dissolution heal for the ends written after finish-import's own (item 85a), persons, geocode,
-  close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks, the calls to each source and the bucket since step 1
+  close-reported-by-parent, mark-shortcuts, mark-stale), 8 read-only checks (with the snapshot's
+  over-100 % and cycle lists, item 97), the calls to each source and the bucket since step 1
   (`manage.py source-calls`, `SourceCall` rows — step 0's shell downloads are not counted) and
   `after.json` (which keeps them, so the diff shows the change from the last rebuild).
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
@@ -67,7 +68,8 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   by issuer + roster (their uuid is re-minted by every rebuild, findings item 56), OWNS
   edges by a stable key; a 13F edge that came or went WITH its filer node is listed apart
   as the relevance sample's churn (findings item 51); the succession links gone and new by name, a
-  self-loop called out (item 88). `save_accounts.py` / `restore_accounts.py` — `User` and
+  self-loop called out (item 88); the companies over 100 % and the ownership cycles,
+  keyed as edge ends are (item 97). `save_accounts.py` / `restore_accounts.py` — `User` and
   `RefreshToken` rows by key, so nobody has to log in again (file 0600, never in memory).
 
 A step a merged change added to `finish-import.sh` usually also belongs in step 7, because
@@ -101,6 +103,12 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
   line's `seats +N/M` (N holdings written for M seats looked up; `seats error` when that pass
   failed) — no marker on a big filer means no seat was left to ask.
 - `schema-audit` and the dissolution dry run in step 8 should be clean.
+- **The two whole-graph checks** (findings item 97), printed by step 8's snapshot and kept
+  in `after.json`: the companies whose disclosed stakes add up **over 100 %** (as the panel
+  sums them) and the **ownership cycles** (self-loops included). The diff's last two sections
+  show them gone / new / changed against the last rebuild. Every new one is a finding or a
+  known case the verify names (the bank ring Berkshire ↔ BofA ↔ Wells Fargo … is real
+  13F/13G cross-holding); one gone is a fix to confirm. Baseline 2026-11-10: 6 and 3.
 - Then `/finding verify` against the last rebuild's `after.json`; record the run (times,
   counts, lessons) in the memory `reference-rebuild-from-agent`.
 

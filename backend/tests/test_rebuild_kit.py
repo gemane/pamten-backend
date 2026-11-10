@@ -246,3 +246,93 @@ class TestSourceCalls:
     def test_a_snapshot_from_before_the_counts_prints_nothing(self, capsys):
         diff._print_source_calls({}, {})
         assert capsys.readouterr().out == ""
+
+
+def _o(a, b, p, c=None, f="13D/A", st=False):
+    return {"a": a, "b": b, "an": a.upper(), "bn": b.upper(), "p": p, "c": c, "f": f, "st": st}
+
+
+class TestOver100:
+    """Findings item 97: the companies whose disclosed stakes add up over
+    100 %, as the panel sums them (the app's `_ownership_summary`)."""
+
+    def test_a_company_over_100_is_listed_with_its_owners_highest_first(self):
+        out = snapshot.over_100([_o("x", "sirius", 49.5, st=True), _o("y", "sirius", 40.15), _o("z", "sirius", 37.1)])
+        assert out == [["sirius", "SIRIUS", 126.75, [["x", "X", 49.5, "13D/A", True],
+                                                      ["y", "Y", 40.15, "13D/A", False],
+                                                      ["z", "Z", 37.1, "13D/A", False]]]]
+
+    @pytest.mark.parametrize("rows", [
+        [_o("x", "c", 60), _o("y", "c", 40.4)],                       # within the panel's 0.5 tolerance
+        [_o("x", "c", 60), _o("x", "c", 55)],                         # one owner, two edges: its highest counts, alone
+        [_o("c", "c", 99), _o("y", "c", 60)],                         # a self-loop is dropped, as on the panel
+        [_o("x", "c", 60, "Class A"), _o("y", "c", 60, "Class B")],   # two named classes: no single total
+        [_o("x", "c", None), _o("y", "c", 90)],                       # an unknown stake adds nothing
+    ])
+    def test_what_the_panel_does_not_flag_is_not_listed(self, rows):
+        assert snapshot.over_100(rows) == []
+
+    def test_one_owner_counts_once_with_its_highest_stake(self):
+        rows = [_o("x", "c", 60), _o("x", "c", 30), _o("y", "c", 45)]
+        assert [r[2] for r in snapshot.over_100(rows)] == [105.0]
+        assert snapshot.over_100(list(reversed(rows)))[0][3][0][2] == 60
+
+    def test_the_snapshot_reads_live_drawn_edges_only(self):
+        seen = []
+        def cy(q):
+            seen.append(q)
+            return _fake_cypher(q)
+        snap = snapshot.take(_fake_sql, cy)
+        q = next(x for x in seen if "[o:OWNS]" in x)
+        assert "o.until IS NULL" in q and "COALESCE(o.shortcut, false) <> true" in q
+        assert snap["over_100"] == [] and snap["cycles"] == []
+
+
+class TestCycles:
+    @pytest.mark.parametrize("edges, expected", [
+        ([("a", "b"), ("b", "c")], []),                                        # a chain
+        ([("texaco", "chevron"), ("chevron", "texaco")], [["chevron", "texaco"]]),
+        ([("s", "s"), ("s", "t")], [["s"]]),                                    # a self-loop on its own
+        ([("a", "b"), ("b", "c"), ("c", "a"), ("c", "d"), ("d", "e"), ("e", "d")],
+         [["a", "b", "c"], ["d", "e"]]),                                        # two components
+        ([("a", "b"), ("b", "a"), ("b", "b")], [["a", "b"], ["b"]]),            # the loop inside a cycle too
+    ])
+    def test_cycles(self, edges, expected):
+        assert snapshot.cycles([{"a": a, "b": b} for a, b in edges]) == expected
+
+    def test_a_long_chain_does_not_recurse(self):
+        rows = [{"a": f"n{i}", "b": f"n{i + 1}"} for i in range(5000)] + [{"a": "n5000", "b": "n0"}]
+        assert len(snapshot.cycles(rows)[0]) == 5001
+
+
+class TestChecksDiff:
+    ENT = [["lei:S", "SIRIUS XM", "gleif", None, "S", None], ["u-1", "Chubb Seguros Chile", "sec-edgar", None, None, None],
+           ["sec:T", "Texaco", "sec-edgar", "T", None, None], ["sec:C", "CHEVRON", "sec-edgar", "C", None, None]]
+
+    def _s(self, over, cyc, ent=None):
+        return {"entities": ent or self.ENT, "persons": [], "over_100": over, "cycles": cyc}
+
+    def test_a_uuid_issuer_re_minted_is_the_same_issuer(self, capsys):
+        ent2 = [["u-2", "Chubb Seguros Chile", "sec-edgar", None, None, None]] + self.ENT[2:] + self.ENT[:1]
+        diff._print_checks(self._s([["u-1", "Chubb Seguros Chile", 198.95, []]], []),
+                           self._s([["u-2", "Chubb Seguros Chile", 198.95, []]], [], ent2))
+        assert "over 100 %: 1 -> 1; gone 0, new 0" in capsys.readouterr().out
+
+    def test_gone_new_and_changed_are_named(self, capsys):
+        diff._print_checks(self._s([["lei:S", "SIRIUS XM", 213.59, []], ["u-1", "Chubb Seguros Chile", 198.95, []]],
+                                   [["sec:C", "sec:T"]]),
+                           self._s([["lei:S", "SIRIUS XM", 79.0, []]], [["lei:S"]]))
+        out = capsys.readouterr().out
+        assert "-  198.95  Chubb Seguros Chile\n" in out
+        assert "~  213.59 ->   79.00  SIRIUS XM  lei:S" in out
+        assert "ownership cycles: 1 -> 1; gone 1, new 1" in out
+        assert "- CHEVRON (sec:C) <-> Texaco (sec:T)" in out
+        assert "+ self-loop SIRIUS XM (lei:S)" in out
+
+    def test_a_previous_snapshot_without_the_checks_lists_all_as_new(self, capsys):
+        diff._print_checks({"entities": [], "persons": []}, self._s([["lei:S", "SIRIUS XM", 213.59, []]], []))
+        assert "over 100 %: - -> 1; gone 0, new 1 (no check in the previous snapshot" in capsys.readouterr().out
+
+    def test_a_new_snapshot_without_the_checks_prints_nothing(self, capsys):
+        diff._print_checks({}, {"entities": [], "persons": []})
+        assert capsys.readouterr().out == ""
