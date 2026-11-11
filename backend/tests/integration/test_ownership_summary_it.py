@@ -76,3 +76,23 @@ def test_an_indirect_owner_beside_a_direct_one_is_not_summed(it_db):
     assert len(profile["owners"]) == 2                  # both listed
     assert profile["ownership"]["disclosed_pct"] == 100.0
     assert profile["ownership"]["exceeds_100"] is False
+
+
+def test_a_controller_s_13d_beside_the_company_it_controls_is_not_added(it_db):
+    # findings item 102: AmBev — BRC's 13D/A 71.9 % counts AB InBev's 61.73 %;
+    # BRC votes 52.3 % of AB InBev in its bloc (no stated stake), so controls it
+    from app.routers.search import get_full_profile
+    for eid, name in (("ambev", "AMBEV S.A."), ("abi", "Anheuser-Busch InBev SA/NV"), ("brc", "BRC S.a.R.L.")):
+        _entity(it_db, eid, name)
+    it_db.run_command("MATCH (a:Entity {id:'brc'}), (b:Entity {id:'ambev'}) "
+                      "CREATE (a)-[:OWNS {stake_percent: 71.9, filing_type: '13D/A', until: null}]->(b)")
+    it_db.run_command("MATCH (a:Entity {id:'abi'}), (b:Entity {id:'ambev'}) "
+                      "CREATE (a)-[:OWNS {stake_percent: 61.73, filing_type: 'EX-8.1', until: null}]->(b)")
+    it_db.run_command("MATCH (a:Entity {id:'brc'}), (b:Entity {id:'abi'}) "
+                      "CREATE (a)-[:OWNS {voting_power_pct: 52.3, ownership_type: 'minority', "
+                      "filing_type: '13D/A', until: null}]->(b)")
+    own = get_full_profile("ambev")["ownership"]
+    assert (own["disclosed_pct"], own["exceeds_100"], own["free_float_pct"]) == (61.73, False, None)
+    # an ended control edge is no control
+    it_db.run_command("MATCH (:Entity {id:'brc'})-[r:OWNS]->(:Entity {id:'abi'}) SET r.until = '2020-01-01'")
+    assert get_full_profile("ambev")["ownership"]["exceeds_100"] is True

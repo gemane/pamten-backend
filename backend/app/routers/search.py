@@ -702,7 +702,92 @@ def _group_holdings(session, group_id: str, hidden: set) -> list[dict]:
     return out
 
 
-def _ownership_summary(owners: list[dict]) -> dict:
+#: A holding that makes its holder the company's controller (findings item 102,
+#: the user's definition of 2026-11-11): a parent/subsidiary link — a subsidiary
+#: list, GLEIF's relationship record, a full or majority holding — or more than
+#: 50 % of the shares or of the votes. BRC holds no stated stake in AB InBev but
+#: votes 52.3 % in its bloc: it controls AB InBev.
+CONTROL_THRESHOLD = 50.0
+
+
+def controls(edge: dict) -> bool:
+    """Whether one OWNS edge (`source_id`, `filing_type`, `ownership_type`,
+    `stake_percent`, `voting_power_pct`) makes its holder the controller of
+    the company held. The one definition `_controls_among` and the rebuild
+    kit's over-100 % check read."""
+    if (edge.get("source_id") == "gleif" or edge.get("filing_type") in _SUBSIDIARY_FILINGS
+            or edge.get("ownership_type") in _CONTROL_TYPES):
+        return True
+    return any(isinstance(edge.get(k), (int, float)) and edge[k] > CONTROL_THRESHOLD
+               for k in ("stake_percent", "voting_power_pct"))
+
+
+def _controls_among(ids: list[str]) -> dict[str, set[str]]:
+    """Among the given owners of one company: controlled id → the ids of those
+    that control it (`controls`, open edges only)."""
+    ids = [i for i in dict.fromkeys(ids) if i]
+    if len(ids) < 2:
+        return {}
+    out: dict[str, set[str]] = {}
+    with db.get_session() as session:
+        for r in session.run(
+                "MATCH (a)-[r:OWNS]->(b:Entity) WHERE a.id IN $ids AND b.id IN $ids AND r.until IS NULL "
+                "AND COALESCE(r.shortcut, false) <> true "
+                "RETURN a.id AS a, b.id AS b, r.source_id AS source_id, r.filing_type AS filing_type, "
+                "r.ownership_type AS ownership_type, r.stake_percent AS stake_percent, "
+                "r.voting_power_pct AS voting_power_pct", ids=ids):
+            rec = {k: r.get(k) for k in ("a", "b", "source_id", "filing_type", "ownership_type",
+                                         "stake_percent", "voting_power_pct")}
+            if rec["a"] and rec["b"] and rec["a"] != rec["b"] and controls(rec):
+                out.setdefault(rec["b"], set()).add(rec["a"])
+    return out
+
+
+#: Statements of BENEFICIAL ownership: a 13D or 13G counts the shares of every
+#: company the filer controls (Rule 13d-3), so beside the controlled company's
+#: own stake it counts those shares again. A subsidiary list or GLEIF's record
+#: states a direct holding: Chubb INA International Holdings' 99.998 % of Chubb
+#: Insurance Hong Kong and its own subsidiary's 0.002 % are two parts of 100 %.
+_BENEFICIAL_FILINGS = frozenset({"13D", "13D/A", "13G", "13G/A"})
+
+
+def _looked_through(owners: list[dict], controlled: dict[str, set[str]] | None = None) -> set[int]:
+    """Which owners hold the company THROUGH another of its owners, so their
+    stated percentage is not added (positions in ``owners``):
+
+    - an `indirect` holding beside an owner of the company's own shares with
+      a stated stake (findings item 101: Heineken's 100 % of Distribuidora La
+      Florida beside 3-101-949828 S.A.'s direct 100 %);
+    - an owner whose stake is a statement of beneficial ownership (a 13D or
+      13G, `_BENEFICIAL_FILINGS`) and that CONTROLS another owner with a
+      stated stake (``controlled``, `_controls_among`; findings item 102):
+      BRC's 13D/A on AmBev, 71.9 %, counts the shares AB InBev holds
+      (61.73 %), and BRC controls AB InBev by its bloc — 133.6 % summed.
+      Two owners controlling each other look through neither."""
+    def stated(o):
+        return isinstance(o["relationship"].get("stake_percent"), (int, float))
+
+    def oid(o):
+        return (o.get("owner") or {}).get("id")
+    direct = any(stated(o) and o["relationship"].get("direct_or_indirect") != "indirect" for o in owners)
+    held = {oid(o) for o in owners if stated(o) and oid(o)}
+    out: set[int] = set()
+    for i, o in enumerate(owners):
+        if not stated(o):
+            continue
+        if direct and o["relationship"].get("direct_or_indirect") == "indirect":
+            out.add(i)
+            continue
+        mine = oid(o)
+        if o["relationship"].get("filing_type") not in _BENEFICIAL_FILINGS:
+            continue
+        if mine and controlled and any(mine in controlled.get(x, ()) and x not in controlled.get(mine, ())
+                                       for x in held if x != mine):
+            out.add(i)
+    return out
+
+
+def _ownership_summary(owners: list[dict], controlled: dict[str, set[str]] | None = None) -> dict:
     """Derive a free-float / data-quality summary from an entity's owners.
 
     `free_float_pct` = 100 − Σ(disclosed stakes), i.e. the widely-held remainder
@@ -720,17 +805,13 @@ def _ownership_summary(owners: list[dict]) -> dict:
     float — the group may hold it through another company. Where no direct
     owner states a stake, the indirect one is the best figure there is and
     counts (Occidental Chemical: OxyChem's parent unstated, Occidental 100 %).
+    An owner that controls another stated owner is looked through the same
+    way (``controlled``, findings item 102, `_looked_through`).
     Edges proven redundant (`shortcut`) never reach this list.
     """
-    def _indirect(o):
-        return o["relationship"].get("direct_or_indirect") == "indirect"
-
-    def _stated(o):
-        return isinstance(o["relationship"].get("stake_percent"), (int, float))
-    looked_through = 0
-    if any(_stated(o) and not _indirect(o) for o in owners):
-        looked_through = sum(1 for o in owners if _indirect(o) and _stated(o))
-        owners = [o for o in owners if not (_indirect(o) and _stated(o))]
+    through = _looked_through(owners, controlled)
+    looked_through = len(through)
+    owners = [o for i, o in enumerate(owners) if i not in through]
     known = [o["relationship"].get("stake_percent") for o in owners
              if isinstance(o["relationship"].get("stake_percent"), (int, float))]
     unknown_owners = sum(
@@ -1128,7 +1209,8 @@ def get_full_profile(
             # True totals, independent of the per-section row limit above.
             "counts": counts,
             "owners": owners,
-            "ownership": _ownership_summary(owners),
+            "ownership": _ownership_summary(
+                owners, _controls_among([(o.get("owner") or {}).get("id") for o in owners])),
             "cross_holdings": cross_holdings,
             "subsidiaries": subsidiaries,
             # True when the walk behind each subsidiary's `descendants` hit its

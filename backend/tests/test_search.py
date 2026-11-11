@@ -389,3 +389,52 @@ class TestAliasAwareRank:
                  "wikidata_id": "Q9"}
         assert self._key(in_force, "acme") < self._key(ended, "acme")
         assert self._key(in_force, "acme")[0] == 1 and self._key(ended, "acme")[0] == 2
+
+
+class TestAControllersBeneficialStake:
+    """Findings item 102 (the user's choice of 2026-11-11: controlled only):
+    BRC's 13D/A on AmBev, 71.9 %, counts the shares AB InBev holds, 61.73 %,
+    and BRC controls AB InBev by its bloc — 133.6 % summed."""
+
+    @staticmethod
+    def _o(oid, pct, ft):
+        return {"owner": {"id": oid}, "relationship": {"stake_percent": pct, "filing_type": ft}}
+
+    BRC = ("sec:0001301486", 71.9, "13D/A")
+    ABI = ("lei:5493008H3828EMEXB082", 61.73, "EX-8.1")
+
+    def test_a_13d_of_the_controller_of_another_owner_is_not_added(self):
+        s = _ownership_summary([self._o(*self.BRC), self._o(*self.ABI)],
+                               {"lei:5493008H3828EMEXB082": {"sec:0001301486"}})
+        assert (s["disclosed_pct"], s["exceeds_100"], s["free_float_pct"]) == (61.73, False, None)
+
+    def test_without_control_every_stake_is_added(self):
+        # Vanguard holds a few % of State Street: passive, not through it
+        s = _ownership_summary([self._o("v", 7.0, "13G"), self._o("ss", 6.0, "13G")], {})
+        assert s["disclosed_pct"] == 13.0
+
+    def test_a_direct_holding_of_a_controller_is_added(self):
+        # Chubb INA International 99.998 % beside its own subsidiary's 0.002 %:
+        # two parts of 100 %, both stated in the subsidiary list
+        s = _ownership_summary([self._o("parent", 99.998, "EX-21"), self._o("sub", 0.002, "EX-21")],
+                               {"sub": {"parent"}})
+        assert s["disclosed_pct"] == 100.0
+
+    def test_two_owners_controlling_each_other_look_through_neither(self):
+        s = _ownership_summary([self._o("a", 40.0, "13D"), self._o("b", 30.0, "13D")],
+                               {"a": {"b"}, "b": {"a"}})
+        assert s["disclosed_pct"] == 70.0
+
+    def test_a_controlled_owner_without_a_stated_stake_leaves_the_controller_counted(self):
+        s = _ownership_summary([self._o(*self.BRC), self._o("lei:5493008H3828EMEXB082", None, "EX-8.1")],
+                               {"lei:5493008H3828EMEXB082": {"sec:0001301486"}})
+        assert s["disclosed_pct"] == 71.9
+
+
+@pytest.mark.parametrize("edge, yes", [
+    ({"filing_type": "EX-21"}, True), ({"source_id": "gleif"}, True), ({"ownership_type": "majority"}, True),
+    ({"stake_percent": 50.1}, True), ({"voting_power_pct": 52.3, "ownership_type": "minority"}, True),
+    ({"stake_percent": 50.0}, False), ({"stake_percent": 7.0, "filing_type": "13G"}, False), ({}, False)])
+def test_what_control_is(edge, yes):
+    from app.routers.search import controls
+    assert controls(edge) is yes

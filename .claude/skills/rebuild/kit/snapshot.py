@@ -97,7 +97,7 @@ def take(q, cy) -> dict:
     live = cy("MATCH (a)-[o:OWNS]->(b) WHERE o.until IS NULL AND COALESCE(o.shortcut, false) <> true "
               "RETURN a.id AS a, b.id AS b, coalesce(a.name, a.full_name) AS an, b.name AS bn, "
               "o.stake_percent AS p, o.share_class AS c, o.filing_type AS f, o.stale AS st, "
-              "o.direct_or_indirect AS d")
+              "o.direct_or_indirect AS d, o.source_id AS s, o.ownership_type AS ot, o.voting_power_pct AS v")
     snap["over_100"] = over_100(live)
     snap["cycles"] = cycles(live)
     snap["users"] = [r["email"] for r in q("SELECT email FROM User")]
@@ -109,28 +109,32 @@ def over_100(rows: list) -> list:
     for every company the panel flags `exceeds_100`: the app's own summary over
     the owners the profile lists — self-loops dropped, one row per owner (its
     highest stake). Pins and suppressions are not applied (a manual layer)."""
-    from app.routers.search import _ownership_summary
+    from app.routers.search import _looked_through, _ownership_summary, controls
     by: dict = {}
+    controlled: dict = {}            # controlled id → its controllers (findings item 102)
     for r in rows:
         if r["a"] == r["b"]:
             continue
         cur = by.setdefault(r["b"], {}).get(r["a"])
         if cur is None or (r.get("p") or -1) > (cur.get("p") or -1):
             by[r["b"]][r["a"]] = r
+        if controls({"source_id": r.get("s"), "filing_type": r.get("f"), "ownership_type": r.get("ot"),
+                     "stake_percent": r.get("p"), "voting_power_pct": r.get("v")}):
+            controlled.setdefault(r["b"], set()).add(r["a"])
     out = []
     for issuer, owners in by.items():
-        summary = _ownership_summary([{"owner": {"id": o["a"]},
-                                       "relationship": {"stake_percent": o.get("p"), "share_class": o.get("c"),
-                                                        # an indirect holding beside a direct
-                                                        # owner is not added (item 101)
-                                                        "direct_or_indirect": o.get("d")}}
-                                      for o in owners.values()])
+        listed = list(owners.values())
+        rel = [{"owner": {"id": o["a"]},
+                "relationship": {"stake_percent": o.get("p"), "share_class": o.get("c"),
+                                 # an indirect holding beside a direct owner (item 101) and
+                                 # an owner controlling another owner (item 102) are not added
+                                 "direct_or_indirect": o.get("d"), "filing_type": o.get("f")}}
+               for o in listed]
+        among = {k: v & set(owners) for k, v in controlled.items() if k in owners}
+        summary = _ownership_summary(rel, among)
         if summary.get("exceeds_100"):
-            # the rows the summary added: an indirect stake beside a direct
-            # owner's stated one is not (item 101)
-            stated = any(isinstance(x.get("p"), (int, float)) and x.get("d") != "indirect"
-                         for x in owners.values())
-            added = [o for o in owners.values() if not (stated and o.get("d") == "indirect")]
+            through = _looked_through(rel, among)
+            added = [o for i, o in enumerate(listed) if i not in through]
             rows_ = sorted(([o["a"], o.get("an"), o["p"], o.get("f"), bool(o.get("st"))]
                             for o in added if isinstance(o.get("p"), (int, float))),
                            key=lambda x: (-x[2], x[0]))
