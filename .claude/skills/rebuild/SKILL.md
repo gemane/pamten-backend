@@ -62,7 +62,9 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
 - `replay_scrapes.py` — A run-all over `scrape-targets.txt`, B the panel refreshes, A2 one
   run-all retry (every source, not Wikidata alone — findings item 54) for the companies whose
   Wikidata part failed ("too busy", a read timeout), A3 one SEC retry for the companies whose
-  SEC part came back `partial` (a section lost to the network, findings item 41), C Exhibit 21,
+  SEC part came back `partial` (a section lost to the network, findings item 41), C Exhibit 21, C2 its
+  history ("owned since at least" for the companies C read a list for; item 96, since 2026-11-11 —
+  rebuilds before it compare without those dates),
   D acquisitions, E 13F, F industry fill. Its target lists are frozen so rebuilds compare; change them only on purpose and
   say so in the verify.
 - `snapshot.py` — counts per type/source/filing/reason, entities and persons by id, the
