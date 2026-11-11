@@ -942,6 +942,15 @@ legacy LEI on a long-lived database), so `dissolved_on` is not written and `acti
 when EDGAR cannot be asked, neither is written (`hold_end_of_live_filer`, counted as `ends_held`,
 logged by node).
 
+**A stated end stands** (findings item 90, 2026-11-11). GLEIF's ACTIVE does not undo a
+`dissolved_on` another source stated: Altaba's record says ACTIVE on a registration LAPSED since
+2023-08-04, while SEC and Wikidata ended the company on 2019-10-04, and any GLEIF re-read (the
+delta, the pointer, a reload) wrote `active = true` over it — a node both dissolved and active. The
+GLEIF-side batch writer (`bulk_import._BatchWriter`) writes `active = true` only where the node
+carries no `dissolved_on`, and a record that states its own end is never written active; GLEIF's
+INACTIVE is written as stated. The Companies House snapshot keeps its own writer: it is the
+register of record for its companies, and a restored UK company is live again.
+
 **How it ended** — `end_kind` (findings item 85c, 2026-11-09): the end event's type, `merged`
 (MERGERS_AND_ACQUISITIONS, ABSORPTION), `split` (BREAKUP) or `dissolved` (DISSOLUTION); when a
 record carries a merger and the dissolution that followed it (619 do), the day is the latest

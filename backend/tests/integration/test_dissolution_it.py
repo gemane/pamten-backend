@@ -249,3 +249,29 @@ def test_another_sources_closed_spell_is_shared_not_drawn_again(it_db):
     _sec_read("2019-03-01")
     rows = _owns(it_db, "gone", "sub")
     assert len(rows) == 1 and rows[0]["until"] == "2019-10-04" and rows[0]["until_reason"] == "dissolution"
+
+
+def test_gleif_s_active_does_not_reopen_a_dissolved_company(it_db):
+    # findings item 90: Altaba's GLEIF record says ACTIVE (LAPSED since
+    # 2023-08-04); SEC and Wikidata ended the company on 2019-10-04. A GLEIF
+    # re-read (the delta, the pointer, a reload) wrote active = true over it.
+    from app.scraper.bulk_import import _BatchWriter
+    it_db.run_command("CREATE (:Entity {id:'lei:549300ZJC0V1K2ZCKG85', name:'Altaba Inc.', type:'company', "
+                      "active:false, dissolved_on:'2019-10-04'})")
+    it_db.run_command("CREATE (:Entity {id:'lei:ALIVE000000000000001', name:'Alive Inc.', type:'company'})")
+    b = _BatchWriter(batch_size=10)
+    b.entity("lei:549300ZJC0V1K2ZCKG85", {"name": "ALTABA INC.", "active": True,
+                                          "gleif_registration_status": "LAPSED"})
+    b.entity("lei:ALIVE000000000000001", {"name": "ALIVE INC.", "active": True})
+    b.entity("lei:NEWDEAD0000000000001", {"name": "NEW DEAD LTD", "active": True, "dissolved_on": "2025-01-01"})
+    b.flush()
+    got = {r["id"]: dict(r) for r in it_db.run_sql(
+        "SELECT id, active, dissolved_on, gleif_registration_status AS st FROM Entity")}
+    altaba = got["lei:549300ZJC0V1K2ZCKG85"]
+    assert altaba["active"] is False and altaba["dissolved_on"] == "2019-10-04" and altaba["st"] == "LAPSED"
+    assert got["lei:ALIVE000000000000001"]["active"] is True
+    assert got["lei:NEWDEAD0000000000001"]["active"] is False      # created with its own end
+    # GLEIF saying INACTIVE is written as stated
+    b.entity("lei:ALIVE000000000000001", {"active": False})
+    b.flush()
+    assert it_db.run_sql("SELECT active FROM Entity WHERE id = 'lei:ALIVE000000000000001'")[0]["active"] is False

@@ -474,3 +474,29 @@ def test_the_lei_cdf_import_labels_registration_day_starts(monkeypatch):
     monkeypatch.setattr(gleif_rr, "mark_registration_day", lambda: calls.append(1) or 7)
     res = r.run_import_gleif_lei_cdf("dummy.zip")
     assert calls == [1] and res["registration_day"] == 7
+
+
+class TestAStatedEndStands:
+    """Findings item 90: GLEIF's ACTIVE on a lapsed record (Altaba's) re-opened
+    a company another source had dissolved. `active = true` yields to a stated
+    `dissolved_on`; a record that states its own end is not active."""
+
+    @staticmethod
+    def _bound(props):
+        from app.scraper.bulk_import import _BatchWriter
+        out: list = []
+        with patch("app.scraper.bulk_import.run_sqlscript",
+                   side_effect=lambda script, params=None: out.append((script, params or {}))):
+            b = _BatchWriter(batch_size=100)
+            b.entity("lei:549300ZJC0V1K2ZCKG85", props)
+            b.flush()
+        return out[0]
+
+    def test_alive_yields_to_a_stored_end(self):
+        script, params = self._bound({"name": "ALTABA INC.", "active": True})
+        assert "active = CASE WHEN :active__0 = true AND dissolved_on IS NOT NULL THEN false" in script
+        assert params["active__0"] is True
+
+    def test_a_record_that_states_its_end_is_not_active(self):
+        _, params = self._bound({"name": "ALTABA INC.", "active": True, "dissolved_on": "2019-10-04"})
+        assert params["active__0"] is False
