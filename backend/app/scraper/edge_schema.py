@@ -172,6 +172,23 @@ RELATED_TO_PROPS: tuple = (
     "last_scraped_at",
 )
 
+#: A company's successor (a rename, a merger) and its dual-listed twin — carried
+#: by an entity merge like the other kinds (findings item 92)
+SUCCEEDED_BY_PROPS: tuple = (
+    "since",
+    "source_id",
+    "credibility_score",
+    "source_url",
+    "source_date",
+    "last_scraped_at",
+)
+DUAL_LISTED_PROPS: tuple = (
+    "source_id",
+    "source_url",
+    "source_date",
+    "last_scraped_at",
+)
+
 #: A party of a 13D filing group pointing at its VotingGroup (2026-10-26;
 #: membership was RELATED_TO {relation: 'group_member'} before)
 MEMBER_OF_PROPS: tuple = (

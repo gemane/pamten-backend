@@ -780,7 +780,8 @@ def _coalesce_entity_props(dead_id: str, keep_id: str) -> int:
 
 
 def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
-    """Move every OWNS / HAS_ROLE / RELATED_TO edge off ``dead_id`` onto ``keep_id``.
+    """Move every OWNS / HAS_ROLE / RELATED_TO / MEMBER_OF / SUCCEEDED_BY /
+    DUAL_LISTED_WITH edge off ``dead_id`` onto ``keep_id``.
 
     An edge is RECREATED, not moved, so its property list decides what
     survives — and hand-written lists here fell behind three separate times
@@ -799,8 +800,8 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     start). A RELATED_TO that ``keep`` already has is dropped rather than
     duplicated. Returns the number of edges created on ``keep``.
     """
-    from app.scraper.edge_schema import (OWNS_PROPS, ROLE_PROPS, RELATED_TO_PROPS,
-                                         edge_return_clause, edge_create_clause,
+    from app.scraper.edge_schema import (OWNS_PROPS, ROLE_PROPS, RELATED_TO_PROPS, SUCCEEDED_BY_PROPS,
+                                         DUAL_LISTED_PROPS, edge_return_clause, edge_create_clause,
                                          edge_params)
     migrated = 0
 
@@ -902,6 +903,32 @@ def _migrate_entity_edges(dead_id: str, keep_id: str) -> int:
     # 5. Membership of a 13D filing group — a party merged into another node
     # keeps its place in the bloc (MEMBER_OF, 2026-10-26).
     migrated += _migrate_membership(dead_id, keep_id, "Entity")
+
+    # 6. Succession and dual listing, both directions (findings item 92): the
+    # `DETACH DELETE` of the dead node took them with it — a `lei:`
+    # predecessor folded into a `sec:` filer lost the link to its successor,
+    # and its claim was re-pointed at an edge that no longer existed. An edge
+    # between the two merged nodes is dropped (a company does not succeed
+    # itself); one ``keep`` already has to the same company is not doubled.
+    for kind, props in (("SUCCEEDED_BY", SUCCEEDED_BY_PROPS), ("DUAL_LISTED_WITH", DUAL_LISTED_PROPS)):
+        for outgoing in (True, False):
+            # (from, to) of the edge as it stands on the dead node, and on keep
+            dead_end, keep_end = "(a:Entity {id: $id})", "(a:Entity {id: $k})"
+            edge = "-[r:%s]->" % kind
+            read = (dead_end + edge + "(o:Entity)") if outgoing else ("(o:Entity)" + edge + dead_end)
+            have = ((keep_end + edge + "(o:Entity {id: $oid})") if outgoing
+                    else ("(o:Entity {id: $oid})" + edge + keep_end))
+            for e in run_query(f"MATCH {read} RETURN o.id AS oid, {edge_return_clause('r', props)}",
+                               {"id": dead_id}):
+                if _between(e["oid"], kind):
+                    continue
+                if run_query(f"MATCH {have} RETURN r LIMIT 1", {"k": keep_id, "oid": e["oid"]}):
+                    continue
+                new_edge = f"-[:{kind} {{{edge_create_clause(props)}}}]->"
+                create = f"(a){new_edge}(o)" if outgoing else f"(o){new_edge}(a)"
+                run_command(f"MATCH {keep_end}, (o:Entity {{id: $oid}}) CREATE {create}",
+                            {"k": keep_id, "oid": e["oid"], **edge_params(e, props)})
+                migrated += 1
 
     from app.claims import migrate_claims
     migrate_claims(dead_id, keep_id)
