@@ -3769,3 +3769,46 @@ class TestStallRetry:
         with patch.object(sec_edgar, "_get_client", return_value=client), patch("time.sleep"):
             assert sec_edgar._lookup_person_ciks("Robyn Denholm") == ["0001242782"]
         assert [p["company"] for _, p in calls] == ["Denholm Robyn", "Denholm Robyn"]
+
+
+class TestAVotingPactOrAJointFiling:
+    """Findings item 103 (the user's rule of 2026-11-11): a joint 13D is a
+    voting group only when it names an agreement over the votes; the rest —
+    a parent with its subsidiaries, a family with its trusts — file together
+    as Rule 13d-1(k) allows and are one holding. Of the 44 joint 13Ds behind
+    dev's 27 groups, two name one: AB InBev's and the New York Times'."""
+
+    def test_an_agreement_named_makes_the_co_filers_a_pact(self):
+        from app.scraper.sec_edgar import _is_voting_pact
+        brc = "<item6>The Reporting Persons are parties to the Voting Agreement</item6><memberOfGroup>a</memberOfGroup>"
+        nyt = "the 1997 Trust … a Stockholders' Agreement … group within the meaning of Rule 13d-5"
+        trust = "the shares are held in a voting trust"
+        for text in (brc, nyt, trust):
+            assert _is_voting_pact("SCHEDULE 13D/A", 8, text) is True, text
+
+    def test_a_family_without_an_agreement_is_a_joint_filing(self):
+        from app.scraper.sec_edgar import _is_voting_pact
+        # Berkshire on DaVita: (a) ticked, but no agreement over the votes
+        berkshire = "<memberOfGroup>a</memberOfGroup> National Indemnity Company is a wholly-owned subsidiary"
+        assert _is_voting_pact("SCHEDULE 13D/A", 8, berkshire) is False
+
+    def test_only_a_13d_with_co_filers_can_be_a_pact(self):
+        from app.scraper.sec_edgar import _is_voting_pact
+        assert _is_voting_pact("SCHEDULE 13G/A", 4, "a Voting Agreement") is False
+        assert _is_voting_pact("SCHEDULE 13D", 1, "a Voting Agreement") is False
+
+    def test_everyone_disclaiming_a_group_is_no_pact(self):
+        # News Corp's Murdoch family trust names a stockholders agreement and
+        # ticks (b) for every reporting person
+        from app.scraper.sec_edgar import _group_boxes, _is_voting_pact
+        xml = "a Stockholders Agreement" + "<memberOfGroup>b</memberOfGroup>" * 4
+        assert _group_boxes(xml) == ["b"] * 4 and _is_voting_pact("SCHEDULE 13D", 4, xml) is False
+        text = ("2. CHECK THE APPROPRIATE BOX IF A MEMBER OF A GROUP (a) ☐ (b) ☒ ... "
+                "2. Check the Appropriate Box if a Member of a Group (a) [X] (b) [ ] a Voting Agreement")
+        assert _group_boxes(text) == ["b", "a"] and _is_voting_pact("SC 13D", 2, text) is True
+
+    def test_the_statement_says_which_one_it_is(self):
+        # the record carries the flag the writer draws by; the stake split stays
+        from app.scraper import sec_edgar
+        raw = _fixture("13da_brc_abinbev_2026.xml")
+        assert sec_edgar._parse_13dg_xml(raw)["raw_text"] == raw

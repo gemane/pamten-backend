@@ -346,6 +346,8 @@ class TestTheWholeScrapeWritesTheGroup:
             {"name": "Jorge Paulo Lemann", "cik": None, "source": "xml",
              "type_code": "IN"},
         ],
+        # the statement names the Voting Agreement (findings item 103)
+        "voting_pact": True,
     }
 
     def _scrape(self, graph, filing):
@@ -698,6 +700,8 @@ class TestAGroupIsItsOwnVertexType:
         rows = graph.run_command("MATCH (g:VotingGroup {id:$g})-[r:OWNS]->(b:Entity {id:'abi2'}) "
                                  "RETURN r.voting_power_pct AS v", {"g": gid})
         assert [r["v"] for r in rows] == [52.3]
+        # the statement names its Voting Agreement: a pact (findings item 103)
+        assert [r["k"] for r in graph.run_command("MATCH (g:VotingGroup) RETURN g.kind AS k")] == ["voting_pact"]
 
 
 class TestARosterThatShrinks:

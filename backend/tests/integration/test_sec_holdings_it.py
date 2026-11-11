@@ -326,7 +326,7 @@ def test_a_scraped_company_s_own_holdings_and_a_voting_group_carry_the_date(it_d
                    form_type="SCHEDULE 13D/A", stake_percent=None, voting_power_pct=52.3,
                    voting_shares=1033081237, event_date="2026-05-13",
                    group_members=[{"name": "Stichting Anheuser-Busch InBev", "cik": None,
-                                   "source": "xml", "type_code": "OO"}])
+                                   "source": "xml", "type_code": "OO"}], voting_pact=True)
     with patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"):
         _write_issuer_side(it_db, [bloc], holdings=[holding])
     assert _edge_with_stake(it_db, 6.25).get("event_date") == "2026-03-31"
@@ -377,3 +377,22 @@ def test_a_scraped_companys_own_holding_writes_a_members_bloc_as_voting_power(it
     _write_issuer_side(it_db, [], holdings=[BLOC_HOLDING])
     edge = _bloc_edge(it_db)
     assert edge.get("stake_percent") is None and edge.get("voting_power_pct") == 52.3
+
+
+def test_a_parent_filing_with_its_own_subsidiaries_is_a_joint_filing(it_db):
+    # findings item 103 (the user's choice of 2026-11-11): Berkshire's 13D/A on
+    # DaVita names Buffett, National Indemnity, GEICO … and no agreement over the
+    # votes — one holder with its affiliates: a "Joint filing", not a "Voting
+    # group". Its figure is shown as before and not added (item 107).
+    family = _filing(investor_name="BERKSHIRE HATHAWAY INC", investor_cik="0001067983",
+                     form_type="SCHEDULE 13D/A", stake_percent=None, voting_power_pct=45.0,
+                     group_members=[{"name": "Warren E. Buffett", "cik": None, "source": "xml", "type_code": "IN"},
+                                    {"name": "National Indemnity Company", "cik": None, "source": "xml",
+                                     "type_code": "IC"}], voting_pact=False)
+    with patch("app.scraper.sec_edgar.fetch_filer_country", return_value="US"):
+        _write_issuer_side(it_db, [family])
+    [g] = it_db.run_command("MATCH (g:VotingGroup)-[r:OWNS]->() RETURN g.kind AS kind, g.name AS name, "
+                            "g.description AS d, r.stake_percent AS stake, r.voting_power_pct AS votes")
+    assert g["kind"] == "joint_filing" and g["name"] == "Joint filing · BERKSHIRE HATHAWAY INC and 2 affiliates"
+    assert "no agreement over the votes" in g["d"]
+    assert (g["stake"], g["votes"]) == (None, 45.0)

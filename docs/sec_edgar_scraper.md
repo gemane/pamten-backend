@@ -431,6 +431,26 @@ The issuer side writes only the bloc for those families — a voting group, its
 members without a stake — while the filer side, which writes one edge from the
 filer and no co-filer beside it, keeps the parent's percent.
 
+**A voting group or a joint filing** (findings item 103, 2026-11-11). The issuer side
+draws every joint 13D as one node over its co-filers, but most are not a group voting
+anyone else's shares: of the 44 joint 13Ds behind dev's 27 groups, read in full, two name
+an agreement over the votes — AB InBev's (BRC, the Stichting, Eugénie Patri Sébastien …:
+the Voting Agreement) and the New York Times' (the Ochs-Sulzberger family trust, a
+stockholders' agreement, a group under Rule 13d-5). About 30 are one controlling chain
+filing together as Rule 13d-1(k) allows (Berkshire with its insurers on DaVita, Icahn's
+entities, SoftBank's funds, Glencore's companies, Alibaba's, Embraer's), about 8 one family
+with its trusts and companies (Sands, Miller, Cohen, Slim). The "member of a group" box
+does not tell them apart: Glencore, Alibaba, the Slim family and News Corp's Murdoch trust
+tick (b), "not a group"; Berkshire and ValueAct tick (a) for one parent's own entities.
+So `sec_edgar._is_voting_pact` — a 13D with co-filers whose text (the XML's Items 4 and 6,
+or the whole text filing) names a voting agreement, a stockholders' or shareholders'
+agreement or a voting trust, and whose persons do not all tick (b) — decides the node's
+`kind`: `voting_pact`, named "Voting group · N parties", or `joint_filing`, named "Joint
+filing · {filer} and N affiliates". How each statement's row 13 is read, and that the
+node's edge carries votes only, stay as they were: counting a joint filing's figure once
+as a holding would add a controller's own statement and its vehicle's (Lennar: Stuart
+Miller 60.4 % beside MP Alpha Holdings' 58.6 %) — findings item 107.
+
 **There are two schemas, one per schedule**, and they spell the same facts differently:
 
 | | Schedule 13D | Schedule 13G |
