@@ -11,6 +11,9 @@ import after the 6 October rebuild (kept fixed since, so rebuilds compare):
   F  the industry fill scrape-companies.sh ends with (POST /scraper/backfill-industry,
      default on) — the 2026-10-26 replay skipped it and its gap was a false finding
   C  the Exhibit 21 pass over the list and the 17 node names it also ran for
+  C2 the Exhibit 21 history ("owned since at least", `sec-ex21-history`) once for
+     every company C wrote a list for (findings item 96, since 2026-11-11 — a
+     rebuild before it has no lower bound on any subsidiary edge)
   D  the acquisitions reader for the three companies it ran for
   E  13F holders for the two companies it ran for
 
@@ -22,7 +25,7 @@ to another legal entity; the 2026-11-04 Wikidata-only retry then wrote the item
 and never re-ran the SEC part (findings item 54) — and A3 the SEC parts that
 came back `partial` (a section lost to the network, findings item 41).
 
-Each step writes its run-log row, as the API would. Usage: replay_scrapes.py [A|B|C|D|E ...]
+Each step writes its run-log row, as the API would. Usage: replay_scrapes.py [A|B|C|C2|D|E|F ...]
 """
 import json
 import logging
@@ -41,7 +44,8 @@ os.environ["SCRAPER_SEC_EDGAR_ENABLED"] = "true"
 logging.basicConfig(level=logging.WARNING)
 
 from app.industry import backfill as industry_backfill  # noqa: E402
-from app.scraper.runner import run_scrape_all, run_sec_ex21, run_sec_acquisitions, run_sec_13f  # noqa: E402
+from app.scraper.runner import (run_scrape_all, run_sec_ex21, run_sec_ex21_history,  # noqa: E402
+                               run_sec_acquisitions, run_sec_13f)
 from app.scraper.run_log import record_run  # noqa: E402
 from app import source_calls  # noqa: E402
 # count every call to an outside source and the bucket the replay makes, as
@@ -65,6 +69,12 @@ WIKIDATA_FAILED: list[str] = []
 # holdings) to the network now says `partial`. The rebuild has no later visit to
 # catch up, so those companies get their SEC part once more after A and B.
 SEC_PARTIAL: list[str] = []
+# Findings item 96 (the user's word, 2026-11-11): phase C wrote every subsidiary
+# edge undated, and the history pass that dates them ("owned since at least",
+# `sec-ex21-history`) ran in no phase — no edge of a rebuilt database had a lower
+# bound, so item 79's dates could never be verified. C2 reads the history once per
+# company phase C wrote a list for: {entity id: the name C ran it under}.
+EX21_READ: dict[str, str] = {}
 
 
 def run_all(name):
@@ -127,7 +137,7 @@ def phase(label, names, fn):
     print(f"=== {label} done: {ok} ok, {failed} failed ({time.strftime('%H:%M:%S')})", flush=True)
 
 
-steps = sys.argv[1:] or ["A", "B", "C", "D", "E", "F"]
+steps = sys.argv[1:] or ["A", "B", "C", "C2", "D", "E", "F"]
 if "A" in steps:
     phase("A run-all over the list", TARGETS, run_all)
 if "B" in steps:
@@ -160,8 +170,20 @@ if SEC_PARTIAL:
                 run["note"] = "lost to the network: " + ", ".join(res.get("failed_sections") or [])
         return (res.get("status"), res.get("total"), res.get("failed_sections") or None)
     phase("A3 SEC retry for the partial parts", sorted(set(SEC_PARTIAL)), retry_sec)
+def ex21(name):
+    res = run_sec_ex21(name)
+    if res.get("status") == "ok" and res.get("entity_id"):
+        EX21_READ.setdefault(res["entity_id"], name)
+    return short(res)
+
+
 if "C" in steps:
-    phase("C Exhibit 21", TARGETS + EX21_EXTRA, lambda n: short(run_sec_ex21(n)))
+    phase("C Exhibit 21", TARGETS + EX21_EXTRA, ex21)
+if "C2" in steps:
+    # one run per company (two target names can be one filer); without phase C
+    # in this run, every name phase C would have read
+    phase("C2 Exhibit 21 history", list(EX21_READ.values()) if EX21_READ else TARGETS + EX21_EXTRA,
+          lambda n: short(run_sec_ex21_history(n)))
 if "D" in steps:
     phase("D acquisitions", ACQ, lambda n: short(run_sec_acquisitions(n)))
 if "E" in steps:

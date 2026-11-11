@@ -106,3 +106,27 @@ def test_the_replay_line_shows_the_seat_holders_rerun():
     assert _source_line()({"sec_edgar": {"status": "ok", "total": 3,
                                          "seats_rerun": {"status": "error", "detail": "x"}}}) == \
         {"sec_edgar": ("ok", 3, "seats error")}
+
+
+def _ex21_and_steps():
+    # findings item 96: phase C collects the companies it read a list for, C2
+    # dates their subsidiary edges once per company; the default steps run it
+    import ast
+    src = (KIT / "replay_scrapes.py").read_text()
+    tree = ast.parse(src)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "ex21")
+    return src, fn
+
+
+def test_the_replay_runs_the_exhibit_21_history_once_per_company():
+    src, fn = _ex21_and_steps()
+    import ast
+    ns: dict = {"EX21_READ": {}, "short": lambda r: r.get("status"),
+                "run_sec_ex21": lambda n: {"Apple": {"status": "ok", "entity_id": "lei:A"},
+                                           "Apple Inc.": {"status": "ok", "entity_id": "lei:A"},
+                                           "Nobody": {"status": "no_annual_filing"}}[n]}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "replay_scrapes.py", "exec"), ns)
+    for name in ("Apple", "Apple Inc.", "Nobody"):
+        ns["ex21"](name)
+    assert ns["EX21_READ"] == {"lei:A": "Apple"}
+    assert '"C", "C2", "D"' in src and 'run_sec_ex21_history' in src
