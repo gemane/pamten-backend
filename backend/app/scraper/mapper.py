@@ -425,17 +425,9 @@ def fold_marks(text: str) -> str:
     return _DASHES.sub("-", unicodedata.normalize("NFC", plain))
 
 
-def normalize_entity_name(name: str) -> str:
-    """
-    Canonical form of a company name for cross-source deduplication.
-    Strips legal suffixes, punctuation, and whitespace.
-    e.g. 'BlackRock, Inc.' → 'blackrock'
-         'BLACKROCK INC'   → 'blackrock'
-         'BlackRock'       → 'blackrock'
-         'JPMorgan Chase & Co.', 'JPMorgan Chase and Company' → 'jpmorgan chase'
-         "Domino's Pizza, Inc.", 'DOMINOS PIZZA INC' → 'dominos pizza'
-         'The New York Times Company', 'NEW YORK TIMES CO' → 'new york times'
-    """
+def _plain_name(name: str) -> str:
+    """The name lowercased, accents and dots gone, spaced abbreviations joined
+    and commas made spaces — `normalize_entity_name` before it strips forms."""
     name = fold_marks(fold_apostrophes(strip_edgar_tag(name)).lower())
     name = name.replace(".", "")
     # A run of spaced single letters is an abbreviation written with spaces:
@@ -449,6 +441,41 @@ def normalize_entity_name(name: str) -> str:
     name = _SPACED_LETTERS.sub(lambda m: m.group(0).replace(" ", ""), name)
     # a comma parts words: "Co.,Llc" is "co llc", not "collc"
     name = re.sub(r"\s+", " ", name.replace(",", " ")).strip()
+    return name
+
+
+def legal_form_of(name: str) -> str:
+    """The legal form a name ends in — the part `normalize_entity_name` strips
+    (a partnership's "& Co. KG" too) — spelled one way ("Ltd." is "limited",
+    as `sec_ex21.legal_name_key` spells it); "" for none. "Citadel Securities
+    Llc" ends in "llc"; "Citadel Securities" and "Investor AB" (an
+    abbreviation the key keeps) end in none (findings item 104)."""
+    from app.scraper.sec_ex21 import _form_key
+    plain = _plain_name(name or "")
+    base = strip_trailing_forms(strip_partnership_form(plain))
+    if not plain or base == plain or not plain.startswith(base):
+        return ""
+    return _form_key(plain[len(base):])
+
+
+def states_legal_form(name: str) -> bool:
+    """Whether the name ends in a legal form: written so, it is a company's
+    whole legal name (findings item 104)."""
+    return bool(legal_form_of(name))
+
+
+def normalize_entity_name(name: str) -> str:
+    """
+    Canonical form of a company name for cross-source deduplication.
+    Strips legal suffixes, punctuation, and whitespace.
+    e.g. 'BlackRock, Inc.' → 'blackrock'
+         'BLACKROCK INC'   → 'blackrock'
+         'BlackRock'       → 'blackrock'
+         'JPMorgan Chase & Co.', 'JPMorgan Chase and Company' → 'jpmorgan chase'
+         "Domino's Pizza, Inc.", 'DOMINOS PIZZA INC' → 'dominos pizza'
+         'The New York Times Company', 'NEW YORK TIMES CO' → 'new york times'
+    """
+    name = _plain_name(name)
     # KG first, so the "GmbH & Co." before it goes as a legal form too; then
     # every form at the end, the slash "SA/NV" leaves and a dangling "&" of
     # "& Co" with it ("JPMorgan Chase &" matched nothing, 2026-10-29)

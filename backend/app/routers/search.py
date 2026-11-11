@@ -10,7 +10,7 @@ from app.database import db
 from app.db.arcadedb import run_sql
 from app.db.anchors import label_or_entity
 from app.roles import canonical_role
-from app.scraper.mapper import normalize_entity_name
+from app.scraper.mapper import legal_form_of, normalize_entity_name, states_legal_form
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 from app.merged_ids import resolve_current_id
@@ -323,7 +323,7 @@ def _parent_before_subsidiary(nodes: list[dict], q: str, tokens: list[str], nn: 
             continue
         at = out.index(sub)
         up = next((i for i, n in enumerate(out) if i > at and n.get("id") in owners
-                   and _credible_match(n, _owner_words(n, tokens), nn)
+                   and _credible_match(n, _owner_words(n, tokens), nn, q)
                    and (not exact(sub) or exact(n) or _same_base_name(n, sub))), None)
         if up is not None:
             out.insert(at, out.pop(up))
@@ -356,18 +356,39 @@ def resolve_best_entity(q: str, country: str | None = None, on: str | None = Non
     # same normalised name, or every word of the query in one of its names.
     # The query's legal form is no word of the name when it is the node's own
     # ("Investor AB" is Investor Aktiebolag: GLEIF spells AB out; item 76).
-    return best if _credible_match(best, _owner_words(best, tokens), nn) else None
+    return best if _credible_match(best, _owner_words(best, tokens), nn, q) else None
 
 
-def _credible_match(node: dict, tokens: list[str], nn: str | None) -> bool:
+def _credible_match(node: dict, tokens: list[str], nn: str | None, query: str | None = None) -> bool:
     """Whether a candidate is the company the query names, not a neighbour
     in the index: its normalised name (or an alias's) equals the query's, or
     every word of the query occurs in its name, an alias, a register name or
     its search text.
-    Words without a letter or digit ("·", "&", "-") are not words."""
+    Words without a letter or digit ("·", "&", "-") are not words.
+
+    ``query`` (as typed): when it ends in a legal form (`states_legal_form`),
+    it is a company's whole legal name, and a name holding a word more is another
+    company. "Citadel Securities Llc" took Citadel Securities GP LLC — every
+    word of the query is in it — when the LLC's own node was not there yet,
+    and its scrape read the GP's CIK (findings item 104, rebuild 2026-11-10).
+    Then only a name with the query's words, in any order and no other, counts
+    ("PRICE T ROWE GROUP INC" is "T. Rowe Price Group, Inc."); the search text
+    (a description's words) does not. A query without its form ("Berkshire",
+    "Citadel Securities") still takes a longer name: it names no whole one.
+    And the form is part of the name, as for an Exhibit 21 row (item 87,
+    `graph_writer._form_disagrees`): with the query's own node missing,
+    "Tesla, Inc." took Tesla LLC and "VIAVI SOLUTIONS INC." Viavi Solutions
+    GmbH — same words, another company."""
+    full_name = bool(query) and states_legal_form(query)
+    if full_name and _form_disagrees(query, node):
+        return False
     alias_raw = _other_spellings(node)
     if nn and (node.get("name_normalized") == nn or any(normalize_entity_name(a) == nn for a in alias_raw if a)):
         return True
+    if full_name and nn:
+        want = set(nn.split())
+        return any(set(normalize_entity_name(_fold(n)).split()) == want
+                   for n in [node.get("name") or "", *alias_raw] if n)
     # accents folded on both sides: "Nestlé" is NESTLE S.A. (the name
     # normaliser keeps accents, so the key test above does not catch it)
     words = [_fold(t) for t in tokens if any(ch.isalnum() for ch in t)]
@@ -379,6 +400,23 @@ def _credible_match(node: dict, tokens: list[str], nn: str | None) -> bool:
     names = ([_fold(node.get("name") or "")] + [_fold(a) for a in alias_raw if a]
              + [_fold(node.get("search_text") or "")])
     return any(all(w in n for w in words) for n in names)
+
+
+def _form_disagrees(query: str, node: dict) -> bool:
+    """The query's legal form is none of the node's: every name the node
+    bears or bore (its own, its aliases, the register's other ones, GLEIF's
+    former legal names) ends in a form, and not one in the query's. A node
+    with a name without a form, or with one of the query's form, agrees —
+    Roche Holding Ltd is "Roche Holding AG" by its alias, Wellington
+    Management Group LLP "Wellington Management Co Llp" by EDGAR's former name.
+    Only the form is compared: the words before it may stand in another order
+    ("PRICE T ROWE GROUP INC") — the word rule of `_credible_match` judges
+    those. A conversion no name of the node records reads as another company:
+    EDGAR's "YouTube Inc" is not "YouTube LLC" (item 87's trade-off)."""
+    want = legal_form_of(query)
+    names = [n for n in [node.get("name"), *_other_spellings(node)] if n]
+    forms = [legal_form_of(n) for n in names]
+    return bool(want) and bool(forms) and all(forms) and want not in forms
 
 
 def _fold(text: str) -> str:

@@ -438,3 +438,25 @@ class TestDottedLettersAndGermanForms:
         assert join_dotted_letters("blackstone l.p") == "blackstone lp"
         assert join_dotted_letters("toys r us") == "toys r us"
         assert join_dotted_letters("amazon.com inc") == "amazon.com inc"     # a word, not letters
+
+
+# Findings item 104: a name written with its legal form is a whole legal name.
+@pytest.mark.parametrize("name, form", [
+    ("Citadel Securities Llc", "llc"),
+    ("Citadel Securities GP LLC", "llc"),
+    ("Tesla, Inc.", "inc"),
+    ("Microsoft Corp", "corp"),
+    ("Microsoft Corporation", "corp"),            # one spelling of a form
+    ("NEW YORK TIMES CO", "co"),
+    ("The New York Times Company", "co"),
+    ("SAMSUNG ELECTRONICS CO., LTD", "coltd"),
+    ("Bertelsmann SE & Co. KGaA", "cokgaa"),       # a partnership's form too
+    ("Citadel Securities", ""),
+    ("Investor AB", ""),                           # an abbreviation the key keeps
+    ("Apple", ""),
+    ("", ""),
+])
+def test_legal_form_of(name, form):
+    from app.scraper.mapper import legal_form_of, states_legal_form
+    assert legal_form_of(name) == form
+    assert states_legal_form(name) is bool(form)
