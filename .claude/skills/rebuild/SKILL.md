@@ -108,7 +108,8 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
 - `schema-audit` and the dissolution dry run in step 8 should be clean.
 - **The two whole-graph checks** (findings item 97), printed by step 8's snapshot and kept
   in `after.json`: the companies whose disclosed stakes add up **over 100 %** (as the panel
-  sums them) and the **ownership cycles** (self-loops included). The diff's last two sections
+  sums them — an indirect owner beside a direct one and a 13D/G holder controlling another owner
+  are not added, items 101/102, the app's own `_looked_through`) and the **ownership cycles** (self-loops included). The diff's last two sections
   show them gone / new / changed against the last rebuild. Every new one is a finding or a
   known case the verify names (the bank ring Berkshire ↔ BofA ↔ Wells Fargo … is real
   13F/13G cross-holding); one gone is a fix to confirm. Baseline 2026-11-10: 6 and 3.

@@ -1751,6 +1751,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       were drawn and summed — 200 % (findings item 101). Mark an indirect edge as
       such (`direct_or_indirect`), and the ownership summary adds it only when no
       direct owner states a stake.
+      A beneficial-ownership statement is a look-through by law: a 13D or 13G counts the
+      shares of every company its filer controls, so beside the controlled company's own
+      stake it counts them again — BRC's 13D/A on AmBev (71.9 %) beside AB InBev's 61.73 %,
+      133.6 % (findings item 102). Look through only CONTROL (a parent/subsidiary link or
+      > 50 % of shares or votes) and only a beneficial statement: on dev 226 owner-owns-owner
+      pairs were passive (Vanguard in State Street), and 19 Chubb subsidiaries are held
+      directly by a parent AND its subsidiary, two parts of one 100 %.
 
 - [ ] **An identifier can name a predecessor.** A security, a ticker or a CIK outlives the
       company it was issued to: Sirius XM's old CUSIP maps (GLEIF's LEI-ISIN file) to the old

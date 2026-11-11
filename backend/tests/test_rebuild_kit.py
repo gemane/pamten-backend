@@ -282,6 +282,16 @@ class TestOver100:
         assert [[o[0] for o in r[3]] for r in snapshot.over_100(rows)] == [["costa", "z"]]
         assert snapshot.over_100(rows)[0][2] == 130.0
 
+    def test_a_controller_s_13d_beside_the_company_it_controls_is_not_summed(self):
+        # findings item 102: BRC's 13D/A on AmBev counts AB InBev's shares; BRC
+        # votes 52.3 % of AB InBev in its bloc, so it controls it
+        rows = [_o("brc", "ambev", 71.9), _o("abi", "ambev", 61.73, f="EX-8.1"),
+                {**_o("brc", "abi", None), "v": 52.3, "ot": "minority"}]
+        assert snapshot.over_100(rows) == []
+        # a passive holding in the other owner is no control: both are summed
+        rows[2] = {**_o("brc", "abi", 7.0, f="13G")}
+        assert [r[2] for r in snapshot.over_100(rows)] == [133.63]
+
     def test_one_owner_counts_once_with_its_highest_stake(self):
         rows = [_o("x", "c", 60), _o("x", "c", 30), _o("y", "c", 45)]
         assert [r[2] for r in snapshot.over_100(rows)] == [105.0]
