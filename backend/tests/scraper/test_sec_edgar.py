@@ -2759,7 +2759,13 @@ class TestRoleDatesFromForm3:
                     "accessionNumber": [f"0000000001-{prefix}-{i:06d}" for i in range(n)],
                     "primaryDocument": [f"{prefix}{i}.xml" for i in range(n)],
                     "filingDate": [f"20{prefix}-01-01"] * n}
-        submissions = {"filings": {"recent": index("26", recent_forms, recent_docs),
+        recent = index("26", recent_forms, recent_docs)
+        # an older filing ends the inline page before the insider window starts,
+        # so the older pages are read for seat dates only (the window: item 105)
+        for key, value in (("form", "8-K"), ("accessionNumber", "0000000001-19-000000"),
+                           ("primaryDocument", "8k.htm"), ("filingDate", "2019-01-01")):
+            recent[key] = [*recent[key], value]
+        submissions = {"filings": {"recent": recent,
                                    "files": [{"name": name} for name in pages]}}
         older = {name: index(name[:2], *fd) for name, fd in pages.items()}
 
@@ -2885,6 +2891,64 @@ class TestTheInsiderWindow:
             docs = [self._xml(f"Person{i} A", title="Vice President", cik=f"{i:07d}") for i in range(5)]
             execs = self._run(forms, docs, ["2026-10-29"] * 5)
         assert len(execs) == 3
+
+    def test_the_window_is_read_whole_past_the_old_ceiling(self):
+        # TSMC, 2026-11-10: 333 Form 3/4s in eight months; its directors' one
+        # filing, the Form 3 of 2026-03-18, came after the 300th (item 105)
+        forms = ["4"] * 330 + ["3"] * 3
+        docs = [self._xml("Wei C C", title="CEO", cik="0000001") for _ in range(330)]
+        docs += [self._xml(f"Director{i} A", form="3", officer="0", director="1", period="2026-03-18",
+                           cik=f"00001{i:02d}") for i in range(3)]
+        execs = self._run(forms, docs, ["2026-11-10"] * 330 + ["2026-03-18"] * 3)
+        assert sorted(e["name"] for e in execs if e["role"] == "Director") == \
+            [f"A Director{i}" for i in range(3)]
+
+    def test_the_window_reads_on_into_the_next_index_page(self):
+        # the inline index ends inside the window (JPMorgan's on 2025-11-10,
+        # the window from 2025-07-16): the director on the next page is listed,
+        # a filing on that page before the window is not, and the page is read
+        # once for the window and the seat dates together
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        recent = {"form": ["4"], "accessionNumber": ["0000000001-26-000000"],
+                  "primaryDocument": ["r0.xml"], "filingDate": ["2026-10-29"]}
+        older = {"form": ["4", "4", "3"],
+                 "accessionNumber": ["0000000001-25-000001", "0000000001-24-000002", "0000000001-06-000003"],
+                 "primaryDocument": ["o1.xml", "o2.xml", "o3.xml"],
+                 "filingDate": ["2025-09-01", "2025-01-02", "2006-01-02"]}
+        served = {"r0.xml": self._xml("Dimon James", title="CEO", cik="0000001"),
+                  "o1.xml": self._xml("Crown James", officer="0", director="1", cik="0000002"),
+                  "o2.xml": self._xml("Gone Long", officer="0", director="1", cik="0000003"),
+                  "o3.xml": self._xml("Dimon James", form="3", period="2006-01-01", title="CEO",
+                                      cik="0000001")}
+        opened = []
+
+        def fake_get_text(url, params=None):
+            opened.append(url.split("/")[-1])
+            return served[url.split("/")[-1]]
+        submissions = {"filings": {"recent": recent, "files": [{"name": "p1.json"}]}}
+        asked = []
+
+        def fake_get(url, params=None):
+            name = url.split("/")[-1]
+            if name.startswith("CIK"):
+                return submissions
+            asked.append(name)
+            return older
+        with patch.object(sec_edgar, "_get", side_effect=fake_get), \
+             patch.object(sec_edgar, "_get_text", side_effect=fake_get_text):
+            execs = sec_edgar.fetch_executives("320193")
+        assert sorted(e["name"] for e in execs) == ["James Crown", "James Dimon"]
+        assert asked == ["p1.json"]
+        # the page's Form 3 from before the window dates the seat, opened once
+        assert next(e for e in execs if e["name"] == "James Dimon")["since"] == "2006-01-01"
+        assert opened.count("o3.xml") == 1
+
+    def test_an_inline_index_that_covers_the_window_reads_no_page_for_it(self):
+        from app.scraper.sec_edgar import _window_pages
+        subs = {"filings": {"files": [{"name": "p1.json"}]}}
+        assert _window_pages(subs, ["2026-10-29", "2025-01-01"], "2025-07-30") == {}
+        assert _window_pages(subs, ["2026-10-29"], None) == {}
 
     def test_the_window_counts_from_the_newest_form_3_or_4(self):
         from app.scraper.sec_edgar import FORM4_WINDOW_DAYS, _form34_window_start

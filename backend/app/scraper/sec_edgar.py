@@ -78,7 +78,11 @@ SECTION_INSIDERS = "insiders"
 SECTION_HOLDINGS = "holdings"
 READ_TIMEOUT     = 10.0   # seconds without a byte before the one retry (item 38)
 MAX_FORM4_FETCH  = 60     # max unique insiders listed from Form 3/4
-MAX_FORM4_SCAN   = 300    # Form 3/4 documents opened for them, at most
+#: Form 3/4 documents opened per scrape, at most: a runaway guard, never the
+#: rule — the window is (below). At 300 it was a rule: TSMC filed 333 Form 3/4s
+#: in eight months, and its seven directors, whose one filing is the Form 3 of
+#: 2026-03-18, fell past it the day 30 new Form 4s came in (findings item 105).
+MAX_FORM4_SCAN   = 1000
 #: Insiders are read from the Form 3/4s of the last ~15 months, counted back
 #: from the issuer's newest one: every sitting director files at least once a
 #: year (the annual grant). The window replaced a cap of 50 documents, which a
@@ -2355,10 +2359,10 @@ def fetch_executives(cik: str) -> list:
         return []
 
     recent       = submissions.get("filings", {}).get("recent", {})
-    forms        = recent.get("form",           [])
-    accessions   = recent.get("accessionNumber", [])
-    primary_docs = recent.get("primaryDocument", [])
-    filing_dates = recent.get("filingDate",      [])
+    forms        = list(recent.get("form",           []))
+    accessions   = list(recent.get("accessionNumber", []))
+    primary_docs = list(recent.get("primaryDocument", []))
+    filing_dates = list(recent.get("filingDate",      []))
 
     # Collect one filing per unique reporting person (newest first = most
     # current title), then keep reading the rarer Form 3s further back for
@@ -2369,6 +2373,19 @@ def fetch_executives(cik: str) -> list:
     scanned  = 0
     form3_scanned = 0
     window_start = _form34_window_start(forms, filing_dates)
+    # The inline index holds the newest ~1,000 filings: a busy filer's ends
+    # inside the window (JPMorgan's on 2025-11-10, the window from 2025-07-16),
+    # and the window's oldest Form 3/4s are on the next page. Read on, so the
+    # window is read whole; the pages are kept for the seat dating below.
+    pages = _window_pages(submissions, filing_dates, window_start)
+    for page in pages.values():
+        for form, acc, doc, filed in zip(page.get("form") or [], page.get("accessionNumber") or [],
+                                         page.get("primaryDocument") or [], page.get("filingDate") or []):
+            if form in ("3", "4", "3/A", "4/A") and filed and filed >= window_start:
+                forms.append(form)
+                accessions.append(acc)
+                primary_docs.append(doc)
+                filing_dates.append(filed)
 
     # Fetch Form 3/4 filings newest-first and dedupe by the *reporting person* —
     # NOT the accession/filer-CIK prefix, which collapses distinct insiders who
@@ -2440,12 +2457,36 @@ def fetch_executives(cik: str) -> list:
     # 2020 — so a long-serving officer's Form 3 is on an older page.
     # a former insider too: its seat is written closed on a fresh read and
     # dated like any other (findings item 74)
+    if scanned >= MAX_FORM4_SCAN:
+        log.warning("SEC EDGAR: CIK=%s files more than %d Form 3/4s in its insider window — "
+                    "the oldest were not read", cik, MAX_FORM4_SCAN)
     if any(not e.get("since") for e in executives):
-        _date_from_older_pages(cik, submissions, by_person)
+        _date_from_older_pages(cik, submissions, by_person, pages)
     _drop_issuer_event_dates(executives)
     log.info("SEC EDGAR: found %d executives from Form 3/4 for CIK=%s",
              len(executives), cik)
     return executives
+
+
+def _window_pages(submissions: dict, filing_dates: list, window_start: str | None) -> dict:
+    """The older submissions pages the insider window reaches into, by name:
+    read while the filings so far end after the window's start, at most
+    MAX_OLDER_PAGES (findings item 105). {} when the inline index covers it."""
+    files = (submissions.get("filings", {}) or {}).get("files") or []
+    pages: dict = {}
+    oldest = filing_dates[-1] if filing_dates else ""
+    for f in files[:MAX_OLDER_PAGES]:
+        if not window_start or not oldest or oldest < window_start:
+            break
+        try:
+            page = _get(f"{SUBMISSIONS_URL}/{f['name']}")
+        except Exception as exc:  # noqa: BLE001 - the window's tail is best-effort
+            log.warning("SEC EDGAR: older submissions page %s failed: %s", f.get("name"), exc)
+            break
+        pages[f["name"]] = page
+        dates = page.get("filingDate") or []
+        oldest = dates[-1] if dates else ""
+    return pages
 
 
 def _form34_window_start(forms: list, filing_dates: list) -> str | None:
@@ -2463,7 +2504,8 @@ MAX_OLDER_PAGES = 3      # older submissions index pages read for Form 3s
 MAX_OLDER_FORM3 = 60     # Form 3 documents opened across them
 
 
-def _date_from_older_pages(cik: str, submissions: dict, by_person: dict) -> int:
+def _date_from_older_pages(cik: str, submissions: dict, by_person: dict,
+                           loaded: dict | None = None) -> int:
     """Seat start dates for listed people whose Form 3 predates the inline index.
 
     EDGAR pages the rest of a company's filings as `filings.files` (Microsoft:
@@ -2474,7 +2516,8 @@ def _date_from_older_pages(cik: str, submissions: dict, by_person: dict) -> int:
     rules as the inline pass: same seat only, never a "Former …" filing as the
     start — a former insider's seat is dated too (findings item 74).
     Returns how many people were dated. Electronic Form 3s begin mid-2003;
-    earlier seats are not in EDGAR at all.
+    earlier seats are not in EDGAR at all. ``loaded``: pages the insider
+    window already read (`_window_pages`), not asked for again.
     """
     files = (submissions.get("filings", {}) or {}).get("files") or []
     issuer_cik_int = _cik_int(cik)
@@ -2483,7 +2526,7 @@ def _date_from_older_pages(cik: str, submissions: dict, by_person: dict) -> int:
         if not any(not e.get("since") for e in by_person.values()):
             break
         try:
-            page = _get(f"{SUBMISSIONS_URL}/{f['name']}")
+            page = (loaded or {}).get(f["name"]) or _get(f"{SUBMISSIONS_URL}/{f['name']}")
         except Exception as exc:  # noqa: BLE001 - dating is best-effort
             log.warning("SEC EDGAR: older submissions page %s failed: %s", f.get("name"), exc)
             break
