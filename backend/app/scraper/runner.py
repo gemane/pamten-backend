@@ -1361,7 +1361,9 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
                 name=sub["name"], entity_type="company",
                 country=country,
                 jurisdiction_code=jurisdiction_subdivision(sub["jurisdiction"]),
-                source_id=source_id)
+                source_id=source_id,
+                # the row's "f/k/a" and "d/b/a" notes (findings item 80)
+                former_names=sub.get("former_names"), aliases=sub.get("aliases"))
             if not sub_id or sub_id == company_id:
                 continue
             sub_ids[-1] = sub_id

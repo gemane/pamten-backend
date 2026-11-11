@@ -816,3 +816,33 @@ def test_a_list_no_filename_pattern_finds_is_read_by_its_declared_type(it_db):
     assert got["Xilinx Development Corporation"] == {
         "name": "Xilinx Development Corporation", "ft": "EX-21",
         "url": base + "exh_21-10kfy25.htm", "asof": "2026-02-04"}
+
+
+def test_a_rows_other_names_reach_the_node(it_db):
+    # findings item 80: "(f/k/a …)" and "(d/b/a …)" are lifted off the name
+    # by the parser; the writer keeps them as the node's former names and
+    # aliases, and search finds the node by them
+    _apple(it_db)
+    data = {**APPLE_DATA, "subsidiaries": [
+        {"name": "ACRES Realty Funding, Inc.", "jurisdiction": "Delaware",
+         "former_names": ["RCC Real Estate, Inc."]},
+        {"name": "Ameren Illinois Company", "jurisdiction": "Illinois", "aliases": ["Ameren Illinois"]}]}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        assert runner.run_sec_ex21("Apple")["status"] == "ok"
+    got = {dict(r)["name"]: dict(r) for r in it_db.run_command(
+        "MATCH (:Entity {id:'apple'})-[:OWNS]->(b:Entity) "
+        "RETURN b.name AS name, b.aliases AS aliases, b.former_names AS former, b.search_text AS st")}
+    acres = got["ACRES Realty Funding, Inc."]
+    from app import former_names
+    # undated, as the row states no date ("NAME|", app.former_names' form)
+    assert former_names.names(acres["former"]) == ["RCC Real Estate, Inc."]
+    assert former_names.parse(acres["former"][0])[1] is None
+    assert "RCC Real Estate, Inc." in acres["aliases"]
+    ameren = got["Ameren Illinois Company"]
+    assert ameren["aliases"] == ["Ameren Illinois"] and not ameren["former"]
+    assert "Ameren Illinois" in ameren["st"]
+    # a second read of the same list merges, never duplicates
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        runner.run_sec_ex21("Apple", force=True)
+    again = it_db.run_command("MATCH (b:Entity {name:'Ameren Illinois Company'}) RETURN b.aliases AS a")
+    assert [dict(r)["a"] for r in again] == [["Ameren Illinois"]]

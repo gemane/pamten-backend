@@ -1053,8 +1053,13 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             website: str | None = None,
                             credibility_score: int = 98,
                             register_name: bool = False,
-                            candidates: list[str] | None = None) -> str:
+                            candidates: list[str] | None = None,
+                            aliases: list[str] | None = None) -> str:
     """Find or create an Entity node matched by CIK, LEI, exact name, or normalized name.
+
+    ``aliases``: other names the company goes by, as the source states them
+    (an Exhibit 21 row's "d/b/a", findings item 80) — merged into the node's
+    aliases and search text like the former names, never replacing its name.
 
     ``candidates`` are node ids weighed before the name's, on the same terms
     (`_not_this_filer`): the GLEIF node a Wikidata item resolved to by its LEI
@@ -1154,7 +1159,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
             # `register_name`); any other spelling leaves it as it is.
             if register_name and name:
                 _take_register_name(session, entity_id, name, credibility_score)
-            if former_names:
+            if former_names or aliases:
                 # Fold former names into aliases + search_text, and their dated
                 # entries into former_names (unions, no clobber).
                 rec = session.run(
@@ -1165,7 +1170,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 ).single()
                 cur_name = (rec["name"] if rec else None) or name
                 merged   = _merge_aliases(rec["aliases"] if rec else None,
-                                          former.names(former_names), cur_name)
+                                          [*former.names(former_names), *(aliases or [])], cur_name)
                 dated    = former.merge(rec["former_names"] if rec else None, former_names)
                 session.run(
                     f"""
@@ -1216,7 +1221,7 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         # keyed by the LEI or the CIK it arrives with (app.node_ids); a
         # name-only row (an Exhibit 21 subsidiary) gets a uuid
         entity_id = mint_node_id(lei=lei, sec_cik=cik)
-        aliases = _merge_aliases([], former.names(former_names), name)
+        aliases = _merge_aliases([], [*former.names(former_names), *(aliases or [])], name)
         session.run(
             f"""
             CREATE (e:Entity {{

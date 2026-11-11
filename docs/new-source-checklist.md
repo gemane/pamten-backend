@@ -750,6 +750,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       company and gets its own node. Keep the lenient match for rows without a form and for
       nodes without a hard id; measure the change over every filer's list before merging
       (the guard: old rule vs new over all Exhibit 21 rows, read-only).
+- [ ] **A name cell holds more than the name: lift the notes off before matching.** Filers write
+      former names, trade names, their own shorthand, stake notes and tax ids into the name
+      cell — 1,500 of 208,442 Exhibit 21 rows (findings item 80, 2026-11-11). Left in, the
+      note becomes part of the stored name, the name key and every later match ("Audios
+      Ventures Inc. (dba Simplecast)"). Measure the shapes over the population, give each a
+      home (former name, alias, stake, parent) or drop it, and keep quotes that ARE the name
+      ('UAB “1stdibs.com Lithuania”').
 - [ ] **A lookup by name answers with the company the name names, or with nothing.** A
       query written with its legal form is a whole legal name: a node whose name holds a word
       more, or ends in another form, is another company — however many of the query's words

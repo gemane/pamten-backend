@@ -2010,6 +2010,22 @@ from readers removed again the same day, so 11 remain):
       place, or one we cannot map, cannot tell, so the name decides.
     - Letter footnotes "(a)"–"(h)" are no part of a name (Éxito, Crown Castle);
       a page footer "… Form 20-F 2025" is no company (BAT's country rows).
+    - **What a row writes after the name is no part of it** (findings item 80,
+      2026-11-11; `_lift_name_notes`). Over 208,442 rows of 4,384 cached
+      exhibits: 952 bracketed "f/k/a" / "d/b/a" notes, 363 defined terms, 159
+      bracketed stakes, 31 "owned by" notes, 10 tax ids, 5 note rows. A former
+      name ("(F/K/A RCC Real Estate, Inc.)", "formerly known as …") goes to the
+      node's `former_names`, undated; a trade name ("(d/b/a Ameren Illinois)",
+      "a/k/a") to its `aliases` — both reach search. The filing's shorthand
+      ("(“AGX”)") and a US tax id ("(87-41661458)") go. A stake note gives the
+      row's stake where no column did ("(37.4% owned)", "(50% interest)"), and
+      the holder it names becomes its parent as a parent column would
+      ("(100% owned by Roadrunner Gas Transmission Holdings, LLC)"); "owned by
+      Registrant" is the filer. A note naming two holders ("31.05% owned by …
+      and 68.95% owned by …") names neither the parent nor the row's stake —
+      the layout decides. A row that is only a note ("Wholly-Owned Subsidiary
+      of Lucid Diagnostics Inc.", "(fka DE 201 Santa Monica, LLC)") is no
+      company, and two spellings of one row are one row.
     - **One name in two countries is two nodes** (the user's call, 2026-10-08):
       Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador. The list
       keeps one entry per name and place; the writer matches a name in its
