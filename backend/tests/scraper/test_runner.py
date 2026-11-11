@@ -2439,7 +2439,8 @@ class TestTheFinalReportReachesTheWriter:
                     {"investor_name": "Member Fund", "investor_cik": "0000000001", "form_type": "SCHEDULE 13D/A",
                      "filing_type": "13D/A", "stake_percent": None, "voting_power_pct": 4.0,
                      "file_date": "2026-05-01", "is_individual": False, "final_report": "2026-04-30",
-                     "group_members": [{"name": "Other Fund", "cik": None, "type_code": "PN"}]}],
+                     "group_members": [{"name": "Other Fund", "cik": None, "type_code": "PN"}],
+                     "voting_pact": True}],
                 "holdings": [{"subject_name": "Nvidia Corp", "subject_cik": None, "stake_percent": 4.1,
                               "file_date": "2026-08-01", "filing_type": "13G/A", "final_report": "2026-06-30"}]}
         got = self._run(data)

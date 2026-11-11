@@ -363,7 +363,8 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     # A 13D filing group. `type` is always `voting_group`: the API's node
     # kind, which the client reads off every node it draws — the vertex type
     # says the same thing to the database
-    "VotingGroup": ("id", "name", "name_normalized", "search_text", "description", "type",
+    # `kind`: voting_pact or joint_filing (findings item 103)
+    "VotingGroup": ("id", "name", "name_normalized", "search_text", "description", "type", "kind",
                     "source_id", "created_at", "last_scraped_at"),
     "SUCCEEDED_BY": ("since", "source_id", "source_url", "source_date", "last_scraped_at"),
     "DUAL_LISTED_WITH": ("source_id", "source_url", "source_date", "last_scraped_at"),

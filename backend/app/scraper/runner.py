@@ -51,7 +51,7 @@ from app.scraper.sec_writer import (
     _retire_superseded_bloc_edge, _roster_overlap, _rosters_match,               # noqa: F401
     _same_member, _split_member_key,                                             # noqa: F401
     _upsert_group_membership, _upsert_owns_sec,                                  # noqa: F401
-    _upsert_role_sec, _upsert_voting_group, _prune_group_membership, _close_role_sec, form_label,                          # noqa: F401
+    _upsert_role_sec, _upsert_voting_group, VOTING_PACT, JOINT_FILING, _prune_group_membership, _close_role_sec, form_label,                          # noqa: F401
     stated_by_13dg,                                                              # noqa: F401
     write_acquisition_sec,                                                       # noqa: F401
 )
@@ -2555,11 +2555,17 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         # Street, Morgan Stanley), which is not a governance bloc at all.
         members = filing.get("group_members") or []
         if members and _is_control_filing(filing.get("form_type")):
+            # A voting pact or a joint filing (findings item 103, the user's
+            # choice of 2026-11-11): a statement naming an agreement over the
+            # votes is a "Voting group"; every other joint 13D is one holder
+            # with its affiliates filing together — Berkshire, Buffett, National
+            # Indemnity, GEICO on DaVita — a "Joint filing".
+            pact = bool(filing.get("voting_pact"))
             roster = [_member_key(investor_name, filing.get("investor_cik"))]
             roster += [_member_key(m["name"], m.get("cik")) for m in members]
             group_id = _upsert_voting_group(
                 subject_id=target_id, subject_name=data["name"], roster=roster,
-                source_id=source_id)
+                source_id=source_id, kind=VOTING_PACT if pact else JOINT_FILING, filer=investor_name)
 
             # The filer joins as a member like everybody else; it gets no edge
             # of its own, or the company would list both it and the group.
@@ -2591,6 +2597,10 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
                 file_date=filing.get("file_date"),
                 # No stake: the group's members hold the shares individually, and
                 # a bloc percentage summed with theirs would exceed the company.
+                # A joint filing's figure is one holding, but a controller's own
+                # statement may already hold its vehicle's block (Lennar: Stuart
+                # Miller 60.4 % beside MP Alpha's 58.6 %) — counting it waits for
+                # those to be merged (findings item 107); the label is item 103's.
                 stake_percent=None,
                 voting_power_pct=filing.get("voting_power_pct") or filing.get("stake_percent"),
                 # The bloc's count belongs on the group's edge above all: this

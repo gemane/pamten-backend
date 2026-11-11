@@ -1269,6 +1269,48 @@ def _co_filers_form_a_bloc(form_type: str | None, reporting_persons: int) -> boo
     return reporting_persons != 1
 
 
+#: what makes co-filers a voting group rather than a joint filing (findings
+#: item 103): an agreement among them over how the shares vote, named in the
+#: statement (Items 4 and 6)
+_PACT_WORDS = re.compile(r"voting\s+agreement|(?:stock|share)holders['’]?\s+agreement|voting\s+trust", re.I)
+#: a cover's "member of a group" box: (a) affirms, (b) disclaims
+_GROUP_BOX_XML = re.compile(r"<(?:memberOfGroup|memberGroup)>\s*([ab])\s*<", re.I)
+_GROUP_BOX_TEXT = re.compile(r"member\s+of\s+a\s+group[^()]{0,200}\(a\)\s*(\S{1,3})\s*\(b\)\s*(\S{1,3})", re.I)
+_BOX_TICKED = re.compile(r"x|☒|þ|ý|✓|☑", re.I)
+
+
+def _group_boxes(text: str) -> list[str]:
+    """Each reporting person's "member of a group" box: 'a' (a group), 'b' (not
+    one), '-' (neither ticked) — from the XML schedule or the text covers."""
+    boxes = [b.lower() for b in _GROUP_BOX_XML.findall(text or "")]
+    if boxes:
+        return boxes
+    out = []
+    for a, b in _GROUP_BOX_TEXT.findall(_plain_text(text or "")):
+        out.append("a" if _BOX_TICKED.search(a) else ("b" if _BOX_TICKED.search(b) else "-"))
+    return out
+
+
+def _is_voting_pact(form_type: str | None, reporting_persons: int, text: str | None) -> bool:
+    """Do this statement's co-filers form a voting pact — the only joint 13D the
+    issuer side draws as a "Voting group" (findings item 103, the user's rule of
+    2026-11-11)? A 13D with co-filers (`_co_filers_form_a_bloc`) whose text
+    names an agreement over the votes — a voting agreement, a stockholders' or
+    shareholders' agreement, a voting trust — and whose persons do not all
+    disclaim a group (box (b)). Of the 44 joint 13Ds behind dev's 27 groups,
+    two are: AB InBev's (BRC, the Stichting, … — the Voting Agreement) and the
+    New York Times' (the Ochs-Sulzberger family trust). The rest are one
+    controlling chain or one family filing together, as Rule 13d-1(k) allows —
+    Berkshire with its insurers on DaVita, Icahn's entities, SoftBank's funds:
+    a "Joint filing" whose figure is one holding. How each statement's row 13
+    is split stays as it was (`_co_filers_form_a_bloc`): only the group node
+    the writer draws changes."""
+    if not _co_filers_form_a_bloc(form_type, reporting_persons) or not _PACT_WORDS.search(text or ""):
+        return False
+    boxes = _group_boxes(text or "")
+    return not (boxes and all(b == "b" for b in boxes))
+
+
 def _split_stake(rows: dict, total: int | None, reported_pct: float | None,
                  in_group: bool = False) -> tuple:
     """The stake/voting split over already-extracted numbers.
@@ -1924,6 +1966,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
         cover_cusip   = None      # the issuer's CUSIP as the cover states it
         names: list[str] = []     # every reporting person of this statement
         passive       = False     # co-filers who report the same shares (no bloc)
+        voting_pact   = False     # co-filers who vote each other's shares (item 103)
 
         if inv.get("xml"):
             xml, person = inv["xml"], inv["person"]
@@ -1959,6 +2002,10 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                               # shape of the name.
                               "type_code": o.get("type_code")}
                              for o in xml["persons"] if o is not person]
+            # a group of co-filers is a voting pact only when the statement
+            # names an agreement over the votes (findings item 103)
+            voting_pact   = _is_voting_pact(xml.get("schedule") or "13D", len(xml.get("persons") or []),
+                                            xml.get("raw_text"))
         elif inv.get("primary_url"):
             try:
                 text          = _get_text(inv["primary_url"])
@@ -1978,6 +2025,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
                 bloc          = _co_filers_form_a_bloc(inv["form_type"], _cover_page_count(text))
                 names         = _cover_page_names(text) or [inv["investor_name"]]
                 passive       = not bloc
+                voting_pact   = _is_voting_pact(inv["form_type"], _cover_page_count(text), text)
                 pct, voting    = _own_stake_and_voting(cover, pct, document=text, in_group=bloc)
                 is_individual = _parse_reporter_type_from_text(cover)
                 share_class   = _parse_class_title_from_text(text)
@@ -2097,6 +2145,9 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # caller to use; deliberately NOT written to the graph (see the
             # module docstring), because membership is not ownership.
             "group_members":    group_members,
+            # whether they form a voting pact — the only joint schedule the
+            # issuer side draws as a group (findings item 103)
+            "voting_pact":      voting_pact,
         })
 
     _restate_against_newest_denominator(results)
@@ -3644,6 +3695,9 @@ def _parse_13dg_xml(raw: str) -> dict | None:
                                     or _xml_child(root, "eventDateRequiresFilingThisStatement")),
         "persons":      persons,
         "schedule":     schedule,
+        # the whole schedule, its Items 4 and 6 included: whether it names
+        # an agreement over the votes (`_is_voting_pact`, findings item 103)
+        "raw_text": raw,
         "comment_text": " ".join(comments),
         # The filer's LAST report (findings item 35): a 13G ticks Item 5,
         # "Ownership of 5 Percent or Less of a Class" — it has ceased to own

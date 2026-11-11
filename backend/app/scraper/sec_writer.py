@@ -115,13 +115,24 @@ def _rosters_match(a: list, b: list) -> bool:
     return shared >= _GROUP_MATCH_MIN_SHARED and shared / smaller >= _GROUP_MATCH_MIN_RATIO
 
 
-def _voting_group_name(size: int) -> str:
-    """What a filing group is called: what it is, and how many are in it."""
+#: what a 13D filing group is (findings item 103, the user's choice of
+#: 2026-11-11): a voting pact names an agreement over the votes; every other
+#: joint statement is one holder with its affiliates filing together
+VOTING_PACT, JOINT_FILING = "voting_pact", "joint_filing"
+
+
+def _voting_group_name(size: int, kind: str = VOTING_PACT, filer: str | None = None) -> str:
+    """What a filing group is called: what it is, and how many are in it — a
+    joint filing by its filer ("Joint filing · Berkshire Hathaway Inc. and 7
+    affiliates")."""
+    if kind == JOINT_FILING and filer:
+        others = size - 1
+        return f"Joint filing · {filer}" + (f" and {others} affiliate{'s' if others != 1 else ''}" if others else "")
     return f"Voting group · {size} parties" if size != 1 else "Voting group · 1 party"
 
 
 def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
-                         source_id: str) -> str:
+                         source_id: str, kind: str = VOTING_PACT, filer: str | None = None) -> str:
     """The node standing for a 13D filing group, found by its roster.
 
     Deliberately not routed through `_upsert_entity_by_name`: that resolves on
@@ -150,7 +161,7 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
         # subsidiary of it. Uniqueness is not needed — groups are found by their
         # roster (above) and excluded from name-based dedup — so the count can
         # sit in the name, where it is the most useful thing to say.
-        name = _voting_group_name(len(roster))
+        name = _voting_group_name(len(roster), kind, filer)
         # The DISPLAY name says what the thing is and how big it is, and that is
         # all a reader wants on a row; the matching key carries the subject, so
         # two nine-party groups over different companies never share one
@@ -169,22 +180,24 @@ def _upsert_voting_group(subject_id: str, subject_name: str, roster: list,
             session.run("""MATCH (g:VotingGroup {id: $id})
                            SET g.member_keys = $roster, g.name = $name,
                                g.name_normalized = $norm, g.search_text = $stext,
-                               g.last_scraped_at = $now""",
+                               g.kind = $kind, g.last_scraped_at = $now""",
                         id=best, roster=roster, name=name, norm=norm,
-                        stext=search_text, now=now)
+                        stext=search_text, kind=kind, now=now)
             return best
         gid = str(uuid.uuid4())
         session.run(
             f"""CREATE (g:VotingGroup {{
                     id: $id, name: $name, name_normalized: $norm, search_text: $stext,
-                    type: '{VOTING_GROUP_TYPE}', member_keys: $roster,
+                    type: '{VOTING_GROUP_TYPE}', kind: $kind, member_keys: $roster,
                     source_id: $src, last_scraped_at: $now,
                     created_at: $now, description: $desc
                 }})""",
-            id=gid, name=name, norm=norm, stext=search_text,
+            id=gid, name=name, norm=norm, stext=search_text, kind=kind,
             roster=roster, src=source_id, now=now,
             desc=(f"Parties acting together under a shareholders' or voting agreement "
-                  f"reported to the SEC on Schedule 13D concerning {subject_name}."))
+                  f"reported to the SEC on Schedule 13D concerning {subject_name}." if kind == VOTING_PACT else
+                  f"{filer or 'A holder'} and its affiliates, reporting one holding of {subject_name} "
+                  f"together on Schedule 13D — no agreement over the votes is stated."))
         return gid
 
 
