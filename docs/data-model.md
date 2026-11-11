@@ -548,6 +548,12 @@ GLEIF data comes from the **GLEIF golden copy** (current, daily), keyed `lei:{LE
 legal-form type) from LEI-CDF; `gleif-rr` imports the **relationships** (direct/
 ultimate parents) from RR-CDF; `gleif-succession` imports mergers from LEI-CDF (in the curated import only those touching its companies, `--only-file`; a record whose registration is DUPLICATE or ANNULLED names its own live record, not a successor, and is skipped — 6,518 + 93 of the 35,346 successor records on 2026-11-08, findings item 88; a merge that makes a claim's two ends one drops it);
 `gleif-repex` imports the **reasons a company gives for reporting no parent**.
+A DUPLICATE or ANNULLED registration is no entity's record either (findings item 91,
+2026-11-11): the entity import, the daily delta and the register pointer skip it and
+count it (`not_an_entity`), and a pointer at one follows its SuccessorLEI to the live
+record, once. Read as entities they had become "active" nodes beside the live one — 9
+on dev (News Corporation, BARCLAYCARD UK, the INDITEX and Domino's duplicates …). A node
+an earlier read made of one stays until the next rebuild.
 This replaces the OpenOwnership GLEIF BODS export (`bods-gleif`), which was frozen
 at 2025‑03.
 

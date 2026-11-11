@@ -282,3 +282,24 @@ class TestTheDownloadedDeltasAreCleanedUp:
         with self._patched(), patch("httpx.get", return_value=api):
             out = download_deltas(fetch_publish_metadata(), "LastDay", str(tmp_path))
         assert os.path.exists(out["lei2"]), "an explicitly requested file was deleted"
+
+
+def test_the_delta_skips_a_duplicate_registration_and_counts_it():
+    # findings item 91: a DUPLICATE / ANNULLED record is no entity's record
+    import io
+    from unittest.mock import patch
+    from app.scraper import gleif_incremental as gi
+    dup = {"LEI": {"$": "549300YBCMRP1ZVOWM12"}, "Entity": {"LegalName": {"$": "News Corporation"}},
+           "Registration": {"RegistrationStatus": {"$": "DUPLICATE"}}}
+    live = {"LEI": {"$": "549300ITS31QK8VRBQ14"}, "Entity": {"LegalName": {"$": "NEWS CORP"}},
+            "Registration": {"RegistrationStatus": {"$": "ISSUED"}}}
+    written = []
+    with patch.object(gi, "_open_json", return_value=(io.BytesIO(b""), 0)), \
+         patch.object(gi, "_iter_lei_records", return_value=iter([dup, live])), \
+         patch.object(gi, "joined_filers", return_value={}), \
+         patch.object(gi._BatchWriter, "entity", side_effect=lambda self_, i, p: written.append(i), autospec=True), \
+         patch.object(gi._BatchWriter, "flush", autospec=True), \
+         patch.object(gi, "run_sql", return_value=[]):
+        counts = gi.import_lei_cdf_delta("delta.json", "gleif", 92)
+    assert counts["not_an_entity"] == 1 and counts["updated"] == 1
+    assert written == ["lei:549300ITS31QK8VRBQ14"]

@@ -139,7 +139,8 @@ def _sec_enabled() -> bool:
     return bool(settings.SCRAPER_SEC_EDGAR_ENABLED and get_source_enabled("sec_edgar"))
 
 
-def write_from_gleif(lei: str, candidates: list[str] | None = None, by_name: bool = True) -> str | None:
+def write_from_gleif(lei: str, candidates: list[str] | None = None, by_name: bool = True,
+                     _hops: int = 1) -> str | None:
     """The node GLEIF states for this LEI, written by the GLEIF importer's own
     reading of the record; its id, or None when GLEIF does not know the LEI.
     A node merged away answers with its survivor, which already exists.
@@ -150,10 +151,14 @@ def write_from_gleif(lei: str, candidates: list[str] | None = None, by_name: boo
     — NYT's GLEIF node was minted beside its SEC node because the SEC node
     happened to come first (2026-10-29b). ``candidates`` are node ids to weigh
     besides the name's (the node a Wikidata item resolved to by its CIK);
-    ``by_name=False`` weighs only them."""
+    ``by_name=False`` weighs only them.
+
+    A DUPLICATE or ANNULLED registration is no entity's record (findings item
+    91): the pointer follows its SuccessorLEI, the live record, once."""
     from app.merged_ids import canonical_id
     from app.scraper.bulk_import import _BatchWriter
-    from app.scraper.gleif_lei_cdf import _entity_props, hold_end_of_live_filer
+    from app.scraper.gleif_lei_cdf import _entity_props, hold_end_of_live_filer, not_an_entity
+    from app.scraper.gleif_succession import _successor_leis
     from app.scraper.runner import BODS_GLEIF_CREDIBILITY, GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, _ensure_source
 
     survivor = canonical_id(f"lei:{lei}")
@@ -163,6 +168,10 @@ def write_from_gleif(lei: str, candidates: list[str] | None = None, by_name: boo
     if not rec:
         log.info("GLEIF does not know the LEI %s a knowledge base pointed at", lei)
         return None
+    if not_an_entity(rec):
+        live = _successor_leis(rec)
+        log.info("GLEIF's LEI %s is a duplicate/annulled registration; its live record: %s", lei, live)
+        return write_from_gleif(live[0], candidates, by_name, _hops - 1) if live and _hops > 0 else None
     source_id = _ensure_source(GLEIF_SOURCE_NAME, GLEIF_SOURCE_URL, BODS_GLEIF_CREDIBILITY)
     built = _entity_props(rec, source_id, BODS_GLEIF_CREDIBILITY)
     if not built:

@@ -400,13 +400,30 @@ def _gleif_former_names(entity: dict, previous: list[str]) -> list[str]:
     return [e for e in (former_names.entry(n, until) for n in previous) if e]
 
 
+#: Registrations that are no legal entity's record (findings item 91): a
+#: DUPLICATE is a second LEI of an entity that has its live one, an ANNULLED
+#: one was issued in error — both name the right record as their SuccessorLEI.
+#: Read as entities they became 'active' nodes beside the live record (9 on
+#: dev after the 2026-11-08b rebuild: News Corporation, BARCLAYCARD UK, the
+#: INDITEX and Domino's duplicates …), each with one edge, the SUCCEEDED_BY
+#: link item 88 stopped writing. The same set `gleif_succession.NOT_A_SUCCESSION`
+#: and `gleif_rr.NOT_A_STATEMENT` name.
+NOT_AN_ENTITY = frozenset({"DUPLICATE", "ANNULLED"})
+
+
+def not_an_entity(rec: dict) -> bool:
+    """Whether the record is a DUPLICATE or ANNULLED registration (`NOT_AN_ENTITY`)."""
+    return (_registration_status(rec) or "").upper() in NOT_AN_ENTITY
+
+
 def _entity_props(rec: dict, source_id: str, credibility_score: int) -> tuple[str, dict] | None:
-    """(node_id, props) for one LEI-CDF record, or None when it lacks an LEI/name.
+    """(node_id, props) for one LEI-CDF record, or None when it lacks an LEI/name
+    or is no entity's record (`not_an_entity`; callers count it apart).
     `type` is set only when the legal form refines it (fund/foundation/nonprofit)
     — otherwise it's left untouched so an existing/Wikidata type isn't clobbered."""
     lei = _v(rec.get("LEI"))
     name = _legal_name(rec)
-    if not lei or not name:
+    if not lei or not name or not_an_entity(rec):
         return None
     entity = rec.get("Entity") or {}
     reg_authority, reg_number, reg_code = _registration(entity)
@@ -655,7 +672,7 @@ def import_lei_cdf_entities(
         raw = open(filepath, "rb")  # noqa: WPS515
 
     jur = filter_jurisdiction.upper() if filter_jurisdiction else None
-    counts = {"records": 0, "entities": 0, "skipped": 0, "inactive": 0, "ends_held": 0}
+    counts = {"records": 0, "entities": 0, "skipped": 0, "inactive": 0, "ends_held": 0, "not_an_entity": 0}
     # before the indexes go: the GLEIF nodes that are EDGAR filers too, whose
     # end this load may not write while they keep filing (findings item 85a)
     filers = joined_filers()
@@ -673,6 +690,9 @@ def import_lei_cdf_entities(
             if limit and counts["records"] >= limit:
                 break
             counts["records"] += 1
+            if not_an_entity(rec):
+                counts["not_an_entity"] += 1        # a DUPLICATE / ANNULLED registration
+                continue
             out = _entity_props(rec, source_id, credibility_score)
             if not out:
                 counts["skipped"] += 1
@@ -689,7 +709,8 @@ def import_lei_cdf_entities(
                 counts["inactive"] += 1
         batch.flush()
         msg = (f"{counts['records']:,} records, {counts['entities']:,} entities "
-               f"({counts['inactive']:,} inactive)")
+               f"({counts['inactive']:,} inactive), {counts['not_an_entity']:,} duplicate/annulled "
+               f"registrations not written")
         if bar:
             bar.finish(msg)
         else:
