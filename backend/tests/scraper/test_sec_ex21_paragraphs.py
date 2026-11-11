@@ -35,7 +35,8 @@ class TestOneCompanyPerParagraph:
     def test_a_place_that_starts_with_state_is_kept(self):
         # "State of Delaware, United States" starts like the header word
         # "State"; the row was dropped as noise
-        assert ("APIHub, Inc. d/b/a Clearbit", "State of Delaware, United States") \
+        # (the trade name goes to the row's aliases, findings item 80)
+        assert ("APIHub, Inc.", "State of Delaware, United States") \
             in _names("hubspot_ex21.htm", "HubSpot, Inc.")
 
     def test_nexpoint_names_are_no_longer_glued(self):

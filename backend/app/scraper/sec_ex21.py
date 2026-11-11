@@ -1223,7 +1223,7 @@ def _country_rows_list(sequence: list, registrant: str | None) -> list[dict]:
 
 def parse_exhibit(html: str, registrant: str | list[str] | None = None,
                   form: str | None = None, home: str | None = None) -> list[dict]:
-    """[{name, jurisdiction, stake_percent?, co_owners?, parent?,
+    """[{name, jurisdiction, stake_percent?, co_owners?, parent?, former_names?, aliases?,
     parent_basis?}] from an Ex-21/Ex-8.1 page. ``registrant`` is the filer's
     name, or a list of its names, so a heading or root row naming the filer
     itself is not taken for an intermediate parent, and a row naming the
@@ -1432,6 +1432,7 @@ def parse_exhibit(html: str, registrant: str | list[str] | None = None,
                     seen.add(_list_key(entry))
                     out.append({**entry, "_indent": 0.0, "read_from": grade})
             break
+    out = _lift_name_notes(out, names)
     # A parent named as the list names it: "Vía Artika S. A." is the listed
     # "Vía Artika S.A."; a holder named like the filer but with another legal
     # form that the list carries is that listed company, not the filer.
@@ -1480,6 +1481,99 @@ def parse_exhibit(html: str, registrant: str | list[str] | None = None,
     for e in out:
         if e.get("parent") in own - kept:
             del e["parent"]
+    return out
+
+
+# What a row writes after a company's name that is no part of it (findings item
+# 80): another name it bears or bore, the filing's own shorthand, a stake note,
+# a tax id. Measured over the 4,384 cached exhibits of 7k filings (208,442
+# rows): 952 bracketed f/k/a / d/b/a notes, 363 defined terms, 159 bracketed
+# stakes, 31 "owned by …" notes, 10 tax ids, 5 note rows.
+# "(F/K/A RCC Real Estate, Inc.)", "(fka: SF Kino SA)", "(formerly known as
+# NYMT Loan Trust I)", "(d/b/a Ameren Illinois)" — one bracket inside is a name's:
+# "(fka AMC (UK) Acquisition Limited)"
+_OTHER_NAME_NOTE = re.compile(
+    r"\s*\(\s*(?:also\s+)?(?P<kind>f/?k/?a|formerly(?:\s+known\s+as)?|d/?b/?a|doing\s+business\s+as|a/?k/?a|"
+    r"also\s+known\s+as)\b[\s:]*(?P<other>[^()]*(?:\([^()]*\)[^()]*)*)\)", re.I)
+# "Old AGI, Inc. f/k/a AIRO Group, Inc.", "Fin Technologies, Inc. d/b/a MANTL"
+_OTHER_NAME_TAIL = re.compile(
+    r"\s+(?P<kind>f/k/a|d/b/a|formerly\s+known\s+as|doing\s+business\s+as|a/k/a)\s+(?P<other>\S.*)$", re.I)
+_FORMER_KIND = re.compile(r"^(?:f|formerly)", re.I)
+_MORE_NAMES = re.compile(r"\s+(?:and|&|;)\s+(f/?k/?a|d/?b/?a|a/?k/?a)\s+", re.I)
+# "Argan, Inc. (“AGX”)", 'ACM Research (Chengdu), Inc. ("ACM Chengdu")': the
+# filing's shorthand for the company, no name it is registered or known by
+_DEFINED_TERM = re.compile(r"\s*\(\s*(?:the\s+)?[“\"‘'][^”\"’'()]{1,60}[”\"’']\s*\)", re.I)
+# "(37.4% owned)", "(50% interest)", "(95% owned by Registrant)", "(100% owned by
+# Roadrunner Gas Transmission Holdings, LLC)"
+_STAKE_NOTE = re.compile(
+    r"\s*\(\s*(?P<pct>\d{1,3}(?:\.\d+)?)\s*%\s*(?:owned|interest|held|ownership|equity)?"
+    r"(?:\s+(?:owned\s+)?by\s+(?P<by>[^()]+?))?\s*\)\s*$", re.I)
+# "(majority owned by unrelated third party)": a note, no stake of the filer's
+_OWNED_NOTE = re.compile(r"\s*\((?:majority|minority|wholly|partially)[- ]owned\b[^()]*\)\s*$", re.I)
+# "LucidDx Labs Inc. (87-41661458)": a US employer id
+_TAX_ID = re.compile(r"\s*\(\d{2}-\d{7,8}\)")
+# "Wholly-Owned Subsidiary of Lucid Diagnostics Inc.": a note row, no company
+_NOTE_ROW = re.compile(r"^(?:an?\s+)?(?:wholly|majority|minority|partially)[- ]owned\s+subsidiar(?:y|ies)\s+of\b",
+                       re.I)
+
+
+def _lift_name_notes(entries: list[dict], registrant: str | list[str] | None) -> list[dict]:
+    """Each row's name without the notes written after it (findings item 80):
+    a former name ("f/k/a", "formerly") goes to ``former_names``, a trade name
+    ("d/b/a", "a/k/a") to ``aliases``; a stake note gives the row's stake when
+    no column did, and the holder it names becomes the row's parent the way a
+    parent column would ("owned by Registrant" is the filer: no parent); the
+    filing's defined terms ("“AGX”") and a tax id go. A note row ("Wholly-Owned
+    Subsidiary of …") is no company. Rows that become one name are one row."""
+    out: list[dict] = []
+    seen: set = set()
+    for e in entries:
+        name = e["name"]
+        if _NOTE_ROW.match(name):
+            continue
+        former, aliases = [], []
+
+        def other(m):
+            # "(d/b/a ArcBest and d/b/a U-Pack)": two names
+            first, *more = _MORE_NAMES.split(m.group("other"))
+            kinds = [m.group("kind"), *more[0::2]]
+            for kind, text in zip(kinds, [first, *more[1::2]]):
+                if kept := _clean_name(text.strip(" ;,:"))[0]:
+                    (former if _FORMER_KIND.match(kind) else aliases).append(kept)
+            return ""
+        name = _OTHER_NAME_NOTE.sub(other, name)
+        name = _OTHER_NAME_TAIL.sub(other, name)
+        name = _TAX_ID.sub("", _DEFINED_TERM.sub("", name))
+        name = _OWNED_NOTE.sub("", name)
+        entry = dict(e)
+        if (m := _STAKE_NOTE.search(name)) and "%" in (m.group("by") or ""):
+            # "(31.05% owned by Kadant Lamort SAS and 68.95% owned by Kadant
+            # Inc.)": two holders — neither is THE parent, the layout decides
+            name, m = name[:m.start()], None
+        if m:
+            name = name[:m.start()]
+            if entry.get("stake_percent") is None:
+                entry["stake_percent"] = float(m.group("pct"))
+            by = (m.group("by") or "").strip()
+            if by and not entry.get("parent") and not entry.get("parent_basis"):
+                if _GENERIC_PARENT.match(by) or _is_filer(by, registrant):
+                    entry["parent_basis"] = "column"          # the filer: directly under it
+                else:
+                    entry["parent"], entry["parent_basis"] = by, "column"
+        while (cleaned := _clean_name(name.strip(" ,;"))[0]) != name:
+            name = cleaned          # "NL Industries, Inc. (2), (3),": one mark at a time
+        if len(name) < 2:
+            continue
+        if name != e["name"]:
+            entry["name"] = name
+        if former:
+            entry["former_names"] = former
+        if aliases:
+            entry["aliases"] = aliases
+        if _list_key(entry) in seen:
+            continue
+        seen.add(_list_key(entry))
+        out.append(entry)
     return out
 
 

@@ -530,9 +530,11 @@ class TestReadAgain:
                                         "Pandora Media, LLC", "Audios Ventures Inc. (dba Simplecast)",
                                         "Sirius XM Ireland Limited"))
         subs = parse_exhibit(_doc(body, "EX-21.1"), "SIRIUS XM HOLDINGS INC.", "10-K")
+        # the trade name is no part of the legal name: an alias (findings item 80)
         assert [s["name"] for s in subs] == ["Sirius XM Inc.", "Sirius XM Radio LLC.", "Automatic Labs Inc.",
-                                             "Pandora Media, LLC", "Audios Ventures Inc. (dba Simplecast)",
+                                             "Pandora Media, LLC", "Audios Ventures Inc.",
                                              "Sirius XM Ireland Limited"]
+        assert subs[4]["aliases"] == ["Simplecast"]
         assert all(s["jurisdiction"] == "" and s["read_from"] == "layout" for s in subs)
         assert parse_exhibit(_doc(body, kind=None), "SIRIUS XM HOLDINGS INC.", "10-K") == []   # undeclared: unread
 
