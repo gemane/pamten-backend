@@ -1112,6 +1112,21 @@ officers' table closed Edward W. Stack on Dick's — all fixed above. Apollo's a
 Blackstone's 2003–2008 statements on Sirius XM stay open where their old text filing
 could not be read.
 
+### A holder that became the issuer's subsidiary (findings item 99 part 3)
+
+Texaco's 13D of 2000-10-15 on Chevron (16.5 %, filed with the merger agreement) stayed
+open long after Texaco became Chevron's subsidiary in 2001 — Chevron's own Exhibit 21
+names it — and drew a two-company ownership cycle. A 13D/G statement whose holder the
+issuer's live subsidiary statement names (its Exhibit 21 / 8.1, GLEIF's relationship
+record) ends when it was filed **before** that statement: on the subsidiary relation's
+stated start, else on the list's date, `until_reason = holder_is_subsidiary`,
+`until_source_url` the list — an upper bound: the outside holding ended by then. A
+statement filed after the list (a subsidiary holding its parent's shares now) and a 13F
+are kept. Graph only, no EDGAR read (`sec_writer.close_held_by_subsidiary`): after every
+Exhibit 21 read for the filer, and over the whole graph with
+`manage.py close-held-by-subsidiary` (rebuild step 7). On dev (2026-11-11) it closes
+exactly one: Texaco → Chevron.
+
 ### One statement filed under two reporting persons' CIKs — newest wins
 
 A joint 13G names every reporting person of the **same** shares, and EDGAR files it

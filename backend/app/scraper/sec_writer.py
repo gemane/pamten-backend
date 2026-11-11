@@ -595,6 +595,11 @@ REPORTED_BY_PARENT = "reported_by_parent"
 #: why a holding's spell ended because the shares it is about ceased to exist
 #: (`close_at_class_end`, findings item 99)
 CLASS_ENDED = "class_ended"
+#: why a holding's spell ended because the holder is the issuer's own
+#: subsidiary (`close_held_by_subsidiary`, findings item 99 part 3)
+HOLDER_IS_SUBSIDIARY = "holder_is_subsidiary"
+#: the statements that say a company is another's subsidiary
+_SUBSIDIARY_STATEMENTS = ("EX-21", "EX-8.1", "RR")
 #: a statement of at least this much is the acquirer's own: one holder of the
 #: whole class is what a takeover leaves, and its holding goes on
 WHOLE_CLASS_PCT = 99.5
@@ -732,6 +737,51 @@ def close_at_class_end(owned_id: str, ends: list[dict]) -> int:
         log.info("SEC: a 13D/G holding of %s ends %s — its class ended (%s)", owned_id, end["date"], end["form"])
         closed += 1
     return closed
+
+
+def close_held_by_subsidiary(issuer_id: str | None = None) -> list[str]:
+    """End a 13D/G holding whose holder is now the issuer's own subsidiary
+    (findings item 99 part 3, the user's word of 2026-11-11): Texaco's 13D of
+    2000-10-15 on Chevron, 16.5 % — filed with the merger agreement, Texaco a
+    Chevron subsidiary since 2001 — stayed open and drew a two-company cycle.
+    The evidence is the issuer's own subsidiary statement about the holder (its
+    Exhibit 21 / 8.1, GLEIF's relationship record), live; a statement filed
+    BEFORE it ends on that statement's date, `until_reason`
+    HOLDER_IS_SUBSIDIARY, `until_source_url` the list — an upper bound: the
+    holding as an outside shareholder ended by then. A statement filed after the
+    list (a subsidiary that holds its parent's shares now) is kept, so is a 13F
+    (another rulebook). ``issuer_id`` scopes the pass to one company; without it
+    the whole graph. Returns a line per closed holding. Dates compared in Python."""
+    from app.db.arcadedb import run_command, run_query
+    from app.scraper.maintenance import restatement_family
+    rows = run_query(
+        "MATCH (h:Entity)-[r:OWNS]->(c:Entity)-[s:OWNS]->(h) "
+        "WHERE r.until IS NULL AND r.source_id = 'sec-edgar' AND s.until IS NULL "
+        "AND (s.filing_type IN $subs OR s.source_id = 'gleif') "
+        + ("AND c.id = $cid " if issuer_id else "")
+        + "RETURN h.id AS h, c.id AS c, h.name AS hn, c.name AS cn, r.filing_type AS ft, "
+          "r.source_date AS source_date, r.since AS since, s.source_date AS list_day, s.since AS sub_since, "
+          "s.source_url AS list_url, s.filing_type AS list_ft",
+        {"subs": list(_SUBSIDIARY_STATEMENTS), "cid": issuer_id}) or []
+    lines: list[str] = []
+    for e in rows:
+        if not restatement_family(e.get("ft")):
+            continue
+        day = _statement_day(e) or str(e.get("since") or "")[:10]
+        # a stated start of the subsidiary relation is the better date
+        end = str(e.get("sub_since") or e.get("list_day") or "")[:10]
+        if not day or not end or day >= end:
+            continue
+        run_command(
+            "MATCH (h:Entity {id: $h})-[r:OWNS]->(c:Entity {id: $c}) "
+            "WHERE r.until IS NULL AND r.source_id = 'sec-edgar' AND r.filing_type = $ft "
+            "SET r.until = $end, r.until_reason = $why, r.until_source_url = $url, " + STALE_CLEAR_CYPHER,
+            {"h": e["h"], "c": e["c"], "ft": e["ft"], "end": end, "why": HOLDER_IS_SUBSIDIARY,
+             "url": e.get("list_url")})
+        lines.append(f"{e.get('hn')} → {e.get('cn')} ({e['ft']} {day}) ends {end}: "
+                     f"{e.get('cn')}'s {e.get('list_ft')} names it a subsidiary")
+        log.info("SEC: %s", lines[-1])
+    return lines
 
 
 def close_absent_from_tables(limit: int | None = None) -> dict:

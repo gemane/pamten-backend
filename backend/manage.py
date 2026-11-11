@@ -408,6 +408,16 @@ def cmd_close_ended_classes(args):
     print(f"Closed {res['closed']} 13D/G holdings whose class ended "
           f"({res['read']} of {res['companies']} companies read, {res['failed']} failed)")
 
+def cmd_close_held_by_subsidiary(args):
+    """End every 13D/G holding whose holder is the issuer's own subsidiary (findings item 99)."""
+    _apply_direct_db_url(args)
+    from app.scraper.sec_writer import close_held_by_subsidiary
+    lines = close_held_by_subsidiary()
+    for line in lines:
+        print(f"  {line}")
+    print(f"Closed {len(lines)} 13D/G holdings whose holder is the issuer's own subsidiary")
+
+
 def cmd_close_absent_from_table(args):
     """End every 13D/G holding the issuer's own ownership table no longer names (findings item 99)."""
     _apply_direct_db_url(args)
@@ -1457,6 +1467,16 @@ def _build_parser():
     p_cat.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_cat.set_defaults(func=cmd_close_absent_from_table)
+
+    # close-held-by-subsidiary command (findings item 99 part 3)
+    p_chs = subparsers.add_parser(
+        'close-held-by-subsidiary',
+        help="End every Schedule 13D/G holding whose holder the issuer's own subsidiary list "
+             "(Exhibit 21 / 8.1) or GLEIF's record names as its subsidiary, filed before that "
+             "statement (until_reason holder_is_subsidiary). Graph only, no EDGAR read")
+    p_chs.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_chs.set_defaults(func=cmd_close_held_by_subsidiary)
 
     # mark-stale command
     p_ms = subparsers.add_parser('mark-stale',
