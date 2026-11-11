@@ -522,6 +522,14 @@ vanished from the group it belongs to. Membership is `MEMBER_OF` since 2026-10-2
 `VotingGroup` — the bloc over a merged company — follows the survivor like any
 owner's, its label read off the edge.
 
+**SUCCEEDED_BY and DUAL_LISTED_WITH**, both directions, since 2026-11-11 (findings item
+92): the merge's `DETACH DELETE` took them with the losing node, so a `lei:`
+predecessor folded into a `sec:` filer lost its link to the successor — and its claim
+was re-pointed at an edge that no longer existed. Their property lists are
+`edge_schema.SUCCEEDED_BY_PROPS` / `DUAL_LISTED_PROPS`, as for the other kinds; a link
+the survivor already has to the same company is not doubled, one between the two is
+dropped like any other.
+
 **An edge between the two nodes is dropped, never carried.** Recreated on the
 survivor it would read keep → keep, a company owning itself: Sirius XM's filer
 owned GLEIF's SIRIUS XM INC. (its Exhibit 21), the securities bridge joined the two,

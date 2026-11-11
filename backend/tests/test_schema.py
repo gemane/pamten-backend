@@ -525,6 +525,10 @@ class TestTheLedger:
             assert ("RELATED_TO", prop) in ledger, prop
         for prop in edge_schema.MEMBER_OF_PROPS:
             assert ("MEMBER_OF", prop) in ledger, prop
+        for prop in edge_schema.SUCCEEDED_BY_PROPS:
+            assert ("SUCCEEDED_BY", prop) in ledger, prop
+        for prop in edge_schema.DUAL_LISTED_PROPS:
+            assert ("DUAL_LISTED_WITH", prop) in ledger, prop
         assert "MEMBER_OF" in schema._EDGE_TYPES and ("VotingGroup", "id", "UNIQUE") in schema._INDEXES
         assert ("VotingGroup", "search_text") in schema._FULLTEXT_INDEXES
         assert ("VotingGroup", "member_keys", "LIST") in schema._TYPED_PROPERTIES

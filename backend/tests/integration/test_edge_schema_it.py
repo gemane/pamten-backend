@@ -9,7 +9,8 @@ with no test edit.
 """
 import pytest
 
-from app.scraper.edge_schema import OWNS_PROPS, ROLE_PROPS, RELATED_TO_PROPS
+from app.scraper.edge_schema import (DUAL_LISTED_PROPS, OWNS_PROPS, RELATED_TO_PROPS, ROLE_PROPS,
+                                     SUCCEEDED_BY_PROPS)
 
 pytestmark = pytest.mark.integration
 
@@ -95,6 +96,30 @@ class TestEveryPropertySurvivesAnEntityMerge:
             f"MATCH (a {{id:'keep'}})-[r:RELATED_TO]->(b {{id:'target'}}) "
             f"RETURN r.{prop} AS v")[0]
         assert r.get("v") == _SAMPLE[prop]
+
+
+    # findings item 92: the merge's DETACH DELETE took these with the dead node
+    @pytest.mark.parametrize("kind,props", [("SUCCEEDED_BY", SUCCEEDED_BY_PROPS),
+                                            ("DUAL_LISTED_WITH", DUAL_LISTED_PROPS)])
+    def test_succession_and_dual_listing_both_ways(self, graph, kind, props):
+        from app.scraper.maintenance import _migrate_entity_edges
+        graph.run_command("CREATE (e:Entity {id:'pred', name:'Predecessor'})")
+        _create_edge(graph, kind, props)                       # dead → target
+        _create_edge(graph, kind, props, frm="pred", to="dead")  # pred → dead
+        _create_edge(graph, kind, props, frm="dead", to="keep")  # between the two: dropped
+        _migrate_entity_edges("dead", "keep")
+        for frm, to in (("keep", "target"), ("pred", "keep")):
+            rows = graph.run_command(
+                f"MATCH (a {{id:'{frm}'}})-[r:{kind}]->(b {{id:'{to}'}}) "
+                f"RETURN {', '.join(f'r.{p} AS {p}' for p in props)}")
+            assert len(rows) == 1, (frm, to)
+            assert {p: rows[0].get(p) for p in props} == {p: _SAMPLE[p] for p in props}
+        assert not graph.run_command(f"MATCH (a {{id:'keep'}})-[r:{kind}]->(b {{id:'keep'}}) RETURN r")
+        # a second merge of a twin with the same link does not double it
+        graph.run_command("CREATE (e:Entity {id:'dead2', name:'Old Node 2'})")
+        _create_edge(graph, kind, props, frm="dead2", to="target")
+        _migrate_entity_edges("dead2", "keep")
+        assert len(graph.run_command(f"MATCH (a {{id:'keep'}})-[r:{kind}]->(b {{id:'target'}}) RETURN r")) == 1
 
 
 class TestEveryPropertySurvivesAPersonMerge:
