@@ -1,6 +1,6 @@
 # API reference
 
-Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
+Full REST surface. Auth is JWT bearer (see [`authentication.md`](authentication.md));
 `contributor` = admin or contributor role. An interactive version is served at
 `/docs` (Swagger) and `/redoc` on a running instance.
 
@@ -47,7 +47,7 @@ Full REST surface. Auth is JWT bearer (see the README's *Authentication*);
 |---|---|---|---|
 | GET | `/persons/{id}` | — | Single person |
 | POST | `/persons/` | contributor | Create person |
-| GET | `/persons/duplicates` | contributor | Suggest likely-duplicate people (see [Duplicate persons](../README.md#duplicate-persons)) |
+| GET | `/persons/duplicates` | contributor | Suggest likely-duplicate people (see [Duplicate persons](deduplication.md#duplicate-persons)) |
 | POST | `/persons/deduplicate` | contributor | Auto-merge high-confidence duplicates (`apply=false` = dry run) |
 | POST | `/persons/merge` | contributor | Fold a duplicate person into the one to keep |
 | POST | `/persons/keep-separate` | contributor | Mark a group as confirmed-different (stops being suggested) |
@@ -132,7 +132,7 @@ Off unless `ANALYTICS_ENABLED` is set.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/scraper/status` | — | Master + per-source flag states (incl. `autodedup_enabled`) |
-| GET | `/scraper/runs` | — | Recent scrape run log — source, target, timings, counts, status, `reason` and the resolved `entity_id` (null when a run has none; see [Scrape run log](../README.md#scrape-run-log)). Public, but the `error` field is **omitted** unless the caller is a contributor or admin, since exception text can carry internal URLs or credentials |
+| GET | `/scraper/runs` | — | Recent scrape run log — source, target, timings, counts, status, `reason` and the resolved `entity_id` (null when a run has none; see [Scrape run log](operations.md#scrape-run-log)). Public, but the `error` field is **omitted** unless the caller is a contributor or admin, since exception text can carry internal URLs or credentials |
 | PATCH | `/scraper/sources/{name}/mode` | admin | Set a source's data mode: `full` draws edges, `claims_only` records claims and enriches entities but never draws structure. Does not touch existing edges |
 | POST | `/scraper/sources/{name}/sweep-edges` | admin | Delete every edge a source drew (nodes and claims stay) — the retro half of claims-only. Destructive: `?confirm=` must equal the source name |
 | GET | `/scraper/health` | public | Per-source health: last run/success, failure streaks, runs in 24h, bulk-dataset freshness (GLEIF publish date, PSC snapshot age) and the import lock. `last_error` and the lock `holder` are stripped outside contributor/admin — key absent, not null, same as `/scraper/runs` |
@@ -265,3 +265,12 @@ at all. `GET /entities/without-country?basis=…` lists them.
 is a **422**, not a silent fallback: a typo should not render the wrong map with nothing to say
 so.
 
+## Versioning — `/v1`
+
+**Everything is served under `/v1`** — `/v1/search/?q=…`, `/v1/auth/login`, and so on. The same routes are *also* still served unversioned (`/search/?q=…`), hidden from the schema and deprecated: released clients pin the path they shipped with, and federation peers call a hardcoded `{base_url}/federation/export`, so the old mount stays until every known caller has moved. New clients should use `/v1`; new endpoints get both mounts automatically.
+
+`/` and `/health` are deliberately **not** versioned — uptime monitoring and Render's health check need a URL that never moves.
+
+## Images and their credit
+
+A company's logo and a person's portrait come from Wikimedia Commons, but through this API (`GET /media/{kind}/{id}` for the credit, `…/file?v=<fingerprint>` for the bytes — a new URL whenever the image changes, so a browser may cache it for a year; `…&size=large` for the enlarged view a click on the image opens, fetched only then), not from the reader's browser: Wikimedia sees the server, never the reader's address or what they looked at. The server reads each file's licence from Commons once and serves only public-domain and CC0 / CC BY / CC BY-SA files — a visible credit is all those ask for, and the panel shows it under the image. Bytes and credit are cached in the shared bucket (`images/`) for a month, a "no image" for a week. When Wikimedia is down, the first failure starts a two-minute backoff (nothing uncached is asked for, 503 with `Retry-After`), and an answer past its TTL is served as it stands until the source is back. See [docs/api-reference.md](api-reference.md#media-images-with-their-credit).

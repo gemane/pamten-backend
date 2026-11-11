@@ -1203,3 +1203,44 @@ bulk entity flush **skips** a merged-away id (never clobbering the survivor's
 own name/credibility with the re-import's), and the RR path **redirects** its
 node-ensure and edge endpoints to the survivor. Works for any number of ids
 merged into one survivor and for chains.
+
+## Merging entities
+
+Duplicate companies are folded together by `deduplicate_entities` (shared LEI / Companies House id / CIK / Wikidata id) and, after every scrape, `deduplicate_entities_for` on just the entities that scrape touched — high-confidence groups only, the rest left for review.
+
+The survivor is the highest-`name_credibility` node (then the lexically smallest id), so a register-sourced node with its stable `lei:` id normally wins over a scraped UUID. A merge carries four things across before deleting the loser:
+
+- **its edges** — owners, subsidiaries and roles, skipping any the survivor already has;
+- **its data** — identifiers (`wikidata_id`, `sec_cik`, …) and descriptive fields, filling gaps only; the survivor's own values always win, its name never changes, and the loser's name is added as an alias so the company stays findable under it;
+- **a forwarding address** for its id (see below) — and with it every stored reference to that id: a moderator's flags, pins and suppressions and the scrape-run log move to the survivor (`merged_ids.REFERENCE_COLUMNS`).
+
+Carrying the data across is not cosmetic. Edges alone would drop the loser's `wikidata_id` — which is what marks a company "notable" in search ranking and the key a later Wikidata scrape resolves on — along with its description, revenue and headcount.
+
+## Merged ids
+
+A merge deletes one of the two nodes, but its id is **not** discarded: it lives on in shared links, client caches and — the case that actually bites — **federation peers' copies of our data**, where a peer that pulled the losing id and pulls again would find nothing and recreate the duplicate we just merged.
+
+Every merge therefore writes a `MergedId` forwarding row (`old_id` → `new_id`). A by-id read that misses falls back to it and returns the survivor, whose own `id` is the canonical one, so a caller can see it and update what it stored. A **live** id is never redirected, and an id that was never merged still 404s.
+
+It's a separate indexed vertex rather than an `also_known_ids` list on the survivor because the lookup has to be an indexed equality: `CONTAINS` over a list can't use an index and would scan the whole `Entity` type (millions of rows) on every miss. Chains are collapsed when written — merging A→B and later B→C rewrites A→C — so resolution is one hop and can never land on a node that was itself merged away.
+
+## Duplicate persons
+
+Different sources spell the same person differently (SEC's "Page Lawrence" vs
+Wikidata's "Larry Page", nicknames, aliases), so scraping creates duplicate
+`Person` nodes. `GET /persons/duplicates` scans for them (name/alias tokens,
+birth date+place, surname+company); high-confidence groups are auto-merged after
+each `run-all` scrape (`SCRAPER_AUTODEDUP_ENABLED`) — never two SEC CIKs, two
+Wikidata items or a "Sr." against a "Jr.", which are two people — the rest are resolved from
+the web app's **Scraper tab → Review duplicate persons** panel (merge, keep
+separate, or view the merge log).
+
+Entities and ownership edges dedupe too: the same company under two GLEIF LEIs is
+detected by name with a confidence tier (registered address / shared hard id). An
+LEI-only node and a CIK-only EDGAR filer of one name merge when the filer's own filings
+state that LEI (Unilever, 2026-10-27; see docs/deduplication.md). Duplicate `OWNS` edges from multi-interest ownership records are collapsed — both via
+`/scraper/duplicate-*` endpoints.
+
+**Scraping a person.** The company scrape reads a company and finds its people; the person scrape goes the other way — the companies someone runs, founded or owns. Wikidata records those links only from the company side (P169 CEO, P112 founder, P488 chairperson, P3320 board member, P127 owner), so it is a reverse lookup, and the results need filtering: "founded by" also covers buildings, software, schools, a political party, and in Elon Musk's case a car and an aeroplane. A target counts as a company when its type is a recognised organisation **or** it carries a company signal — a legal form, an industry, an LEI or a stock listing. Nothing without one of those is written.
+
+📄 **Deep dive:** [`docs/deduplication.md`](deduplication.md) — person scan signals + confidence model + param-mediated merge, entity same-company detection with confidence tiers, and OWNS edge dedup.
