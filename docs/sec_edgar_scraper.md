@@ -1452,7 +1452,14 @@ new CEO) — read both, or the newest insiders vanish.
 
 Insiders are listed from every Form 3/4 filed in the **15 months** before the
 issuer's newest one (`FORM4_WINDOW_DAYS = 456`), newest first, one per reporting
-person — up to `MAX_FORM4_FETCH = 60` people and `MAX_FORM4_SCAN = 300` documents.
+person — up to `MAX_FORM4_FETCH = 60` people. The window is read whole: when EDGAR's
+inline index (the newest ~1,000 filings) ends inside it — JPMorgan's on 2025-11-10,
+its window from 2025-07-16 — the next submissions page is read for the rest, and the
+seat dating below reuses that page. `MAX_FORM4_SCAN = 1000` documents is only a
+runaway guard and logs a warning when it binds. At 300 it was a rule: TSMC filed 333
+Form 3/4s in eight months, and when 30 new Form 4s arrived on 2026-11-10 its seven
+directors — National Development Fund among them, each with one Form 3 of
+2026-03-18 — fell past the 300th document and left the graph (findings item 105).
 Most sitting directors file at least once a year (the annual grant), so the window
 holds most of the board; someone whose last filing is older is not listed here.
 Not every board grants yearly: Robyn Denholm, Tesla's chair, last filed on
@@ -1465,7 +1472,7 @@ up: Bank of America listed 8 of its 29 insiders, none of the nine directors of i
 directors who filed on 2026-04-30, at documents 51–55. Which board a rebuild wrote
 depended on the officers' trading that month (findings item 9, 2026-10-31). Over
 the 136 SEC filers of the scrape list the window is 4,975 documents (median 15,
-Alphabet 226), read once — Archives documents are cached.
+Alphabet 226; TSMC 333 on 2026-11-11), read once — Archives documents are cached.
 
 ### People the window misses — the person-centric pass
 

@@ -1175,7 +1175,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       Fifty newest Form 4s was a request budget that silently became the definition of a
       board: a few officers' repeat filings used them up and Bank of America listed 8 of
       its 29 insiders (findings item 9, 2026-10-31). Read the window the facts live in (every
-      director files yearly → 15 months) and keep a count only as a high ceiling.
+      director files yearly → 15 months) and keep a count only as a high ceiling. **A ceiling
+      a real filer reaches is the old rule again**: the 300-document guard cut TSMC's window
+      after eight months, and its seven directors — one Form 3 each, all on 2026-03-18 — fell
+      out the day 30 new Form 4s came in (findings item 105, 2026-11-11). Measure the largest
+      window over the scrape list and keep the ceiling well above it, warn when it binds, and
+      read the window across the index's paging too (EDGAR's inline ~1,000 filings end
+      inside JPMorgan's 15 months).
 - [ ] **A narrower main path is a test of its fallback — test the fallback with the names it will get.**
       The person-centric Form 4 lookup searched EDGAR with "Robyn Denholm", and EDGAR matches its
       own surname-first spelling from the start, so it had never found a Wikidata-named person;
