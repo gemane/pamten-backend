@@ -98,6 +98,8 @@ SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
 # … and those the issuer's own ownership table (proxy) no longer names (item 99)
 SCRAPER_ENABLED=true SCRAPER_SEC_EDGAR_ENABLED=true \
   python3 manage.py close-absent-from-table || echo "  ! close-absent-from-table failed"
+# … and those whose holder is the issuer's own subsidiary (item 99 part 3)
+python3 manage.py close-held-by-subsidiary || echo "  ! close-held-by-subsidiary failed"
 python3 manage.py mark-shortcuts || echo "  ! mark-shortcuts failed"
 python3 manage.py mark-stale || echo "  ! mark-stale failed"
 

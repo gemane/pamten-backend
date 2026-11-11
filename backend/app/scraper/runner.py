@@ -1452,6 +1452,10 @@ def run_sec_ex21(company: str, force: bool = False) -> dict:
         from app.scraper.sec_writer import close_reported_by_parent
         for holder in sorted(holders):
             close_reported_by_parent(parent_id=holder)
+        # a subsidiary listed now may hold an old 13D/G on the filer itself —
+        # Texaco's on Chevron (findings item 99 part 3)
+        from app.scraper.sec_writer import close_held_by_subsidiary
+        close_held_by_subsidiary(issuer_id=company_id)
         with db.get_session() as session:
             session.run("MATCH (e:Entity {id: $id}) SET e.sec_ex21_ingested = $u",
                         id=company_id, u=data["url"])

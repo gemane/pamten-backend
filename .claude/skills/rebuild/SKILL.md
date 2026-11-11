@@ -53,7 +53,8 @@ second run that day), `chmod 700` it. The scripts find their folder themselves.
   dissolution heal for the ends written after finish-import's own (item 85a), persons, geocode,
   close-reported-by-parent, close-ended-classes (the 13D/G holdings whose shares ceased — a
   merger's 25-NSE, a takeover's Form 15; reads EDGAR with the flags on, item 99), close-absent-from-table
-  (those the issuer's own proxy table no longer names, item 99), mark-shortcuts,
+  (those the issuer's own proxy table no longer names, item 99), close-held-by-subsidiary (those whose
+  holder the issuer's own subsidiary list names, item 99 part 3), mark-shortcuts,
   mark-stale), 8 read-only checks (with the snapshot's over-100 % and cycle lists, item 97), the
   calls to each source and the bucket since step 1
   (`manage.py source-calls`, `SourceCall` rows — step 0's shell downloads are not counted) and
