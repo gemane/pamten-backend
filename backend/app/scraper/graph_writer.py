@@ -866,6 +866,12 @@ def _form_disagrees(row_name: str, node: dict) -> bool:
         return False
     names = [n for n in [node.get("name"), *(node.get("other_names") or [])] if n]
     names += [n for n, _until in map(former.parse, former.of_node(node)) if n]
+    # Only the names the row's stem matched: a former name that is another
+    # name altogether says nothing about this one's form. Symbotic Inc. was
+    # the SPAC "SVF Investment Corp. 3", a name ending in no form, and that
+    # alone kept its list's "Symbotic LLC" on the filer (findings item 83).
+    stem = normalize_entity_name(row_name)
+    names = [n for n in names if normalize_entity_name(n) == stem]
     if not names or not all(_has_legal_form(n) for n in names):
         return False
     key = legal_name_key(row_name)

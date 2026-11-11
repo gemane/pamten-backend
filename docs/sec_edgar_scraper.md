@@ -2046,7 +2046,10 @@ from readers removed again the same day, so 11 remain):
       (item 83). When the row states a form and every name the node bears
       states one, and none agrees (`sec_ex21.legal_name_key`), a node that
       carries a CIK, LEI or register id is not that row: the row gets its own
-      node (`graph_writer._form_disagrees`). Rows without a form ("Apple
+      node (`graph_writer._form_disagrees`). Only the node's names under the
+      row's own stem count (findings item 83, 2026-11-11): Symbotic Inc. bore
+      the SPAC name "SVF Investment Corp. 3", which ends in no form, and that
+      alone kept its list's "Symbotic LLC" on the filer. Rows without a form ("Apple
       Operations Europe") still find the register node of their name, and a
       node without a hard id is matched on its stem as before, so two filers'
       spellings of one subsidiary still meet. Across the 1,062 filings ten

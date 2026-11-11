@@ -352,3 +352,14 @@ class TestAStatedFormOnARegisterNode:
     def test_a_node_without_a_hard_id_is_matched_on_its_stem_as_before(self):
         # two filers' spellings of one subsidiary must still meet
         assert _form_disagrees("Flex Co., Ltd.", {"id": "u1", "name": "Flex Ltd.", "other_names": []}) is False
+
+    def test_a_former_name_under_another_stem_says_nothing_about_the_form(self):
+        # findings item 83: Symbotic Inc. was the SPAC "SVF Investment Corp. 3",
+        # a name ending in no form, and that alone kept "Symbotic LLC" — a row
+        # of its own list — on the filer
+        symbotic = {"id": "sec:0001837240", "name": "Symbotic Inc.", "other_names": None, "sec_cik": "0001837240",
+                    "former_names": ["SVF Investment Corp. 3|2022-06-03", "SVF Investment III Corp.|2020-12-21"]}
+        assert _form_disagrees("Symbotic LLC", symbotic) is True
+        assert _form_disagrees("Symbotic Inc", symbotic) is False
+        # a name under the row's own stem without a form still keeps the match open
+        assert _form_disagrees("Symbotic LLC", {**symbotic, "other_names": ["Symbotic"]}) is False

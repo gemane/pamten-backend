@@ -846,3 +846,23 @@ def test_a_rows_other_names_reach_the_node(it_db):
         runner.run_sec_ex21("Apple", force=True)
     again = it_db.run_command("MATCH (b:Entity {name:'Ameren Illinois Company'}) RETURN b.aliases AS a")
     assert [dict(r)["a"] for r in again] == [["Ameren Illinois"]]
+
+
+def test_a_filer_s_spac_name_does_not_keep_its_namesake_row_on_it(it_db):
+    # findings item 83: Symbotic Inc.'s list names "Symbotic LLC" (Delaware);
+    # the filer's former SPAC name "SVF Investment Corp. 3" ends in no legal
+    # form, and that alone kept the row on the filer — 11 of 12 written
+    it_db.run_command(
+        "CREATE (:Entity {id: 'sec:0001837240', name: 'Symbotic Inc.', name_normalized: 'symbotic', "
+        "search_text: 'Symbotic Inc.', type: 'company', sec_cik: '0001837240', country: 'US', "
+        "former_names: ['SVF Investment Corp. 3|2022-06-03', 'SVF Investment III Corp.|2020-12-21']})")
+    data = {"subsidiaries": [{"name": "Symbotic Holdings LLC", "jurisdiction": "Delaware"},
+                             {"name": "Symbotic LLC", "jurisdiction": "Delaware"}],
+            "form": "10-K", "filing_date": "2025-11-26",
+            "url": "https://www.sec.gov/Archives/edgar/data/1837240/000183724025000278/"
+                   "exhibit211-listofsubsidiar.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data):
+        result = runner.run_sec_ex21("Symbotic Inc.")
+    names = {dict(r)["name"] for r in it_db.run_command(
+        "MATCH (:Entity {id:'sec:0001837240'})-[:OWNS]->(b:Entity) RETURN b.name AS name")}
+    assert result["total"] == 2 and names == {"Symbotic Holdings LLC", "Symbotic LLC"}
