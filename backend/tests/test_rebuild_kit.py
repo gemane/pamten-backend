@@ -357,3 +357,31 @@ class TestChecksDiff:
     def test_a_new_snapshot_without_the_checks_prints_nothing(self, capsys):
         diff._print_checks({}, {"entities": [], "persons": []})
         assert capsys.readouterr().out == ""
+
+
+class TestTimings:
+    """The user, 2026-11-11: the big steps' durations — GLEIF, UK PSC, the
+    replay's phases and per source (SEC, Wikidata), Exhibit 21 and its history."""
+
+    def test_the_snapshot_reads_the_kit_folder_s_timings(self, tmp_path):
+        f = tmp_path / "timings.tsv"
+        f.write_text("2a bulk import: GLEIF (curated subset)\t900\n6.A run-all over the list · sec_edgar\t5400\n"
+                     "half a line\n6.C2 Exhibit 21 history\t1500\n")
+        assert snapshot.timings(str(f)) == [["2a bulk import: GLEIF (curated subset)", 900],
+                                            ["6.A run-all over the list · sec_edgar", 5400],
+                                            ["6.C2 Exhibit 21 history", 1500]]
+        assert snapshot.timings(str(tmp_path / "none.tsv")) == []
+
+    def test_the_diff_prints_minutes_previous_against_new(self, capsys):
+        diff._print_timings({"timings": [["2a GLEIF", 600], ["6.C Exhibit 21", 1200]]},
+                            {"timings": [["2a GLEIF", 900], ["6.C Exhibit 21", 1200], ["6.C2 history", 1500]]})
+        out = capsys.readouterr().out
+        assert "2a GLEIF" in out and "10.0 ->   15.0  (+5.0)" in out
+        assert "6.C2 history" in out and "-> " in out and "25.0" in out
+        diff._print_timings({}, {})
+        assert capsys.readouterr().out == ""
+
+    def test_the_rebuild_script_times_each_step_and_splits_the_import(self):
+        script = (KIT / "rebuild.sh").read_text()
+        assert 't "2a bulk import: GLEIF' in script and 't "2b bulk import: UK PSC' in script
+        assert "close_step" in script and "timings.tsv" in script and "Timings (min)" in script

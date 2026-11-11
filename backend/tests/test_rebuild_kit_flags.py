@@ -130,3 +130,26 @@ def test_the_replay_runs_the_exhibit_21_history_once_per_company():
         ns["ex21"](name)
     assert ns["EX21_READ"] == {"lei:A": "Apple"}
     assert '"C", "C2", "D"' in src and 'run_sec_ex21_history' in src
+
+
+def test_the_replay_adds_each_source_s_time_to_its_phase(tmp_path):
+    # the rebuild's timings: run-all reports each source's seconds, the phase sums them
+    import ast
+    src = (KIT / "replay_scrapes.py").read_text()
+    tree = ast.parse(src)
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("timing", "phase")]
+    rows = tmp_path / "timings.tsv"
+    import os
+    import time
+    ns: dict = {"TIMINGS": str(rows), "SOURCE_SECONDS": {}, "time": time, "os": os}
+    exec(compile(ast.Module(body=fns, type_ignores=[]), "replay_scrapes.py", "exec"), ns)
+
+    def fake_run_all(name):
+        for src_, secs in (("sec_edgar", 30.0), ("wikidata", 12.0)):
+            ns["SOURCE_SECONDS"][src_] = ns["SOURCE_SECONDS"].get(src_, 0.0) + secs
+        return "ok"
+    ns["phase"]("A run-all over the list", ["Apple", "Tesla"], fake_run_all)
+    got = dict(line.split("\t") for line in rows.read_text().splitlines())
+    assert got["6.A run-all over the list · sec_edgar"] == "60"
+    assert got["6.A run-all over the list · wikidata"] == "24"
+    assert "6.A run-all over the list" in got
