@@ -278,8 +278,22 @@ class _BatchWriter:
         for node_id, props in buf:
             if canonical_id(node_id) != node_id:
                 continue
+            if props.get("dissolved_on") and props.get("active") is True:
+                props = {**props, "active": False}    # a record that states its own end
             sets = []
             for name, val in props.items():
+                if name == "active":
+                    # A stated end stands (findings item 90): GLEIF's ACTIVE on
+                    # a record nobody maintains — Altaba's, LAPSED since
+                    # 2023-08-04 — re-opened a company SEC and Wikidata had
+                    # ended on 2019-10-04, a node both dissolved and active.
+                    # "Alive" does not undo another source's `dissolved_on`;
+                    # "ceased" is written as stated.
+                    pk = f"{name}__{k}"
+                    params[pk] = val
+                    sets.append(f"active = CASE WHEN :{pk} = true AND dissolved_on IS NOT NULL "
+                                f"THEN false ELSE :{pk} END")
+                    continue
                 if name in _EARLIEST_FIELDS:
                     # Time travel hides a node before its founding: a missing
                     # date must not blank another source's, and a later one (a
