@@ -10,7 +10,17 @@ owlgraph_env
 cd "$WORKDIR" && source venv/bin/activate
 export SCRAPER_TMP_DIR="$DATA/tmp"
 R="$(cd "$(dirname "$0")" && pwd)"     # the kit folder this copy lives in
-t() { echo; echo "######## $* ($(date +%H:%M:%S))"; }
+# Each step's duration goes to timings.tsv in the kit folder ("label<TAB>seconds"):
+# `t` closes the step before it; the replay adds its phases and, for its run-all
+# phases, each source's time; the snapshot keeps the file in after.json, so the
+# verify's diff compares them with the last rebuild (the user, 2026-11-11).
+TIMINGS="$R/timings.tsv"; : > "$TIMINGS"
+STEP=""; STEP_T0=0
+close_step() {
+  if [ -n "$STEP" ]; then printf '%s\t%s\n' "$STEP" $(( $(date +%s) - STEP_T0 )) >> "$TIMINGS"; fi
+  STEP=""
+}
+t() { close_step; STEP="$*"; STEP_T0=$(date +%s); echo; echo "######## $* ($(date +%H:%M:%S))"; }
 die() { echo "❌ FAILED: $*"; python3 manage.py import-lock release >/dev/null 2>&1; exit 1; }
 api() {
   local out
@@ -30,10 +40,11 @@ api "drop database $ARCADEDB_DATABASE" || die "drop"
 api "create database $ARCADEDB_DATABASE" || die "create"
 python3 manage.py init-schema || die "schema"
 
-t "2 bulk import (curated GLEIF + UK PSC subset)"
+t "2a bulk import: GLEIF (curated subset)"
 python3 manage.py import-lock acquire --holder new-database || die "import lock"
 export IMPORT_ORCHESTRATED=1
 bash /home/administrator/scripts/steps/lei-cdf-import-test.sh || die "GLEIF test import"
+t "2b bulk import: UK PSC (curated subset)"
 bash /home/administrator/scripts/steps/psc-import-test.sh || die "PSC test import"
 t "3 finishing the import"
 REBUILD_SEARCH=1 bash /home/administrator/scripts/steps/finish-import.sh || die "finish-import"
@@ -109,7 +120,10 @@ python3 manage.py heal-ends-at-dissolution 2>&1 | grep -v "^WARNING\|^INFO" | ta
 # calls to each outside source and the bucket since step 1 created the database
 # (step 0's golden copies are shell downloads, not counted)
 python3 manage.py source-calls --from 2000-01-01 2>&1 | grep -v "^WARNING\|^INFO"
+close_step                      # step 8 up to here; the snapshot below keeps every row in after.json
 # the snapshot also prints the companies over 100 % and the ownership cycles (item 97)
 python3 "$R/snapshot.py" "$R/after.json" 2>&1 | grep -v "^WARNING\|^INFO"
 echo
+echo "Timings (min):"
+awk -F'\t' '{ printf "  %-62s %6.1f\n", $1, $2 / 60 }' "$TIMINGS"
 echo "✅ REBUILD DONE in $(( ($(date +%s) - START) / 60 )) min ($(date +%H:%M:%S))"

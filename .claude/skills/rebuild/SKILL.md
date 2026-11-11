@@ -116,6 +116,12 @@ start time (Vienna) and the commit in the findings list's state line. Progress, 
   show them gone / new / changed against the last rebuild. Every new one is a finding or a
   known case the verify names (the bank ring Berkshire ↔ BofA ↔ Wells Fargo … is real
   13F/13G cross-holding); one gone is a fix to confirm. Baseline 2026-11-10: 6 and 3.
+- **Timings** (the user, 2026-11-11): each step's duration is in the kit folder's
+  `timings.tsv` and the table at the end of the log — the import split into 2a GLEIF and
+  2b UK PSC, every replay phase (`6.A run-all …`, `6.C Exhibit 21`, `6.C2 Exhibit 21
+  history` …) and, for the run-all phases, each source's share (`6.A … · sec_edgar`,
+  `· wikidata`; run-all's per-source `seconds`). `after.json` keeps them and the diff's
+  last section compares them with the last rebuild — report the big ones in the verify.
 - Then `/finding verify` against the last rebuild's `after.json`; record the run (times,
   counts, lessons) in the memory `reference-rebuild-from-agent`.
 

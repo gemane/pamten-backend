@@ -15,6 +15,7 @@ All entry points:
 import os
 import re
 import logging
+import time
 import zipfile
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -3154,16 +3155,19 @@ def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> di
                   if any(s.reads_stored_ids and s.enabled() for s in specs) else None)
 
     def run_one(spec) -> dict:
+        # how long the source took, for the rebuild's timings (2026-11-11)
+        started = time.monotonic()
         try:
-            return spec.run(query, depth, country)
+            out = spec.run(query, depth, country)
         except PermissionError as exc:
-            return {"status": "disabled", "detail": str(exc)}
+            out = {"status": "disabled", "detail": str(exc)}
         except Exception as exc:  # noqa: BLE001 - one scraper failing mustn't sink the rest
             log.error("%s scrape failed for %r: %s", spec.name, query, exc)
             # nothing of it was written, and the sources after it run without what
             # it would have written: the target is stamped incomplete (item 54)
             mark_source_lost(spec.name)
-            return {"status": "error", "detail": str(exc)}
+            out = {"status": "error", "detail": str(exc)}
+        return {**out, "seconds": round(time.monotonic() - started, 1)} if isinstance(out, dict) else out
 
     for spec in specs:
         if not spec.enabled():
@@ -3173,7 +3177,10 @@ def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> di
     # once more, by the id a later source wrote (findings item 27)
     for spec in specs:
         if spec.enabled() and rerun_for_new_ids(spec, results.get(spec.name), ids_before, query, country):
-            results[spec.name] = {**run_one(spec), "rerun": "new_ids"}
+            again = run_one(spec)
+            results[spec.name] = {**again, "rerun": "new_ids",
+                                  "seconds": round((results[spec.name].get("seconds") or 0)
+                                                   + (again.get("seconds") or 0), 1)}
     # and the SEC's seat-holders pass once more, for the officers a later source
     # wrote: their Form 4s and 8-K departures by name (findings item 67). The
     # registers run before the knowledge bases (item 60), so the SEC part met
@@ -3181,12 +3188,15 @@ def run_scrape_all(query: str, depth: int = 2, country: str | None = None) -> di
     sec = results.get("sec_edgar")
     filer_id = seat_rerun_target(sec)
     if filer_id:
+        started = time.monotonic()
         try:
             results["sec_edgar"] = {**sec, "seats_rerun": run_sec_seat_holders(
                 filer_id, sec["cik"], sec.get("company") or query)}
         except Exception as exc:  # noqa: BLE001 - an extra pass; its loss is logged, not fatal
             log.error("sec_edgar seat-holders rerun failed for %r: %s", query, exc)
             results["sec_edgar"] = {**sec, "seats_rerun": {"status": "error", "detail": str(exc)}}
+        # the seats pass is the SEC's time too
+        results["sec_edgar"]["seconds"] = round((sec.get("seconds") or 0) + time.monotonic() - started, 1)
 
     return {"status": "ok", "query": query, "results": results}
 

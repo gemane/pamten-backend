@@ -62,6 +62,10 @@ def test_run_scrape_all_dispatches_registry(monkeypatch, fake_sources):
 
     assert out["status"] == "ok" and out["query"] == "Acme"
     # gets (query, depth, country) — no country asked for here
+    # every source that ran says how long it took (the rebuild's timings)
+    secs = {k: v.pop("seconds", None) for k, v in out["results"].items()}
+    assert all(isinstance(secs[k], float) and secs[k] >= 0 for k in ("good", "bad", "denied"))
+    assert secs["off"] is None
     assert out["results"]["good"] == {"status": "ok", "q": "Acme", "d": 2, "c": None, "total": 3}
     assert out["results"]["off"] == {"status": "disabled"}                              # enabled() False → not run
     assert out["results"]["bad"]["status"] == "error" and "kaboom" in out["results"]["bad"]["detail"]

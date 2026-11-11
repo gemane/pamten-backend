@@ -75,6 +75,11 @@ SEC_PARTIAL: list[str] = []
 # bound, so item 79's dates could never be verified. C2 reads the history once per
 # company phase C wrote a list for: {entity id: the name C ran it under}.
 EX21_READ: dict[str, str] = {}
+# The rebuild's timings (the user, 2026-11-11): every phase's seconds, and in a
+# run-all phase each source's (run-all says how long each took, `seconds`), into
+# the kit folder's timings.tsv beside rebuild.sh's steps.
+TIMINGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "timings.tsv")
+SOURCE_SECONDS: dict[str, float] = {}
 
 
 def run_all(name):
@@ -87,6 +92,9 @@ def run_all(name):
             SEC_PARTIAL.append(name)
             run["status"] = "partial"
             run["note"] = "lost to the network: sec_edgar: " + ", ".join(sec.get("failed_sections") or [])
+        for source, v in (res.get("results") or {}).items():
+            if isinstance(v, dict) and isinstance(v.get("seconds"), (int, float)):
+                SOURCE_SECONDS[source] = SOURCE_SECONDS.get(source, 0.0) + v["seconds"]
         per = [v for v in (res.get("results") or {}).values() if isinstance(v, dict)]
         run["total"] = sum((v or {}).get("total", 0) for v in per)
         run["entity_id"] = next((v["entity_id"] for v in per if v.get("entity_id")), None)
@@ -122,8 +130,19 @@ def short(res):
                                     "filings_total", "priority_found", "priority_known") if k in res}
 
 
+def timing(label: str, seconds: float) -> None:
+    """One row of the rebuild's timings.tsv: "6.<label><TAB><seconds>"."""
+    try:
+        with open(TIMINGS, "a") as f:
+            f.write(f"6.{label}\t{round(seconds)}\n")
+    except OSError as exc:
+        print(f"  ! timing not written: {exc}", flush=True)
+
+
 def phase(label, names, fn):
     print(f"\n=== {label}: {len(names)} ({time.strftime('%H:%M:%S')})", flush=True)
+    started = time.time()
+    SOURCE_SECONDS.clear()
     ok = failed = 0
     for i, name in enumerate(names, 1):
         t0 = time.time()
@@ -134,7 +153,14 @@ def phase(label, names, fn):
             summary = f"FAILED: {str(exc)[:160]}"
             failed += 1
         print(f"[{i:3}/{len(names)}] {name:45} {time.time() - t0:5.0f}s {summary}", flush=True)
-    print(f"=== {label} done: {ok} ok, {failed} failed ({time.strftime('%H:%M:%S')})", flush=True)
+    took = time.time() - started
+    print(f"=== {label} done: {ok} ok, {failed} failed ({time.strftime('%H:%M:%S')}, "
+          f"{took / 60:.1f} min)", flush=True)
+    timing(label, took)
+    # a run-all phase: each source's share (SEC, Wikidata, …)
+    for source, secs in sorted(SOURCE_SECONDS.items()):
+        print(f"    {source}: {secs / 60:.1f} min", flush=True)
+        timing(f"{label} · {source}", secs)
 
 
 steps = sys.argv[1:] or ["A", "B", "C", "C2", "D", "E", "F"]
@@ -190,6 +216,8 @@ if "E" in steps:
     phase("E 13F holders", F13, lambda n: short(run_sec_13f(n)))
 if "F" in steps:
     print(f"\n=== F industry fill ({time.strftime('%H:%M:%S')})", flush=True)
+    started = time.time()
     res = industry_backfill()
+    timing("F industry fill", time.time() - started)
     print({k: v for k, v in res.items() if not isinstance(v, list)}, flush=True)
 print("REPLAY DONE", flush=True)

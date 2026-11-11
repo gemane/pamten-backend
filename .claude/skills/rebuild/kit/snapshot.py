@@ -101,7 +101,25 @@ def take(q, cy) -> dict:
     snap["over_100"] = over_100(live)
     snap["cycles"] = cycles(live)
     snap["users"] = [r["email"] for r in q("SELECT email FROM User")]
+    snap["timings"] = timings()
     return snap
+
+
+def timings(path: str | None = None) -> list:
+    """[[step, seconds], …] from the kit folder's timings.tsv — rebuild.sh's steps
+    and the replay's phases (each run-all phase also per source); [] when there
+    is none (a `before.json` taken by hand)."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "timings.tsv")
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        label, _, secs = line.rpartition("\t")
+        if label and secs.strip().isdigit():
+            out.append([label, int(secs)])
+    return out
 
 
 def over_100(rows: list) -> list:

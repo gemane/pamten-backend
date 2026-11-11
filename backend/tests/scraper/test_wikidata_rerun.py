@@ -53,7 +53,10 @@ class TestRunScrapeAll:
         world["register"]()
         out = self._run()
         assert world["calls"] == ["wd", "sec", "wd"]
-        assert out["results"]["wd"] == {"status": "ok", "total": 1, "rerun": "new_ids"}
+        wd = out["results"]["wd"]
+        # both runs' time, for the rebuild's timings
+        assert isinstance(wd.pop("seconds"), (int, float))
+        assert wd == {"status": "ok", "total": 1, "rerun": "new_ids"}
 
     def test_not_a_company_is_asked_again_too(self, world):
         world["register"]()

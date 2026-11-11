@@ -197,6 +197,21 @@ def _print_checks(P: dict, N: dict) -> None:
             print(f"  {sign} " + (" <-> ".join(map(say, c)) if len(c) > 1 else f"self-loop {say(c[0])}"))
 
 
+def _print_timings(P: dict, N: dict) -> None:
+    """Each step's minutes beside the last rebuild's (the user, 2026-11-11): the
+    import (GLEIF, UK PSC), the replay's phases and, in its run-all phases, each
+    source; a step one of the two did not time shows '-'."""
+    a, b = dict(map(tuple, P.get("timings") or [])), dict(map(tuple, N.get("timings") or []))
+    if not (a or b):
+        return
+    print("\n== timings (min, previous -> new):")
+    for label in list(dict.fromkeys([*b, *a])):
+        old, new = a.get(label), b.get(label)
+        fmt = lambda v: "-" if v is None else f"{v / 60:.1f}"  # noqa: E731
+        change = "" if old is None or new is None else f"  ({(new - old) / 60:+.1f})"
+        print(f"  {label:<62} {fmt(old):>6} -> {fmt(new):>6}{change}")
+
+
 def main() -> None:
     P, N = load(sys.argv[1]), load(sys.argv[2])
     _print_counts({k: v for k, v in P.items() if k != "source_calls"}, N)
@@ -208,6 +223,7 @@ def main() -> None:
     _print_edges(P, N)
     _print_succession(P, N)
     _print_checks(P, N)
+    _print_timings(P, N)
 
 
 if __name__ == "__main__":
