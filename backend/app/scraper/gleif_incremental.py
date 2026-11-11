@@ -39,7 +39,7 @@ from app.db.arcadedb import run_command, run_sql
 from app.claims import KIND_OWNS, record_claim
 from app.scraper.bulk_import import _BatchWriter, _now_iso, _ProgressBar, _ProgressStream
 from app.scraper.gleif_lei_cdf import (  # noqa: F401 — the status readers are re-exported
-    _entity_props, _entity_status, _registration_status, hold_end_of_live_filer, joined_filers)
+    _entity_props, _entity_status, _registration_status, hold_end_of_live_filer, joined_filers, not_an_entity)
 from app.scraper.gleif_rr import (
     _CONSOLIDATION, NOT_A_STATEMENT, UNMAINTAINED_STATUSES, _node_lei, _record_date,
     _relationship_dates, _rr_status, _stake, _validation)
@@ -494,7 +494,7 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
     without it a curated subset does not get refreshed — it gets buried.
     """
     raw, total = _open_json(filepath)
-    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "ends_held": 0, "succession": 0,
+    counts = {"records": 0, "updated": 0, "marked_inactive": 0, "ends_held": 0, "succession": 0, "not_an_entity": 0,
               "not_here": 0, "errors": 0}
     known = existing_lei_ids() if only_existing else None
     # the GLEIF nodes that are EDGAR filers too: an end a delta states about one
@@ -509,6 +509,11 @@ def import_lei_cdf_delta(filepath: str, source_id: str, credibility_score: int,
                 break
             counts["records"] += 1
             try:
+                if not_an_entity(rec):
+                    # a DUPLICATE / ANNULLED registration is no entity's record
+                    # (findings item 91); a node an earlier read made of it stays
+                    counts["not_an_entity"] += 1
+                    continue
                 built = _entity_props(rec, source_id, credibility_score)
                 if built and known is not None and built[0] not in known:
                     counts["not_here"] += 1

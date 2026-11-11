@@ -571,3 +571,35 @@ class TestSeveralStatedLeis:
             assert rp._record_legal_names("549300LRIF3NWCU26A80") == ["BlackRock Finance, Inc."]
         with patch.object(rp, "fetch_gleif_record", return_value=None):
             assert rp._record_legal_names("X" * 20) == []
+
+
+def test_a_pointer_at_a_duplicate_registration_follows_it_to_the_live_record():
+    # findings item 91: Wikidata may state a DUPLICATE LEI; its record names
+    # the live one as SuccessorLEI — that is the company, written once
+    dup = {"LEI": {"$": "549300YBCMRP1ZVOWM12"},
+           "Entity": {"LegalName": {"$": "News Corporation"},
+                      "SuccessorEntity": [{"SuccessorLEI": {"$": "549300ITS31QK8VRBQ14"}}]},
+           "Registration": {"RegistrationStatus": {"$": "DUPLICATE"}}}
+    live = {"LEI": {"$": "549300ITS31QK8VRBQ14"}, "Entity": {"LegalName": {"$": "NEWS CORP"},
+                                                         "LegalJurisdiction": {"$": "US-DE"}},
+            "Registration": {"RegistrationStatus": {"$": "ISSUED"}}}
+    written = []
+
+    class Batch:
+        def entity(self, node_id, props):
+            written.append(node_id)
+
+        def flush(self):
+            pass
+    with patch("app.merged_ids.canonical_id", side_effect=lambda i: i), \
+         patch.object(rp, "fetch_gleif_record", side_effect=lambda lei: {
+             "549300YBCMRP1ZVOWM12": dup, "549300ITS31QK8VRBQ14": live}.get(lei)), \
+         patch("app.scraper.runner._ensure_source", return_value="gleif"), \
+         patch("app.scraper.bulk_import._BatchWriter", Batch), \
+         patch.object(rp, "_join_filer", return_value=None):
+        assert rp.write_from_gleif("549300YBCMRP1ZVOWM12") == "lei:549300ITS31QK8VRBQ14"
+    assert written == ["lei:549300ITS31QK8VRBQ14"]
+    # a duplicate of a duplicate is not followed further
+    with patch("app.merged_ids.canonical_id", side_effect=lambda i: i), \
+         patch.object(rp, "fetch_gleif_record", return_value=dup):
+        assert rp.write_from_gleif("549300YBCMRP1ZVOWM12") is None

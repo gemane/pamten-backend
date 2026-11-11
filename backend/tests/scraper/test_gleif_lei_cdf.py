@@ -748,3 +748,42 @@ def test_the_lei_registration_day_is_kept():
     assert props["lei_registration_date"] == "2012-06-06"
     _, props = _entity_props(_rec("LEI124", "Beta AG"), "gleif", 92)
     assert props["lei_registration_date"] is None
+
+
+class TestADuplicateRegistrationIsNoEntity:
+    """Findings item 91: a DUPLICATE or ANNULLED registration names the live
+    record as its successor; read as an entity it became an 'active' node
+    beside it (9 on dev: News Corporation, BARCLAYCARD UK, the INDITEX and
+    Domino's duplicates …)."""
+
+    @staticmethod
+    def _status(status):
+        rec = _rec("549300YBCMRP1ZVOWM12", "News Corporation")
+        rec["Registration"] = {"RegistrationStatus": _w(status)}
+        return rec
+
+    def test_duplicate_and_annulled_are_no_entity(self):
+        from app.scraper.gleif_lei_cdf import _entity_props, not_an_entity
+        for status in ("DUPLICATE", "ANNULLED"):
+            rec = self._status(status)
+            assert not_an_entity(rec) and _entity_props(rec, "gleif", 92) is None, status
+        for status in ("ISSUED", "LAPSED", "RETIRED", "MERGED"):
+            rec = self._status(status)
+            assert not not_an_entity(rec) and _entity_props(rec, "gleif", 92) is not None, status
+
+    def test_the_full_load_counts_them_apart(self, tmp_path):
+        import json
+        from unittest.mock import patch
+        from app.scraper import gleif_lei_cdf
+        records = [self._status("DUPLICATE"), _rec("549300ITS31QK8VRBQ14", "NEWS CORP")]
+        path = tmp_path / "golden.json"
+        path.write_text(json.dumps({"records": records}))
+        written = []
+        with patch.object(gleif_lei_cdf, "_iter_lei_records", return_value=iter(records)), \
+             patch.object(gleif_lei_cdf, "joined_filers", return_value={}), \
+             patch.object(gleif_lei_cdf._BatchWriter, "entity",
+                          side_effect=lambda self_, i, p: written.append(i), autospec=True), \
+             patch.object(gleif_lei_cdf._BatchWriter, "flush", autospec=True):
+            counts = gleif_lei_cdf.import_lei_cdf_entities(str(path), "gleif", 92)
+        assert counts["not_an_entity"] == 1 and counts["entities"] == 1
+        assert written == ["lei:549300ITS31QK8VRBQ14"]

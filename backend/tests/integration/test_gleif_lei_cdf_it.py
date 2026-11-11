@@ -229,3 +229,23 @@ def test_previous_and_trading_names_land_apart_and_a_reimport_replaces_them(it_d
     assert "BLACKROCK FUNDING, INC." in row["search_text"]
     row = load([], [], 2)
     assert list(row["gleif_former_names"] or []) == [] and list(row["gleif_trading_names"] or []) == []
+
+
+def test_a_duplicate_registration_writes_no_node(it_db, tmp_path):
+    # findings item 91: News Corporation's DUPLICATE LEI names the live record
+    from app.scraper.gleif_lei_cdf import import_lei_cdf_entities
+    records = [
+        {"LEI": _w("549300YBCMRP1ZVOWM12"),
+         "Entity": {"LegalName": _w("News Corporation"), "LegalJurisdiction": _w("US-DE"),
+                    "SuccessorEntity": [{"SuccessorLEI": _w("549300ITS31QK8VRBQ14")}]},
+         "Registration": {"RegistrationStatus": _w("DUPLICATE")}},
+        {"LEI": _w("549300ITS31QK8VRBQ14"),
+         "Entity": {"LegalName": _w("NEWS CORP"), "LegalJurisdiction": _w("US-DE")},
+         "Registration": {"RegistrationStatus": _w("ISSUED")}},
+    ]
+    zpath = tmp_path / "dup.json.zip"
+    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("lei2-golden-copy.json", json.dumps({"records": records}))
+    result = import_lei_cdf_entities(str(zpath), "gleif", 92)
+    assert result["entities"] == 1 and result["not_an_entity"] == 1
+    assert [r["id"] for r in it_db.run_sql("SELECT id FROM Entity")] == ["lei:549300ITS31QK8VRBQ14"]
