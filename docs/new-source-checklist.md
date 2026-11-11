@@ -750,6 +750,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       company and gets its own node. Keep the lenient match for rows without a form and for
       nodes without a hard id; measure the change over every filer's list before merging
       (the guard: old rule vs new over all Exhibit 21 rows, read-only).
+- [ ] **A lookup by name answers with the company the name names, or with nothing.** A
+      query written with its legal form is a whole legal name: a node whose name holds a word
+      more, or ends in another form, is another company — however many of the query's words
+      it carries. "Citadel Securities Llc" took Citadel Securities GP LLC while the LLC's own
+      node was not there yet, and the scrape read the GP's CIK (findings item 104,
+      2026-11-11). Test a resolver change with each target's own node hidden: that is the
+      moment a loose rule hands over a neighbour (35 subsidiaries and siblings on dev).
 - [ ] **A place has a date: take the filer's newest statement of it, in its own context.** The
       annual report is a year's snapshot — Liberty Media became a Nevada company three months
       after its 10-K said Delaware, and the join with GLEIF (Nevada) was refused; its 10-Q

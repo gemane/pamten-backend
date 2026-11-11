@@ -235,3 +235,65 @@ def test_an_owner_that_does_not_match_never_moves():
 def test_the_same_base_name_folds_accents_and_the_legal_form():
     assert search._same_base_name(AMX, AMX_BV)
     assert not search._same_base_name(INV, INV_SUB)
+
+
+# Findings item 104 (rebuild 2026-11-10): Tesla's joint 13G/A went to the GP
+# alone (item 93), so the LLC's node was not there when its own target ran,
+# and "Citadel Securities Llc" took Citadel Securities GP LLC — every word of
+# the query is in its name — whose CIK the scrape then read.
+CITADEL_GP = {"id": "sec:0001721695", "name": "Citadel Securities GP LLC",
+              "name_normalized": "citadel securities gp", "sec_cik": "0001721695"}
+CITADEL_LLC = {"id": "lei:12UUJYTN7D3SW8KCSG25", "name": "CITADEL SECURITIES LLC",
+               "name_normalized": "citadel securities", "lei_id": "12UUJYTN7D3SW8KCSG25"}
+
+
+def test_a_query_with_its_legal_form_is_a_whole_name_a_longer_one_is_another_company():
+    assert _resolve("Citadel Securities Llc", [CITADEL_GP]) is None
+    assert _resolve("Citadel Securities Llc", [CITADEL_GP, CITADEL_LLC])["id"] == CITADEL_LLC["id"]
+    assert _resolve("Citadel Securities GP LLC", [CITADEL_GP])["id"] == CITADEL_GP["id"]
+    # the rebuild's other fallbacks of this kind: a subsidiary bearing more words
+    assert _resolve("BARCLAYS PLC", [{"id": "bb", "name": "BARCLAYS BANK PLC",
+                                      "name_normalized": "barclays bank"}]) is None
+    assert _resolve("BERKSHIRE HATHAWAY INC.", [{"id": "ba", "name": "Berkshire Hathaway Automotive Inc.",
+                                                 "name_normalized": "berkshire hathaway automotive"}]) is None
+
+
+def test_without_its_form_a_query_still_takes_a_longer_name():
+    assert _resolve("Citadel Securities", [CITADEL_GP])["id"] == CITADEL_GP["id"]
+    assert _resolve("berkshire", [{"id": "b", "name": "BERKSHIRE HATHAWAY INC.",
+                                   "name_normalized": "berkshire hathaway"}])["id"] == "b"
+
+
+def test_a_whole_name_may_stand_in_another_word_order_but_not_in_a_description():
+    trow = {"id": "t", "name": "PRICE T ROWE GROUP INC", "name_normalized": "price t rowe group"}
+    assert _resolve("T. Rowe Price Group, Inc.", [trow])["id"] == "t"
+    sx = {"id": "sx", "name": "Space Exploration Technologies Corp.", "name_normalized": "space exploration technologies",
+          "search_text": "Space Exploration Technologies Corp. SpaceX Holdings"}
+    assert _resolve("SpaceX Holdings Corp.", [sx]) is None
+
+
+def test_a_whole_name_s_legal_form_must_be_one_the_node_bears():
+    tesla_llc = {"id": "tl", "name": "Tesla LLC", "name_normalized": "tesla", "lei_id": "X"}
+    assert _resolve("Tesla, Inc.", [tesla_llc]) is None
+    assert _resolve("Tesla", [tesla_llc])["id"] == "tl"
+    assert _resolve("Tesla LLC", [tesla_llc])["id"] == "tl"
+    # one spelling of a form is the other's ("Corp" is "Corporation")
+    assert _resolve("Microsoft Corp", [{"id": "m", "name": "Microsoft Corporation",
+                                        "name_normalized": "microsoft"}])["id"] == "m"
+    # an alias or an earlier legal name bearing the query's form agrees
+    roche = {"id": "r", "name": "ROCHE HOLDING LTD", "name_normalized": "roche holding",
+             "aliases": ["Roche Holding AG"]}
+    assert _resolve("Roche Holding AG", [roche])["id"] == "r"
+    nrg = {"id": "n", "name": "Nederlandse Reassurantie Groep B.V.", "name_normalized": "nederlandse reassurantie groep",
+           "gleif_former_names": ["Nederlandse Reassurantie Groep N.V.|2025-12-29"]}
+    assert _resolve("Nederlandse Reassurantie Groep N.V.", [nrg])["id"] == "n"
+    # a name of the node without any form agrees with every form
+    assert _resolve("Tesla, Inc.", [{**tesla_llc, "aliases": ["Tesla"]}])["id"] == "tl"
+
+
+def test_a_group_whose_form_is_not_the_query_s_does_not_jump_its_namesake():
+    # "Domino's Pizza LLC" opened DOMINOS PIZZA INC, its owner, before
+    inc = {"id": "inc", "name": "DOMINOS PIZZA INC", "name_normalized": "dominos pizza"}
+    llc = {"id": "llc", "name": "Domino's Pizza LLC", "name_normalized": "dominos pizza"}
+    assert _resolve_owned("Domino's Pizza LLC", [llc, inc], {"llc": {"inc"}})["id"] == "llc"
+    assert _resolve_owned("Domino's Pizza", [llc, inc], {"llc": {"inc"}})["id"] == "inc"

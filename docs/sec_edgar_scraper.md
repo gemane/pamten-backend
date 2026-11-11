@@ -163,6 +163,22 @@ held the right CIK. By number, SpaceX reads its 13D/G holders and ten officers.
 Nestlé is found but yields no edges: its one large-holder filing (2024) is
 pre-XML HTML and its Forms 3/4 name it as the owner, not the issuer.
 
+A query written with its legal form is a whole legal name (findings item 104,
+2026-11-11): the resolver takes a node for it only when one of the node's names
+holds the query's words, in any order and no other, and ends in the same form
+(or a name of the node states no form at all). The 2026-11-10 rebuild ran
+"Citadel Securities Llc" before the LLC's own node existed — Tesla's joint 13G/A
+now goes to the GP alone (item 93) — and the resolver took Citadel Securities GP
+LLC, every word of the query being in its name; the SEC part then read the GP's
+CIK and the LLC's own 13G holdings were never written. Hiding each replay
+target's own node on dev showed 35 such fallbacks, every one another company
+(Barclays Bank for "BARCLAYS PLC", Tesla LLC for "Tesla, Inc.", an Occidental PAC
+for "OCCIDENTAL PETROLEUM CORPORATION"); now none is taken and the name search
+runs. A query without its form ("Berkshire", "Citadel Securities") still takes a
+longer name. The cost: a conversion no name of the node records reads as another
+company — EDGAR's "YouTube Inc" no longer answers "YouTube LLC", as item 87
+decided for Exhibit 21 rows.
+
 **Step 0b — the stored node's LEI, confirmed by the filer's own filings (2026-10-27):**
 When the node the query resolved to holds an **LEI and no CIK**, the name search
 below found a filer, EDGAR states **no LEI** for that filer, and the two names key
