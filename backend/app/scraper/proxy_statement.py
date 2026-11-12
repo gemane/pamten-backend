@@ -248,8 +248,10 @@ def _parse_pct(text: str | None) -> tuple[float | None, bool]:
 def _first_data_row(grid) -> int | None:
     """Index of the first row with a name cell and a value right of it."""
     for i, row in enumerate(grid[:12]):
+        # a figure has a digit: Skydance's header row "Name of Beneficial
+        # Owner | Shares | % | Shares | %" is no data row (findings item 86)
         if len(row) >= 2 and not _VALUE.match(row[0][2]) and any(
-                c[0] >= row[0][1] and _VALUE.match(c[2]) for c in row[1:]):
+                c[0] >= row[0][1] and _VALUE.match(c[2]) and re.search(r"\d", c[2]) for c in row[1:]):
             return i
     return None
 
@@ -376,7 +378,7 @@ def _holder_rows(table) -> list[dict] | None:
             if not name or _NOT_AN_OWNER.search(name) or not has_data:
                 current = None
                 continue
-            current = {"name": name, "percents": []}
+            current = {"name": name, "percents": [], "raw": _clean_name(name_cell[2])}
             rows.append(current)
         if current is not None:
             for col in percents:
@@ -384,7 +386,20 @@ def _holder_rows(table) -> list[dict] | None:
                 pct = _parse_pct(" ".join(cells))[0] if cells else None
                 if pct is not None:
                     current["percents"].append(pct)
+                    current.setdefault("columns", []).append((_column_header(header, col), pct))
     return rows
+
+
+def _column_header(header: list, column: tuple[int, int, str]) -> str:
+    """Every header cell above a column, top to bottom: "Class A Common Stock"
+    spanning "Shares | %" gives the percent column "Class A Common Stock %".
+    A header that names no class takes the class of the shares column left of
+    it: Molson Coors' "Class A Shares | Percent of class (%)"."""
+    text = " ".join(c[2] for c in header if _overlaps(c, column))
+    if _CLASS.search(text):
+        return text
+    left = [c for c in header if c[1] <= column[0] and _CLASS.search(c[2])]
+    return f"{max(left, key=lambda c: c[1])[2]} {text}" if left else text
 
 
 def read_holder_rows(html: str) -> list[dict]:
@@ -397,6 +412,106 @@ def read_holder_rows(html: str) -> list[dict]:
             row = out.setdefault(r["name"], {"name": r["name"], "percents": []})
             row["percents"] += r["percents"]
     return list(out.values())
+
+
+# ── The holders the table adds to the graph (findings item 86) ─────────────
+#
+# A controlling holder that files no Schedule 13D/G is invisible to the
+# 13D/G reader: Skydance's 10-K/A (2026-04-24) names Harbor Lights
+# Entertainment with 100 % of the Class A stock, and EDGAR holds no statement
+# of it. The table states, per holder, the percent of each class and — on a
+# multi-class issuer — of the votes, as of a record date.
+
+_AS_OF = re.compile(r"\bas\s+of\s+([A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4})", re.IGNORECASE)
+_CLASS = re.compile(r"\b(class|series)\s+([A-Z]{1,2}|\d)\b(?!\w)", re.IGNORECASE)
+#: "Entities affiliated with BlackRock, Inc." → "BlackRock, Inc."
+_AFFILIATED_PREFIX = re.compile(r"^(certain\s+)?(entities|funds|persons)(\s+and\s+persons)?\s+affiliated\s+with\s+",
+                                re.IGNORECASE)
+#: an address run into the name: "GAMCO Investors, Inc. One Corporate Center
+#: Rye, NY", "MUFG 4-5, Marunouchi 1-chome" — a street number, or "One"
+#: followed by a place word
+_STREET = re.compile(r"\s+(\d[\d-]*,?\s+[A-Z]|One\s+[A-Z][a-z]+\s+(Center|Centre|Plaza|Street|Avenue|Way|Drive|Road|Park|Place|Square)\b).*$")
+
+
+def _iso_date(text: str) -> str | None:
+    from datetime import datetime
+    t = re.sub(r"\s+", " ", text.replace(".", "")).replace(",", "").strip()
+    for fmt in ("%B %d %Y", "%b %d %Y"):
+        try:
+            return datetime.strptime(t, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def table_as_of(header_text: str, before_text: str) -> str | None:
+    """The record date a table speaks as of: its own header ("Shares
+    Beneficially Owned as of April 2, 2026", Sirius XM) first, else the
+    sentence before it ("… as of March 2, 2026, by …")."""
+    for text in (header_text, before_text):
+        for m in _AS_OF.finditer(text or ""):
+            day = _iso_date(m.group(1))
+            if day:
+                return day
+    return None
+
+
+def holder_names(text: str) -> list[str]:
+    """A table's owner cell → the names it may stand for, in order: footnotes,
+    an appended address and "Entities affiliated with" cut, and two names
+    joined by "/" split ("Warren E. Buffett/Berkshire Hathaway Inc." on
+    Domino's 2026 proxy)."""
+    name = _AFFILIATED_PREFIX.sub("", holder_name(text))
+    name = _STREET.sub("", name).strip(" ,")
+    return [p.strip(" ,") for p in name.split("/") if p.strip(" ,")] if name else []
+
+
+def _share_class(header: str) -> str | None:
+    m = _CLASS.search(header or "")
+    return f"{m.group(1).title()} {m.group(2).upper()}" if m else None
+
+
+def holder_stake(columns: list[tuple[str, float]]) -> dict:
+    """A row's percent columns → {"stake_pct", "share_class", "voting_power_pct"}:
+    the largest stated percent of a class is the stake (Better Home's Vishal
+    Garg: 13.2 % of Class A, 40.4 % of Class B → 40.4, "Class B"), a
+    voting-power column the voting power."""
+    voting = [p for h, p in columns if _VOTING.search(h)]
+    classes = [(p, h) for h, p in columns if not _VOTING.search(h)]
+    best = max(classes, key=lambda c: c[0]) if classes else None
+    return {"stake_pct": best[0] if best else None,
+            "share_class": _share_class(best[1]) if best else None,
+            "voting_power_pct": max(voting) if voting else None}
+
+
+def read_holder_table(html: str) -> dict:
+    """The holders an ownership table states a percent for, with what the
+    graph needs to write them: {"as_of", "rows": [{"name", "names", "group",
+    "stake_pct", "share_class", "voting_power_pct"}]} — a name listed twice
+    kept once (its first row)."""
+    soup = BeautifulSoup(html, "lxml")
+    as_of = None
+    out: dict[str, dict] = {}
+    for table in soup.find_all("table"):
+        rows = _holder_rows(table)
+        if not rows:
+            continue
+        if as_of is None:
+            grid = _grid(table)
+            first = _first_data_row(grid) or 0
+            header_text = " ".join(c[2] for row in grid[:first] for c in row)
+            before = " ".join(reversed([t.strip() for t in table.find_all_previous(string=True, limit=40)]))
+            as_of = table_as_of(header_text, before)
+        for r in rows:
+            if r["name"] in out or not r.get("columns"):
+                continue
+            raw = r.get("raw") or r["name"]
+            out[r["name"]] = {"name": r["name"], "names": holder_names(raw),
+                              # "Entities affiliated with X", "X and affiliated
+                              # entities": the stake is the group's, not X's own
+                              "group": bool(_AFFILIATED_PREFIX.search(raw) or _GROUP_WORDS.search(raw)),
+                              **holder_stake(r["columns"])}
+    return {"as_of": as_of, "rows": list(out.values())}
 
 
 #: the forms that carry the ownership table: the proxy, and a 10-K/A whose

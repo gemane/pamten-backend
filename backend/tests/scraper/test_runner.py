@@ -2051,7 +2051,8 @@ class TestClassEndInTheScrape:
         self.subs.assert_called_once_with("0000101830")
         read.assert_called_once_with("0000101830", {"subs": 1})
         close.assert_called_once_with("sprint-id", ends)
-        self.table.assert_called_once_with("sprint-id", "0000101830", {"subs": 1})
+        # the issuer's own scrape also writes its table's holders (findings item 86)
+        self.table.assert_called_once_with("sprint-id", "0000101830", {"subs": 1}, write=True, source_id="src")
 
     def test_no_cik_no_read(self):
         read, close, _ = self._scrape({"name": "SPRINT Corp", "cik": None,

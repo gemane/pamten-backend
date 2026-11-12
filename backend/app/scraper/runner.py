@@ -2723,7 +2723,11 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             from app.scraper.sec_writer import close_at_class_end, read_table_and_close
             subs = _submissions(data["cik"])
             close_at_class_end(target_id, class_ends(data["cik"], subs))
-            read_table_and_close(target_id, data["cik"], subs)
+            # ...and writes the 5 % holders its table states that no
+            # statement covers (findings item 86)
+            table = read_table_and_close(target_id, data["cik"], subs, write=True, source_id=source_id)
+            if table.get("written"):
+                log.info("SEC EDGAR: %r's ownership table: %s", data["name"], table["written"])
         except Exception as exc:  # noqa: BLE001 — the scrape stands without it
             log.warning("SEC EDGAR: class ends / ownership table of %r not read: %s", data["name"], exc)
 

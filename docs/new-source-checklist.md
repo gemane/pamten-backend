@@ -99,7 +99,18 @@ parser. Anything that does not map is either a new property (document it) or noi
       trust is in every member's filing: summed per member, America Movil's Slim family held
       169 % of Series B (findings item 111, 2026-11-12). Before summing positions into a
       stake, ask whether another filer reports the same position — the same holder, the same
-      count — and write it once, from its holder.
+      count — and write it once, from its holder. A table does it within one document:
+      Skydance's 10-K/A lists Harbor Lights and David Ellison (its controller) both at 100 %
+      of Class A, Molson Coors four voting-trust parties at 96.2 % (findings item 86) — equal
+      rows that add up past 100 % are one block.
+- [ ] **A table that summarises other filings is older than they are.** An issuer's
+      ownership table speaks as of a record date weeks before it is filed; a holder's own
+      statement can end after it (Berkshire's 13G/A on Pool closed 2026-03-31, the proxy of
+      2026-03-26 still lists 8 %). Before writing a row from the summary, ask whether the
+      primary statement for the pair is open or ended after the summary's date — then the
+      statement speaks, and the summary must not reopen it. Name its holders strictly
+      (exact name, exact EDGAR registrant, never a person minted from the summary's
+      spelling): a fuzzy match put "MUFG" on "Morgan Stanley MUFG Securities" (item 86).
 - [ ] **One holding, two figures: of record versus beneficial.** A source can state the
       same holding in two documents that answer different questions. Musk's Form 4 counts
       what is registered to him (1,123 M Tesla shares, 28.4 % — "controlling" by the 20 %

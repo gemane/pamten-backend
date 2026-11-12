@@ -177,7 +177,7 @@ single, fast, current-best answer — and the claims sit beside it as the eviden
 (:Claim {kind:'owns', from_id, to_id, stake_percent: 75, source_id:'ch-psc'})
 ```
 
-- **Keyed** on `claim_key` = digest of (kind, from_id, to_id, source_id — and, for a role, the canonical role; for an ownership claim, the **SEC filing family**: 13D/G, 13F, Form 3/4/5, EX-21, EX-8.1, the acquisition facts, and DEF 14A — the proxy's voting power, findings item 46), UNIQUE.
+- **Keyed** on `claim_key` = digest of (kind, from_id, to_id, source_id — and, for a role, the canonical role; for an ownership claim, the **SEC filing family**: 13D/G, 13F, Form 3/4/5, EX-21, EX-8.1, the acquisition facts, and the ownership table — DEF 14A or the 10-K/A that stands in for it: the proxy's voting power, findings item 46, and its 5 % holders, item 86), UNIQUE.
   A source re-asserting the same relationship updates its own row, so re-imports
   are idempotent here even though the edges still need a dedup pass. SEC EDGAR
   speaks about one pair through several filing families, each its own statement:

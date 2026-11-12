@@ -1772,6 +1772,89 @@ defined-terms table at Nike and a director's biography at Comcast for the
 ownership table. The tests read the real 2026 tables of all ten issuers
 (`tests/scraper/fixtures/def14a_*_2026.html`).
 
+## The table's 5 % holders — owners no statement names (findings item 86)
+
+A controlling holder that files no Schedule 13D/G is invisible to the 13D/G
+reader. Skydance's graph showed David Ellison as founder and CEO and **nobody
+owning the company**: EDGAR holds no statement under the issuer, and the only
+public record is the ownership table of its 10-K/A (2026-04-24, Part III Item
+12): Harbor Lights Entertainment, Inc. with 31,500,087 Class A shares = 100 %.
+The issuer's own SEC scrape now writes the table's 5 % holders where no
+statement speaks for the pair (`sec_writer.write_table_holders`, called by
+`read_table_and_close(..., write=True)` beside the absence rule above — the
+same filing, one request).
+
+**What is read** (`proxy_statement.read_holder_table`): every row with a
+percent, each percent column under its header — the **largest stated class
+percent** is the stake, with its class (`share_class` "Class A", from the
+column's own header, a spanning header above it, or the shares column left of
+it as Molson Coors' "Class A Shares | Percent of class"); a voting-power column
+is `voting_power_pct`; the table's **record date** ("Shares Beneficially Owned
+as of April 2, 2026" in the header, else "as of …" in the text before it) is
+the start, as a lower bound (`since_basis` first_reported) and `event_date`.
+The edge carries `filing_type` "DEF 14A" or "10-K/A", `read_from` table, the
+filing as `source_url`. Skydance's header row ("Name of Beneficial Owner |
+Shares | % | Shares | %") was once taken for the first data row — "%" looked
+like a figure — so the table read as none; a data row's figure has a digit.
+
+**Which rows are written** — the holder must be named strictly, since proxies
+name loosely ("MUFG", "Vanguard", "GAMCO Investors, Inc. One Corporate Center
+Rye, NY"): the address, footnote marks and "Entities affiliated with" are cut,
+"A/B" is two names ("Warren E. Buffett/Berkshire Hathaway Inc."), and then
+
+1. one Entity of exactly that name or name key, else
+2. for a name with no legal form, one Person of exactly that full name, else
+3. an EDGAR registrant of exactly that name (`_browse_index` + `_exact_registrant`),
+   written by its CIK.
+
+A person is never minted from a proxy's spelling, and a group row ("Entities
+affiliated with X") is written only as the company X, never as the person —
+the stake is the group's. Two nodes of the name → none (no guess). The fuzzy
+resolver the measurement first used put MUFG's 24 % of Morgan Stanley on
+"Morgan Stanley MUFG Securities Co., Ltd.".
+
+**Which rows are not written:**
+
+- a row under 5 % (the directors' "*" rows);
+- a **registered fund's** table (`is_registered_fund`: it files N-CSR, NPORT-P
+  or 485BPOS) — Europacific Growth Fund's proxy lists who holds each share class
+  of record: IRAs, pension plans, "Individual Investor";
+- a **block several rows share** (`_shared_blocks`): the same percent of the
+  same class on several rows adding up to more than 100 %. Skydance lists Harbor
+  Lights and David Ellison (deemed, as its controller) both at 100 % of Class A —
+  written once, on the one company; Molson Coors lists four rows at 96.2 % of
+  Class A (the Coors and Pentland sides of the voting trust) — written on none,
+  the table does not say which holds it (the item-111 rule: one block, one owner);
+- a pair a **13D/G statement** speaks for: one open, or one that ended on or after
+  the table's date — Berkshire's 13G/A on Pool closed 2026-03-31, after the
+  table's 2026-03-26 filing, and the table must not reopen it; a statement that
+  ended before the table says nothing about it (Vanguard on Sirius XM);
+- a holder those statements name otherwise — their holders' names, aliases and
+  controlling parents, and the open statements' reporting persons
+  (`named_in_table`, generous on purpose: a wrong match only leaves a row out).
+
+**Precedence.** Over a Form 4 count the table wins — beneficial ownership, not
+of record (user, 2026-11-10): the table's claim (filing family `def14a`, with a
+stake) makes `stated_by_13dg` true, and the Form 4 reader yields to it as to a
+13D/G. A 13D/G statement filed later takes the pair over. `proxy_write`
+(voting power, manual) leaves a holding the table wrote alone — a voting-only
+claim under the same key would erase the stake.
+
+**The end.** A newer table that no longer names the holder ends the holding on
+its date (`close_absent_from_table`, `until_reason` not_in_issuer_table); the
+table that wrote it never does.
+
+**Measured 2026-11-12** on the 64 scrape targets with a table (read-only
+guard): 204 rows of 5 % or more; 187 covered by a statement, 5 shared, 11
+unresolved (MUFG, GAMCO's two spellings, the Johnsons of Franklin under their
+Form 4 spelling, three group rows, LifeStance's "Parties to the Stockholders
+Agreement", Better Home's BHFHC Distribution Trust, Skydance's Harbor Lights and
+Gerald Cardinale), one fund; **4 written** — BlackRock on Bank of America (6.9 %)
+and State Street (8.99 %), Vanguard on Sirius XM (5.4 %), Security Benefit Life on
+Franklin BSP Realty (100 % of Series H). Harbor Lights itself stays unwritten:
+EDGAR still names CIK 913264 "NATIONAL AMUSEMENTS INC /MD/", so no registrant of
+that name exists and the graph has no node for it.
+
 ## Industry — the filer's SIC code
 
 EDGAR assigns every filer a Standard Industrial Classification code, in the
@@ -2430,9 +2513,8 @@ bare "Delaware"). The parser reads `<tr>/<td>` rows, drops header/registrant/
 prose rows, strips the significance asterisk, and de-duplicates by casefolded
 name.
 
-**Deferred, deliberately**: the DEF 14A beneficial-ownership table (>5% holders
-incl. non-13F ones, director/officer stakes) is the next EDGAR family — harder
-HTML, planned for a later version.
+The DEF 14A beneficial-ownership table's 5 % holders are read since findings
+item 86 — see "The table's 5 % holders" above.
 
 ---
 
