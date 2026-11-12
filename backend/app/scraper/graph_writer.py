@@ -1083,7 +1083,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                             credibility_score: int = 98,
                             register_name: bool = False,
                             candidates: list[str] | None = None,
-                            aliases: list[str] | None = None) -> str:
+                            aliases: list[str] | None = None,
+                            by_name: bool = True) -> str:
     """Find or create an Entity node matched by CIK, LEI, exact name, or normalized name.
 
     ``aliases``: other names the company goes by, as the source states them
@@ -1093,6 +1094,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
     ``candidates`` are node ids weighed before the name's, on the same terms
     (`_not_this_filer`): the GLEIF node a Wikidata item resolved to by its LEI
     when the item states the CIK too (`register_pointer.attach_stated_cik`).
+    ``by_name=False`` weighs only them: a name that is no legal name — an
+    insider's "By GFI" (findings item 111) — must not land on a namesake.
 
     A name says which company only together with where it is registered
     (`_resolve_by_name`): a row that states a ``country`` takes the node of
@@ -1143,20 +1146,20 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         if not entity_id:
             entity_id, refused = _first_filer_match(
                 session, list(dict.fromkeys([*(candidates or []),
-                                             *_candidates_by_name(session, name, name_norm, country,
-                                                                  jurisdiction_code)])),
+                                             *(_candidates_by_name(session, name, name_norm, country,
+                                                                   jurisdiction_code) if by_name else [])])),
                 name, cik, lei, edgar_name)
             # The filing spelled a name EDGAR no longer gives the CIK: the
             # filer is written under the name in force, its former names
             # dated, not under the old spelling.
-            if refused and not entity_id and cik and not register_name \
+            if refused and not entity_id and cik and not register_name and by_name \
                     and (now := _filer_as_registered(cik, name)):
                 name, former_names, register_name = now[0], former.merge(former_names, now[1]), True
                 name_norm, edgar_name = normalize_entity_name(name), name
                 entity_id, _ = _first_filer_match(
                     session, _candidates_by_name(session, name, name_norm, country, jurisdiction_code),
                     name, cik, lei, edgar_name)
-        if not entity_id and cik:
+        if not entity_id and cik and by_name:
             # The prefix must end on a WORD boundary, and the candidate must not
             # already belong to a different filer.
             #

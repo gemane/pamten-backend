@@ -1051,7 +1051,7 @@ def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,
 
 
 def detach_owns_sec(owner_id: str, owned_id: str, source_id: str,
-                    filing_type: str = "EX-21") -> str:
+                    filing_type: str = "EX-21", owner_label: str = "Entity") -> str:
     """Withdraw SEC's assertion that ``owner`` holds ``owned`` directly — an
     Exhibit 21 re-read that now places the subsidiary under an intermediate
     parent, where an earlier flat read had hung it off the filer.
@@ -1061,7 +1061,8 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str,
     an edge another source also claims (GLEIF's ultimate-parent link, say)
     stays and is re-answered from that source's claim, so it never keeps
     citing SEC for a fact SEC withdrew. Returns "deleted", "reassigned" or
-    "none" (nothing SEC's to withdraw).
+    "none" (nothing SEC's to withdraw). ``owner_label``: "Person" for an
+    insider whose Form 4 holding is a shared vehicle's (findings item 111).
     """
     from app.claims import KIND_OWNS, claims_for, edge_values_from, owns_claim_key
     from app.db.arcadedb import run_sql
@@ -1070,7 +1071,7 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str,
     run_sql("DELETE FROM Claim WHERE claim_key = :k", {"k": withdrawn})
     with db.get_session() as session:
         edge = session.run(
-            """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+            f"""MATCH (a:{owner_label} {{id: $o}})-[r:OWNS]->(b:Entity {{id: $n}})
                WHERE r.until IS NULL AND r.source_id = $sid RETURN r LIMIT 1""",
             o=owner_id, n=owned_id, sid=source_id).single()
         if not edge:
@@ -1082,7 +1083,7 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str,
         others = [c for c in claims_for(owner_id, owned_id, KIND_OWNS) if c.get("claim_key") != withdrawn]
         if not others:
             session.run(
-                """MATCH (a:Entity {id: $o})-[r:OWNS]->(b:Entity {id: $n})
+                f"""MATCH (a:{owner_label} {{id: $o}})-[r:OWNS]->(b:Entity {{id: $n}})
                    WHERE r.until IS NULL AND r.source_id = $sid DELETE r""",
                 o=owner_id, n=owned_id, sid=source_id)
             return "deleted"
@@ -1095,7 +1096,7 @@ def detach_owns_sec(owner_id: str, owned_id: str, source_id: str,
             values.update(direct_or_indirect=None, structure_basis=None)
         assignments = ", ".join(f"r.{f} = $v_{f}" for f in values)
         session.run(
-            f"""MATCH (a:Entity {{id: $o}})-[r:OWNS]->(b:Entity {{id: $n}})
+            f"""MATCH (a:{owner_label} {{id: $o}})-[r:OWNS]->(b:Entity {{id: $n}})
                 WHERE r.until IS NULL AND r.source_id = $sid SET {assignments}""",
             o=owner_id, n=owned_id, sid=source_id, **{f"v_{f}": v for f, v in values.items()})
         return "reassigned"

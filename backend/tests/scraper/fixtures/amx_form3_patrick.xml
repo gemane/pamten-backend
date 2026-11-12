@@ -1,0 +1,163 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+
+    <schemaVersion>X0206</schemaVersion>
+
+    <documentType>3</documentType>
+
+    <periodOfReport>2026-03-16</periodOfReport>
+
+    <noSecuritiesOwned>0</noSecuritiesOwned>
+
+    <issuer>
+        <issuerCik>0001129137</issuerCik>
+        <issuerName>AMERICA MOVIL SAB DE CV/</issuerName>
+        <issuerTradingSymbol>AMX</issuerTradingSymbol>
+    </issuer>
+
+    <reportingOwner>
+        <reportingOwnerId>
+            <rptOwnerCik>0002117931</rptOwnerCik>
+            <rptOwnerName>Slim Domit Patrick</rptOwnerName>
+        </reportingOwnerId>
+        <reportingOwnerAddress>
+            <rptOwnerStreet1>PASEO DE LAS PALMAS 736</rptOwnerStreet1>
+            <rptOwnerStreet2>LOMAS DE CHAPULTEPEC</rptOwnerStreet2>
+            <rptOwnerCity>CIUDAD DE MEXICO</rptOwnerCity>
+            <rptOwnerState>O5</rptOwnerState>
+            <rptOwnerZipCode>11000</rptOwnerZipCode>
+            <rptOwnerStateDescription>MEXICO</rptOwnerStateDescription>
+        </reportingOwnerAddress>
+        <reportingOwnerRelationship>
+            <isDirector>true</isDirector>
+        </reportingOwnerRelationship>
+    </reportingOwner>
+
+    <nonDerivativeTable>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>1236591858</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>D</value>
+                </directOrIndirectOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>1139074</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Spouse</value>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>4891412</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Children</value>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>17742515522</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Control Trust</value>
+                    <footnoteId id="F1"/>
+                    <footnoteId id="F2"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>10933355873</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Control Empresarial Trust by Control Empresarial</value>
+                    <footnoteId id="F3"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>196009735</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By GFI</value>
+                    <footnoteId id="F4"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+    </nonDerivativeTable>
+
+    <footnotes>
+        <footnote id="F1">These securities are held by Banco Inbursa, S.A., Institucion de Banca Multiple, Grupo Financiero Inbursa, Trust No. F/0126 (the &quot;Control Trust&quot;), a trust organized under the laws of Mexico in which members of the Slim family, including the reporting person, are trust participants. Investment decisions by the Control Trust are made by a technical committee, which is composed of representatives of the Slim family, including the reporting person. As a result, the reporting person may be deemed to control the Control Trust and to share beneficial ownership of all Series B Shares held by the Control Trust.</footnote>
+        <footnote id="F2">The reporting person hereby disclaims having any pecuniary interests derived from the beneficial ownership of these securities except to the extent of the pecuniary interest derived by the reporting person's securities in the Control Trust, and this report shall not be deemed an admission that the reporting person is the beneficial owner of such securities for purposes of Section 16 or for any other purpose.</footnote>
+        <footnote id="F3">These securities are held by Control Empresarial de Capitales S.A. de C.V., a sociedad anonima de capital variable organized under the laws of Mexico (&quot;Control Empresarial&quot;). The Slim family, including the reporting person, are trust participants in Trust No. F/0125, a trust organized under the laws of Mexico, which holds all of the issued and outstanding voting equity securities of Control Empresarial (the &quot;Control Empresarial Trust&quot;), and the reporting person may be deemed to beneficially own the Series B Shares held by Control Empresarial.
+
+The reporting person hereby disclaims having any pecuniary interests derived from the beneficial ownership of these securities except to the extent of the pecuniary interest derived by the reporting person's interest in the Control Empresarial Trust, and this report shall not be deemed an admission that the reporting person is the beneficial owner of such securities for purposes of Section 16 or for any other purpose.</footnote>
+        <footnote id="F4">These securities are held by Grupo Financiero Inbursa, S.A.B. de C.V., a sociedad anonima bursatil de capital variable organized under the laws of Mexico (&quot;GFI&quot;). The Slim family, including the reporting person, beneficially own a majority of the outstanding voting equity securities of GFI, and the reporting person may be deemed to beneficially own the Series B Shares held by GFI.
+
+The reporting person hereby disclaims having any pecuniary interests derived from the beneficial ownership of these securities except to the extent of the pecuniary interest derived by the reporting person's interest in GFI, and this report shall not be deemed an admission that the reporting person is the beneficial owner of such securities for purposes of Section 16 or for any other purpose.</footnote>
+    </footnotes>
+
+    <ownerSignature>
+        <signatureName>/S/VICTOR MANUEL GUTIERREZ LOPEZ, ATTORNEY-IN-FACT_</signatureName>
+        <signatureDate>2026-03-16</signatureDate>
+    </ownerSignature>
+</ownershipDocument>

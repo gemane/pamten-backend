@@ -2365,13 +2365,14 @@ def _parse_form34_xml(xml_text: str) -> dict | None:
 
     # What the filer holds after the reported transactions, per security —
     # the stake is computed per class once the issuer's counts are known.
+    blocks = _form4_blocks(root)
     holdings = _form4_holdings(root)
     pick = stake_for(holdings, None)
 
     return {"name": name, "title": officer_title, "role": role,
             "shares_owned": pick["shares_owned"] if pick else None,
             "share_class": pick["share_class"] if pick else None,
-            "holdings": holdings, "issuer_cik": issuer_cik,
+            "holdings": holdings, "blocks": blocks, "issuer_cik": issuer_cik,
             "person_cik": owner_cik, "document_type": document_type,
             "period_of_report": period, "former": former_role is not None}
 
@@ -2925,14 +2926,19 @@ def _own_form4_holding(cik: str, issuer_int: str,
         if not m or m.group(1) != issuer_int:
             continue                       # this Form 4 is about a different company
         try:
-            holdings = _form4_holdings(ET.fromstring(xml))
+            root = ET.fromstring(xml)
         except ET.ParseError:
             return None
+        holdings = _form4_holdings(root)
         pick = stake_for(holdings, shares_outstanding)
         if not pick:
             return None
         return {
             **pick,
+            # the positions, so a vehicle already written for the issuer can be
+            # taken out of this person's (`without_vehicles`, findings item 111)
+            "holdings":      holdings,
+            "blocks":        _form4_blocks(root),
             "cik":           cik,
             "source_url":    _filing_index_url(cik, accs[i]),
             "source_date":   dates[i] if i < len(dates) else None,
@@ -2988,7 +2994,17 @@ _NOT_A_SHARE = re.compile(r"option|unit|right|warrant|note|debenture|preferred|p
 
 
 def _form4_holdings(root: ET.Element) -> dict[str, float]:
-    """What the filer holds after the reported transactions, per security title.
+    """What the filer holds after the reported transactions, per security
+    title: the positions of `_form4_blocks` summed."""
+    out: dict[str, float] = {}
+    for b in _form4_blocks(root):
+        out[b["title"]] = out.get(b["title"], 0.0) + b["shares"]
+    return out
+
+
+def _form4_blocks(root: ET.Element) -> list[dict]:
+    """What the filer holds after the reported transactions, one position per
+    security title and nature of ownership: {title, indirect, nature, shares}.
 
     The rows of a Form 4 are in order; each states the position AFTER it. So
     the last row per security is the position the filing leaves the filer
@@ -2997,8 +3013,10 @@ def _form4_holdings(root: ET.Element) -> dict[str, float]:
     12,000,000 Class B ("owned following": 12,001,162) and gives the B away in
     four gifts (…1,162); the largest was the moment before the gifts. Direct
     and indirect positions (a trust beside the person) in the same security
-    are summed; derivative rows count only when they are plainly a class of
-    common stock (`_NOT_A_SHARE`).
+    are positions of their own (`_form4_holdings` sums them; a vehicle several
+    insiders report is taken out first, `split_shared_blocks`); derivative
+    rows count only when they are plainly a class of common stock
+    (`_NOT_A_SHARE`).
     """
     last: dict[tuple[str, str], float] = {}
     for row in root.iter():
@@ -3017,9 +3035,118 @@ def _form4_holdings(root: ET.Element) -> dict[str, float]:
         nature = ((row.findtext("ownershipNature/directOrIndirectOwnership/value") or "D").strip().upper()
                   + "|" + (row.findtext("ownershipNature/natureOfOwnership/value") or "").strip())
         last[(title, nature)] = n
-    out: dict[str, float] = {}
-    for (title, _nature), n in last.items():
-        out[title] = out.get(title, 0.0) + n
+    return [{"title": title, "indirect": nature.startswith("I|"), "nature": nature.split("|", 1)[1],
+             "shares": n} for (title, nature), n in last.items()]
+
+
+def _vehicle_key(block: dict) -> tuple[str, str, float] | None:
+    """What makes two insiders' indirect positions one block (findings item
+    111): the security, the words naming the holder ("By Control Trust") and
+    the count, to the share. None for a direct position or an unnamed one."""
+    words = re.sub(r"\s+", " ", block.get("nature") or "").strip().casefold()
+    if not block.get("indirect") or not words or not block.get("shares"):
+        return None
+    return block["title"], words, float(block["shares"])
+
+
+def without_vehicles(holding: dict, vehicles: list[dict],
+                     shares_outstanding: "SharesOutstanding | dict | float | None") -> dict | None:
+    """A person's holding (`fetch_insider_holding`) without the positions that
+    are vehicles already written for the issuer — {name, share_class, shares}
+    of their edges: an indirect position whose holder is named so, of that
+    class and that count (findings item 111). The person-centric lookup reads
+    one filing at a time and cannot see that another insider reports the same
+    block; the issuer's scan did. None when nothing of their own is left."""
+    known = {(v.get("share_class") or "", (v.get("name") or "").casefold(), float(v.get("shares") or 0))
+             for v in vehicles}
+    held = dict(holding.get("holdings") or {})
+    for b in holding.get("blocks") or []:
+        if b.get("indirect") and (b["title"], vehicle_name(b["nature"]).casefold(), float(b["shares"])) in known:
+            held[b["title"]] = held.get(b["title"], 0.0) - b["shares"]
+    held = {t: n for t, n in held.items() if n > 0}
+    if held == (holding.get("holdings") or {}):
+        return holding
+    pick = stake_for(held, shares_outstanding)
+    return {**holding, **pick, "holdings": held} if pick else None
+
+
+def vehicle_name(nature: str) -> str:
+    """The holder a nature of ownership names, as the filer wrote it:
+    "By Control Trust" → "Control Trust"."""
+    return re.sub(r"^\s*(?:held\s+)?by\s+", "", re.sub(r"\s+", " ", nature or ""), flags=re.I).strip(" .,;:") or nature
+
+
+#: below this share of its class an identical count is as likely two people's
+#: own accounts as one vehicle: TSMC's officers each hold 7,036 shares "LTI
+#: Trust" (equal grants), Wells Fargo's 893.67 "Through 401(k) Plan" (three
+#: people), two unrelated insiders 2,000 "Spouse" — all far below it — and a
+#: block this small changes no picture (findings item 111's guard, 83
+#: issuers; the Slim family's GFI block is 0.33 % of Series B)
+VEHICLE_MIN_PCT = 0.1
+#: words that point at a footnote instead of naming the holder ("See footnote",
+#: "(1)"): the holder is in the footnote, which is not read
+_NO_HOLDER = re.compile(r"^(?:see|refer|as\s+described)\b|\bfoot\s*note|^[\W\d]*$", re.I)
+
+
+def _names_a_holder(nature: str) -> bool:
+    """Whether the words name a holder: no pointer to a footnote, and written
+    as a name — a capitalised word ("Control Trust", "GFI"), not NYT's bare
+    "trust" of the Sulzberger family, which says only what kind of holder."""
+    name = vehicle_name(nature)
+    return not _NO_HOLDER.search(name) and any(w[:1].isupper() for w in name.split())
+
+
+def split_shared_blocks(executives: list[dict],
+                        outstanding: "SharesOutstanding | dict | float | None" = None) -> list[dict]:
+    """The indirect positions two or more insiders of one issuer report alike,
+    taken off each insider's holdings and returned once each (findings item
+    111, the user's choice of 2026-11-12: the vehicle is the owner).
+
+    A Form 3/4 states what the reporting person may be deemed to own
+    beneficially, and a family's shared vehicle is in every member's filing:
+    America Movil's Form 3s of 2026-03 by Carlos and Patrick Slim Domit each
+    list "By Control Trust" 17,742,515,522, "By Control Empresarial Trust by
+    Control Empresarial" 10,933,355,873 and "By GFI" 196,009,735 Series B
+    shares — summed into every member's edge, the family held 169 % of the
+    class. Alike means the same security, the same words and the same count;
+    the footnotes that name the trust in law are not read, so a vehicle hidden
+    in another position ("By Spouse", which a footnote breaks down) stays as
+    filed. Only a block of at least VEHICLE_MIN_PCT of its class (measured
+    against ``outstanding``; none without it) whose words name a holder: equal
+    small counts are often each person's own account, and "See footnote" names
+    nobody. Each returned block: {name, nature, title, shares, reporters,
+    source_url, source_date} — the newest reporter's filing."""
+    seen: dict[tuple, list[dict]] = {}
+    nature_of: dict[tuple, str] = {}             # the words as the first reporter wrote them
+    for ex in executives:
+        for b in ex.get("blocks") or []:
+            if k := _vehicle_key(b):
+                nature_of.setdefault(k, b["nature"])
+                if ex not in seen.setdefault(k, []):
+                    seen[k].append(ex)
+    def large(title: str, shares: float) -> bool:
+        pick = stake_for({title: shares}, outstanding) if outstanding is not None else None
+        return bool(pick and pick.get("stake_percent") is not None and pick["stake_percent"] >= VEHICLE_MIN_PCT)
+    shared = {k: who for k, who in seen.items()
+              if len({ex.get("person_cik") or ex.get("name") for ex in who}) >= 2
+              and _names_a_holder(nature_of[k]) and large(k[0], k[2])}
+    out: list[dict] = []
+    for (title, _words, shares), who in shared.items():
+        nature = nature_of[(title, _words, shares)]
+        newest = max(who, key=lambda ex: ex.get("source_date") or "")
+        out.append({"name": vehicle_name(nature), "nature": nature, "title": title or None, "shares": shares,
+                    "reporters": [ex.get("name") for ex in who],
+                    "source_url": newest.get("source_url"), "source_date": newest.get("source_date")})
+        for ex in who:
+            held = dict(ex.get("holdings") or {})
+            held[title] = max(0.0, held.get(title, 0.0) - shares)
+            ex["holdings"] = {t: n for t, n in held.items() if n > 0}
+            pick = stake_for(ex["holdings"], None)
+            ex["shares_owned"] = pick["shares_owned"] if pick else None
+            ex["share_class"] = pick["share_class"] if pick else None
+    if out:
+        log.info("SEC EDGAR: %d position(s) reported alike by several insiders written once: %s",
+                 len(out), "; ".join(f"{b['name']} {b['shares']:,.0f}" for b in out))
     return out
 
 
@@ -3306,11 +3433,16 @@ def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> 
     # when the issuer's counts are known and fresh (see SharesOutstanding).
     detail = fetch_shares_outstanding_detail(cik) if cik else None
     shares_out = detail.total if detail else None
+    # a vehicle several insiders report is one owner, not a part of each (item 111)
+    vehicles = split_shared_blocks(executives, detail)
     for ex in executives:
         if ex.get("holdings"):
             pick = stake_for(ex["holdings"], detail)
             if pick:
                 ex.update(pick)
+    for v in vehicles:
+        if pick := stake_for({v["title"] or "": v["shares"]}, detail):
+            v.update(pick)
 
     return {
         "cik":                company["cik"],
@@ -3322,6 +3454,7 @@ def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> 
         "ads_cusips":         ads.get("cusips") or [],
         "ads_cusip_url":      ads.get("source_url"),
         "executives":         executives,
+        "shared_vehicles":    vehicles,
         "shares_outstanding": shares_out,
         # dated and per class, for the insider lookups the runner adds later
         "shares_outstanding_detail": asdict(detail) if detail else None,

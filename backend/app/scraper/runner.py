@@ -2851,6 +2851,8 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             scraped.append({"type": "owns", "name": name, "role": "insider owner"})
             log.info("SEC EDGAR: wrote insider OWNS %r → %r (%s shares)", name, data["name"], shares)
 
+    _write_shared_vehicles(target_id, data, source_id, scraped, role_holders)
+
     # The seats' own filings: departures and personal Form 4s for the people
     # with a seat at the company — this scan's and the graph's.
     asked = _seat_holders_pass(target_id, data.get("cik"), data["name"],
@@ -2886,6 +2888,64 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
     }
 
 
+def _form4_vehicles(target_id: str) -> list[dict]:
+    """The vehicles written for this issuer from its insiders' Form 3/4s
+    (`_write_shared_vehicles`): {id, name, shares, share_class} of each open
+    Form 4 edge an Entity without a register id holds into it."""
+    with db.get_session() as session:
+        return [{k: r.get(k) for k in ("id", "name", "shares", "share_class")} for r in session.run(
+            """MATCH (v:Entity)-[r:OWNS]->(t:Entity {id: $id})
+               WHERE r.until IS NULL AND r.filing_type = 'Form 4' AND v.sec_cik IS NULL AND v.lei_id IS NULL
+               RETURN v.id AS id, v.name AS name, r.shares AS shares, r.share_class AS share_class""",
+            id=target_id)]
+
+
+def _write_shared_vehicles(target_id: str, data: dict, source_id: str, scraped: list[dict],
+                           role_holders: dict[str, str]) -> None:
+    """The positions several insiders report alike (`sec_edgar.split_shared_blocks`),
+    each written once, from a node of the holder the filers name, to the
+    issuer (findings item 111, the user's choice of 2026-11-12: the vehicle is
+    the owner). The node is found among this issuer's vehicles only, never by
+    its name elsewhere: "GFI" is how the Slim family's Form 3s name Grupo
+    Financiero Inbursa, and a name search would hand it any GFI. An insider
+    whose filing held nothing else keeps no Form 4 edge of their own — the
+    vehicle's edge carries what it said."""
+    from app.scraper.sec_writer import detach_owns_sec
+    vehicles = data.get("shared_vehicles") or []
+    if not vehicles:
+        return
+    known = {(v.get("name") or "").casefold(): v["id"] for v in _form4_vehicles(target_id)}
+    for v in vehicles:
+        vid = _upsert_entity_by_name(name=v["name"], entity_type="company", source_id=source_id,
+                                     candidates=[known[k]] if (k := v["name"].casefold()) in known else None,
+                                     by_name=False)
+        stake = v.get("stake_percent")
+        _upsert_owns_sec(
+            owner_id=vid, owned_id=target_id, source_id=source_id,
+            ownership_type=(derive_ownership_type(stake) if stake is not None else "minority"),
+            file_date=v.get("source_date"), stake_percent=stake,
+            shares=v.get("shares_owned") or v["shares"], share_class=v.get("share_class") or v.get("title"),
+            shares_outstanding=v.get("shares_outstanding"), denominator_date=v.get("denominator_date"),
+            filing_type="Form 4", read_from=READ_FIELD, filing_dates_the_stake=False,
+            source_url=v.get("source_url"), owner_label="Entity")
+        scraped.append({"type": "owns", "name": v["name"], "role": "insiders' shared vehicle"})
+        log.info("SEC EDGAR: wrote OWNS %r → %r (%s shares, reported by %s)", v["name"], data["name"],
+                 v["shares"], ", ".join(v.get("reporters") or []))
+    for ex in data.get("executives") or []:
+        if ex.get("shares_owned") or not ex.get("blocks"):
+            continue
+        # a company that reports a fund of its group (Innovex's Amberjack funds)
+        # by its CIK; a person by the seat this run wrote
+        if _vertex_holding_cik(ex.get("person_cik")) == "Entity":
+            with db.get_session() as session:
+                owner = resolve_entity_id(session, sec_cik=normalize_cik(ex["person_cik"]))
+            label = "Entity"
+        else:
+            owner, label = role_holders.get((ex.get("name") or "").strip()), "Person"
+        if owner:
+            detach_owns_sec(owner, target_id, source_id, filing_type="Form 4", owner_label=label)
+
+
 def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, shares_out,
                        source_id: str, scraped: list[dict], role_holders: dict[str, str] | None = None) -> list[str]:
     """What the seats at ``target_id`` say for themselves on EDGAR — the people
@@ -2907,7 +2967,7 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
     67): with the registers running before the knowledge bases (item 60) the
     SEC part met no Wikidata officers yet, and 22 of them lost their Form 4
     lookups, their CIKs and their item ids in the 2026-11-06 rebuild."""
-    from app.scraper.sec_edgar import fetch_departures, fetch_insider_holding
+    from app.scraper.sec_edgar import fetch_departures, fetch_insider_holding, without_vehicles
     known = dict(role_holders or {})
     with db.get_session() as session:
         for r in session.run(
@@ -2948,12 +3008,16 @@ def _seat_holders_pass(target_id: str, cik: str | None, company_name: str, share
                     id=target_id, cap=MAX_INSIDER_LOOKUPS,
                 )
             ]
+        vehicles: list[dict] | None = None
         for row in known:
             pname, pid = row["name"], row["id"]
             if not pname or not pid:
                 continue
             asked.append(pid)
             holding = fetch_insider_holding(pname, cik, shares_out, person_cik=row.get("cik"))
+            if holding and (vehicles := vehicles if vehicles is not None else _form4_vehicles(target_id)):
+                # a shared vehicle is the vehicle's, not this person's (item 111)
+                holding = without_vehicles(holding, vehicles, shares_out)
             if not holding:
                 continue
             if holding.get("cik") and not row.get("cik"):

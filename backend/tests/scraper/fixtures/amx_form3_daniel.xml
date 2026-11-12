@@ -1,0 +1,110 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+
+    <schemaVersion>X0607</schemaVersion>
+
+    <documentType>3</documentType>
+
+    <periodOfReport>2026-03-18</periodOfReport>
+
+    <noSecuritiesOwned>0</noSecuritiesOwned>
+
+    <issuer>
+        <issuerCik>0001129137</issuerCik>
+        <issuerName>AMERICA MOVIL SAB DE CV/</issuerName>
+        <issuerTradingSymbol>AMX</issuerTradingSymbol>
+        <issuerForeignTradingSymbol></issuerForeignTradingSymbol>
+    </issuer>
+
+    <reportingOwner>
+        <reportingOwnerId>
+            <rptOwnerCik>0002122013</rptOwnerCik>
+            <rptOwnerName>Hajj Aboumrad Daniel Antonio</rptOwnerName>
+        </reportingOwnerId>
+        <reportingOwnerAddress>
+            <rptOwnerNonUSAddressFlag>true</rptOwnerNonUSAddressFlag>
+            <rptOwnerStreet1>LAGO ZURICH 245, PLAZA CARSO,</rptOwnerStreet1>
+            <rptOwnerStreet2>COLONIA AMPLIACION GRANADA</rptOwnerStreet2>
+            <rptOwnerCity>MEXICO CITY</rptOwnerCity>
+            <rptOwnerNonUSStateTerritory></rptOwnerNonUSStateTerritory>
+            <rptOwnerCountry>O5</rptOwnerCountry>
+            <rptOwnerZipCode>11529</rptOwnerZipCode>
+            <rptOwnerStateDescription>MEXICO</rptOwnerStateDescription>
+        </reportingOwnerAddress>
+        <reportingOwnerRelationship>
+            <isDirector>true</isDirector>
+            <isOfficer>true</isOfficer>
+            <officerTitle>Director and CEO</officerTitle>
+        </reportingOwnerRelationship>
+    </reportingOwner>
+
+    <nonDerivativeTable>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>57174804</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>D</value>
+                </directOrIndirectOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>4888499</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Children</value>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Series B Shares</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>29762794676</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Spouse</value>
+                    <footnoteId id="F1"/>
+                    <footnoteId id="F2"/>
+                    <footnoteId id="F3"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+    </nonDerivativeTable>
+
+    <footnotes>
+        <footnote id="F1">Consists of (i) 890,913,546 Series B Shares held directly by the reporting person's spouse; (ii) 17,742,515,522 Series B Shares held by Banco Inbursa, S.A., Institucion de Banca Multiple, Grupo Financiero Inbursa, Trust No. F/0126, a trust organized under the laws of Mexico (&quot;Control Trust&quot;), in which the Slim family (including the reporting person's spouse) are trust participants and may be deemed to share beneficial ownership of Series B Shares held by the Control Trust; (iii) 10,933,355,873 Series B Shares held by Control Empresarial de Capitales S.A. de C.V., a sociedad anonima de capital variable organized under the laws of Mexico (&quot;Control Empresarial&quot;), which equity securities are held by the Trust No. F/0125, organized under the laws of Mexico, in which the Slim family (including the reporting person's spouse) are trust participants and may be deemed to beneficially own the Series B Shares held by Control Empresarial;</footnote>
+        <footnote id="F2">and (iv)196,009,735 Series B Shares held by Grupo Financiero Inbursa, S.A.B. de C.V., a sociedad anonima bursatil de capital variable organized under the laws of Mexico (&quot;GFI&quot;), which the Slim family (including the reporting person's spouse) beneficially own the majority of its outstanding voting equity securities and may be deemed to beneficially own the Series B Shares held by GFI.</footnote>
+        <footnote id="F3">The reporting person hereby disclaims having any pecuniary interests derived from the beneficial ownership of these securities except to the extent of the pecuniary interest derived from the securities reported herein, and this report shall not be deemed an admission that the reporting person is the beneficial owner of such securities for purposes of Section 16 or for any other purpose.</footnote>
+    </footnotes>
+
+    <remarks>Exhibit 24 - Power of Attorney</remarks>
+
+    <ownerSignature>
+        <signatureName>/S/ ERNESTO CARLOS LEYVA PEDROSA, ATTORNEY-IN-FACT</signatureName>
+        <signatureDate>2026-03-18</signatureDate>
+    </ownerSignature>
+</ownershipDocument>
