@@ -2064,7 +2064,22 @@ from readers removed again the same day, so 11 remain):
       and 68.95% owned by …") names neither the parent nor the row's stake —
       the layout decides. A row that is only a note ("Wholly-Owned Subsidiary
       of Lucid Diagnostics Inc.", "(fka DE 201 Santa Monica, LLC)") is no
-      company, and two spellings of one row are one row.
+      company, and two spellings of one row are one row. **A place in brackets
+      after the legal form is the row's jurisdiction** (findings item 112,
+      2026-11-12; `_place_note`): Quaker Houghton (Pennsylvania) lists "Quaker
+      Chemical Corporation (PA)" and "… (DE)" under "United States". Kept in
+      the name, the Delaware company — GLEIF's 549300PJQ1R3WCWCPS54, which
+      Wikidata's item for the filer states as the filer's own LEI — became a
+      third node, and the Pennsylvania one, the filer, its own subsidiary. Only
+      where the name before the bracket ends with a legal form and the place
+      agrees with the column's country; the bracket becomes the jurisdiction
+      when it is the finer one. "Alibaba Information Port (Wulanchabu) Co.,
+      Ltd." (the bracket inside), "Foo GmbH (UK)" under Germany and "Acme
+      Holdings (Delaware)" (no form before it) stay as filed. Over the 81
+      filers dev had read (7,202 rows) 17 rows changed, all of them this shape
+      (LVMH's "(Germany)", News Corp's "(UK entity)", Lennar's "(Florida)"),
+      and the list key weighs the state, so Lennar's "Lennar Title, Inc." in
+      Alabama and in California are two rows (+4).
     - **One name in two countries is two nodes** (the user's call, 2026-10-08):
       Lavoro's "Agrointegral Andina S.A.S." in Colombia and Ecuador. The list
       keeps one entry per name and place; the writer matches a name in its
@@ -2076,7 +2091,13 @@ from readers removed again the same day, so 11 remain):
       Limited" (Cayman) and "Chubb Services Corporation" (Illinois) had become
       one node with three parents at 100 %, likewise "Rain and Hail Insurance
       Service, Inc." (Iowa) and ", Ltd." (Canada). A row without a jurisdiction
-      still folds onto the namesake. **A register-identified node is not a row
+      still folds onto the namesake. **A state is weighed as a country is**
+      (findings item 112, `graph_writer._by_subdivision`): a row that names a
+      US state, Canadian province or UK nation takes the namesake registered
+      there first, then one whose state is unknown, never one registered in
+      another state — Quaker's Delaware row met the filer (Pennsylvania, no
+      state on its node) first and was dropped as the filer's own row, while
+      GLEIF's node of that name is US-DE. Over the 4,229 rows of the 81 read lists that name a state, resolved on dev with and without it, 9 change: Quaker's, and eight that had folded a company in one state onto another company in another — Berkshire's "XTRA LLC" (Maine) onto XTRA Corporation (Delaware), Tesla's "Tesla Insurance Company" (California) onto Tesla Insurance, Inc. (Delaware), Delek's "Delek Refining, Ltd." (Texas) onto the Inc. (Delaware), five "Lennar Title" companies onto the Maryland one. **A register-identified node is not a row
       that states another legal form** (findings item 87, 2026-11-09): the name
       key drops the form, so VIAVI's "Flex Co., Ltd." (China) met FLEX LTD. —
       the Singapore electronics group, an EDGAR filer whose node had no country

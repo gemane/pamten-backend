@@ -97,3 +97,44 @@ def test_two_spellings_of_one_row_stay_one_row():
     # one per place, as a list repeated across pages is
     assert [(e["name"], e["jurisdiction"]) for e in got] == [("BREX Parker MF DST", "Delaware"),
                                                             ("BREX Parker MF DST", "Ireland")]
+
+
+def test_a_place_in_brackets_after_the_legal_form_is_the_rows_jurisdiction():
+    # findings item 112: Quaker Houghton (Pennsylvania) lists "Quaker Chemical
+    # Corporation (PA)" and "… (DE)" under "United States"; kept in the name, the
+    # Delaware company became a node beside GLEIF's US-DE record, and the filer
+    # itself a subsidiary of itself
+    got = parse_exhibit(
+        "<html><body><table><tr><td>Name</td><td>Jurisdiction of Incorporation</td></tr>"
+        "<tr><td>Quaker Chemical Corporation (PA)</td><td>United States</td></tr>"
+        "<tr><td>Quaker Chemical Corporation (DE)</td><td>United States</td></tr>"
+        "<tr><td>Quaker Houghton Brazil Holdings Ltda. (Brazil)</td><td>Brazil</td></tr>"
+        "<tr><td>LR Port Imperial South BB, LLC (Delaware)</td><td>DE</td></tr>"
+        "</table></body></html>", ["QUAKER CHEMICAL CORP"], home="US-PA")
+    assert [(e["name"], e["jurisdiction"]) for e in got] == [
+        ("Quaker Chemical Corporation", "DE"),            # the PA one is the filer's own row
+        ("Quaker Houghton Brazil Holdings Ltda.", "Brazil"),
+        ("LR Port Imperial South BB, LLC", "DE")]          # the column already says the state
+
+
+def test_a_bracket_that_is_part_of_the_name_or_disagrees_stays():
+    got = _rows(("Alibaba Information Port (Wulanchabu) Co., Ltd.", "China"),
+                ("Foo Services GmbH (UK)", "Germany"),           # another country than the column's
+                ("Acme Holdings (Delaware)", "Delaware"),          # no legal form before it
+                ("Bar Trading Limited (Group Treasury)", "Ireland"))  # no place in it
+    assert set(got) == {"Alibaba Information Port (Wulanchabu) Co., Ltd.", "Foo Services GmbH (UK)",
+                        "Acme Holdings (Delaware)", "Bar Trading Limited (Group Treasury)"}
+
+
+def test_one_name_in_two_states_is_two_rows():
+    # Lennar lists "Lennar Title, Inc." in Alabama and in California: two companies,
+    # one row until the list key weighed the state (findings item 112)
+    got = parse_exhibit(
+        "<html><body><table><tr><td>Name of Subsidiary</td><td>State</td></tr>"
+        "<tr><td>Lennar Title, Inc.</td><td>AL</td></tr>"
+        "<tr><td>Lennar Title, Inc.</td><td>CA</td></tr>"
+        "<tr><td>Lennar Title, Inc.</td><td>CA</td></tr>"
+        "<tr><td>Rutenberg Homes, Inc. (Florida)</td><td>FL</td></tr>"
+        "</table></body></html>", "Lennar Corp")
+    assert [(e["name"], e["jurisdiction"]) for e in got] == [
+        ("Lennar Title, Inc.", "AL"), ("Lennar Title, Inc.", "CA"), ("Rutenberg Homes, Inc.", "FL")]

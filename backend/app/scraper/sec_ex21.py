@@ -682,9 +682,11 @@ def _at_home(place: str | None, home: str | None) -> bool:
 def _list_key(entry: dict) -> tuple[str, str]:
     """One list entry per name AND place: a list repeats a row across printed
     pages, but Lavoro lists "Agrointegral Andina S.A.S." in Colombia and in
-    Ecuador — two entries, two nodes (the writer matches each in its country)."""
+    Ecuador — two entries, two nodes (the writer matches each in its country).
+    A state counts where the list names one: Quaker Houghton lists "Quaker
+    Chemical Corporation" in Pennsylvania and in Delaware (findings item 112)."""
     place = entry.get("jurisdiction") or ""
-    return entry["name"].casefold(), jurisdiction_country(place) or place.casefold()
+    return entry["name"].casefold(), jurisdiction_subdivision(place) or jurisdiction_country(place) or place.casefold()
 
 
 def _named_parent(text: str, registrant: str | None = None) -> str | None:
@@ -1521,6 +1523,44 @@ _NOTE_ROW = re.compile(r"^(?:an?\s+)?(?:wholly|majority|minority|partially)[- ]o
                        re.I)
 
 
+# "Quaker Chemical Corporation (DE)", "Quaker Houghton Brazil Holdings Ltda.
+# (Brazil)": a place in brackets after the legal form (findings item 112)
+_PLACE_NOTE = re.compile(r"^(?P<name>.+?)\s*\((?P<place>[^()]{2,40})\)$")
+#: the last word of a legal name that ends with its form, spelled out or abbreviated
+_LONG_FORMS = frozenset(("corporation", "company", "limited", "incorporated", "partnership", "ltda"))
+
+
+def _ends_with_form(name: str) -> bool:
+    last = re.sub(r"[^a-z]", "", name.split()[-1].lower()) if name.split() else ""
+    return last in _FORM_TAILS or last in _LONG_FORMS
+
+
+def _place_note(name: str, jurisdiction: str | None) -> tuple[str, str] | None:
+    """(name, jurisdiction) for a row whose name ends with its legal form and
+    then a place in brackets, or None (findings item 112). The bracket is
+    where the company is registered, written into the name cell: Quaker
+    Houghton lists "Quaker Chemical Corporation (PA)" and "… (DE)" under the
+    jurisdiction "United States". Kept in the name, the Delaware company —
+    GLEIF's 549300PJQ1R3WCWCPS54 — was written as a node of its own beside
+    GLEIF's, and the Pennsylvania one, the filer itself, as a subsidiary of
+    itself. Only where the place agrees with the jurisdiction column's country
+    (or the row has no other place): "Foo GmbH (UK)" under Germany is left as
+    filed. The bracket becomes the jurisdiction when it is the finer one ("DE"
+    under "United States" is Delaware; `jurisdiction_country` reads a bare
+    state code as a US state, not as Germany). A bracket inside a name —
+    "Alibaba Information Port (Wulanchabu) Co., Ltd." — is no note: the
+    form comes after it."""
+    m = _PLACE_NOTE.match(name.strip())
+    if not m or not _ends_with_form(m.group("name")):
+        return None
+    place = m.group("place").strip()
+    country = jurisdiction_country(place)
+    if country is None or (jurisdiction and jurisdiction_country(jurisdiction) not in (None, country)):
+        return None
+    finer = jurisdiction_subdivision(place) and not jurisdiction_subdivision(jurisdiction or "")
+    return m.group("name").strip(" ,"), place if finer or not jurisdiction else jurisdiction
+
+
 def _lift_name_notes(entries: list[dict], registrant: str | list[str] | None) -> list[dict]:
     """Each row's name without the notes written after it (findings item 80):
     a former name ("f/k/a", "formerly") goes to ``former_names``, a trade name
@@ -1566,6 +1606,8 @@ def _lift_name_notes(entries: list[dict], registrant: str | list[str] | None) ->
                     entry["parent"], entry["parent_basis"] = by, "column"
         while (cleaned := _clean_name(name.strip(" ,;"))[0]) != name:
             name = cleaned          # "NL Industries, Inc. (2), (3),": one mark at a time
+        if place := _place_note(name, entry.get("jurisdiction")):
+            name, entry["jurisdiction"] = place
         if len(name) < 2:
             continue
         if name != e["name"]:

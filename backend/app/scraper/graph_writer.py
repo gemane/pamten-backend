@@ -799,7 +799,8 @@ def _resolve_by_name(session, name: str, name_norm: str, country: str | None) ->
 _NAME_CANDIDATES = 10
 
 
-def _candidates_by_name(session, name: str, name_norm: str, country: str | None) -> list[str]:
+def _candidates_by_name(session, name: str, name_norm: str, country: str | None,
+                        subdivision: str | None = None) -> list[str]:
     """Every node a name alone can stand for, in `_resolve_by_name`'s order
     (exact name before name key; with a ``country``, registered there before
     not known), then the nodes that bear the name otherwise (`_namesakes_by_other_name`:
@@ -830,7 +831,29 @@ def _candidates_by_name(session, name: str, name_norm: str, country: str | None)
     for entity_id in _namesakes_by_other_name(name, name_norm, country):
         if entity_id not in out:
             out.append(entity_id)
-    return out
+    return _by_subdivision(out, subdivision) if subdivision and out else out
+
+
+def _by_subdivision(ids: list[str], subdivision: str) -> list[str]:
+    """``ids`` with the state a row names weighed as its country is (findings
+    item 112): a node registered in that state first, then one whose state is
+    not known, and never one registered in another state of that country — a
+    company of its own. Quaker Houghton (Pennsylvania) lists "Quaker Chemical
+    Corporation" in Delaware: the name key met the filer itself first, and the
+    row was dropped as the filer's own, while GLEIF's node of that name is
+    registered in Delaware (US-DE). A node's code without a state ("KY", or
+    another country's) says nothing about the state."""
+    from app.db.arcadedb import run_sql
+    codes = {r["id"]: r.get("jurisdiction_code") for r in
+             run_sql("SELECT id, jurisdiction_code FROM Entity WHERE id IN :ids", {"ids": ids})}
+    country = subdivision.split("-")[0]
+
+    def state(entity_id: str) -> str | None:
+        code = codes.get(entity_id) or ""
+        return code if "-" in code and code.split("-")[0] == country else None
+    same = [i for i in ids if state(i) == subdivision]
+    unknown = [i for i in ids if state(i) is None]
+    return same + unknown
 
 
 def _has_legal_form(name: str) -> bool:
@@ -1120,7 +1143,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
         if not entity_id:
             entity_id, refused = _first_filer_match(
                 session, list(dict.fromkeys([*(candidates or []),
-                                             *_candidates_by_name(session, name, name_norm, country)])),
+                                             *_candidates_by_name(session, name, name_norm, country,
+                                                                  jurisdiction_code)])),
                 name, cik, lei, edgar_name)
             # The filing spelled a name EDGAR no longer gives the CIK: the
             # filer is written under the name in force, its former names
@@ -1130,7 +1154,8 @@ def _upsert_entity_by_name(name: str, entity_type: str = "company",
                 name, former_names, register_name = now[0], former.merge(former_names, now[1]), True
                 name_norm, edgar_name = normalize_entity_name(name), name
                 entity_id, _ = _first_filer_match(
-                    session, _candidates_by_name(session, name, name_norm, country), name, cik, lei, edgar_name)
+                    session, _candidates_by_name(session, name, name_norm, country, jurisdiction_code),
+                    name, cik, lei, edgar_name)
         if not entity_id and cik:
             # The prefix must end on a WORD boundary, and the candidate must not
             # already belong to a different filer.
