@@ -94,6 +94,12 @@ parser. Anything that does not map is either a new property (document it) or noi
       test alone made it AB InBev's majority owner. And never *derive* other holders'
       voting from someone's bloc: pooled votes dilute nobody; only extra votes per share
       (a dual-class issuer) do, and then only the source's own class votes say by how much.
+- [ ] **A statement of what one may be deemed to own repeats shared holdings.** A Form 3/4
+      counts every block the reporter may be deemed to beneficially own, and a family's
+      trust is in every member's filing: summed per member, America Movil's Slim family held
+      169 % of Series B (findings item 111, 2026-11-12). Before summing positions into a
+      stake, ask whether another filer reports the same position — the same holder, the same
+      count — and write it once, from its holder.
 - [ ] **One holding, two figures: of record versus beneficial.** A source can state the
       same holding in two documents that answer different questions. Musk's Form 4 counts
       what is registered to him (1,123 M Tesla shares, 28.4 % — "controlling" by the 20 %

@@ -1369,6 +1369,48 @@ and the cover's date (`denominator_date`). A title naming no class, or a class t
 issuer does not state, gets no percentage on a multi-class issuer; an unclassed
 issuer total divides any title, as before. The 13F path keeps the total.
 
+### A vehicle several insiders report is one owner
+
+A Form 3/4 lists each position on its own row: the shares held directly, and
+each indirect one with the words naming its holder ("By Control Trust", "By
+Spouse"). Each insider's edge sums them. A family's shared vehicle is in every
+member's filing, so the sum counted it once per member: America Movil's Form 3s
+of March 2026 by Carlos and Patrick Slim Domit each list "By Control Trust"
+17,742,515,522, "By Control Empresarial Trust by Control Empresarial"
+10,933,355,873 and "By GFI" 196,009,735 Series B shares (Vanessa Hajj Slim's
+the Control Empresarial one), and the family held 169 % of the class (findings
+item 111; the panel's over-100 % flag of item 110 showed it).
+
+Since 2026-11-12 (the user's choice: the vehicle is the owner) an indirect
+position that two or more insiders of one issuer report **alike — the same
+security, the same words, the same count to the share** — is written once, from
+a node named as the filers name the holder ("Control Trust", "GFI"), and taken
+off each insider's holding (`sec_edgar.split_shared_blocks`, in the issuer's
+insider scan) — when it is at least 0.1 % of its class (`VEHICLE_MIN_PCT`) and
+its words name a holder (a capitalised name, no "See footnote"). The guard read
+the insiders of the 83 issuers dev holds Form 4 stakes in: identical counts at
+7 of them, and the floor and the name keep exactly the shared holders —
+America Movil's three blocks, Molson Coors' Adolph Coors Company LLC, five of
+Innovex's Amberjack and Intervale funds (reported by two of their general
+partners) — and drop the coincidences: TSMC's officers each hold 7,036 or
+20,190 shares "LTI Trust" (equal grants), Wells Fargo's 893.67 "Through 401(k)
+Plan" (three people), two unrelated insiders 2,000 "Spouse"; Alignment
+Healthcare's General Atlantic funds write "See footnote", NYT's Sulzberger
+family a bare "trust" — those stay as filed. An insider — a person, or a company such as a fund's general partner —
+whose filing held nothing else keeps no Form 4 edge of their own; the
+vehicle's edge carries what it said. The vehicle node is found
+among the issuer's own vehicles only (`runner._write_shared_vehicles`,
+`_upsert_entity_by_name(by_name=False)`): "GFI" is how these filings name
+Grupo Financiero Inbursa, and a name search would hand it any GFI. The
+person-centric lookup, which reads one person's filing at a time, takes a known
+vehicle out by its name, class and count (`sec_edgar.without_vehicles`). People
+are not linked to the vehicle: the filings call them "trust participants" in a
+footnote, and footnotes are not read — each filer words them differently (the
+user, 2026-11-12). The same limit leaves a vehicle hidden in another position
+as filed: Daniel Hajj Aboumrad reports the three blocks inside "By Spouse"
+29,762,794,676, which only his footnote breaks down, so America Movil still sums
+a little over 100 % (55 % without his position).
+
 ### Of record versus beneficial — a 13D/G statement beats the Form 4 count
 
 A Form 4 reports what is registered to the insider; a Schedule 13D/G reports
