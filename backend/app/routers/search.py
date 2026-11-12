@@ -794,7 +794,9 @@ def _ownership_summary(owners: list[dict], controlled: dict[str, set[str]] | Non
     (Streubesitz) — but only when EVERY owner has a known stake (an owner with an
     unknown % means we can't tell what's left) and the disclosed total is under
     100%. `exceeds_100` flags aggregation conflicts (overlapping sources/dates)
-    rather than silently capping. Percentages, not sourced — computed on read.
+    rather than silently capping — the company's total, or, when it has several
+    securities and so no total, any one security's (`exceeds_pct`,
+    `exceeds_class`; findings item 110). Percentages, not sourced — computed on read.
 
     An `indirect` holding (GLEIF's "ultimate parent", an exhibit's "indirectly
     owned") is held THROUGH somebody else's shares. Beside an owner of the
@@ -847,6 +849,16 @@ def _ownership_summary(owners: list[dict], controlled: dict[str, set[str]] | Non
         # different wholes. Saying nothing beats saying 115.9%.
         disclosed = None
     exceeds = disclosed is not None and disclosed > 100.0 + _OVER_100_TOL
+    exceeds_pct, exceeds_class = (disclosed, None) if exceeds else (None, None)
+    if not exceeds:
+        # One security's stakes over 100 % are a conflict whether or not the
+        # company has other securities: with several, there is no total, and
+        # the check never looked at the parts — Symbotic's Class A summed
+        # 133 % over 14 owners on dev and was not flagged (findings item 110).
+        over = max((b for b in by_class.values() if b["disclosed_pct"] > 100.0 + _OVER_100_TOL),
+                   key=lambda b: b["disclosed_pct"], default=None)
+        if over is not None:
+            exceeds, exceeds_pct, exceeds_class = True, over["disclosed_pct"], over["title"]
     free_float = None
     if disclosed is not None and unknown_owners == 0 and not looked_through and not exceeds:
         residual = round(100.0 - disclosed, 4)
@@ -857,6 +869,10 @@ def _ownership_summary(owners: list[dict], controlled: dict[str, set[str]] | Non
         "free_float_pct": free_float,
         "unknown_owners": unknown_owners,
         "exceeds_100": exceeds,
+        # the sum that passed 100 %, and the security it is of (None for the
+        # company's total) — the warning's figure when there is no total
+        "exceeds_pct": exceeds_pct,
+        "exceeds_class": exceeds_class,
         "multi_class": multi_class,
         # Per-security totals, largest first; the unnamed bucket last.
         "by_class": sorted(
