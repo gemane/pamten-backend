@@ -866,3 +866,34 @@ def test_a_filer_s_spac_name_does_not_keep_its_namesake_row_on_it(it_db):
     names = {dict(r)["name"] for r in it_db.run_command(
         "MATCH (:Entity {id:'sec:0001837240'})-[:OWNS]->(b:Entity) RETURN b.name AS name")}
     assert result["total"] == 2 and names == {"Symbotic Holdings LLC", "Symbotic LLC"}
+
+
+def test_a_row_in_a_state_takes_the_namesake_registered_there_not_the_filer(it_db):
+    # findings item 112: Quaker Houghton (CIK 81362, Pennsylvania) lists "Quaker
+    # Chemical Corporation" in Delaware; the name key met the filer first, which
+    # dropped the row as the filer's own, while GLEIF's node of that name is
+    # registered in Delaware. A namesake registered in another state is no
+    # candidate at all.
+    it_db.run_command(
+        "CREATE (:Entity {id: 'quaker', name: 'QUAKER CHEMICAL CORP', name_normalized: 'quaker chemical', "
+        "country: 'US', search_text: 'QUAKER CHEMICAL CORP', type: 'company', sec_cik: '0000081362'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'lei:549300PJQ1R3WCWCPS54', name: 'QUAKER CHEMICAL CORPORATION', "
+        "name_normalized: 'quaker chemical', country: 'US', jurisdiction_code: 'US-DE', type: 'company', "
+        "search_text: 'QUAKER CHEMICAL CORPORATION', lei_id: '549300PJQ1R3WCWCPS54'})")
+    it_db.run_command(
+        "CREATE (:Entity {id: 'il', name: 'Coral Chemical Company, LLC', name_normalized: 'coral chemical', "
+        "country: 'US', jurisdiction_code: 'US-IL', type: 'company', search_text: 'Coral Chemical Company, LLC'})")
+    data = {"subsidiaries": [{"name": "Quaker Chemical Corporation", "jurisdiction": "DE"},
+                             {"name": "Coral Chemical Company, LLC", "jurisdiction": "Delaware"}],
+            "form": "10-K", "filing_date": "2026-02-23",
+            "url": "https://www.sec.gov/Archives/edgar/data/81362/000162828026010694/kwr-20251231xex21.htm"}
+    with patch("app.scraper.sec_ex21.fetch_subsidiaries", return_value=data), \
+         patch("app.scraper.sec_edgar.fetch_filer_identity", return_value=("QUAKER CHEMICAL CORP", "US-PA")):
+        assert runner.run_sec_ex21("Quaker Chemical")["total"] == 2
+    rows = it_db.run_command(
+        "MATCH (:Entity {id: 'quaker'})-[:OWNS]->(b:Entity) RETURN b.id AS id, b.jurisdiction_code AS j")
+    ids = {r["id"]: r["j"] for r in rows}
+    assert ids.pop("lei:549300PJQ1R3WCWCPS54") == "US-DE"
+    assert list(ids.values()) == ["US-DE"] and "il" not in ids, "the Illinois namesake is another company"
+    assert it_db.run_sql("SELECT count(*) AS n FROM Entity WHERE name_normalized = 'quaker chemical'")[0]["n"] == 2

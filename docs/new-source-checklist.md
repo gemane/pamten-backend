@@ -756,7 +756,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       note becomes part of the stored name, the name key and every later match ("Audios
       Ventures Inc. (dba Simplecast)"). Measure the shapes over the population, give each a
       home (former name, alias, stake, parent) or drop it, and keep quotes that ARE the name
-      ('UAB “1stdibs.com Lithuania”').
+      ('UAB “1stdibs.com Lithuania”'). A place in the name cell is a place too: "Quaker
+      Chemical Corporation (DE)" under "United States" is the Delaware company, and its
+      sibling "(PA)" the filer itself (findings item 112, 2026-11-12) — and once the place is
+      lifted, the key that keeps one entry per row and the resolver's namesake tiers must
+      weigh the state as they weigh the country, or the two rows fold into one and the row
+      lands on the filer.
 - [ ] **A lookup by name answers with the company the name names, or with nothing.** A
       query written with its legal form is a whole legal name: a node whose name holds a word
       more, or ends in another form, is another company — however many of the query's words
