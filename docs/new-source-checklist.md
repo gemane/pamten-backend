@@ -985,6 +985,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       cell as the jurisdiction and 58 of 102 rows were lost. Read a continued
       table both ways — by cell index and by the header's column grid — keep
       whichever reads more places, and let a tie keep the index.
+- [ ] **A header cell may cover more than the value it names.** Quaker Houghton's
+      "Name" spans a cell of footnote marks ("*", "+*") and the name cell; the first
+      filled cell under the span was the mark, and the list read as empty (findings
+      item 106). Under a spanning header, skip the cells that only number, bullet or
+      footnote a row, and check a parse that returns nothing against the rows the
+      document plainly holds.
 - [ ] **Layout is data only when it is unambiguous.** Exhibit 21 filers draw the
       group tree by indentation or "Subsidiaries of X" headings — and the same
       signals appear where there is no tree (a uniform hanging indent, a page
