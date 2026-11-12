@@ -1930,7 +1930,11 @@ from readers removed again the same day, so 11 remain):
     spans grid columns 3–8 while each "Denmark" is the third cell of its row, at
     column 6. A header printed over three rows (UTStarcom) keeps its columns: a row
     of labels counts as a new section's header only after data rows. A row number
-    in the name cell ("1. YD Network …") is dropped; a label spanning the whole row
+    in the name cell ("1. YD Network …") is dropped, and so is a cell that only numbers,
+    bullets or footnotes the row under the name column's span — Quaker Houghton's "Name"
+    spans a cell of footnote marks ("*", "**", "+*") and the name cell, and the marks
+    were read as the names: 11 rows named "+", the 129 "*" rows dropped as noise, an
+    empty list (findings item 106, 140 rows since); a label spanning the whole row
     ("Insurance Agencies and Brokers") is neither name nor place. A table continued
     on the next printed page, without its header, is read by cell index — the next
     page's grid need not be the first page's (BHP) — unless the header's grid reads

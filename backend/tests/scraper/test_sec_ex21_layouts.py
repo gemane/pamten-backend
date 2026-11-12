@@ -173,6 +173,23 @@ class TestColumnGrid:
                 '<tr><td>1.</td><td>Alpha Ltd.</td><td></td><td>BVI</td></tr></table>')
         assert parse_exhibit(html) == [{"name": "Alpha Ltd.", "jurisdiction": "BVI", "read_from": "table"}]
 
+    def test_a_footnote_mark_in_its_own_cell_is_not_the_name(self):
+        # Quaker Houghton (findings item 106): "Name" spans the mark cell and the
+        # name cell; "*", "**", "+*" were read as the name, the list was empty
+        subs = _read("quaker_ex21_excerpt.htm", "QUAKER CHEMICAL CORP")
+        assert [s["name"] for s in subs] == [
+            "Quaker Houghton Argentina S.A.", "Quaker Houghton Australia Pty. Ltd.",
+            "Surface Technology Australia", "Primex, Ltd.", "Quaker Chemical Participacoes, Ltda.",
+            "Quaker Chemical Industria e Comercio Ltda."]
+        assert _by_name(subs)["Primex, Ltd."]["stake_percent"] == 33.0
+        assert _by_name(subs)["Primex, Ltd."]["jurisdiction"] == "Barbados"
+
+    @pytest.mark.parametrize("mark", ["*", "**", "+*", "+", "\u2020", "\u2021", "#", "\u00a7"])
+    def test_any_footnote_mark_cell_before_the_name(self, mark):
+        html = ('<table><tr><td colspan="2">Name</td><td>Jurisdiction</td></tr>'
+                f'<tr><td>{mark}</td><td>Alpha Ltd.</td><td>Bermuda</td></tr></table>')
+        assert [s["name"] for s in parse_exhibit(html)] == ["Alpha Ltd."]
+
     def test_a_row_number_in_the_name_cell_is_dropped(self):
         html = ("<table><tr><td>Subsidiaries</td><td>Place of Incorporation</td></tr>"
                 "<tr><td>1. YD Network Technology Company Limited</td><td>Hong Kong SAR</td></tr>"

@@ -446,9 +446,13 @@ def _find_header(table: list[list[str]]) -> dict | None:
     return None
 
 
-#: A cell that only numbers or bullets a row: "1.", "1.001", "·", "II."
+#: A cell that only numbers, bullets or footnotes a row: "1.", "1.001", "·",
+#: "II.", and a cell of footnote marks — Quaker Houghton's "*", "**", "+*"
+#: stand in their own cell under the header "Name", whose span covers the mark
+#: and the name; the mark was read as the name (findings item 106: 11 rows
+#: named "+", the 136 "*" rows dropped as noise, the list empty).
 _MARKER_CELL = re.compile(r"^(?:[\u00b7\u2022\u25aa\u25cf\u25cb\u25e6\-\u2013]|\d{1,3}(?:\.\d{1,4})*[.)]?|"
-                          r"\(?[ivxlcIVXLC]{1,5}[.)])$")
+                          r"\(?[ivxlcIVXLC]{1,5}[.)]|[*+#\u2020\u2021\u00a7\u00b6]{1,4})$")
 
 
 def _column(row: list[str], header: dict, key: str) -> str:
