@@ -253,6 +253,29 @@ class TestClassAwareSummary:
         assert s["free_float_pct"] is None
         assert s["exceeds_100"] is False
 
+    def test_one_security_over_100_is_flagged_though_there_is_no_total(self):
+        # Symbotic's Class A summed 133 % on dev and nothing was flagged (item 110)
+        s = _ownership_summary([_owner(86.6, "Class A common stock, par value $0.0001 per share"),
+                                _owner(39.9, "Class A Common Stock"),
+                                _owner(6.5, "Class A Common Stock"),
+                                _owner(0.7, "Class V-1 Common Stock")])
+        assert s["multi_class"] is True and s["disclosed_pct"] is None
+        assert s["exceeds_100"] is True
+        assert (s["exceeds_pct"], s["exceeds_class"]) == (133.0, "Class A common stock, par value $0.0001 per share")
+        assert s["free_float_pct"] is None
+
+    def test_several_securities_each_under_100_are_not_flagged(self):
+        s = _ownership_summary([_owner(60.0, "Class A"), _owner(30.0, "Class A"), _owner(70.0, "Class B")])
+        assert (s["exceeds_100"], s["exceeds_pct"], s["exceeds_class"]) == (False, None, None)
+
+    def test_a_total_over_100_carries_its_figure(self):
+        s = _ownership_summary([_owner(80.0), _owner(63.0)])
+        assert (s["exceeds_pct"], s["exceeds_class"]) == (143.0, None)
+
+    def test_the_tolerance_holds_per_security(self):
+        s = _ownership_summary([_owner(60.0, "Class A"), _owner(40.4, "Class A"), _owner(5.0, "Class B")])
+        assert s["exceeds_100"] is False
+
     def test_each_security_still_gets_its_own_total(self):
         s = _ownership_summary([
             _owner(22.3, "Series A Shares"), _owner(9.0, "Series A Shares"),
