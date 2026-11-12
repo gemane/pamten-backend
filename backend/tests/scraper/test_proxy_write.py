@@ -16,7 +16,7 @@ PROXY = {"filing_date": "2026-04-24",
                     {"name": "Sundar Pichai", "voting_power_pct": None, "below_one_percent": True}]}
 
 
-def _run(entity_id="goog", resolved=None, proxy=PROXY, edge=True):
+def _run(entity_id="goog", resolved=None, proxy=PROXY, edge=True, filing_type=None):
     queries, commands, claims, fetched = [], [], [], []
 
     def run_query(cypher, params=None):
@@ -24,7 +24,7 @@ def _run(entity_id="goog", resolved=None, proxy=PROXY, edge=True):
         if "(c:Entity {id: $id})" in cypher:
             return [{"id": "goog", "name": "Alphabet Inc.", "sec_cik": "0001652044"}]
         return [{"oid": "sb", "olabel": "Person", "matched_name": "Brin Sergey",
-                 "stake": 6.0, "ownership_type": "minority"}] if edge else []
+                 "stake": 6.0, "ownership_type": "minority", "filing_type": filing_type}] if edge else []
 
     def fetch(company, cik=None):
         fetched.append(cik)
@@ -98,3 +98,13 @@ def test_the_proxy_claim_never_shares_a_key_with_the_pairs_other_claims(other):
     theirs = claim_props(kind=KIND_OWNS, from_id="sb", to_id="goog", source_id="s", filing_type=other)
     assert mine["claim_key"] != theirs["claim_key"]
     assert key_for(mine) == mine["claim_key"]       # a heal re-keys it to itself
+
+
+@pytest.mark.parametrize("filing_type", ["DEF 14A", "10-K/A"])
+def test_a_holding_written_from_the_table_is_left_alone(filing_type):
+    """The table writer (findings item 86) wrote the holding with its stake and
+    voting power under the same claim key; a voting-only claim would erase the
+    stake."""
+    out, _, commands, claims, _ = _run(filing_type=filing_type)
+    assert commands == [] and claims == []
+    assert "Sergey Brin" in out["skipped_no_pct"]

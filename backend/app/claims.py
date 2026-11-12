@@ -66,9 +66,10 @@ _SEC_FAMILIES: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"^Form\s*[345]\b", re.I), "insider"),        # Form 3 / 4 / 5
     (re.compile(r"^EX-21\b", re.I), "ex21"),
     (re.compile(r"^EX-8\.1\b", re.I), "ex81"),
-    # the proxy statement's voting power (findings item 46): its own claim
-    # beside the pair's 13D/G or Form 4 one, never folded into it
-    (re.compile(r"^DEF\s*14A\b", re.I), "def14a"),
+    # the issuer's ownership table — the proxy's voting power (findings item
+    # 46) and its 5 % holders (item 86), from a DEF 14A or the 10-K/A that
+    # stands in for it: its own claim beside the pair's 13D/G or Form 4 one
+    (re.compile(r"^(DEF\s*14A\b|10-K/A$)", re.I), "def14a"),
 )
 
 

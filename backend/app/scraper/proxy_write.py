@@ -103,7 +103,8 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
                RETURN n.id AS oid, labels(n)[0] AS olabel,
                       coalesce(n.full_name, n.name) AS matched_name,
                       r.stake_percent   AS stake,
-                      r.ownership_type  AS ownership_type
+                      r.ownership_type  AS ownership_type,
+                      r.filing_type     AS filing_type
                LIMIT 1""",
             {"cid": company_id, "variants": variants,
              "norms": list(dict.fromkeys([name_norm, name_norm_the]))},
@@ -113,6 +114,13 @@ def write_proxy_ownership(company: str, entity_id: str | None = None) -> dict:
             continue
 
         row          = match_rows[0]
+        from app.scraper.sec_writer import is_table_filing
+        if is_table_filing(row.get("filing_type")):
+            # the holding was written FROM the table (findings item 86), its
+            # voting power with it; a voting-only claim under the same key
+            # would erase the stake the table states
+            skipped.append(name)
+            continue
         oid          = row["oid"]
         olabel       = label_or_entity(row.get("olabel"))
 

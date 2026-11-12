@@ -281,10 +281,26 @@ def stated_by_13dg(owner_id: str, owned_id: str, source_id: str) -> bool:
     count, percentage, date — because a Form 4 count beside a 13D/G percentage
     would not add up (`shares` / `shares_outstanding` ≠ `stake_percent`).
     A 13D/G that reported an exit (`until`) no longer speaks for the pair.
+
+    The issuer's own ownership table states beneficial ownership too: a
+    holding `write_table_holders` wrote from it (a table claim WITH a stake —
+    the voting-power claim `proxy_write` records has none) is kept the same
+    way (findings item 86).
     """
     return any(c.get("source_id") == source_id and not c.get("until")
-               and is_beneficial_ownership_filing(c.get("filing_type"))
+               and (is_beneficial_ownership_filing(c.get("filing_type"))
+                    or (is_table_filing(c.get("filing_type")) and c.get("stake_percent") is not None))
                for c in claims_for(from_id=owner_id, to_id=owned_id, kind=KIND_OWNS))
+
+
+#: the filing types of a holding read from the issuer's ownership table — its
+#: proxy, or a 10-K/A whose Part III stands in for it (= `proxy_statement.TABLE_FORMS`)
+TABLE_FILING_TYPES = frozenset({"DEF 14A", "10-K/A"})
+
+
+def is_table_filing(filing_type: str | None) -> bool:
+    """A holding read from the issuer's ownership table (findings item 86)."""
+    return (filing_type or "").strip().upper() in TABLE_FILING_TYPES
 
 
 def _write_owns_sec(owner_id: str, owned_id: str, source_id: str,
@@ -805,7 +821,8 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
     from app.scraper.maintenance import restatement_family
     rows = run_sql("SELECT @in.id AS id, @in.sec_cik AS cik, @in.name AS name, filing_type FROM OWNS "
                    "WHERE until IS NULL AND source_id = 'sec-edgar' AND @in.sec_cik IS NOT NULL") or []
-    issuers = sorted({(r["id"], r["cik"], r.get("name")) for r in rows if restatement_family(r.get("filing_type"))})
+    issuers = sorted({(r["id"], r["cik"], r.get("name")) for r in rows
+                      if restatement_family(r.get("filing_type")) or is_table_filing(r.get("filing_type"))})
     if limit:
         issuers = issuers[:limit]
     out: dict = {"companies": len(issuers), "tables": 0, "read": 0, "failed": 0, "closed": 0, "lines": []}
@@ -972,6 +989,17 @@ def close_absent_from_table(owned_id: str, filing: dict, rows: list[dict]) -> in
     for e in run_sql("SELECT @rid AS rid, @out.id AS owner, @out.@type AS olabel, filing_type, source_date, "
                      "since, stake_percent, source_url FROM OWNS WHERE until IS NULL AND source_id = 'sec-edgar' AND @in.id = :id",
                      {"id": owned_id}) or []:
+        if is_table_filing(e.get("filing_type")):
+            # a holding an earlier table stated (findings item 86): a newer
+            # table that no longer names it ends it — no statement to read
+            if (str(e.get("source_date") or "")[:10] < table_day
+                    and not named_in_table(_holder_aliases(e["owner"], e.get("olabel")), names)
+                    and not named_in_table(_holder_aliases(e["owner"], e.get("olabel")), insiders)):
+                run_sql(f"UPDATE {e['rid']} SET until = :d, until_reason = :why, until_source_url = :u, "
+                        + STALE_CLEAR_SQL, {"d": table_day, "why": NOT_IN_TABLE, "u": filing["url"]})
+                log.info("SEC: %s's table holding of %s ends %s — not in the newer table", e["owner"], owned_id, table_day)
+                closed += 1
+            continue
         if not restatement_family(e.get("filing_type")):
             continue
         pct = e.get("stake_percent")
@@ -999,19 +1027,193 @@ def close_absent_from_table(owned_id: str, filing: dict, rows: list[dict]) -> in
     return closed
 
 
-def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = None) -> dict:
+def read_table_and_close(owned_id: str, cik: str, submissions: dict | None = None,
+                         write: bool = False, source_id: str | None = None) -> dict:
     """The issuer's newest ownership table (DEF 14A / 10-K/A within
     `proxy_statement.TABLE_MAX_AGE_DAYS`) read and applied: {"filing", "rows",
-    "closed"}; no table filing → {"filing": None, "closed": 0}. Two requests
-    (the submissions, unless given, and the filing)."""
+    "closed", "written"}; no table filing → {"filing": None, "closed": 0}. Two
+    requests (the submissions, unless given, and the filing).
+
+    ``write``: also write the 5 % holders no statement covers
+    (`write_table_holders`, findings item 86) — the issuer's own scrape does;
+    the whole-graph closing pass (`close_absent_from_tables`) does not, so a
+    rebuild's step 7 never adds owners to companies nobody scraped."""
     from app.scraper import sec_edgar
-    from app.scraper.proxy_statement import latest_table_filing, read_holder_rows
+    from app.scraper.proxy_statement import latest_table_filing, read_holder_rows, read_holder_table
     subs = submissions if submissions is not None else sec_edgar._submissions(cik)
     filing = latest_table_filing(subs)
     if not filing:
-        return {"filing": None, "rows": 0, "closed": 0}
-    rows = read_holder_rows(sec_edgar._get_text(filing["url"]))
-    return {"filing": filing, "rows": len(rows), "closed": close_absent_from_table(owned_id, filing, rows)}
+        return {"filing": None, "rows": 0, "closed": 0, "written": None}
+    html = sec_edgar._get_text(filing["url"])
+    rows = read_holder_rows(html)
+    written = None
+    if write and source_id:
+        written = write_table_holders(owned_id, filing, read_holder_table(html), source_id, subs)
+    return {"filing": filing, "rows": len(rows), "written": written,
+            "closed": close_absent_from_table(owned_id, filing, rows)}
+
+
+# ── The holders the issuer's table adds (findings item 86) ──────────────────
+#
+# A controlling holder that files no Schedule 13D/G appears in the issuer's own
+# ownership table only: Harbor Lights Entertainment's 100 % of Skydance's Class
+# A stock (10-K/A, 2026-04-24). The table's 5 % holders are written where no
+# statement speaks for the pair — a holder linked to a node the graph already
+# has, or to an EDGAR registrant of exactly that name; a person is never minted
+# from a proxy's spelling (user, 2026-11-10).
+
+#: a table row below this states no 5 % holding: the directors' "*" rows
+TABLE_HOLDER_MIN_PCT = 5.0
+#: forms only a registered fund files — its proxy lists who holds each share
+#: class of record (IRAs, pension plans, "Individual Investor"), not owners
+#: (Europacific Growth Fund, 2025)
+FUND_FORMS = frozenset({"N-CSR", "N-CSRS", "485BPOS", "485APOS", "NPORT-P"})
+
+
+def is_registered_fund(submissions: dict | None) -> bool:
+    """Whether the filer is a registered investment company (it files fund
+    reports or prospectus updates)."""
+    forms = ((submissions or {}).get("filings") or {}).get("recent", {}).get("form") or []
+    return any(f in FUND_FORMS for f in forms)
+
+
+def _table_holder_node(name: str, source_id: str, entity_only: bool) -> tuple[str, str] | None:
+    """The node a table's holder name stands for — strictly, since a proxy
+    names holders loosely ("MUFG" is not "Morgan Stanley MUFG Securities Co.,
+    Ltd.", which a fuzzy resolver picked): one Entity of exactly that name or
+    name key, else (a name with no legal form) one Person of exactly that
+    name, else an EDGAR registrant of exactly that name, written by its CIK.
+    None when none, or more than one, is found."""
+    from app.db.arcadedb import run_query
+    from app.scraper import sec_edgar
+    from app.scraper.graph_writer import _upsert_entity_by_name
+    from app.scraper.mapper import has_entity_suffix
+    found = run_query("MATCH (e:Entity) WHERE e.name = $n OR e.name_normalized = $k RETURN DISTINCT e.id AS id LIMIT 3",
+                      {"n": name, "k": normalize_entity_name(name)}) or []
+    if len(found) == 1:
+        return found[0]["id"], "Entity"
+    if found:
+        return None
+    if not has_entity_suffix(name):
+        if entity_only:
+            return None
+        people = run_query("MATCH (p:Person) WHERE p.full_name = $n RETURN DISTINCT p.id AS id LIMIT 3", {"n": name}) or []
+        return (people[0]["id"], "Person") if len(people) == 1 else None
+    registrants = sec_edgar._browse_index(name, "")
+    match = sec_edgar._exact_registrant(name, registrants) if registrants else None
+    if not match:
+        return None
+    return _upsert_entity_by_name(name, cik=match["cik"], source_id=source_id), "Entity"
+
+
+def _shared_blocks(rows: list[dict]) -> set[str]:
+    """The rows that report one block between them: the same percent of the
+    same class on several rows adding up to more than 100 % — Skydance's
+    Harbor Lights (holder) and David Ellison (deemed, as its controller) both
+    at 100 % of Class A; Molson Coors' Coors and Pentland sides of the voting
+    trust, four rows at 96.2 %. The block is written once, on the one company
+    among them (Harbor Lights); with several companies (Molson's) on none — the
+    table does not say which holds it. Returns the names NOT to write."""
+    from app.scraper.mapper import has_entity_suffix
+    groups: dict = {}
+    for r in rows:
+        if r.get("stake_pct"):
+            groups.setdefault((r["stake_pct"], r.get("share_class")), []).append(r)
+    skip: set[str] = set()
+    for (pct, _), group in groups.items():
+        if len(group) < 2 or pct * len(group) <= 100:
+            continue
+        companies = [r for r in group if any(has_entity_suffix(n) for n in r["names"])]
+        keep = companies[0]["name"] if len(companies) == 1 else None
+        skip.update(r["name"] for r in group if r["name"] != keep)
+    return skip
+
+
+def write_table_holders(owned_id: str, filing: dict, table: dict, source_id: str,
+                        submissions: dict | None = None) -> dict:
+    """Write the issuer's 5 % holders its own ownership table states and no
+    Schedule 13D/G covers (findings item 86): an SEC OWNS edge per holder —
+    `filing_type` the table's form (DEF 14A / 10-K/A), `read_from` table, the
+    largest stated class percent as the stake with its class, a voting-power
+    column as the voting power, the table's record date as "held since at
+    least" (`since_basis` first_reported) and as the event date.
+
+    Not written: a registered fund's table (`is_registered_fund`); a row under
+    TABLE_HOLDER_MIN_PCT; a block several rows share (`_shared_blocks`); a
+    holder no strict lookup finds (`_table_holder_node`) — a group row ("Entities
+    affiliated with X") only as the company X, never as the person; a pair a
+    13D/G statement holds, open OR closed (Berkshire's 13G/A on Pool closed
+    2026-03-31; the table, as of an earlier record date, would reopen it); a
+    holder whose name, or its statement's reporting persons, the issuer's
+    13D/G holders bear ("Warren E. Buffett" is Berkshire's). Over a Form 4
+    count the table wins — beneficial, not of record (user, 2026-11-10); the
+    Form 4 reader then yields to it (`stated_by_13dg`).
+
+    Returns {"written", "covered", "unresolved", "shared", "fund"}."""
+    from app.db.arcadedb import run_sql
+    from app.scraper.edge_schema import READ_TABLE
+    from app.scraper.mapper import derive_ownership_type
+    out = {"written": 0, "covered": 0, "unresolved": 0, "shared": 0, "fund": False}
+    if is_registered_fund(submissions):
+        out["fund"] = True
+        return out
+    rows = [r for r in table.get("rows") or [] if (r.get("stake_pct") or 0) >= TABLE_HOLDER_MIN_PCT]
+    if not rows:
+        return out
+    shared = _shared_blocks(rows)
+    as_of = table.get("as_of")
+    # The statements that speak for a holder as of the table: the open ones,
+    # and those that ended on or after its date — Berkshire's 13G/A on Pool
+    # closed 2026-03-31, after the table's 2026-03-26 filing. One that ended
+    # before it says nothing about the table's holders.
+    table_day = str(filing["date"])[:10]
+    statements = [e for e in run_sql(
+        "SELECT @out.id AS owner, @out.@type AS olabel, filing_type, source_url, until FROM OWNS "
+        "WHERE source_id = 'sec-edgar' AND @in.id = :id", {"id": owned_id}) or []
+        if is_beneficial_ownership_filing(e.get("filing_type"))
+        and (not e.get("until") or str(e["until"])[:10] >= min(table_day, as_of or table_day))]
+    stated_owners = {e["owner"] for e in statements}
+    aliases = [a for e in {e["owner"]: e for e in statements}.values()
+               for a in _holder_aliases(e["owner"], e.get("olabel"))]
+    persons: list[str] | None = None              # read once, only when needed
+    for r in rows:
+        if r["name"] in shared:
+            out["shared"] += 1
+            continue
+        if named_in_table(aliases, r["names"]):
+            out["covered"] += 1
+            continue
+        node = next((n for n in (_table_holder_node(x, source_id, r.get("group")) for x in r["names"]) if n), None)
+        if node is None:
+            out["unresolved"] += 1
+            log.info("SEC: %r (%s %% of %s) in %s's table — no node of exactly that name, not written",
+                     r["name"], r["stake_pct"], owned_id, filing["form"])
+            continue
+        owner_id, owner_label = node
+        if owner_id == owned_id:
+            continue
+        if owner_id in stated_owners:
+            out["covered"] += 1
+            continue
+        if persons is None:
+            # the open statements' cover pages only: one request each, and a
+            # closed statement's holder is matched by its node and names above
+            persons = [p for e in statements if not e.get("until") for p in statement_persons(e.get("source_url"))]
+        if named_in_table(persons, r["names"]):
+            out["covered"] += 1
+            continue
+        _upsert_owns_sec(
+            owner_id, owned_id, source_id, owner_label=owner_label,
+            ownership_type=derive_ownership_type(r["stake_pct"]),
+            file_date=str(filing["date"])[:10], stake_percent=r["stake_pct"],
+            voting_power_pct=r.get("voting_power_pct"), share_class=r.get("share_class"),
+            source_url=filing["url"], filing_type=filing["form"], read_from=READ_TABLE,
+            filing_dates_the_stake=False, event_date=as_of,
+            since_date=as_of, since_basis="first_reported" if as_of else None)
+        out["written"] += 1
+        log.info("SEC: %r holds %s %% of %s (%s, its %s of %s)", r["name"], r["stake_pct"], owned_id,
+                 r.get("share_class") or "the class", filing["form"], filing["date"])
+    return out
 
 
 def _share_owns_edge(session, owner_label: str, owner_id: str, owned_id: str,
