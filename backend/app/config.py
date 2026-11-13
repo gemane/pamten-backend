@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # `python manage.py gen-federation-key`; keep it secret (env only).
     FEDERATION_SIGNING_KEY:           str  = ""
     OPENCORPORATES_API_KEY:           str  = ""
+    # Companies House REST API key (developer.company-information.service.gov.uk) —
+    # `manage.py ch-officers` reads the register of officers with it. Secret: env only.
+    COMPANIES_HOUSE_API_KEY:          str  = ""
     SECRET_KEY:                       str  = INSECURE_DEFAULT_SECRET_KEY
     # Access tokens are bearer JWTs with no revocation check on the hot path, so
     # the TTL *is* the blast radius of a stolen one — keep it short. Sessions

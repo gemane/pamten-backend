@@ -601,6 +601,29 @@ parser. Anything that does not map is either a new property (document it) or noi
       click; `bulk` = a whole dataset on a schedule. Only `depth_aware` sources re-run on
       the depth-2 pass.
 
+- [ ] **Count what a register holds for the companies you have before deciding what to
+      take — most of it may be history.** The Companies House register of officers lists
+      every appointment a company ever had: 9,111 at dev's 280 UK companies, 7,871 of them
+      ended (Barclays Investment Solutions: 301 listed, 6 serving), and 462 held by
+      companies, not people (2026-11-13). The first plan spoke of "the officers" and of 36
+      companies (the curated test list — 249 more UK companies had come in through GLEIF).
+      Probe the real records for every company the run will touch, then decide in the
+      open: current or history, people or companies too, which personal fields. Here:
+      serving people only; a resigned record is read to END a seat an earlier run wrote,
+      nothing else.
+- [ ] **A dry run writes nothing — not a run-log row, not a catalogue node.** The first
+      `ch-officers --dry-run` wrote a `ScrapeRun` row to the shared database through
+      `record_run`, and asking whether the source is switched on (`get_source_enabled`)
+      MERGEs every catalogue `Source` node. Test a dry run with every writer patched to
+      fail (`side_effect=AssertionError`), the run log and the catalogue among them.
+- [ ] **A list field in the graph may be one joined text in the source — count the values
+      before mapping them.** Companies House states an officer's two nationalities as one
+      text, "British,American" (33 of dev's 1,105 serving officers), and the demonym table
+      knows neither half of it joined: the PSC mapping would have stored the text whole,
+      beside `GB` and `US`. Split on the source's separator, map each part as the other
+      sources do, drop a repeat ("British,English" is `GB` once), and write no field —
+      never an empty list — for a person without one.
+
 ## 3. Identity and duplicates
 
 This is where a new source does the most damage, because a wrong merge is much harder to

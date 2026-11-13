@@ -10,7 +10,7 @@ import pytest
 
 from app.scraper.sources import KNOWN_SOURCES
 
-EXPECTED = {"wikidata", "sec_edgar", "open_corporates", "bods_gleif", "bods_uk_psc"}
+EXPECTED = {"wikidata", "sec_edgar", "open_corporates", "bods_gleif", "bods_uk_psc", "ch_officers"}
 
 
 class TestCatalogueMetadata:

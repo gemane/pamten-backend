@@ -169,3 +169,63 @@ edges at its end (`since_basis = register_first_year`). Both importers store the
 registered office only (`address` with its matching key `address_normalized`, `reg_street`/`reg_city`/`reg_postcode`)
 and nothing under `hq_*`: the register does not say where a company is run, and the
 headquarters pin comes from a source that does (GLEIF, EDGAR).
+
+## Companies House officers
+
+Who **runs** a UK company — its serving directors, secretaries and LLP members. The PSC
+snapshot above names who controls a company; the register of officers is a separate
+one with no free bulk file, read per company from the Companies House REST API
+(`app/scraper/ch_officers.py`):
+
+```
+GET https://api.company-information.service.gov.uk/company/{number}/officers
+```
+
+`manage.py ch-officers` reads it for every company in the graph with a Companies House
+number (`--company 00102498,…`, `--limit N`, `--dry-run` — which writes nothing, not
+even a run-log row). **Run by hand; no schedule calls it.** It needs
+`COMPANIES_HOUSE_API_KEY`: a REST key of a *live* application registered at
+developer.company-information.service.gov.uk, sent as the basic-auth user with an
+empty password. The key allows 600 requests per five minutes; the reader follows the
+`X-Ratelimit-*` headers and waits for the next window when this one is used up. One
+request per 100 appointments: dev's 280 UK companies took 292.
+
+**What is written** (decided 2026-11-13):
+
+- **Serving officers only.** Of 9,111 appointments at those 280 companies 7,871 had
+  ended (Barclays Investment Solutions: 301 listed, 6 serving). A resigned officer is
+  read only to **end a seat an earlier run wrote**, on `resigned_on`; history builds up
+  from the first run. Loading the past is a later decision.
+- **People only.** A corporate officer (`corporate-secretary`, `corporate-director`,
+  `corporate-nominee-…`, or any record that states an `identification`) is a company —
+  mostly company-secretary firms — and a seat runs from a person: 466 left out on dev.
+- **Per person:** the name ("SURNAME, Forename" turned into first and last name, a
+  title cut), the month and year of birth (the register publishes no day), and the id
+  `choff:{officer id}` — Companies House's own key for one person across companies,
+  taken from `links.officer.appointments`, and the nationality as the other sources
+  store it: `nationalities`, each demonym as an ISO-2 code where it is recognised
+  ("British" → `GB`), the register's words otherwise; a person of two nationalities is
+  one comma-joined text in the register ("British,American") and becomes two entries.
+  It fills an empty field and never replaces another source's. **Not stored:** the
+  correspondence address and the country of residence.
+- **Per seat:** `HAS_ROLE` with the role (`director` → "Director", `secretary` →
+  "Company Secretary", `llp-member` → "LLP Member", `llp-designated-member` → "LLP
+  Designated Member", a nominee as "Nominee …", any other as the register words it),
+  `since` = `appointed_on` (absent for an appointment before 1992, which the register
+  only bounds), the company's officers page as `source_url`, `read_from` field, source
+  `ch-officers` (credibility 97, statutory).
+
+A person whose `choff:` node a merge folded into another (the person dedup, a Wikidata
+twin) is followed through `MergedId`: the seat and a later resignation land on the
+survivor, and no second node is created. The person dedup (`dedupe-persons`) is what
+joins an officer to the same person from another source — by name and an agreeing
+birth month, never by name alone.
+
+### Licence
+
+The register is public under the Companies Act 2006, and Companies House sets no
+conditions on reuse and asks for no attribution (GOV.UK, *Companies House data
+products*) — compatible with ODbL. Whoever republishes it is a data controller in
+their own right: the fields above are what the legal record
+(`pamten-legal/record-of-processing.md`) names.
+

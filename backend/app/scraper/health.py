@@ -24,6 +24,7 @@ _RUNLOG_LABELS = {
     "sec-13f": "SEC 13F holders",
     "sec-ex21": "SEC Exhibit 21 subsidiaries",
     "sec-formd": "SEC Form D boards",
+    "ch-officers": "Companies House officers",
     "sec-acquisitions": "SEC acquisitions (XBRL)",
     "sec-proxy": "SEC proxy statement (read)",
     "sec-proxy-write": "SEC proxy statement voting power",

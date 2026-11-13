@@ -16,6 +16,7 @@ When writing a new scraper plugin, ensure:
    - CC0: ✅ compatible
    - Public domain: ✅ compatible
    - Open Government Licence: ✅ compatible
+   - A statutory public register with no reuse conditions (Companies House): ✅ compatible
    - Creative Commons Attribution (CC-BY): ✅ compatible
    - CC-BY-SA: ✅ compatible (share-alike aligns with ODbL)
    - Proprietary / All rights reserved: ❌ not compatible
