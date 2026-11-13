@@ -396,9 +396,9 @@ def _column_header(header: list, column: tuple[int, int, str]) -> str:
     A header that names no class takes the class of the shares column left of
     it: Molson Coors' "Class A Shares | Percent of class (%)"."""
     text = " ".join(c[2] for c in header if _overlaps(c, column))
-    if _CLASS.search(text):
+    if _class_match(text):
         return text
-    left = [c for c in header if c[1] <= column[0] and _CLASS.search(c[2])]
+    left = [c for c in header if c[1] <= column[0] and _class_match(c[2])]
     return f"{max(left, key=lambda c: c[1])[2]} {text}" if left else text
 
 
@@ -424,6 +424,24 @@ def read_holder_rows(html: str) -> list[dict]:
 
 _AS_OF = re.compile(r"\bas\s+of\s+([A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4})", re.IGNORECASE)
 _CLASS = re.compile(r"\b(class|series)\s+([A-Z]{1,2}|\d)\b(?!\w)", re.IGNORECASE)
+#: words after "class" that name no class: "Title or Class of Securities",
+#: "Class of Shares or Units" (LENSAR, Forward Air read as "Class OF")
+_NOT_A_CLASS = frozenset({"OF", "OR", "AS", "IN", "TO", "ON", "BY", "IS", "AT"})
+#: a numbered class is one only with its security named after it ("Class 1
+#: Common Stock"): "Percent of Class 1" is a footnote mark (Baxter, Equifax)
+_CLASS_SECURITY = re.compile(r"\s*(common|ordinary|preferred|stock|shares|units)\b", re.IGNORECASE)
+
+
+def _class_match(text: str | None) -> re.Match | None:
+    """The first share class a header names, None when it names none."""
+    for m in _CLASS.finditer(text or ""):
+        word = m.group(2).upper()
+        if word in _NOT_A_CLASS:
+            continue
+        if word.isdigit() and not _CLASS_SECURITY.match(text, m.end()):
+            continue
+        return m
+    return None
 #: "Entities affiliated with BlackRock, Inc." → "BlackRock, Inc."
 _AFFILIATED_PREFIX = re.compile(r"^(certain\s+)?(entities|funds|persons)(\s+and\s+persons)?\s+affiliated\s+with\s+",
                                 re.IGNORECASE)
@@ -467,7 +485,7 @@ def holder_names(text: str) -> list[str]:
 
 
 def _share_class(header: str) -> str | None:
-    m = _CLASS.search(header or "")
+    m = _class_match(header)
     return f"{m.group(1).title()} {m.group(2).upper()}" if m else None
 
 

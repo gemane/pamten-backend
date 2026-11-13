@@ -1115,7 +1115,7 @@ and officers — not only the voting-power column `proxy_write` reads. The filin
 newest DEF 14A or 10-K/A within 18 months (`latest_table_filing`). It runs in the
 company scrape for the company itself (with the class end, from the same submissions
 read) and over the whole graph with `manage.py close-absent-from-table` (scraper flags;
-rebuild step 7).
+rebuild step 7), which also writes the table's holders (item 113, below).
 
 Measured over the scrape list (2026-11-10): 64 US filers have a recent proxy, the
 reader finds the table in 56 (858 rows; it misses BlackRock's, the New York Times',
@@ -1784,11 +1784,31 @@ statement speaks for the pair (`sec_writer.write_table_holders`, called by
 `read_table_and_close(..., write=True)` beside the absence rule above — the
 same filing, one request).
 
+**Where it runs** — in the issuer's own scrape, and over the whole graph in
+`manage.py close-absent-from-table` (rebuild step 7), which writes as well as
+closes since findings item 113. A holder is found among the nodes the graph
+holds, so the issuer's own scrape depends on what was scraped before it:
+Security Benefit Life Insurance Company holds 100 % of Franklin BSP Realty's
+Series H, and in the rebuild of 2026-11-12 its node (EDGAR spells it "… Co
+/Ks/", found by the name key) was written 21 minutes after Franklin BSP's
+scrape, which found nobody — a guard on the populated dev database had counted
+the edge. The pass over the finished graph does not depend on the order, and it
+reads the table of every company an open 13D/G or table holding points at, not
+only the scrape targets (user, 2026-11-13): a company known only as some
+holder's 13D/G issuer has few statements in the graph, and its table names the
+rest. Measured on dev (2026-11-13, read-only): 956 companies, 654 with a table,
+about 1,100 holdings written (BlackRock about 310, Vanguard about 180), about
+450 rows covered by a statement, 660 not resolved; about 260 holders are new
+nodes, each an exact EDGAR registrant written by its CIK.
+
 **What is read** (`proxy_statement.read_holder_table`): every row with a
 percent, each percent column under its header — the **largest stated class
 percent** is the stake, with its class (`share_class` "Class A", from the
 column's own header, a spanning header above it, or the shares column left of
-it as Molson Coors' "Class A Shares | Percent of class"); a voting-power column
+it as Molson Coors' "Class A Shares | Percent of class" — "Class of
+Securities" and the footnote mark of "Percent of Class 1" name no class, a
+numbered class does only with its security after it, "Class 1 Common Stock";
+item 113); a voting-power column
 is `voting_power_pct`; the table's **record date** ("Shares Beneficially Owned
 as of April 2, 2026" in the header, else "as of …" in the text before it) is
 the start, as a lower bound (`since_basis` first_reported) and `event_date`.

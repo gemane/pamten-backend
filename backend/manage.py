@@ -419,7 +419,8 @@ def cmd_close_held_by_subsidiary(args):
 
 
 def cmd_close_absent_from_table(args):
-    """End every 13D/G holding the issuer's own ownership table no longer names (findings item 99)."""
+    """End every 13D/G holding the issuer's own ownership table no longer names (findings item 99)
+    and write the 5 % holders it names that no 13D/G covers (item 113)."""
     _apply_direct_db_url(args)
     from app.config import settings
     if not (settings.SCRAPER_ENABLED and settings.SCRAPER_SEC_EDGAR_ENABLED):
@@ -430,7 +431,8 @@ def cmd_close_absent_from_table(args):
     res = close_absent_from_tables(limit=args.limit)
     for line in res["lines"]:
         print(f"  {line}")
-    print(f"Closed {res['closed']} 13D/G holdings their issuer's table no longer names "
+    print(f"Closed {res['closed']} 13D/G holdings their issuer's table no longer names, wrote "
+          f"{res['written']} holders it names and no 13D/G covers "
           f"({res['tables']} tables of {res['read']} companies read, {res['failed']} failed)")
 
 def cmd_close_reported_by_parent(args):
@@ -1462,7 +1464,8 @@ def _build_parser():
         'close-absent-from-table',
         help="End every Schedule 13D/G holding of 5 %% or more that the issuer's newest ownership "
              "table (DEF 14A / 10-K/A, at most 18 months old) no longer names "
-             "(until_reason not_in_issuer_table). Reads EDGAR: needs the scraper flags on")
+             "(until_reason not_in_issuer_table), and write the table's 5 %% holders no 13D/G covers. "
+             "Reads EDGAR: needs the scraper flags on")
     p_cat.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
     p_cat.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')

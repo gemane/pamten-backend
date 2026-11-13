@@ -189,3 +189,45 @@ def test_a_row_under_five_percent_is_not_written(it_db):
     _seed(it_db)
     out = _write({"as_of": None, "rows": [_row("BlackRock, Inc.", 4.9)]})
     assert out["written"] == 0 and _edges(it_db) == {}
+
+
+def _pass(table):
+    """The whole-graph pass over the seeded issuer, its table given."""
+    from app.scraper.sec_writer import close_absent_from_tables
+    subs = {"cik": "2041610", "filings": {"recent": {"form": ["10-K", "10-K/A"]}}}
+    with patch("app.scraper.sec_edgar._submissions", return_value=subs), \
+         patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
+         patch("app.scraper.sec_edgar._get_text", return_value="<html></html>"), \
+         patch("app.scraper.sec_edgar._browse_index", return_value=[]), \
+         patch("app.scraper.proxy_statement.read_holder_rows",
+               return_value=[{"name": r["name"], "percents": [r["stake_pct"]]} for r in table["rows"]]), \
+         patch("app.scraper.proxy_statement.read_holder_table", return_value=table), \
+         patch("app.scraper.sec_writer.statement_persons", return_value=[]):
+        return close_absent_from_tables()
+
+
+def test_the_whole_graph_pass_writes_a_holder_whose_node_came_later(it_db):
+    """Findings item 113: Security Benefit Life holds 100 % of Franklin BSP's
+    Series H; its node was written 21 minutes after Franklin BSP's own scrape,
+    which found nobody of that name. The pass over the finished graph does."""
+    from app.scraper.sec_writer import _upsert_owns_sec
+    _seed(it_db)
+    table = {"as_of": "2026-02-20", "rows": [_row("BlackRock, Inc.", 17.0),
+                                             _row("Security Benefit Life Insurance Company", 100.0, "Series H")]}
+    # the issuer's own scrape: BlackRock's 13G/A covers its row, the insurer has no node
+    _upsert_owns_sec(BLK, ISSUER, SID, ownership_type="minority", file_date="2026-02-01", stake_percent=17.0,
+                     filing_type="13G/A", source_url="https://www.sec.gov/blk-index.htm")
+    assert _write(table)["unresolved"] == 1 and set(_edges(it_db)) == {BLK}
+    # a later scrape writes the insurer under EDGAR's spelling of it
+    it_db.run_command("CREATE (:Entity {id: 'sec:0000869772', name: 'Security Benefit Life Insurance Co /Ks/', "
+                      "type: 'company', name_normalized: 'security benefit life insurance', sec_cik: '0000869772'})")
+    res = _pass(table)
+    edges = _edges(it_db)
+    assert (edges["sec:0000869772"]["pct"], edges["sec:0000869772"]["cls"], edges["sec:0000869772"]["ft"]) == \
+        (100.0, "Series H", "10-K/A")
+    assert edges[BLK]["ft"] == "13G/A" and edges[BLK]["until"] is None
+    assert (res["companies"], res["written"], res["closed"]) == (1, 1, 0)
+    assert res["lines"] == ["Skydance Corp: 1 written — named in its 10-K/A of 2026-04-24, in no 13D/G"]
+    # a second pass writes nothing new
+    again = _pass(table)
+    assert (again["written"], len(_edges(it_db))) == (1, 2)

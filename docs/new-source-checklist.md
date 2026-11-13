@@ -103,6 +103,17 @@ parser. Anything that does not map is either a new property (document it) or noi
       Skydance's 10-K/A lists Harbor Lights and David Ellison (its controller) both at 100 %
       of Class A, Molson Coors four voting-trust parties at 96.2 % (findings item 86) — equal
       rows that add up past 100 % are one block.
+- [ ] **A writer that looks its parties up in the graph depends on the order of the scrapes
+      — and a guard on a populated database cannot see it.** The ownership-table writer
+      finds a holder among the nodes the graph holds. Checked on dev, where every node
+      existed, it wrote Security Benefit Life's 100 % of Franklin BSP Realty's Series H; in
+      the rebuild the insurer's node arrived 21 minutes after Franklin BSP's scrape and the
+      edge was missing (findings item 113, 2026-11-13). When a write depends on a node
+      another scrape creates, give it a pass over the finished graph (here
+      `close-absent-from-table`, rebuild step 7), and judge the guard against a rebuild, not
+      against the database the last one left behind. While reading headers for it: the word
+      after "class" is not always a class — "Class of Securities" read as "Class OF",
+      "Percent of Class 1" (a footnote mark) as "Class 1".
 - [ ] **A table that summarises other filings is older than they are.** An issuer's
       ownership table speaks as of a record date weeks before it is filed; a holder's own
       statement can end after it (Berkshire's 13G/A on Pool closed 2026-03-31, the proxy of

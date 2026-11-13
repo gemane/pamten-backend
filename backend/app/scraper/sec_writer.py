@@ -815,20 +815,31 @@ def close_held_by_subsidiary(issuer_id: str | None = None) -> list[str]:
 
 def close_absent_from_tables(limit: int | None = None) -> dict:
     """`read_table_and_close` for every company with an SEC CIK that open
-    13D/G holdings point at — the whole graph (see `close_ended_classes` for
-    why). Returns {companies, tables, read, failed, closed, lines}."""
+    13D/G or table holdings point at — the whole graph (see
+    `close_ended_classes` for why) — writing each table's holders as well as
+    closing those it no longer names (findings item 113): a table's holder is
+    found among the nodes the graph holds, so the issuer's own scrape misses
+    one whose node a later scrape writes (Security Benefit Life, 100 % of
+    Franklin BSP's Series H, written 21 minutes after Franklin BSP), and a
+    company known only as some holder's 13D/G issuer never had its table
+    written at all (user, 2026-11-13: every company with a table).
+    Returns {companies, tables, read, failed, closed, written, lines}."""
     from app.db.arcadedb import run_sql
+    from app.scraper.graph_writer import _ensure_source
     from app.scraper.maintenance import restatement_family
+    from app.scraper.runner import SEC_EDGAR_CREDIBILITY, SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL
+    source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
     rows = run_sql("SELECT @in.id AS id, @in.sec_cik AS cik, @in.name AS name, filing_type FROM OWNS "
                    "WHERE until IS NULL AND source_id = 'sec-edgar' AND @in.sec_cik IS NOT NULL") or []
     issuers = sorted({(r["id"], r["cik"], r.get("name")) for r in rows
                       if restatement_family(r.get("filing_type")) or is_table_filing(r.get("filing_type"))})
     if limit:
         issuers = issuers[:limit]
-    out: dict = {"companies": len(issuers), "tables": 0, "read": 0, "failed": 0, "closed": 0, "lines": []}
+    out: dict = {"companies": len(issuers), "tables": 0, "read": 0, "failed": 0, "closed": 0, "written": 0,
+                 "lines": []}
     for eid, cik, name in issuers:
         try:
-            res = read_table_and_close(eid, cik)
+            res = read_table_and_close(eid, cik, write=True, source_id=source_id)
         except Exception as exc:  # noqa: BLE001 — one company's filing lost is not the run's
             out["failed"] += 1
             log.warning("SEC: ownership table of %s (CIK %s) not read: %s", name, cik, exc)
@@ -836,6 +847,11 @@ def close_absent_from_tables(limit: int | None = None) -> dict:
         out["read"] += 1
         if res["filing"]:
             out["tables"] += 1
+        written = (res.get("written") or {}).get("written") or 0
+        if written:
+            out["written"] += written
+            out["lines"].append(f"{name}: {written} written — named in its {res['filing']['form']} "
+                                f"of {res['filing']['date']}, in no 13D/G")
         if res["closed"]:
             out["closed"] += res["closed"]
             out["lines"].append(f"{name}: {res['closed']} closed — not in its {res['filing']['form']} "
