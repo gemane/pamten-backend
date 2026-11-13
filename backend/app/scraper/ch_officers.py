@@ -12,6 +12,7 @@ Companies House REST API (no free bulk file):
     items[].appointed_on          → HAS_ROLE.since
     items[].resigned_on           → ends a seat this source holds open
     items[].date_of_birth         {month, year} — never a day  → Person.birth_date "YYYY-MM"
+    items[].nationality           "British" / "British,American"  → Person.nationalities ["GB", "US"]
     items[].links.officer.appointments  "/officers/{id}/appointments"  → Person.id "choff:{id}"
 
 What is taken, and what is not (user, 2026-11-13):
@@ -22,9 +23,11 @@ What is taken, and what is not (user, 2026-11-13):
   wrote, on the day the register states; history builds from the first run.
 - **People only.** A corporate officer (a company-secretary firm, a nominee
   company: 462 of the 9,111) is a company, and a seat runs from a person.
-- **Name, role, the dates, month and year of birth** — the birth month is what
-  keeps two people of one name apart. Not the correspondence address, the
-  country of residence or the nationality: nothing here needs them.
+- **Name, role, the dates, month and year of birth, nationality** — the birth
+  month is what keeps two people of one name apart; the nationality is stored
+  as the other sources store it (ISO-2 where the demonym is recognised, the
+  register's words otherwise). Not the correspondence address or the country
+  of residence: nothing here needs them.
 
 The officer id is Companies House's own key for a person across companies
 (1,442 of dev's 6,226 officers sit at more than one of its companies), so
@@ -125,13 +128,29 @@ def birth_month(item: dict) -> str | None:
     return f"{year:04d}-{month:02d}" if 1 <= month <= 12 and 1800 <= year <= 2100 else None
 
 
+def nationalities(item: dict) -> list[str]:
+    """The register's nationality as the graph's list: each demonym as an ISO-2
+    code where it is recognised, verbatim otherwise — the PSC mapping. A person
+    of two nationalities is one comma-joined text here ("British,American":
+    33 of dev's 1,105 serving officers), so it is split first; "GB" is not
+    written twice for "British,English"."""
+    from app.scraper.companies_house_psc import _nationality
+    out: list[str] = []
+    for part in (item.get("nationality") or "").split(","):
+        value = _nationality(part)
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
 def _date(value: str | None) -> str | None:
     return value[:10] if value and re.match(r"^\d{4}-\d{2}-\d{2}", value) else None
 
 
 def read_officer(item: dict) -> dict | None:
     """One appointment as the writer takes it: {"officer_id", "first_name",
-    "last_name", "full_name", "birth_date", "role", "since", "until"} — None for
+    "last_name", "full_name", "birth_date", "nationalities", "role", "since",
+    "until"} — None for
     a company, and for a record with no officer id, name or role."""
     if is_corporate(item):
         return None
@@ -140,7 +159,7 @@ def read_officer(item: dict) -> dict | None:
         return None
     first, last, full = name
     return {"officer_id": oid, "first_name": first, "last_name": last, "full_name": full,
-            "birth_date": birth_month(item), "role": role,
+            "birth_date": birth_month(item), "nationalities": nationalities(item), "role": role,
             "since": _date(item.get("appointed_on")), "until": _date(item.get("resigned_on"))}
 
 
@@ -197,8 +216,9 @@ def person_id(oid: str) -> str:
 
 def _upsert_officer(session, rec: dict, source_id: str, now: str) -> str:
     """The officer's Person node: found by the register's id — or where a merge
-    moved it (`MergedId`) — else created. A birth month fills an empty one and
-    never replaces what another source stated."""
+    moved it (`MergedId`) — else created. A birth month and the nationalities
+    fill an empty field and never replace what another source stated; a person
+    without a nationality gets no field, never an empty list."""
     from app.merged_ids import resolve_current_id
     from app.scraper.graph_writer import _person_search_text
     pid = person_id(rec["officer_id"])
@@ -211,16 +231,20 @@ def _upsert_officer(session, rec: dict, source_id: str, now: str) -> str:
                 """
                 CREATE (p:Person {
                     id: $id, first_name: $first, last_name: $last, full_name: $full,
-                    birth_date: $birth, source_id: $source_id, aliases: [],
+                    birth_date: $birth, nationalities: $nats, source_id: $source_id, aliases: [],
                     search_text: $search_text, created_at: $now, last_scraped_at: $now
                 })
                 """,
                 id=pid, first=rec["first_name"], last=rec["last_name"], full=rec["full_name"],
-                birth=rec["birth_date"], source_id=source_id, now=now,
+                birth=rec["birth_date"], nats=rec.get("nationalities") or None,
+                source_id=source_id, now=now,
                 search_text=_person_search_text(rec["full_name"], None))
             return pid
     session.run("MATCH (p:Person {id: $id}) SET p.last_scraped_at = $now, "
-                "p.birth_date = COALESCE(p.birth_date, $birth)", id=pid, now=now, birth=rec["birth_date"])
+                "p.birth_date = COALESCE(p.birth_date, $birth), "
+                "p.nationalities = CASE WHEN size(COALESCE(p.nationalities, [])) > 0 "
+                "THEN p.nationalities ELSE $nats END",
+                id=pid, now=now, birth=rec["birth_date"], nats=rec.get("nationalities") or None)
     return pid
 
 

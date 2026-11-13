@@ -24,8 +24,8 @@ def _item(oid, name, role="director", appointed="2014-10-16", **over):
 
 
 ITEMS = [
-    _item("jane", "SMITH, Jane Mary"),
-    _item("omar", "KHAN, Omar", role="secretary", appointed="2019-01-02"),
+    _item("jane", "SMITH, Jane Mary", nationality="British,American"),
+    _item("omar", "KHAN, Omar", role="secretary", appointed="2019-01-02", nationality=None),
     _item("gone", "OLD, Peter", resigned_on="2018-06-30"),                    # left before the first run
     _item("firm", "PRISM COSEC LIMITED", role="corporate-secretary"),
 ]
@@ -71,7 +71,8 @@ def test_serving_officers_become_persons_and_seats(it_db):
         "p.birth_date AS birth, p.nationalities AS nat, p.source_id AS sid")}
     assert set(people) == {"choff:jane", "choff:omar"}            # nobody for the resigned, nobody for the firm
     assert people["choff:jane"] == {"id": "choff:jane", "full": "Jane Mary Smith", "first": "Jane Mary",
-                                    "last": "Smith", "birth": "1979-10", "nat": None, "sid": "ch-officers"}
+                                    "last": "Smith", "birth": "1979-10", "nat": ["GB", "US"], "sid": "ch-officers"}
+    assert people["choff:omar"]["nat"] is None       # no nationality: no field, never an empty list
     assert it_db.run_command("MATCH (e:Entity) RETURN count(e) AS n")[0]["n"] == 2
     claims = it_db.run_command(f"MATCH (c:Claim) WHERE c.to_id = '{CO}' RETURN c.kind AS kind, c.role AS role")
     assert sorted(c["role"] for c in claims) == ["Company Secretary", "Director"]
@@ -134,3 +135,12 @@ def test_a_source_switched_off_in_the_scraper_panel_reads_nothing(it_db):
     it_db.run_command("MATCH (s:Source {id: 'ch-officers'}) SET s.enabled = false")
     out, asked = _run(ITEMS)
     assert out == {"status": "disabled"} and asked == []
+
+
+def test_a_nationality_fills_an_empty_field_and_never_replaces_one(it_db):
+    _seed(it_db)
+    it_db.run_command("CREATE (:Person {id: 'choff:jane', full_name: 'Jane Mary Smith', nationalities: ['FR']})")
+    it_db.run_command("CREATE (:Person {id: 'choff:omar', full_name: 'Omar Khan'})")
+    _run([ITEMS[0], _item("omar", "KHAN, Omar", role="secretary", nationality="Irish")])
+    nats = {r["id"]: r["nat"] for r in it_db.run_command("MATCH (p:Person) RETURN p.id AS id, p.nationalities AS nat")}
+    assert nats == {"choff:jane": ["FR"], "choff:omar": ["IE"]}

@@ -202,8 +202,12 @@ request per 100 appointments: dev's 280 UK companies took 292.
 - **Per person:** the name ("SURNAME, Forename" turned into first and last name, a
   title cut), the month and year of birth (the register publishes no day), and the id
   `choff:{officer id}` — Companies House's own key for one person across companies,
-  taken from `links.officer.appointments`. **Not stored:** the correspondence address,
-  the country of residence, the nationality.
+  taken from `links.officer.appointments`, and the nationality as the other sources
+  store it: `nationalities`, each demonym as an ISO-2 code where it is recognised
+  ("British" → `GB`), the register's words otherwise; a person of two nationalities is
+  one comma-joined text in the register ("British,American") and becomes two entries.
+  It fills an empty field and never replaces another source's. **Not stored:** the
+  correspondence address and the country of residence.
 - **Per seat:** `HAS_ROLE` with the role (`director` → "Director", `secretary` →
   "Company Secretary", `llp-member` → "LLP Member", `llp-designated-member` → "LLP
   Designated Member", a nominee as "Nominee …", any other as the register words it),

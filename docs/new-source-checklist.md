@@ -616,6 +616,13 @@ parser. Anything that does not map is either a new property (document it) or noi
       `record_run`, and asking whether the source is switched on (`get_source_enabled`)
       MERGEs every catalogue `Source` node. Test a dry run with every writer patched to
       fail (`side_effect=AssertionError`), the run log and the catalogue among them.
+- [ ] **A list field in the graph may be one joined text in the source — count the values
+      before mapping them.** Companies House states an officer's two nationalities as one
+      text, "British,American" (33 of dev's 1,105 serving officers), and the demonym table
+      knows neither half of it joined: the PSC mapping would have stored the text whole,
+      beside `GB` and `US`. Split on the source's separator, map each part as the other
+      sources do, drop a repeat ("British,English" is `GB` once), and write no field —
+      never an empty list — for a person without one.
 
 ## 3. Identity and duplicates
 

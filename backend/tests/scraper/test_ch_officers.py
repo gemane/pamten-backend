@@ -21,8 +21,20 @@ def _item(**over):
 def test_an_appointment_gives_the_person_the_seat_and_nothing_else():
     assert ch.read_officer(_item()) == {
         "officer_id": "T-eg0NXIoSj2L_IyntMpc3kSXh8", "first_name": "Jane Mary", "last_name": "Smith",
-        "full_name": "Jane Mary Smith", "birth_date": "1979-10", "role": "Director",
-        "since": "2014-10-16", "until": None}       # no address, residence or nationality
+        "full_name": "Jane Mary Smith", "birth_date": "1979-10", "nationalities": ["GB"],
+        "role": "Director", "since": "2014-10-16", "until": None}       # no address, no residence
+
+
+@pytest.mark.parametrize("raw, nats", [
+    ("British", ["GB"]),
+    ("British,American", ["GB", "US"]),                 # two nationalities are one comma-joined text
+    ("British, Swiss ,South African", ["GB", "CH", "ZA"]),
+    ("British,English", ["GB"]),                        # one country, once
+    ("Citizen Of Usa", ["Citizen Of Usa"]),             # not recognised: the register's words stay
+    ("", []), (None, []), (" , ", []),
+])
+def test_nationalities_are_stored_as_the_other_sources_store_them(raw, nats):
+    assert ch.nationalities({"nationality": raw}) == nats
 
 
 @pytest.mark.parametrize("raw, name", [
