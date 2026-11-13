@@ -159,7 +159,7 @@ six==1.17.0
     # via
     #   -c requirements.txt
     #   python-dateutil
-soupsieve==2.10
+soupsieve==4.1
     # via
     #   -c requirements.txt
     #   beautifulsoup4
