@@ -154,3 +154,19 @@ def test_the_writer_knows_every_form_the_reader_reads():
     from app.scraper.proxy_statement import TABLE_FORMS
     from app.scraper.sec_writer import TABLE_FILING_TYPES
     assert set(TABLE_FORMS) == TABLE_FILING_TYPES
+
+
+@pytest.mark.parametrize("header, cls", [
+    # "class of" is the column's title, not a class (LENSAR, Forward Air read "Class OF")
+    ("Title or Class of Securities Series A Convertible Preferred Stock (2) Percentage of", "Series A"),
+    ("Class of Shares or Units Percent of Class", None),
+    # a number after "class" is a footnote mark (Baxter, Equifax, Quantum read "Class 1")
+    ("PERCENT OF CLASS 1 (%)", None),
+    ("Beneficial Ownership of Common Stock % of Class 1", None),
+    ("Percent of Class 2", None),
+    ("% of Class 1 Common Stock", "Class 1"),              # a numbered class names its security
+    ("% of Class A Common Stock", "Class A"),
+    ("Percent of class (%)", None),
+])
+def test_a_header_word_after_class_is_not_always_a_class(header, cls):
+    assert holder_stake([(header, 7.0)])["share_class"] == cls
