@@ -84,7 +84,7 @@ s3transfer==0.19.2
     # via boto3
 six==1.17.0
     # via python-dateutil
-soupsieve==2.10
+soupsieve==4.0
     # via beautifulsoup4
 starlette==1.7.0
     # via fastapi
