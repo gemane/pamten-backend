@@ -111,6 +111,20 @@ KNOWN_SOURCES = {
         "coverage": "Beneficial owners — the persons and companies with significant "
                     "control over UK-registered companies",
     },
+    "ch_officers": {
+        "id": "ch-officers",
+        "type": "register",
+        "kind": "bulk",          # run from the CLI over the graph, never on demand
+        "label": "Companies House officers",
+        "url": "https://find-and-update.company-information.service.gov.uk",
+        "credibility": 97,
+        "quality": "statutory",
+        "description": "Companies House register of officers "
+                       "(directors, secretaries and LLP members of UK companies)",
+        "region": "GB",
+        "coverage": "Who runs a UK company — its serving directors, secretaries and "
+                    "LLP members, with the day each was appointed",
+    },
 }
 
 

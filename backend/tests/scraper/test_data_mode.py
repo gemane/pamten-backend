@@ -161,7 +161,8 @@ class TestConfiguredDefaultMode:
                    and "s.enabled = COALESCE(s.enabled, true)" in stmt for stmt, _ in merges), \
             "the seed fills only an empty switch — an admin's later flip in the UI must survive restarts"
         # one node per source, keyed by its stable id, carrying the catalogue key
-        assert {p["id"] for _, p in merges} == {"wikidata", "sec-edgar", "opencorporates", "gleif", "uk-psc"}
+        assert {p["id"] for _, p in merges} == {"wikidata", "sec-edgar", "opencorporates", "gleif", "uk-psc",
+                                                "ch-officers"}
         assert all("s.registry_key = $key" in stmt for stmt, _ in merges)
 
     def test_writers_obey_the_setting_before_any_row_exists(self, monkeypatch):

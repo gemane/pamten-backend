@@ -156,6 +156,29 @@ def cmd_ch_psc_update(args):
     if result is not None:
         print(result)
 
+def cmd_ch_officers(args):
+    """Read the serving officers of the UK companies in the graph from the
+    Companies House API and write them as seats (manual; needs the API key)."""
+    _apply_direct_db_url(args)
+    from app.scraper.ch_officers import run_ch_officers
+    only = [n for n in (args.company or "").split(",") if n.strip()] or None
+    res = run_ch_officers(only=only, limit=args.limit, dry_run=args.dry_run)
+    if res["status"] == "no_api_key":
+        print("ch-officers reads the Companies House API: set COMPANIES_HOUSE_API_KEY "
+              "(developer.company-information.service.gov.uk, a REST key of a live application)")
+        sys.exit(1)
+    if res["status"] == "disabled":
+        print("The source 'Companies House officers' is switched off in the Scraper panel — nothing read")
+        sys.exit(1)
+    verb = "would write" if args.dry_run else "wrote"
+    print(f"Companies House officers: {res['read']} of {res['companies']} companies read "
+          f"({res['unknown']} unknown to the register, {res['failed']} failed); {verb} {res['written']} seats, "
+          f"ended {res['ended']}; left out {res['resigned']} resigned, {res['corporate']} corporate, "
+          f"{res['unreadable']} unreadable")
+    if res["failed"]:
+        sys.exit(1)
+
+
 def cmd_ch_company_data(args):
     from app.config import settings
     settings.SCRAPER_ENABLED = True
@@ -1458,6 +1481,20 @@ def _build_parser():
     p_cec.add_argument('--db-url',
                        help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
     p_cec.set_defaults(func=cmd_close_ended_classes)
+
+    # ch-officers command (Companies House register of officers)
+    p_cho = subparsers.add_parser(
+        'ch-officers',
+        help="Read the serving officers (directors, secretaries, LLP members) of the UK companies "
+             "in the graph from the Companies House API and write them as seats; a seat whose "
+             "holder has resigned since is ended on the register's date. Manual; needs "
+             "COMPANIES_HOUSE_API_KEY")
+    p_cho.add_argument('--company', help='Only these company numbers (comma-separated)')
+    p_cho.add_argument('--limit', type=int, help='Only the first N companies (a trial run)')
+    p_cho.add_argument('--dry-run', action='store_true', help='Read and count, write nothing')
+    p_cho.add_argument('--db-url',
+                       help='Override ARCADEDB_URL for this run — point straight at ArcadeDB to bypass a proxy timeout')
+    p_cho.set_defaults(func=cmd_ch_officers)
 
     # close-absent-from-table command (findings item 99)
     p_cat = subparsers.add_parser(

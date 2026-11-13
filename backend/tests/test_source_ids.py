@@ -13,7 +13,8 @@ class TestTheIds:
         assert len(set(ids)) == len(ids) and all(i == slug_id(i) for i in ids)
         assert all(m["type"] in ("register", "knowledge_base") for m in KNOWN_SOURCES.values())
         assert SOURCE_ID == {"wikidata": "wikidata", "sec_edgar": "sec-edgar", "open_corporates": "opencorporates",
-                             "bods_gleif": "gleif", "bods_uk_psc": "uk-psc"}
+                             "bods_gleif": "gleif", "bods_uk_psc": "uk-psc",
+                             "ch_officers": "ch-officers"}
 
     def test_a_label_or_an_id_resolves_to_its_catalogue_key(self):
         assert source_key_for("GLEIF") == "bods_gleif" and source_key_for("gleif") == "bods_gleif"

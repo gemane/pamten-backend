@@ -44,6 +44,7 @@ Every environment variable the backend reads (`app/config.py`). A local `.env` n
 | `FEDERATION_ENABLED` | `false` | Enable trusted-peer federation (publish/pull) |
 | `FEDERATION_SIGNING_KEY` | — | Ed25519 private seed (base64) for signing exports; generate with `manage.py gen-federation-key`. Secret — env only |
 | `OPENCORPORATES_API_KEY` | — | OpenCorporates API token (optional) |
+| `COMPANIES_HOUSE_API_KEY` | — | Companies House REST API key (a live application at developer.company-information.service.gov.uk) — `manage.py ch-officers` reads the register of officers with it; secret, env only |
 | `GEOCODING_ENABLED` | `false` | Geocode addresses to coordinates via Nominatim |
 | `GEOCODING_CONTACT` | — | Contact email added to the Nominatim User-Agent (required by their usage policy) |
 | `GEOCODING_USER_AGENT` | `owlgraph-ownership-platform` | Base User-Agent for Nominatim requests |
