@@ -22,7 +22,7 @@ def test_the_writer_and_the_catalogue_share_one_node_under_the_stable_id(it_db):
     assert rows[0]["id"] == "gleif" and rows[0]["registry_key"] == "bods_gleif"
     assert rows[0]["enabled"] is True and rows[0]["data_mode"] == "full" and rows[0]["type"] == "register"
     assert src_mod.get_source_enabled("bods_gleif") is True
-    assert {r["id"] for r in it_db.run_sql("SELECT id FROM Source")} == {"wikidata", "sec-edgar", "opencorporates", "gleif", "uk-psc"}
+    assert {r["id"] for r in it_db.run_sql("SELECT id FROM Source")} == {"wikidata", "sec-edgar", "opencorporates", "gleif", "uk-psc", "ch-officers"}
 
 
 def test_a_peer_source_is_keyed_by_its_slug(it_db):
