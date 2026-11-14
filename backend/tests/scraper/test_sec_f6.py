@@ -132,6 +132,7 @@ class TestScrape:
                  "fetch_former_names": [], "fetch_company_lei": None, "fetch_ownership_filings": [],
                  "fetch_executives": [], "fetch_filer_holdings": [], "fetch_shares_outstanding_detail": None}
         with patch.multiple(sec_edgar, **{k: (lambda *a, _v=v, **k2: _v) for k, v in stubs.items()}), \
+             patch("app.scraper.sec_roster.roster_insiders", return_value=[]), \
              patch.object(sec_f6, "fetch_ads_cusips",
                           return_value={"cusips": ["641069406"], "source_url": "u", "filings_read": 1}):
             data = sec_edgar.scrape_company("Nestlé", cik="0000792990")

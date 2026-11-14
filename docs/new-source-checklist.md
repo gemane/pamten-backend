@@ -1277,6 +1277,23 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       window over the scrape list and keep the ceiling well above it, warn when it binds, and
       read the window across the index's paging too (EDGAR's inline ~1,000 filings end
       inside JPMorgan's 15 months).
+- [ ] **A reader built on "everybody files at least once a year" lists the people the rule
+      fits.** The insider window assumed the annual grant; Berkshire's directors get none, and
+      the graph held 2 of 13 (findings item 115, 2026-11-14). When a list is derived from
+      activity, find the document that states the roster itself (here the proxy's table) and
+      join the two: activity alone misses the quiet, a history alone keeps the departed
+      (EDGAR's owner list still names Bill Gates), and a summary alone carries last year's
+      officers (the same table names a chief executive who retired). Decide which of them
+      each kind of person can be trusted from — and take only that kind. Then check the
+      join against the people it adds, one by one: the first version seated 33 directors, and
+      13 had last filed a grant a year before their colleagues' newest — they had left at
+      the meeting the proxy was written for. "Named in the summary, silent in the filings"
+      means quiet only where the whole board is quiet, or the person always was.
+- [ ] **Looking a person up in their own filings is bounded by how busy they are elsewhere.**
+      "The person's newest 20 Form 4s" never reached Kenneth Chenault's Berkshire Form 3
+      behind his Airbnb filings, and cost 660 requests for one board. Ask the index that is
+      keyed the way the question is — the issuer's owner list, one request — and open only
+      the form that is filed once per company (Form 3).
 - [ ] **A narrower main path is a test of its fallback — test the fallback with the names it will get.**
       The person-centric Form 4 lookup searched EDGAR with "Robyn Denholm", and EDGAR matches its
       own surname-first spelling from the start, so it had never found a Wikidata-named person;
