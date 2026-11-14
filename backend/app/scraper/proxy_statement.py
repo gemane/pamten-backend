@@ -366,6 +366,10 @@ def _holder_rows(table) -> list[dict] | None:
     if not names or not percents or not _OWNED.search(" ".join(c[2] for c in header)):
         return None
     name_col = names[0]
+    # a table with a column per security (Class A beside Class B, common
+    # beside a preferred series) names the security on every row it writes
+    securities = {_security(_column_header(header, c)) for c in percents if not _VOTING.search(c[2])}
+    several = len(securities - {None}) > 1
     rows: list[dict] = []
     current: dict | None = None
     for row in grid[first:]:
@@ -378,7 +382,8 @@ def _holder_rows(table) -> list[dict] | None:
             if not name or _NOT_AN_OWNER.search(name) or not has_data:
                 current = None
                 continue
-            current = {"name": name, "percents": [], "raw": _clean_name(name_cell[2])}
+            current = {"name": name, "percents": [], "raw": _clean_name(name_cell[2]),
+                       "several_classes": several}
             rows.append(current)
         if current is not None:
             for col in percents:
@@ -393,12 +398,14 @@ def _holder_rows(table) -> list[dict] | None:
 def _column_header(header: list, column: tuple[int, int, str]) -> str:
     """Every header cell above a column, top to bottom: "Class A Common Stock"
     spanning "Shares | %" gives the percent column "Class A Common Stock %".
-    A header that names no class takes the class of the shares column left of
-    it: Molson Coors' "Class A Shares | Percent of class (%)"."""
+    A header that names no security takes that of the shares column left of
+    it: Molson Coors' "Class A Shares | Percent of class (%)", QXO's "Shares of
+    Convertible Preferred Stock Beneficially Owned | Percentage of Class
+    Outstanding" (findings item 116)."""
     text = " ".join(c[2] for c in header if _overlaps(c, column))
-    if _class_match(text):
+    if _security(text):
         return text
-    left = [c for c in header if c[1] <= column[0] and _class_match(c[2])]
+    left = [c for c in header if c[1] <= column[0] and _security(c[2])]
     return f"{max(left, key=lambda c: c[1])[2]} {text}" if left else text
 
 
@@ -489,16 +496,57 @@ def _share_class(header: str) -> str | None:
     return f"{m.group(1).title()} {m.group(2).upper()}" if m else None
 
 
-def holder_stake(columns: list[tuple[str, float]]) -> dict:
+#: a security a column is a percent OF when its header gives it no letter:
+#: "Shares of Convertible Preferred Stock Beneficially Owned" (QXO) — and the
+#: totals over every class, which are no preferred: "% of Total Capital Stock"
+#: (Victory Capital: Amundi's 27.8 %, beside 4.9 % of the common), "Total
+#: Shares of Voting Stock" (Arbor Realty)
+_SECURITY_KIND = re.compile(
+    r"\b((?:convertible\s+)?preferred|common|ordinary|capital|voting)\s+(stock|shares|units)\b", re.IGNORECASE)
+_PREFERRED = re.compile(r"\bpreferred\b", re.IGNORECASE)
+_COMMON = re.compile(r"\b(common|ordinary)\b", re.IGNORECASE)
+
+
+def _security(header: str | None) -> str | None:
+    """The security a header names — its class ("Class B", "Series A"), else
+    its kind ("Common Stock", "Convertible Preferred Stock") — or None."""
+    named = _share_class(header or "")
+    if named:
+        return named
+    m = _SECURITY_KIND.search(header or "")
+    return re.sub(r"\s+", " ", m.group(0)).title() if m else None
+
+
+def _is_preferred(header: str) -> bool:
+    return bool(_PREFERRED.search(header)) and not _COMMON.search(header)
+
+
+def holder_stake(columns: list[tuple[str, float]], several_classes: bool = False) -> dict:
     """A row's percent columns → {"stake_pct", "share_class", "voting_power_pct"}:
     the largest stated percent of a class is the stake (Better Home's Vishal
     Garg: 13.2 % of Class A, 40.4 % of Class B → 40.4, "Class B"), a
-    voting-power column the voting power."""
+    voting-power column the voting power.
+
+    A preferred class beside common stock is not the stake (findings item
+    116): the common percent is beneficial ownership and already counts the
+    shares the preferred converts into — QXO's Jacobs Private Equity II, 35.7 %
+    of the common and 90.0 % of the Convertible Preferred, holds 35.7 %, and
+    the 90 beside Vanguard's 7.8 summed to 102.3 %. A row that states a
+    preferred only keeps it (Security Benefit Life: 100 % of Franklin BSP's
+    Series H).
+
+    ``several_classes``: the table has a column per security, so the class is
+    named even where the header gives it no letter ("Common Stock") — a
+    preferred-only holder beside holders of an unnamed class would be added
+    to them (LENSAR: 100 % of the Series A beside 8.4 and 5.1 % of the common).
+    A one-class table names none, as before."""
     voting = [p for h, p in columns if _VOTING.search(h)]
     classes = [(p, h) for h, p in columns if not _VOTING.search(h)]
-    best = max(classes, key=lambda c: c[0]) if classes else None
+    pool = [c for c in classes if not _is_preferred(c[1])] or classes
+    best = max(pool, key=lambda c: c[0]) if pool else None
+    named = (_security(best[1]) if several_classes else _share_class(best[1])) if best else None
     return {"stake_pct": best[0] if best else None,
-            "share_class": _share_class(best[1]) if best else None,
+            "share_class": named,
             "voting_power_pct": max(voting) if voting else None}
 
 
@@ -528,7 +576,7 @@ def read_holder_table(html: str) -> dict:
                               # "Entities affiliated with X", "X and affiliated
                               # entities": the stake is the group's, not X's own
                               "group": bool(_AFFILIATED_PREFIX.search(raw) or _GROUP_WORDS.search(raw)),
-                              **holder_stake(r["columns"])}
+                              **holder_stake(r["columns"], r.get("several_classes", False))}
     return {"as_of": as_of, "rows": list(out.values())}
 
 

@@ -103,6 +103,14 @@ parser. Anything that does not map is either a new property (document it) or noi
       Skydance's 10-K/A lists Harbor Lights and David Ellison (its controller) both at 100 %
       of Class A, Molson Coors four voting-trust parties at 96.2 % (findings item 86) — equal
       rows that add up past 100 % are one block.
+- [ ] **"The largest percent on the row" is only a stake among securities of one kind.**
+      The ownership-table reader took the largest class percent (right for Class A beside
+      Class B). QXO's proxy states Jacobs Private Equity II at 35.7 % of the common and
+      90.0 % of the Convertible Preferred — and the footnote says the 35.7 already counts
+      the shares the preferred converts into; the 90 was stored, classless, and the company
+      summed to 102.3 % (findings item 116, 2026-11-14). When a document states several
+      percentages for one holder, ask what each is a percentage OF before picking one, and
+      store the security's name with the figure whenever the document has more than one.
 - [ ] **A writer that looks its parties up in the graph depends on the order of the scrapes
       — and a guard on a populated database cannot see it.** The ownership-table writer
       finds a holder among the nodes the graph holds. Checked on dev, where every node
