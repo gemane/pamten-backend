@@ -642,6 +642,16 @@ parser. Anything that does not map is either a new property (document it) or noi
       beside `GB` and `US`. Split on the source's separator, map each part as the other
       sources do, drop a repeat ("British,English" is `GB` once), and write no field —
       never an empty list — for a person without one.
+- [ ] **Read the real spellings of a text field before writing its parser — all of them,
+      counted.** The officer-name reader cut a title in FRONT of the forenames ("SMITH, Dr
+      John"), a form that occurs once in 8,746 names; the register writes it BEHIND, after
+      a second comma ("MERRICK, Julie, Dr"), 524 times, and 56 people were stored as
+      "Julie, Dr Merrick" (findings item 120, 2026-11-14). Dump the field for the whole
+      import, count its shapes (here: by the number of commas, then by the last part), and
+      test with the commonest of each. Where the source also offers the field in parts,
+      ask for the parts where the text is ambiguous, and keep the text's reading as the
+      fallback — tried once more before falling back. And let a re-run correct what an
+      earlier run of the same source wrote: a name set only on creation stays wrong.
 
 ## 3. Identity and duplicates
 

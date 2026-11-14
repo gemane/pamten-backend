@@ -199,8 +199,8 @@ request per 100 appointments: dev's 280 UK companies took 292.
 - **People only.** A corporate officer (`corporate-secretary`, `corporate-director`,
   `corporate-nominee-…`, or any record that states an `identification`) is a company —
   mostly company-secretary firms — and a seat runs from a person: 466 left out on dev.
-- **Per person:** the name ("SURNAME, Forename" turned into first and last name, a
-  title cut), the month and year of birth (the register publishes no day), and the id
+- **Per person:** the name ("SURNAME, Forename" turned into first and last name; see
+  *The name's title part* below), the month and year of birth (the register publishes no day), and the id
   `choff:{officer id}` — Companies House's own key for one person across companies,
   taken from `links.officer.appointments`, and the nationality as the other sources
   store it: `nationalities`, each demonym as an ISO-2 code where it is recognised
@@ -214,6 +214,21 @@ request per 100 appointments: dev's 280 UK companies took 292.
   `since` = `appointed_on` (absent for an appointment before 1992, which the register
   only bounds), the company's officers page as `source_url`, `read_from` field, source
   `ch-officers` (credibility 97, statutory).
+
+**The name's title part** (findings item 120). The list gives a name as one text, and
+524 of the 8,746 names at dev's UK companies have a third part after a second comma:
+"MERRICK, Julie, Dr". It is the register's title field — Mr 186, Dr 119, Sir 98 — but
+free text: "Managing Director", "CVO CBE", once more forenames ("John Anton"). The
+reader once kept it with the forenames ("Julie, Dr Merrick": 56 people on dev). Now a
+serving person whose name has such a part is asked for the register's own split,
+`name_elements` {title, forename, other_forenames, surname}, on their appointments page
+(`GET /officers/{id}/appointments?items_per_page=1`; `fetch_name_elements`) — one
+request per officer and run, 56 of 788 on dev; the names without a title part cost
+nothing. A failed request is tried once more; if that fails too, or the page has no
+split, the title part is left out of the name. No title is stored. A re-run rewrites
+the name of a person this source created and still owns (`source_id` its own, the id
+the officer's); a node a merge moved the officer to, or another source took over,
+keeps its name.
 
 A person whose `choff:` node a merge folded into another (the person dedup, a Wikidata
 twin) is followed through `MergedId`: the seat and a later resignation land on the

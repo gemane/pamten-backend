@@ -46,9 +46,40 @@ def test_nationalities_are_stored_as_the_other_sources_store_them(raw, nats):
     ("Jane Smith", ("Jane", "Smith", "Jane Smith")),                    # no comma: already in order
     ("SMITH", ("", "Smith", "Smith")),
     ("", None), (None, None),
+    # what follows a second comma is the register's title field (findings item 120)
+    ("MERRICK, Julie, Dr", ("Julie", "Merrick", "Julie Merrick")),
+    ("NODA, Hidehiko, Mr.", ("Hidehiko", "Noda", "Hidehiko Noda")),
+    ("KINGMAN, John Oliver Frank, Sir", ("John Oliver Frank", "Kingman", "John Oliver Frank Kingman")),
+    ("COTTAM, Harold, Managing Director", ("Harold", "Cottam", "Harold Cottam")),
+    ("POWELL, Charles David, The Right Honourable Viscount St. Davids", ("Charles David", "Powell", "Charles David Powell")),
 ])
 def test_officer_name(raw, name):
     assert ch.officer_name(raw) == name
+
+
+@pytest.mark.parametrize("raw, title", [
+    ("MERRICK, Julie, Dr", True), ("SMITH, Jane Mary", False), ("Jane Smith", False), ("", False), (None, False),
+])
+def test_a_name_has_a_title_part_after_its_second_comma(raw, title):
+    assert ch.has_title_part(raw) is title
+
+
+def test_the_registers_own_split_of_the_name_is_taken_where_it_is_given():
+    """The one name of 524 whose third part is forenames, not a title: the
+    register's split has them, the list's text does not say."""
+    split = {"title": "Mr", "forename": "Peter", "other_forenames": "John  Anton", "surname": "O'NEILL"}
+    assert ch.officer_name("O'NEILL, Peter, John Anton", split) == ("Peter John Anton", "O'Neill", "Peter John Anton O'Neill")
+    assert ch.officer_name("MERRICK, Julie, Dr", {"title": "Dr", "forename": "Julie", "surname": "MERRICK"}) == \
+        ("Julie", "Merrick", "Julie Merrick")
+    # a split without a surname says nothing: the text is read
+    assert ch.officer_name("MERRICK, Julie, Dr", {"title": "Dr", "forename": "Julie"})[2] == "Julie Merrick"
+    assert ch.officer_name("MERRICK, Julie, Dr", {})[2] == "Julie Merrick"
+
+
+def test_an_appointment_with_the_split_is_read_by_it():
+    rec = ch.read_officer(_item(name="O'NEILL, Peter, John Anton",
+                                name_elements={"forename": "Peter", "other_forenames": "John Anton", "surname": "O'NEILL"}))
+    assert (rec["first_name"], rec["last_name"], rec["full_name"]) == ("Peter John Anton", "O'Neill", "Peter John Anton O'Neill")
 
 
 @pytest.mark.parametrize("role, label", [
@@ -180,3 +211,103 @@ def test_a_source_switched_off_in_the_catalogue_reads_nothing():
          patch("app.scraper.sources.get_source_enabled", return_value=False), \
          patch.object(ch, "companies_in_graph", side_effect=AssertionError("read")):
         assert ch.run_ch_officers() == {"status": "disabled"}
+
+
+# ── a name with a title part: the register's own split (findings item 120) ───
+
+SPLIT = {"title": "Dr", "forename": "Julie", "surname": "MERRICK"}
+
+
+def _appointments(*responses):
+    """A client that answers the appointments page with these, in order."""
+    calls = []
+
+    def handler(request):
+        calls.append((request.url.path, dict(request.url.params)))
+        r = responses[min(len(calls), len(responses)) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return r
+    return _client(handler), calls
+
+
+def _page(elements=SPLIT, **kw):
+    return httpx.Response(200, json={"items": [{"name": "Julie MERRICK", "name_elements": elements}]}, **kw)
+
+
+@mocked
+def test_the_split_is_one_request_for_one_item_of_the_officers_page():
+    client, calls = _appointments(_page())
+    assert ch.fetch_name_elements(client, "abc123") == SPLIT
+    assert calls == [("/officers/abc123/appointments", {"items_per_page": "1"})]
+
+
+@mocked
+@pytest.mark.parametrize("first", [httpx.Response(500), httpx.Response(502), httpx.ConnectError("down"),
+                                   httpx.ReadTimeout("stalled")])
+def test_a_failed_request_is_tried_once_more(first):
+    client, calls = _appointments(first, _page())
+    assert ch.fetch_name_elements(client, "abc123") == SPLIT and len(calls) == 2
+
+
+@mocked
+def test_two_failures_give_none_and_no_third_request():
+    client, calls = _appointments(httpx.Response(500), httpx.ConnectError("down"), _page())
+    assert ch.fetch_name_elements(client, "abc123") is None and len(calls) == 2
+
+
+@mocked
+def test_a_page_the_register_does_not_have_is_not_asked_for_twice():
+    client, calls = _appointments(httpx.Response(404), _page())
+    assert ch.fetch_name_elements(client, "abc123") is None and len(calls) == 1
+
+
+@mocked
+@pytest.mark.parametrize("response", [
+    httpx.Response(200, json={"items": []}), httpx.Response(200, json={"items": [{"name": "Julie MERRICK"}]}),
+    httpx.Response(200, json={"items": [{"name_elements": {"forename": "Julie"}}]}), httpx.Response(200, text="not json"),
+])
+def test_a_page_without_a_split_gives_none(response):
+    client, calls = _appointments(response)
+    assert ch.fetch_name_elements(client, "abc123") is None and len(calls) == 1
+
+
+@mocked
+def test_the_window_is_respected_for_the_name_request_too():
+    slept = []
+    client, calls = _appointments(httpx.Response(429, headers={"x-ratelimit-remain": "0", "x-ratelimit-reset": "0"}),
+                                  _page(headers={"x-ratelimit-remain": "599", "x-ratelimit-reset": "0"}))
+    assert ch.fetch_name_elements(client, "abc123", sleep=slept.append) == SPLIT
+    assert len(calls) == 2 and len(slept) == 1
+
+
+def _titled(oid="abc123", **over):
+    item = _item(name="MERRICK, Julie, Dr", **over)
+    item["links"] = {"officer": {"appointments": f"/officers/{oid}/appointments"}}
+    return item
+
+
+def test_only_serving_people_with_a_title_part_are_asked_and_each_officer_once():
+    """1,049 of dev's 1,122 serving officers have no title part and cost
+    nothing; an officer at three companies is asked once for the run."""
+    from unittest.mock import patch
+    plain = _item(name="SMITH, Jane Mary")
+    left = _titled("left", resigned_on="2020-01-01")
+    firm = {**_titled("firm"), "officer_role": "corporate-secretary"}
+    here, again = _titled("abc123"), _titled("abc123")
+    known: dict = {}
+    with patch.object(ch, "fetch_name_elements", return_value=dict(SPLIT)) as fetch:
+        assert ch.add_name_elements(None, [plain, left, firm, here], known) == 1
+        assert ch.add_name_elements(None, [again], known) == 0          # the next company: known
+    assert [c.args[1] for c in fetch.call_args_list] == ["abc123"]
+    assert here["name_elements"] == SPLIT == again["name_elements"]
+    assert all("name_elements" not in i for i in (plain, left, firm))
+
+
+def test_a_split_that_could_not_be_read_leaves_the_title_part_out():
+    from unittest.mock import patch
+    item = _titled()
+    with patch.object(ch, "fetch_name_elements", return_value=None):
+        ch.add_name_elements(None, [item], {})
+    assert "name_elements" not in item
+    assert ch.read_officer(item)["full_name"] == "Julie Merrick"
