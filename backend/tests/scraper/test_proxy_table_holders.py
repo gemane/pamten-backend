@@ -91,6 +91,107 @@ def test_holder_stake_keeps_the_voting_power_apart():
         {"stake_pct": 40.4, "share_class": "Class B", "voting_power_pct": None}
 
 
+# ── a preferred class beside the common stock (findings item 116) ───────────
+
+def test_a_preferred_class_beside_common_stock_is_not_the_stake():
+    """QXO's 2026 proxy: Jacobs Private Equity II holds 35.7 % of the common —
+    which counts the shares its preferred converts into — and 90.0 % of the
+    Convertible Preferred. The 90 was stored, with no class, and summed with
+    Vanguard's 7.8 to 102.3 %."""
+    big = _big(_table("qxo_def14a_2026.html"))
+    assert big["Jacobs Private Equity II, LLC"]["stake_pct"] == 35.7
+    assert big["Jacobs Private Equity II, LLC"]["share_class"] == "Common Stock"
+    assert big["The Vanguard Group"] == {**big["The Vanguard Group"], "stake_pct": 7.8,
+                                         "share_class": "Common Stock"}
+
+
+def test_lensar_north_run_holds_its_common_percent_not_all_of_the_series_a():
+    big = _big(_table("lensar_def14a_2026.html"))
+    assert big["North Run Capital, LP"]["stake_pct"] == 54.7
+    assert big["North Run Capital, LP"]["share_class"] == "Common Stock"
+    assert big["BlackRock, Inc."]["share_class"] == "Common Stock"
+
+
+def test_a_row_that_states_a_preferred_only_keeps_it_with_its_class():
+    """Security Benefit Life holds 100 % of Franklin BSP's Series H and no
+    common: the preferred is all the row states."""
+    preferred = "Series H Convertible Preferred Stock Percent of Class"
+    assert holder_stake([(preferred, 100.0)], several_classes=True) == \
+        {"stake_pct": 100.0, "share_class": "Series H", "voting_power_pct": None}
+    assert holder_stake([("Shares of Convertible Preferred Stock Percentage of Class", 90.0)],
+                        several_classes=True)["share_class"] == "Convertible Preferred Stock"
+
+
+def test_a_common_column_that_mentions_the_preferred_is_still_common():
+    columns = [("Common Stock, with the shares the Series A Preferred Stock converts into %", 30.0),
+               ("Series A Preferred Stock %", 100.0)]
+    assert holder_stake(columns, several_classes=True)["stake_pct"] == 30.0
+
+
+def test_two_classes_of_common_stock_still_take_the_larger():
+    columns = [("% of Class A Common Stock", 13.2), ("% of Shares of Class B Common Stock", 40.4)]
+    assert holder_stake(columns, several_classes=True)["stake_pct"] == 40.4      # Better Home's Garg
+
+
+def _html(header: list[str], *rows: list[str]) -> str:
+    cells = "".join(f"<td>{h}</td>" for h in header)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    return f"<html><body><p>as of March 2, 2026</p><table><tr>{cells}</tr>{body}</table></body></html>"
+
+
+def test_a_percent_column_that_names_its_own_security_keeps_it():
+    """Two percent columns side by side: the preferred's header must not take
+    "Common Stock" from the column left of it."""
+    table = read_holder_table(_html(
+        ["Name of Beneficial Owner", "Shares Beneficially Owned", "Common Stock (%)", "Preferred Stock (%)"],
+        ["Alpha Holdings LLC", "1,000", "30.0%", "100.0%"],
+        ["Beta Insurance Company", "50", "—", "100.0%"]))
+    rows = {r["name"]: r for r in table["rows"]}
+    assert (rows["Alpha Holdings LLC"]["stake_pct"], rows["Alpha Holdings LLC"]["share_class"]) == (30.0, "Common Stock")
+    assert (rows["Beta Insurance Company"]["stake_pct"], rows["Beta Insurance Company"]["share_class"]) == \
+        (100.0, "Preferred Stock")
+
+
+def test_a_total_over_every_class_is_not_the_preferred_left_of_it():
+    """Victory Capital's 2026 proxy: "# of Preferred Shares | # of Capital
+    Shares | % of Total Capital Stock" — Amundi holds 4.9 % of the common and
+    27.8 % of the capital stock. The total must not read as the preferred."""
+    table = read_holder_table(_html(
+        ["Name of Beneficial Owner", "# of Common Stock Shares", "% of Total Common Stock", "# of Preferred Shares",
+         "# of Capital Shares", "% of Total Capital Stock"],
+        ["Amundi Parties", "3,293,471", "4.9%", "19,742,300", "23,035,771", "27.8%"],
+        ["BlackRock, Inc.", "7,000,000", "10.8%", "—", "7,000,000", "8.2%"]))
+    rows = {r["name"]: (r["stake_pct"], r["share_class"]) for r in table["rows"]}
+    assert rows == {"Amundi Parties": (27.8, "Capital Stock"), "BlackRock, Inc.": (10.8, "Common Stock")}
+
+
+def test_a_holder_of_a_voting_preferred_holds_its_share_of_the_voting_stock():
+    """Arbor Realty's 2026 proxy: Arbor Commercial Mortgage, 1.3 % of the
+    common, 64.8 % of the Special Voting Preferred, 6.2 % of the voting stock."""
+    table = read_holder_table(_html(
+        ["Name and Address", "Shares of Common Stock Beneficially Owned Percentage",
+         "Shares of Special Voting Preferred Stock Beneficially Owned Percentage",
+         "Total Shares of Voting Stock Beneficially Owned Percentage"],
+        ["Arbor Commercial Mortgage, LLC", "1.3%", "64.8%", "6.2%"],
+        ["John Natalone", "—", "23.1%", "1.9%"]))
+    rows = {r["name"]: (r["stake_pct"], r["share_class"]) for r in table["rows"]}
+    assert rows == {"Arbor Commercial Mortgage, LLC": (6.2, "Voting Stock"), "John Natalone": (1.9, "Voting Stock")}
+
+
+def test_a_one_class_table_that_says_common_stock_names_no_class():
+    table = read_holder_table(_html(
+        ["Name of Beneficial Owner", "Shares of Common Stock Beneficially Owned", "Percent of Class"],
+        ["Alpha Holdings LLC", "1,000", "30.0%"]))
+    assert table["rows"][0]["stake_pct"] == 30.0 and table["rows"][0]["share_class"] is None
+
+
+def test_a_one_class_table_names_no_class():
+    """Nearly every table: "Common Stock | Percent of Class". Naming it would
+    part these holders from the 13D/G holders of the same, unnamed class."""
+    assert holder_stake([("Shares of Common Stock Percent of Class", 7.0)])["share_class"] is None
+    assert _big(_table("davita_def14a_2026.html"))["BlackRock, Inc."]["share_class"] is None
+
+
 # ── the writer's rules ──────────────────────────────────────────────────────
 
 def test_a_block_several_rows_report_is_written_on_its_one_company():

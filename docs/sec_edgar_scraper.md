@@ -1808,7 +1808,22 @@ column's own header, a spanning header above it, or the shares column left of
 it as Molson Coors' "Class A Shares | Percent of class" — "Class of
 Securities" and the footnote mark of "Percent of Class 1" name no class, a
 numbered class does only with its security after it, "Class 1 Common Stock";
-item 113); a voting-power column
+item 113). A **preferred class beside common stock is not the stake** (item
+116): the common percent is beneficial ownership and already counts the shares
+the preferred converts into — QXO's Jacobs Private Equity II, 35.7 % of the
+common and 90.0 % of the Convertible Preferred, holds 35.7 %; the 90, stored
+without a class, summed with Vanguard's 7.8 to 102.3 %. A row that states a
+preferred only keeps it (Security Benefit Life, 100 % of Franklin BSP's Series
+H). A **total over every class** is a security of its own, not the preferred
+left of it: Victory Capital's "% of Total Capital Stock" (Amundi: 4.9 % of the
+common, 27.8 % of the capital stock → 27.8, "Capital Stock"), Arbor Realty's
+"Total Shares of Voting Stock" (Arbor Commercial Mortgage: 1.3 % of the common,
+64.8 % of the Special Voting Preferred, 6.2 % of the voting stock → 6.2). In a table with a **column per security** every row's class is named, by
+its kind where the header gives no letter ("Common Stock", "Convertible
+Preferred Stock"), so the panel never adds a preferred-only holder to the
+holders of an unnamed class (LENSAR: 100 % of the Series A beside 8.4 and 5.1 %
+of the common); a one-class table names none, as the 13D/G holders of the same
+class carry none. A voting-power column
 is `voting_power_pct`; the table's **record date** ("Shares Beneficially Owned
 as of April 2, 2026" in the header, else "as of …" in the text before it) is
 the start, as a lower bound (`since_basis` first_reported) and `event_date`.
