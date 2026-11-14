@@ -130,6 +130,17 @@ parser. Anything that does not map is either a new property (document it) or noi
       statement speaks, and the summary must not reopen it. Name its holders strictly
       (exact name, exact EDGAR registrant, never a person minted from the summary's
       spelling): a fuzzy match put "MUFG" on "Morgan Stanley MUFG Securities" (item 86).
+- [ ] **"No statement in the graph" is not "no statement": the graph holds what was
+      scraped.** The table writer skipped a pair a 13D/G statement speaks for — looked up
+      in the graph. For a company nobody scraped (a node only as some holder's 13G issuer)
+      the graph has none of its statements: MiniMed's proxy named Medtronic with 89.86 %,
+      Medtronic's 13G/A reporting 0 % after the split-off was on EDGAR, unread, and the
+      company summed to 111 % (findings item 116, 2026-11-14). A guard that asks the graph
+      whether a primary record exists must know whether that record was ever fetched for
+      this subject; where it was not, ask the source — and then use what it says: of 167
+      table holders that had left, 143 were The Vanguard Group, whose holdings moved to a
+      subsidiary that files on its own; leaving them out without writing the statements
+      filed since would have taken Vanguard off 143 companies.
 - [ ] **One holding, two figures: of record versus beneficial.** A source can state the
       same holding in two documents that answer different questions. Musk's Form 4 counts
       what is registered to him (1,123 M Tesla shares, 28.4 % — "controlling" by the 20 %

@@ -2240,6 +2240,33 @@ class TestAnExitIsNotAZeroPercentHolding:
         # the structured branch carries the cover's date of event too
         assert res[0]["event_date"] == "2025-12-31"
 
+    def test_the_caller_is_told_who_left(self):
+        """Findings item 116: the table pass reads only the statements filed
+        since an issuer's ownership table, so the older holding an exit closes
+        is never reached — it must still learn who reported no position."""
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        atom = self._atom(("0000102909-26-000394", "2026-03-26"))
+        pages = {self.ZERO_XML: _fixture("13ga_vanguard_exit.xml")}
+        exits: list[str] = []
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve(atom, pages)), \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("GCI Liberty Inc", "0002057463", exits=exits)
+        assert res == [] and len(exits) == 1 and "vanguard" in exits[0].lower()
+
+    def test_given_filings_are_read_instead_of_the_feed(self):
+        from unittest.mock import patch
+        from app.scraper import sec_edgar
+        entries = [{"index_url": "https://x.test/held.htm", "form_type": "SCHEDULE 13G/A",
+                    "file_date": "2026-01-07", "accession": "0000102909-26-000024"}]
+        pages = {self.HELD_XML: _fixture("13ga_vanguard_held.xml")}
+        with patch.object(sec_edgar, "_get_text", side_effect=_serve("no feed is asked for", pages)), \
+             patch.object(sec_edgar, "_ownership_feed_entries") as feed, \
+             patch.object(sec_edgar, "fetch_former_names", return_value=[]):
+            res = sec_edgar.fetch_ownership_filings("GCI Liberty Inc", "0002057463", entries=entries)
+        feed.assert_not_called()
+        assert [r["stake_percent"] for r in res] == [10.84]
+
     def test_the_exit_is_scoped_to_the_cik_that_filed_it(self):
         """The realignment moved holdings from the parent to a subsidiary that
         files separately. The parent's zero must not suppress the subsidiary's

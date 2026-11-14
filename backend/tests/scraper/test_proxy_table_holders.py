@@ -271,3 +271,66 @@ def test_the_writer_knows_every_form_the_reader_reads():
 ])
 def test_a_header_word_after_class_is_not_always_a_class(header, cls):
     assert holder_stake([(header, 7.0)])["share_class"] == cls
+
+
+# ── a holder that left after the table (findings item 116) ──────────────────
+
+MINIMED = "0002062583"
+
+
+def _submissions(*filings):
+    return {"filings": {"recent": {"form": [f for f, _, _ in filings], "filingDate": [d for _, d, _ in filings],
+                                   "accessionNumber": [a for _, _, a in filings]}}}
+
+
+def _since(submissions, feed=(), day="2026-08-21"):
+    from app.scraper import sec_edgar
+    from app.scraper.sec_writer import _statements_since
+    with patch.object(sec_edgar, "_ownership_feed_entries", return_value=iter(feed)) as asked:
+        out = _statements_since(MINIMED, day, submissions)
+    return out, asked.called
+
+
+def test_the_statements_since_the_table_come_from_the_submissions_already_read():
+    """MiniMed's submissions list the filings it is the subject of beside its
+    own: no feed request, and nothing filed on or before the proxy's day."""
+    subs = _submissions(("SCHEDULE 13G", "2026-11-06", "0000315066-26-002944"), ("4", "2026-10-30", "0002111492-26-000008"),
+                        ("SCHEDULE 13G/A", "2026-10-16", "0001999371-26-022971"),
+                        ("SCHEDULE 13G", "2026-09-30", "0002062583-26-000001"),      # its own, about another company
+                        ("DEF 14A", "2026-08-21", "0001140361-26-034021"), ("SCHEDULE 13G", "2026-08-21", "0000000001-26-000001"),
+                        ("SCHEDULE 13G", "2026-02-10", "0001613103-26-000001"))
+    out, asked = _since(subs)
+    assert [(e["file_date"], e["form_type"], e["accession"]) for e in out] == [
+        ("2026-11-06", "SCHEDULE 13G", "0000315066-26-002944"), ("2026-10-16", "SCHEDULE 13G/A", "0001999371-26-022971")]
+    assert out[1]["index_url"].endswith("/2062583/000199937126022971/0001999371-26-022971-index.htm")
+    assert not asked
+
+
+def test_a_recent_list_that_does_not_reach_the_table_falls_back_to_the_feed():
+    """A bank's thousand newest filings span days: the list cannot say what
+    was filed since a table of last spring."""
+    subs = _submissions(("424B2", "2026-11-13", "x-1"), ("424B2", "2026-11-12", "x-2"))
+    feed = [{"file_date": d, "accession": a, "form_type": "SCHEDULE 13G/A", "index_url": "u"}
+            for d, a in (("2026-10-16", "mdt"), ("2026-08-21", "same-day"), ("2026-05-01", "older"))]
+    out, asked = _since(subs, feed)
+    assert [e["accession"] for e in out] == ["mdt"] and asked
+
+
+def test_no_submissions_means_the_feed():
+    out, asked = _since(None, [{"file_date": "2026-10-16", "accession": "mdt", "form_type": "SCHEDULE 13G/A",
+                                "index_url": "u"}])
+    assert [e["accession"] for e in out] == ["mdt"] and asked
+
+
+@pytest.mark.parametrize("a, b, same", [
+    ("Medtronic plc", "MEDTRONIC PLC", True),
+    ("Warren E. Buffett", "BUFFETT WARREN E", True),
+    ("The Vanguard Group", "VANGUARD GROUP INC", True),
+    ("BlackRock, Inc.", "BlackRock Portfolio Management LLC", False),     # one shared word is not the holder
+    ("The Vanguard Group", "Vanguard Capital Management", False),         # the filer its exit made way for
+    ("Capital World Investors", "Capital Research Global Investors", False),
+    ("", "", False),
+])
+def test_an_exit_is_matched_to_a_row_by_the_whole_name(a, b, same):
+    from app.scraper.sec_writer import _same_holder
+    assert _same_holder(a, b) is same
