@@ -1866,7 +1866,41 @@ resolver the measurement first used put MUFG's 24 % of Morgan Stanley on
   ended before the table says nothing about it (Vanguard on Sirius XM);
 - a holder those statements name otherwise — their holders' names, aliases and
   controlling parents, and the open statements' reporting persons
-  (`named_in_table`, generous on purpose: a wrong match only leaves a row out).
+  (`named_in_table`, generous on purpose: a wrong match only leaves a row out);
+- a holder that **left after the table** (findings item 116): the reporting
+  persons of a 13D/G statement filed since the table that reports no position
+  (`exited`, from `write_statements_since`, below). MiniMed's proxy of
+  2026-08-21 names Medtronic with 89.86 %; the split-off closed on 2026-10-15
+  and Medtronic's 13G/A of 2026-10-16 states 0 % — unread, so the row was
+  written beside FMR's 13.5 % and Capital Ventures' 7.8 %, 111 % together.
+  Matched by the whole name (`_same_holder`), not by one shared word: Vanguard
+  Capital Management is another filer than The Vanguard Group, whose exit it
+  follows.
+
+**The statements filed since the table** (`write_statements_since`, findings
+item 116, the user's choice of 2026-11-14). The graph holds the 13D/G
+statements of the companies it scraped; the whole-graph pass
+(`close-absent-from-table`) reads the tables of companies nobody scraped — a
+node only as some holder's 13G issuer. For each of them the pass first reads
+the statements filed after the table's record date and writes them exactly as
+the issuer's own scrape would (`fetch_ownership_filings` given those filings,
+`runner._write_ownership_filings`): Charter's proxy of 2026-03-12 lists Liberty
+Broadband (29.07 %) and The Vanguard Group (7.26 %); since then both state
+0 %, Vanguard Capital Management reports 7.31 % and Cox Enterprises 28.7 %.
+The filings come from the submissions document the pass already holds — it
+lists the filings a company is the subject of beside its own — or, where its
+recent list does not reach back to the table (a bank's thousand newest filings
+span days), from the 13D/G feed; one request per statement. An exit read this
+way closes nothing by itself (the older holding it ends was filed before the
+table and is not read): its persons are handed to the table writer, which
+leaves their rows out. Not for a registered fund; the issuer's own scrape,
+which has just read every statement, does not do it. Measured on dev
+(2026-11-14, read-only): 634 companies with a table (funds apart), 4,238 statements filed since, read
+in 25 minutes; 2,399 holders, 1,374 of them not in the graph before (Vanguard
+Capital Management 256, Vanguard Portfolio Management 148, State Street 83,
+BlackRock 78), 518 newer than the edge the graph held, 448 the same, 59
+already ended; 546 reporting persons with no position (The Vanguard Group
+276), which keep 167 table rows from being written.
 
 **Precedence.** Over a Form 4 count the table wins — beneficial ownership, not
 of record (user, 2026-11-10): the table's claim (filing family `def14a`, with a

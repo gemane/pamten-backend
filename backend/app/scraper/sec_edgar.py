@@ -1831,12 +1831,21 @@ def _ownership_feed_entries(company_cik: str):
 
 
 def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
-                            limit: int = 20) -> list:
+                            limit: int = 20, entries=None, exits: list | None = None) -> list:
     """
     Find SC 13D/13G large-shareholder filings where this company is the issuer.
     Uses EDGAR's company browse Atom feed (keyed by CIK), which is more reliable
     than full-text search. Each entry represents an investor holding >5%.
     Names and stake percentages are fetched from individual submissions JSONs.
+
+    ``entries``: read these filings instead of the feed — the same rows, newest
+    first ({index_url, form_type, file_date, accession}); the whole-graph table
+    pass gives the statements filed since an issuer's ownership table
+    (`sec_writer.write_statements_since`, findings item 116).
+    ``exits``: a list that receives the reporting persons of every statement
+    that reports no position — the caller that reads only the newest filings
+    never reaches the older holding an exit closes, and must still know who
+    left.
     """
     if not company_cik:
         log.warning("SEC EDGAR: CIK required for ownership search; skipping %r", company_name)
@@ -1845,7 +1854,7 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
     log.info("SEC EDGAR: fetching SC 13D/13G via browse for CIK=%s (%r)", company_cik, company_name)
     # Read lazily, page by page: the loop below asks for the next page only
     # while it still needs holders (findings item 49).
-    raw_entries = _ownership_feed_entries(company_cik)
+    raw_entries = iter(entries) if entries is not None else _ownership_feed_entries(company_cik)
     norm_company_cik = company_cik.zfill(10)
 
     # One pass per filing: fetch, verify, then claim the investor's slot.
@@ -2075,6 +2084,8 @@ def fetch_ownership_filings(company_name: str, company_cik: str | None = None,
             # day the position actually ended (the cover's date of event when
             # it states one), not a later repetition of the exit.
             closed_since[inv["investor_cik"]] = event_date or inv["file_date"]
+            if exits is not None:
+                exits.extend(names or [inv["investor_name"]])
             if passive:
                 group_closed.append((_co_filer_names(names, inv["investor_name"]),
                                      event_date or inv["file_date"]))

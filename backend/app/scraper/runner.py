@@ -2483,46 +2483,14 @@ def _record_sec_industry(entity_id: str, cik: str | None, source_id: str) -> Non
                         source_date=datetime.now(timezone.utc).date().isoformat())
 
 
-def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -> dict:
-    """The write phase of `run_scrape_sec_edgar`: the filer, its holders, its
-    insiders and officers, from the scraped `data`."""
-    from app.scraper.sec_edgar import fetch_filer_headquarters, fetch_filer_website
-    source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
-    scraped: list[dict] = []
-
-    # Upsert the target company
-    target_id = _upsert_entity_by_name(
-        name=data["name"],
-        entity_type="company",
-        cik=data.get("cik"),
-        source_id=source_id,
-        register_name=True,                 # EDGAR's own name for this CIK
-        former_names=data.get("former_names"),
-        lei=data.get("lei"),
-        country=filer_country,
-        # Where it is RUN, from the same cached document — kept apart from
-        # `country`, which is where it is registered.
-        headquarters=fetch_filer_headquarters(data["cik"]) if data.get("cik") else None,
-        website=fetch_filer_website(data["cik"]) if data.get("cik") else None,
-    )
-    scraped.append({"type": "entity", "name": data["name"], "role": "target"})
-    if data.get("lei_source_url"):
-        # the filing that tied the CIK to the node's LEI (`_confirm_stored_lei`)
-        with db.get_session() as session:
-            session.run("MATCH (e:Entity {id: $id}) "
-                        "SET e.lei_source_url = COALESCE(e.lei_source_url, $u)",
-                        id=target_id, u=data["lei_source_url"])
-    _record_sec_industry(target_id, data.get("cik"), source_id)
-
-    # Ownership filings → investor nodes + OWNS edges
-    # CUSIP from the first schedule that states one — fill-if-missing, so a
-    # hand-set or 13F-adopted value is never clobbered. This is what lets
-    # `sec-13f` match info-table rows exactly instead of by name.
-    _keep_cover_cusip(target_id, next((f.get("issuer_cusip") for f in data.get("ownership_filings", [])
-                                       if f.get("issuer_cusip")), None))
-    _keep_ads_cusips(target_id, data.get("ads_cusips"))
-
-    for filing in data.get("ownership_filings", []):
+def _write_ownership_filings(target_id: str, target_name: str, filings: list[dict], source_id: str,
+                              scraped: list[dict]) -> None:
+    """Write an issuer's 13D/G statements (`sec_edgar.fetch_ownership_filings`):
+    the holder nodes, the voting groups and joint filings, and the OWNS edges,
+    open or already ended. One function for the issuer's own scrape and for
+    the statements the whole-graph table pass reads for a company nobody
+    scraped (`sec_writer.write_statements_since`, findings item 116)."""
+    for filing in filings:
         investor_name = filing.get("investor_name", "").strip()
         if not investor_name:
             continue
@@ -2564,7 +2532,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             roster = [_member_key(investor_name, filing.get("investor_cik"))]
             roster += [_member_key(m["name"], m.get("cik")) for m in members]
             group_id = _upsert_voting_group(
-                subject_id=target_id, subject_name=data["name"], roster=roster,
+                subject_id=target_id, subject_name=target_name, roster=roster,
                 source_id=source_id, kind=VOTING_PACT if pact else JOINT_FILING, filer=investor_name)
 
             # The filer joins as a member like everybody else; it gets no edge
@@ -2622,7 +2590,7 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
             _retire_superseded_bloc_edge(investor_node_id, target_id, source_id,
                                          "Person" if is_individual else "Entity")
             log.info("SEC EDGAR: wrote voting group of %d over %r (filed by %r)",
-                     len(roster), data["name"], investor_name)
+                     len(roster), target_name, investor_name)
             continue
 
         _upsert_owns_sec(
@@ -2652,8 +2620,50 @@ def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -
         )
         log.info(
             "SEC EDGAR: wrote OWNS %r → %r (%s)",
-            investor_name, data["name"], filing.get("form_type"),
+            investor_name, target_name, filing.get("form_type"),
         )
+
+
+def _write_sec_edgar(company_name: str, data: dict, filer_country: str | None) -> dict:
+    """The write phase of `run_scrape_sec_edgar`: the filer, its holders, its
+    insiders and officers, from the scraped `data`."""
+    from app.scraper.sec_edgar import fetch_filer_headquarters, fetch_filer_website
+    source_id = _ensure_source(SEC_EDGAR_SOURCE_NAME, SEC_EDGAR_SOURCE_URL, SEC_EDGAR_CREDIBILITY)
+    scraped: list[dict] = []
+
+    # Upsert the target company
+    target_id = _upsert_entity_by_name(
+        name=data["name"],
+        entity_type="company",
+        cik=data.get("cik"),
+        source_id=source_id,
+        register_name=True,                 # EDGAR's own name for this CIK
+        former_names=data.get("former_names"),
+        lei=data.get("lei"),
+        country=filer_country,
+        # Where it is RUN, from the same cached document — kept apart from
+        # `country`, which is where it is registered.
+        headquarters=fetch_filer_headquarters(data["cik"]) if data.get("cik") else None,
+        website=fetch_filer_website(data["cik"]) if data.get("cik") else None,
+    )
+    scraped.append({"type": "entity", "name": data["name"], "role": "target"})
+    if data.get("lei_source_url"):
+        # the filing that tied the CIK to the node's LEI (`_confirm_stored_lei`)
+        with db.get_session() as session:
+            session.run("MATCH (e:Entity {id: $id}) "
+                        "SET e.lei_source_url = COALESCE(e.lei_source_url, $u)",
+                        id=target_id, u=data["lei_source_url"])
+    _record_sec_industry(target_id, data.get("cik"), source_id)
+
+    # Ownership filings → investor nodes + OWNS edges
+    # CUSIP from the first schedule that states one — fill-if-missing, so a
+    # hand-set or 13F-adopted value is never clobbered. This is what lets
+    # `sec-13f` match info-table rows exactly instead of by name.
+    _keep_cover_cusip(target_id, next((f.get("issuer_cusip") for f in data.get("ownership_filings", [])
+                                       if f.get("issuer_cusip")), None))
+    _keep_ads_cusips(target_id, data.get("ads_cusips"))
+
+    _write_ownership_filings(target_id, data["name"], data.get("ownership_filings", []), source_id, scraped)
 
     # Holdings → OWNS edges pointing OUT of this company.
     #
