@@ -174,7 +174,7 @@ def cmd_ch_officers(args):
     print(f"Companies House officers: {res['read']} of {res['companies']} companies read "
           f"({res['unknown']} unknown to the register, {res['failed']} failed); {verb} {res['written']} seats, "
           f"ended {res['ended']}; left out {res['resigned']} resigned, {res['corporate']} corporate, "
-          f"{res['unreadable']} unreadable")
+          f"{res['unreadable']} unreadable; {res['names_asked']} names with a title part asked for their split")
     if res["failed"]:
         sys.exit(1)
 

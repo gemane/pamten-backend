@@ -144,3 +144,65 @@ def test_a_nationality_fills_an_empty_field_and_never_replaces_one(it_db):
     _run([ITEMS[0], _item("omar", "KHAN, Omar", role="secretary", nationality="Irish")])
     nats = {r["id"]: r["nat"] for r in it_db.run_command("MATCH (p:Person) RETURN p.id AS id, p.nationalities AS nat")}
     assert nats == {"choff:jane": ["FR"], "choff:omar": ["IE"]}
+
+
+# ── a name with a title part (findings item 120) ────────────────────────────
+
+def _titled():
+    # a fresh one each time: the run puts the split on the item it read
+    return _item("julie", "MERRICK, Julie, Dr")
+
+
+def _run_named(items, split):
+    with patch.object(ch, "fetch_name_elements", return_value=split) as asked:
+        out, _ = _run(items)
+    return out, [c.args[1] for c in asked.call_args_list]
+
+
+def _name(it_db, pid):
+    return it_db.run_command(f"MATCH (p:Person {{id: '{pid}'}}) RETURN p.first_name AS f, p.last_name AS l, "
+                             "p.full_name AS n, p.search_text AS s")[0]
+
+
+def test_a_title_after_the_forenames_is_not_part_of_the_name(it_db):
+    """The register writes "MERRICK, Julie, Dr"; 56 people on dev were written
+    "Julie, Dr Merrick". The split of the name is asked for that officer only."""
+    _seed(it_db)
+    out, asked = _run_named([_titled(), ITEMS[0]], {"title": "Dr", "forename": "Julie", "surname": "MERRICK"})
+    assert asked == ["julie"] and out["names_asked"] == 1
+    p = _name(it_db, "choff:julie")
+    assert (p["f"], p["l"], p["n"]) == ("Julie", "Merrick", "Julie Merrick")
+
+
+def test_without_the_split_the_title_part_is_left_out(it_db):
+    _seed(it_db)
+    _run_named([_titled()], None)                          # both requests failed
+    assert _name(it_db, "choff:julie")["n"] == "Julie Merrick"
+
+
+def test_a_second_run_corrects_a_name_the_first_wrote_wrong(it_db):
+    """Dev holds the 56 under their wrong names: the register is the only
+    source of a `choff:` person's name, so a re-run rewrites it."""
+    _seed(it_db)
+    _run_named([_titled()], {"title": "Dr", "forename": "Julie", "surname": "MERRICK"})
+    it_db.run_command("MATCH (p:Person {id: 'choff:julie'}) SET p.first_name = 'Julie, Dr', "
+                      "p.full_name = 'Julie, Dr Merrick', p.search_text = 'julie, dr merrick'")
+    _run_named([_titled()], {"title": "Dr", "forename": "Julie", "surname": "MERRICK"})
+    p = _name(it_db, "choff:julie")
+    assert (p["f"], p["n"]) == ("Julie", "Julie Merrick") and "dr" not in p["s"]
+    assert it_db.run_command("MATCH (p:Person) WHERE p.id STARTS WITH 'choff:' RETURN count(p) AS n")[0]["n"] == 1
+
+
+def test_a_name_another_source_or_a_merge_chose_is_left_alone(it_db):
+    from app.merged_ids import record_merge_sql
+    _seed(it_db)
+    _run_named([_titled(), ITEMS[0]], None)
+    # Jane's node was merged into a Wikidata person, who is called otherwise there
+    it_db.run_command("CREATE (:Person {id: 'wd:Q1', full_name: 'Jane M. Smith-Jones', source_id: 'wikidata'})")
+    it_db.run_command("MATCH (p:Person {id: 'choff:jane'}) DETACH DELETE p")
+    record_merge_sql("choff:jane", "wd:Q1", "Person")
+    # Julie's own node was taken over by another source's name
+    it_db.run_command("MATCH (p:Person {id: 'choff:julie'}) SET p.source_id = 'wikidata', p.full_name = 'Dr Julie Merrick'")
+    _run_named([_titled(), ITEMS[0]], None)
+    assert _name(it_db, "wd:Q1")["n"] == "Jane M. Smith-Jones"
+    assert _name(it_db, "choff:julie")["n"] == "Dr Julie Merrick"
