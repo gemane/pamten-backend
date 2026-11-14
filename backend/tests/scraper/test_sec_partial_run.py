@@ -84,8 +84,9 @@ class TestScrapeCompanyReportsLostSections:
     def test_a_timed_out_submissions_file_loses_the_holdings(self):
         def subs(*a, **k):
             raise httpx.ReadTimeout("stalled")
-        # the F-6 read starts from the same file (findings item 72): lost with it
-        assert self._scrape(submissions=subs)["failed_sections"] == ["holdings", "F-6 ADS CUSIP"]
+        # the F-6 read starts from the same file (findings item 72): lost with it —
+        # and so does the proxy roster of the insiders (findings item 115)
+        assert self._scrape(submissions=subs)["failed_sections"] == ["insiders", "holdings", "F-6 ADS CUSIP"]
 
     def test_a_filer_without_a_submissions_file_lost_nothing(self):
         def subs(*a, **k):

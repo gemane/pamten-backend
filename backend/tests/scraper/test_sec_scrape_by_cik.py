@@ -64,6 +64,23 @@ class TestScrapeCompany:
         search.assert_not_called()
         assert (data["cik"], data["name"]) == ("0000792990", "NESTLE SA")
 
+    def test_the_proxys_directors_join_the_windows_insiders(self):
+        """Findings item 115: the roster reader is asked with what the window
+        listed, and what it returns is written like any insider."""
+        window = [{"name": "Warren E Buffett", "role": "Director", "person_cik": "0000315090"}]
+        roster = [{"name": "Kenneth I Chenault", "role": "Director", "person_cik": "0001180524", "holdings": {}}]
+        stubs = {"fetch_former_names": [], "fetch_company_lei": None, "fetch_ownership_filings": [],
+                 "fetch_filer_holdings": [], "fetch_shares_outstanding_detail": None}
+        with patch.multiple(sec_edgar, **{k: (lambda *a, _v=v, **k2: _v) for k, v in stubs.items()}), \
+             patch.object(sec_edgar, "_submissions", return_value={"name": "BERKSHIRE HATHAWAY INC"}), \
+             patch.object(sec_edgar, "fetch_executives", return_value=list(window)), \
+             patch("app.scraper.sec_f6.fetch_ads_cusips", return_value={}), \
+             patch("app.scraper.sec_roster.roster_insiders", return_value=list(roster)) as asked:
+            data = sec_edgar.scrape_company("Berkshire Hathaway", cik="0001067983")
+        assert asked.call_args.args[0] == "0001067983"
+        assert [e["name"] for e in asked.call_args.args[1]][0] == "Warren E Buffett"
+        assert [e["name"] for e in data["executives"]] == ["Warren E Buffett", "Kenneth I Chenault"]
+
     def test_a_stored_cik_edgar_does_not_know_falls_back_to_the_name(self, quiet_fetches):
         found = {"cik": "0001181412", "name": "SPACE EXPLORATION TECHNOLOGIES CORP"}
         with patch.object(sec_edgar, "_submissions", side_effect=_http_error(404)), \

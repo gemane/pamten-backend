@@ -3431,6 +3431,11 @@ def _scrape_company(company_name: str, holdings_limit: int, cik: str | None) -> 
     lei          = fetch_company_lei(cik) if cik else None
     ownership    = fetch_ownership_filings(company_name, company_cik=cik)
     executives   = fetch_executives(cik) if cik else []
+    if cik:
+        # the directors and officers the proxy names whom the insider window
+        # misses — a board without yearly grants (findings item 115)
+        from app.scraper.sec_roster import roster_insiders
+        executives += roster_insiders(cik, executives)
     # What this company owns of others. Costs one submissions read for a company
     # that files no 13D/13G — almost all of them — and only fetches documents for
     # an actual institutional filer.

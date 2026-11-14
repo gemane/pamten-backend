@@ -1557,7 +1557,8 @@ Most sitting directors file at least once a year (the annual grant), so the wind
 holds most of the board; someone whose last filing is older is not listed here.
 Not every board grants yearly: Robyn Denholm, Tesla's chair, last filed on
 2025-05-08 and Meryl Witmer, a Berkshire director, on 2025-03-04 — both outside
-the window. They are reached by the person-centric pass below.
+the window. They get their seats from the proxy's roster (the section after
+this one), and their holdings from the person-centric pass below it.
 
 It used to be the newest **50 documents**, and a few officers filing often used them
 up: Bank of America listed 8 of its 29 insiders, none of the nine directors of its
@@ -1566,6 +1567,89 @@ directors who filed on 2026-04-30, at documents 51–55. Which board a rebuild w
 depended on the officers' trading that month (findings item 9, 2026-10-31). Over
 the 136 SEC filers of the scrape list the window is 4,975 documents (median 15,
 Alphabet 226; TSMC 333 on 2026-11-11), read once — Archives documents are cached.
+
+### A board without grants — the proxy's roster (`sec_roster.py`, findings item 115)
+
+The window rests on "every sitting director files at least once a year". A
+board that gets no stock grants does not: Berkshire Hathaway's window held 2 of
+its 13 directors (Kenneth Chenault's only filing is his Form 3 of 2020, Stephen
+Burke's of 2009), Tesla's 3. Two things EDGAR has say who sits on the board,
+and neither does alone:
+
+- **The proxy's ownership table** (the newest DEF 14A or 10-K/A,
+  `proxy_statement.latest_table_filing`) names every director, nominee and named
+  executive officer as of its record date — by name only.
+- **The issuer's reporting owners** (`cgi-bin/own-disp?action=getissuer&CIK=…`,
+  one request; `issuer_owners`) lists everyone who ever filed a Form 3/4/5 about
+  the company, with the person's CIK and a "Type of Owner" (director / officer:
+  title / 10 percent owner) — Berkshire's 23 include Bill Gates, David Gottesman
+  and Thomas Murphy sr., long gone: leaving a board needs no filing.
+
+A person the proxy names **and** the owner list holds as a director who is no
+officer gets a Director seat (`roster_insiders`, called by `scrape_company`
+after `fetch_executives`, for the people its list lacks). The records have the
+window's shape, so the seat writer, the claims and the departures pass take
+them as they are.
+
+**The name match is strict** (`match_owner`): the surname and the first name —
+or a nickname of it ("Joe Gebbia" ~ Gebbia Joseph), or initials for the given
+names ("JB Straubel" ~ Straubel Jeffrey B) — never a surname alone and never a
+shared first letter. Where father and son are both owners (MURPHY THOMAS S and
+MURPHY THOMAS S JR) only a suffix the proxy states decides; a middle initial
+tells Susan A. Buffett from BUFFETT SUSAN T. Two candidates left → no seat.
+Whether the window already lists the person is asked generously (`has_seat`:
+the surname and one shared initial) and then by CIK, so nobody is written
+twice.
+
+**The start** is the person's own newest Form 3 about the issuer (`own_form3`:
+their submissions, Form 3s only, up to `MAX_PERSON_FORM3 = 25` — one per
+company they ever joined, where their Form 4s about other companies would bury
+it). Its date is the seat's `since` and the filing its source. It also decides
+the role where it is the person's own: JB Straubel is "officer: Chief
+Technology Officer" in the owner list (2010) and a director by his Form 3 of
+2023. A joint Form 3 (a fund and its director) only dates the seat. Without a
+Form 3 — Howard Buffett, a director since 1993 — the seat has no start and the
+proxy is its source. The owner list's date column is not used: it is neither
+the first nor the newest filing.
+
+**Only where silence is the rule.** At a board that grants shares every year, a
+director who is in the proxy and not in the window has usually **left** — at
+the very meeting the proxy was written for. Pool's 2026 proxy names Carlos
+Sabater: his last grant is of May 2025, every other director filed one in May
+2026. The first version of this reader gave 33 seats on dev, and 13 were such
+people (ONEOK's two, Valvoline's, Herc's, HubSpot's …). So a seat is given
+
+- on a **quiet board** — the window lacks at least as many of the proxy's
+  outside directors as it holds (`seated_directors`): Berkshire lacks 8 and
+  holds 1, Tesla 5 and 3; or
+- to a director who has **filed nothing since their Form 3** about the issuer,
+  about any company (`silent_since`, read off their own index): no grants to
+  file for — a shareholder's nominee, as Eve's Luis Carlos Affonso (Embraer) or
+  LifeStance's Katherine Wood.
+
+Everybody else stays out: a director who filed yearly and then stopped is more
+likely gone than quiet, and an open seat for somebody who left is the worse
+error.
+
+**Outside directors only.** The table also lists last year's named executive
+officers, and those include the departed: Molson Coors' 2026 proxy names Gavin
+Hattersley, who retired as chief executive in 2025 — and a departed officer
+files nothing more, so he looks exactly like a director without grants. An
+officer who serves files for the yearly grant and is in the window.
+
+**No holding** is written from a roster record: a Form 3's count is as old as
+the seat. The person-centric pass below asks each seat holder's own Form 4s as
+for anybody else.
+
+**Not found:** a person EDGAR lists under no matching name (Tesla's "Tom Zhu" is
+Zhu Xiaotong — in the window anyway) or not at all (Wallace Weitz files nothing
+under Berkshire). A director who is not standing again is listed until the
+next proxy. Measured on dev (2026-11-14, read-only): 86 companies with SEC seats, 66 with
+a table; 16 seats at 5 companies — Berkshire 8 (6 → 14 insiders), Tesla 5,
+Eve, LifeStance and Symbotic 1 each; 218 requests for the 26 companies that had
+anybody to look up. Left for other findings: a director named only as the
+second reporting owner of a joint Form 4 (Innovex) and one who files Form 5
+instead of Form 4 (WesBanco) are in neither list.
 
 ### People the window misses — the person-centric pass
 
@@ -1956,6 +2040,7 @@ other than through its own scrape.
 | Form 3/4 XML documents of the last 15 months (up to 60 insiders) | median 15, up to 300 (cached) |
 | Form 3s past the cap, for seat start dates | up to 40 (cached) |
 | Older index pages + their Form 3s, while someone is undated | up to 3 + 60 (documents cached) |
+| The proxy's roster: the table filing, the issuer's owner list, per missing director a submissions JSON and their Form 3s | 2, then usually 2–4 per director (Berkshire 32, Tesla 15) |
 | 8-Ks with Item 5.02, for departures | up to 12 (cached) |
 | Person-centric pass: per person without a holding (up to 15), 1–2 name searches, then per candidate (up to 5) a submissions JSON and up to 20 Form 4s | usually 3–4 per person (documents cached) |
 | **Total (typical)** | **~40–50** |
