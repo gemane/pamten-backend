@@ -485,6 +485,16 @@ parser. Anything that does not map is either a new property (document it) or noi
       said whether the company exists, which is a different fact from "not ceased".
 - [ ] **Dates carry their real precision.** UK PSC publishes month and year only; storing
       a fabricated day makes two different people look like the same one.
+- [ ] **A value kept at its source's precision is compared at the precision both state.**
+      Whatever reads the field across sources — a dedupe, a conflict check — must not
+      compare the strings: the register's `1957-08` and Wikidata's `1957-08-11` were
+      "two different birth dates", so Masayoshi Son stayed two people, flagged likely
+      distinct. And a signal counts only for the records that carry it: a same-name
+      group merged whole once two members shared a birth month, the member without any
+      date included. When a new source's persons carry a date, count on its own data how
+      often two different people would agree on it (name + month: 13 namesake pairs in
+      6,102 officers, ~1 in 240 of those sharing the month) and say at which size the rule
+      stops holding (findings item 122).
 - [ ] **An entity's end is a fact the source may state — read it, where the source puts it.**
       Wikidata's P576, GLEIF's `EntityExpirationDate`, Companies House's `CompanyStatus`/`DissolutionDate`
       all existed for years before anything read them (2026-10-25), so a dissolved

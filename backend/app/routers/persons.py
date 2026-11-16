@@ -279,6 +279,53 @@ def _fulltext_name_candidates(name: str) -> list[dict]:
 _GENERATION_WORDS = {"jr", "sr", "ii", "iii", "iv"}
 
 
+def _birth_parts(value: str | None) -> tuple:
+    """A birth date as the parts its source states: Companies House gives a
+    month (`1957-08`), Wikidata a day, or a year written `1957-00-00`."""
+    parts = (value or "")[:10].split("-")
+    while parts and parts[-1] in ("", "00"):
+        parts.pop()
+    return tuple(parts)
+
+
+def births_compare(a: str | None, b: str | None) -> str | None:
+    """`same`, `different`, or None when the two say too little to tell.
+
+    Compared at the precision both state (findings item 122): the register's
+    `1957-08` and Wikidata's `1957-08-11` are one birth date — read as two, they
+    kept Masayoshi Son apart as "likely distinct". A year alone that agrees
+    settles nothing (one name in forty shares it), so it is neither."""
+    pa, pb = _birth_parts(a), _birth_parts(b)
+    n = min(len(pa), len(pb))
+    if not n:
+        return None
+    if pa[:n] != pb[:n]:
+        return "different"
+    return "same" if n >= 2 else None
+
+
+def birth_clusters(members: list) -> list[list]:
+    """The members whose birth dates say they are one person, as lists of two or
+    more. A member without a date is in none (item 122: it merged along with
+    two others who shared one), and neither is a set the dates contradict
+    inside — a month between two different days of it."""
+    dated = [m for m in members if _birth_parts(m.get("birth_date"))]
+    parent = list(range(len(dated)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            i = parent[i]
+        return i
+    for i, j in combinations(range(len(dated)), 2):
+        if births_compare(dated[i]["birth_date"], dated[j]["birth_date"]) == "same":
+            parent[find(i)] = find(j)
+    sets: dict[int, list] = defaultdict(list)
+    for i, m in enumerate(dated):
+        sets[find(i)].append(m)
+    return [ms for ms in sets.values() if len(ms) >= 2 and not any(
+        births_compare(x["birth_date"], y["birth_date"]) == "different" for x, y in combinations(ms, 2))]
+
+
 def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
     """
     Suggest likely-duplicate person nodes for review (does NOT merge).
@@ -383,9 +430,17 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 return
 
             # Birth-date signal (place may be missing — BODS/PSC give date only).
-            present_dates = [m["birth_date"] for m in members if m["birth_date"]]
-            shared_birth   = len(set(present_dates)) == 1 and len(present_dates) >= 2
-            conflict_birth = len(set(present_dates)) >= 2
+            # Read at the precision both members state, and only for the members
+            # who state one (findings item 122): those whose dates agree are
+            # judged as a group of their own first, so a member without a date —
+            # or with another one — does not merge along with them.
+            clusters = birth_clusters(members)
+            shared_birth = len(clusters) == 1 and len(clusters[0]) == len(members)
+            conflict_birth = any(births_compare(a["birth_date"], b["birth_date"]) == "different"
+                                 for a, b in combinations(members, 2))
+            if not shared_birth and not hard_id:
+                for cluster in clusters:
+                    _emit(cluster, base_reason, variant=variant, match_key=match_key)
             # judge distinctiveness on the token set that actually matched (an alias
             # like "William H. Gates III" is distinctive even if a full name is not)
             distinctive = len(match_key if match_key is not None else _name_key(members[0]["full_name"])) >= 3
@@ -394,7 +449,10 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             if shared_entity and "company" not in base_reason:
                 reasons.append("share a company")
             if shared_birth and "birth" not in base_reason:
-                reasons.append("same birth date")
+                # the merge log keeps this line: a month is thirty times weaker
+                # than a day, and says so
+                month_only = any(len(_birth_parts(m["birth_date"])) < 3 for m in members)
+                reasons.append("same birth month" if month_only else "same birth date")
 
             # keep: prefer a Wikidata node, then most-connected, then shortest name
             keep_order = sorted(range(len(members)),
@@ -532,7 +590,7 @@ def deduplicate_high_confidence(apply: bool = True, seed_ids: list[str] | None =
                     # the survivor may come back under a better id (a `wd:`
                     # person that took the twin's CIK is `sec:` now): the
                     # group's next merge and the report use that id
-                    keep = merge_person_records(keep, m["id"])
+                    keep = merge_person_records(keep, m["id"], reason=g["reason"])
                 except ValueError:
                     continue  # node vanished (already merged in a prior group)
             done.append(m["full_name"])
@@ -614,14 +672,15 @@ def merge_log(limit: int = Query(200, ge=1, le=1000), _: dict = Depends(require_
     with db.get_session() as session:
         entries = [
             {"id": r.get("id"), "keep_id": r.get("keep_id"), "keep_name": r.get("keep_name"),
-             "dup_name": r.get("dup_name"), "at": r.get("at"), "count": r.get("count")}
+             "dup_name": r.get("dup_name"), "at": r.get("at"), "count": r.get("count"),
+             "reason": r.get("reason")}
             for r in session.run(
                 # Entity merges share this type now, so filter. A row written
                 # before `kind` existed has none and is a person merge — the
                 # only kind there was.
                 "MATCH (ml:MergeLog) WHERE ml.kind IS NULL OR ml.kind = 'person' "
                 "RETURN ml.id AS id, ml.keep_id AS keep_id, ml.keep_name AS keep_name, "
-                "       ml.dup_name AS dup_name, ml.at AS at, ml.count AS count")
+                "       ml.dup_name AS dup_name, ml.at AS at, ml.count AS count, ml.reason AS reason")
         ]
     entries.sort(key=lambda e: e["at"] or "", reverse=True)
     return {"count": len(entries), "entries": entries[:limit]}
@@ -659,7 +718,7 @@ def _earliest_birth(keep_id: str, dup_id: str) -> str | None:
     return earliest(*(r.get("created_at") for r in rows))
 
 
-def merge_person_records(keep: str, dup: str) -> str:
+def merge_person_records(keep: str, dup: str, reason: str | None = None) -> str:
     """
     Fold person `dup` into person `keep` (see merge_persons). Raises ValueError if
     the ids are equal or either node is missing — callers map that to HTTP status.
@@ -675,6 +734,11 @@ def merge_person_records(keep: str, dup: str) -> str:
     with both ids on dev, by spelling alone (findings item 39). The twin's
     forwarding row `sec:…→wd:…` is deleted by the rename (its old id is live
     again) and `wd:…→sec:…` written, so every old link resolves in one hop.
+
+    `reason` is why: the scan's own line for an automatic merge ("same
+    name/alias …, same birth month"), "manual" for one a person asked for. The
+    log kept none until findings item 122, so the merges that rest on a birth
+    month alone could not be listed afterwards.
     """
     if keep == dup:
         raise ValueError("keep_id and dup_id must differ")
@@ -773,15 +837,23 @@ def merge_person_records(keep: str, dup: str) -> str:
              nationalities=dup_node.get("nationalities") or None,   # absent, never []
              **{p: dup_node.get(p) for p in BIO_COALESCE})
 
+        # The two dates are one birth date told at two precisions (the register's
+        # month, Wikidata's day): the person keeps the fuller one, whichever
+        # node carried it (findings item 122).
+        kept_birth, dup_birth = keep_node.get("birth_date"), dup_node.get("birth_date")
+        if (births_compare(kept_birth, dup_birth) == "same"
+                and len(_birth_parts(dup_birth)) > len(_birth_parts(kept_birth))):
+            session.run("MATCH (keep:Person {id:$keep}) SET keep.birth_date = $birth", keep=keep, birth=dup_birth)
+
         # Record the merge (deduped on keep + merged-name; repeated auto-merges of
         # a re-scraped node bump `count`/`at` instead of piling up rows).
         dup_full = (dup_node.get("full_name") or "").strip()
         session.run(
             "MERGE (ml:MergeLog {keep_id:$keep, dup_name:$dup_name}) "
             "SET ml.id = COALESCE(ml.id, $id), ml.kind = 'person', "
-            "    ml.keep_name = $keep_name, ml.dup_id = $dup_id, "
+            "    ml.keep_name = $keep_name, ml.dup_id = $dup_id, ml.reason = $reason, "
             "    ml.at = $at, ml.count = COALESCE(ml.count, 0) + 1",
-            keep=keep, dup_name=dup_full, keep_name=keep_full, dup_id=dup,
+            keep=keep, dup_name=dup_full, keep_name=keep_full, dup_id=dup, reason=reason or "manual",
             id=str(uuid.uuid4()), at=datetime.now(timezone.utc).isoformat())
 
         # Forwarding address BEFORE the delete: the dup's id may be in a shared
