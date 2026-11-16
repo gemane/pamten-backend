@@ -283,6 +283,40 @@ def cmd_dedupe_persons(args):
           f"{len(res['merged'])} groups; {res['review_count']} groups need review")
 
 
+def cmd_undo_person_merge(args):
+    """Split a merged person back into the two it was made of (findings item
+    123), from the pictures the merge stored. Without an id: the merges that
+    can be undone, newest first. What the merge moved or filled goes back; what
+    was written to the merged person since stays with the kept one and is
+    printed, because nothing says whose it is. The two are marked keep-separate."""
+    _apply_direct_db_url(args)
+    from app import merge_undo
+    if not args.snapshot_id:
+        rows = merge_undo.snapshots(limit=args.limit, open_only=True)
+        for r in rows:
+            print(f"  {r['id']}  {str(r.get('at'))[:16]}  {r.get('keep_name')} ({r.get('survivor_id')}) "
+                  f"took {r.get('dup_name')} ({r.get('dup_id')}) — {r.get('reason')}")
+        print(f"{len(rows)} merges can be undone")
+        return
+    try:
+        rep = merge_undo.split(args.snapshot_id)
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        sys.exit(1)
+    print(f"Two persons again: {rep['kept_id']} and {rep['restored_id']}")
+    print(f"  fields restored on the kept one: {', '.join(rep['fields_restored']) or 'none'}")
+    print(f"  edges: {rep['edges_moved']} moved back, {rep['edges_recreated']} drawn again, "
+          f"{rep['edges_restored']} restored; claims: {rep['claims_moved']} moved back, "
+          f"{rep['claims_recreated']} written again; stake rows {rep['stakes_moved']}, "
+          f"references {rep['references_moved']}")
+    for line in rep["not_restored"]:
+        print(f"  NOT restored (the other end is gone): {line}")
+    if rep["written_since"]:
+        print(f"  written since the merge, left with {rep['kept_id']} — check whose they are:")
+        for line in rep["written_since"]:
+            print(f"    {line}")
+
+
 def cmd_gleif_isin_bridge(args):
     """The securities bridge (findings item 71): an EDGAR issuer's CUSIP -> its US
     ISIN -> GLEIF's daily LEI-ISIN file -> the issuer's LEI. Dry run unless --apply;
@@ -1246,6 +1280,14 @@ def _build_parser():
     p_dp.add_argument('--dry-run', action='store_true', help='Report what would merge; change nothing')
     p_dp.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
     p_dp.set_defaults(func=cmd_dedupe_persons)
+
+    p_um = subparsers.add_parser('undo-person-merge',
+        help='Split a merged person back into two from the pictures the merge stored; '
+             'without an id, list the merges that can be undone')
+    p_um.add_argument('snapshot_id', nargs='?', help="The merge's snapshot id (see the list)")
+    p_um.add_argument('--limit', type=int, default=50, help='How many merges to list')
+    p_um.add_argument('--db-url', help='Override ARCADEDB_URL for this run')
+    p_um.set_defaults(func=cmd_undo_person_merge)
 
     # audit-registers command (the general-register map, from the LEI-CDF golden copy)
     p_ar = subparsers.add_parser('audit-registers',

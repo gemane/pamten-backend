@@ -53,7 +53,8 @@ Full REST surface. Auth is JWT bearer (see [`authentication.md`](authentication.
 | POST | `/persons/keep-separate` | contributor | Mark a group as confirmed-different (stops being suggested) |
 | DELETE | `/persons/keep-separate` | contributor | Undo a keep-separate |
 | GET | `/persons/kept-separate` | contributor | List confirmed-distinct pairs |
-| GET | `/persons/merge-log` | contributor | History of merges (the "already merged" list) |
+| GET | `/persons/merge-log` | contributor | History of merges (the "already merged" list); each entry with `reason`, `snapshot_id` and `undone_at` |
+| POST | `/persons/merge-log/{snapshot_id}/undo` | contributor | Split a merged person back into the two it was made of; answers with what went back and what was `written_since`. 404 unknown, 409 already undone or not possible as things stand |
 
 ## Search
 | Method | Path | Description |
