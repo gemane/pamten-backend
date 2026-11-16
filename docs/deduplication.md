@@ -86,12 +86,44 @@ incompatible), while variants of one person are.
 
 | Confidence | When |
 |---|---|
-| `high` | name/alias-token match **and** (a shared company **or** a shared birth date) |
+| `high` | name/alias-token match **and** (a shared company **or** a shared birth date — see *The birth date* below) |
 | `medium` | distinctive (3+ token) name match, **or** a surname+company variant |
 | `low` | common 2-token name match, no corroboration |
-| + `likely_distinct` | conflicting birth dates on an otherwise-matching group ⇒ probably different people (Keith vs Rupert Murdoch) — never auto-merged |
+| + `likely_distinct` | conflicting birth dates on an otherwise-matching group ⇒ probably different people (Keith vs Rupert Murdoch) — never auto-merged; the members inside it whose dates agree are still judged as a group of their own |
 | + `likely_distinct`, definitive | two different **SEC CIKs**, two different **Wikidata items**, or two different **generational marks** ("…, Sr." against "…, Jr.", II against III — read across a member's name *and* aliases, `app.generations`) ⇒ two people however alike the names — never auto-merged. The marks rule came from Berkshire's 2022 director "Thomas S. Murphy, Jr.", folded into his father (dead since 2022) when the son's "Thomas Murphy" alias matched and the shared company corroborated it (2026-10-25) |
 | capped at `medium` | a mark on one name and none on the other ("Thomas S Murphy Jr" / "Thomas Murphy"): a doubt, not a verdict — a father is rarely written "Sr." — so it waits for a human unless a birth date settles it. The same mark on both sides (SEC's "Gates William H Iii" / the alias "William H. Gates III") merges as before |
+
+#### The birth date
+
+Sources state a birth date at different precisions: Companies House (officers and
+PSC) a month, `1957-08`; Wikidata a day, or a year written `1957-00-00`.
+`births_compare` reads two dates at the precision both state (findings item 122,
+2026-11-16):
+
+- `1957-08` and `1957-08-11` are **the same** — compared as strings they were
+  "different birth dates", which kept Wikidata's Masayoshi Son, Simon Keswick and
+  C. S. Venkatakrishnan beside their register twins as "likely distinct";
+- `1967-06-01` and `1967-05` are **different** (the sources disagree: review);
+- a year alone that agrees is **neither** — one namesake in forty shares it.
+
+Only the members who state a date are held together by it (`birth_clusters`). A
+same-name group used to merge whole as soon as two of its members shared a date,
+so a third without any date merged on its name alone (10 officer ids among the
+6,102 people in the register history of dev's 281 UK companies, 7 of them at
+another company). Now the members whose dates agree are emitted as their own
+group, and the whole group is then judged without the birth signal. A month
+that lies between two different days of it holds nobody together.
+
+**How strong a month is.** Measured on that register history: 244 pairs of two
+officer ids with the same name and a month each — 231 the same month, 13
+another (6 of those one man with a typo). Two different people share a month
+about once in 240, so ~0.05 of the 231 are expected to be wrong. A rule asking
+for a shared company as well would have sent 84 of the 231 to review, all plainly
+one person at sister companies. **This holds at dev's size only**: the number of
+namesake pairs grows with the square of the persons, and a register-wide import
+(production) needs the measurement again before the month merges alone there.
+The merge log's reason says "same birth month" or "same birth date", so the
+month merges can be listed.
 
 Groups already confirmed distinct via keep-separate (below) are dropped from the
 scan (`_all_pairs_dismissed`).
@@ -183,7 +215,9 @@ by hand (recreate the relative, move their seats and claims, keep-separate).
    dropping the share counts, the PSC interest fields, `stale`, `shortcut` and
    the ultimate-parent dates from every person merge.
 2. **Backfill bio** — `BIO_COALESCE` fields (`wikidata_id`, `sec_cik`, birth/death,
-   `wikipedia_url`) fill only where the kept person is blank.
+   `wikipedia_url`) fill only where the kept person is blank. One exception: a
+   birth date the duplicate states more fully (a day against the kept month)
+   replaces the kept one — it is the same date.
 3. **Alias** — the dup's `full_name` and aliases become aliases of the kept
    person, so it stays findable (and feeds Signal 1 on the next scan).
 4. **Migrate claims** — `claim_key` hashes (kind|from|to|source, and for a
@@ -221,7 +255,10 @@ his son Rupert without being re-suggested on every scrape.
 
 Every merge upserts a `MergeLog` vertex keyed on `(keep_id, dup_name)`, so
 repeated auto-merges of a re-scraped node bump `count`/`at` instead of piling up
-rows. `GET /persons/merge-log` returns them newest-first.
+rows. `GET /persons/merge-log` returns them newest-first. Each row carries the
+`reason`: the scan's own line for an automatic merge ("same name/alias
+(order/spelling/title), same birth month"), `manual` for one asked for through
+`POST /persons/merge` (since findings item 122; older rows have none).
 
 **The survivor is re-keyed when the merge gave it a better hard id** (2026-11-04,
 findings item 39). A merge is a way of learning an id: the Wikidata person takes the SEC

@@ -291,3 +291,84 @@ def test_an_initial_alone_fetches_no_namesakes(it_db):
 
     res = deduplicate_high_confidence(apply=True, seed_ids=["js"])
     assert res["merged_count"] == 0 and res["review_count"] == 0
+
+
+# ── the birth date as the deciding signal (findings item 122) ───────────────
+
+def _people(it_db, *rows):
+    for pid, name, birth in rows:
+        birth_sql = f", birth_date: '{birth}'" if birth else ""
+        it_db.run_command(f"CREATE (:Person {{id: '{pid}', full_name: '{name}'{birth_sql}}})")
+
+
+def _alive(it_db):
+    return sorted(r["id"] for r in it_db.run_command("MATCH (p:Person) RETURN p.id AS id"))
+
+
+def test_a_person_without_a_birth_date_does_not_merge_along(it_db):
+    """Two register officers share name and birth month; a third carries the
+    name and no date. The whole group merged — the third on its name alone."""
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("choff:a", "Paul Edelstyn", "1966-02"), ("p-b", "Paul Edelstyn", "1966-02-14"),
+            ("choff:c", "Paul Edelstyn", None))
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1
+    assert len(_alive(it_db)) == 2 and "choff:c" in _alive(it_db)
+    # the three wait for a human as a doubt — a month and a day in it are no conflict
+    whole = [g for g in res["needs_review"] if len(g["members"]) == 3]
+    assert len(whole) == 1 and whole[0]["likely_distinct"] is False
+
+
+def test_a_day_and_the_month_it_lies_in_are_one_birth_date(it_db):
+    """Wikidata's 1957-08-11 and the register's 1957-08 read as two dates kept
+    Masayoshi Son apart as "likely distinct"; the person keeps the day."""
+    from app.routers.persons import deduplicate_high_confidence
+    it_db.run_command("CREATE (:Person {id: 'choff:son', full_name: 'Masayoshi Son', birth_date: '1957-08'})")
+    it_db.run_command("CREATE (:Person {id: 'p-son', full_name: 'Masayoshi Son', birth_date: '1957-08-11'})")
+    # the register's node is the better connected one, so it is the one kept
+    it_db.run_command("CREATE (:Entity {id: 'arm', name: 'Arm', type: 'company'})")
+    it_db.run_command("MATCH (p:Person {id: 'choff:son'}), (e:Entity {id: 'arm'}) CREATE (p)-[:HAS_ROLE {role: 'Director'}]->(e)")
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1 and _alive(it_db) == ["choff:son"]
+    assert it_db.run_command("MATCH (p:Person {id: 'choff:son'}) RETURN p.birth_date AS b")[0]["b"] == "1957-08-11"
+    log = it_db.run_command("MATCH (ml:MergeLog) RETURN ml.reason AS reason, ml.dup_id AS dup")
+    assert [r["dup"] for r in log] == ["p-son"] and "same birth month" in log[0]["reason"]
+
+
+def test_two_dates_that_disagree_stay_two_people(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("p-a", "Vishal Sikka", "1967-06-01"), ("choff:b", "Vishal Sikka", "1967-05"))
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 0 and len(_alive(it_db)) == 2
+    assert res["needs_review"][0]["likely_distinct"] is True
+
+
+def test_a_year_alone_that_agrees_merges_nobody(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("p-a", "John Turner", "1957-00-00"), ("p-b", "John Turner", "1957-00-00"))
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 0 and len(_alive(it_db)) == 2
+    assert res["needs_review"][0]["likely_distinct"] is False
+
+
+def test_the_two_who_share_a_month_merge_beside_a_namesake_born_in_another(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("choff:a", "Mark Stephen Jones", "1959-11"), ("choff:b", "Mark Stephen Jones", "1959-11"),
+            ("choff:c", "Mark Stephen Jones", "1971-03"))
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1
+    assert len(_alive(it_db)) == 2 and "choff:c" in _alive(it_db)
+    assert it_db.run_command("MATCH (ml:MergeLog) RETURN ml.reason AS r")[0]["r"].endswith("same birth month")
+
+
+def test_two_full_dates_are_logged_as_a_date_and_a_manual_merge_as_manual(it_db):
+    from app.routers.persons import deduplicate_high_confidence, merge_person_records
+    _people(it_db, ("p-a", "Jane Mary Smith", "1979-10-04"), ("p-b", "Jane Mary Smith", "1979-10-04"),
+            ("p-c", "Omar Khan", None), ("p-d", "O. Khan", None))
+    deduplicate_high_confidence(apply=True)
+    merge_person_records("p-c", "p-d")
+    reasons = {r["dup"]: r["reason"] for r in it_db.run_command(
+        "MATCH (ml:MergeLog) RETURN ml.dup_id AS dup, ml.reason AS reason")}
+    assert reasons["p-d"] == "manual"
+    auto = next(v for k, v in reasons.items() if k != "p-d")
+    assert auto.endswith("same birth date")

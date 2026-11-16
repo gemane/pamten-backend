@@ -7,6 +7,7 @@ from app.models.person import PersonMergeRequest
 from app.routers import persons
 
 GROUP = {"confidence": "high", "likely_distinct": False, "suggested_keep_id": "wd:Q912811",
+         "reason": "same name/alias (order/spelling/title), share a company",
          "members": [{"id": "wd:Q912811", "full_name": "Brian Moynihan"},
                      {"id": "sec:0001195071", "full_name": "Brian T Moynihan"},
                      {"id": "u-3", "full_name": "Moynihan Brian T"}]}
@@ -15,7 +16,8 @@ GROUP = {"confidence": "high", "likely_distinct": False, "suggested_keep_id": "w
 def test_the_auto_dedup_follows_the_survivor_to_its_new_id():
     calls = []
 
-    def merge(keep, dup):
+    def merge(keep, dup, reason=None):
+        assert reason == GROUP["reason"]                # the scan's line goes into the merge log (item 122)
         calls.append((keep, dup))
         return "sec:0001195071" if dup == "sec:0001195071" else keep
 
