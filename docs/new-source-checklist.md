@@ -1877,6 +1877,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       pairs were passive (Vanguard in State Street), and 19 Chubb subsidiaries are held
       directly by a parent AND its subsidiary, two parts of one 100 %.
 
+- [ ] **A write that cannot be read back keeps what it replaced.** A merge folds, fills and
+      deletes; its log held two ids. When a path destroys information by design, store the
+      state before AND after it, so an undo can tell what the path did from what came
+      later (`app/merge_undo.py`, findings item 123). And do not identify a record by its
+      `@rid` across a delete: ArcadeDB gives a freed record id to the next insert — a
+      person written again by an undo had its old id, its edges new ones.
 - [ ] **An identifier can name a predecessor.** A security, a ticker or a CIK outlives the
       company it was issued to: Sirius XM's old CUSIP maps (GLEIF's LEI-ISIN file) to the old
       Sirius, now SIRIUS XM INC. — the subsidiary the filer's own Exhibit 21 lists. The bridge

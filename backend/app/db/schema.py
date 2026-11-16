@@ -63,6 +63,12 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("User",     "email",           "UNIQUE"),
     ("MergeLog", "id",              "UNIQUE"),
     ("MergeLog", "keep_id",         "NOTUNIQUE"),
+    # The pictures behind a person merge's undo (app/merge_undo.py): read by id
+    # for the split, by the ids for "which merges touched this person".
+    ("MergeSnapshot", "id",         "UNIQUE"),
+    ("MergeSnapshot", "dup_id",     "NOTUNIQUE"),
+    ("MergeSnapshot", "keep_id",    "NOTUNIQUE"),
+    ("MergeSnapshot", "survivor_id", "NOTUNIQUE"),
     # Forwarding addresses for ids a merge folded away, so shared links, cached
     # client ids and federation peers don't dangle. old_id is UNIQUE — an id can
     # only have been merged into one survivor — and the lookup must be indexed,
@@ -373,7 +379,10 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "IndustryCode": ("key", "entity_id", "scheme", "code", "label", "nace_code", "source_id",
                      "source_url", "source_date", "first_seen_at", "last_seen_at"),
     "MergedId": ("old_id", "new_id", "id", "kind", "at"),
-    "MergeLog": ("id", "keep_id", "kind", "keep_name", "dup_id", "dup_name", "at", "reason"),
+    "MergeLog": ("id", "keep_id", "kind", "keep_name", "dup_id", "dup_name", "at", "reason",
+                 "snapshot_id", "undone_at"),
+    "MergeSnapshot": ("id", "kind", "keep_id", "dup_id", "survivor_id", "keep_name", "dup_name", "at",
+                      "reason", "payload", "undone_at"),
     "Flag": ("id", "target_kind", "category", "note", "status", "reporter_kind", "reporter_id",
              "reporter_fp", "from_id", "to_id", "role", "node_id", "created_at", "updated_at"),
     "Suppression": ("id", "target_kind", "node_id", "from_id", "to_id", "role", "flag_id", "created_at"),

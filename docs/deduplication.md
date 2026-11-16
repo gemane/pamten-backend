@@ -273,6 +273,65 @@ the same person met under EDGAR's own spelling (`_upsert_person_by_name` stamps 
 and re-keys) became `sec:`: after the 2026-11-03 rebuild 90 persons with a QID and a CIK
 were `wd:` and 36 `sec:`, by spelling alone.
 
+## Undoing a merge — `POST /persons/merge-log/{snapshot_id}/undo`
+
+A merge is lossy: seats are folded, blank fields filled, claims re-keyed, the
+duplicate deleted. A wrong one — two namesakes born in the same month, noticed
+years later, perhaps by the person — could only be repaired by hand. Since
+findings item 123 every person merge stores three pictures in a `MergeSnapshot`
+row (`app/merge_undo.py`): the kept person **before**, the duplicate **before**,
+and the survivor right **after** (after its re-keying, if it learned a hard id).
+A picture is the node, its edges with the node at the other end, its claims and
+stake rows, the stored references to it and the ids forwarded to it. The merge
+log's entry carries the `snapshot_id`.
+
+`merge_undo.split` puts the two back with a three-way rule, so that nothing
+written since the merge is thrown away:
+
+| On the survivor now | What the split does |
+|---|---|
+| an edge or claim the merge **created** (in *after*, not in *before*) | goes back to the duplicate, **in the state it has now** — a seat the register has ended since returns with its end |
+| a field, seat or claim the merge **changed** (filled, folded an earlier start into) | gets its *before* value — only where it still reads as the merge left it |
+| the duplicate's edge or claim that was **folded** into the survivor's | drawn again on the duplicate from its picture |
+| anything **written since** (not in *after*) | stays with the kept person and is listed under `written_since`: nothing says whose it is |
+
+Then: the duplicate's node under its own id; an id the merge gave the survivor
+(`wd:Q…` → `sec:…`) goes back with the hard id it came from; flags, pins,
+suppressions, run-log rows and stake rows that named the duplicate name it
+again; ids that forwarded to the duplicate do so again; the forwarding row is
+deleted, so the next register run writes to the duplicate; and the two are
+marked keep-separate, so the scan does not merge them again. The snapshot and
+the log entry get `undone_at`, and the snapshot's pictures are emptied: the row
+stays as the log line (ids, names, when, why).
+
+Edges are followed by their record id (`@rid`), which a rename and a property
+update leave alone. Claims are followed by what they assert (kind, direction,
+other end, source, role or filing family), because their key hashes the ids.
+
+**Limits.**
+- Only merges made since this shipped have a picture; older ones do not.
+- A merge is undone in reverse order: while the survivor is merged into a third
+  person, the split refuses and names that merge. After that undo the survivor
+  is a new record (new record ids), and its edges are matched by content.
+- The split is not one transaction (neither is the merge). It validates first;
+  a failure half-way leaves the snapshot open and says where.
+- Person merges only. Entity merges have no undo.
+
+**Kept while the merge stands** (user, 2026-11-16): the pictures have no time
+limit, because a wrong merge must stay repairable whenever it is found — the
+purpose lasts as long as the merged person does. Two things end it: an undo
+empties the pictures, and deleting a person (`DELETE /persons/{id}`) deletes
+every picture that shows it (`merge_undo.forget`), so an erasure reaches this
+store too. Not covered yet: a single field removed from a person later (a
+register protecting someone's details, a corrected birth date) stays in the
+picture, and a split would write it back (findings item 126).
+
+`manage.py undo-person-merge` lists the merges that can be undone;
+`manage.py undo-person-merge <snapshot_id>` splits one and prints the report.
+Guard at the build: 52 real same-name pairs of dev's review list (15 re-keyed by
+the merge) loaded into a test database, merged and split — both persons of
+every pair identical to before.
+
 ## Endpoint summary
 
 | Endpoint | Purpose |
@@ -283,6 +342,7 @@ were `wd:` and 36 `sec:`, by spelling alone.
 | `POST` / `DELETE /persons/keep-separate` | Mark / unmark a group as distinct |
 | `GET /persons/kept-separate` | The "not to be merged" list |
 | `GET /persons/merge-log` | The "already merged" history |
+| `POST /persons/merge-log/{snapshot_id}/undo` | Split a merged person back into two |
 
 
 # Entity deduplication

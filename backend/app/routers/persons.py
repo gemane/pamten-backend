@@ -673,17 +673,36 @@ def merge_log(limit: int = Query(200, ge=1, le=1000), _: dict = Depends(require_
         entries = [
             {"id": r.get("id"), "keep_id": r.get("keep_id"), "keep_name": r.get("keep_name"),
              "dup_name": r.get("dup_name"), "at": r.get("at"), "count": r.get("count"),
-             "reason": r.get("reason")}
+             "reason": r.get("reason"), "snapshot_id": r.get("snapshot_id"),
+             "undone_at": r.get("undone_at")}
             for r in session.run(
                 # Entity merges share this type now, so filter. A row written
                 # before `kind` existed has none and is a person merge — the
                 # only kind there was.
                 "MATCH (ml:MergeLog) WHERE ml.kind IS NULL OR ml.kind = 'person' "
                 "RETURN ml.id AS id, ml.keep_id AS keep_id, ml.keep_name AS keep_name, "
-                "       ml.dup_name AS dup_name, ml.at AS at, ml.count AS count, ml.reason AS reason")
+                "       ml.dup_name AS dup_name, ml.at AS at, ml.count AS count, ml.reason AS reason, "
+                "       ml.snapshot_id AS snapshot_id, ml.undone_at AS undone_at")
         ]
     entries.sort(key=lambda e: e["at"] or "", reverse=True)
     return {"count": len(entries), "entries": entries[:limit]}
+
+
+@router.post("/merge-log/{snapshot_id}/undo")
+def undo_merge(snapshot_id: str, _: dict = Depends(require_contributor)):
+    """
+    Split a merged person back into the two it was made of (findings item 123).
+
+    `snapshot_id` is the merge-log entry's. What the merge moved or filled goes
+    back; what was written to the merged person since stays with the kept one
+    and is listed under `written_since`. The two are marked keep-separate, so
+    the duplicate scan does not merge them again.
+    """
+    from app import merge_undo
+    try:
+        return merge_undo.split(snapshot_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404 if "no such" in str(exc) else 409, detail=str(exc))
 
 
 @router.post("/merge")
@@ -761,6 +780,12 @@ def merge_person_records(keep: str, dup: str, reason: str | None = None) -> str:
         if not dup_rec:
             raise ValueError("Duplicate person not found")
         dup_node = dict(dup_rec["p"])
+
+        # The undo's pictures (findings item 123): both persons as they are
+        # BEFORE anything is written; the survivor is added at the end.
+        from app import merge_undo
+        snapshot_id = str(uuid.uuid4())
+        before_keep, before_dup = merge_undo.picture(keep), merge_undo.picture(dup)
 
         # The duplicate's name is an alias of the kept person (e.g. SEC's
         # "Page Lawrence" becomes an alias of "Larry Page"), so it's still
@@ -852,8 +877,10 @@ def merge_person_records(keep: str, dup: str, reason: str | None = None) -> str:
             "MERGE (ml:MergeLog {keep_id:$keep, dup_name:$dup_name}) "
             "SET ml.id = COALESCE(ml.id, $id), ml.kind = 'person', "
             "    ml.keep_name = $keep_name, ml.dup_id = $dup_id, ml.reason = $reason, "
+            "    ml.snapshot_id = $snapshot_id, ml.undone_at = null, "
             "    ml.at = $at, ml.count = COALESCE(ml.count, 0) + 1",
             keep=keep, dup_name=dup_full, keep_name=keep_full, dup_id=dup, reason=reason or "manual",
+            snapshot_id=snapshot_id,
             id=str(uuid.uuid4()), at=datetime.now(timezone.utc).isoformat())
 
         # Forwarding address BEFORE the delete: the dup's id may be in a shared
@@ -871,7 +898,10 @@ def merge_person_records(keep: str, dup: str, reason: str | None = None) -> str:
         session.run("MATCH (dup:Person {id:$dup}) DETACH DELETE dup", dup=dup)
 
         from app.node_ids import key_on_learning
-        return key_on_learning(session, "Person", keep)
+        survivor = key_on_learning(session, "Person", keep)
+        if before_keep and before_dup:
+            merge_undo.record(snapshot_id, before_keep, before_dup, survivor, reason or "manual")
+        return survivor
 
 
 @router.post("/", response_model=PersonResponse)
@@ -984,4 +1014,8 @@ def delete_person(person_id: str, _: dict = Depends(require_contributor)):
     """
     with db.get_session() as session:
         session.run(query, id=person_id)
+        # the undo's pictures of this person go with it (findings item 123):
+        # a deleted person must not live on in a merge's stored copy
+        from app import merge_undo
+        merge_undo.forget(person_id)
         return {"message": "Person deleted"}
