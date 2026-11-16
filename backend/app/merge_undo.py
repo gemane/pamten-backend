@@ -24,9 +24,10 @@ Edges are followed by their record id (`@rid`), which a rename of the node and a
 property update both leave alone; claims by what they assert (kind, direction,
 other end, source, role or filing family), since their key hashes the ids.
 
-The pictures are kept for good (user, 2026-11-16): a wrong merge must stay
-repairable whenever it is found. They hold nothing the merged person does not
-hold anyway.
+The pictures are kept while the merge stands, with no time limit (user,
+2026-11-16): a wrong merge must stay repairable whenever it is found. An undo
+empties them — a used picture has no purpose left — and keeps the row as the
+log line (who, when, why).
 """
 from __future__ import annotations
 
@@ -395,7 +396,10 @@ def split(snapshot_id: str) -> dict:
     at = _now()
     run_command("MATCH (a:Person {id: $a}), (b:Person {id: $b}) MERGE (a)-[r:NOT_DUPLICATE]->(b) SET r.at = $at",
                 {"a": survivor, "b": dup_id, "at": at})
+    # the pictures have done their work: the row stays as the log line (ids,
+    # names, when, why), the copy of two persons' data does not
     _sql(f"UPDATE {TYPE} SET undone_at = :at WHERE id = :id", {"at": at, "id": snapshot_id})
+    _sql(f"UPDATE {TYPE} REMOVE payload WHERE id = :id", {"id": snapshot_id})
     _sql("UPDATE MergeLog SET undone_at = :at WHERE snapshot_id = :id", {"at": at, "id": snapshot_id})
     invalidate_forwarding_cache()
     report.update(kept_id=survivor, restored_id=dup_id)

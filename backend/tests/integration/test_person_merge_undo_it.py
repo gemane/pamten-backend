@@ -82,6 +82,23 @@ def test_a_split_gives_both_persons_back_as_they_were(it_db):
     assert entry["undone_at"] and entry["reason"] == "manual"
 
 
+def test_an_undo_empties_the_pictures_and_keeps_the_log_line(it_db):
+    """Kept while the merge stands: once it is undone the copy of the two
+    persons' data has no purpose left, the row (ids, names, when, why) has."""
+    _two_people(it_db)
+    merge_person_records("p-keep", "choff:dup")
+    sid = _snapshot_id()
+    stored = it_db.run_command("MATCH (s:MergeSnapshot {id: $id}) RETURN s.payload AS p", {"id": sid})[0]["p"]
+    assert stored and "choff:dup" in stored
+
+    undo_merge(sid, _=_USER)
+
+    row = it_db.run_command("MATCH (s:MergeSnapshot {id: $id}) RETURN s.payload AS p, s.undone_at AS u, "
+                            "s.keep_id AS k, s.dup_id AS d, s.reason AS r", {"id": sid})[0]
+    assert row["p"] is None
+    assert row["u"] and (row["k"], row["d"], row["r"]) == ("p-keep", "choff:dup", "manual")
+
+
 def test_a_merge_is_undone_once(it_db):
     from fastapi import HTTPException
     _two_people(it_db)

@@ -301,7 +301,8 @@ suppressions, run-log rows and stake rows that named the duplicate name it
 again; ids that forwarded to the duplicate do so again; the forwarding row is
 deleted, so the next register run writes to the duplicate; and the two are
 marked keep-separate, so the scan does not merge them again. The snapshot and
-the log entry get `undone_at`.
+the log entry get `undone_at`, and the snapshot's pictures are emptied: the row
+stays as the log line (ids, names, when, why).
 
 Edges are followed by their record id (`@rid`), which a rename and a property
 update leave alone. Claims are followed by what they assert (kind, direction,
@@ -316,11 +317,14 @@ other end, source, role or filing family), because their key hashes the ids.
   a failure half-way leaves the snapshot open and says where.
 - Person merges only. Entity merges have no undo.
 
-**Kept for good** (user, 2026-11-16): the pictures are not expired, because a
-wrong merge must stay repairable whenever it is found. They hold nothing the
-merged person does not hold anyway. Deleting a person (`DELETE /persons/{id}`)
-deletes every picture that shows it (`merge_undo.forget`), so an erasure reaches
-this store too.
+**Kept while the merge stands** (user, 2026-11-16): the pictures have no time
+limit, because a wrong merge must stay repairable whenever it is found — the
+purpose lasts as long as the merged person does. Two things end it: an undo
+empties the pictures, and deleting a person (`DELETE /persons/{id}`) deletes
+every picture that shows it (`merge_undo.forget`), so an erasure reaches this
+store too. Not covered yet: a single field removed from a person later (a
+register protecting someone's details, a corrected birth date) stays in the
+picture, and a split would write it back (findings item 126).
 
 `manage.py undo-person-merge` lists the merges that can be undone;
 `manage.py undo-person-merge <snapshot_id>` splits one and prints the report.
