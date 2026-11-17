@@ -518,14 +518,6 @@ def mark_ownership_shortcuts(
     return maintenance.mark_ownership_shortcuts(limit=limit)
 
 
-# ── Person deduplication endpoint ──────────────────────────────────────────────
-
-@router.post("/deduplicate-persons")
-def deduplicate_person_nodes(_: dict = Depends(require_admin)):
-    """Merge reversed-name Person duplicates and migrate their edges. Admin only."""
-    return maintenance.deduplicate_person_nodes()
-
-
 # ── Entity deduplication endpoint ──────────────────────────────────────────────
 
 _dedup_lock = threading.Lock()

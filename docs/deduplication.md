@@ -643,6 +643,16 @@ them — a property added to the schema is carried through every merge with no
 edit here. Generated with bound `$params`, never `properties(r)`, which prod
 ArcadeDB silently no-ops.
 
+**One path merges persons.** `merge_person_records` is the only code that folds
+one person into another. The first person dedup — `POST
+/scraper/deduplicate-persons`, a reversed two-word name and nothing else — was
+still reachable until findings item 125 removed it: it wrote no merge log, no
+forwarding row and no undo picture, and on dev it would have merged the
+register's "Kun-Hee Lee" (1943-01) into Wikidata's "Lee Kun-hee" (1942-01-09),
+a pair the scan holds back for its differing birth dates. Its edge helper went
+with it; the tests that pinned seat folding, property carry-over and claim
+re-keying through it now run against `merge_person_records`.
+
 **A merge keeps history** (`maintenance._carry_edge`, used by both merge paths
 and the manual person merge). An **ended** edge is carried over as its own
 period, unless the survivor already holds the very same period; an **open** one

@@ -1883,6 +1883,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       later (`app/merge_undo.py`, findings item 123). And do not identify a record by its
       `@rid` across a delete: ArcadeDB gives a freed record id to the next insert — a
       person written again by an undo had its old id, its edges new ones.
+- [ ] **The path a better one replaces is removed in the same change.** The first person
+      dedup stayed reachable as an admin route for five months after the scan replaced it,
+      marked "legacy" in the docs: no log, no forwarding row, no guard, and after item 123
+      no undo picture — one call would have made a merge the rules refuse (findings item
+      125). Its tests pinned real rules through the old helper; port them to the path that
+      stays, do not delete them with it.
 - [ ] **An identifier can name a predecessor.** A security, a ticker or a CIK outlives the
       company it was issued to: Sirius XM's old CUSIP maps (GLEIF's LEI-ISIN file) to the old
       Sirius, now SIRIUS XM INC. — the subsidiary the filer's own Exhibit 21 lists. The bridge

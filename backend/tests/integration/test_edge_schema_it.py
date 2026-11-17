@@ -123,16 +123,16 @@ class TestEveryPropertySurvivesAnEntityMerge:
 
 
 class TestEveryPropertySurvivesAPersonMerge:
-    """The block the entity path's docstring did not know about — it named 6 of
-    25 properties and runs on every auto-dedup."""
+    """The person merge (`merge_person_records`, the one path since findings
+    item 125 removed the older `_migrate_person_edges`) carries every property."""
 
     @pytest.mark.parametrize("prop", OWNS_PROPS)
     def test_owns(self, graph, prop):
-        from app.scraper.maintenance import _migrate_person_edges
+        from app.routers.persons import merge_person_records
         graph.run_command("CREATE (p:Person {id:'p-dead', full_name:'Dupe'})")
         graph.run_command("CREATE (p:Person {id:'p-keep', full_name:'Real'})")
         _create_edge(graph, "OWNS", OWNS_PROPS, frm="p-dead", from_label="Person")
-        _migrate_person_edges("p-dead", "p-keep")
+        merge_person_records("p-keep", "p-dead")
         r = graph.run_command(
             f"MATCH (p {{id:'p-keep'}})-[r:OWNS]->(b {{id:'target'}}) "
             f"RETURN r.{prop} AS v")[0]
@@ -143,14 +143,14 @@ class TestEveryPropertySurvivesAPersonMerge:
         # merge used to sever them from their bloc. MEMBER_OF since 2026-10-26,
         # recreated from `MEMBER_OF_PROPS`.
         from app.scraper.edge_schema import MEMBER_OF_PROPS
-        from app.scraper.maintenance import _migrate_person_edges
+        from app.routers.persons import merge_person_records
         graph.run_command("CREATE (p:Person {id:'p-dead', full_name:'Dupe'})")
         graph.run_command("CREATE (p:Person {id:'p-keep', full_name:'Real'})")
         graph.run_command("CREATE (g:VotingGroup {id:'grp', name:'Voting group · 3 parties', type:'voting_group'})")
         clause = ", ".join(f"{p}: ${p}" for p in MEMBER_OF_PROPS)
         graph.run_command(f"MATCH (a:Person {{id:'p-dead'}}), (g:VotingGroup {{id:'grp'}}) "
                           f"CREATE (a)-[:MEMBER_OF {{{clause}}}]->(g)", {p: _SAMPLE[p] for p in MEMBER_OF_PROPS})
-        _migrate_person_edges("p-dead", "p-keep")
+        merge_person_records("p-keep", "p-dead")
         rows = graph.run_command(
             "MATCH (p:Person {id:'p-keep'})-[r:MEMBER_OF]->(g:VotingGroup {id:'grp'}) "
             + "RETURN " + ", ".join(f"r.{p} AS {p}" for p in MEMBER_OF_PROPS))
@@ -196,7 +196,8 @@ class TestClaimsFollowTheSurvivor:
         # Direct calls prove migrate_claims works; this proves the merges USE
         # it — the wiring a refactor can silently drop.
         from app.claims import claim_key
-        from app.scraper.maintenance import _migrate_entity_edges, _migrate_person_edges
+        from app.routers.persons import merge_person_records
+        from app.scraper.maintenance import _migrate_entity_edges
         graph.run_command(
             "CREATE (c:Claim {claim_key:$k, kind:'owns', from_id:'dead', "
             "to_id:'target', source_id:'src-sec'})",
@@ -212,7 +213,7 @@ class TestClaimsFollowTheSurvivor:
             "CREATE (c:Claim {claim_key:$k, kind:'owns', from_id:'p-dead', "
             "to_id:'target', source_id:'src-sec'})",
             {"k": claim_key("owns", "p-dead", "target", "src-sec")})
-        _migrate_person_edges("p-dead", "p-keep")
+        merge_person_records("p-keep", "p-dead")
         assert graph.run_command(
             "MATCH (c:Claim) WHERE c.from_id = 'p-dead' RETURN c") == [], \
             "the person merge left claims on the dead node"

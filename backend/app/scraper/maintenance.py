@@ -508,65 +508,6 @@ def _carry_seat(src: str, tgt: str, params: dict, e: dict) -> bool:
     return True
 
 
-def _migrate_person_edges(dead_id: str, keep_id: str) -> int:
-    """Move all OWNS / HAS_ROLE / RELATED_TO edges from dead_id → keep_id.
-
-    This was the recreate block the entity path's "add it to all three blocks"
-    docstring did not know about: it named 6 of 25 OWNS properties, and it runs
-    automatically after every scrape via auto-dedup — so every person merge
-    silently stripped provenance, counts and voting data from the surviving
-    edges. Property lists now come from ``edge_schema``, same as the entity
-    path, so both carry whatever the schema carries.
-    """
-    from app.scraper.edge_schema import (OWNS_PROPS, ROLE_PROPS, RELATED_TO_PROPS,
-                                         edge_return_clause, edge_create_clause,
-                                         edge_params)
-    migrated = 0
-
-    for e in run_query(
-        f"""MATCH (p:Person {{id: $pid}})-[r:OWNS]->(t:Entity)
-            RETURN t.id AS tid, {edge_return_clause('r', OWNS_PROPS)}""",
-        {"pid": dead_id},
-    ):
-        migrated += _carry_edge("OWNS", OWNS_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
-                                {"k": keep_id, "tid": e["tid"]}, e)
-
-    for e in run_query(
-        f"""MATCH (p:Person {{id: $pid}})-[r:HAS_ROLE]->(t:Entity)
-            RETURN t.id AS tid, {edge_return_clause('r', ROLE_PROPS)}""",
-        {"pid": dead_id},
-    ):
-        migrated += _carry_edge("HAS_ROLE", ROLE_PROPS, "(a:Person {id: $k})", "(t:Entity {id: $tid})",
-                                {"k": keep_id, "tid": e["tid"]}, e)
-
-    # People are group members too — Lemann, Sicupira and Telles all are — and
-    # a person-merge used to sever them from their bloc exactly as the entity
-    # path once did.
-    for e in run_query(
-        f"""MATCH (p:Person {{id: $pid}})-[r:RELATED_TO]->(t:Entity)
-            RETURN t.id AS tid, {edge_return_clause('r', RELATED_TO_PROPS)}""",
-        {"pid": dead_id},
-    ):
-        if run_query(
-            "MATCH (p:Person {id: $pid})-[r:RELATED_TO]->(t:Entity {id: $tid}) "
-            "WHERE r.relation = $relation RETURN r LIMIT 1",
-            {"pid": keep_id, "tid": e["tid"], "relation": e.get("relation")},
-        ):
-            continue
-        run_command(
-            f"""MATCH (p:Person {{id: $pid}}), (t:Entity {{id: $tid}})
-                CREATE (p)-[:RELATED_TO {{{edge_create_clause(RELATED_TO_PROPS)}}}]->(t)""",
-            {"pid": keep_id, "tid": e["tid"], **edge_params(e, RELATED_TO_PROPS)},
-        )
-        migrated += 1
-
-    migrated += _migrate_membership(dead_id, keep_id, "Person")
-    from app.claims import migrate_claims
-    migrate_claims(dead_id, keep_id)
-
-    return migrated
-
-
 def _migrate_membership(dead_id: str, keep_id: str, label: str) -> int:
     """A party's place in its 13D filing groups follows the surviving node
     (MEMBER_OF, 2026-10-26 — RELATED_TO {group_member} before): one edge per
@@ -588,73 +529,6 @@ def _migrate_membership(dead_id: str, keep_id: str, label: str) -> int:
         )
         moved += 1
     return moved
-
-
-def deduplicate_person_nodes() -> dict:
-    """
-    Merge Person node pairs whose 2-word names are each other's reversal
-    (e.g. 'Brin Sergey' ↔ 'Sergey Brin').  Keeps the richer node
-    (prefer wikidata_id, then more edges, then alphabetically first name),
-    migrates all edges from the dead node, then deletes it.  Admin only.
-    """
-    # Fetch all Person nodes with a 2-word full_name
-    persons = run_query(
-        "MATCH (p:Person) RETURN p.id AS id, p.full_name AS name, p.wikidata_id AS wid"
-    )
-
-    # Build a lookup: normalised name → node
-    by_name: dict[str, dict] = {}
-    for p in persons:
-        name = (p.get("name") or "").strip()
-        if name:
-            by_name[name.lower()] = p
-
-    merged: list[dict] = []
-    visited: set[str] = set()
-
-    for p in persons:
-        name = (p.get("name") or "").strip()
-        parts = name.split()
-        if len(parts) != 2:
-            continue
-        pid = p["id"]
-        if pid in visited:
-            continue
-
-        reversed_name = f"{parts[1]} {parts[0]}"
-        other = by_name.get(reversed_name.lower())
-        if not other or other["id"] == pid or other["id"] in visited:
-            continue
-
-        # Decide which to keep: prefer wikidata_id, then pick the one with
-        # more natural "First Last" order (first word title-cased, second too)
-        p_has_wiki   = bool(p.get("wid"))
-        oth_has_wiki = bool(other.get("wid"))
-
-        if p_has_wiki and not oth_has_wiki:
-            keep, dead = p, other
-        elif oth_has_wiki and not p_has_wiki:
-            keep, dead = other, p
-        else:
-            # Both or neither have wikidata — keep the more "natural" name
-            # (prefer First Last over Last First: first word should be shorter
-            # for EDGAR LAST FIRST format, but simplest heuristic is alphabetical)
-            keep, dead = (p, other) if p["name"] < other["name"] else (other, p)
-
-        migrated = _migrate_person_edges(dead["id"], keep["id"])
-
-        # Delete the dead node
-        run_command("MATCH (p:Person {id: $pid}) DETACH DELETE p", {"pid": dead["id"]})
-
-        visited.add(pid)
-        visited.add(other["id"])
-        merged.append({
-            "kept":     keep["name"],
-            "deleted":  dead["name"],
-            "edges_migrated": migrated,
-        })
-
-    return {"pairs_merged": len(merged), "detail": merged}
 
 
 # Properties that must NOT move from the loser to the survivor on a merge.
