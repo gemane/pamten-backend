@@ -838,3 +838,15 @@ def test_run_all_without_errors_stays_ok(client, make_token, monkeypatch):
     client.post("/scraper/run-all", params={"company": "Toast"}, headers=auth(make_token))
     assert "status" not in rows[0] and "note" not in rows[0]
     assert rows[0]["total"] == 3
+
+
+def test_persons_are_merged_through_one_path_only(client, make_token):
+    """Findings item 125: the first person dedup (`POST /scraper/deduplicate-persons`)
+    merged on a reversed name alone and left no log, no forwarding row and no
+    undo picture. It is gone; `merge_person_records` is the one path."""
+    from app.scraper import maintenance
+    r = client.post("/scraper/deduplicate-persons",
+                    headers={"Authorization": f"Bearer {make_token(role='admin')}"})
+    assert r.status_code in (404, 405)
+    assert not hasattr(maintenance, "deduplicate_person_nodes")
+    assert not hasattr(maintenance, "_migrate_person_edges")

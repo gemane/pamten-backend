@@ -128,7 +128,7 @@ class TestEntityMerge:
 
 
 class TestSeatsFoldByPosition:
-    """The auto-dedup's person merge matched a seat by its label, so the
+    """The person merge matched a seat by its label, so the
     Wikidata person's "Board Member" landed beside the SEC person's
     "Director" on every merged board (12 pairs on dev, 2026-10-25). A seat
     is the same position over a touching period, in any words."""
@@ -145,23 +145,23 @@ class TestSeatsFoldByPosition:
             "MATCH (:Person {id:'keep'})-[r:HAS_ROLE]->(:Entity {id:'cvx'}) RETURN r.role AS role, "
             "r.since AS since, r.until AS until, r.source_id AS src, r.credibility_score AS cred")]
 
-    def test_the_auto_merge_folds_board_member_into_director(self, board):
-        from app.scraper.maintenance import _migrate_person_edges
+    def test_the_merge_folds_board_member_into_director(self, board):
+        from app.routers.persons import merge_person_records
         board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'Director', since:'2008-12-10', source_id:'sec-edgar', credibility_score:98}]->(e)")
         board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'Board Member', since:'2008-12-00', source_id:'wikidata', credibility_score:80}]->(e)")
-        _migrate_person_edges("dup", "keep")
+        merge_person_records("keep", "dup")
         assert self._seat(board) == [{"role": "Director", "since": "2008-12-10", "until": None,
                                       "src": "sec-edgar", "cred": 98}]
 
     def test_the_more_credible_word_takes_over_when_the_survivor_is_the_community_node(self, board):
-        from app.scraper.maintenance import _migrate_person_edges
+        from app.routers.persons import merge_person_records
         board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'Board Member', since:'2016-00-00', source_id:'wikidata', credibility_score:80}]->(e)")
         board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'Director', source_id:'sec-edgar', credibility_score:98}]->(e)")
-        _migrate_person_edges("dup", "keep")
+        merge_person_records("keep", "dup")
         assert self._seat(board) == [{"role": "Director", "since": "2016-00-00", "until": None,
                                       "src": "sec-edgar", "cred": 98}]
 
@@ -175,24 +175,24 @@ class TestSeatsFoldByPosition:
         assert [(r["role"], r["since"]) for r in self._seat(board)] == [("Director", "2022-07-11")]
 
     def test_an_ended_spell_that_does_not_touch_the_open_seat_is_carried_as_history(self, board):
-        from app.scraper.maintenance import _migrate_person_edges
+        from app.routers.persons import merge_person_records
         board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'CEO', since:'2011-04-04', source_id:'sec-edgar', credibility_score:98}]->(e)")
         board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'Chief Executive Officer', since:'1998-01-01', until:'2001-08-01', "
                           "source_id:'wikidata', credibility_score:80}]->(e)")
-        _migrate_person_edges("dup", "keep")
+        merge_person_records("keep", "dup")
         assert sorted((r["since"], r["until"]) for r in self._seat(board)) == [
             ("1998-01-01", "2001-08-01"), ("2011-04-04", None)]
 
     def test_an_ended_spell_touching_the_open_seat_ends_it(self, board):
-        from app.scraper.maintenance import _migrate_person_edges
+        from app.routers.persons import merge_person_records
         board.run_command("MATCH (p:Person {id:'keep'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'Director', since:'2022-07-11', source_id:'sec-edgar', credibility_score:98}]->(e)")
         board.run_command("MATCH (p:Person {id:'dup'}),(e:Entity {id:'cvx'}) CREATE (p)-[:HAS_ROLE "
                           "{role:'Board Member', since:'2022-07-14', until:'2025-03-01', "
                           "source_url:'https://www.wikidata.org/wiki/Q1', source_id:'wikidata', credibility_score:80}]->(e)")
-        _migrate_person_edges("dup", "keep")
+        merge_person_records("keep", "dup")
         rows = board.run_command("MATCH (:Person {id:'keep'})-[r:HAS_ROLE]->(:Entity {id:'cvx'}) "
                                  "RETURN r.since AS since, r.until AS until, r.until_source_url AS u")
         assert [(r["since"], r["until"], r["u"]) for r in rows] == [
@@ -226,12 +226,6 @@ class TestPersonMerges:
         # into keep's current one and set its `until`: a live holder, closed.
         from app.routers.persons import merge_person_records
         merge_person_records("keep", "dup")
-        assert [(e.get("since"), e.get("until")) for e in _owns(people, "keep", "co")] == [
-            ("2004-01-01", "2015-01-01"), ("2020-01-01", None)]
-
-    def test_the_auto_merge_keeps_both_periods(self, people):
-        from app.scraper.maintenance import _migrate_person_edges
-        _migrate_person_edges("dup", "keep")
         assert [(e.get("since"), e.get("until")) for e in _owns(people, "keep", "co")] == [
             ("2004-01-01", "2015-01-01"), ("2020-01-01", None)]
 

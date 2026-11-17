@@ -219,8 +219,9 @@ not need a deploy.
 | POST | `/federation/peers/{id}/pull` | admin | Pull a peer's snapshot, verify, import, reconcile |
 
 ## Maintenance / advanced
-One-off migrations and lower-level tools, mostly for operators. The person-merge
-endpoints under [Persons](#persons) supersede the legacy scraper ones below.
+One-off migrations and lower-level tools, mostly for operators. Persons are merged
+only through the endpoints under [Persons](#persons); the older
+`/scraper/deduplicate-persons` was removed (findings item 125).
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -232,7 +233,6 @@ endpoints under [Persons](#persons) supersede the legacy scraper ones below.
 | GET | `/scraper/duplicate-entities/name-count` | admin | Count same-name entity duplicate groups — the same company under different identifiers (e.g. two GLEIF LEIs) the id-based dedup can't see. Also reported in the BODS import result as `duplicate_names` |
 | GET | `/scraper/duplicate-entities/name-candidates` | admin | The biggest same-name duplicate groups, each tagged with a `confidence` they're the same company — **definitive** (shared wikidata_id/sec_cik/companies_house_id), **high** (same registered address), **medium** (same country+founded), **low** (name only) — with members (id/country/lei/address) for review. `?limit=`, `?min_confidence=` |
 | POST | `/scraper/deduplicate-entities` | admin | Collapse Entity duplicates sharing an LEI / Companies House number (heals the recordId-keyed BODS doubling). Background by default (returns `started`; poll `GET /scraper/runs`). `strategy=bulk` (default) keeps one node per id and deletes the rest (fast; drops losers' edges); `strategy=merge` migrates edges first (only finishes on small data). `background=false` runs the sync bounded-batch merge (`?limit=`, returns `remaining`). `strategy=merge` and `background=false` first join an LEI-only node to a CIK-only filer of its name when the filer's own filings state the LEI, or else when GLEIF and EDGAR agree it is one legal entity (`legal_identity`; `lei_bridged` in the result, with `evidence` for the latter; skipped when SEC scraping is off); `bulk` does not |
-| POST | `/scraper/deduplicate-persons` | admin | Legacy: merge reversed-name Person duplicates (use `/persons/deduplicate`) |
 | POST | `/relationships/dual-listed` | contributor | Link two share classes of a dual-listed company (`DUAL_LISTED_WITH`) |
 
 ### Counting companies by country
