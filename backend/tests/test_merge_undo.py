@@ -49,3 +49,67 @@ def test_the_claim_identity_does_not_depend_on_the_persons_id():
         assert merge_undo._claim_ident(claim, "wd:Q1") == merge_undo._claim_ident(moved, "sec:1")
         other = {**claim, "role": "Director"}
         assert merge_undo._claim_ident(claim, "wd:Q1") != merge_undo._claim_ident(other, "wd:Q1")
+
+
+# ── findings item 126: whose value it was, and what an undo holds back ───────
+
+@pytest.mark.parametrize("keep,dup,after,whose", [
+    ({}, {"birth_date": "1979-10"}, {"birth_date": "1979-10"}, "duplicate"),
+    ({"birth_date": "1979-10"}, {}, {"birth_date": "1979-10"}, "kept"),
+    ({"birth_date": "1979-10"}, {"birth_date": "1979-10"}, {"birth_date": "1979-10"}, "both"),
+    # the fuller of two agreeing dates is the duplicate's
+    ({"birth_date": "1979-10"}, {"birth_date": "1979-10-05"}, {"birth_date": "1979-10-05"}, "duplicate"),
+    ({"nationalities": ["US"]}, {"nationalities": ["GB"]}, {"nationalities": ["US", "GB"]}, "both"),
+    ({"nationalities": ["US"]}, {}, {"nationalities": ["US"]}, "kept"),
+    ({}, {}, {}, None),                                                  # never set
+    ({"birth_date": "1979-10"}, {"birth_date": "1980-01"}, {"birth_date": "1979-10"}, "kept"),
+])
+def test_whose_value_the_merged_person_showed(keep, dup, after, whose):
+    name = next(iter(after), "birth_date")
+    assert merge_undo._came_from(name, keep, dup, after) == whose
+
+
+@pytest.mark.parametrize("dup,after,current,confirmed,node,held", [
+    # removed from the merged person: held back — confirmed or not (a script)
+    ({"id": "d", "birth_date": "1979-10"}, {"birth_date": "1979-10"}, {}, set(), {"id": "d"}, ["birth_date"]),
+    # still there: written back
+    ({"id": "d", "birth_date": "1979-10"}, {"birth_date": "1979-10"}, {"birth_date": "1979-10"}, set(),
+     {"id": "d", "birth_date": "1979-10"}, []),
+    # changed, and nobody confirmed an edit of it (a scraper overwrote it): written back
+    ({"id": "d", "description": "old"}, {"description": "old"}, {"description": "new"}, set(),
+     {"id": "d", "description": "old"}, []),
+    # changed by a confirmed edit: held back
+    ({"id": "d", "birth_date": "1979-10"}, {"birth_date": "1979-10"}, {"birth_date": "1979-11"}, {"birth_date"},
+     {"id": "d"}, ["birth_date"]),
+    # the merged person never showed the duplicate's value: not this removal's business
+    ({"id": "d", "birth_date": "1980-01"}, {"birth_date": "1979-10"}, {}, set(),
+     {"id": "d", "birth_date": "1980-01"}, []),
+    # a list loses only what was removed
+    ({"id": "d", "nationalities": ["GB", "IE"]}, {"nationalities": ["US", "GB", "IE"]}, {"nationalities": ["US", "IE"]},
+     set(), {"id": "d", "nationalities": ["IE"]}, ["nationalities"]),
+    ({"id": "d", "nationalities": ["GB"]}, {"nationalities": ["US", "GB"]}, {}, set(), {"id": "d"}, ["nationalities"]),
+    # a person keeps its name whatever happened to the merged one
+    ({"id": "d", "full_name": "Jane Smith"}, {"id": "k", "full_name": "Jane Smith"}, {"id": "k"}, {"full_name"},
+     {"id": "d", "full_name": "Jane Smith"}, []),
+])
+def test_what_an_undo_holds_back_from_the_duplicate(dup, after, current, confirmed, node, held):
+    assert merge_undo._held_back(dup, after, current, confirmed) == (node, held)
+
+
+@pytest.mark.parametrize("edge,whose", [
+    (("HAS_ROLE", "co-a", "CEO"), "kept"),
+    (("HAS_ROLE", "co-b", "Company Secretary"), "duplicate"),
+    (("HAS_ROLE", "co-both", "Director"), "both"),
+    (("HAS_ROLE", "co-a", "Director"), None),            # that company, another seat: nobody's
+    (("OWNS", "co-b", ""), "duplicate"),                 # a holding carries no role
+    (("OWNS", "co-a", ""), None),
+])
+def test_who_brought_a_link_into_the_merge(edge, whose):
+    def seat(kind, other, role=None):
+        return {"type": kind, "out": True, "other": other, "props": {"role": role} if role else {}}
+    pictures = {"keep": {"edges": [seat("HAS_ROLE", "co-a", "CEO"), seat("HAS_ROLE", "co-both", "Director")]},
+                "dup": {"edges": [seat("HAS_ROLE", "co-b", "Company Secretary"), seat("HAS_ROLE", "co-both", "Director"),
+                                  seat("OWNS", "co-b")]}}
+    with patch.object(merge_undo, "_fwd", lambda node_id: node_id):
+        assert merge_undo._edge_from(edge, pictures) == whose
+

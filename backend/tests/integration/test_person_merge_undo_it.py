@@ -242,3 +242,176 @@ def test_a_deleted_person_is_not_kept_in_a_picture(it_db):
     assert "Jane Mary Smith" not in str(it_db.run_command("MATCH (s:MergeSnapshot) RETURN s.payload AS p"))
     entry = next(e for e in merge_log(limit=10, _=_USER)["entries"] if e["keep_id"] == "p-keep")
     assert entry["snapshot_id"] is None
+
+
+# ── findings item 126: a removal asks about the merge first ──────────────────
+
+def _edit(pid, confirmed=False, **changes):
+    """The edit form's PUT: every field as the person has it now, plus the changes."""
+    from app.models.person import PersonCreate
+    from app.routers.persons import update_person
+    node = merge_undo.picture(pid)["node"]
+    first, _, last = node["full_name"].partition(" ")
+    body = {k: node.get(k) for k in ("aliases", "nationalities", "birth_date", "death_date", "birth_place",
+                                     "description", "wikipedia_url")}
+    return update_person(pid, PersonCreate(first_name=first, last_name=last, **{**body, **changes}),
+                         merge_confirmed=confirmed, _=_USER)
+
+
+def _merged(it_db):
+    _two_people(it_db)
+    merge_person_records("p-keep", "choff:dup")
+    return _snapshot_id()
+
+
+def test_an_edit_that_removes_a_value_asks_about_the_merge_first(it_db):
+    from fastapi import HTTPException
+    sid = _merged(it_db)
+    with pytest.raises(HTTPException) as asked:
+        _edit("p-keep", birth_date=None, aliases=[])
+    detail = asked.value.detail
+    assert asked.value.status_code == 409 and detail["code"] == "merged_person"
+    assert detail["fields"] == ["aliases", "birth_date"]
+    assert [(m["snapshot_id"], m["keep_name"], m["dup_name"]) for m in detail["merges"]] == [
+        (sid, "Jane Smith", "Jane Mary Smith")]
+    assert detail["merges"][0]["fields"] == {"aliases": "kept", "birth_date": "duplicate"}
+    # nothing was written, nothing recorded
+    assert merge_undo.picture("p-keep")["node"]["birth_date"] == "1979-10"
+    assert merge_undo.standing("p-keep")[0].get("confirmations") is None
+
+    _edit("p-keep", confirmed=True, birth_date=None)
+    assert "birth_date" not in merge_undo.picture("p-keep")["node"]
+    import json
+    said = json.loads(merge_undo.standing("p-keep")[0]["confirmations"])
+    assert [(c["action"], c["fields"]) for c in said] == [("edit", ["birth_date"])]
+
+
+def test_an_edit_asks_nothing_where_no_merge_or_no_value_is_touched(it_db):
+    _two_people(it_db)
+    _edit("choff:dup", birth_date=None)                       # not a merged person
+    merge_person_records("p-keep", "choff:dup")
+    _edit("p-keep", birth_place="Leeds")                      # a value added, none touched
+    assert merge_undo.picture("p-keep")["node"]["birth_place"] == "Leeds"
+    undo_merge(_snapshot_id(), _=_USER)
+    _edit("p-keep", birth_place=None)                         # the merge no longer stands
+
+
+def test_an_undo_holds_back_what_was_removed_from_the_merged_person(it_db):
+    sid = _merged(it_db)
+    _edit("p-keep", confirmed=True, birth_date=None, nationalities=[])
+    report = undo_merge(sid, _=_USER)
+    assert report["held_back"] == ["field birth_date", "field nationalities"]
+    dup, keep = merge_undo.picture("choff:dup")["node"], merge_undo.picture("p-keep")["node"]
+    assert "birth_date" not in dup and "nationalities" not in dup and dup["full_name"] == "Jane Mary Smith"
+    assert "birth_date" not in keep and "nationalities" not in keep
+
+
+def test_a_value_removed_by_a_script_is_held_back_too_and_an_overwritten_one_is_not(it_db):
+    sid = _merged(it_db)
+    it_db.run_command("MATCH (p:Person {id: 'p-keep'}) REMOVE p.birth_date SET p.nationalities = ['IE']")
+    report = undo_merge(sid, _=_USER)
+    # removed: held back. The list lost 'GB', which the duplicate brought: held back.
+    assert report["held_back"] == ["field birth_date", "field nationalities"]
+    assert "birth_date" not in merge_undo.picture("choff:dup")["node"]
+
+
+def test_a_value_a_confirmed_edit_changed_is_held_back_and_a_silent_change_is_not(it_db):
+    sid = _merged(it_db)
+    it_db.run_command("MATCH (p:Person {id: 'p-keep'}) SET p.birth_date = '1979-11'")     # a scraper, say
+    assert undo_merge(sid, _=_USER)["held_back"] == []
+    assert merge_undo.picture("choff:dup")["node"]["birth_date"] == "1979-10"
+
+
+def test_a_confirmed_correction_is_not_undone_on_the_duplicate(it_db):
+    sid = _merged(it_db)
+    _edit("p-keep", confirmed=True, birth_date="1979-11")
+    assert undo_merge(sid, _=_USER)["held_back"] == ["field birth_date"]
+    assert "birth_date" not in merge_undo.picture("choff:dup")["node"]
+    assert merge_undo.picture("p-keep")["node"]["birth_date"] == "1979-11"
+
+
+def test_a_folded_seat_deleted_since_is_not_drawn_again(it_db):
+    sid = _merged(it_db)
+    it_db.run_command("MATCH (:Person {id: 'p-keep'})-[r:HAS_ROLE]->(:Entity {id: 'co-both'}) DELETE r")
+    report = undo_merge(sid, _=_USER)
+    assert report["held_back"] == ["HAS_ROLE -> co-both (Director)"] and report["edges_recreated"] == 0
+    for pid in ("p-keep", "choff:dup"):
+        assert it_db.run_command("MATCH (:Person {id: $id})-[r:HAS_ROLE]->(:Entity {id: 'co-both'}) "
+                                 "RETURN count(r) AS n", {"id": pid})[0]["n"] == 0
+    assert report["edges_moved"] == 2                         # the duplicate's own two still go back
+
+
+def _suppressions(it_db):
+    return sorted((s["tk"], s["node"], s["f"], s["t"], s["role"]) for s in it_db.run_command(
+        "MATCH (s:Suppression) RETURN s.target_kind AS tk, s.node_id AS node, s.from_id AS f, "
+        "s.to_id AS t, s.role AS role"))
+
+
+def test_a_suppression_written_since_the_merge_covers_both_after_the_undo(it_db):
+    _two_people(it_db)
+    # the kept person's own, from before the merge: stays theirs alone
+    # (at a company where the duplicate sits too — it was never about them)
+    it_db.run_command("CREATE (:Suppression {id: 's0', target_kind: 'role', node_id: '', from_id: 'p-keep', "
+                      "to_id: 'co-both', role: 'Director', created_at: '2020-01-01T00:00:00+00:00'})")
+    merge_person_records("p-keep", "choff:dup")
+    later = "2999-01-01T00:00:00+00:00"
+    for sid, kind, node, frm, to, role in (
+            ("s1", "person", "p-keep", "", "", ""),
+            ("s2", "role", "", "p-keep", "co-b", "Company Secretary"),      # the duplicate's seat
+            ("s4", "role", "", "p-keep", "co-a", "CEO")):                   # a seat only the kept one had
+        it_db.run_command("CREATE (:Suppression {id: $id, target_kind: $k, node_id: $n, from_id: $f, to_id: $t, "
+                          "role: $r, flag_id: 'f', created_at: $at})",
+                          {"id": sid, "k": kind, "n": node, "f": frm, "t": to, "r": role, "at": later})
+    report = undo_merge(_snapshot_id(), _=_USER)
+    assert report["suppressions_copied"] == 2
+    rows = _suppressions(it_db)
+    assert [r for r in rows if "choff:dup" in r] == [
+        ("person", "choff:dup", "", "", ""),
+        ("role", "", "choff:dup", "co-b", "Company Secretary")]
+    assert len([r for r in rows if "p-keep" in r]) == 4       # every one of the kept person's stays
+
+
+def test_suppressing_a_merged_person_or_their_seat_asks_about_the_merge_first(it_db):
+    from fastapi import HTTPException
+    from app.routers.flags import suppress_flag
+    sid = _merged(it_db)
+    mod = {"role": "moderator"}
+    it_db.run_command("CREATE (:Flag {id: 'f-seat', target_kind: 'role', from_id: 'p-keep', to_id: 'co-b', "
+                      "role: 'Company Secretary', node_id: '', status: 'open'})")
+    it_db.run_command("CREATE (:Flag {id: 'f-person', target_kind: 'person', from_id: '', to_id: '', role: '', "
+                      "node_id: 'p-keep', status: 'open'})")
+    it_db.run_command("CREATE (:Flag {id: 'f-co', target_kind: 'entity', from_id: '', to_id: '', role: '', "
+                      "node_id: 'co-a', status: 'open'})")
+    with pytest.raises(HTTPException) as asked:
+        suppress_flag("f-seat", _=mod)
+    assert asked.value.status_code == 409 and asked.value.detail["code"] == "merged_person"
+    assert [(m["snapshot_id"], m["link"]) for m in asked.value.detail["merges"]] == [(sid, "duplicate")]
+    assert _suppressions(it_db) == []                         # nothing suppressed, the seat still there
+    assert it_db.run_command("MATCH (:Person {id: 'p-keep'})-[r:HAS_ROLE]->(:Entity {id: 'co-b'}) "
+                             "RETURN count(r) AS n")[0]["n"] == 1
+    with pytest.raises(HTTPException):
+        suppress_flag("f-person", _=mod)
+
+    assert suppress_flag("f-co", _=mod)["status"] == "suppressed"           # a company: no question
+    assert suppress_flag("f-seat", merge_confirmed=True, _=mod)["status"] == "suppressed"
+    assert suppress_flag("f-person", merge_confirmed=True, _=mod)["status"] == "suppressed"
+    import json
+    said = json.loads(merge_undo.standing("p-keep")[0]["confirmations"])
+    assert [c["action"] for c in said] == ["suppress", "suppress"]
+
+
+
+def test_a_link_the_merge_dropped_is_drawn_again_whatever_was_removed(it_db):
+    """Holding back is for a link folded into one the merged person lost — not
+    for every link of the duplicate the merged person does not have: the one
+    between the two is dropped by the merge (a person is not related to
+    themselves) and comes back with the split."""
+    _two_people(it_db)
+    it_db.run_command("MATCH (a:Person {id: 'choff:dup'}), (b:Person {id: 'p-keep'}) "
+                      "CREATE (a)-[:RELATED_TO {relation_type: 'sibling'}]->(b)")
+    before = [e for e in merge_undo.picture("choff:dup")["edges"] if e["type"] == "RELATED_TO"]
+    merge_person_records("p-keep", "choff:dup")
+    report = undo_merge(_snapshot_id(), _=_USER)
+    after = [e for e in merge_undo.picture("choff:dup")["edges"] if e["type"] == "RELATED_TO"]
+    assert len(before) == 1 and [(e["other"], e["props"]) for e in after] == [("p-keep", before[0]["props"])]
+    assert report["held_back"] == []

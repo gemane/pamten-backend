@@ -28,6 +28,15 @@ The pictures are kept while the merge stands, with no time limit (user,
 2026-11-16): a wrong merge must stay repairable whenever it is found. An undo
 empties them — a used picture has no purpose left — and keeps the row as the
 log line (who, when, why).
+
+A removal on a merged person asks about the merge FIRST (findings item 126,
+user 2026-11-18): the edit and the suppress action call `question`, and refuse
+until the answer is "the merge is right" — which `confirm` records on the
+snapshot. A value somebody says is wrong may be the other person's, and then
+the fix is the undo, not the removal. So when a merge is undone later, what
+was removed from the merged person since was removed on purpose: the split
+holds it back from the person it came from and says so (`held_back`), and a
+suppression written since covers both.
 """
 from __future__ import annotations
 
@@ -155,6 +164,117 @@ def forget(person_id: str) -> int:
     return len(rows)
 
 
+# ── the question a removal asks first (findings item 126) ────────────────────
+
+#: a person without these is not a person: an undo always writes them back
+_ESSENTIAL = ("id", "full_name", "first_name", "last_name")
+
+
+def _blank(value) -> bool:
+    return value is None or value == "" or value == []
+
+
+def standing(person_id: str) -> list[dict]:
+    """The merges this person is made of and that still stand, newest first —
+    under the id it has now or one it had (a hard id learned since, an earlier
+    merge further down the chain)."""
+    ids = sorted({person_id, *(r["old_id"] for r in _sql("SELECT old_id FROM MergedId WHERE new_id = :id",
+                                                         {"id": person_id}))})
+    rows = _sql(f"SELECT FROM {TYPE} WHERE survivor_id IN :ids OR keep_id IN :ids", {"ids": ids})
+    rows = [r for r in rows if not r.get("undone_at") and r.get("payload")
+            and _fwd(r["survivor_id"]) == person_id]
+    rows.sort(key=lambda r: str(r.get("at") or ""), reverse=True)
+    return rows
+
+
+def _came_from(name: str, keep: dict, dup: dict, after: dict) -> str | None:
+    """Whose value the merged person showed in this field: 'kept', 'duplicate',
+    'both' — or None when neither brought it (written since, or never set)."""
+    shown = after.get(name)
+    if _blank(shown):
+        return None
+
+    def gave(node: dict) -> bool:
+        value = node.get(name)
+        if _blank(value):
+            return False
+        if isinstance(shown, list):
+            return bool({str(v) for v in (value if isinstance(value, list) else [value])} & {str(v) for v in shown})
+        return value == shown
+
+    kept, duplicate = gave(keep), gave(dup)
+    return "both" if kept and duplicate else "kept" if kept else "duplicate" if duplicate else None
+
+
+def _edge_from(edge: tuple, pictures: dict) -> str | None:
+    """Who brought the link `(type, to_id, role)` into the merge."""
+    kind, to_id, role = edge
+    spot = _fwd(to_id or "")
+
+    def had(pic: dict) -> bool:
+        return any(e["type"] == kind and e["out"] and _fwd(e["other"]) == spot
+                   and (not role or e["props"].get("role") == role) for e in pic["edges"])
+
+    kept, duplicate = had(pictures["keep"]), had(pictures["dup"])
+    return "both" if kept and duplicate else "kept" if kept else "duplicate" if duplicate else None
+
+
+def question(person_id: str, fields: tuple | list = (), edge: tuple | None = None) -> list[dict]:
+    """What a removal on this person has to ask before it happens: the standing
+    merges it is made of, each with whose value every named field was and who
+    brought the named link. Empty for a person no merge made."""
+    asked = []
+    for snap in standing(_fwd(person_id)):
+        pictures = json.loads(snap["payload"])
+        entry = {"snapshot_id": snap["id"], "keep_id": snap["keep_id"], "keep_name": snap.get("keep_name"),
+                 "dup_id": snap["dup_id"], "dup_name": snap.get("dup_name"), "at": snap.get("at"),
+                 "reason": snap.get("reason"),
+                 "fields": {name: _came_from(name, pictures["keep"]["node"], pictures["dup"]["node"],
+                                             pictures["after"]["node"]) for name in fields}}
+        if edge:
+            entry["link"] = _edge_from(edge, pictures)
+        asked.append(entry)
+    return asked
+
+
+def confirm(person_id: str, action: str, fields: tuple | list = ()) -> int:
+    """Record on every standing merge of this person that a removal went ahead
+    with the answer "the merge is right": when, what kind, which fields. No
+    values and nobody's name — the split reads the field names."""
+    rows = standing(_fwd(person_id))
+    for snap in rows:
+        said = json.loads(snap.get("confirmations") or "[]")
+        said.append({"at": _now(), "action": action, "fields": sorted(fields)})
+        _sql(f"UPDATE {TYPE} SET confirmations = :c WHERE id = :id", {"c": json.dumps(said), "id": snap["id"]})
+    return len(rows)
+
+
+def _held_back(dup: dict, after: dict, current: dict, confirmed: set) -> tuple[dict, list]:
+    """The duplicate's node as the split writes it, and the fields held back:
+    a value the duplicate brought to the merged person, and that the merged
+    person no longer shows, is not written again. Removed counts always (it
+    covers a script run on the database); CHANGED counts only for a field a
+    confirmed edit names — a scraper may overwrite a field too, and that says
+    nothing about the duplicate's value."""
+    node, held = dict(dup), []
+    for name, value in dup.items():
+        shown, now = after.get(name), current.get(name)
+        if name in _ESSENTIAL or _blank(shown) or now == shown:
+            continue
+        if isinstance(value, list) and isinstance(shown, list):
+            gone = [v for v in value if v in shown and v not in (now or [])]
+            if gone:
+                rest = [v for v in value if v not in gone]
+                node.pop(name)
+                if rest:
+                    node[name] = rest
+                held.append(name)
+        elif value == shown and (_blank(now) or name in confirmed):
+            node.pop(name)
+            held.append(name)
+    return node, sorted(held)
+
+
 # ── the split ────────────────────────────────────────────────────────────────
 
 def _fwd(node_id: str) -> str:
@@ -266,9 +386,12 @@ def split(snapshot_id: str) -> dict:
     survivor = current["id"]
     if survivor != dup_id and _sql("SELECT id FROM Person WHERE id = :id", {"id": dup_id}):
         raise ValueError(f"a person {dup_id} exists again")
+    at_split = _now()
     report = {"snapshot_id": snapshot_id, "fields_restored": [], "edges_moved": 0, "edges_restored": 0,
               "edges_recreated": 0, "claims_moved": 0, "claims_recreated": 0, "stakes_moved": 0,
-              "references_moved": 0, "written_since": [], "not_restored": []}
+              "references_moved": 0, "suppressions_copied": 0, "written_since": [], "not_restored": [],
+              "held_back": []}
+    confirmed = {name for said in json.loads(snap.get("confirmations") or "[]") for name in said.get("fields", [])}
 
     # 1. the survivor's own fields: what the merge filled reads as before
     sets, removes = _restore(current["node"], before["node"], after["node"], skip=("id",))
@@ -289,7 +412,10 @@ def split(snapshot_id: str) -> dict:
     # 3. the duplicate is a person again, under its own id
     _sql("DELETE FROM MergedId WHERE old_id = :id", {"id": dup_id})
     invalidate_forwarding_cache()
-    _insert("Person", dup["node"])
+    # — without what was removed from the merged person since (findings item 126)
+    node, held = _held_back(dup["node"], after["node"], current["node"], confirmed)
+    _insert("Person", node)
+    report["held_back"] += [f"field {name}" for name in held]
 
     # 4. edges: by record id — or, on a person an undo wrote again (every
     # record id new), by what the edge says
@@ -313,10 +439,18 @@ def split(snapshot_id: str) -> dict:
             pool.remove(hit)
         return hit
 
+    def spot(e: dict) -> tuple:
+        return (e["type"], e["out"], _fwd(e["other"]))
+
     unpaired = list(dup["edges"])
+    folded_into, alive = set(), set()      # the survivor's own links of before: where, and which are left
     for made in after["edges"]:
         now = live(made)
         kept = was.get(made["rid"])
+        if kept is not None:
+            folded_into.add(spot(made))
+            if now:
+                alive.add(spot(made))
         if kept is None:
             # created by the merge: the duplicate's edge, carried over as it was
             key = _edge_key(made, _fwd(made["other"]))
@@ -333,8 +467,13 @@ def split(snapshot_id: str) -> dict:
             if sets or removes:
                 _write(now["type"], "@rid = :rid", {"rid": now["rid"]}, sets, removes)
                 report["edges_restored"] += 1
+    alive |= {spot(e) for e in pool}           # written again since counts as left
     for d in unpaired:                         # folded into a survivor's edge, or not carried
-        if _create_edge(dup_id, d, _fwd(d["other"])):
+        if spot(d) in folded_into and spot(d) not in alive:
+            # the link both had, folded into one, and deleted from the merged
+            # person since: not drawn again on the duplicate (findings item 126)
+            report["held_back"].append(_edge_label(d))
+        elif _create_edge(dup_id, d, _fwd(d["other"])):
             report["edges_recreated"] += 1
         else:
             report["not_restored"].append(_edge_label(d))
@@ -387,13 +526,41 @@ def split(snapshot_id: str) -> dict:
                          {"dup": dup_id, "rid": rid, "survivor": survivor})
             report["references_moved"] += sum(int(r.get("count") or 0) for r in moved if isinstance(r, dict))
 
+    # 7b. a suppression written since the merge names the merged person, and
+    # nothing says which of the two it was meant for: it covers both from now
+    # on (findings item 126). A person-hide always; a link's only where the
+    # duplicate had such a link — in the words its own link used.
+    import uuid
+    for s in _sql("SELECT FROM Suppression WHERE node_id = :id OR from_id = :id", {"id": survivor}):
+        if str(s.get("created_at") or "") <= str(snap.get("at") or ""):
+            continue                                   # older than the merge: the kept person's own
+        twins = []
+        if s.get("node_id") == survivor:
+            twins = [{"node_id": dup_id, "from_id": "", "to_id": "", "role": ""}]
+        elif s.get("from_id") == survivor:
+            kind = "OWNS" if s.get("target_kind") == "owns" else "HAS_ROLE"
+            roles = {d["props"].get("role") or "" for d in dup["edges"]
+                     if d["type"] == kind and d["out"] and _fwd(d["other"]) == _fwd(s.get("to_id") or "")}
+            if (s.get("role") or "") in roles:
+                roles = {s.get("role") or ""}
+            twins = [{"node_id": "", "from_id": dup_id, "to_id": s.get("to_id"), "role": role}
+                     for role in sorted(roles)]
+        for twin in twins:
+            if _sql("SELECT id FROM Suppression WHERE target_kind = :tk AND node_id = :node_id AND "
+                    "from_id = :from_id AND to_id = :to_id AND role = :role",
+                    {"tk": s.get("target_kind"), **twin}):
+                continue
+            _insert("Suppression", {"id": str(uuid.uuid4()), "target_kind": s.get("target_kind"), **twin,
+                                    "flag_id": s.get("flag_id"), "created_at": at_split})
+            report["suppressions_copied"] += 1
+
     # 8. ids that forwarded to the duplicate before do so again
     if dup["forwards"]:
         _sql("UPDATE MergedId SET new_id = :dup WHERE new_id = :survivor AND old_id IN :ids",
              {"dup": dup_id, "survivor": survivor, "ids": dup["forwards"]})
 
     # 9. two people, on the record: the scan leaves the pair alone from now on
-    at = _now()
+    at = at_split
     run_command("MATCH (a:Person {id: $a}), (b:Person {id: $b}) MERGE (a)-[r:NOT_DUPLICATE]->(b) SET r.at = $at",
                 {"a": survivor, "b": dup_id, "at": at})
     # the pictures have done their work: the row stays as the log line (ids,

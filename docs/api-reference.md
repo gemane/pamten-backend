@@ -46,6 +46,7 @@ Full REST surface. Auth is JWT bearer (see [`authentication.md`](authentication.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/persons/{id}` | — | Single person |
+| PUT | `/persons/{id}` | contributor | Replace a person's editable fields. On a person a merge made, an edit that removes or changes a value answers 409 `merged_person` (the standing merges, and whose value each field was) until `?merge_confirmed=true` — see [deduplication](deduplication.md#undoing-a-merge) |
 | POST | `/persons/` | contributor | Create person |
 | GET | `/persons/duplicates` | contributor | Suggest likely-duplicate people (see [Duplicate persons](deduplication.md#duplicate-persons)) |
 | POST | `/persons/deduplicate` | contributor | Auto-merge high-confidence duplicates (`apply=false` = dry run) |
@@ -54,7 +55,7 @@ Full REST surface. Auth is JWT bearer (see [`authentication.md`](authentication.
 | DELETE | `/persons/keep-separate` | contributor | Undo a keep-separate |
 | GET | `/persons/kept-separate` | contributor | List confirmed-distinct pairs |
 | GET | `/persons/merge-log` | contributor | History of merges (the "already merged" list); each entry with `reason`, `snapshot_id` and `undone_at` |
-| POST | `/persons/merge-log/{snapshot_id}/undo` | contributor | Split a merged person back into the two it was made of; answers with what went back and what was `written_since`. 404 unknown, 409 already undone or not possible as things stand |
+| POST | `/persons/merge-log/{snapshot_id}/undo` | contributor | Split a merged person back into the two it was made of; answers with what went back, what was `written_since`, and what was `held_back` because it was removed from the merged person since (plus `suppressions_copied`). 404 unknown, 409 already undone or not possible as things stand |
 
 ## Search
 | Method | Path | Description |
@@ -106,7 +107,7 @@ Off unless `ANALYTICS_ENABLED` is set.
 | GET | `/flags/summary` | public | Open-flag count for one target (`?node_id=` or `?from_id=&to_id=[&role=]`), or for a node and everything reported about it (`?related_to=`) — powers the "disputed" badge |
 | PATCH | `/flags/{id}` | moderator | Triage status: `open` ⇄ `reviewing`, `→ rejected` |
 | DELETE | `/flags/{id}` | moderator | Remove a flag entirely (spam/test/duplicate); any Suppression/Pin it made is left untouched |
-| POST | `/flags/{id}/suppress` | moderator | Resolve a flag by **suppressing** its target — an *edge* flag deletes the edge + records a `Suppression`; a *node* flag (entity/person) is a pure read-time hide (search, own profile, related-node lists). Survives re-scrapes; flag → `resolved` |
+| POST | `/flags/{id}/suppress` | moderator | Resolve a flag by **suppressing** its target — an *edge* flag deletes the edge + records a `Suppression`; a *node* flag (entity/person) is a pure read-time hide (search, own profile, related-node lists). Survives re-scrapes; flag → `resolved` On a person a merge made (the person, or a seat or holding of theirs) it answers 409 `merged_person` with the standing merges until `?merge_confirmed=true` — see [deduplication](deduplication.md#undoing-a-merge) |
 | GET | `/flags/suppressions` | moderator | Active suppression overrides |
 | DELETE | `/flags/suppressions/{id}` | moderator | Un-suppress (edge reappears if a re-scrape recreates it) |
 | POST | `/flags/{id}/pin` | moderator | Resolve an OWNS flag by **pinning** a corrected `stake_percent`/`ownership_type` — a read-time override that survives re-scrapes (edge not mutated); flag → `resolved` |

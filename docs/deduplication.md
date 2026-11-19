@@ -322,9 +322,51 @@ limit, because a wrong merge must stay repairable whenever it is found — the
 purpose lasts as long as the merged person does. Two things end it: an undo
 empties the pictures, and deleting a person (`DELETE /persons/{id}`) deletes
 every picture that shows it (`merge_undo.forget`), so an erasure reaches this
-store too. Not covered yet: a single field removed from a person later (a
-register protecting someone's details, a corrected birth date) stays in the
-picture, and a split would write it back (findings item 126).
+store too. A single value removed from the merged person stays in the stored
+picture — it is what tells whose value it was — and is handled by the two
+rules below.
+
+**A removal asks about the merge first** (findings item 126; user, 2026-11-18).
+A value somebody reports as wrong on a merged person may simply be the other
+person's: then the fix is the undo, and removing the value would take it from
+the person it is right for. So the two paths that remove something from a
+person stop when the person was made by a merge that still stands:
+
+| Path | Asks when | Answer |
+|---|---|---|
+| `PUT /persons/{id}` | the edit removes or changes a value the person has (adding one asks nothing) | 409, `detail.code = "merged_person"`, `detail.fields` (the values touched) and `detail.merges`: each standing merge with both names, when, why, and per field whose value it was — `kept`, `duplicate`, `both`, or null for one written since |
+| `POST /flags/{id}/suppress` | the flag is on such a person, or on a seat or holding of theirs | the same, with `link`: who brought that seat or holding into the merge |
+
+The caller then either undoes the merge (`POST /persons/merge-log/{id}/undo`)
+or repeats the request with `?merge_confirmed=true`: the merge is right, the
+removal goes ahead, and the answer is recorded on the snapshot
+(`confirmations`: when, `edit` or `suppress`, the field names — no values,
+nobody's name). Whose value it was is read from the pictures
+(`merge_undo.question`).
+
+**What an undo does with a removal made since** — which, after the question,
+was made on purpose:
+
+- A value the duplicate brought and the merged person no longer shows is **not
+  written again** on the duplicate: removed always (that also covers a script
+  run on the database), changed only when a confirmed edit names the field — a
+  scraper overwriting a field says nothing about the duplicate's value. A list
+  loses only the entries that were removed. Name and id are always written.
+  A value the merged person never showed (the kept person's own won) is not a
+  removal's business and comes back.
+- A seat or holding **both** had — folded into one by the merge — and deleted
+  from the merged person since is not drawn again on the duplicate.
+- A **suppression written since the merge** names the merged person, and
+  nothing says which of the two it was meant for: the undo copies it to the
+  duplicate, so it covers both (a person-hide always; a link's only where the
+  duplicate had such a link). One older than the merge is the kept person's
+  own and stays theirs.
+
+The report lists all of it under `held_back` (field names and links, no
+values) and `suppressions_copied`. A register that still publishes a held-back
+value writes it again on its next run (the writers fill an empty field); what
+it no longer publishes stays gone. Guard at the build: the 52 real pairs of
+item 123 split back identical, nothing held back.
 
 `manage.py undo-person-merge` lists the merges that can be undone;
 `manage.py undo-person-merge <snapshot_id>` splits one and prints the report.

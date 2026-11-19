@@ -188,7 +188,8 @@ def test_suppress_requires_moderator(client, fake_db, make_token):
     assert r.status_code == 403
 
 
-def test_suppress_edge_flag_creates_suppression_and_resolves(client, fake_db, make_token):
+def test_suppress_edge_flag_creates_suppression_and_resolves(client, fake_db, fake_arcadedb, make_token):
+    # (fake_arcadedb: the suppress asks whether the owner is a merged person — findings item 126)
     # 1st query returns the flag (an owns edge); the existence check then finds none.
     fake_db.queue([{"tk": "owns", "from_id": "a", "to_id": "b", "role": ""}])
     r = client.post("/flags/f1/suppress", headers=_auth(make_token(role="moderator")))
