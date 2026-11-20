@@ -171,16 +171,43 @@ Per project convention (mocked unit tests + real-ArcadeDB integration —
 
 - **Suppress (implemented).** `POST /flags/{id}/suppress` (moderator) resolves an
   *edge* flag: it deletes the wrong OWNS/HAS_ROLE edge now and records a
-  `Suppression` override keyed by the edge's natural key. Enforcement is
-  **read-time** (`app/suppressions.py`): the read endpoints (`full-profile`,
-  `person/full-profile`, `/relationships/owners`) load the small suppression set
-  and drop matching edges — so a suppressed edge stays hidden even if a later
-  import recreates it. **Node suppression** (entity/person flags) is also
-  supported: a pure read-time hide (the node is not deleted) enforced in search,
-  its own `full-profile` (404), and related-node lists on other profiles;
+  `Suppression` override keyed by the edge's natural key. **Node suppression**
+  (entity/person flags) is a pure hide: the node is not deleted, and
   un-suppress restores it. `GET /flags/suppressions` lists them; `DELETE
-  /flags/suppressions/{id}` un-suppresses. (Graph tree/expand filtering is not yet
-  covered.)
+  /flags/suppressions/{id}` un-suppresses.
+
+  **Enforced at read time, in every public read** (`app/suppressions.py`,
+  findings item 130). A suppression is *not* applied by the importers: the
+  next import writes a suppressed edge again, and a suppressed node stays
+  stored. What a suppression guarantees is that no public route shows it:
+
+  | Suppressed | What every public read does |
+  |---|---|
+  | a person or a company | answers 404 for its own record, profile, tree, timeline, image; leaves it out of every list, search, tree, timeline, provenance list and export of anything else |
+  | a holding or a seat | leaves the edge, its timeline events, its stake series, its claim and the link to the record behind it out — on both ends' pages and in the export |
+
+  An edge is hidden when it is suppressed itself **or either of its ends is**
+  (`Guard.edge`). Routes ask one object, `suppressions.guard(session)`, two
+  questions — `node(id)` and `edge(kind, from, to, role)`. Until 2026-11-21
+  the filter was two loads and an `if` written out per route, and the routes
+  without it showed a suppressed person to anyone: `GET /persons/{id}`,
+  `GET /entities/{id}`, both lists, the country lists, the company timeline
+  (which the frontend draws), the stake series, the provenance lists, the
+  ownership tree, the image routes and the export's Claims and Stake history
+  sheets.
+
+  **The guard against the next one**:
+  `tests/integration/test_suppression_reads_it.py` walks every GET route the
+  app declares, with a suppressed person, company and seat in a real database.
+  A new public read must be added to its `WALK` table (and show nothing), or
+  to `NOT_WALKED` with the reason it cannot show a graph record — the test
+  fails otherwise.
+
+  Not covered, on purpose: routes behind a login (the moderator's own views —
+  duplicates, merge log, the suppression list itself); counts (`/stats`, the
+  per-country totals still count a suppressed company); federation export
+  (unmounted while federation is on hold — it must apply the guard before it
+  is switched on again).
 - **Pin (implemented).** `POST /flags/{id}/pin` (moderator) resolves an *OWNS*
   flag by recording a corrected `stake_percent`/`ownership_type` as a **read-time
   override** (`app/pins.py`) — it does *not* mutate the scraped edge, so the fix

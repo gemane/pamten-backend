@@ -3,6 +3,7 @@ from app import addresses
 from app.models.entity import EntityCreate, EntityResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
+from app import suppressions
 from app.merged_ids import resolve_current_id
 from app.models.person import KeepSeparateRequest
 from datetime import datetime, timezone
@@ -148,7 +149,8 @@ def get_entities_without_country(
     """
     with db.get_session() as session:
         result = session.run(query, limit=limit)
-        return [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in result]
+        return suppressions.guard(session).visible(
+            [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in result])
 
 
 @router.get("/by-country/{country}")
@@ -168,7 +170,8 @@ def get_entities_for_country(
     """
     with db.get_session() as session:
         result = session.run(query, country=country, limit=limit)
-        return [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in result]
+        return suppressions.guard(session).visible(
+            [{"id": r["id"], "name": r["name"], "type": r["type"]} for r in result])
 
 
 @router.get("/")
@@ -180,7 +183,8 @@ def list_entities(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20,
     """
     with db.get_session() as session:
         result = session.run(query, skip=skip, limit=limit)
-        return [dict(record["e"]) for record in result]
+        # a suppressed company is hidden in every public read (findings item 130)
+        return suppressions.guard(session).visible([dict(record["e"]) for record in result])
 
 
 @router.post("/keep-separate")
@@ -275,7 +279,8 @@ def get_entity(entity_id: str):
             merged_into = resolve_current_id(session, entity_id)
             if merged_into:
                 record = session.run(query, id=merged_into).single()
-        if not record:
+        # a suppressed company answers as one that is not there (findings item 130)
+        if not record or suppressions.guard(session).node(dict(record["e"]).get("id")):
             raise HTTPException(status_code=404, detail="Entity not found")
         # The response carries the survivor's own id, so a caller can see the
         # canonical one and update what it stored.

@@ -13,7 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from app import media
+from app import media, suppressions
 from app.database import db
 from app.merged_ids import resolve_current_id
 
@@ -34,11 +34,14 @@ def _record(kind: str, node_id: str) -> dict:
              "RETURN n.logo_url AS logo_url, n.image_url AS image_url, "
              "n.wikipedia_url AS wikipedia_url")
     with db.get_session() as session:
-        rec = session.run(query, id=node_id).single()
+        rec, found_id = session.run(query, id=node_id).single(), node_id
         if not rec:
             merged_into = resolve_current_id(session, node_id)
             if merged_into:
-                rec = session.run(query, id=merged_into).single()
+                rec, found_id = session.run(query, id=merged_into).single(), merged_into
+        # a suppressed node has no portrait or logo to hand out (findings item 130)
+        if rec and suppressions.guard(session).node(found_id):
+            rec = None
     if not rec:
         raise HTTPException(status_code=404, detail=f"{label} not found")
     return {"logo_url": rec.get("logo_url"), "image_url": rec.get("image_url"),

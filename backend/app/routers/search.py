@@ -1429,7 +1429,9 @@ def search_by_country(country: str, region: str = None):
     """
 
     with db.get_session() as session:
-        result = session.run(query, country=country)
+        hidden = load_suppressed_nodes(session)
+        result = [r for r in session.run(query, country=country)
+                  if dict(r["e"]).get("id") not in hidden]
         return [
             {
                 "entity": dict(record["e"]),

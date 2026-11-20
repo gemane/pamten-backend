@@ -439,3 +439,17 @@ def fake_sources(monkeypatch):
                  "description": "test fake"})
     return add
 
+
+
+@pytest.fixture(autouse=True)
+def _nothing_suppressed(request, monkeypatch):
+    """Unit tests feed the database's answers from a queue, in the order a
+    route asks. The suppression guard every public read loads (findings item
+    130) would take two of those answers from each route, so here it is empty.
+    What the guard really does to each route is
+    `tests/integration/test_suppression_reads_it.py`'s job, against a real
+    ArcadeDB — this fixture stands down there."""
+    if request.node.get_closest_marker("integration"):
+        return
+    from app import suppressions
+    monkeypatch.setattr(suppressions, "guard", lambda session: suppressions.Guard(set(), set()))
