@@ -308,7 +308,9 @@ def delete_entity(entity_id: str, _: dict = Depends(require_contributor)):
     """
     with db.get_session() as session:
         session.run(query, id=entity_id)
-        return {"message": "Entity deleted"}
+    # and every row that names it by id (findings item 129) — suppressions excepted
+    from app import node_forget
+    return {"message": "Entity deleted", "removed": node_forget.forget_node("Entity", entity_id)}
 
 
 # ── Keep-separate and the merge log ───────────────────────────────────────────

@@ -321,8 +321,10 @@ other end, source, role or filing family), because their key hashes the ids.
 limit, because a wrong merge must stay repairable whenever it is found — the
 purpose lasts as long as the merged person does. Two things end it: an undo
 empties the pictures, and deleting a person (`DELETE /persons/{id}`) deletes
-every picture that shows it (`merge_undo.forget`), so an erasure reaches this
-store too. A single value removed from the merged person stays in the stored
+every picture that shows it (`merge_undo.forget`) together with the log rows
+of its merges and everything else that names it (`app.node_forget`, see
+docs/data-model.md "What a delete removes"), so an erasure reaches this store
+too. A single value removed from the merged person stays in the stored
 picture — it is what tells whose value it was — and is handled by the two
 rules below.
 

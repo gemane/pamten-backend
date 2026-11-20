@@ -124,6 +124,38 @@ backslashes (`[0-9]`, `[.]`).
 | `Claim` | `claim_key` (UNIQUE), `kind` (owns/role/succession), `from_id`, `to_id`, `source_id`, `stake_percent`, `voting_power_pct`, `ownership_type`, `role`, `since`, `until`, `source_url`, `source_date`, `credibility_score`, `filing_type` (which KIND of record asserted it — "13F", "13G/A", "RR", "PSC", "10-Q XBRL", "DEF 14A", and on a seat claim "Form 4", "Form 3", "Form D" or, for a departure, "8-K"; the Sources panel shows it beside the source name. The SEC seat claims carried none until 2026-10-25 — 208 on dev; the next scrape of a company rewrites its claims with the form), `until_source_url` + `until_read_from` (a seat claim's departure, when another record than the appointment stated it: a close **updates** the source's own claim for the position — it keeps the appointment's `source_url`, `read_from` and `filing_type` and gains the departure's citation and grade — and a source that never asserted the seat gets a claim stating only the end. A re-read that brings no end and the same start — a Form 4 after an 8-K — keeps the end; a different start is a new spell and replaces it; `claims._END_KEPT`), `first_seen_at`, `last_seen_at` — **what one source asserts about one relationship**; see below. One claim per (kind, pair, source), with two exceptions keyed apart: a role claim carries its canonical role, and an owns claim read from an acquirer's XBRL business-combination facts (`filing_type` "10-K XBRL" / "10-Q XBRL") sits beside the same source's Exhibit 21 claim for the pair — the list says "held at year-end", the deal says "bought on this day for this much" |
 | `ScrapeRun` | `id`, `source`, `target`, `status` (running/ok/failed/skipped/partial — `partial`: written, but a section was lost to the network, named in `error`; findings item 41; an `ok` or `partial` SEC row also notes `N request(s) lost to the network` in `error` when single requests were lost, findings item 45), `started_at`, `finished_at` (once finished), `total`, `error` (only on a failure; on a `run-all` row, the sources that errored), `reason` (why an on-demand run happened: absent, incomplete, stale, forced…), `entity_id` (the company the run resolved — every per-company runner sets it; a bulk run has none) — the scrape run log (capped). What is not known is absent, never `''`: the row was created with empty strings in `finished_at`, `error` and `entity_id` until 2026-10-25 |
 
+### What a delete removes
+
+`DELETE /persons/{id}` and `DELETE /entities/{id}` delete the node with its
+edges, and then every row that names the node **by id** — rows no edge holds,
+which a `DETACH DELETE` alone leaves behind (`app/node_forget.py`, findings
+item 129):
+
+| Row | Named by | Why it goes |
+|---|---|---|
+| `Claim` | `from_id`, `to_id` | what each source said about it: role, stake, source link |
+| `StakeHistory` | `from_id`, `to_id` | earlier stated stakes |
+| `IndustryCode` | `entity_id` | a company's codes |
+| `Flag`, `Pin` | `node_id`, `from_id`, `to_id` | a flag's note is free text about the node |
+| `MergeLog` | `keep_id`, `dup_id` | holds both names in plain text |
+| `MergeSnapshot` | `keep_id`, `dup_id`, `survivor_id` | the undo's stored copies |
+| `MergedId` | `new_id`, `old_id` | the ids it had before would forward to nothing |
+| stored image | `media/<kind>/<id>.*` in the object store | portrait or logo with its credit |
+
+The ids the node had before (the losers of merges it survived, the id it
+carried before it learned a register's) are cleaned with it: the merge log
+names a merge by them. A `ScrapeRun` line stays as the record of what was
+scraped and loses only its `entity_id`.
+
+**A `Suppression` is kept.** A delete does not last: the next import writes a
+record with a register id again, and the suppression is what keeps it from
+showing. Deleting it with the node would un-hide the record on its return. To
+make a record stay away, suppress it; the delete only removes what is stored
+now. `GeoCache` is keyed by address text, not by node, and is not touched.
+
+The route answers with `removed`: the count per type. Every column read is
+indexed, so the cleanup is a handful of lookups at any size.
+
 ## Relationships
 
 | Pattern | Properties |

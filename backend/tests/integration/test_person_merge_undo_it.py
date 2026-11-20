@@ -229,7 +229,8 @@ def test_a_seat_deleted_since_the_merge_is_not_drawn_again(it_db):
 
 def test_a_deleted_person_is_not_kept_in_a_picture(it_db):
     """An erasure must reach the undo's store: deleting the merged person
-    deletes the pictures that show it, and the log entry offers no undo."""
+    deletes the pictures that show it — and, since findings item 129, the log
+    entry of that merge, which carried both names."""
     from app.routers.persons import delete_person
     _two_people(it_db)
     it_db.run_command("CREATE (:Person {id: 'p-other', full_name: 'Somebody Else'})")
@@ -240,8 +241,7 @@ def test_a_deleted_person_is_not_kept_in_a_picture(it_db):
     left = merge_undo.snapshots()
     assert [s["keep_id"] for s in left] == ["p-other"]
     assert "Jane Mary Smith" not in str(it_db.run_command("MATCH (s:MergeSnapshot) RETURN s.payload AS p"))
-    entry = next(e for e in merge_log(limit=10, _=_USER)["entries"] if e["keep_id"] == "p-keep")
-    assert entry["snapshot_id"] is None
+    assert [e["keep_id"] for e in merge_log(limit=10, _=_USER)["entries"]] == ["p-other"]
 
 
 # ── findings item 126: a removal asks about the merge first ──────────────────
