@@ -977,8 +977,33 @@ def get_person(person_id: str):
             raise HTTPException(status_code=404, detail="Person not found")
         return dict(record["p"])
 @router.put("/{person_id:path}", response_model=PersonResponse)
-def update_person(person_id: str, person: PersonCreate, _: dict = Depends(require_contributor)):
+def update_person(person_id: str, person: PersonCreate, merge_confirmed: bool = False,
+                  _: dict = Depends(require_contributor)):
+    """
+    Replace a person's editable fields.
+
+    On a person a merge made, an edit that removes or changes a value asks about
+    the merge first (findings item 126): it answers 409 with the standing merges
+    and whose value each field was — the value may be the other person's, and
+    then the fix is the undo (`POST /persons/merge-log/{id}/undo`), not the
+    edit. `?merge_confirmed=true` says the merge is right; the edit goes ahead
+    and the answer is recorded on the merge.
+    """
+    from app import merge_undo
     full_name = f"{person.first_name} {person.last_name}"
+    values = {**person.model_dump(), "full_name": full_name, "nationalities": person.nationalities or None,
+              "description": person.description or None}
+    now = merge_undo._sql("SELECT FROM Person WHERE id = :id", {"id": person_id})
+    touched = sorted(name for name, value in values.items()
+                     if now and not merge_undo._blank(now[0].get(name)) and now[0].get(name) != value
+                     and not (merge_undo._blank(value) and merge_undo._blank(now[0].get(name))))
+    asked = merge_undo.question(person_id, touched) if touched else []
+    if asked and not merge_confirmed:
+        raise HTTPException(status_code=409, detail={
+            "code": "merged_person",
+            "message": "This person was made by a merge. If the value is wrong because the merge is wrong, "
+                       "undo the merge instead; otherwise confirm that the merge is right.",
+            "fields": touched, "merges": asked})
     query = """
         MATCH (p:Person {id: $id})
         SET p += {
@@ -1005,6 +1030,8 @@ def update_person(person_id: str, person: PersonCreate, _: dict = Depends(requir
         record = result.single()
         if not record:
             raise HTTPException(status_code=404, detail="Person not found")
+        if asked:
+            merge_undo.confirm(person_id, "edit", touched)
         return dict(record["p"])
 @router.delete("/{person_id:path}")
 def delete_person(person_id: str, _: dict = Depends(require_contributor)):

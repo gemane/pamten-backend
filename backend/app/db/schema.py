@@ -382,7 +382,7 @@ _STRING_PROPERTIES: dict[str, tuple[str, ...]] = {
     "MergeLog": ("id", "keep_id", "kind", "keep_name", "dup_id", "dup_name", "at", "reason",
                  "snapshot_id", "undone_at"),
     "MergeSnapshot": ("id", "kind", "keep_id", "dup_id", "survivor_id", "keep_name", "dup_name", "at",
-                      "reason", "payload", "undone_at"),
+                      "reason", "payload", "undone_at", "confirmations"),
     "Flag": ("id", "target_kind", "category", "note", "status", "reporter_kind", "reporter_id",
              "reporter_fp", "from_id", "to_id", "role", "node_id", "created_at", "updated_at"),
     "Suppression": ("id", "target_kind", "node_id", "from_id", "to_id", "role", "flag_id", "created_at"),

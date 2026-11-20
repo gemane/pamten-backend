@@ -298,11 +298,18 @@ def remove_suppression(suppression_id: str, _: dict = Depends(require_moderator)
 
 
 @router.post("/{flag_id}/suppress")
-def suppress_flag(flag_id: str, _: dict = Depends(require_moderator)):
+def suppress_flag(flag_id: str, merge_confirmed: bool = False, _: dict = Depends(require_moderator)):
     """Resolve a flag by suppressing its target, recorded as a re-scrape-surviving
     override; the flag becomes resolved. An **edge** flag (owns/role) also deletes
     the active edge now; a **node** flag (entity/person) is a pure read-time hide
-    (not deleted, so un-suppress restores it). Moderator only."""
+    (not deleted, so un-suppress restores it). Moderator only.
+
+    When the target is a person a merge made — the person itself, or a seat or
+    holding of theirs — it asks about the merge first (findings item 126): 409
+    with the standing merges and who brought the link, until
+    `?merge_confirmed=true` says the merge is right. What somebody reports as
+    "not mine" may be the other person's, and then the fix is the undo."""
+    from app import merge_undo
     with db.get_session() as session:
         flag = session.run(
             "MATCH (f:Flag {id:$id}) RETURN f.target_kind AS tk, f.from_id AS from_id, "
@@ -311,6 +318,17 @@ def suppress_flag(flag_id: str, _: dict = Depends(require_moderator)):
             raise HTTPException(status_code=404, detail="Flag not found")
         tk = flag["tk"]
         now = _now_iso()
+
+        merged = flag["node_id"] if tk == "person" else flag["from_id"] if tk in ("owns", "role") else None
+        link = ("OWNS" if tk == "owns" else "HAS_ROLE", flag["to_id"], flag.get("role") or "") \
+            if tk in ("owns", "role") else None
+        asked = merge_undo.question(merged, edge=link) if merged else []
+        if asked and not merge_confirmed:
+            raise HTTPException(status_code=409, detail={
+                "code": "merged_person",
+                "message": "This person was made by a merge. If the report is right because the merge is wrong, "
+                           "undo the merge instead; otherwise confirm that the merge is right.",
+                "fields": [], "merges": asked})
 
         if tk in ("entity", "person"):
             node_id = flag["node_id"]
@@ -363,6 +381,8 @@ def suppress_flag(flag_id: str, _: dict = Depends(require_moderator)):
                 "AND f.role=$role AND (f.status='open' OR f.status='reviewing') "
                 "SET f.status='resolved', f.updated_at=$now",
                 tk=tk, f=from_id, t=to_id, role=role, now=now)
+    if asked:
+        merge_undo.confirm(merged, "suppress")
     return {"id": sup_id, "flag_id": flag_id, "status": "suppressed"}
 
 

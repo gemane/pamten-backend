@@ -1883,6 +1883,14 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       later (`app/merge_undo.py`, findings item 123). And do not identify a record by its
       `@rid` across a delete: ArcadeDB gives a freed record id to the next insert — a
       person written again by an undo had its old id, its edges new ones.
+- [ ] **A correction asks where the wrong value came from before it removes it.** On a record
+      made by joining two, "this is wrong" has two causes: the value, or the join. Removing
+      the value when the join was wrong takes it from the record it is right for — and an
+      undo later cannot tell a deliberate removal from a mistaken one. So the removal paths
+      (the person edit, the suppress action) stop on a merged person, show the merge and
+      whose value it was, and go on only with "the merge is right", recorded; the undo then
+      holds back what was removed since (findings item 126). Ask at the moment the answer is
+      known — the operator has the complaint in front of them — not when the data is read.
 - [ ] **The path a better one replaces is removed in the same change.** The first person
       dedup stayed reachable as an admin route for five months after the scan replaced it,
       marked "legacy" in the docs: no log, no forwarding row, no guard, and after item 123
