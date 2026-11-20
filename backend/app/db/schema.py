@@ -63,6 +63,8 @@ _INDEXES: list[tuple[str, str, str]] = [
     ("User",     "email",           "UNIQUE"),
     ("MergeLog", "id",              "UNIQUE"),
     ("MergeLog", "keep_id",         "NOTUNIQUE"),
+    # a deleted node's merges are removed by either end (app.node_forget)
+    ("MergeLog", "dup_id",          "NOTUNIQUE"),
     # The pictures behind a person merge's undo (app/merge_undo.py): read by id
     # for the split, by the ids for "which merges touched this person".
     ("MergeSnapshot", "id",         "UNIQUE"),

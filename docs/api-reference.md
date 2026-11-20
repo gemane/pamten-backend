@@ -36,7 +36,7 @@ Full REST surface. Auth is JWT bearer (see [`authentication.md`](authentication.
 | GET | `/entities/{id}` | Single entity |
 | POST | `/entities/` | Create entity |
 | PUT | `/entities/{id}` | Update entity |
-| DELETE | `/entities/{id}` | Delete entity |
+| DELETE | `/entities/{id}` | Delete the entity and every row that names it by id; returns `removed` (counts per type). Suppressions are kept — see docs/data-model.md "What a delete removes" |
 | POST | `/entities/keep-separate` | **contributor** — mark entities as confirmed DIFFERENT companies `{ids}`; excluded from auto-merge, checked per pair |
 | DELETE | `/entities/keep-separate` | **contributor** — undo a keep-separate `{ids}` |
 | GET | `/entities/kept-separate` | **contributor** — pairs confirmed to be different companies |
@@ -53,6 +53,7 @@ Full REST surface. Auth is JWT bearer (see [`authentication.md`](authentication.
 | POST | `/persons/merge` | contributor | Fold a duplicate person into the one to keep |
 | POST | `/persons/keep-separate` | contributor | Mark a group as confirmed-different (stops being suggested) |
 | DELETE | `/persons/keep-separate` | contributor | Undo a keep-separate |
+| DELETE | `/persons/{id}` | contributor | Delete the person and every row that names them by id; returns `removed` (counts per type). Suppressions are kept — see docs/data-model.md "What a delete removes" |
 | GET | `/persons/kept-separate` | contributor | List confirmed-distinct pairs |
 | GET | `/persons/merge-log` | contributor | History of merges (the "already merged" list); each entry with `reason`, `snapshot_id` and `undone_at` |
 | POST | `/persons/merge-log/{snapshot_id}/undo` | contributor | Split a merged person back into the two it was made of; answers with what went back, what was `written_since`, and what was `held_back` because it was removed from the merged person since (plus `suppressions_copied`). 404 unknown, 409 already undone or not possible as things stand |

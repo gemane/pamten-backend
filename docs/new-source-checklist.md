@@ -1904,6 +1904,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       endpoints, kept without edges on purpose, with 60 claims — and with a full GLEIF import
       most companies have no edge at all. Nobody called it; it was removed (findings item
       127). "Has no edge" is not "is rubbish": a node can be held by its claims alone.
+- [ ] **A new row type that names a node by id is added to the delete's list.** `DETACH
+      DELETE` takes a node and its edges; claims, stake history, industry codes, the merge
+      log (both names in plain text), flags, pins, forwarding rows and the stored image name
+      it by id and stayed — a deleted person was still described row by row (findings item
+      129). `app.node_forget.ROWS` is the list, next to `merged_ids.REFERENCE_COLUMNS` (what a
+      merge re-points); a type with a `*_id` column pointing at a Person or an Entity goes
+      into the one it belongs to, with an indexed column, and the integration test's own
+      column list (written out, not read from the module — a test that takes its columns
+      from the code it checks let three mutants live).
 - [ ] **An identifier can name a predecessor.** A security, a ticker or a CIK outlives the
       company it was issued to: Sirius XM's old CUSIP maps (GLEIF's LEI-ISIN file) to the old
       Sirius, now SIRIUS XM INC. — the subsidiary the filer's own Exhibit 21 lists. The bridge

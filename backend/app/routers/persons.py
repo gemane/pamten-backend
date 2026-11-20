@@ -1041,8 +1041,9 @@ def delete_person(person_id: str, _: dict = Depends(require_contributor)):
     """
     with db.get_session() as session:
         session.run(query, id=person_id)
-        # the undo's pictures of this person go with it (findings item 123):
-        # a deleted person must not live on in a merge's stored copy
-        from app import merge_undo
-        merge_undo.forget(person_id)
-        return {"message": "Person deleted"}
+    # every row that names this person goes with them — claims, stake history,
+    # the merge log's names, flags, the forwarding rows, the portrait, the
+    # undo's stored copies (findings items 123 and 129). A suppression stays:
+    # it is what keeps the record hidden when the next import writes it again
+    from app import node_forget
+    return {"message": "Person deleted", "removed": node_forget.forget_node("Person", person_id)}
