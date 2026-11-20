@@ -152,7 +152,6 @@ Off unless `ANALYTICS_ENABLED` is set.
 | GET | `/scraper/bods/status` | — | Enabled state of the bulk GLEIF / UK datasets (imported from the CLI, not HTTP) |
 | GET | `/scraper/sources` | — | Per-source toggle states + `kind` (`instant` = query-driven, on-demand; `bulk` = scheduled dataset import). On-demand `/scraper/ensure` runs only enabled `instant` sources |
 | PATCH | `/scraper/sources/{name}/toggle` | admin | Flip a source on/off |
-| DELETE | `/scraper/company` | admin | Delete a company and all its related nodes |
 
 ## Media (images with their credit)
 | Method | Path | Auth | Description |

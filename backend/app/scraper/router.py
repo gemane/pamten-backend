@@ -457,20 +457,6 @@ def open_corporates_run(
         raise HTTPException(status_code=500, detail="OpenCorporates scrape failed. Check server logs for details.")
 
 
-# ── Purge endpoint ────────────────────────────────────────────────────────────
-
-@router.delete("/company")
-def purge_company(
-    name: str = Query(..., min_length=2, description="Exact company name to delete"),
-    _: dict = Depends(require_admin),
-):
-    """Delete a company entity and all its relationships, then orphans. Admin only."""
-    try:
-        return maintenance.purge_company(name)
-    except maintenance.CompanyNotFound:
-        raise HTTPException(status_code=404, detail=f"Company '{name}' not found")
-
-
 # ── Deduplication endpoint ─────────────────────────────────────────────────────
 
 @router.get("/duplicate-edges/count")

@@ -1897,6 +1897,13 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       no undo picture — one call would have made a merge the rules refuse (findings item
       125). Its tests pinned real rules through the old helper; port them to the path that
       stays, do not delete them with it.
+- [ ] **A cleanup is scoped to what the action touched, and deletes by id.** The admin
+      route that deleted a company matched it by name (every company of that name went) and
+      then removed "the orphans": every person and company in the whole graph without an
+      edge. On dev that was 75 records nobody asked about — the Wikidata claims-only
+      endpoints, kept without edges on purpose, with 60 claims — and with a full GLEIF import
+      most companies have no edge at all. Nobody called it; it was removed (findings item
+      127). "Has no edge" is not "is rubbish": a node can be held by its claims alone.
 - [ ] **An identifier can name a predecessor.** A security, a ticker or a CIK outlives the
       company it was issued to: Sirius XM's old CUSIP maps (GLEIF's LEI-ISIN file) to the old
       Sirius, now SIRIUS XM INC. — the subsidiary the filer's own Exhibit 21 lists. The bridge

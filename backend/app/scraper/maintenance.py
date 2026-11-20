@@ -21,52 +21,6 @@ from app.scraper.owns_merge import fold as _fold_edges
 log = logging.getLogger(__name__)
 
 
-class CompanyNotFound(Exception):
-    """Raised by purge_company when the named entity does not exist."""
-
-
-def purge_company(name: str) -> dict:
-    """
-    Delete a company entity and all its relationships from the graph, then
-    remove any nodes that are left with no remaining relationships (orphans).
-    Admin only. Useful for cleaning up test scrapes.
-    """
-    with db.get_session() as session:
-        # Check it exists first
-        rec = session.run(
-            "MATCH (e:Entity {name: $name}) RETURN e.id AS id LIMIT 1",
-            name=name,
-        ).single()
-        if not rec:
-            raise CompanyNotFound(f"Company '{name}' not found")
-
-        # Detach-delete the entity and all its relationships
-        session.run(
-            "MATCH (e:Entity {name: $name}) DETACH DELETE e",
-            name=name,
-        )
-
-        # Remove orphaned Person and Entity nodes (no remaining relationships)
-        orphan_result = session.run(
-            """
-            MATCH (n)
-            WHERE (n:Person OR n:Entity) AND NOT (n)--()
-            WITH n, n.name AS orphan_name
-            DETACH DELETE n
-            RETURN count(*) AS removed, collect(orphan_name) AS names
-            """
-        ).single()
-        orphans_removed = orphan_result["removed"] if orphan_result else 0
-        orphan_names    = orphan_result["names"]   if orphan_result else []
-
-    return {
-        "status":          "deleted",
-        "company":         name,
-        "orphans_removed": orphans_removed,
-        "orphans":         orphan_names,
-    }
-
-
 #: Owner vertices read per request when collecting OWNS edges. Each page is an
 #: index range on `id` plus one adjacency expansion — never a scan of OWNS.
 _OWNER_PAGE = 5000
