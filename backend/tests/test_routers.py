@@ -850,3 +850,17 @@ def test_persons_are_merged_through_one_path_only(client, make_token):
     assert r.status_code in (404, 405)
     assert not hasattr(maintenance, "deduplicate_person_nodes")
     assert not hasattr(maintenance, "_migrate_person_edges")
+
+
+def test_no_route_deletes_a_company_by_name_with_every_unconnected_node(client, make_token):
+    """Findings item 127: `DELETE /scraper/company?name=` deleted every company of
+    that name and then every person and company in the graph without an edge —
+    on dev 75 records nobody asked about, the Wikidata claims-only endpoints
+    among them, and with a full GLEIF import most of the graph. It is gone; one
+    record is deleted by id (`DELETE /entities/{id}`)."""
+    from app.scraper import maintenance
+    r = client.delete("/scraper/company", params={"name": "Acme Holdings"},
+                      headers={"Authorization": f"Bearer {make_token(role='admin')}"})
+    assert r.status_code in (404, 405)
+    assert not hasattr(maintenance, "purge_company")
+    assert not hasattr(maintenance, "CompanyNotFound")
