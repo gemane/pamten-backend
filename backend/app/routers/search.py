@@ -1411,11 +1411,15 @@ def get_person_profile(person_id: str):
             _attach_corroboration(h["relationship"], claims,
                                   person_id, h["entity"].get("id"), "owns")
 
+        from app import person_identity, suppressions
         return {
             "person": dict(record["p"]),
             "positions": positions_out,
             "holdings": holdings_out,
             "voting_groups": _voting_groups_of(session, person_id, hidden, "Person"),
+            # which entries this person was made of and how sure each merge is,
+            # and who else carries the name and birth month (findings item 124)
+            "identity": person_identity.identity(session, dict(record["p"]), suppressions.Guard(hidden, sup)),
         }
 
 

@@ -215,6 +215,23 @@ officer of the same name and birth month, and the chain of two shared
 companies makes the two entries and the officer one person. It works wherever
 `ch-officers` has read the companies.
 
+**What the person's page says** (`app/person_identity.py`, `app/merge_quality.py`;
+step 7 of item 124 and the user's "how sure" step). The person profile carries
+an `identity` block:
+
+- `merged` — the records folded into this person, found under every id the
+  person has had (a merge logs the keeper's id of the day), without the undone
+  ones. Each says how sure it was, read off the merge log's reason: **proof**
+  (one SEC filer number), **confirmed** (a person asked for it), **strong**
+  (a birth date to the day, or a birth month beside a second fact), **likely**
+  (a birth month under a rare name, or one company without a birth date). The
+  person's own tier is the weakest of them.
+- `namesakes` — the other persons of the same name and birth month the dedupe
+  left apart: two people, or one person nothing links. Up to ten, with the
+  count and up to three companies each; a suppressed one is not listed, and a
+  person without a birth month has no list. Under a common name this is what
+  the page shows instead of a guess.
+
 **Evidence links two people, not a group.** One company shared by two of ten
 namesakes used to make the whole group "high". Now the members are joined
 pair by pair (`_components`): those a shared company links are emitted as a
