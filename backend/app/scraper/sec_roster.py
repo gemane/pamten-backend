@@ -33,6 +33,18 @@ seat is given
       about any company: no grants to file for (a shareholder's nominee — Eve's
       Luis Carlos Affonso, LifeStance's Katherine Wood).
 
+    - to a director who DID file inside the window, as a later reporting
+      owner of a joint filing (findings item 118). The window lists a filing
+      under its first reporting owner; a director who reports together with
+      the fund they sit for is second or tenth in it, so the window credits
+      the fund and the person looks like one who did not file. Innovex's
+      Jason Turowsky: named in the proxy, a director among the reporting
+      owners, Form 4 of 2026-08-10 filed jointly with Amberjack Capital
+      Partners — and no seat. The relationship flags of a joint filing alone
+      prove nothing: they are copied to every filer (31 of the 33 later
+      owners flagged "director" in the windows of dev's issuers are the
+      funds' own entities), which is why the proxy's name stays the condition.
+
 Outside directors only. The table also lists the named executive officers of
 the last fiscal year, and those include people who have left — Molson Coors'
 2026 proxy lists Gavin Hattersley, who retired as chief executive in 2025; a
@@ -59,6 +71,9 @@ MAX_PERSON_FORM3 = 25
 
 #: an insider's filings after the Form 3: transactions and the annual statement
 _LATER_FORMS = frozenset({"4", "4/A", "5", "5/A"})
+#: a person's own Form 4/5s opened to find one about the issuer inside the
+#: window: they file a handful a year
+MAX_PERSON_LATER = 8
 
 _SUFFIXES = {"jr": "jr", "junior": "jr", "sr": "sr", "senior": "sr", "ii": "ii", "iii": "iii", "iv": "iv"}
 #: what a proxy appends to a name: footnote marks, degrees, a title after a comma
@@ -254,6 +269,51 @@ def own_form3(person_cik: str, issuer_cik: str) -> dict | None:
     return None
 
 
+def filed_jointly(person_cik: str, issuer_cik: str, since: str | None) -> dict | None:
+    """The person's newest Form 4 or 5 about the issuer filed on or after
+    ``since`` in which they are a reporting owner flagged a director — the
+    filing the insider window listed under its first reporting owner
+    (findings item 118): {"source_url", "source_date"}, or None. Reads the
+    person's own submissions, at most MAX_PERSON_LATER documents."""
+    import xml.etree.ElementTree as ET
+
+    from app.scraper import sec_edgar
+    if not since:
+        return None
+    try:
+        recent = (sec_edgar._submissions(person_cik).get("filings") or {}).get("recent") or {}
+    except httpx.HTTPError:
+        return None
+    issuer, person = sec_edgar._cik_int(issuer_cik), sec_edgar._cik_int(person_cik)
+    opened = 0
+    for form, acc, doc, filed in zip(recent.get("form") or [], recent.get("accessionNumber") or [],
+                                     recent.get("primaryDocument") or [], recent.get("filingDate") or []):
+        if form not in _LATER_FORMS or not filed or filed < since:
+            continue
+        if opened >= MAX_PERSON_LATER:
+            break
+        doc = doc.split("/")[-1] if doc else ""
+        if not doc:
+            continue
+        opened += 1
+        try:
+            root = ET.fromstring(sec_edgar._get_text(
+                f"{sec_edgar.ARCHIVES_URL}/{person}/{acc.replace('-', '')}/{doc}"))
+        except (httpx.HTTPError, ET.ParseError):
+            continue
+        about = (root.findtext(".//issuer/issuerCik") or "").strip()
+        if not about or sec_edgar._cik_int(about) != issuer:
+            continue
+        for owner in root.findall(".//reportingOwner"):
+            owner_cik = (owner.findtext(".//rptOwnerCik") or "").strip()
+            rel = owner.find("reportingOwnerRelationship")
+            if owner_cik and sec_edgar._cik_int(owner_cik) == person and rel is not None \
+                    and sec_edgar._xml_flag(rel, "isDirector"):
+                return {"source_url": sec_edgar._filing_index_url(issuer_cik, acc) or None,
+                        "source_date": filed}
+    return None
+
+
 def roster_insiders(cik: str, executives: list[dict], submissions: dict | None = None) -> list[dict]:
     """The proxy-named outside directors `executives` (the insider window's
     list) lacks — on a quiet board, or silent since their own Form 3 (the
@@ -315,12 +375,20 @@ def roster_insiders(cik: str, executives: list[dict], submissions: dict | None =
     # Silence must be the rule, or the person's own: where the board files
     # every year, a director the window lacks has left (see the module's head).
     quiet_board = bool(found) and len(found) >= seated_directors(people, executives)
-    out = [r for r in found if quiet_board or r["silent_since"]]
+    if not quiet_board:
+        # … or they did file, behind the fund they sit for (findings item 118)
+        recent = (subs.get("filings") or {}).get("recent") or {}
+        window = sec_edgar._form34_window_start(recent.get("form") or [], recent.get("filingDate") or [])
+        for r in found:
+            r["joint"] = None if r["silent_since"] else filed_jointly(r["person_cik"], cik, window)
+    out = [r for r in found if quiet_board or r["silent_since"] or r.get("joint")]
     for r in out:
         log.info("SEC EDGAR: %r (%s) is named in the %s of %s and is a director among the issuer's "
                  "reporting owners — seat%s (%s)", r["name"], r["person_cik"], filing["form"], filing["date"],
                  f" since {r['since']}" if r.get("since") else "",
-                 "a board that files little" if quiet_board else "nothing filed since the Form 3")
+                 "a board that files little" if quiet_board
+                 else "nothing filed since the Form 3" if r["silent_since"]
+                 else f"filed jointly on {r['joint']['source_date']}")
     for r in found:
         if r not in out:
             log.info("SEC EDGAR: %r (%s) is named in the %s of %s but the board files yearly and they "

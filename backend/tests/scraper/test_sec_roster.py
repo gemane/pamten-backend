@@ -351,3 +351,120 @@ def test_the_people_a_proxy_names_leave_the_companies_out():
     assert "Kenneth I. Chenault" in people and "Thomas S. Murphy, Jr." in people
     assert "BlackRock, Inc." not in people and "Cher" not in people
     assert "Harbor Lights Entertainment LLC" not in people
+
+
+# ── a director who files behind the fund they sit for (findings item 118) ───
+
+def _joint_xml(issuer_cik, owners):
+    """A joint Form 4: `owners` = [(cik, name, is_director)], in filing order."""
+    blocks = "".join(
+        f"<reportingOwner><reportingOwnerId><rptOwnerCik>{cik}</rptOwnerCik><rptOwnerName>{name}</rptOwnerName>"
+        f"</reportingOwnerId><reportingOwnerRelationship><isDirector>{1 if director else 0}</isDirector>"
+        f"<isTenPercentOwner>1</isTenPercentOwner></reportingOwnerRelationship></reportingOwner>"
+        for cik, name, director in owners)
+    return (f'<?xml version="1.0"?><ownershipDocument><documentType>4</documentType>'
+            f"<issuer><issuerCik>{issuer_cik}</issuerCik></issuer>{blocks}</ownershipDocument>")
+
+
+TUROWSKY, INNOVEX = "0001880001", "0001042893"
+FUND = ("0001880000", "Amberjack Capital Partners, L.P.", True)
+
+
+def _jointly(filings, pages, since="2025-05-12"):
+    subs = {"filings": {"recent": {"form": [f for f, _, _ in filings], "accessionNumber": [a for _, a, _ in filings],
+                                   "primaryDocument": ["xslF345X05/doc.xml"] * len(filings),
+                                   "filingDate": [d for _, _, d in filings]}}}
+
+    def text(url, params=None):
+        acc = url.split("/")[-2]
+        if acc not in pages:
+            raise httpx.ConnectError("no such filing")
+        return pages[acc]
+    with patch.object(sec_edgar, "_submissions", return_value=subs), \
+         patch.object(sec_edgar, "_get_text", side_effect=text) as fetched:
+        out = sec_roster.filed_jointly(TUROWSKY, INNOVEX, since)
+    return out, [c.args[0].split("/")[-2] for c in fetched.call_args_list]
+
+
+def test_a_later_reporting_owner_of_a_joint_form_4_about_the_issuer_has_filed():
+    """Innovex's Jason Turowsky is the last of several reporting owners of the
+    Form 4 of 2026-08-10; the window lists that filing under the fund."""
+    out, opened = _jointly(
+        [("3", "0001-26-000906", "2026-09-10"), ("4", "0001-26-000810", "2026-08-10")],
+        {"000126000810": _joint_xml(INNOVEX, [FUND, (TUROWSKY, "Turowsky Jason", True)])})
+    assert out["source_date"] == "2026-08-10"
+    assert out["source_url"].endswith("/1042893/000126000810/0001-26-000810-index.htm")
+    assert opened == ["000126000810"]                       # the Form 3 is not a later form
+
+
+@pytest.mark.parametrize("why, filings, page", [
+    ("about another issuer", [("4", "0001-26-000810", "2026-08-10")],
+     _joint_xml("0000999999", [FUND, (TUROWSKY, "Turowsky Jason", True)])),
+    ("their own block is no director's", [("4", "0001-26-000810", "2026-08-10")],
+     _joint_xml(INNOVEX, [FUND, (TUROWSKY, "Turowsky Jason", False)])),
+    ("only the fund is in it", [("4", "0001-26-000810", "2026-08-10")], _joint_xml(INNOVEX, [FUND])),
+    ("filed before the window", [("4", "0001-26-000810", "2025-05-11")],
+     _joint_xml(INNOVEX, [FUND, (TUROWSKY, "Turowsky Jason", True)])),
+    ("unreadable", [("4", "0001-26-000810", "2026-08-10")], "<ownershipDocument>"),
+])
+def test_what_does_not_count_as_having_filed(why, filings, page):
+    out, _ = _jointly(filings, {"000126000810": page})
+    assert out is None, why
+
+
+def test_a_form_5_counts_and_the_newest_filing_about_the_issuer_is_taken():
+    joint = _joint_xml(INNOVEX, [FUND, (TUROWSKY, "Turowsky Jason", True)])
+    out, opened = _jointly(
+        [("4", "0001-26-000900", "2026-09-01"), ("5", "0001-26-000210", "2026-02-10"),
+         ("4", "0001-25-001201", "2025-12-01")],
+        {"000126000900": _joint_xml("0000999999", [(TUROWSKY, "Turowsky Jason", True)]),   # another board
+         "000126000210": joint, "000125001201": joint})
+    assert out["source_date"] == "2026-02-10" and opened == ["000126000900", "000126000210"]
+
+
+def test_without_a_window_nothing_is_asked_and_the_documents_opened_are_capped():
+    out, opened = _jointly([("4", "0001-26-000810", "2026-08-10")], {}, since=None)
+    assert out is None and opened == []
+    many = [("4", f"0001-26-{i:06d}", "2026-08-10") for i in range(sec_roster.MAX_PERSON_LATER + 5)]
+    out, opened = _jointly(many, {})                         # every one unreadable
+    assert out is None and len(opened) == sec_roster.MAX_PERSON_LATER
+
+
+def _yearly_board(joint, silent=False):
+    """Pool's shape — a board that files every year — with a window to count from."""
+    sabater = {**FORM3, "name": "Carlos A Sabater", "person_cik": "0000000101", "silent_since": silent}
+    seated = [e["name"] for e in POOL_WINDOW]
+    subs = {"filings": {"recent": {"form": ["4", "10-K"], "filingDate": ["2026-08-10", "2026-02-01"]}}}
+    with patch("app.scraper.proxy_statement.latest_table_filing", return_value=FILING), \
+         patch.object(sec_edgar, "_get_text", return_value="<html></html>"), \
+         patch.object(sec_roster, "roster_people", return_value=seated + ["Carlos A. Sabater"]), \
+         patch.object(sec_roster, "issuer_owners", return_value=POOL_OWNERS), \
+         patch.object(sec_roster, "own_form3", return_value=dict(sabater)), \
+         patch.object(sec_roster, "filed_jointly", return_value=joint) as asked:
+        return roster_insiders("0000945841", POOL_WINDOW, subs), asked
+
+
+def test_a_proxy_named_director_who_filed_jointly_keeps_the_seat_on_a_board_that_files_yearly():
+    out, asked = _yearly_board({"source_url": "u", "source_date": "2026-08-10"})
+    assert [r["name"] for r in out] == ["Carlos A Sabater"]
+    # asked with the issuer's insider window: 456 days before its newest Form 4
+    assert asked.call_args.args == ("0000000101", "0000945841", "2025-05-11")
+    assert out[0]["since"] == FORM3["period_of_report"] and out[0]["shares_owned"] is None    # a seat, no holding
+
+
+def test_a_director_who_did_not_file_even_jointly_has_left():
+    out, asked = _yearly_board(None)
+    assert out == [] and asked.call_count == 1
+
+
+def test_the_silent_director_is_seated_without_the_extra_reads():
+    out, asked = _yearly_board(None, silent=True)
+    assert [r["name"] for r in out] == ["Carlos A Sabater"] and asked.call_count == 0
+
+
+def test_on_a_quiet_board_nobody_is_asked_about_joint_filings():
+    """The quiet board seats every proxy-named director the owner list knows;
+    the extra reads would change nothing."""
+    with patch.object(sec_roster, "seated_directors", return_value=0):
+        out, asked = _yearly_board({"source_url": "u", "source_date": "2026-08-10"})
+    assert [r["name"] for r in out] == ["Carlos A Sabater"] and asked.call_count == 0

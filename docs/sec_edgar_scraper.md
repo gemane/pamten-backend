@@ -1641,7 +1641,19 @@ people (ONEOK's two, Valvoline's, Herc's, HubSpot's …). So a seat is given
 - to a director who has **filed nothing since their Form 3** about the issuer,
   about any company (`silent_since`, read off their own index): no grants to
   file for — a shareholder's nominee, as Eve's Luis Carlos Affonso (Embraer) or
-  LifeStance's Katherine Wood.
+  LifeStance's Katherine Wood; or
+- to a director who **did file inside the window, jointly** (`filed_jointly`,
+  findings item 118): the window lists a filing under its first reporting
+  owner, and a director who reports together with the fund they sit for is a
+  later one — Innovex's Jason Turowsky, last of the reporting owners of the
+  Form 4 of 2026-08-10 that Amberjack Capital Partners leads. The window
+  credited the fund, so he looked like a director who had stopped filing. The
+  person's own Form 4/5s since the window's start are opened (at most
+  `MAX_PERSON_LATER = 8`) for one about the issuer in which their own block is
+  flagged a director. The flag alone is no proof — a joint filing copies it to
+  every filer, and 31 of the 33 later owners so flagged in the windows of dev's
+  issuers are the funds' own entities — so the proxy's name stays the
+  condition: only a person the proxy names is asked about.
 
 Everybody else stays out: a director who filed yearly and then stopped is more
 likely gone than quiet, and an open seat for somebody who left is the worse
