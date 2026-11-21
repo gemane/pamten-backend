@@ -1987,6 +1987,18 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       open seat's start (resigned and re-appointed the same day) would have closed a seat
       its holder serves in. Ask of every "end it" rule: which term is this the end of, and
       does the holder appear as serving in the very same answer?
+- [ ] **Measure a matching rule at the size it will run at, and ask what a piece of
+      evidence is evidence ABOUT.** "Same name and birth month" was measured on dev's 6,102
+      officers: 231 pairs, 0.05 expected wrong. On the full UK register (14 million people)
+      the same rule joins at least 25,000 pairs of different people, because a common name
+      has hundreds of bearers and only about 605 birth months to put them in — one group in
+      six for the names a scrape starts from (findings item 124). Two lessons: the strength
+      of a coincidence depends on how many candidates there are, so count them (here: the
+      birth months a name spans) inside the rule; and evidence found between two members of
+      a group — one shared company — says nothing about the others, so join pair by pair.
+      And check the yardstick before trusting it: the register's identity-verification day
+      looked like proof of two people when it differed, and differs in 4 % of the groups of
+      a name only one person bears.
 
 ## 9. Documentation
 

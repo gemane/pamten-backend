@@ -119,9 +119,53 @@ officer ids with the same name and a month each — 231 the same month, 13
 another (6 of those one man with a typo). Two different people share a month
 about once in 240, so ~0.05 of the 231 are expected to be wrong. A rule asking
 for a shared company as well would have sent 84 of the 231 to review, all plainly
-one person at sister companies. **This holds at dev's size only**: the number of
-namesake pairs grows with the square of the persons, and a register-wide import
-(production) needs the measurement again before the month merges alone there.
+one person at sister companies. **This held at dev's size only**: the number of
+namesake pairs grows with the square of the persons.
+
+**The month at register scale** (findings item 124, measured 2026-11-21 on the
+full UK PSC snapshot of 2026-10-16: 14,010,118 people, 7,239,834 names by
+`_name_key`, every one with a birth month). 2,405,972 name-and-month groups
+hold 53 % of the entries — mostly one person at several companies, the merge
+that is wanted. But the register's birth months amount to about 605 equally
+likely ones, so two different people of a name that spans *m* months share one
+with probability m(m−1)/2/605: at least 25,256 groups hold two different
+people, three quarters of them under the 9,891 names with twenty months or
+more ("Ali Muhammad" 341, "David Smith" 331). For the names of dev's scraped
+persons — what a scoped scan starts from — about one group in six.
+
+So a shared month merges only
+
+- under a **rare name**: its bearers in the scan span at most
+  `PERSON_RARE_NAME_MONTHS` (3) birth months (`_name_months`). 7,090,650 of the
+  7.24 million names are rare by that measure and hold 2,037,128 of the groups;
+  1,184 of those are expected to be two people (0.058 %). The reason says "a
+  rare name";
+- or beside **a second fact about the same two people** — today a shared
+  company. The 149,184 other names wait for one ("a birth month alone does not
+  tell namesakes apart — the name spans N birth months").
+
+A full birth date still stands alone. The register's own check: where two
+entries of a group carry an identity-verification day, the days differ in
+4.0 % of the groups of a name with ONE birth month — one person verified
+twice, the floor of this measure — in 3.7 % under two or three months, and in
+7.1 % under five or more.
+
+**Evidence links two people, not a group.** One company shared by two of ten
+namesakes used to make the whole group "high". Now the members are joined
+pair by pair (`_components`): those a shared company links are emitted as a
+group of their own, a chain of links (A with B at one company, B with C at
+another) is one person, and the rest stay for review ("only some of them share
+a company").
+
+**A full scan has a size limit.** It loads every person; above
+`PERSON_FULL_SCAN_MAX` (200,000) persons it is refused — `GET
+/persons/duplicates` and `POST /persons/deduplicate` answer 409, `manage.py
+dedupe-persons` exits 1 — and the scoped scan (`--scraped-only`) is the way.
+A scoped scan counts a name's months among the persons it fetches for it (the
+same full name or alias), so a name written in another word order can look
+rarer than it is; merging at import, over the whole register file, is planned
+with the production server.
+
 The merge log's reason says "same birth month" or "same birth date", so the
 month merges can be listed.
 
@@ -135,7 +179,8 @@ scan (`_all_pairs_dismissed`).
 under `needs_review`. It runs:
 
 - on demand via `POST /persons/deduplicate` (`apply=false` = dry run) and
-  `manage.py dedupe-persons` (`--dry-run`) — a **full** scan of every person
+  `manage.py dedupe-persons` (`--dry-run`) — a **full** scan of every person,
+  refused above `PERSON_FULL_SCAN_MAX` persons
   (`--scraped-only` seeds the scoped scan from the persons with a SEC CIK or
   Wikidata item instead, bounded on a graph with millions of register persons:
   188 s for 1,480 seeds on dev against 1 s for the full scan of 1,509, the same

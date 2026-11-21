@@ -276,10 +276,14 @@ def cmd_dedupe_persons(args):
     instead (188 s for 1,480 on dev, the same groups). High-confidence groups
     merge; the rest are reported for review, as after a scrape."""
     _apply_direct_db_url(args)
-    from app.routers.persons import deduplicate_high_confidence
+    from app.routers.persons import ScanTooLarge, deduplicate_high_confidence
     seeds = _hard_id_person_ids() if getattr(args, "scraped_only", False) else None
     dry = getattr(args, "dry_run", False)
-    res = deduplicate_high_confidence(apply=not dry, seed_ids=seeds)
+    try:
+        res = deduplicate_high_confidence(apply=not dry, seed_ids=seeds)
+    except ScanTooLarge as exc:
+        print(str(exc))
+        sys.exit(1)
     for g in res["merged"]:
         print(f"  {g['keep_name']} ({g['keep_id']}) takes {', '.join(g['merged'])}")
     print(f"{'Would merge' if dry else 'Merged'} {res['merged_count']} persons across "
