@@ -2031,6 +2031,12 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       every reader of the same record — the mapper, the digest, the dry-run counters — and
       add it so that records WITHOUT the field keep the digest they had (here: appended only
       when present), or the whole register looks changed.
+- [ ] **A log row is keyed by the id of the day.** The merge log stores the keeper's id when
+      the merge ran; the keeper is later merged into somebody else, or learns a filer number
+      and is re-keyed (`wd:…` → `sec:…`). "The merges of this person" asked by its present
+      id found none of the earlier ones (findings item 124, step 7). Collect every id the
+      node has had from the forwarding rows first, then ask the log — and test it with a
+      chain and a re-key, not with one merge.
 
 ## 9. Documentation
 
