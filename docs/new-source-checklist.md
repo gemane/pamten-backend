@@ -1913,6 +1913,15 @@ undo than a missing one. See [`deduplication.md`](deduplication.md) for the mode
       into the one it belongs to, with an indexed column, and the integration test's own
       column list (written out, not read from the module — a test that takes its columns
       from the code it checks let three mutants live).
+- [ ] **A new public read goes through the suppression guard and into the walk.** The
+      filter was written out per route, so ten routes had none: a suppressed person was
+      served by `GET /persons/{id}`, drawn in a company's timeline, linked in the provenance
+      list and exported in the spreadsheet's Claims sheet (findings item 130). Every read
+      asks `suppressions.guard(session)` — `node(id)` for what it is about, `edge(...)` for
+      every holding or seat it lists — and
+      `tests/integration/test_suppression_reads_it.py` walks every GET route the app
+      declares; a route it does not know fails it. A reader that takes rows straight from
+      `Claim` or `StakeHistory` (they outlive a deleted edge) filters them the same way.
 - [ ] **An identifier can name a predecessor.** A security, a ticker or a CIK outlives the
       company it was issued to: Sirius XM's old CUSIP maps (GLEIF's LEI-ISIN file) to the old
       Sirius, now SIRIUS XM INC. — the subsidiary the filer's own Exhibit 21 lists. The bridge

@@ -3,6 +3,7 @@ from app.models.person import PersonCreate, PersonResponse, PersonMergeRequest, 
 from app.generations import generation_marks, marks_conflict
 from app.auth.dependencies import require_contributor
 from app.database import db
+from app import suppressions
 from app.db.arcadedb import run_sql
 from app.merged_ids import record_merge, resolve_current_id
 from app.claims import migrate_claims
@@ -950,7 +951,8 @@ def list_persons(skip: int = Query(0, ge=0, le=100_000), limit: int = Query(20, 
     """
     with db.get_session() as session:
         result = session.run(query, skip=skip, limit=limit)
-        return [dict(record["p"]) for record in result]
+        # a suppressed person is hidden in every public read (findings item 130)
+        return suppressions.guard(session).visible([dict(record["p"]) for record in result])
 
 # ── Catch-all by-id routes, LAST on purpose ──────────────────────────────────
 # The {id:path} converter is greedy — it exists because PSC-derived ids carry
@@ -973,7 +975,9 @@ def get_person(person_id: str):
             merged_into = resolve_current_id(session, person_id)
             if merged_into:
                 record = session.run(query, id=merged_into).single()
-        if not record:
+        # a suppressed person answers as one who is not there — the same 404 the
+        # profile gives (findings item 130: this route showed the whole record)
+        if not record or suppressions.guard(session).node(dict(record["p"]).get("id")):
             raise HTTPException(status_code=404, detail="Person not found")
         return dict(record["p"])
 @router.put("/{person_id:path}", response_model=PersonResponse)

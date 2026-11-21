@@ -434,7 +434,16 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
                     s.get("filing_type"), s.get("read_from")]
                    for s in get_sources_for_entity(entity_id)]
 
-    claims = claims_for(to_id=entity_id) + claims_for(from_id=entity_id, kind="owns")
+    # the Claims and Stake history sheets read the rows themselves, not the
+    # profile's filtered lists: what a moderator suppressed is left out here
+    # too — a person, a company, a holding, a seat (findings item 130)
+    from app import suppressions
+    from app.database import db
+    with db.get_session() as session:
+        shown = suppressions.guard(session)
+    claims = [c for c in claims_for(to_id=entity_id) + claims_for(from_id=entity_id, kind="owns")
+              if not (c.get("kind") in ("owns", "role")
+                      and shown.edge(c["kind"], c.get("from_id"), c.get("to_id"), c.get("role") or ""))]
     names = {entity_id: name}
     for o in profile["owners"]:
         names[o["owner"].get("id")] = _name(o["owner"])
@@ -458,7 +467,8 @@ def build_workbook(entity_id: str, opt: ExportOptions) -> tuple[str, bytes]:
                    h.get("as_of"), _pct(h.get("stake_percent")), _pct(h.get("previous_percent")),
                    _source(h.get("source_id"), sources), h.get("filing_type"),
                    Link(h["source_url"]) if h.get("source_url") else None, h.get("recorded_at")]
-                  for h in history_for_entity(entity_id)]
+                  for h in history_for_entity(entity_id)
+                  if not shown.edge("owns", h.get("from_id"), h.get("to_id"))]
 
     counts = profile.get("counts") or {}
     stake_label = ("any" if not opt.min_stake else

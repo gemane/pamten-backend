@@ -231,6 +231,34 @@ def test_is_suppressed_matches_natural_key():
     assert not is_suppressed(keys, "role", "p", "e", "CFO")
 
 
+def test_the_guard_hides_a_suppressed_node_and_every_edge_that_touches_it():
+    """Findings item 130: one object, two questions — a route cannot apply
+    half of the filter. An edge is hidden when it is suppressed itself or
+    when either of its ends is."""
+    from app.suppressions import Guard
+    shown = Guard({"p-hidden"}, {("owns", "a", "b", ""), ("role", "p", "e", "CEO")})
+    assert shown.node("p-hidden") and not shown.node("p") and not shown.node(None)
+    assert shown.edge("owns", "a", "b") and not shown.edge("owns", "b", "a")
+    assert shown.edge("role", "p", "e", "CEO") and not shown.edge("role", "p", "e", "CFO")
+    assert shown.edge("owns", "p-hidden", "x") and shown.edge("role", "x", "p-hidden", "CEO")
+    assert shown.visible([{"id": "p"}, {"id": "p-hidden"}, {"id": None}]) == [{"id": "p"}, {"id": None}]
+
+
+def test_a_timeline_event_is_hidden_by_the_holding_or_seat_it_states():
+    from app.routers.relationships import _event_hidden
+    from app.suppressions import Guard
+    shown = Guard({"gone"}, {("owns", "holder", "co", ""), ("owns", "co", "sub", ""), ("role", "p", "co", "CEO")})
+    ev = lambda kind, party, **more: {"kind": kind, "party": {"id": party}, **more}     # noqa: E731
+    assert _event_hidden(shown, "co", ev("ownership_in", "holder"))
+    assert not _event_hidden(shown, "co", ev("ownership_out", "holder"))       # the other direction is another holding
+    assert _event_hidden(shown, "co", ev("ownership_out", "sub"))
+    assert _event_hidden(shown, "co", ev("role", "p", role="CEO")) and not _event_hidden(shown, "co", ev("role", "p", role="CFO"))
+    assert _event_hidden(shown, "co", ev("stake_reached", "holder", direction="in"))
+    assert _event_hidden(shown, "co", ev("stake_dropped", "sub", direction="out"))
+    assert _event_hidden(shown, "co", ev("role", "gone", role="Director"))
+    assert not _event_hidden(shown, "co", {"kind": "renamed"})                 # the company's own events stay
+
+
 # ── Pin (Phase B) ────────────────────────────────────────────────────────────
 
 def test_pin_requires_moderator(client, fake_db, make_token):

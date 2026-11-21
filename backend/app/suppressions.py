@@ -41,3 +41,41 @@ def load_suppressed_nodes(session) -> set:
         if nid:
             ids.add(nid)
     return ids
+
+
+class Guard:
+    """Both suppression sets, loaded once for a request — what every public
+    read asks before it shows a node or an edge (findings item 130).
+
+    The filter used to be two loads and an `if` written out in each route that
+    remembered it; the routes that did not (the plain record reads, the
+    timeline, the stake series, the portrait) showed a suppressed person to
+    anyone with the id. One object with two questions is harder to half-apply.
+    """
+
+    def __init__(self, nodes: set, keys: set[tuple]):
+        self.nodes, self.keys = nodes, keys
+
+    def node(self, node_id) -> bool:
+        """Is this person / company suppressed?"""
+        return bool(node_id) and node_id in self.nodes
+
+    def edge(self, target_kind: str, from_id, to_id, role: str = "") -> bool:
+        """Is this holding / seat hidden — itself suppressed, or either end?"""
+        return (self.node(from_id) or self.node(to_id)
+                or is_suppressed(self.keys, target_kind, from_id, to_id, role))
+
+    def visible(self, rows, key="id") -> list:
+        """The rows whose node is not suppressed (`key` names the id field)."""
+        return [r for r in rows if not self.node(r.get(key))]
+
+
+def guard(session) -> Guard:
+    return Guard(load_suppressed_nodes(session), load_keys(session))
+
+
+def node_hidden(node_id) -> bool:
+    """One node, asked outside a session a caller already holds."""
+    from app.database import db
+    with db.get_session() as session:
+        return node_id in load_suppressed_nodes(session)

@@ -12,6 +12,7 @@ from app.models.relationship import (
 )
 from app.database import db
 from app.db.anchors import node_label
+from app import suppressions
 from app.suppressions import load_keys, is_suppressed, load_suppressed_nodes
 from app.pins import load_pins, apply_pin
 from app.claims import ACQUISITION_FILING_TYPES, KIND_OWNS, record_claim
@@ -294,8 +295,19 @@ def ownership_tree_of(
         # company walk found nothing, by one indexed point read
         if not paths and session.run("MATCH (g:VotingGroup {id: $id}) RETURN g.id AS id", id=entity_id).single():
             paths = _walk(session, "VotingGroup")
+        shown = suppressions.guard(session)
 
-    return paths[:limit], len(paths) > limit
+    truncated = len(paths) > limit
+    # a path through a suppressed company or holding is not shown — the root's
+    # own tree is empty when the root is the suppressed one (findings item 130)
+    paths = [p for p in paths[:limit] if not _path_hidden(shown, p)]
+    return paths, truncated
+
+
+def _path_hidden(shown, path: dict) -> bool:
+    ids = [n.get("id") for n in path.get("nodes") or []]
+    return (any(shown.node(i) for i in ids)
+            or any(shown.edge("owns", a, b) for a, b in zip(ids, ids[1:])))
 
 
 @router.get("/ownership-tree/{entity_id:path}")
@@ -359,6 +371,8 @@ def subsidiary_tree_of(entity_id: str, max_nodes: int = SUBTREE_DEFAULT_NODES,
         sup = load_keys(session)
         hidden = load_suppressed_nodes(session)
         pins = load_pins(session)
+    if entity_id in hidden:        # a suppressed company has no tree to show: not found, as its profile (item 130)
+        return None
     seen: dict[str, str] = {root[0]["rid"]: entity_id}      # vertex rid -> id
     frontier = [root[0]["rid"]]
     nodes: list[dict] = []
@@ -600,6 +614,8 @@ def owners_of(entity_id: str, limit: int = OWNERS_DEFAULT_LIMIT) -> tuple[list[d
         rows = rows[:limit]
         sup = load_keys(session)                  # suppressed owner edges
         hidden = load_suppressed_nodes(session)   # suppressed owner nodes
+        if entity_id in hidden:                   # a suppressed company's owners are not listed either (item 130)
+            return [], False
         pins = load_pins(session)                 # pinned corrections
         out = []
         for record in rows:
@@ -831,6 +847,19 @@ def _history_pass(session, label: str, entity_id: str, limit: int) -> tuple[list
     return events, truncated, rec is not None
 
 
+def _event_hidden(shown, entity_id: str, event: dict) -> bool:
+    """Does a timeline event name something suppressed? Events without a party
+    (a rename, a dissolution) are the company's own and stay."""
+    party = (event.get("party") or {}).get("id")
+    if not party:
+        return False
+    kind = event.get("kind")
+    if kind == "role":
+        return shown.edge("role", party, entity_id, event.get("role") or "")
+    outward = kind == "ownership_out" or event.get("direction") == "out"
+    return shown.edge("owns", entity_id, party) if outward else shown.edge("owns", party, entity_id)
+
+
 def ownership_history_of(
     entity_id: str, limit: int = HISTORY_DEFAULT_LIMIT,
 ) -> tuple[list[dict], bool]:
@@ -857,6 +886,14 @@ def ownership_history_of(
     # stake movement the timeline tells; the quarterly drift between stays in
     # the holding's own history (app.stake_history), where it cannot flood this.
     events.extend(_stake_crossing_events(entity_id))
+    with db.get_session() as session:
+        shown = suppressions.guard(session)
+    # the timeline is a public read like the profile: nothing of a suppressed
+    # company, and no event that names a suppressed person, company, holding
+    # or seat (findings item 130 — it showed all four)
+    if shown.node(entity_id):
+        return [], False
+    events = [e for e in events if not _event_hidden(shown, entity_id, e)]
 
     # Dated events first (desc), undated at bottom
     def sort_key(e):
@@ -877,7 +914,12 @@ def get_stake_history(
     from app.stake_history import history_for_pair
     from app.merged_ids import canonical_id
     sources = _source_names()
-    rows = history_for_pair(canonical_id(from_id), canonical_id(to_id))
+    holder, held = canonical_id(from_id), canonical_id(to_id)
+    with db.get_session() as session:
+        # the series behind a suppressed holding, holder or company is not served (findings item 130)
+        if suppressions.guard(session).edge("owns", holder, held):
+            return []
+    rows = history_for_pair(holder, held)
     return [{**r, "source_name": sources.get(r.get("source_id"))} for r in rows]
 
 

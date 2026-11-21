@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from app.models.source import SourceCreate, SourceResponse
 from app.auth.dependencies import require_contributor
 from app.database import db
+from app import suppressions
 
 router = APIRouter(prefix="/sources", tags=["Sources"])
 
@@ -54,6 +55,16 @@ def get_source(source_id: str):
         return dict(record["s"])
 
 
+def _fact_hidden(shown, rec) -> bool:
+    """Is the fact this provenance row cites a suppressed holding or seat (or
+    one whose other end is suppressed)? A row about the node itself has no
+    fact columns and stays."""
+    kind = rec.get("fact_kind")
+    if kind not in ("owns", "role"):
+        return False
+    return shown.edge(kind, rec.get("fact_from"), rec.get("fact_to"), rec.get("fact_role") or "")
+
+
 # Per-entry provenance for an entity is where *its own* information came from:
 # who owns it, its executives, and the entity record itself. We deliberately do
 # NOT include the entity's outbound ownership edges (its subsidiaries) — those
@@ -83,7 +94,8 @@ _PROVENANCE_QUERIES = (
            c.source_url AS source_url, c.source_date AS source_date,
            c.last_seen_at AS last_scraped_at, c.filing_type AS filing_type,
            c.read_from AS read_from, c.validation_sources AS validation_sources,
-           c.validation_documents AS validation_documents
+           c.validation_documents AS validation_documents,
+           c.kind AS fact_kind, c.from_id AS fact_from, c.to_id AS fact_to, c.role AS fact_role
     """,
     # NOTE: the entity's OWN record provenance is a different question, answered by
     # _entity_own_source_rows from its hard identifiers — claims describe relationships,
@@ -207,8 +219,15 @@ def get_sources_for_entity(entity_id: str):
              "validation_sources", "validation_documents")
     rows: list[dict] = []
     with db.get_session() as session:
+        # nothing is cited for a suppressed node, and the record behind a
+        # suppressed holding or seat is not linked either (findings item 130)
+        shown = suppressions.guard(session)
+        if shown.node(entity_id):
+            return []
         for query in _PROVENANCE_QUERIES:            # owners + roles (edge provenance)
             for rec in session.run(query, entity_id=entity_id):
+                if _fact_hidden(shown, rec):
+                    continue
                 rows.append({c: rec.get(c) for c in _COLS})
         rows.extend(_entity_own_source_rows(session, entity_id))   # the record's own sources
 
@@ -228,7 +247,8 @@ _PERSON_PROVENANCE_QUERIES = (
            s.credibility_score AS credibility_score, s.url AS source_home_url,
            r.source_url AS source_url, r.source_date AS source_date,
            r.last_scraped_at AS last_scraped_at, r.filing_type AS filing_type,
-           r.read_from AS read_from
+           r.read_from AS read_from,
+           'owns' AS fact_kind, p.id AS fact_from, x.id AS fact_to, '' AS fact_role
     """,
     # Roles this person holds
     """
@@ -238,7 +258,8 @@ _PERSON_PROVENANCE_QUERIES = (
     RETURN s.id AS id, s.name AS name, s.type AS type,
            s.credibility_score AS credibility_score, s.url AS source_home_url,
            r.source_url AS source_url, r.source_date AS source_date,
-           r.last_scraped_at AS last_scraped_at, r.read_from AS read_from
+           r.last_scraped_at AS last_scraped_at, r.read_from AS read_from,
+           'role' AS fact_kind, p.id AS fact_from, x.id AS fact_to, r.role AS fact_role
     """,
     # Provenance stamped directly on the person record
     """
@@ -264,8 +285,15 @@ def get_sources_for_person(person_id: str):
              "validation_sources", "validation_documents")
     rows: list[dict] = []
     with db.get_session() as session:
+        # as for a company: nothing for a suppressed person, no link to the
+        # record behind a suppressed holding or seat (findings item 130)
+        shown = suppressions.guard(session)
+        if shown.node(person_id):
+            return []
         for query in _PERSON_PROVENANCE_QUERIES:
             for rec in session.run(query, person_id=person_id):
+                if _fact_hidden(shown, rec):
+                    continue
                 rows.append({c: rec.get(c) for c in _COLS})
 
     return _dedupe_source_rows(rows)
