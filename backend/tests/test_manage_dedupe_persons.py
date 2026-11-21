@@ -57,3 +57,34 @@ def test_the_command_is_registered_with_the_flags_it_reads():
     assert args.scraped_only is True and args.dry_run is True and args.func is manage.cmd_dedupe_persons
     plain = manage._build_parser().parse_args(["dedupe-persons"])
     assert plain.scraped_only is False and plain.dry_run is False
+
+
+def test_a_graph_too_large_for_the_full_scan_says_how_to_scan_it(monkeypatch, capsys):
+    """Findings item 124: the full scan loads every person; on a register-sized
+    graph the command says so and names the scoped scan, and writes nothing."""
+    import pytest
+
+    from app.routers import persons
+
+    def refuse(apply=True, seed_ids=None):
+        raise persons.ScanTooLarge("14,010,118 persons: … manage.py dedupe-persons --scraped-only")
+    monkeypatch.setattr(persons, "deduplicate_high_confidence", refuse)
+    with pytest.raises(SystemExit) as stop:
+        manage.cmd_dedupe_persons(SimpleNamespace(scraped_only=False, dry_run=False, db_url=None))
+    assert stop.value.code == 1
+    assert "--scraped-only" in capsys.readouterr().out
+
+
+def test_the_scan_routes_answer_409_on_a_graph_too_large(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    from app.routers import persons
+
+    def refuse(*args, **kwargs):
+        raise persons.ScanTooLarge("too many persons")
+    monkeypatch.setattr(persons, "scan_duplicate_groups", refuse)
+    for call in (lambda: persons.find_duplicate_persons({}), lambda: persons.deduplicate_persons(True, {})):
+        with pytest.raises(HTTPException) as err:
+            call()
+        assert err.value.status_code == 409 and err.value.detail == "too many persons"

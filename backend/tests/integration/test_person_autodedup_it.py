@@ -358,7 +358,8 @@ def test_the_two_who_share_a_month_merge_beside_a_namesake_born_in_another(it_db
     res = deduplicate_high_confidence(apply=True)
     assert res["merged_count"] == 1
     assert len(_alive(it_db)) == 2 and "choff:c" in _alive(it_db)
-    assert it_db.run_command("MATCH (ml:MergeLog) RETURN ml.reason AS r")[0]["r"].endswith("same birth month")
+    assert it_db.run_command("MATCH (ml:MergeLog) RETURN ml.reason AS r")[0]["r"].endswith(
+        "same birth month, a rare name")
 
 
 def test_two_full_dates_are_logged_as_a_date_and_a_manual_merge_as_manual(it_db):
@@ -372,3 +373,139 @@ def test_two_full_dates_are_logged_as_a_date_and_a_manual_merge_as_manual(it_db)
     assert reasons["p-d"] == "manual"
     auto = next(v for k, v in reasons.items() if k != "p-d")
     assert auto.endswith("same birth date")
+
+
+# ── a birth month is evidence for a rare name only; evidence links two people,
+#    not a group (findings item 124) ──────────────────────────────────────────
+
+def _works_at(it_db, company, *pids):
+    it_db.run_command(f"CREATE (:Entity {{id: '{company}', name: '{company}', type: 'company'}})")
+    for pid in pids:
+        it_db.run_command(f"MATCH (p:Person {{id: '{pid}'}}), (e:Entity {{id: '{company}'}}) "
+                          "CREATE (p)-[:HAS_ROLE {role: 'Director'}]->(e)")
+
+
+def _david_smiths(it_db, months):
+    """One David Smith per birth month, and a second one born in the first."""
+    _people(it_db, *[(f"chpsc:ds{i}", "David Smith", m) for i, m in enumerate(months)],
+            ("chpsc:twin", "David Smith", months[0]))
+
+
+@pytest.mark.parametrize("months, merged", [
+    (["1961-03", "1958-07", "1974-11"], 1),                       # three birth months: a rare name
+    (["1961-03", "1958-07", "1974-11", "1980-01"], 0),            # four: a namesake is to be expected
+])
+def test_a_shared_birth_month_merges_only_under_a_rare_name(it_db, months, merged):
+    """The full UK register has 331 birth months of "David Smith"; two of them
+    born in the same one are two people more often than the old rule allowed."""
+    from app.routers.persons import deduplicate_high_confidence
+    _david_smiths(it_db, months)
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == merged
+    assert ("chpsc:twin" in _alive(it_db) and "chpsc:ds0" in _alive(it_db)) is (merged == 0)
+    if not merged:
+        pair = [g for g in res["needs_review"] if {m["id"] for m in g["members"]} == {"chpsc:ds0", "chpsc:twin"}]
+        assert len(pair) == 1 and pair[0]["confidence"] != "high"
+        assert "a birth month alone does not tell namesakes apart — the name spans 4 birth months" in pair[0]["reason"]
+
+
+def test_under_a_common_name_the_month_counts_beside_a_shared_company(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _david_smiths(it_db, ["1961-03", "1958-07", "1974-11", "1980-01"])
+    _works_at(it_db, "acme", "chpsc:ds0", "chpsc:twin")
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1 and len(_alive(it_db)) == 4
+    assert "share a company" in it_db.run_command("MATCH (ml:MergeLog) RETURN ml.reason AS r")[0]["r"]
+
+
+def test_only_the_two_a_company_links_merge_not_the_third_of_the_month(it_db):
+    """Three David Smiths born in March 1961, two of them at one company: the
+    company is a fact about those two."""
+    from app.routers.persons import deduplicate_high_confidence
+    _david_smiths(it_db, ["1961-03", "1958-07", "1974-11", "1980-01"])
+    _people(it_db, ("chpsc:third", "David Smith", "1961-03"))
+    _works_at(it_db, "acme", "chpsc:ds0", "chpsc:twin")
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1
+    assert "chpsc:third" in _alive(it_db) and len(_alive(it_db)) == 5
+
+
+def test_a_full_birth_date_still_stands_alone_under_a_common_name(it_db):
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("wd:a", "David Smith", "1961-03-04"), ("p-b", "David Smith", "1961-03-04"),
+            *[(f"chpsc:o{i}", "David Smith", m) for i, m in enumerate(["1958-07", "1974-11", "1980-01", "1990-05"])])
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1 and len(_alive(it_db)) == 5
+
+
+def test_a_day_and_the_registers_month_do_not_merge_under_a_common_name(it_db):
+    """Wikidata's David Smith of 4 March 1961 and the register's of March 1961:
+    the register side states a month, and the name is common."""
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("wd:a", "David Smith", "1961-03-04"), ("chpsc:b", "David Smith", "1961-03"),
+            *[(f"chpsc:o{i}", "David Smith", m) for i, m in enumerate(["1958-07", "1974-11", "1980-01"])])
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 0 and len(_alive(it_db)) == 5
+
+
+def test_one_shared_company_does_not_merge_the_whole_group_of_a_name(it_db):
+    """No birth dates at all: two spellings of one person at one company, and a
+    third bearer of the name elsewhere. One pair sharing a company used to
+    make the whole group "high"."""
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("sec:1", "Monica C. Lozano", None), ("p-2", "Monica C Lozano", None),
+            ("p-3", "Lozano Monica C", None))
+    _works_at(it_db, "acme", "sec:1", "p-2")
+    _works_at(it_db, "other", "p-3")
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1 and "p-3" in _alive(it_db) and len(_alive(it_db)) == 2
+    whole = [g for g in res["needs_review"] if len(g["members"]) == 3]
+    assert len(whole) == 1 and "only some of them share a company" in whole[0]["reason"]
+
+
+def test_a_chain_of_shared_companies_links_all_of_them(it_db):
+    """A and B at one company, B and C at another: B is the same person in
+    both, so the three are one."""
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("sec:1", "Monica C. Lozano", None), ("p-2", "Monica C Lozano", None),
+            ("p-3", "Lozano Monica C", None))
+    _works_at(it_db, "acme", "sec:1", "p-2")
+    _works_at(it_db, "other", "p-2", "p-3")
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 2 and len(_alive(it_db)) == 1
+
+
+def test_the_scoped_scan_counts_the_names_months_among_the_candidates(it_db):
+    """Seeded from one David Smith, the scan fetches the others of the name —
+    and sees that the name is common."""
+    from app.routers.persons import deduplicate_high_confidence
+    _david_smiths(it_db, ["1961-03", "1958-07", "1974-11", "1980-01"])
+    res = deduplicate_high_confidence(apply=True, seed_ids=["chpsc:twin"])
+    assert res["merged_count"] == 0 and len(_alive(it_db)) == 5
+
+
+def test_a_full_scan_is_refused_on_a_graph_too_large_to_load(it_db):
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.routers.persons import ScanTooLarge, deduplicate_high_confidence, scan_duplicate_groups
+    _people(it_db, ("p-a", "Jane Mary Smith", "1979-10-04"), ("p-b", "Jane Mary Smith", "1979-10-04"))
+    with patch.object(settings, "PERSON_FULL_SCAN_MAX", 1):
+        with pytest.raises(ScanTooLarge, match="2 persons.*--scraped-only"):
+            scan_duplicate_groups()
+        with pytest.raises(ScanTooLarge):
+            deduplicate_high_confidence(apply=True)
+        # scoped, the same graph is scanned
+        assert deduplicate_high_confidence(apply=True, seed_ids=["p-a"])["merged_count"] == 1
+    assert len(_alive(it_db)) == 1
+
+
+def test_a_day_and_its_month_count_as_one_birth_month_of_the_name(it_db):
+    """Three birth months, one of them stated once as a day and once as the
+    month: still three, still a rare name — Masayoshi Son's case under a name
+    two more people carry."""
+    from app.routers.persons import deduplicate_high_confidence
+    _people(it_db, ("wd:a", "Tadashi Yanai", "1949-02-07"), ("chpsc:b", "Tadashi Yanai", "1949-02"),
+            ("chpsc:c", "Tadashi Yanai", "1961-05"), ("chpsc:d", "Tadashi Yanai", "1975-09"))
+    res = deduplicate_high_confidence(apply=True)
+    assert res["merged_count"] == 1 and len(_alive(it_db)) == 3

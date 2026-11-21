@@ -131,7 +131,10 @@ def _first_compatible(a: str | None, b: str | None) -> bool:
 @router.get("/duplicates")
 def find_duplicate_persons(_: dict = Depends(require_contributor)):
     """List likely-duplicate person groups for review (does NOT merge)."""
-    groups = scan_duplicate_groups()
+    try:
+        groups = scan_duplicate_groups()
+    except ScanTooLarge as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     return {"count": len(groups), "groups": groups}
 
 
@@ -327,6 +330,41 @@ def birth_clusters(members: list) -> list[list]:
         births_compare(x["birth_date"], y["birth_date"]) == "different" for x, y in combinations(ms, 2))]
 
 
+def _name_months(members: list) -> int:
+    """How many different birth months (year and month) the bearers of one
+    name state — at least that many people carry it. The measure of how common
+    a name is, taken on the graph itself (findings item 124): two different
+    people of a name that spans m months share one of the register's ~605
+    effective birth months with probability m(m−1)/2/605 — 0.5 % at three,
+    1.7 % at five, and "David Smith" spans 331."""
+    return len({parts[:2] for m in members if len(parts := _birth_parts(m.get("birth_date"))) >= 2})
+
+
+class ScanTooLarge(RuntimeError):
+    """A full scan was asked for on a graph too large to load every person."""
+
+
+def _components(n: int, linked) -> list[list[int]]:
+    """The indexes 0…n-1 as sets connected by ``linked(i, j)``, largest first.
+    Evidence between two people is evidence about those two: a group is one
+    person only as far as its members are linked, pair by pair (findings item
+    124)."""
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for i, j in combinations(range(n), 2):
+        if find(i) != find(j) and linked(i, j):
+            parent[find(i)] = find(j)
+    sets: dict[int, list[int]] = defaultdict(list)
+    for i in range(n):
+        sets[find(i)].append(i)
+    return sorted(sets.values(), key=len, reverse=True)
+
+
 def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
     """
     Suggest likely-duplicate person nodes for review (does NOT merge).
@@ -350,9 +388,38 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
     medium = distinctive name match (3+ tokens) OR a surname+company name variant;
     low = common 2-token name match with no corroboration.
     Feed a group's members into POST /persons/merge to resolve it.
+
+    Two rules since findings item 124 (measured on the full UK register: 14
+    million people of significant control, 2.4 million name-and-month groups):
+
+    - **A birth month alone is evidence only for a rare name.** The register
+      states month and year, never a day, and a common name has a namesake in
+      the same month as a matter of course ("David Smith": 331 birth months
+      among its bearers) — at least 25,000 such groups register-wide, up to
+      7 % of the groups of a common name. A name whose bearers span at most
+      `settings.PERSON_RARE_NAME_MONTHS` birth months (`_name_months`) merges
+      on the month; any other needs a second fact about the same two people.
+      A full date still stands alone.
+    - **Evidence links two people, not a group.** One company shared by two of
+      ten namesakes says nothing about the other eight. A group is "high" only
+      where every member is linked to the others, pair by pair
+      (`_components`); the linked members of a larger group are emitted as a
+      group of their own.
+
+    A full scan (`seed_ids=None`) loads every person and is refused on a graph
+    of more than `settings.PERSON_FULL_SCAN_MAX` persons (`ScanTooLarge`): the
+    register-sized graph is scanned scoped, from the persons a scrape wrote.
     """
     if seed_ids is not None and not seed_ids:
         return []                                            # scrape touched no persons
+    from app.config import settings
+    if seed_ids is None:
+        total = int((run_sql("SELECT count(*) AS n FROM Person") or [{}])[0].get("n") or 0)
+        if total > settings.PERSON_FULL_SCAN_MAX:
+            raise ScanTooLarge(
+                f"{total:,} persons: a full scan loads every one of them (limit "
+                f"{settings.PERSON_FULL_SCAN_MAX:,}, PERSON_FULL_SCAN_MAX). Scan from the persons a "
+                "scrape wrote instead: manage.py dedupe-persons --scraped-only")
 
     with db.get_session() as session:
         persons = _all_persons(session) if seed_ids is None else _candidate_persons(session, seed_ids)
@@ -388,7 +455,11 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             return _ent_cache[pid]
 
         def _emit(members: list, base_reason: str, variant: bool = False,
-                  match_key: tuple | None = None, hard_id: bool = False):
+                  match_key: tuple | None = None, hard_id: bool = False,
+                  name_months: int = 1):
+            """``name_months``: how many birth months the bearers of this name
+            span in the scan (`_name_months`) — what makes a shared month
+            evidence for a rare name and none for a common one."""
             ids = frozenset(m["id"] for m in members)
             if len(ids) < 2 or ids in seen:
                 return
@@ -441,7 +512,20 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                                  for a, b in combinations(members, 2))
             if not shared_birth and not hard_id:
                 for cluster in clusters:
-                    _emit(cluster, base_reason, variant=variant, match_key=match_key)
+                    _emit(cluster, base_reason, variant=variant, match_key=match_key, name_months=name_months)
+            # a month is thirty times weaker than a day — and no evidence at
+            # all for a common name (findings item 124)
+            month_only = shared_birth and any(len(_birth_parts(m["birth_date"])) < 3 for m in members)
+            # Who is linked to whom by a fact about the two of them. Where that
+            # does not join the whole group, the joined members are a group of
+            # their own — unless a full birth date already makes the group one.
+            linked_sets = _components(len(members), lambda i, j: bool(ent[i] & ent[j]))
+            linked = len(linked_sets) == 1
+            if not linked and not hard_id and not variant and (month_only or not shared_birth):
+                for idx in linked_sets:
+                    if len(idx) >= 2:
+                        _emit([members[i] for i in idx], base_reason, match_key=match_key,
+                              name_months=name_months)
             # judge distinctiveness on the token set that actually matched (an alias
             # like "William H. Gates III" is distinctive even if a full name is not)
             distinctive = len(match_key if match_key is not None else _name_key(members[0]["full_name"])) >= 3
@@ -452,7 +536,6 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
             if shared_birth and "birth" not in base_reason:
                 # the merge log keeps this line: a month is thirty times weaker
                 # than a day, and says so
-                month_only = any(len(_birth_parts(m["birth_date"])) < 3 for m in members)
                 reasons.append("same birth month" if month_only else "same birth date")
 
             # keep: prefer a Wikidata node, then most-connected, then shortest name
@@ -479,11 +562,28 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
                 # different given names ⇒ needs review even with the shared company,
                 # unless a matching birth date settles it
                 confidence = "high" if shared_birth else "medium"
-            elif shared_birth:
+            elif shared_birth and (linked or not month_only):
                 confidence = "high"
+            elif shared_birth and name_months <= settings.PERSON_RARE_NAME_MONTHS:
+                # a rare name: its bearers span so few birth months that two
+                # different people in the same one are under 1 % likely
+                confidence = "high"
+                reasons.append("a rare name")
+            elif shared_birth:
+                # the same name and the same birth month, and nothing else that
+                # is about these two: for a common name a namesake is to be
+                # expected. Waits for a second fact (or a human).
+                confidence = "medium" if distinctive else "low"
+                reasons.append(f"a birth month alone does not tell namesakes apart — the name spans "
+                               f"{name_months} birth months")
             elif likely_distinct:
                 confidence = "low"
                 reasons.append("but DIFFERENT birth dates — likely distinct people")
+            elif shared_entity and not linked:
+                # some of them share a company; those were emitted as a group
+                # of their own above — the rest are namesakes until shown otherwise
+                confidence = "medium" if distinctive else "low"
+                reasons.append("only some of them share a company")
             elif shared_entity:
                 # A shared company corroborates a same-person name variant — EXCEPT
                 # when two members carry the BYTE-IDENTICAL name, which is exactly
@@ -529,7 +629,8 @@ def scan_duplicate_groups(seed_ids: list[str] | None = None) -> list[dict]:
         for members in by_birth.values():
             _emit(members, "same birth date + place")
         for nk, members in by_name.items():
-            _emit(members, "same name/alias (order/spelling/title)", match_key=nk)
+            _emit(members, "same name/alias (order/spelling/title)", match_key=nk,
+                  name_months=_name_months(members))
         # Surname + shared company + compatible given name — catches nickname and
         # legal-name variants (Larry/Laurence Fink) that no name-token or birth
         # signal links. Only pairs with differing given names reach here; identical
@@ -616,7 +717,10 @@ def deduplicate_persons(
     the medium/low groups left for manual review. Runs after each scrape when
     SCRAPER_AUTODEDUP_ENABLED is set; also callable directly from the UI.
     """
-    return deduplicate_high_confidence(apply=apply)
+    try:
+        return deduplicate_high_confidence(apply=apply)
+    except ScanTooLarge as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.post("/keep-separate")

@@ -48,8 +48,8 @@ Full REST surface. Auth is JWT bearer (see [`authentication.md`](authentication.
 | GET | `/persons/{id}` | — | Single person |
 | PUT | `/persons/{id}` | contributor | Replace a person's editable fields. On a person a merge made, an edit that removes or changes a value answers 409 `merged_person` (the standing merges, and whose value each field was) until `?merge_confirmed=true` — see [deduplication](deduplication.md#undoing-a-merge--post-personsmerge-logsnapshot_idundo) |
 | POST | `/persons/` | contributor | Create person |
-| GET | `/persons/duplicates` | contributor | Suggest likely-duplicate people (see [Duplicate persons](deduplication.md#duplicate-persons)) |
-| POST | `/persons/deduplicate` | contributor | Auto-merge high-confidence duplicates (`apply=false` = dry run) |
+| GET | `/persons/duplicates` | contributor | Suggest likely-duplicate people (see [Duplicate persons](deduplication.md#duplicate-persons)); 409 above `PERSON_FULL_SCAN_MAX` persons |
+| POST | `/persons/deduplicate` | contributor | Auto-merge high-confidence duplicates (`apply=false` = dry run); 409 above `PERSON_FULL_SCAN_MAX` persons |
 | POST | `/persons/merge` | contributor | Fold a duplicate person into the one to keep |
 | POST | `/persons/keep-separate` | contributor | Mark a group as confirmed-different (stops being suggested) |
 | DELETE | `/persons/keep-separate` | contributor | Undo a keep-separate |
