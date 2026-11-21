@@ -192,6 +192,36 @@ validated against this set at the API boundary. `free_float` is
 Vertex/edge types and lookup indexes are created idempotently on startup and via
 `python manage.py init-schema` (see *Schema & indexes* in [`operations.md`](operations.md#schema--indexes)).
 
+## Shared registered addresses — the letterbox view (derived, not stored)
+
+A registered office is often an agent's door rather than where a company is run: on dev,
+99 companies give "c/o Corporation Service Company, 251 Little Falls Drive, Wilmington",
+79 "c/o The Corporation Trust Company, 1209 Orange St", 52 "1 Churchill Place, London".
+Who else is registered behind the same door is the network a letterbox company sits in.
+
+It is **read, not stored** (`app/registered_address.py`, 2026-11-10): the companies sharing
+an `address_normalized` — the matching key every importer already writes and the schema
+indexes — are the group. The profile's `registered_address` section lists the others at a
+company's door with their true count, and `GET /search/address` lists everyone at one
+address, paged (docs/api-reference.md); the client draws the address as a node joining
+them. There is no `Address` vertex: it would be a copy of that key needing a sync pass after
+every import, delta and merge, and a company that moved its registered office would sit at
+the old door until the pass ran.
+
+Limits, stated rather than guessed away:
+- **The key is exact.** `normalize_address` only lowercases and strips punctuation, so one
+  building under two spellings is two groups — "1209 Orange St" and "1209 Orange Street";
+  "c/o Walkers Corporate Limited, 190 Elgin Avenue" and "190 Elgin Avenue". Joining them
+  needs an address parser; libpostal was rejected for its memory and a hand-written
+  normalisation pass declined (2026-09-17).
+- **Only the sources that write the key** — GLEIF, the Companies House importers and the bulk
+  import. A company known only from SEC, Wikidata or an Exhibit 21 row has no
+  registered-office key and joins no group.
+- **Present-day only.** An address carries no dates, so time travel does not apply to it.
+- **No judgement.** A shared address is a fact the companies state; whether a company is a
+  letterbox is not derived or shown (a marker, and the officers behind the doors from the
+  national registers, wait until after the production start).
+
 ## Claims: per-source provenance
 
 An `OWNS` edge holds **one** answer — the value traversals read. Several sources

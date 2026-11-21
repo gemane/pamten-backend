@@ -21,6 +21,8 @@ from app.db.arcadedb import run_sql
 pytestmark = pytest.mark.integration
 
 P, C = "p-hidden", "co-hidden"                     # the suppressed person and company
+#: the registered office Acme Holdings shares with the suppressed company
+DOOR = "1 letterbox lane london ec1a 1bb gb"
 #: what must never be served: their names, their ids, the records that state them
 HIDDEN = ("Quillfeather", P, "Hidden Trading", C, "example.com/filing-hidden", "example.com/record-hidden-co")
 #: the suppressed seat of a person who is otherwise visible: its role and its record
@@ -32,6 +34,8 @@ SEAT = ("Treasurer", "example.com/seat-suppressed")
 WALK: dict[str, list[tuple[str, tuple | None]]] = {
     "/v1/search/": [("/v1/search/?q=Quillfeather", HIDDEN), ("/v1/search/?q=Hidden%20Trading", HIDDEN)],
     "/v1/search/geographic": [("/v1/search/geographic?country=GB", HIDDEN)],
+    # the letterbox view: the suppressed company shares the visible one's registered office
+    "/v1/search/address": [(f"/v1/search/address?key={DOOR.replace(' ', '%20')}", HIDDEN)],
     "/v1/search/person/{person_id}/full-profile": [(f"/v1/search/person/{P}/full-profile", None),
                                                    ("/v1/search/person/p-seat/full-profile", HIDDEN + SEAT)],
     "/v1/search/entity/{entity_id}/full-profile": [(f"/v1/search/entity/{C}/full-profile", None),
@@ -107,6 +111,8 @@ def _graph(it_db):
                              ("co-hsub", "Hidden Sub Ltd", "")):
         it_db.run_command(f"CREATE (:Entity {{id: '{eid}', name: '{name}', type: 'company', country: 'GB', "
                           f"name_normalized: '{name.lower()}', search_text: '{name.lower()}'{extra}}})")
+    run_sql(f"UPDATE Entity SET address = '1 Letterbox Lane, London, EC1A 1BB, GB', address_normalized = '{DOOR}' "
+            f"WHERE id IN ['co-a', 'co-sub', '{C}']")
     it_db.run_command(f"CREATE (:Person {{id: '{P}', full_name: 'Zebedee Quillfeather', first_name: 'Zebedee', "
                       "last_name: 'Quillfeather', search_text: 'zebedee quillfeather', birth_date: '1970-01', "
                       "source_id: 'wikidata', source_url: 'https://example.com/filing-hidden', "

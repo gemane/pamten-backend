@@ -864,3 +864,32 @@ def test_no_route_deletes_a_company_by_name_with_every_unconnected_node(client, 
     assert r.status_code in (404, 405)
     assert not hasattr(maintenance, "purge_company")
     assert not hasattr(maintenance, "CompanyNotFound")
+
+
+# ── /search/address: the companies at one registered office ────────────────────
+
+def test_address_requires_a_key(client, fake_db):
+    assert client.get("/search/address").status_code == 422
+
+
+def test_address_caps_the_page(client, fake_db):
+    r = client.get("/search/address", params={"key": "1209 orange st", "limit": 1001})
+    assert r.status_code == 422
+
+
+def test_address_404_when_nobody_is_registered_there(client, fake_db):
+    fake_db.queue([], [{"n": 0}])  # the suppressed nodes, then the count
+    r = client.get("/search/address", params={"key": "1209 orange st"})
+    assert r.status_code == 404
+
+
+def test_address_lists_the_companies(client, fake_db):
+    fake_db.queue([], [{"n": 2}],
+                  [{"e": {"id": "a", "name": "Alpha", "address": "1209 Orange St"}},
+                   {"e": {"id": "b", "name": "Beta", "address": "1209 Orange St"}}])
+    r = client.get("/search/address", params={"key": "1209 Orange St."})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["key"] == "1209 orange st" and body["count"] == 2
+    assert [e["id"] for e in body["entities"]] == ["a", "b"]
+    assert body["address"] == "1209 Orange St"
